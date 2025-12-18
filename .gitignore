@@ -1,0 +1,60 @@
+*~
+\#*
+sample_code/
+# Python
+__pycache__/
+output/
+docs/paid/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+venv/
+env/
+ENV/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Test outputs
+test_results_*.txt
+test_output*.txt
+test_latest*.txt
+
+# Assembler/linker outputs
+*.rel
+*.sym
+*.prn
+*.com
+*.hex
+*.bin
+
+# Keep .mac source files but track them explicitly if needed
+# Generated .mac files in test directories
+tests/**/*.mac
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation build
+/site/
+.cache/
+
+# Temporary files
+/tmp/
+*.bak

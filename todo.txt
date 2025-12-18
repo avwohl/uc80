@@ -1,0 +1,17 @@
+project: write a c compiler for the z80
+for the ansi c24 language
+
+step 0:
+create a github depository in this directory. I already set a .gitignore.
+create with gh a private repository and push.
+
+step 1:
+in docs/paid/ISO+IEC+9899-2024.pdf is the latest standard
+for c.  without reading it yourself and getting a loop
+convert it to text in the same directory.  We bought the standard
+but can not pass it on to anyone.  This will be an open source project
+eventually so this docs/paid/ is in git ignore.
+
+step 2:
+read the .txt making a plan to implement it
+
