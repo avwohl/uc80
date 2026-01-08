@@ -200,10 +200,17 @@ class Parser:
     def _parse_declarator(self, base_type: ast.TypeNode) -> tuple[str, ast.TypeNode]:
         """Parse declarator, returning (name, full_type)."""
         # Handle pointers
+        pointer_stack = []  # Track pointer modifiers for later
         while self._match(TokenType.STAR):
             is_const = self._match(TokenType.CONST) is not None
             is_volatile = self._match(TokenType.VOLATILE) is not None
-            base_type = ast.PointerType(base_type=base_type, is_const=is_const, is_volatile=is_volatile)
+            pointer_stack.append((is_const, is_volatile))
+
+        # If no grouping, apply pointers directly to base type
+        if not pointer_stack or not self._check(TokenType.LPAREN) or self._is_paren_function():
+            # Apply pointers to base_type
+            for is_const, is_volatile in pointer_stack:
+                base_type = ast.PointerType(base_type=base_type, is_const=is_const, is_volatile=is_volatile)
 
         # Handle parenthesized declarator
         if self._match(TokenType.LPAREN):
@@ -213,11 +220,16 @@ class Parser:
                 self.pos -= 1
                 name = ""
             else:
+                # Grouped declarator like (*fptr)
+                # Parse inner declarator recursively with a placeholder
                 name, inner_type = self._parse_declarator(base_type)
                 self._expect(TokenType.RPAREN)
-                # Continue with array/function suffixes
-                base_type = self._parse_declarator_suffix(inner_type)
-                return name, base_type
+                # Parse suffix (array/function) with original base type
+                suffix_type = self._parse_declarator_suffix(base_type)
+                # Now substitute: inner_type wraps suffix_type
+                # inner_type has base_type somewhere inside; replace it with suffix_type
+                result_type = self._substitute_base_type(inner_type, base_type, suffix_type)
+                return name, result_type
         elif self._check(TokenType.IDENTIFIER):
             name = self._advance().value
         else:
@@ -226,6 +238,41 @@ class Parser:
         # Parse array and function suffixes
         result_type = self._parse_declarator_suffix(base_type)
         return name, result_type
+
+    def _is_paren_function(self) -> bool:
+        """Check if the upcoming LPAREN is for function params, not grouping."""
+        if not self._check(TokenType.LPAREN):
+            return False
+        # Look ahead past LPAREN
+        saved_pos = self.pos
+        self._advance()  # consume LPAREN
+        result = self._is_type_name() or self._check(TokenType.RPAREN)
+        self.pos = saved_pos  # restore position
+        return result
+
+    def _substitute_base_type(self, type_node: ast.TypeNode, old_base: ast.TypeNode,
+                              new_base: ast.TypeNode) -> ast.TypeNode:
+        """Replace old_base with new_base inside type_node."""
+        if type_node is old_base:
+            return new_base
+        if isinstance(type_node, ast.PointerType):
+            return ast.PointerType(
+                base_type=self._substitute_base_type(type_node.base_type, old_base, new_base),
+                is_const=type_node.is_const,
+                is_volatile=type_node.is_volatile
+            )
+        if isinstance(type_node, ast.ArrayType):
+            return ast.ArrayType(
+                base_type=self._substitute_base_type(type_node.base_type, old_base, new_base),
+                size=type_node.size
+            )
+        if isinstance(type_node, ast.FunctionType):
+            return ast.FunctionType(
+                return_type=self._substitute_base_type(type_node.return_type, old_base, new_base),
+                param_types=type_node.param_types,
+                is_variadic=type_node.is_variadic
+            )
+        return type_node
 
     def _parse_declarator_suffix(self, base_type: ast.TypeNode) -> ast.TypeNode:
         """Parse array brackets and function parameters."""
