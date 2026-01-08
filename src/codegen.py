@@ -189,6 +189,9 @@ class CodeGenContext:
     # Struct definitions: name -> list of (member_name, member_type, offset)
     structs: dict[str, list[tuple[str, ast.TypeNode, int]]] = field(default_factory=dict)
 
+    # Enum constants: name -> integer value
+    enum_constants: dict[str, int] = field(default_factory=dict)
+
     def emit(self, line: str = "") -> None:
         """Emit a line of assembly."""
         self.lines.append(line)
@@ -347,6 +350,10 @@ class CodeGenerator:
             pass
         elif isinstance(decl, ast.StructDecl):
             self._register_struct(decl)
+        elif isinstance(decl, ast.EnumDecl):
+            self._register_enum(decl)
+        elif isinstance(decl, ast.TypedefDecl):
+            self._register_typedef(decl)
 
     def _register_struct(self, decl: ast.StructDecl) -> None:
         """Register a struct definition for later use."""
@@ -365,6 +372,43 @@ class CodeGenerator:
                     # Struct: sequential layout
                     offset += self._type_size(member.member_type)
         self.ctx.structs[decl.name] = members
+
+    def _register_enum(self, decl: ast.EnumDecl) -> None:
+        """Register enum constants for later use."""
+        if not decl.is_definition:
+            return
+
+        next_value = 0
+        for enum_val in decl.values:
+            if enum_val.value is not None:
+                # Explicit value - must be a constant expression
+                if isinstance(enum_val.value, ast.IntLiteral):
+                    next_value = enum_val.value.value
+                else:
+                    # For now, only support integer literals
+                    next_value = 0
+            self.ctx.enum_constants[enum_val.name] = next_value
+            next_value += 1
+
+    def _register_typedef(self, decl: ast.TypedefDecl) -> None:
+        """Register typedef, especially for anonymous structs."""
+        if isinstance(decl.target_type, ast.StructType):
+            struct_type = decl.target_type
+            # If it's an anonymous struct with inline members, register under typedef name
+            if struct_type.members:
+                struct_name = decl.name
+                struct_type.name = struct_name  # Set name for later lookup
+                members = []
+                offset = 0
+                for member in struct_type.members:
+                    if member.name:
+                        members.append((member.name, member.member_type, offset))
+                        if struct_type.is_union:
+                            pass  # Union: all at offset 0
+                        else:
+                            offset += self._type_size(member.member_type)
+                self.ctx.structs[struct_name] = members
+        # For enum types, nothing special needed - enum values are already constants
 
     def gen_function(self, func: ast.FunctionDecl) -> None:
         """Generate code for a function."""
@@ -753,6 +797,14 @@ class CodeGenerator:
 
     def gen_identifier(self, expr: ast.Identifier, force_long: bool = False) -> None:
         """Generate code to load an identifier's value into HL (or DEHL for 32-bit)."""
+        # Check for enum constant first
+        if expr.name in self.ctx.enum_constants:
+            val = self.ctx.enum_constants[expr.name]
+            self.ctx.emit_instr("LD", f"HL,{val}")
+            if force_long:
+                self.ctx.emit_instr("LD", "DE,0")
+            return
+
         sym = self.ctx.lookup(expr.name)
         if sym is None:
             # Assume external function

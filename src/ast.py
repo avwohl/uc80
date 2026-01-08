@@ -56,6 +56,7 @@ class StructType(TypeNode):
     """Struct type reference."""
     name: Optional[str] = None  # None for anonymous structs
     is_union: bool = False
+    members: list['StructMember'] = field(default_factory=list)  # For inline definitions
 
 
 @dataclass(kw_only=True)

@@ -11,7 +11,7 @@
 - [x] Code Generator (src/codegen.py) - 33 tests passing
 - [x] Runtime Library (lib/runtime.mac) - 16-bit and 32-bit arithmetic
 - [x] CP/M Startup (lib/crt0.mac) - Stack setup, main() call, exit
-- [x] Minimal libc (lib/libc.mac) - putchar, getchar, puts, printf, strlen
+- [x] Minimal libc (lib/libc.mac) - I/O, string, and memory functions
 - [x] CLI Entry Point (src/main.py) - Command-line compiler interface
 - [x] End-to-End Test - Hello World and arithmetic working!
 
@@ -33,19 +33,25 @@
 - Pre/post increment/decrement (++, --)
 - Ternary operator (?:)
 - Structs and unions with member access (. and ->)
+- Enums with explicit and auto-incrementing values
+- Typedef for basic types, pointers, and structs
 
 ### Bugs Fixed
 - Parser: Parameter names were not captured for function definitions
 - Linker (ul80): DSEG data placed at wrong address when linking multiple modules
 
 ### Next Steps (Phase 2)
-1. **Standard Library**
-   - Full printf with format specifiers
-   - scanf
-   - Memory functions (memcpy, memset)
-   - String functions (strcpy, strcmp, etc.)
+1. **Standard Library Additions**
+   - scanf (console input parsing)
+   - File I/O (fopen, fread, fwrite, fclose via CP/M FCB)
+   - sprintf/sscanf
 
-2. **Optimizations**
+2. **Language Features**
+   - static keyword
+   - extern declarations
+   - const enforcement
+
+3. **Optimizations**
    - Register allocation improvements
    - Peephole optimization
 

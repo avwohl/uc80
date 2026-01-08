@@ -48,7 +48,7 @@ class Parser:
     def __init__(self, tokens: list[Token]):
         self.tokens = tokens
         self.pos = 0
-        self.typedefs: set[str] = set()  # Track typedef names
+        self.typedefs: dict[str, ast.TypeNode] = {}  # Map typedef names to target types
         self._last_params: list[ast.ParamDecl] = []  # Store params from last function declarator
 
     def _current(self) -> Token:
@@ -149,9 +149,11 @@ class Parser:
             elif self._check(TokenType.ENUM):
                 return self._parse_enum_type()
             elif self._check(TokenType.IDENTIFIER) and self._current().value in self.typedefs:
-                base_type = self._advance().value
-                return ast.BasicType(name=base_type, is_signed=is_signed,
-                                     is_const=is_const, is_volatile=is_volatile, location=loc)
+                typedef_name = self._advance().value
+                target_type = self.typedefs[typedef_name]
+                # Return a copy of the target type (applying any modifiers)
+                # For now, just return the target type directly
+                return target_type
             else:
                 break
 
@@ -901,7 +903,7 @@ class Parser:
                 init = self._parse_initializer()
 
             if is_typedef:
-                self.typedefs.add(name)
+                self.typedefs[name] = full_type
                 declarations.append(ast.TypedefDecl(name=name, target_type=full_type, location=loc))
             else:
                 declarations.append(ast.VarDecl(name=name, var_type=full_type,
@@ -948,7 +950,9 @@ class Parser:
             if is_typedef:
                 name, _ = self._parse_declarator(struct_type)
                 if name:
-                    self.typedefs.add(name)
+                    # Copy members to StructType for codegen
+                    struct_type.members = members
+                    self.typedefs[name] = struct_type
                     self._expect(TokenType.SEMICOLON)
                     return ast.TypedefDecl(name=name, target_type=struct_type, location=loc)
         self._expect(TokenType.SEMICOLON)
@@ -980,7 +984,7 @@ class Parser:
 
         if is_typedef and self._check(TokenType.IDENTIFIER):
             name = self._advance().value
-            self.typedefs.add(name)
+            self.typedefs[name] = enum_type
             self._expect(TokenType.SEMICOLON)
             return ast.TypedefDecl(name=name, target_type=enum_type, location=loc)
 
