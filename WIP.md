@@ -1,6 +1,6 @@
 # Work in Progress - uc80 C24 Compiler
 
-## Current Status: Phase 1 - Lexer & Parser Complete
+## Current Status: Phase 1 - Code Generation Complete
 
 ### Completed
 - [x] Step 0: GitHub repo created (private)
@@ -8,41 +8,71 @@
 - [x] Step 2: Implementation plan created
 - [x] Lexer (src/lexer.py) - 42 tests passing
 - [x] Parser (src/parser.py) - 78 tests passing
+- [x] Code Generator (src/codegen.py) - 33 tests passing
+- [x] Runtime Library (lib/runtime.mac) - 16-bit mul/div/mod/shift
+- [x] CP/M Startup (lib/crt0.mac) - Stack setup, main() call, exit
+- [x] Minimal libc (lib/libc.mac) - putchar, getchar, puts, printf, strlen
+- [x] CLI Entry Point (src/main.py) - Command-line compiler interface
+- [x] End-to-End Test - Hello World and arithmetic working!
 
-### Next Steps (Phase 1 continued)
-1. **Code Generator** (src/codegen.py)
-   - Generate Z80 assembly (.mac files) for um80
-   - Function prologue/epilogue
-   - Stack frame management (IX = frame pointer)
-   - Expression evaluation
-   - Control flow (if/while/for)
+### Working Features
+- Basic types: char, int
+- Pointers and pointer arithmetic
+- Arrays and array indexing
+- Control flow: if/else, while, do-while, for
+- Arithmetic: +, -, *, /, %
+- Comparisons: <, <=, >, >=, ==, !=
+- Logical: &&, ||, !
+- Bitwise: &, |, ^, ~, <<, >>
+- Function calls and recursion
+- Local variables and parameters
+- String literals
 
-2. **Runtime Library** (lib/crt0.mac)
-   - CP/M startup code
-   - Stack setup
-   - Call main()
-   - Exit handling
+### Bugs Fixed
+- Parser: Parameter names were not captured for function definitions
+- Linker (ul80): DSEG data placed at wrong address when linking multiple modules
 
-3. **Minimal libc** (lib/)
-   - putchar() via BDOS
-   - puts()
-   - Basic printf()
+### Next Steps (Phase 2)
+1. **More Types**
+   - long (32-bit) support
+   - unsigned types
+   - struct/union
 
-4. **Integration Test**
-   - Compile "Hello, World!"
-   - Assemble with um80
-   - Link with ul80
-   - Run on cpmemu
+2. **More Features**
+   - switch/case
+   - break/continue in loops
+   - Compound assignment operators (+=, etc.)
+
+3. **Standard Library**
+   - Full printf with format specifiers
+   - scanf
+   - Memory functions (memcpy, memset)
+   - String functions (strcpy, strlen, etc.)
 
 ### Architecture Reference
 ```
-C source → Lexer → Parser → AST → CodeGen → .mac
-                                              ↓
-                                         um80 → .rel
-                                              ↓
-                                         ul80 → .com
-                                              ↓
+C source -> Lexer -> Parser -> AST -> CodeGen -> .mac
+                                              |
+                                         um80 -> .rel
+                                              |
+                                         ul80 -> .com
+                                              |
                                          cpmemu (test)
+```
+
+### Example Usage
+```bash
+# Compile C to assembly
+python -m src.main examples/hello.c -o examples/hello.mac
+
+# Assemble
+um80 examples/hello.mac
+
+# Link with runtime
+ul80 lib/crt0.rel examples/hello.rel lib/libc.rel -o hello.com
+
+# Run on CP/M emulator
+cpmemu hello.com
 ```
 
 ### Z80 Type Sizes
@@ -61,5 +91,10 @@ python -m pytest tests/ -v
 - `src/lexer.py` - Tokenizer
 - `src/ast.py` - AST nodes
 - `src/parser.py` - Recursive descent parser
+- `src/codegen.py` - Z80 code generator
+- `src/main.py` - CLI entry point
+- `lib/crt0.mac` - CP/M runtime startup
+- `lib/runtime.mac` - 16-bit arithmetic library
+- `lib/libc.mac` - Minimal C library
 - `docs/implementation_plan.md` - Full roadmap
 - `docs/paid/ISO+IEC+9899-2024.txt` - C24 standard (gitignored)

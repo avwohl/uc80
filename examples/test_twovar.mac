@@ -1,0 +1,77 @@
+; Test with two local variables like hello3
+	.Z80
+
+	PUBLIC	_main
+	EXTRN	_putchar
+
+	CSEG
+
+_main:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	HL,-4
+	ADD	HL,SP
+	LD	SP,HL
+
+	; s = @STR1 at IX-2/-1
+	LD	HL,@STR1
+	LD	(IX-2),L
+	LD	(IX-1),H
+
+	; i = 0 at IX-4/-3
+	LD	HL,0
+	LD	(IX-4),L
+	LD	(IX-3),H
+
+loop:
+	; Check s[i] != 0
+	LD	L,(IX-4)	; i
+	LD	H,(IX-3)
+	PUSH	HL
+	LD	L,(IX-2)	; s
+	LD	H,(IX-1)
+	POP	DE
+	ADD	HL,DE		; HL = s + i
+	LD	L,(HL)
+	LD	H,0
+	LD	A,H
+	OR	L
+	JR	Z,done
+
+	; Print s[i] - reload and compute again
+	LD	L,(IX-4)
+	LD	H,(IX-3)
+	PUSH	HL
+	LD	L,(IX-2)
+	LD	H,(IX-1)
+	POP	DE
+	ADD	HL,DE
+	LD	L,(HL)
+	LD	H,0
+	PUSH	HL
+	CALL	_putchar
+	POP	DE
+
+	; i = i + 1
+	LD	L,(IX-4)
+	LD	H,(IX-3)
+	EX	DE,HL
+	LD	HL,1
+	ADD	HL,DE
+	LD	(IX-4),L
+	LD	(IX-3),H
+	JP	loop
+
+done:
+	LD	HL,0
+	LD	SP,IX
+	POP	IX
+	RET
+
+
+	DSEG
+@STR1:
+	DB	'ABC',0
+
+	END

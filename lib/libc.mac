@@ -1,0 +1,472 @@
+; libc.mac - Minimal C Standard Library for CP/M
+; uc80 C Compiler
+;
+; Implements basic I/O functions using CP/M BDOS calls
+
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5		; BDOS entry point
+CONOUT	EQU	2		; Console output (char in E)
+CONIN	EQU	1		; Console input (char returned in A)
+PRTSTR	EQU	9		; Print string (address in DE, '$' terminated)
+
+	CSEG
+
+; ============================================================
+; int putchar(int c)
+; Output a character to console
+; Argument: character on stack at IX+4
+; Returns: the character written, or EOF (-1) on error
+; ============================================================
+	PUBLIC	_putchar
+_putchar:
+	; Minimal implementation - doesn't touch IX
+	; Stack at entry: [ret_addr][arg]
+	POP	HL		; Get return address
+	POP	DE		; Get argument (char in E)
+	PUSH	DE		; Restore arg for caller cleanup
+	PUSH	HL		; Restore return address
+
+	LD	C,CONOUT
+	CALL	BDOS
+
+	; Return value - get arg again
+	LD	HL,2
+	ADD	HL,SP		; Points to arg (after ret addr)
+	LD	L,(HL)
+	LD	H,0
+	RET
+
+; ============================================================
+; int getchar(void)
+; Read a character from console
+; Returns: character read, or EOF (-1) on error
+; ============================================================
+	PUBLIC	_getchar
+_getchar:
+	LD	C,CONIN
+	CALL	BDOS
+	LD	L,A
+	LD	H,0
+	RET
+
+; ============================================================
+; int puts(const char *s)
+; Output a string followed by newline
+; Argument: pointer to string on stack at IX+4
+; Returns: non-negative on success, EOF (-1) on error
+; ============================================================
+	PUBLIC	_puts
+_puts:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Get string pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+_puts_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_puts_newline	; End of string
+
+	LD	E,A		; Character in E
+	LD	C,CONOUT
+	PUSH	HL
+	CALL	BDOS
+	POP	HL
+	INC	HL
+	JR	_puts_loop
+
+_puts_newline:
+	; Output newline (CR LF)
+	LD	E,0DH		; CR
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,0AH		; LF
+	LD	C,CONOUT
+	CALL	BDOS
+
+	; Return 0 (success)
+	LD	HL,0
+
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; void cputs(const char *s)
+; Output a string (no newline, for internal use)
+; ============================================================
+	PUBLIC	_cputs
+_cputs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Get string pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+_cputs_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_cputs_done
+
+	LD	E,A
+	LD	C,CONOUT
+	PUSH	HL
+	CALL	BDOS
+	POP	HL
+	INC	HL
+	JR	_cputs_loop
+
+_cputs_done:
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int printf(const char *fmt, ...)
+; Minimal printf supporting %d, %s, %c, %x, %%
+; Very simplified - no field width, precision, etc.
+; ============================================================
+	PUBLIC	_printf
+_printf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; fmt is at IX+4, first vararg at IX+6
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = format string pointer
+	LD	C,6		; C = offset to next argument
+
+_printf_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_printf_done
+
+	CP	'%'
+	JR	Z,_printf_format
+
+	; Regular character - output it
+	LD	E,A
+	PUSH	HL
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	HL
+	INC	HL
+	JR	_printf_loop
+
+_printf_format:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JR	Z,_printf_done
+
+	CP	'%'
+	JR	Z,_printf_pct
+
+	CP	's'
+	JR	Z,_printf_str
+
+	CP	'd'
+	JR	Z,_printf_dec
+
+	CP	'c'
+	JR	Z,_printf_chr
+
+	CP	'x'
+	JR	Z,_printf_hex
+
+	; Unknown format - skip
+	INC	HL
+	JR	_printf_loop
+
+_printf_pct:
+	; Output literal %
+	LD	E,'%'
+	PUSH	HL
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	HL
+	INC	HL
+	JR	_printf_loop
+
+_printf_chr:
+	; Output character
+	PUSH	HL
+	; Get argument
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE		; DE = IX
+	ADD	HL,DE		; HL = IX + offset
+	LD	E,(HL)		; Get character
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	INC	C
+	INC	C		; Advance to next arg
+	POP	HL
+	INC	HL
+	JR	_printf_loop
+
+_printf_str:
+	; Output string
+	PUSH	HL
+	; Get argument (pointer)
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE		; HL = IX + offset
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = string pointer
+
+	; Output string
+_printf_str_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_printf_str_done
+	PUSH	DE
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	INC	DE
+	JR	_printf_str_loop
+
+_printf_str_done:
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JR	_printf_loop
+
+_printf_dec:
+	; Output signed decimal
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE		; HL = IX + offset
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = value
+	EX	DE,HL		; HL = value
+
+	; Check for negative
+	BIT	7,H
+	JR	Z,_printf_dec_pos
+
+	; Negative - output minus sign and negate
+	PUSH	HL
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+
+	; Negate HL (0 - HL)
+	PUSH	DE
+	EX	DE,HL
+	LD	HL,0
+	OR	A
+	SBC	HL,DE
+	POP	DE
+
+_printf_dec_pos:
+	CALL	_prt_dec
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_printf_loop
+
+_printf_hex:
+	; Output hex
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	CALL	_prt_hex
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_printf_loop
+
+_printf_done:
+	LD	HL,0		; Return 0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; Internal: print HL as decimal
+; ============================================================
+_prt_dec:
+	PUSH	BC
+	PUSH	DE
+
+	; Convert to decimal digits on stack
+	LD	DE,10
+	LD	B,0		; Digit counter
+
+_prt_dec_loop:
+	CALL	_div16		; HL = HL / 10, DE = remainder
+	PUSH	DE		; Push digit
+	INC	B
+	LD	A,H
+	OR	L
+	JR	NZ,_prt_dec_loop
+
+	; Pop and print digits
+_prt_dec_out:
+	POP	DE
+	LD	A,E
+	ADD	A,'0'
+	LD	E,A
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt_dec_out
+
+	POP	DE
+	POP	BC
+	RET
+
+; Simple division: HL = HL / 10, DE = HL % 10
+; (Optimized for divide by 10)
+_div16:
+	PUSH	BC
+	LD	BC,0		; Result
+	LD	DE,0		; Remainder
+
+_div16_lp:
+	; Subtract 10 from HL repeatedly
+	LD	A,H
+	OR	A
+	JR	NZ,_div16_sub
+	LD	A,L
+	CP	10
+	JR	C,_div16_dn
+
+_div16_sub:
+	LD	A,L
+	SUB	10
+	LD	L,A
+	LD	A,H
+	SBC	A,0
+	LD	H,A
+	INC	BC
+	JR	_div16_lp
+
+_div16_dn:
+	; Remainder in L
+	LD	E,L
+	LD	D,0
+	LD	H,B
+	LD	L,C		; HL = quotient
+	POP	BC
+	RET
+
+; ============================================================
+; Internal: print HL as 4-digit hex
+; ============================================================
+_prt_hex:
+	PUSH	BC
+	LD	A,H
+	CALL	_prt_hex2
+	LD	A,L
+	CALL	_prt_hex2
+	POP	BC
+	RET
+
+_prt_hex2:
+	PUSH	AF
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	CALL	_prt_hex1
+	POP	AF
+_prt_hex1:
+	AND	0FH
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_prt_hex_out
+	ADD	A,7		; 'A' - '0' - 10
+_prt_hex_out:
+	LD	E,A
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	RET
+
+; ============================================================
+; size_t strlen(const char *s)
+; ============================================================
+	PUBLIC	_strlen
+_strlen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = string pointer
+	LD	BC,0		; Counter
+
+_strlen_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strlen_done
+	INC	HL
+	INC	BC
+	JR	_strlen_loop
+
+_strlen_done:
+	LD	H,B
+	LD	L,C
+	POP	IX
+	RET
+
+; ============================================================
+; void exit(int status)
+; ============================================================
+	PUBLIC	_exit
+_exit:
+	; Just return to CP/M
+	JP	0
+
+	END

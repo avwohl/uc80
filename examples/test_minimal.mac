@@ -1,0 +1,67 @@
+; Minimal test of generated code pattern
+	.Z80
+
+	PUBLIC	_main
+
+	CSEG
+
+_main:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	HL,-4
+	ADD	HL,SP
+	LD	SP,HL
+
+	; s = @STR1 (at IX-2/IX-1)
+	LD	HL,@STR1
+	LD	(IX-2),L
+	LD	(IX-1),H
+
+	; i = 0 (at IX-4/IX-3)
+	LD	HL,0
+	LD	(IX-4),L
+	LD	(IX-3),H
+
+loop:
+	; Compute s[i]
+	LD	L,(IX-4)
+	LD	H,(IX-3)	; HL = i
+	PUSH	HL
+	LD	L,(IX-2)
+	LD	H,(IX-1)	; HL = s
+	POP	DE		; DE = i
+	ADD	HL,DE		; HL = s + i
+	LD	L,(HL)		; Load char
+	LD	H,0
+
+	; Test if zero
+	LD	A,L
+	OR	A
+	JR	Z,done
+
+	; putchar(s[i])
+	LD	E,L
+	LD	C,2
+	CALL	5
+
+	; i = i + 1
+	LD	L,(IX-4)
+	LD	H,(IX-3)
+	INC	HL
+	LD	(IX-4),L
+	LD	(IX-3),H
+
+	JR	loop
+
+done:
+	LD	HL,0
+	LD	SP,IX
+	POP	IX
+	RET
+
+	DSEG
+@STR1:
+	DB	'Hi',0DH,0AH,0
+
+	END

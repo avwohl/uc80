@@ -1,0 +1,32 @@
+; crt0.mac - C Runtime Startup for CP/M
+; uc80 C Compiler
+;
+; This is the startup code that:
+; 1. Sets up the stack from BDOS
+; 2. Initializes any globals (future)
+; 3. Calls main()
+; 4. Returns exit code to CP/M
+
+	.Z80
+
+	CSEG
+
+	PUBLIC	__start
+
+	EXTRN	_main
+
+; CP/M program entry point (at 0100H after linking)
+__start:
+	; Get stack pointer from BDOS (address 6 contains top of TPA)
+	LD	HL,(6)
+	LD	SP,HL
+
+	; Call main - result in HL (16-bit) or just L (8-bit for char)
+	CALL	_main
+
+	; Return to CP/M
+	; The return value in L can be checked by CCP if desired
+	; CP/M warm boot at address 0
+	JP	0
+
+	END	__start

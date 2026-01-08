@@ -1,0 +1,43 @@
+; Test putchar function from libc
+	.Z80
+
+	PUBLIC	_main
+	EXTRN	_putchar
+
+	CSEG
+
+_main:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Call putchar('H')
+	LD	HL,'H'
+	PUSH	HL
+	CALL	_putchar
+	POP	DE
+
+	; Call putchar('i')
+	LD	HL,'i'
+	PUSH	HL
+	CALL	_putchar
+	POP	DE
+
+	; Call putchar(0DH)
+	LD	HL,0DH
+	PUSH	HL
+	CALL	_putchar
+	POP	DE
+
+	; Call putchar(0AH)
+	LD	HL,0AH
+	PUSH	HL
+	CALL	_putchar
+	POP	DE
+
+	LD	HL,0
+	LD	SP,IX
+	POP	IX
+	RET
+
+	END

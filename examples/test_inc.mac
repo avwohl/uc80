@@ -1,0 +1,71 @@
+; Test the specific increment pattern
+	.Z80
+
+	PUBLIC	_main
+	EXTRN	_putchar
+
+	CSEG
+
+_main:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	HL,-2
+	ADD	HL,SP
+	LD	SP,HL
+
+	; i = 0
+	LD	HL,0
+	LD	(IX-2),L
+	LD	(IX-1),H
+
+loop:
+	; Check i < 3
+	LD	L,(IX-2)
+	LD	H,(IX-1)
+	LD	A,H
+	OR	A
+	JR	NZ,check_l
+	LD	A,L
+	CP	3
+check_l:
+	JR	NC,done
+
+	; Print 'A' + i
+	LD	L,(IX-2)	; Reload i
+	LD	H,(IX-1)
+	LD	A,L
+	ADD	A,'A'
+	LD	L,A
+	LD	H,0
+	PUSH	HL
+	CALL	_putchar
+	POP	DE		; DE now has garbage
+
+	; i = i + 1 using the pattern from hello3.mac
+	LD	L,(IX-2)
+	LD	H,(IX-1)
+	EX	DE,HL		; DE = i, HL = garbage from POP
+	LD	HL,1
+	ADD	HL,DE		; HL = 1 + i
+	LD	(IX-2),L
+	LD	(IX-1),H
+	JR	loop
+
+done:
+	; Newline
+	LD	HL,0DH
+	PUSH	HL
+	CALL	_putchar
+	POP	DE
+	LD	HL,0AH
+	PUSH	HL
+	CALL	_putchar
+	POP	DE
+
+	LD	HL,0
+	LD	SP,IX
+	POP	IX
+	RET
+
+	END

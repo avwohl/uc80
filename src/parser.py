@@ -49,6 +49,7 @@ class Parser:
         self.tokens = tokens
         self.pos = 0
         self.typedefs: set[str] = set()  # Track typedef names
+        self._last_params: list[ast.ParamDecl] = []  # Store params from last function declarator
 
     def _current(self) -> Token:
         """Get current token."""
@@ -244,6 +245,8 @@ class Parser:
                     else:
                         params, is_variadic = self._parse_parameter_list()
                 self._expect(TokenType.RPAREN)
+                # Store params for use by FunctionDecl creation
+                self._last_params = params
                 base_type = ast.FunctionType(return_type=base_type,
                                              param_types=[p.param_type for p in params],
                                              is_variadic=is_variadic)
@@ -883,10 +886,8 @@ class Parser:
             # Check for function definition
             if isinstance(full_type, ast.FunctionType) and self._check(TokenType.LBRACE):
                 body = self._parse_compound_statement()
-                # Get params from function type
-                param_types = full_type.param_types
-                # Re-parse params for names (simplified - just use types)
-                params = [ast.ParamDecl(name=None, param_type=pt) for pt in param_types]
+                # Use stored params with names from declarator parsing
+                params = self._last_params
                 return ast.FunctionDecl(
                     name=name, return_type=full_type.return_type, params=params,
                     body=body, is_variadic=full_type.is_variadic,

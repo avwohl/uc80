@@ -1,0 +1,38 @@
+; Manual hello world to test toolchain
+	.Z80
+
+	PUBLIC	_main
+
+	CSEG
+
+_main:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Print "Hello, World!\r\n"
+	LD	HL,msg
+loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,done
+	PUSH	HL
+	LD	E,A
+	LD	C,2		; CONOUT
+	CALL	5		; BDOS
+	POP	HL
+	INC	HL
+	JR	loop
+
+done:
+	LD	HL,0
+
+	LD	SP,IX
+	POP	IX
+	RET
+
+	DSEG
+msg:
+	DB	'Hello, World!',0DH,0AH,0
+
+	END

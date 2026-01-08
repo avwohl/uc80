@@ -1,0 +1,65 @@
+; Debug test - call putchar in simple way vs complex way
+	.Z80
+
+	PUBLIC	_main
+	EXTRN	_putchar
+
+	CSEG
+
+_main:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	HL,-4
+	ADD	HL,SP
+	LD	SP,HL
+
+	; Initialize local variable
+	LD	HL,'X'
+	LD	(IX-2),L
+	LD	(IX-1),H
+
+	; Print 'A' directly
+	LD	E,'A'
+	LD	C,2
+	CALL	5
+
+	; Call _putchar with character from local var
+	LD	L,(IX-2)
+	LD	H,(IX-1)
+	PUSH	HL
+	CALL	_putchar
+	POP	DE
+
+	; Check if IX is still valid - print 'B' if so
+	LD	A,(IX-2)
+	CP	'X'
+	JR	NZ,bad
+
+	; Print 'B' - local var still accessible
+	LD	E,'B'
+	LD	C,2
+	CALL	5
+	JR	done
+
+bad:
+	; Print 'E' for error
+	LD	E,'E'
+	LD	C,2
+	CALL	5
+
+done:
+	; Newline
+	LD	E,0DH
+	LD	C,2
+	CALL	5
+	LD	E,0AH
+	LD	C,2
+	CALL	5
+
+	LD	HL,0
+	LD	SP,IX
+	POP	IX
+	RET
+
+	END
