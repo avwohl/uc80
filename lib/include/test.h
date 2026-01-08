@@ -21,6 +21,7 @@ const char *_failed_msg;
 
 #define ASSERT(cond) Assert(cond, #cond)
 #define assertEqual(a, b) Assert((a) == (b), #a " == " #b)
+#define assertEqualLong(a, b) Assert((a) == (b), #a " == " #b)
 #define assertNotEqual(a, b) Assert((a) != (b), #a " != " #b)
 
 /* Suite management - simple version */

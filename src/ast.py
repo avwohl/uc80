@@ -77,6 +77,8 @@ class Expression(Node):
 class IntLiteral(Expression):
     """Integer literal."""
     value: int
+    is_long: bool = False     # True if has L/LL suffix
+    is_unsigned: bool = False  # True if has U suffix
 
 
 @dataclass(kw_only=True)

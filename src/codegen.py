@@ -1036,11 +1036,45 @@ class CodeGenerator:
         # Store right operand to __tmp32
         self._store_tmp32()
 
+        # Check if left operand is complex (might clobber __tmp32)
+        left_is_complex = self._is_complex_expr(expr.left)
+        if left_is_complex:
+            # Save __tmp32 on stack before generating left operand
+            self.ctx.emit_instr("LD", "HL,(__tmp32)")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", "HL,(__tmp32+2)")
+            self.ctx.emit_instr("PUSH", "HL")
+
         # Generate left operand, extend to 32-bit if needed
         self.gen_expr(expr.left, force_long=True)
         if not left_is_long:
             is_signed = not self._is_unsigned_expr(expr.left)
             self._extend_hl_to_dehl(is_signed)
+
+        if left_is_complex:
+            # Restore __tmp32 from stack (need to save DEHL first)
+            self.ctx.emit_instr("PUSH", "DE")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", "HL,4")
+            self.ctx.emit_instr("ADD", "HL,SP")
+            # Stack now: [saved HL][saved DE][high tmp][low tmp]...
+            self.ctx.emit_instr("LD", "E,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "D,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "(__tmp32+2),DE")
+            self.ctx.emit_instr("LD", "E,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "D,(HL)")
+            self.ctx.emit_instr("LD", "(__tmp32),DE")
+            # Restore DEHL
+            self.ctx.emit_instr("POP", "HL")
+            self.ctx.emit_instr("POP", "DE")
+            # Clean up saved __tmp32 from stack
+            self.ctx.emit_instr("INC", "SP")
+            self.ctx.emit_instr("INC", "SP")
+            self.ctx.emit_instr("INC", "SP")
+            self.ctx.emit_instr("INC", "SP")
 
         # Now: left in DEHL, right in __tmp32
         if op == "+":
@@ -1370,10 +1404,20 @@ class CodeGenerator:
 
     def gen_call(self, expr: ast.Call) -> None:
         """Generate code for function call."""
-        # Push arguments right-to-left
+        # Push arguments right-to-left, tracking total stack size
+        stack_size = 0
         for arg in reversed(expr.args):
-            self.gen_expr(arg)
-            self.ctx.emit_instr("PUSH", "HL")
+            arg_is_long = self._is_long_expr(arg)
+            if arg_is_long:
+                self.gen_expr(arg, force_long=True)
+                # Push 32-bit value: high word (DE) first, then low word (HL)
+                self.ctx.emit_instr("PUSH", "DE")
+                self.ctx.emit_instr("PUSH", "HL")
+                stack_size += 4
+            else:
+                self.gen_expr(arg)
+                self.ctx.emit_instr("PUSH", "HL")
+                stack_size += 2
 
         # Call the function
         if isinstance(expr.func, ast.Identifier):
@@ -1384,15 +1428,11 @@ class CodeGenerator:
             self._call_runtime("__callhl")
 
         # Clean up stack (caller cleanup)
-        if expr.args:
-            stack_size = len(expr.args) * 2  # Assuming 16-bit args
+        if stack_size > 0:
             if stack_size <= 6:
-                for _ in range(len(expr.args)):
+                for _ in range(stack_size // 2):
                     self.ctx.emit_instr("POP", "DE")  # Discard
             else:
-                self.ctx.emit_instr("LD", f"DE,{stack_size}")
-                self.ctx.emit_instr("ADD", "HL,DE")  # Oops, this clobbers HL
-                # Better approach:
                 self.ctx.emit_instr("EX", "DE,HL")  # Save return value
                 self.ctx.emit_instr("LD", f"HL,{stack_size}")
                 self.ctx.emit_instr("ADD", "HL,SP")
@@ -1555,7 +1595,9 @@ class CodeGenerator:
     def _is_long_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has 32-bit type."""
         if isinstance(expr, ast.IntLiteral):
-            # Check if literal is too large for signed 16-bit
+            # Check for explicit L suffix or value too large for signed 16-bit
+            if expr.is_long:
+                return True
             # In C, decimal literals are int, long, long long (first that fits)
             return expr.value > 32767 or expr.value < -32768
         if isinstance(expr, ast.BinaryOp):
@@ -1568,6 +1610,29 @@ class CodeGenerator:
                 return self._is_long_expr(expr.left) or self._is_long_expr(expr.right)
         expr_type = self._get_expr_type(expr)
         return self._is_long_type(expr_type)
+
+    def _is_complex_expr(self, expr: ast.Expression) -> bool:
+        """Check if an expression might use __tmp32 (and thus clobber it)."""
+        # Complex expressions that use __tmp32 internally
+        if isinstance(expr, ast.BinaryOp):
+            # Any 32-bit binary op will use __tmp32
+            if self._is_long_expr(expr.left) or self._is_long_expr(expr.right):
+                return True
+            # Check nested expressions
+            return self._is_complex_expr(expr.left) or self._is_complex_expr(expr.right)
+        if isinstance(expr, ast.UnaryOp):
+            return self._is_complex_expr(expr.operand)
+        if isinstance(expr, ast.TernaryOp):
+            return (self._is_complex_expr(expr.condition) or
+                    self._is_complex_expr(expr.true_expr) or
+                    self._is_complex_expr(expr.false_expr))
+        if isinstance(expr, ast.Call):
+            # Function calls might clobber __tmp32 (conservative)
+            return True
+        if isinstance(expr, ast.Cast):
+            return self._is_complex_expr(expr.expr)
+        # Simple expressions (identifiers, literals) don't use __tmp32
+        return False
 
     def _get_expr_size(self, expr: ast.Expression) -> int:
         """Get the size of an expression result in bytes."""

@@ -228,12 +228,12 @@ class Lexer:
                 raise LexerError(f"Invalid float literal: {text}", loc)
             return Token(TokenType.FLOAT_LITERAL, value, loc)
         else:
-            # Integer literal
+            # Integer literal - store (value, suffix) tuple
             try:
                 value = int(text, base)
             except ValueError:
                 raise LexerError(f"Invalid integer literal: {text}", loc)
-            return Token(TokenType.INT_LITERAL, value, loc)
+            return Token(TokenType.INT_LITERAL, (value, suffix_str), loc)
 
     def _read_char_literal(self) -> Token:
         """Read a character literal."""

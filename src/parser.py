@@ -591,7 +591,11 @@ class Parser:
 
         # Literals
         if self._check(TokenType.INT_LITERAL):
-            return ast.IntLiteral(value=self._advance().value, location=loc)
+            token = self._advance()
+            value, suffix = token.value
+            is_long = 'l' in suffix
+            is_unsigned = 'u' in suffix
+            return ast.IntLiteral(value=value, is_long=is_long, is_unsigned=is_unsigned, location=loc)
         if self._check(TokenType.FLOAT_LITERAL):
             return ast.FloatLiteral(value=self._advance().value, location=loc)
         if self._check(TokenType.CHAR_LITERAL):
