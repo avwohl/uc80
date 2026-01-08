@@ -279,6 +279,81 @@ __mul32_noadd:
 	RET
 
 ; ============================================================
+; 32-bit signed multiplication: DEHL = DEHL * (__tmp32)
+; Handles signed operands by converting to unsigned, multiplying,
+; then adjusting sign of result.
+; ============================================================
+	PUBLIC	__smul32
+__smul32:
+	PUSH	BC
+	PUSH	AF
+	LD	A,0		; A = sign flag (0=positive, 1=negative)
+
+	; Check if DEHL is negative
+	BIT	7,D
+	JR	Z,__smul32_ck2
+	; Negate DEHL (save A first since __neg32 clobbers it)
+	PUSH	AF
+	CALL	__neg32
+	POP	AF
+	XOR	1		; Toggle sign
+
+__smul32_ck2:
+	; Check if __tmp32 is negative
+	PUSH	AF		; Save sign flag
+	LD	A,(__tmp32+3)	; High byte of __tmp32
+	BIT	7,A
+	JR	Z,__smul32_domul
+
+	; Negate __tmp32
+	PUSH	HL
+	PUSH	DE
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	DE
+	POP	HL
+	POP	AF		; Get sign flag back
+	XOR	1		; Toggle sign
+	PUSH	AF
+
+__smul32_domul:
+	POP	AF		; A = sign flag
+	PUSH	AF		; Save for after mul
+
+	; Do unsigned multiply
+	CALL	__mul32
+
+	; Check if we need to negate result
+	POP	AF
+	AND	1
+	JR	Z,__smul32_done
+
+	; Negate result
+	CALL	__neg32
+
+__smul32_done:
+	POP	AF
+	POP	BC
+	RET
+
+; ============================================================
 ; 32-bit unsigned division: DEHL = DEHL / (__tmp32)
 ; Also stores remainder in __rem32
 ; ============================================================

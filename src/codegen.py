@@ -1082,7 +1082,11 @@ class CodeGenerator:
         elif op == "-":
             self._call_runtime("__sub32")
         elif op == "*":
-            self._call_runtime("__mul32")
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            if is_unsigned:
+                self._call_runtime("__mul32")
+            else:
+                self._call_runtime("__smul32")
         elif op == "/":
             self._call_runtime("__div32")
         elif op == "%":
@@ -1316,11 +1320,15 @@ class CodeGenerator:
 
         if op == "-":
             self.gen_expr(expr.operand)
-            # Negate: 0 - HL
-            self.ctx.emit_instr("EX", "DE,HL")
-            self.ctx.emit_instr("LD", "HL,0")
-            self.ctx.emit_instr("OR", "A")
-            self.ctx.emit_instr("SBC", "HL,DE")
+            if self._is_long_expr(expr.operand):
+                # 32-bit negate using runtime
+                self._call_runtime("__neg32")
+            else:
+                # 16-bit negate: 0 - HL
+                self.ctx.emit_instr("EX", "DE,HL")
+                self.ctx.emit_instr("LD", "HL,0")
+                self.ctx.emit_instr("OR", "A")
+                self.ctx.emit_instr("SBC", "HL,DE")
 
         elif op == "+":
             self.gen_expr(expr.operand)  # No-op
@@ -1336,13 +1344,17 @@ class CodeGenerator:
 
         elif op == "~":
             self.gen_expr(expr.operand)
-            # Bitwise NOT
-            self.ctx.emit_instr("LD", "A,H")
-            self.ctx.emit_instr("CPL")
-            self.ctx.emit_instr("LD", "H,A")
-            self.ctx.emit_instr("LD", "A,L")
-            self.ctx.emit_instr("CPL")
-            self.ctx.emit_instr("LD", "L,A")
+            if self._is_long_expr(expr.operand):
+                # 32-bit bitwise NOT using runtime
+                self._call_runtime("__not32")
+            else:
+                # 16-bit bitwise NOT
+                self.ctx.emit_instr("LD", "A,H")
+                self.ctx.emit_instr("CPL")
+                self.ctx.emit_instr("LD", "H,A")
+                self.ctx.emit_instr("LD", "A,L")
+                self.ctx.emit_instr("CPL")
+                self.ctx.emit_instr("LD", "L,A")
 
         elif op == "*":
             # Pointer dereference
@@ -1523,6 +1535,21 @@ class CodeGenerator:
             ptr_type = self._get_expr_type(expr.operand)
             if isinstance(ptr_type, ast.PointerType):
                 return ptr_type.base_type
+        elif isinstance(expr, ast.UnaryOp) and expr.op in ("-", "+", "~"):
+            # These preserve the operand type
+            return self._get_expr_type(expr.operand)
+        elif isinstance(expr, ast.BinaryOp):
+            # For arithmetic/bitwise ops, result type is based on operand types
+            # This is simplified - real C would have more complex rules
+            left_type = self._get_expr_type(expr.left)
+            right_type = self._get_expr_type(expr.right)
+            # If either operand is unsigned, result is unsigned
+            if left_type:
+                return left_type
+            if right_type:
+                return right_type
+        elif isinstance(expr, ast.Cast):
+            return expr.target_type
         return None
 
     def _gen_address(self, expr: ast.Expression) -> None:
@@ -1600,6 +1627,14 @@ class CodeGenerator:
                 return True
             # In C, decimal literals are int, long, long long (first that fits)
             return expr.value > 32767 or expr.value < -32768
+        if isinstance(expr, ast.UnaryOp):
+            # Unary operators preserve operand size for -, +, ~
+            if expr.op in ("-", "+", "~"):
+                return self._is_long_expr(expr.operand)
+            # Logical NOT always returns int (0 or 1)
+            if expr.op == "!":
+                return False
+            # Address-of, dereference - fall through to type checking
         if isinstance(expr, ast.BinaryOp):
             # Comparison operators always return int (0 or 1), not long
             if expr.op in ("==", "!=", "<", ">", "<=", ">="):
