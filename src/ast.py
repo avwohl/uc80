@@ -359,6 +359,12 @@ class TypedefDecl(Declaration):
     target_type: TypeNode
 
 
+@dataclass(kw_only=True)
+class DeclarationList(Declaration):
+    """Multiple declarations from a single declaration statement (e.g., 'int a, b;')."""
+    declarations: list[Declaration] = field(default_factory=list)
+
+
 # === Initializers ===
 
 @dataclass(kw_only=True)

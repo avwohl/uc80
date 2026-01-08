@@ -913,8 +913,8 @@ class Parser:
 
         if len(declarations) == 1:
             return declarations[0]
-        # Multiple declarations - return first for now (TODO: handle multiple)
-        return declarations[0]
+        # Multiple declarations - wrap in DeclarationList
+        return ast.DeclarationList(declarations=declarations, location=loc)
 
     def _parse_struct_definition(
         self,

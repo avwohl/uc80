@@ -11,6 +11,14 @@ from typing import Callable, Iterator, Optional
 from . import ast
 
 
+def ix_off(offset: int) -> str:
+    """Format an IX offset for assembly, always including the sign."""
+    if offset >= 0:
+        return f"IX+{offset}"
+    else:
+        return f"IX{offset}"
+
+
 class RegState(Enum):
     """State of a register in the allocator."""
     FREE = auto()      # Available for use
@@ -274,6 +282,14 @@ class CodeGenerator:
                     sym_type=decl.var_type,
                     is_global=True
                 )
+            elif isinstance(decl, ast.DeclarationList):
+                for d in decl.declarations:
+                    if isinstance(d, ast.VarDecl):
+                        self.ctx.globals[d.name] = Symbol(
+                            name=d.name,
+                            sym_type=d.var_type,
+                            is_global=True
+                        )
 
         # Code segment
         self.ctx.emit("\tCSEG")
@@ -303,9 +319,14 @@ class CodeGenerator:
 
         # Data segment for global variables
         # Collect global variable declarations with their initializers
-        global_var_decls = [d for d in unit.declarations
-                           if isinstance(d, ast.VarDecl)
-                           and not isinstance(d.var_type, ast.FunctionType)]
+        global_var_decls = []
+        for d in unit.declarations:
+            if isinstance(d, ast.VarDecl) and not isinstance(d.var_type, ast.FunctionType):
+                global_var_decls.append(d)
+            elif isinstance(d, ast.DeclarationList):
+                for inner in d.declarations:
+                    if isinstance(inner, ast.VarDecl) and not isinstance(inner.var_type, ast.FunctionType):
+                        global_var_decls.append(inner)
         if global_var_decls:
             self.ctx.emit()
             self.ctx.emit("; Global variables")
@@ -375,6 +396,9 @@ class CodeGenerator:
                 self.ctx.emit_instr("EXTRN", f"_{decl.name}")
             # Other global variables are handled in data segment
             pass
+        elif isinstance(decl, ast.DeclarationList):
+            for d in decl.declarations:
+                self.gen_declaration(d)
         elif isinstance(decl, ast.StructDecl):
             self._register_struct(decl)
         elif isinstance(decl, ast.EnumDecl):
@@ -507,6 +531,12 @@ class CodeGenerator:
 
     def gen_local_decl(self, decl: ast.Declaration) -> None:
         """Generate code for a local declaration."""
+        if isinstance(decl, ast.DeclarationList):
+            # Handle multiple declarations (e.g., 'int a, b;')
+            for d in decl.declarations:
+                self.gen_local_decl(d)
+            return
+
         if isinstance(decl, ast.VarDecl):
             # Check for static local variable
             if decl.storage_class == "static":
@@ -1642,49 +1672,27 @@ class CodeGenerator:
 
     def _load_local(self, sym: Symbol) -> None:
         """Load a local variable into HL."""
-        if sym.offset >= 0:
-            # Parameter (positive offset from IX)
-            self.ctx.emit_instr("LD", f"L,(IX+{sym.offset})")
-            self.ctx.emit_instr("LD", f"H,(IX+{sym.offset + 1})")
-        else:
-            # Local (negative offset from IX)
-            self.ctx.emit_instr("LD", f"L,(IX{sym.offset})")
-            self.ctx.emit_instr("LD", f"H,(IX{sym.offset + 1})")
+        self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
+        self.ctx.emit_instr("LD", f"H,({ix_off(sym.offset + 1)})")
 
     def _store_local(self, sym: Symbol) -> None:
         """Store HL into a local variable."""
-        if sym.offset >= 0:
-            self.ctx.emit_instr("LD", f"(IX+{sym.offset}),L")
-            self.ctx.emit_instr("LD", f"(IX+{sym.offset + 1}),H")
-        else:
-            self.ctx.emit_instr("LD", f"(IX{sym.offset}),L")
-            self.ctx.emit_instr("LD", f"(IX{sym.offset + 1}),H")
+        self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
+        self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 1)}),H")
 
     def _load_local_32(self, sym: Symbol) -> None:
         """Load a 32-bit local variable into DEHL (DE=high, HL=low)."""
-        if sym.offset >= 0:
-            self.ctx.emit_instr("LD", f"L,(IX+{sym.offset})")
-            self.ctx.emit_instr("LD", f"H,(IX+{sym.offset + 1})")
-            self.ctx.emit_instr("LD", f"E,(IX+{sym.offset + 2})")
-            self.ctx.emit_instr("LD", f"D,(IX+{sym.offset + 3})")
-        else:
-            self.ctx.emit_instr("LD", f"L,(IX{sym.offset})")
-            self.ctx.emit_instr("LD", f"H,(IX{sym.offset + 1})")
-            self.ctx.emit_instr("LD", f"E,(IX{sym.offset + 2})")
-            self.ctx.emit_instr("LD", f"D,(IX{sym.offset + 3})")
+        self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
+        self.ctx.emit_instr("LD", f"H,({ix_off(sym.offset + 1)})")
+        self.ctx.emit_instr("LD", f"E,({ix_off(sym.offset + 2)})")
+        self.ctx.emit_instr("LD", f"D,({ix_off(sym.offset + 3)})")
 
     def _store_local_32(self, sym: Symbol) -> None:
         """Store DEHL (32-bit) into a local variable."""
-        if sym.offset >= 0:
-            self.ctx.emit_instr("LD", f"(IX+{sym.offset}),L")
-            self.ctx.emit_instr("LD", f"(IX+{sym.offset + 1}),H")
-            self.ctx.emit_instr("LD", f"(IX+{sym.offset + 2}),E")
-            self.ctx.emit_instr("LD", f"(IX+{sym.offset + 3}),D")
-        else:
-            self.ctx.emit_instr("LD", f"(IX{sym.offset}),L")
-            self.ctx.emit_instr("LD", f"(IX{sym.offset + 1}),H")
-            self.ctx.emit_instr("LD", f"(IX{sym.offset + 2}),E")
-            self.ctx.emit_instr("LD", f"(IX{sym.offset + 3}),D")
+        self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
+        self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 1)}),H")
+        self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 2)}),E")
+        self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 3)}),D")
 
     def _call_runtime(self, name: str) -> None:
         """Call a runtime library function."""
@@ -1759,11 +1767,19 @@ class CodeGenerator:
         for item in body.items:
             if isinstance(item, ast.VarDecl):
                 size += self._type_size(item.var_type)
+            elif isinstance(item, ast.DeclarationList):
+                for decl in item.declarations:
+                    if isinstance(decl, ast.VarDecl):
+                        size += self._type_size(decl.var_type)
             elif isinstance(item, ast.CompoundStmt):
                 size += self._calc_locals_size(item)
             elif isinstance(item, ast.ForStmt):
                 if isinstance(item.init, ast.VarDecl):
                     size += self._type_size(item.init.var_type)
+                elif isinstance(item.init, ast.DeclarationList):
+                    for decl in item.init.declarations:
+                        if isinstance(decl, ast.VarDecl):
+                            size += self._type_size(decl.var_type)
                 if isinstance(item.body, ast.CompoundStmt):
                     size += self._calc_locals_size(item.body)
         return size
