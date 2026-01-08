@@ -1,61 +1,52 @@
 # Work in Progress - uc80 C24 Compiler
 
-## Current Status: Phase 1 - Code Generation Complete
+## Current Status: Test Suite Validation
 
-### Completed
-- [x] Step 0: GitHub repo created (private)
-- [x] Step 1: C24 standard PDF converted to text
-- [x] Step 2: Implementation plan created
-- [x] Lexer (src/lexer.py) - 42 tests passing
-- [x] Parser (src/parser.py) - 78 tests passing
-- [x] Code Generator (src/codegen.py) - 33 tests passing
-- [x] Runtime Library (lib/runtime.mac) - 16-bit and 32-bit arithmetic
-- [x] CP/M Startup (lib/crt0.mac) - Stack setup, main() call, exit
-- [x] Minimal libc (lib/libc.mac) - I/O, string, and memory functions
-- [x] CLI Entry Point (src/main.py) - Command-line compiler interface
-- [x] End-to-End Test - Hello World and arithmetic working!
+### Test Results (Jan 8, 2025)
+- **z88dk tests**: 22/22 passed (100%)
+  - mult: 5/5, shift: 8/8, compare: 4/4, bitwise: 5/5
+- **c-testsuite**: 162/220 passed (73.6%)
 
-### Working Features
-- Basic types: char, int, long, unsigned char, unsigned int, unsigned long
-- Pointers and pointer arithmetic
-- Arrays and array indexing
-- Control flow: if/else, while, do-while, for, switch/case
-- break/continue in loops and switch
-- Arithmetic: +, -, *, /, %
-- Comparisons: <, <=, >, >=, ==, !=
-- Logical: &&, ||, !
-- Bitwise: &, |, ^, ~, <<, >>
-- Function calls and recursion
-- Local variables and parameters
-- Global variables with initialization
-- String literals
-- Compound assignment (+=, -=, *=, /=, %=, etc.)
-- Pre/post increment/decrement (++, --)
-- Ternary operator (?:)
-- Structs and unions with member access (. and ->)
-- Enums with explicit and auto-incrementing values
-- Typedef for basic types, pointers, and structs
+### Recent Fixes
+- Function pointer declaration parsing (`int (*fptr)()` now correctly parsed)
+- Tentative definitions (multiple `int x;` declarations merge properly)
+- Struct array member access (`jones[0].member` fixed)
+- 32-bit signed operations (unary minus, bitwise NOT)
+- Type inference for BinaryOp, UnaryOp, Index, Cast expressions
 
-### Bugs Fixed
-- Parser: Parameter names were not captured for function definitions
-- Linker (ul80): DSEG data placed at wrong address when linking multiple modules
+### External Test Suites (~/src/external)
+- `c-testsuite/` - 220 single-exec tests with runners
+- `compiler-test-suite/` - Fujitsu C test suite (C99 features like `restrict`)
+- `z88dk/` - Full z88dk testsuite (tests assembly output)
 
-### Next Steps (Phase 2)
-1. **Standard Library Additions**
-   - scanf (console input parsing)
-   - File I/O (fopen, fread, fwrite, fclose via CP/M FCB)
-   - sprintf/sscanf
+### Remaining c-testsuite Failures (58 tests)
+Common patterns:
+- Anonymous structs/unions (00017, 00018, 00019, 00046, etc.)
+- Nested struct definitions inside declarations
+- `calloc` not implemented (00040)
+- Preprocessor ternary `?:` in `#if` (00075)
+- Float support missing
 
-2. **Language Features**
-   - static keyword
-   - extern declarations
-   - const enforcement
+### Completed Features
+- [x] Lexer, Parser, Code Generator
+- [x] Runtime Library (16-bit and 32-bit arithmetic)
+- [x] CP/M Startup and minimal libc
+- [x] Basic types: char, int, long, unsigned variants
+- [x] Pointers, arrays, structs, unions, enums, typedef
+- [x] Control flow: if/else, while, do-while, for, switch/case
+- [x] All arithmetic, comparison, logical, bitwise operators
+- [x] Function calls, recursion, function pointers
+- [x] Global/local variables, static locals
+- [x] Compound assignment, pre/post increment/decrement
+- [x] Ternary operator, string literals
 
-3. **Optimizations**
-   - Register allocation improvements
-   - Peephole optimization
+### Next Steps
+1. Support anonymous structs/unions
+2. Support nested struct definitions in declarations
+3. Add `calloc` to libc
+4. Preprocessor ternary support
 
-### Architecture Reference
+### Architecture
 ```
 C source -> Lexer -> Parser -> AST -> CodeGen -> .mac
                                               |
@@ -66,18 +57,18 @@ C source -> Lexer -> Parser -> AST -> CodeGen -> .mac
                                          cpmemu (test)
 ```
 
-### Example Usage
+### Quick Test Commands
 ```bash
-# Compile C to assembly
+# Run z88dk tests
+for t in mult shift compare bitwise; do cpmemu tests/z88dk/$t.com; done
+
+# Run c-testsuite (from ~/src/external/c-testsuite)
+./runners/single-exec/uc80 tests/single-exec/00001.c
+
+# Compile and run a C file
 python -m src.main examples/hello.c -o examples/hello.mac
-
-# Assemble
 um80 examples/hello.mac
-
-# Link with runtime
-ul80 lib/crt0.rel examples/hello.rel lib/libc.rel -o hello.com
-
-# Run on CP/M emulator
+ul80 lib/crt0.rel examples/hello.rel lib/libc.rel lib/runtime.rel -o hello.com
 cpmemu hello.com
 ```
 
@@ -87,11 +78,6 @@ cpmemu hello.com
 - long: 32 bits
 - pointer: 16 bits
 
-### Test Command
-```bash
-python -m pytest tests/ -v
-```
-
 ## Files
 - `src/tokens.py` - Token types
 - `src/lexer.py` - Tokenizer
@@ -100,7 +86,5 @@ python -m pytest tests/ -v
 - `src/codegen.py` - Z80 code generator
 - `src/main.py` - CLI entry point
 - `lib/crt0.mac` - CP/M runtime startup
-- `lib/runtime.mac` - 16-bit arithmetic library
+- `lib/runtime.mac` - Arithmetic library
 - `lib/libc.mac` - Minimal C library
-- `docs/implementation_plan.md` - Full roadmap
-- `docs/paid/ISO+IEC+9899-2024.txt` - C24 standard (gitignored)
