@@ -32,6 +32,7 @@
 - Compound assignment (+=, -=, *=, /=, %=, etc.)
 - Pre/post increment/decrement (++, --)
 - Ternary operator (?:)
+- Structs and unions with member access (. and ->)
 
 ### Bugs Fixed
 - Parser: Parameter names were not captured for function definitions
@@ -41,7 +42,6 @@
 1. **More Types**
    - long (32-bit) support
    - unsigned types
-   - struct/union
 
 2. **Standard Library**
    - Full printf with format specifiers

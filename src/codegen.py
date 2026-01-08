@@ -186,6 +186,9 @@ class CodeGenContext:
     # Runtime functions used (need EXTRN)
     runtime_used: set[str] = field(default_factory=set)
 
+    # Struct definitions: name -> list of (member_name, member_type, offset)
+    structs: dict[str, list[tuple[str, ast.TypeNode, int]]] = field(default_factory=dict)
+
     def emit(self, line: str = "") -> None:
         """Emit a line of assembly."""
         self.lines.append(line)
@@ -335,6 +338,26 @@ class CodeGenerator:
                 self.ctx.emit_instr("EXTRN", f"_{decl.name}")
             # Other global variables are handled in data segment
             pass
+        elif isinstance(decl, ast.StructDecl):
+            self._register_struct(decl)
+
+    def _register_struct(self, decl: ast.StructDecl) -> None:
+        """Register a struct definition for later use."""
+        if not decl.is_definition or not decl.name:
+            return
+
+        members = []
+        offset = 0
+        for member in decl.members:
+            if member.name:
+                members.append((member.name, member.member_type, offset))
+                if decl.is_union:
+                    # Union: all members at offset 0
+                    pass
+                else:
+                    # Struct: sequential layout
+                    offset += self._type_size(member.member_type)
+        self.ctx.structs[decl.name] = members
 
     def gen_function(self, func: ast.FunctionDecl) -> None:
         """Generate code for a function."""
@@ -745,14 +768,14 @@ class CodeGenerator:
         # Generate left operand (result in HL)
         self.gen_expr(expr.left)
 
-        # Save left operand using register allocator
-        # Request DE to hold left value; will spill if busy
-        self.ctx.regs.need_reg('de', 'binary_left', self._emit_reg)
-        self.ctx.emit_instr("EX", "DE,HL")  # Left now in DE
-        self.ctx.regs.mark_busy('hl', 'binary_result')
+        # Save left operand to stack (DE is used internally by various address computations)
+        self.ctx.emit_instr("PUSH", "HL")
 
         # Generate right operand (result in HL)
         self.gen_expr(expr.right)
+
+        # Restore left operand to DE
+        self.ctx.emit_instr("POP", "DE")
 
         # Now: left in DE, right in HL
         # Perform operation, result in HL
@@ -837,6 +860,19 @@ class CodeGenerator:
             self.ctx.emit_instr("LD", "(HL),E")
             self.ctx.emit_instr("INC", "HL")
             self.ctx.emit_instr("LD", "(HL),D")
+            self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
+        elif isinstance(expr.left, ast.Member):
+            # Struct member assignment
+            member_size = self._get_member_size(expr.left)
+            self.ctx.emit_instr("PUSH", "HL")  # Save value
+            self._gen_address(expr.left)       # Get member address in HL
+            self.ctx.emit_instr("POP", "DE")   # Value in DE
+            if member_size == 1:
+                self.ctx.emit_instr("LD", "(HL),E")
+            else:
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
             self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
 
     def gen_compound_assignment(self, expr: ast.BinaryOp, op: str) -> None:
@@ -1054,13 +1090,52 @@ class CodeGenerator:
 
     def gen_member(self, expr: ast.Member) -> None:
         """Generate code for struct member access."""
-        # TODO: Need type information to calculate offset
-        # For now, just generate address and dereference
+        # Generate address of the member
         self._gen_address(expr)
-        self.ctx.emit_instr("LD", "E,(HL)")
-        self.ctx.emit_instr("INC", "HL")
-        self.ctx.emit_instr("LD", "D,(HL)")
-        self.ctx.emit_instr("EX", "DE,HL")
+
+        # Determine member size and load appropriately
+        member_size = self._get_member_size(expr)
+        if member_size == 1:
+            self.ctx.emit_instr("LD", "L,(HL)")
+            self.ctx.emit_instr("LD", "H,0")
+        else:
+            self.ctx.emit_instr("LD", "E,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "D,(HL)")
+            self.ctx.emit_instr("EX", "DE,HL")
+
+    def _get_member_size(self, expr: ast.Member) -> int:
+        """Get the size of a struct member."""
+        struct_type = self._get_expr_type(expr.obj)
+        if isinstance(struct_type, ast.PointerType):
+            struct_type = struct_type.base_type
+        if isinstance(struct_type, ast.StructType) and struct_type.name:
+            if struct_type.name in self.ctx.structs:
+                for name, member_type, _ in self.ctx.structs[struct_type.name]:
+                    if name == expr.member:
+                        return self._type_size(member_type)
+        return 2  # Default to 16-bit
+
+    def _get_member_offset(self, struct_name: str, member_name: str) -> int:
+        """Get the offset of a member within a struct."""
+        if struct_name in self.ctx.structs:
+            for name, _, offset in self.ctx.structs[struct_name]:
+                if name == member_name:
+                    return offset
+        return 0
+
+    def _get_expr_type(self, expr: ast.Expression) -> ast.TypeNode | None:
+        """Try to infer the type of an expression."""
+        if isinstance(expr, ast.Identifier):
+            sym = self.ctx.lookup(expr.name)
+            if sym:
+                return sym.sym_type
+        elif isinstance(expr, ast.UnaryOp) and expr.op == "*":
+            # Dereference - get base type of pointer
+            ptr_type = self._get_expr_type(expr.operand)
+            if isinstance(ptr_type, ast.PointerType):
+                return ptr_type.base_type
+        return None
 
     def _gen_address(self, expr: ast.Expression) -> None:
         """Generate code to compute address of an expression into HL."""
@@ -1104,7 +1179,16 @@ class CodeGenerator:
                 self.gen_expr(expr.obj)  # p->member: p is the address
             else:
                 self._gen_address(expr.obj)  # s.member: address of s
-            # TODO: Add member offset (needs type info)
+
+            # Get struct type and member offset
+            struct_type = self._get_expr_type(expr.obj)
+            if expr.is_arrow and isinstance(struct_type, ast.PointerType):
+                struct_type = struct_type.base_type
+            if isinstance(struct_type, ast.StructType) and struct_type.name:
+                offset = self._get_member_offset(struct_type.name, expr.member)
+                if offset > 0:
+                    self.ctx.emit_instr("LD", f"DE,{offset}")
+                    self.ctx.emit_instr("ADD", "HL,DE")
 
     def _gen_comparison(self, op: str) -> None:
         """Generate code for comparison. Left in DE, right in HL."""
@@ -1254,6 +1338,17 @@ class CodeGenerator:
             if t.size and isinstance(t.size, ast.IntLiteral):
                 return base_size * t.size.value
             return base_size  # Unsized array, return element size
+        elif isinstance(t, ast.StructType):
+            # Look up struct definition
+            if t.name and t.name in self.ctx.structs:
+                members = self.ctx.structs[t.name]
+                if t.is_union:
+                    # Union: size is max of all members
+                    return max((self._type_size(mt) for _, mt, _ in members), default=0)
+                else:
+                    # Struct: size is sum of all members
+                    return sum(self._type_size(mt) for _, mt, _ in members)
+            return 0  # Unknown struct
         return 2  # Default
 
     def _escape_string(self, s: str) -> str:
