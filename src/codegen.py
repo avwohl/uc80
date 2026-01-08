@@ -192,6 +192,10 @@ class CodeGenContext:
     # Enum constants: name -> integer value
     enum_constants: dict[str, int] = field(default_factory=dict)
 
+    # Static local variables: label -> (type, init_value)
+    static_locals: dict[str, tuple[ast.TypeNode, Optional[ast.Expression]]] = field(default_factory=dict)
+    static_counter: int = 0
+
     def emit(self, line: str = "") -> None:
         """Emit a line of assembly."""
         self.lines.append(line)
@@ -332,6 +336,29 @@ class CodeGenerator:
                     # Uninitialized global - just reserve space
                     self.ctx.emit_instr("DS", str(size))
 
+        # Static local variables (in DSEG)
+        if self.ctx.static_locals:
+            if not global_var_decls and not self.ctx.strings:
+                self.ctx.emit()
+                self.ctx.emit("\tDSEG")
+            self.ctx.emit("; Static local variables")
+            for label, (var_type, init) in self.ctx.static_locals.items():
+                self.ctx.emit_label(label)
+                size = self._type_size(var_type)
+                if init and isinstance(init, ast.IntLiteral):
+                    if size == 1:
+                        self.ctx.emit_instr("DB", str(init.value))
+                    elif size == 4:
+                        val = init.value & 0xFFFFFFFF
+                        low = val & 0xFFFF
+                        high = (val >> 16) & 0xFFFF
+                        self.ctx.emit_instr("DW", str(low))
+                        self.ctx.emit_instr("DW", str(high))
+                    else:
+                        self.ctx.emit_instr("DW", str(init.value))
+                else:
+                    self.ctx.emit_instr("DS", str(size))
+
         self.ctx.emit()
         self.ctx.emit("\tEND")
 
@@ -422,8 +449,9 @@ class CodeGenerator:
         self.ctx.local_offset = 0
         self.ctx.regs.reset()  # Reset register allocator for new function
 
-        # Make function public
-        self.ctx.emit_instr("PUBLIC", f"_{func.name}")
+        # Make function public (unless static)
+        if func.storage_class != "static":
+            self.ctx.emit_instr("PUBLIC", f"_{func.name}")
         self.ctx.emit()
         self.ctx.emit(f"; Function {func.name}")
         self.ctx.emit_label(f"_{func.name}")
@@ -480,6 +508,11 @@ class CodeGenerator:
     def gen_local_decl(self, decl: ast.Declaration) -> None:
         """Generate code for a local declaration."""
         if isinstance(decl, ast.VarDecl):
+            # Check for static local variable
+            if decl.storage_class == "static":
+                self._gen_static_local(decl)
+                return
+
             size = self._type_size(decl.var_type)
             self.ctx.local_offset -= size
             self.ctx.locals[decl.name] = Symbol(
@@ -502,6 +535,22 @@ class CodeGenerator:
                     self._store_local_32(sym)
                 else:
                     self._store_local(sym)
+
+    def _gen_static_local(self, decl: ast.VarDecl) -> None:
+        """Handle static local variable."""
+        # Generate unique label for this static variable
+        label = f"@S{self.ctx.static_counter}"
+        self.ctx.static_counter += 1
+
+        # Store type and init value for data segment emission
+        self.ctx.static_locals[label] = (decl.var_type, decl.init)
+
+        # Register as a "global" for access purposes
+        self.ctx.locals[decl.name] = Symbol(
+            name=label,  # Use label as name for global-style access
+            sym_type=decl.var_type,
+            is_global=True
+        )
 
     def gen_statement(self, stmt: ast.Statement) -> None:
         """Generate code for a statement."""

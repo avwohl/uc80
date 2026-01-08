@@ -11,6 +11,7 @@ from pathlib import Path
 from .lexer import Lexer, LexerError
 from .parser import Parser, ParseError
 from .codegen import generate
+from .preprocessor import Preprocessor, PreprocessorError
 
 
 def main() -> int:
@@ -31,6 +32,30 @@ def main() -> int:
         "-v", "--verbose",
         action="store_true",
         help="Verbose output"
+    )
+    parser.add_argument(
+        "-I", "--include",
+        action="append",
+        default=[],
+        metavar="DIR",
+        help="Add directory to include search path"
+    )
+    parser.add_argument(
+        "-D", "--define",
+        action="append",
+        default=[],
+        metavar="NAME[=VALUE]",
+        help="Define preprocessor macro"
+    )
+    parser.add_argument(
+        "-E", "--preprocess-only",
+        action="store_true",
+        help="Preprocess only, output to stdout"
+    )
+    parser.add_argument(
+        "-P", "--no-preprocess",
+        action="store_true",
+        help="Skip preprocessing"
     )
 
     args = parser.parse_args()
@@ -57,6 +82,38 @@ def main() -> int:
     try:
         if args.verbose:
             print(f"Compiling {input_path}...")
+
+        # Set up include paths
+        include_paths = list(args.include)
+        # Add lib/include as default include path
+        lib_include = Path(__file__).parent.parent / "lib" / "include"
+        if lib_include.exists():
+            include_paths.append(str(lib_include))
+
+        # Preprocessing
+        if not args.no_preprocess:
+            if args.verbose:
+                print(f"  Preprocessing...")
+
+            pp = Preprocessor(include_paths)
+
+            # Add command-line defines
+            for define in args.define:
+                if '=' in define:
+                    name, value = define.split('=', 1)
+                    pp.macros[name] = pp.macros.get(name) or type(pp.macros["__UC80__"])(name, body=value)
+                else:
+                    pp.macros[define] = type(pp.macros["__UC80__"])(define, body="1")
+
+            source = pp.preprocess(source, str(input_path))
+
+            if args.verbose:
+                print(f"  Preprocessed to {len(source.splitlines())} lines")
+
+            # If -E, just output preprocessed source
+            if args.preprocess_only:
+                print(source)
+                return 0
 
         # Lexical analysis
         lexer = Lexer(source, str(input_path))
@@ -85,6 +142,10 @@ def main() -> int:
             print(f"  Wrote {output_path}")
 
         return 0
+
+    except PreprocessorError as e:
+        print(f"uc80: {e}", file=sys.stderr)
+        return 1
 
     except LexerError as e:
         print(f"uc80: {e}", file=sys.stderr)
