@@ -136,6 +136,48 @@ class Preprocessor:
 
         return '\n'.join(output_lines)
 
+    def _preprocess_included(self, source: str, filename: str, parent_stack_depth: int) -> str:
+        """Preprocess an included file, checking only for conditionals opened in this file."""
+        self.current_file = filename
+        self.current_line = 0
+
+        # Set __FILE__ for this file
+        self.macros["__FILE__"] = Macro("__FILE__", body=f'"{filename}"', is_predefined=True)
+
+        lines = source.split('\n')
+        output_lines = []
+
+        i = 0
+        while i < len(lines):
+            self.current_line = i + 1
+            self.macros["__LINE__"] = Macro("__LINE__", body=str(self.current_line), is_predefined=True)
+
+            line = lines[i]
+
+            # Handle line continuation
+            while line.endswith('\\') and i + 1 < len(lines):
+                line = line[:-1] + lines[i + 1]
+                i += 1
+
+            # Check if this is a preprocessor directive
+            stripped = line.lstrip()
+            if stripped.startswith('#'):
+                result = self._process_directive(stripped[1:].strip())
+                if result is not None:
+                    output_lines.append(result)
+            elif self._is_active():
+                expanded = self._expand_macros(line)
+                output_lines.append(expanded)
+
+            i += 1
+
+        # Check for unclosed conditionals opened in THIS file only
+        if len(self.state.condition_stack) > parent_stack_depth:
+            raise PreprocessorError("Unterminated #if/#ifdef/#ifndef",
+                                   self.current_file, self.current_line)
+
+        return '\n'.join(output_lines)
+
     def preprocess_file(self, filepath: str) -> str:
         """Preprocess a file."""
         filepath = os.path.abspath(filepath)
@@ -218,12 +260,13 @@ class Preprocessor:
                 # Save current state
                 saved_file = self.current_file
                 saved_line = self.current_line
+                saved_stack_depth = len(self.state.condition_stack)
 
                 # Preprocess included file
                 with open(full_path, 'r') as f:
                     content = f.read()
 
-                result = self.preprocess(content, full_path)
+                result = self._preprocess_included(content, full_path, saved_stack_depth)
 
                 # Restore state
                 self.current_file = saved_file

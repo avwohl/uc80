@@ -1042,35 +1042,81 @@ class CodeGenerator:
             else:
                 self._call_runtime("__sar32")
         elif op in ("==", "!=", "<", ">", "<=", ">="):
-            self._gen_comparison_32(op)
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            self._gen_comparison_32(op, is_unsigned)
         elif op == ",":
             pass  # Result is already in DEHL
 
-    def _gen_comparison_32(self, op: str) -> None:
+    def _gen_comparison_32(self, op: str, is_unsigned: bool = False) -> None:
         """Generate 32-bit comparison. Left in DEHL, right in __tmp32. Result in HL."""
-        self._call_runtime("__cmp32")
         true_label = self.ctx.new_label("CMP_T")
+        false_label = self.ctx.new_label("CMP_F")
         end_label = self.ctx.new_label("CMP_E")
 
-        # __cmp32 sets Z if equal, C if DEHL < __tmp32 (unsigned)
-        if op == "==":
-            self.ctx.emit_instr("JP", f"Z,{true_label}")
-        elif op == "!=":
-            self.ctx.emit_instr("JP", f"NZ,{true_label}")
-        elif op == "<":
-            self.ctx.emit_instr("JP", f"C,{true_label}")
-        elif op == ">=":
-            self.ctx.emit_instr("JP", f"NC,{true_label}")
-        elif op == ">":
-            # Greater: not equal AND not less
-            self.ctx.emit_instr("JP", f"Z,{end_label}")  # Equal -> false
-            self.ctx.emit_instr("JP", f"NC,{true_label}")  # Not less -> true
-        elif op == "<=":
-            # Less or equal: less OR equal
-            self.ctx.emit_instr("JP", f"Z,{true_label}")  # Equal -> true
-            self.ctx.emit_instr("JP", f"C,{true_label}")  # Less -> true
+        if op == "==" or op == "!=":
+            # Equality doesn't care about sign
+            self._call_runtime("__cmp32")
+            if op == "==":
+                self.ctx.emit_instr("JP", f"Z,{true_label}")
+            else:
+                self.ctx.emit_instr("JP", f"NZ,{true_label}")
+        elif is_unsigned:
+            # Unsigned comparison - use __cmp32 directly
+            self._call_runtime("__cmp32")
+            if op == "<":
+                self.ctx.emit_instr("JP", f"C,{true_label}")
+            elif op == ">=":
+                self.ctx.emit_instr("JP", f"NC,{true_label}")
+            elif op == ">":
+                self.ctx.emit_instr("JP", f"Z,{false_label}")
+                self.ctx.emit_instr("JP", f"NC,{true_label}")
+            elif op == "<=":
+                self.ctx.emit_instr("JP", f"Z,{true_label}")
+                self.ctx.emit_instr("JP", f"C,{true_label}")
+        else:
+            # Signed comparison - check sign bits first
+            # Left sign is in D (high byte of DEHL)
+            # Right sign is in __tmp32+3
+            sign_same = self.ctx.new_label("CMP_SS")
 
-        # False case
+            # Check if signs are different: (left_sign XOR right_sign) & 0x80
+            self.ctx.emit_instr("LD", "A,(__tmp32+3)")  # A = high byte of right
+            self.ctx.emit_instr("XOR", "D")  # XOR with high byte of left
+            self.ctx.emit_instr("JP", f"P,{sign_same}")  # If bit 7 clear, signs are same
+
+            # Signs differ - negative is always less than positive
+            # If left is negative (D & 0x80), left < right
+            self.ctx.emit_instr("LD", "A,D")
+            self.ctx.emit_instr("AND", "80H")
+            if op == "<":
+                self.ctx.emit_instr("JP", f"NZ,{true_label}")  # Left negative -> true
+                self.ctx.emit_instr("JP", false_label)
+            elif op == ">=":
+                self.ctx.emit_instr("JP", f"Z,{true_label}")  # Left positive -> true
+                self.ctx.emit_instr("JP", false_label)
+            elif op == ">":
+                self.ctx.emit_instr("JP", f"Z,{true_label}")  # Left positive -> true
+                self.ctx.emit_instr("JP", false_label)
+            elif op == "<=":
+                self.ctx.emit_instr("JP", f"NZ,{true_label}")  # Left negative -> true
+                self.ctx.emit_instr("JP", false_label)
+
+            # Signs are the same - do unsigned comparison
+            self.ctx.emit_label(sign_same)
+            self._call_runtime("__cmp32")
+            if op == "<":
+                self.ctx.emit_instr("JP", f"C,{true_label}")
+            elif op == ">=":
+                self.ctx.emit_instr("JP", f"NC,{true_label}")
+            elif op == ">":
+                self.ctx.emit_instr("JP", f"Z,{false_label}")
+                self.ctx.emit_instr("JP", f"NC,{true_label}")
+            elif op == "<=":
+                self.ctx.emit_instr("JP", f"Z,{true_label}")
+                self.ctx.emit_instr("JP", f"C,{true_label}")
+
+        # Fall through to false
+        self.ctx.emit_label(false_label)
         self.ctx.emit_instr("LD", "HL,0")
         self.ctx.emit_instr("JP", end_label)
         self.ctx.emit_label(true_label)
@@ -1483,6 +1529,9 @@ class CodeGenerator:
             # In C, decimal literals are int, long, long long (first that fits)
             return expr.value > 32767 or expr.value < -32768
         if isinstance(expr, ast.BinaryOp):
+            # Comparison operators always return int (0 or 1), not long
+            if expr.op in ("==", "!=", "<", ">", "<=", ">="):
+                return False
             # Binary operation is long if either operand is long
             # (excluding assignment operators which return target type)
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
@@ -1507,6 +1556,7 @@ class CodeGenerator:
         """Generate code for comparison. Left in DE, right in HL."""
         # Result should be 1 if true, 0 if false
         true_label = self.ctx.new_label("CMP_T")
+        false_label = self.ctx.new_label("CMP_F")
         end_label = self.ctx.new_label("CMP_E")
 
         # Compare DE with HL (compute DE - HL)
@@ -1514,7 +1564,9 @@ class CodeGenerator:
         self.ctx.emit_instr("OR", "A")  # Clear carry
         self.ctx.emit_instr("SBC", "HL,DE")
 
-        # Now flags reflect DE - HL (original left - right)
+        # Now flags reflect HL - DE (original left - right)
+        # For signed comparison, we need to check Sign XOR Overflow
+        # Z80's P/V flag after SBC indicates overflow
         if op == "==":
             self.ctx.emit_instr("JP", f"Z,{true_label}")
         elif op == "!=":
@@ -1524,33 +1576,62 @@ class CodeGenerator:
                 # Unsigned less than: carry set means left < right
                 self.ctx.emit_instr("JP", f"C,{true_label}")
             else:
-                # Signed less than: use sign flag
+                # Signed less than: true if Sign XOR Overflow
+                # No overflow: true if Sign set (M)
+                # Overflow: true if Sign clear (P)
+                ov_label = self.ctx.new_label("CMP_OV")
+                self.ctx.emit_instr("JP", f"PE,{ov_label}")
                 self.ctx.emit_instr("JP", f"M,{true_label}")
+                self.ctx.emit_instr("JP", false_label)
+                self.ctx.emit_label(ov_label)
+                self.ctx.emit_instr("JP", f"P,{true_label}")
+                self.ctx.emit_instr("JP", false_label)
         elif op == ">=":
             if is_unsigned:
                 # Unsigned greater or equal: no carry
                 self.ctx.emit_instr("JP", f"NC,{true_label}")
             else:
+                # Signed >=: true if NOT (Sign XOR Overflow)
+                ov_label = self.ctx.new_label("CMP_OV")
+                self.ctx.emit_instr("JP", f"PE,{ov_label}")
                 self.ctx.emit_instr("JP", f"P,{true_label}")
+                self.ctx.emit_instr("JP", false_label)
+                self.ctx.emit_label(ov_label)
+                self.ctx.emit_instr("JP", f"M,{true_label}")
+                self.ctx.emit_instr("JP", false_label)
         elif op == ">":
             if is_unsigned:
                 # Unsigned greater: no carry and not zero
-                self.ctx.emit_instr("JP", f"Z,{end_label}")  # if equal, not greater
+                self.ctx.emit_instr("JP", f"Z,{false_label}")
                 self.ctx.emit_instr("JP", f"NC,{true_label}")
             else:
-                # left > right is !(left <= right)
-                self.ctx.emit_instr("JP", f"Z,{end_label}")  # if equal, not greater
+                # Signed >: not equal AND NOT (Sign XOR Overflow)
+                ov_label = self.ctx.new_label("CMP_OV")
+                self.ctx.emit_instr("JP", f"Z,{false_label}")
+                self.ctx.emit_instr("JP", f"PE,{ov_label}")
                 self.ctx.emit_instr("JP", f"P,{true_label}")
+                self.ctx.emit_instr("JP", false_label)
+                self.ctx.emit_label(ov_label)
+                self.ctx.emit_instr("JP", f"M,{true_label}")
+                self.ctx.emit_instr("JP", false_label)
         elif op == "<=":
             if is_unsigned:
                 # Unsigned less or equal: carry or zero
                 self.ctx.emit_instr("JP", f"Z,{true_label}")
                 self.ctx.emit_instr("JP", f"C,{true_label}")
             else:
+                # Signed <=: equal OR (Sign XOR Overflow)
+                ov_label = self.ctx.new_label("CMP_OV")
                 self.ctx.emit_instr("JP", f"Z,{true_label}")
+                self.ctx.emit_instr("JP", f"PE,{ov_label}")
                 self.ctx.emit_instr("JP", f"M,{true_label}")
+                self.ctx.emit_instr("JP", false_label)
+                self.ctx.emit_label(ov_label)
+                self.ctx.emit_instr("JP", f"P,{true_label}")
+                self.ctx.emit_instr("JP", false_label)
 
-        # False case
+        # Fall through to false for simple cases (==, !=, unsigned)
+        self.ctx.emit_label(false_label)
         self.ctx.emit_instr("LD", "HL,0")
         self.ctx.emit_instr("JP", end_label)
 
