@@ -318,20 +318,31 @@ class CodeGenerator:
                 self.ctx.emit_instr("DB", f"'{escaped}',0")
 
         # Data segment for global variables
-        # Collect global variable declarations with their initializers
-        global_var_decls = []
+        # Collect global variable declarations, merging tentative definitions
+        # In C, multiple declarations of the same variable are allowed (tentative definitions)
+        # Only one can have an initializer
+        global_vars: dict[str, ast.VarDecl] = {}  # name -> decl with init (or first decl)
         for d in unit.declarations:
+            decls_to_check = []
             if isinstance(d, ast.VarDecl) and not isinstance(d.var_type, ast.FunctionType):
-                global_var_decls.append(d)
+                decls_to_check.append(d)
             elif isinstance(d, ast.DeclarationList):
                 for inner in d.declarations:
                     if isinstance(inner, ast.VarDecl) and not isinstance(inner.var_type, ast.FunctionType):
-                        global_var_decls.append(inner)
-        if global_var_decls:
+                        decls_to_check.append(inner)
+            for decl in decls_to_check:
+                if decl.name in global_vars:
+                    # Already seen - prefer the one with initializer
+                    if decl.init and not global_vars[decl.name].init:
+                        global_vars[decl.name] = decl
+                else:
+                    global_vars[decl.name] = decl
+
+        if global_vars:
             self.ctx.emit()
             self.ctx.emit("; Global variables")
             self.ctx.emit("\tDSEG")
-            for decl in global_var_decls:
+            for name, decl in global_vars.items():
                 size = self._type_size(decl.var_type)
                 self.ctx.emit_label(f"_{decl.name}")
                 if decl.init:
@@ -359,7 +370,7 @@ class CodeGenerator:
 
         # Static local variables (in DSEG)
         if self.ctx.static_locals:
-            if not global_var_decls and not self.ctx.strings:
+            if not global_vars and not self.ctx.strings:
                 self.ctx.emit()
                 self.ctx.emit("\tDSEG")
             self.ctx.emit("; Static local variables")
