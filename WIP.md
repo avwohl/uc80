@@ -29,6 +29,9 @@
 - Local variables and parameters
 - Global variables with initialization
 - String literals
+- Compound assignment (+=, -=, *=, /=, %=, etc.)
+- Pre/post increment/decrement (++, --)
+- Ternary operator (?:)
 
 ### Bugs Fixed
 - Parser: Parameter names were not captured for function definitions
@@ -40,16 +43,15 @@
    - unsigned types
    - struct/union
 
-2. **More Features**
-   - Compound assignment operators (+=, -=, etc.)
-   - Pre/post increment/decrement (++, --)
-   - Ternary operator (?:)
-
-3. **Standard Library**
+2. **Standard Library**
    - Full printf with format specifiers
    - scanf
    - Memory functions (memcpy, memset)
    - String functions (strcpy, strcmp, etc.)
+
+3. **Optimizations**
+   - Register allocation improvements
+   - Peephole optimization
 
 ### Architecture Reference
 ```
