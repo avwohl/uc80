@@ -19,13 +19,15 @@
 - Basic types: char, int
 - Pointers and pointer arithmetic
 - Arrays and array indexing
-- Control flow: if/else, while, do-while, for
+- Control flow: if/else, while, do-while, for, switch/case
+- break/continue in loops and switch
 - Arithmetic: +, -, *, /, %
 - Comparisons: <, <=, >, >=, ==, !=
 - Logical: &&, ||, !
 - Bitwise: &, |, ^, ~, <<, >>
 - Function calls and recursion
 - Local variables and parameters
+- Global variables with initialization
 - String literals
 
 ### Bugs Fixed
@@ -39,15 +41,15 @@
    - struct/union
 
 2. **More Features**
-   - switch/case
-   - break/continue in loops
-   - Compound assignment operators (+=, etc.)
+   - Compound assignment operators (+=, -=, etc.)
+   - Pre/post increment/decrement (++, --)
+   - Ternary operator (?:)
 
 3. **Standard Library**
    - Full printf with format specifiers
    - scanf
    - Memory functions (memcpy, memset)
-   - String functions (strcpy, strlen, etc.)
+   - String functions (strcpy, strcmp, etc.)
 
 ### Architecture Reference
 ```

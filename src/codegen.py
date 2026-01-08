@@ -236,6 +236,9 @@ class CodeGenerator:
     def __init__(self, module_name: str = "main"):
         self.module_name = module_name
         self.ctx = CodeGenContext()
+        # Switch statement context
+        self._switch_cases: list[tuple[int, str]] = []
+        self._switch_default: str | None = None
 
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
@@ -289,17 +292,31 @@ class CodeGenerator:
                 self.ctx.emit_instr("DB", f"'{escaped}',0")
 
         # Data segment for global variables
-        global_vars = [s for s in self.ctx.globals.values()
-                      if s.is_global and not isinstance(s.sym_type, ast.FunctionType)]
-        if global_vars:
+        # Collect global variable declarations with their initializers
+        global_var_decls = [d for d in unit.declarations
+                           if isinstance(d, ast.VarDecl)
+                           and not isinstance(d.var_type, ast.FunctionType)]
+        if global_var_decls:
             self.ctx.emit()
             self.ctx.emit("; Global variables")
             self.ctx.emit("\tDSEG")
-            for sym in global_vars:
-                if sym.name not in [d.name for d in unit.declarations
-                                   if isinstance(d, ast.FunctionDecl)]:
-                    size = self._type_size(sym.sym_type)
-                    self.ctx.emit_label(f"_{sym.name}")
+            for decl in global_var_decls:
+                size = self._type_size(decl.var_type)
+                self.ctx.emit_label(f"_{decl.name}")
+                if decl.init:
+                    # Initialized global variable
+                    if isinstance(decl.init, ast.IntLiteral):
+                        if size == 1:
+                            self.ctx.emit_instr("DB", str(decl.init.value))
+                        else:
+                            self.ctx.emit_instr("DW", str(decl.init.value))
+                    elif isinstance(decl.init, ast.CharLiteral):
+                        self.ctx.emit_instr("DB", str(decl.init.value))
+                    else:
+                        # Complex initializer - reserve space (would need runtime init)
+                        self.ctx.emit_instr("DS", str(size))
+                else:
+                    # Uninitialized global - just reserve space
                     self.ctx.emit_instr("DS", str(size))
 
         self.ctx.emit()
@@ -422,6 +439,10 @@ class CodeGenerator:
             self.gen_break()
         elif isinstance(stmt, ast.ContinueStmt):
             self.gen_continue()
+        elif isinstance(stmt, ast.SwitchStmt):
+            self.gen_switch(stmt)
+        elif isinstance(stmt, ast.CaseStmt):
+            self.gen_case(stmt)
 
     def gen_return(self, stmt: ast.ReturnStmt) -> None:
         """Generate code for return statement."""
@@ -545,6 +566,89 @@ class CodeGenerator:
         """Generate code for continue statement."""
         if self.ctx.continue_labels:
             self.ctx.emit_instr("JP", self.ctx.continue_labels[-1])
+
+    def gen_switch(self, stmt: ast.SwitchStmt) -> None:
+        """Generate code for switch statement."""
+        end_label = self.ctx.new_label("ENDSWITCH")
+
+        # Collect case values and create labels
+        cases: list[tuple[int, str]] = []  # (value, label)
+        default_label: str | None = None
+
+        def collect_cases(s: ast.Statement) -> None:
+            nonlocal default_label
+            if isinstance(s, ast.CaseStmt):
+                if s.value is None:
+                    # default case
+                    default_label = self.ctx.new_label("DEFAULT")
+                else:
+                    # Regular case - evaluate constant
+                    if isinstance(s.value, ast.IntLiteral):
+                        label = self.ctx.new_label("CASE")
+                        cases.append((s.value.value, label))
+            elif isinstance(s, ast.CompoundStmt):
+                for item in s.items:
+                    if isinstance(item, ast.Statement):
+                        collect_cases(item)
+
+        collect_cases(stmt.body)
+
+        # Evaluate switch expression
+        self.gen_expr(stmt.expr)
+
+        # Generate comparison chain
+        for value, label in cases:
+            # Compare HL with value
+            self.ctx.emit_instr("LD", f"DE,{value}")
+            self.ctx.emit_instr("OR", "A")  # Clear carry
+            self.ctx.emit_instr("SBC", "HL,DE")
+            self.ctx.emit_instr("ADD", "HL,DE")  # Restore HL (SBC modified it)
+            self.ctx.emit_instr("JP", f"Z,{label}")
+
+        # Jump to default or end
+        if default_label:
+            self.ctx.emit_instr("JP", default_label)
+        else:
+            self.ctx.emit_instr("JP", end_label)
+
+        # Set up case label map for gen_case
+        case_idx = 0
+        self._switch_cases = cases
+        self._switch_default = default_label
+        self._switch_case_idx = 0
+
+        # Push break label
+        self.ctx.break_labels.append(end_label)
+
+        # Generate body with case labels
+        self.gen_statement(stmt.body)
+
+        # Pop break label
+        self.ctx.break_labels.pop()
+
+        # End label
+        self.ctx.emit_label(end_label)
+
+        # Clean up
+        self._switch_cases = []
+        self._switch_default = None
+
+    def gen_case(self, stmt: ast.CaseStmt) -> None:
+        """Generate code for case label."""
+        if stmt.value is None:
+            # default case
+            if self._switch_default:
+                self.ctx.emit_label(self._switch_default)
+        else:
+            # Find matching case label
+            if isinstance(stmt.value, ast.IntLiteral):
+                for value, label in self._switch_cases:
+                    if value == stmt.value.value:
+                        self.ctx.emit_label(label)
+                        break
+
+        # Generate the statement following the case label
+        self.gen_statement(stmt.stmt)
 
     def gen_expr(self, expr: ast.Expression) -> None:
         """Generate code for an expression. Result in HL (16-bit) or A (8-bit)."""
