@@ -469,4 +469,388 @@ _exit:
 	; Just return to CP/M
 	JP	0
 
+; ============================================================
+; char *strcpy(char *dest, const char *src)
+; Copy string from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strcpy
+_strcpy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+
+_strcpy_loop:
+	LD	A,(HL)		; Get source char
+	LD	(DE),A		; Store to dest
+	OR	A
+	JR	Z,_strcpy_done	; Done if null
+	INC	HL
+	INC	DE
+	JR	_strcpy_loop
+
+_strcpy_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	IX
+	RET
+
+; ============================================================
+; char *strncpy(char *dest, const char *src, size_t n)
+; Copy at most n chars from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strncpy
+_strncpy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncpy_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncpy_done
+
+	LD	A,(HL)		; Get source char
+	LD	(DE),A		; Store to dest
+	DEC	BC
+	OR	A
+	JR	Z,_strncpy_pad	; Null found, pad with zeros
+	INC	HL
+	INC	DE
+	JR	_strncpy_loop
+
+_strncpy_pad:
+	; Pad remaining with zeros
+	LD	A,B
+	OR	C
+	JR	Z,_strncpy_done
+	INC	DE
+	XOR	A
+	LD	(DE),A
+	DEC	BC
+	JR	_strncpy_pad
+
+_strncpy_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int strcmp(const char *s1, const char *s2)
+; Compare two strings
+; Returns: <0 if s1<s2, 0 if s1==s2, >0 if s1>s2
+; ============================================================
+	PUBLIC	_strcmp
+_strcmp:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	E,(IX+4)	; DE = s1
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = s2
+	LD	H,(IX+7)
+
+_strcmp_loop:
+	LD	A,(DE)		; Get s1 char
+	LD	B,(HL)		; Get s2 char
+	SUB	B		; Compare
+	JR	NZ,_strcmp_diff	; Different
+
+	LD	A,(DE)		; Check if null
+	OR	A
+	JR	Z,_strcmp_equal	; Both null, equal
+
+	INC	DE
+	INC	HL
+	JR	_strcmp_loop
+
+_strcmp_equal:
+	LD	HL,0
+	POP	IX
+	RET
+
+_strcmp_diff:
+	; A contains s1[i] - s2[i]
+	; Sign-extend to HL
+	LD	L,A
+	RLA			; Sign to carry
+	SBC	A,A		; A = 0xFF if neg, 0 if pos
+	LD	H,A
+	POP	IX
+	RET
+
+; ============================================================
+; int strncmp(const char *s1, const char *s2, size_t n)
+; Compare at most n chars of two strings
+; ============================================================
+	PUBLIC	_strncmp
+_strncmp:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = s1
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = s2
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncmp_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncmp_equal
+
+	LD	A,(DE)		; Get s1 char
+	PUSH	HL
+	LD	H,(HL)		; H = s2 char
+	SUB	H		; Compare
+	POP	HL
+	JR	NZ,_strncmp_diff
+
+	LD	A,(DE)		; Check if null
+	OR	A
+	JR	Z,_strncmp_equal
+
+	DEC	BC
+	INC	DE
+	INC	HL
+	JR	_strncmp_loop
+
+_strncmp_equal:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+_strncmp_diff:
+	LD	L,A
+	RLA
+	SBC	A,A
+	LD	H,A
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; char *strcat(char *dest, const char *src)
+; Append src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strcat
+_strcat:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+
+	; Find end of dest
+_strcat_find:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strcat_copy
+	INC	DE
+	JR	_strcat_find
+
+_strcat_copy:
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+
+_strcat_loop:
+	LD	A,(HL)
+	LD	(DE),A
+	OR	A
+	JR	Z,_strcat_done
+	INC	HL
+	INC	DE
+	JR	_strcat_loop
+
+_strcat_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	IX
+	RET
+
+; ============================================================
+; char *strchr(const char *s, int c)
+; Find first occurrence of c in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strchr
+_strchr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+	LD	C,(IX+6)	; C = char to find
+
+_strchr_loop:
+	LD	A,(HL)
+	CP	C
+	JR	Z,_strchr_found	; Found it
+	OR	A
+	JR	Z,_strchr_notfound	; End of string
+	INC	HL
+	JR	_strchr_loop
+
+_strchr_found:
+	POP	IX
+	RET			; HL already points to char
+
+_strchr_notfound:
+	LD	HL,0		; Return NULL
+	POP	IX
+	RET
+
+; ============================================================
+; void *memcpy(void *dest, const void *src, size_t n)
+; Copy n bytes from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_memcpy
+_memcpy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_memcpy_done
+
+	LDIR			; Block copy
+
+_memcpy_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; void *memset(void *s, int c, size_t n)
+; Fill n bytes of s with c
+; Returns: s
+; ============================================================
+	PUBLIC	_memset
+_memset:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = dest
+	LD	H,(IX+5)
+	LD	A,(IX+6)	; A = fill byte
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+	PUSH	HL		; Save dest for return
+
+	PUSH	AF		; Save fill byte
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_memset_done_pop
+
+	POP	AF		; Restore fill byte
+	LD	(HL),A		; Store first byte
+	LD	D,H		; DE = HL + 1
+	LD	E,L
+	INC	DE
+	DEC	BC		; n - 1
+	LD	A,B
+	OR	C
+	JR	Z,_memset_done
+	LDIR			; Copy first byte to rest
+	JR	_memset_done
+
+_memset_done_pop:
+	POP	AF		; Discard saved fill byte
+
+_memset_done:
+	POP	HL		; Return dest
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int memcmp(const void *s1, const void *s2, size_t n)
+; Compare n bytes of s1 and s2
+; Returns: <0 if s1<s2, 0 if s1==s2, >0 if s1>s2
+; ============================================================
+	PUBLIC	_memcmp
+_memcmp:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = s1
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = s2
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_memcmp_loop:
+	LD	A,B
+	OR	C
+	JR	Z,_memcmp_equal	; n == 0, equal
+
+	LD	A,(DE)
+	PUSH	HL
+	LD	H,(HL)
+	SUB	H
+	POP	HL
+	JR	NZ,_memcmp_diff
+
+	DEC	BC
+	INC	DE
+	INC	HL
+	JR	_memcmp_loop
+
+_memcmp_equal:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+_memcmp_diff:
+	LD	L,A
+	RLA
+	SBC	A,A
+	LD	H,A
+	POP	BC
+	POP	IX
+	RET
+
 	END

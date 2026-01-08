@@ -9,14 +9,14 @@
 - [x] Lexer (src/lexer.py) - 42 tests passing
 - [x] Parser (src/parser.py) - 78 tests passing
 - [x] Code Generator (src/codegen.py) - 33 tests passing
-- [x] Runtime Library (lib/runtime.mac) - 16-bit mul/div/mod/shift
+- [x] Runtime Library (lib/runtime.mac) - 16-bit and 32-bit arithmetic
 - [x] CP/M Startup (lib/crt0.mac) - Stack setup, main() call, exit
 - [x] Minimal libc (lib/libc.mac) - putchar, getchar, puts, printf, strlen
 - [x] CLI Entry Point (src/main.py) - Command-line compiler interface
 - [x] End-to-End Test - Hello World and arithmetic working!
 
 ### Working Features
-- Basic types: char, int
+- Basic types: char, int, long, unsigned char, unsigned int, unsigned long
 - Pointers and pointer arithmetic
 - Arrays and array indexing
 - Control flow: if/else, while, do-while, for, switch/case
@@ -39,17 +39,13 @@
 - Linker (ul80): DSEG data placed at wrong address when linking multiple modules
 
 ### Next Steps (Phase 2)
-1. **More Types**
-   - long (32-bit) support
-   - unsigned types
-
-2. **Standard Library**
+1. **Standard Library**
    - Full printf with format specifiers
    - scanf
    - Memory functions (memcpy, memset)
    - String functions (strcpy, strcmp, etc.)
 
-3. **Optimizations**
+2. **Optimizations**
    - Register allocation improvements
    - Peephole optimization
 

@@ -173,4 +173,427 @@ __sar16_loop:
 __callhl:
 	JP	(HL)		; Jump to address in HL
 
+; ============================================================
+; 32-bit routines
+; Convention: DEHL = 32-bit value (DE=high word, HL=low word)
+; For binary ops: left in DEHL, right on stack [SP+2]=high, [SP]=low
+; (after return address)
+; Result returned in DEHL
+; ============================================================
+
+; ============================================================
+; 32-bit addition: DEHL = DEHL + (__tmp32)
+; ============================================================
+	PUBLIC	__add32
+__add32:
+	; DEHL = DEHL + (__tmp32)
+	PUSH	BC
+	LD	BC,(__tmp32)	; BC = right low word
+	ADD	HL,BC		; HL = left.low + right.low
+	EX	DE,HL		; HL = left.high, DE = result.low
+	LD	BC,(__tmp32+2)	; BC = right high word
+	ADC	HL,BC		; HL = left.high + right.high + carry
+	EX	DE,HL		; DEHL = result
+	POP	BC
+	RET
+
+; ============================================================
+; 32-bit subtraction: DEHL = DEHL - (__tmp32)
+; ============================================================
+	PUBLIC	__sub32
+__sub32:
+	PUSH	BC
+	LD	BC,(__tmp32)
+	OR	A		; Clear carry
+	SBC	HL,BC		; HL = left.low - right.low
+	EX	DE,HL
+	LD	BC,(__tmp32+2)
+	SBC	HL,BC		; HL = left.high - right.high - borrow
+	EX	DE,HL
+	POP	BC
+	RET
+
+; ============================================================
+; 32-bit multiplication: DEHL = DEHL * (__tmp32)
+; Uses shift-and-add algorithm
+; ============================================================
+	PUBLIC	__mul32
+__mul32:
+	PUSH	BC
+
+	; Save multiplicand DEHL to __mul32_mcd
+	LD	(__mul32_mcd),HL
+	LD	(__mul32_mcd+2),DE
+
+	; Copy multiplier (__tmp32) to __mul32_mpr
+	LD	HL,(__tmp32)
+	LD	(__mul32_mpr),HL
+	LD	HL,(__tmp32+2)
+	LD	(__mul32_mpr+2),HL
+
+	; Initialize result to 0
+	LD	HL,0
+	LD	DE,0
+
+	; Loop through 32 bits
+	LD	B,32
+
+__mul32_loop:
+	; Shift multiplier right, get LSB
+	PUSH	HL
+	LD	HL,(__mul32_mpr+2)
+	SRL	H
+	RR	L
+	LD	(__mul32_mpr+2),HL
+	LD	HL,(__mul32_mpr)
+	RR	H
+	RR	L
+	LD	(__mul32_mpr),HL
+	POP	HL
+	JR	NC,__mul32_noadd
+
+	; Add multiplicand to result
+	PUSH	BC
+	LD	BC,(__mul32_mcd)
+	ADD	HL,BC
+	EX	DE,HL
+	LD	BC,(__mul32_mcd+2)
+	ADC	HL,BC
+	EX	DE,HL
+	POP	BC
+
+__mul32_noadd:
+	; Shift multiplicand left
+	PUSH	HL
+	LD	HL,(__mul32_mcd)
+	ADD	HL,HL
+	LD	(__mul32_mcd),HL
+	LD	HL,(__mul32_mcd+2)
+	ADC	HL,HL
+	LD	(__mul32_mcd+2),HL
+	POP	HL
+
+	DJNZ	__mul32_loop
+
+	POP	BC
+	RET
+
+; ============================================================
+; 32-bit unsigned division: DEHL = DEHL / (__tmp32)
+; Also stores remainder in __rem32
+; ============================================================
+	PUBLIC	__div32
+	PUBLIC	__rem32
+__div32:
+	PUSH	BC
+
+	; Dividend (DEHL) -> __div32_dvd
+	LD	(__div32_dvd),HL
+	LD	(__div32_dvd+2),DE
+
+	; Quotient in DEHL (start at 0)
+	LD	DE,0
+	LD	HL,0
+
+	; Remainder starts at 0
+	LD	(__rem32),HL
+	LD	(__rem32+2),DE
+
+	LD	B,32		; 32 bits
+
+__div32_loop:
+	; Shift dividend left, MSB into carry
+	PUSH	HL
+	LD	HL,(__div32_dvd)
+	ADD	HL,HL
+	LD	(__div32_dvd),HL
+	LD	HL,(__div32_dvd+2)
+	ADC	HL,HL
+	LD	(__div32_dvd+2),HL
+	POP	HL
+
+	; Rotate carry into remainder (shift remainder left, add carry)
+	PUSH	HL
+	PUSH	DE
+	LD	HL,(__rem32)
+	ADC	HL,HL		; Shift left, carry in LSB
+	LD	(__rem32),HL
+	LD	HL,(__rem32+2)
+	ADC	HL,HL
+	LD	(__rem32+2),HL
+	POP	DE
+	POP	HL
+
+	; Shift quotient (DEHL) left
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+
+	; Check if remainder >= divisor
+	PUSH	HL
+	PUSH	DE
+
+	LD	HL,(__rem32)
+	LD	DE,(__tmp32)
+	OR	A
+	SBC	HL,DE		; low comparison
+	PUSH	HL		; Save difference low
+	LD	HL,(__rem32+2)
+	LD	DE,(__tmp32+2)
+	SBC	HL,DE		; high comparison with borrow
+	JR	C,__div32_nosub	; remainder < divisor
+
+	; remainder >= divisor
+	; Update remainder with subtraction result
+	LD	(__rem32+2),HL	; Store high difference
+	POP	HL		; Get low difference
+	LD	(__rem32),HL
+
+	POP	DE
+	POP	HL
+	INC	HL		; Set LSB of quotient
+
+	DJNZ	__div32_loop
+	JR	__div32_done
+
+__div32_nosub:
+	POP	HL		; Discard difference low
+	POP	DE
+	POP	HL
+	DJNZ	__div32_loop
+
+__div32_done:
+	POP	BC
+	RET
+
+; ============================================================
+; 32-bit unsigned modulo: DEHL = DEHL % (__tmp32)
+; ============================================================
+	PUBLIC	__mod32
+__mod32:
+	CALL	__div32
+	LD	HL,(__rem32)
+	LD	DE,(__rem32+2)
+	RET
+
+; ============================================================
+; 32-bit compare: sets flags based on DEHL - (__tmp32)
+; Returns: Z if equal, C if DEHL < __tmp32 (unsigned)
+; ============================================================
+	PUBLIC	__cmp32
+__cmp32:
+	PUSH	BC
+	; Compare high words first
+	LD	BC,(__tmp32+2)
+	LD	A,D
+	CP	B
+	JR	NZ,__cmp32_done
+	LD	A,E
+	CP	C
+	JR	NZ,__cmp32_done
+	; High words equal, compare low
+	LD	BC,(__tmp32)
+	LD	A,H
+	CP	B
+	JR	NZ,__cmp32_done
+	LD	A,L
+	CP	C
+__cmp32_done:
+	POP	BC
+	RET
+
+; ============================================================
+; 32-bit left shift: DEHL = DEHL << A
+; ============================================================
+	PUBLIC	__shl32
+__shl32:
+	; Shift count in A
+	AND	1FH		; Limit to 31
+	RET	Z
+__shl32_loop:
+	ADD	HL,HL		; Shift low left
+	EX	DE,HL
+	ADC	HL,HL		; Shift high left with carry
+	EX	DE,HL
+	DEC	A
+	JR	NZ,__shl32_loop
+	RET
+
+; ============================================================
+; 32-bit logical right shift: DEHL = DEHL >> A (unsigned)
+; ============================================================
+	PUBLIC	__shr32
+__shr32:
+	AND	1FH
+	RET	Z
+__shr32_loop:
+	SRL	D		; Shift high right
+	RR	E
+	RR	H		; Shift low right with carry
+	RR	L
+	DEC	A
+	JR	NZ,__shr32_loop
+	RET
+
+; ============================================================
+; 32-bit arithmetic right shift: DEHL = DEHL >> A (signed)
+; ============================================================
+	PUBLIC	__sar32
+__sar32:
+	AND	1FH
+	RET	Z
+__sar32_loop:
+	SRA	D		; Arithmetic shift preserves sign
+	RR	E
+	RR	H
+	RR	L
+	DEC	A
+	JR	NZ,__sar32_loop
+	RET
+
+; ============================================================
+; 32-bit negate: DEHL = -DEHL
+; ============================================================
+	PUBLIC	__neg32
+__neg32:
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+	RET
+
+; ============================================================
+; 32-bit bitwise AND: DEHL = DEHL & (__tmp32)
+; ============================================================
+	PUBLIC	__and32
+__and32:
+	PUSH	BC
+	LD	BC,(__tmp32)
+	LD	A,L
+	AND	C
+	LD	L,A
+	LD	A,H
+	AND	B
+	LD	H,A
+	LD	BC,(__tmp32+2)
+	LD	A,E
+	AND	C
+	LD	E,A
+	LD	A,D
+	AND	B
+	LD	D,A
+	POP	BC
+	RET
+
+; ============================================================
+; 32-bit bitwise OR: DEHL = DEHL | (__tmp32)
+; ============================================================
+	PUBLIC	__or32
+__or32:
+	PUSH	BC
+	LD	BC,(__tmp32)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	BC,(__tmp32+2)
+	LD	A,E
+	OR	C
+	LD	E,A
+	LD	A,D
+	OR	B
+	LD	D,A
+	POP	BC
+	RET
+
+; ============================================================
+; 32-bit bitwise XOR: DEHL = DEHL ^ (__tmp32)
+; ============================================================
+	PUBLIC	__xor32
+__xor32:
+	PUSH	BC
+	LD	BC,(__tmp32)
+	LD	A,L
+	XOR	C
+	LD	L,A
+	LD	A,H
+	XOR	B
+	LD	H,A
+	LD	BC,(__tmp32+2)
+	LD	A,E
+	XOR	C
+	LD	E,A
+	LD	A,D
+	XOR	B
+	LD	D,A
+	POP	BC
+	RET
+
+; ============================================================
+; 32-bit bitwise NOT: DEHL = ~DEHL
+; ============================================================
+	PUBLIC	__not32
+__not32:
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	A,E
+	CPL
+	LD	E,A
+	LD	A,D
+	CPL
+	LD	D,A
+	RET
+
+; ============================================================
+; Sign-extend 16-bit HL to 32-bit DEHL
+; ============================================================
+	PUBLIC	__sext32
+__sext32:
+	LD	D,H
+	LD	A,D
+	RLA			; Get sign bit into carry
+	SBC	A,A		; A = 0xFF if negative, 0 if positive
+	LD	D,A
+	LD	E,A
+	RET
+
+; ============================================================
+; Zero-extend 16-bit HL to 32-bit DEHL
+; ============================================================
+	PUBLIC	__zext32
+__zext32:
+	LD	DE,0
+	RET
+
+	DSEG
+	PUBLIC	__tmp32
+__tmp32:
+	DW	0,0
+__mul32_mcd:
+	DW	0,0
+__mul32_mpr:
+	DW	0,0
+__div32_dvd:
+	DW	0,0
+__rem32:
+	DW	0,0
+
 	END

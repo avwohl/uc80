@@ -311,6 +311,13 @@ class CodeGenerator:
                     if isinstance(decl.init, ast.IntLiteral):
                         if size == 1:
                             self.ctx.emit_instr("DB", str(decl.init.value))
+                        elif size == 4:
+                            # 32-bit: emit low word first, then high word
+                            val = decl.init.value & 0xFFFFFFFF
+                            low = val & 0xFFFF
+                            high = (val >> 16) & 0xFFFF
+                            self.ctx.emit_instr("DW", str(low))
+                            self.ctx.emit_instr("DW", str(high))
                         else:
                             self.ctx.emit_instr("DW", str(decl.init.value))
                     elif isinstance(decl.init, ast.CharLiteral):
@@ -438,8 +445,19 @@ class CodeGenerator:
             )
             # Initialize if there's an initializer
             if decl.init:
-                self.gen_expr(decl.init)  # Result in HL (or A for char)
-                self._store_local(self.ctx.locals[decl.name])
+                is_long = self._is_long_type(decl.var_type)
+                self.gen_expr(decl.init, force_long=is_long)
+
+                # Extend to 32-bit if target is long but source is not
+                if is_long and not self._is_long_expr(decl.init):
+                    is_signed = not self._is_unsigned_expr(decl.init)
+                    self._extend_hl_to_dehl(is_signed)
+
+                sym = self.ctx.locals[decl.name]
+                if is_long:
+                    self._store_local_32(sym)
+                else:
+                    self._store_local(sym)
 
     def gen_statement(self, stmt: ast.Statement) -> None:
         """Generate code for a statement."""
@@ -673,10 +691,18 @@ class CodeGenerator:
         # Generate the statement following the case label
         self.gen_statement(stmt.stmt)
 
-    def gen_expr(self, expr: ast.Expression) -> None:
-        """Generate code for an expression. Result in HL (16-bit) or A (8-bit)."""
+    def gen_expr(self, expr: ast.Expression, force_long: bool = False) -> None:
+        """Generate code for an expression. Result in HL (16-bit) or DEHL (32-bit)."""
         if isinstance(expr, ast.IntLiteral):
-            self.ctx.emit_instr("LD", f"HL,{expr.value}")
+            if self._is_long_expr(expr) or force_long:
+                # 32-bit literal: load into DEHL (DE=high, HL=low)
+                val = expr.value & 0xFFFFFFFF
+                low = val & 0xFFFF
+                high = (val >> 16) & 0xFFFF
+                self.ctx.emit_instr("LD", f"HL,{low}")
+                self.ctx.emit_instr("LD", f"DE,{high}")
+            else:
+                self.ctx.emit_instr("LD", f"HL,{expr.value}")
 
         elif isinstance(expr, ast.CharLiteral):
             self.ctx.emit_instr("LD", f"HL,{expr.value}")
@@ -693,7 +719,7 @@ class CodeGenerator:
             self.ctx.emit_instr("LD", "HL,0")
 
         elif isinstance(expr, ast.Identifier):
-            self.gen_identifier(expr)
+            self.gen_identifier(expr, force_long)
 
         elif isinstance(expr, ast.BinaryOp):
             self.gen_binary_op(expr)
@@ -725,19 +751,42 @@ class CodeGenerator:
             # Would need type inference; for now assume int
             self.ctx.emit_instr("LD", "HL,2")
 
-    def gen_identifier(self, expr: ast.Identifier) -> None:
-        """Generate code to load an identifier's value into HL."""
+    def gen_identifier(self, expr: ast.Identifier, force_long: bool = False) -> None:
+        """Generate code to load an identifier's value into HL (or DEHL for 32-bit)."""
         sym = self.ctx.lookup(expr.name)
         if sym is None:
             # Assume external function
             self.ctx.emit_instr("LD", f"HL,_{expr.name}")
             return
 
+        # Arrays decay to pointers - return address, not value
+        if isinstance(sym.sym_type, ast.ArrayType):
+            if sym.is_global:
+                self.ctx.emit_instr("LD", f"HL,_{sym.name}")
+            else:
+                # Compute address IX+offset
+                if sym.offset >= 0:
+                    self.ctx.emit_instr("LD", f"HL,{sym.offset}")
+                else:
+                    self.ctx.emit_instr("LD", f"HL,{sym.offset}")
+                self.ctx.emit_instr("PUSH", "IX")
+                self.ctx.emit_instr("POP", "DE")
+                self.ctx.emit_instr("ADD", "HL,DE")
+            return
+
+        is_long = self._is_long_type(sym.sym_type) or force_long
         if sym.is_global:
-            self.ctx.emit_instr("LD", f"HL,(_{sym.name})")
+            if is_long:
+                self.ctx.emit_instr("LD", f"HL,(_{sym.name})")
+                self.ctx.emit_instr("LD", f"DE,(_{sym.name}+2)")
+            else:
+                self.ctx.emit_instr("LD", f"HL,(_{sym.name})")
         else:
             # Local variable: IX+offset
-            self._load_local(sym)
+            if is_long:
+                self._load_local_32(sym)
+            else:
+                self._load_local(sym)
 
     def gen_binary_op(self, expr: ast.BinaryOp) -> None:
         """Generate code for binary operation."""
@@ -765,6 +814,16 @@ class CodeGenerator:
             self.gen_logical_or(expr)
             return
 
+        # Check if this is a 32-bit operation
+        is_long = self._is_long_expr(expr.left) or self._is_long_expr(expr.right)
+
+        if is_long:
+            self._gen_binary_op_32(expr, op)
+        else:
+            self._gen_binary_op_16(expr, op)
+
+    def _gen_binary_op_16(self, expr: ast.BinaryOp, op: str) -> None:
+        """Generate 16-bit binary operation."""
         # Generate left operand (result in HL)
         self.gen_expr(expr.left)
 
@@ -817,7 +876,9 @@ class CodeGenerator:
         elif op == ">>":
             self._call_runtime("__shr16")
         elif op in ("==", "!=", "<", ">", "<=", ">="):
-            self._gen_comparison(op)
+            # Check if either operand is unsigned for proper comparison
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            self._gen_comparison(op, is_unsigned)
         elif op == ",":
             # Comma operator: result is right operand (already in HL)
             pass
@@ -826,23 +887,133 @@ class CodeGenerator:
         self.ctx.regs.release_reg('de', self._emit_reg)
         self.ctx.regs.mark_free('hl')
 
+    def _gen_binary_op_32(self, expr: ast.BinaryOp, op: str) -> None:
+        """Generate 32-bit binary operation. Result in DEHL."""
+        # For 32-bit: right operand goes to __tmp32, left in DEHL, call runtime
+
+        # Generate right operand first
+        left_is_long = self._is_long_expr(expr.left)
+        right_is_long = self._is_long_expr(expr.right)
+
+        # Generate right operand, extend to 32-bit if needed
+        self.gen_expr(expr.right, force_long=True)
+        if not right_is_long:
+            # Need to extend 16-bit to 32-bit
+            is_signed = not self._is_unsigned_expr(expr.right)
+            self._extend_hl_to_dehl(is_signed)
+
+        # Store right operand to __tmp32
+        self._store_tmp32()
+
+        # Generate left operand, extend to 32-bit if needed
+        self.gen_expr(expr.left, force_long=True)
+        if not left_is_long:
+            is_signed = not self._is_unsigned_expr(expr.left)
+            self._extend_hl_to_dehl(is_signed)
+
+        # Now: left in DEHL, right in __tmp32
+        if op == "+":
+            self._call_runtime("__add32")
+        elif op == "-":
+            self._call_runtime("__sub32")
+        elif op == "*":
+            self._call_runtime("__mul32")
+        elif op == "/":
+            self._call_runtime("__div32")
+        elif op == "%":
+            self._call_runtime("__mod32")
+        elif op == "&":
+            self._call_runtime("__and32")
+        elif op == "|":
+            self._call_runtime("__or32")
+        elif op == "^":
+            self._call_runtime("__xor32")
+        elif op == "<<":
+            # Shift amount should be in A
+            # For now, get low byte of __tmp32 into A
+            self.ctx.emit_instr("LD", "A,(__tmp32)")
+            self._call_runtime("__shl32")
+        elif op == ">>":
+            self.ctx.emit_instr("LD", "A,(__tmp32)")
+            is_unsigned = self._is_unsigned_expr(expr.left)
+            if is_unsigned:
+                self._call_runtime("__shr32")
+            else:
+                self._call_runtime("__sar32")
+        elif op in ("==", "!=", "<", ">", "<=", ">="):
+            self._gen_comparison_32(op)
+        elif op == ",":
+            pass  # Result is already in DEHL
+
+    def _gen_comparison_32(self, op: str) -> None:
+        """Generate 32-bit comparison. Left in DEHL, right in __tmp32. Result in HL."""
+        self._call_runtime("__cmp32")
+        true_label = self.ctx.new_label("CMP_T")
+        end_label = self.ctx.new_label("CMP_E")
+
+        # __cmp32 sets Z if equal, C if DEHL < __tmp32 (unsigned)
+        if op == "==":
+            self.ctx.emit_instr("JP", f"Z,{true_label}")
+        elif op == "!=":
+            self.ctx.emit_instr("JP", f"NZ,{true_label}")
+        elif op == "<":
+            self.ctx.emit_instr("JP", f"C,{true_label}")
+        elif op == ">=":
+            self.ctx.emit_instr("JP", f"NC,{true_label}")
+        elif op == ">":
+            # Greater: not equal AND not less
+            self.ctx.emit_instr("JP", f"Z,{end_label}")  # Equal -> false
+            self.ctx.emit_instr("JP", f"NC,{true_label}")  # Not less -> true
+        elif op == "<=":
+            # Less or equal: less OR equal
+            self.ctx.emit_instr("JP", f"Z,{true_label}")  # Equal -> true
+            self.ctx.emit_instr("JP", f"C,{true_label}")  # Less -> true
+
+        # False case
+        self.ctx.emit_instr("LD", "HL,0")
+        self.ctx.emit_instr("JP", end_label)
+        self.ctx.emit_label(true_label)
+        self.ctx.emit_instr("LD", "HL,1")
+        self.ctx.emit_label(end_label)
+        # Clear DE for 16-bit result
+        self.ctx.emit_instr("LD", "DE,0")
+
     def _emit_reg(self, instr: str, operand: str) -> None:
         """Emit instruction for register allocator callbacks."""
         self.ctx.emit_instr(instr, operand)
 
     def gen_assignment(self, expr: ast.BinaryOp) -> None:
         """Generate code for assignment."""
-        # Generate the value
-        self.gen_expr(expr.right)
+        # Check if target is 32-bit
+        target_is_long = False
+        if isinstance(expr.left, ast.Identifier):
+            sym = self.ctx.lookup(expr.left.name)
+            if sym and self._is_long_type(sym.sym_type):
+                target_is_long = True
+
+        # Generate the value (force_long if target is 32-bit)
+        self.gen_expr(expr.right, force_long=target_is_long)
+
+        # If target is 32-bit but source is not, extend
+        if target_is_long and not self._is_long_expr(expr.right):
+            is_signed = not self._is_unsigned_expr(expr.right)
+            self._extend_hl_to_dehl(is_signed)
 
         # Store to the target
         if isinstance(expr.left, ast.Identifier):
             sym = self.ctx.lookup(expr.left.name)
             if sym:
-                if sym.is_global:
-                    self.ctx.emit_instr("LD", f"(_{sym.name}),HL")
+                if target_is_long:
+                    if sym.is_global:
+                        self.ctx.emit_instr("LD", f"(_{sym.name}),HL")
+                        self.ctx.emit_instr("LD", f"(_{sym.name}+2),DE")
+                    else:
+                        self._store_local_32(sym)
                 else:
-                    self._store_local(sym)
+                    if sym.is_global:
+                        self.ctx.emit_instr("LD", f"(_{sym.name}),HL")
+                    else:
+                        self._store_local(sym)
         elif isinstance(expr.left, ast.UnaryOp) and expr.left.op == "*":
             # Pointer dereference assignment: *p = value
             self.ctx.emit_instr("PUSH", "HL")  # Save value
@@ -1190,7 +1361,48 @@ class CodeGenerator:
                     self.ctx.emit_instr("LD", f"DE,{offset}")
                     self.ctx.emit_instr("ADD", "HL,DE")
 
-    def _gen_comparison(self, op: str) -> None:
+    def _is_unsigned_expr(self, expr: ast.Expression) -> bool:
+        """Check if an expression has unsigned type."""
+        expr_type = self._get_expr_type(expr)
+        if isinstance(expr_type, ast.BasicType):
+            # is_signed=False means unsigned, is_signed=None means default (signed)
+            return expr_type.is_signed == False
+        return False
+
+    def _is_long_type(self, t: ast.TypeNode | None) -> bool:
+        """Check if a type is 32-bit (long)."""
+        if isinstance(t, ast.BasicType):
+            return t.name in ("long", "long long")
+        return False
+
+    def _is_long_expr(self, expr: ast.Expression) -> bool:
+        """Check if an expression has 32-bit type."""
+        if isinstance(expr, ast.IntLiteral):
+            # Check if literal is too large for signed 16-bit
+            # In C, decimal literals are int, long, long long (first that fits)
+            return expr.value > 32767 or expr.value < -32768
+        if isinstance(expr, ast.BinaryOp):
+            # Binary operation is long if either operand is long
+            # (excluding assignment operators which return target type)
+            if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
+                return self._is_long_expr(expr.left) or self._is_long_expr(expr.right)
+        expr_type = self._get_expr_type(expr)
+        return self._is_long_type(expr_type)
+
+    def _get_expr_size(self, expr: ast.Expression) -> int:
+        """Get the size of an expression result in bytes."""
+        if isinstance(expr, ast.IntLiteral):
+            if expr.value > 32767 or expr.value < -32768:
+                return 4
+            return 2
+        if isinstance(expr, ast.CharLiteral):
+            return 1
+        expr_type = self._get_expr_type(expr)
+        if expr_type:
+            return self._type_size(expr_type)
+        return 2  # Default to int
+
+    def _gen_comparison(self, op: str, is_unsigned: bool = False) -> None:
         """Generate code for comparison. Left in DE, right in HL."""
         # Result should be 1 if true, 0 if false
         true_label = self.ctx.new_label("CMP_T")
@@ -1207,17 +1419,35 @@ class CodeGenerator:
         elif op == "!=":
             self.ctx.emit_instr("JP", f"NZ,{true_label}")
         elif op == "<":
-            # Signed less than: use sign flag
-            self.ctx.emit_instr("JP", f"M,{true_label}")
+            if is_unsigned:
+                # Unsigned less than: carry set means left < right
+                self.ctx.emit_instr("JP", f"C,{true_label}")
+            else:
+                # Signed less than: use sign flag
+                self.ctx.emit_instr("JP", f"M,{true_label}")
         elif op == ">=":
-            self.ctx.emit_instr("JP", f"P,{true_label}")
+            if is_unsigned:
+                # Unsigned greater or equal: no carry
+                self.ctx.emit_instr("JP", f"NC,{true_label}")
+            else:
+                self.ctx.emit_instr("JP", f"P,{true_label}")
         elif op == ">":
-            # left > right is !(left <= right)
-            self.ctx.emit_instr("JP", f"Z,{end_label}")  # if equal, not greater
-            self.ctx.emit_instr("JP", f"P,{true_label}")
+            if is_unsigned:
+                # Unsigned greater: no carry and not zero
+                self.ctx.emit_instr("JP", f"Z,{end_label}")  # if equal, not greater
+                self.ctx.emit_instr("JP", f"NC,{true_label}")
+            else:
+                # left > right is !(left <= right)
+                self.ctx.emit_instr("JP", f"Z,{end_label}")  # if equal, not greater
+                self.ctx.emit_instr("JP", f"P,{true_label}")
         elif op == "<=":
-            self.ctx.emit_instr("JP", f"Z,{true_label}")
-            self.ctx.emit_instr("JP", f"M,{true_label}")
+            if is_unsigned:
+                # Unsigned less or equal: carry or zero
+                self.ctx.emit_instr("JP", f"Z,{true_label}")
+                self.ctx.emit_instr("JP", f"C,{true_label}")
+            else:
+                self.ctx.emit_instr("JP", f"Z,{true_label}")
+                self.ctx.emit_instr("JP", f"M,{true_label}")
 
         # False case
         self.ctx.emit_instr("LD", "HL,0")
@@ -1248,10 +1478,49 @@ class CodeGenerator:
             self.ctx.emit_instr("LD", f"(IX{sym.offset}),L")
             self.ctx.emit_instr("LD", f"(IX{sym.offset + 1}),H")
 
+    def _load_local_32(self, sym: Symbol) -> None:
+        """Load a 32-bit local variable into DEHL (DE=high, HL=low)."""
+        if sym.offset >= 0:
+            self.ctx.emit_instr("LD", f"L,(IX+{sym.offset})")
+            self.ctx.emit_instr("LD", f"H,(IX+{sym.offset + 1})")
+            self.ctx.emit_instr("LD", f"E,(IX+{sym.offset + 2})")
+            self.ctx.emit_instr("LD", f"D,(IX+{sym.offset + 3})")
+        else:
+            self.ctx.emit_instr("LD", f"L,(IX{sym.offset})")
+            self.ctx.emit_instr("LD", f"H,(IX{sym.offset + 1})")
+            self.ctx.emit_instr("LD", f"E,(IX{sym.offset + 2})")
+            self.ctx.emit_instr("LD", f"D,(IX{sym.offset + 3})")
+
+    def _store_local_32(self, sym: Symbol) -> None:
+        """Store DEHL (32-bit) into a local variable."""
+        if sym.offset >= 0:
+            self.ctx.emit_instr("LD", f"(IX+{sym.offset}),L")
+            self.ctx.emit_instr("LD", f"(IX+{sym.offset + 1}),H")
+            self.ctx.emit_instr("LD", f"(IX+{sym.offset + 2}),E")
+            self.ctx.emit_instr("LD", f"(IX+{sym.offset + 3}),D")
+        else:
+            self.ctx.emit_instr("LD", f"(IX{sym.offset}),L")
+            self.ctx.emit_instr("LD", f"(IX{sym.offset + 1}),H")
+            self.ctx.emit_instr("LD", f"(IX{sym.offset + 2}),E")
+            self.ctx.emit_instr("LD", f"(IX{sym.offset + 3}),D")
+
     def _call_runtime(self, name: str) -> None:
         """Call a runtime library function."""
         self.ctx.runtime_used.add(name)
         self.ctx.emit_instr("CALL", name)
+
+    def _store_tmp32(self) -> None:
+        """Store DEHL to __tmp32 for 32-bit binary operations."""
+        self.ctx.runtime_used.add("__tmp32")
+        self.ctx.emit_instr("LD", "(__tmp32),HL")
+        self.ctx.emit_instr("LD", "(__tmp32+2),DE")
+
+    def _extend_hl_to_dehl(self, is_signed: bool = True) -> None:
+        """Sign or zero extend HL to DEHL."""
+        if is_signed:
+            self._call_runtime("__sext32")
+        else:
+            self._call_runtime("__zext32")
 
     def _get_deref_size(self, expr: ast.Expression) -> int:
         """Get the size of the type that would be loaded when dereferencing expr.
