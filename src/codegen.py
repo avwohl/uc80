@@ -1538,6 +1538,13 @@ class CodeGenerator:
         elif isinstance(expr, ast.UnaryOp) and expr.op in ("-", "+", "~"):
             # These preserve the operand type
             return self._get_expr_type(expr.operand)
+        elif isinstance(expr, ast.Index):
+            # Array indexing: return element type
+            array_type = self._get_expr_type(expr.array)
+            if isinstance(array_type, ast.ArrayType):
+                return array_type.base_type
+            elif isinstance(array_type, ast.PointerType):
+                return array_type.base_type
         elif isinstance(expr, ast.BinaryOp):
             # For arithmetic/bitwise ops, result type is based on operand types
             # This is simplified - real C would have more complex rules
