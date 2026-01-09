@@ -5907,6 +5907,390 @@ _raise_ok:
 	POP	IX
 	RET
 
+; ============================================================
+; Math functions (stub implementations for Z80 without FPU)
+; These return 0 or the input value unchanged.
+; ============================================================
+
+	PUBLIC	_sin
+	PUBLIC	_cos
+	PUBLIC	_tan
+	PUBLIC	_asin
+	PUBLIC	_acos
+	PUBLIC	_atan
+	PUBLIC	_atan2
+	PUBLIC	_sinh
+	PUBLIC	_cosh
+	PUBLIC	_tanh
+	PUBLIC	_exp
+	PUBLIC	_log
+	PUBLIC	_log10
+	PUBLIC	_log2
+	PUBLIC	_pow
+	PUBLIC	_sqrt
+	PUBLIC	_cbrt
+	PUBLIC	_hypot
+	PUBLIC	_ceil
+	PUBLIC	_floor
+	PUBLIC	_trunc
+	PUBLIC	_round
+	PUBLIC	_fmod
+	PUBLIC	_remainder
+	PUBLIC	_fabs
+	PUBLIC	_copysign
+	PUBLIC	_frexp
+	PUBLIC	_ldexp
+	PUBLIC	_modf
+	PUBLIC	_sinf
+	PUBLIC	_cosf
+	PUBLIC	_tanf
+	PUBLIC	_asinf
+	PUBLIC	_acosf
+	PUBLIC	_atanf
+	PUBLIC	_atan2f
+	PUBLIC	_sinhf
+	PUBLIC	_coshf
+	PUBLIC	_tanhf
+	PUBLIC	_sqrtf
+	PUBLIC	_cbrtf
+	PUBLIC	_hypotf
+	PUBLIC	_powf
+	PUBLIC	_fabsf
+	PUBLIC	_copysignf
+	PUBLIC	_floorf
+	PUBLIC	_ceilf
+	PUBLIC	_truncf
+	PUBLIC	_roundf
+	PUBLIC	_fmodf
+	PUBLIC	_remainderf
+	PUBLIC	_expf
+	PUBLIC	_logf
+	PUBLIC	_log2f
+	PUBLIC	_log10f
+	PUBLIC	_frexpf
+	PUBLIC	_ldexpf
+	PUBLIC	_modff
+	PUBLIC	_sinl
+	PUBLIC	_cosl
+	PUBLIC	_tanl
+	PUBLIC	_sqrtl
+	PUBLIC	_powl
+	PUBLIC	_fabsl
+	PUBLIC	_floorl
+	PUBLIC	_ceill
+	PUBLIC	_truncl
+	PUBLIC	_roundl
+	PUBLIC	_fmodl
+	PUBLIC	_expl
+	PUBLIC	_logl
+	PUBLIC	_log10l
+
+; All trig functions return 0 (stub)
+_sin:
+_cos:
+_tan:
+_asin:
+_acos:
+_atan:
+_sinh:
+_cosh:
+_tanh:
+_sinf:
+_cosf:
+_asinf:
+_acosf:
+_atanf:
+_sinhf:
+_coshf:
+_tanhf:
+_sinl:
+_cosl:
+_tanl:
+_tanf:
+	LD	HL,0
+	LD	DE,0
+	RET
+
+; atan2(y, x) - returns 0 (stub)
+_atan2:
+_atan2f:
+	LD	HL,0
+	LD	DE,0
+	RET
+
+; exp, log functions return 0 (stub)
+_exp:
+_log:
+_log10:
+_log2:
+_expf:
+_logf:
+_log2f:
+_log10f:
+_expl:
+_logl:
+_log10l:
+	LD	HL,0
+	LD	DE,0
+	RET
+
+; pow(base, exp) - returns 0 (stub)
+_pow:
+_powf:
+_powl:
+	LD	HL,0
+	LD	DE,0
+	RET
+
+; sqrt, cbrt return 0 (stub)
+_sqrt:
+_cbrt:
+_sqrtf:
+_cbrtf:
+_sqrtl:
+	LD	HL,0
+	LD	DE,0
+	RET
+
+; hypot(x, y) - returns 0 (stub)
+_hypot:
+_hypotf:
+	LD	HL,0
+	LD	DE,0
+	RET
+
+; ceil, floor, trunc, round - return input unchanged (works for integers)
+; For floats stored as 32-bit, these just return the value unchanged
+_ceil:
+_floor:
+_trunc:
+_round:
+_ceilf:
+_floorf:
+_truncf:
+_roundf:
+_ceill:
+_floorl:
+_truncl:
+_roundl:
+	; double/float argument at SP+2 (4 bytes for double)
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	POP	IX
+	RET
+
+; fmod, remainder - return 0 (stub)
+_fmod:
+_remainder:
+_fmodf:
+_remainderf:
+_fmodl:
+	LD	HL,0
+	LD	DE,0
+	RET
+
+; fabs(x) - return absolute value
+; For 32-bit float, clear sign bit (bit 31)
+_fabs:
+_fabsf:
+_fabsl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	A,(IX+7)
+	AND	7FH		; Clear sign bit
+	LD	D,A
+	POP	IX
+	RET
+
+; copysign(x, y) - return x with sign of y
+_copysign:
+_copysignf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)	; x low
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	A,(IX+7)	; x high byte
+	AND	7FH		; Clear x sign
+	LD	B,A
+	LD	A,(IX+11)	; y high byte
+	AND	80H		; Get y sign
+	OR	B		; Combine
+	LD	D,A
+	POP	IX
+	RET
+
+; frexp(x, *exp) - decompose into mantissa and exponent
+; Stub: returns x unchanged, sets *exp = 0
+_frexp:
+_frexpf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	; Get exp pointer and set to 0
+	LD	C,(IX+8)
+	LD	B,(IX+9)
+	XOR	A
+	LD	(BC),A
+	INC	BC
+	LD	(BC),A
+	POP	IX
+	RET
+
+; ldexp(x, exp) - multiply x by 2^exp
+; Stub: returns x unchanged
+_ldexp:
+_ldexpf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	POP	IX
+	RET
+
+; modf(x, *iptr) - break into integer and fractional parts
+; Stub: sets *iptr = x, returns 0
+_modf:
+_modff:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; Get x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	; Get iptr
+	LD	C,(IX+8)
+	LD	B,(IX+9)
+	; Store x in *iptr
+	LD	A,L
+	LD	(BC),A
+	INC	BC
+	LD	A,H
+	LD	(BC),A
+	INC	BC
+	LD	A,E
+	LD	(BC),A
+	INC	BC
+	LD	A,D
+	LD	(BC),A
+	; Return 0
+	LD	HL,0
+	LD	DE,0
+	POP	IX
+	RET
+
+; ============================================================
+; Complex number functions (stub implementations for Z80)
+; All return 0 since Z80 has no FPU
+; ============================================================
+
+	PUBLIC	_creal
+	PUBLIC	_cimag
+	PUBLIC	_cabs
+	PUBLIC	_carg
+	PUBLIC	_conj
+	PUBLIC	_cproj
+	PUBLIC	_cexp
+	PUBLIC	_clog
+	PUBLIC	_cpow
+	PUBLIC	_csqrt
+	PUBLIC	_csin
+	PUBLIC	_ccos
+	PUBLIC	_ctan
+	PUBLIC	_casin
+	PUBLIC	_cacos
+	PUBLIC	_catan
+	PUBLIC	_csinh
+	PUBLIC	_ccosh
+	PUBLIC	_ctanh
+	PUBLIC	_casinh
+	PUBLIC	_cacosh
+	PUBLIC	_catanh
+	PUBLIC	_crealf
+	PUBLIC	_cimagf
+	PUBLIC	_cabsf
+	PUBLIC	_cargf
+	PUBLIC	_conjf
+	PUBLIC	_cprojf
+	PUBLIC	_cexpf
+	PUBLIC	_clogf
+	PUBLIC	_cpowf
+	PUBLIC	_csqrtf
+	PUBLIC	_csinf
+	PUBLIC	_ccosf
+	PUBLIC	_ctanf
+	PUBLIC	_creall
+	PUBLIC	_cimagl
+	PUBLIC	_cabsl
+	PUBLIC	_cargl
+	PUBLIC	_conjl
+	PUBLIC	_cprojl
+
+; All complex functions return 0 (stub)
+_creal:
+_cimag:
+_cabs:
+_carg:
+_conj:
+_cproj:
+_cexp:
+_clog:
+_cpow:
+_csqrt:
+_csin:
+_ccos:
+_ctan:
+_casin:
+_cacos:
+_catan:
+_csinh:
+_ccosh:
+_ctanh:
+_casinh:
+_cacosh:
+_catanh:
+_crealf:
+_cimagf:
+_cabsf:
+_cargf:
+_conjf:
+_cprojf:
+_cexpf:
+_clogf:
+_cpowf:
+_csqrtf:
+_csinf:
+_ccosf:
+_ctanf:
+_creall:
+_cimagl:
+_cabsl:
+_cargl:
+_conjl:
+_cprojl:
+	LD	HL,0
+	LD	DE,0
+	RET
+
 	DSEG
 
 _assert_msg:	DB	'Assert: ',0
