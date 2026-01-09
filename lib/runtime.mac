@@ -111,6 +111,111 @@ __mod16:
 	RET
 
 ; ============================================================
+; 16-bit signed division: HL = DE / HL (signed)
+; ============================================================
+	PUBLIC	__sdiv16
+__sdiv16:
+	; Check signs of both operands
+	LD	A,D
+	XOR	H		; A bit 7 = 1 if signs differ
+	PUSH	AF		; Save sign for result
+
+	; Make DE positive
+	BIT	7,D
+	JR	Z,__sdiv16_de_pos
+	LD	A,E
+	CPL
+	LD	E,A
+	LD	A,D
+	CPL
+	LD	D,A
+	INC	DE		; DE = -DE
+
+__sdiv16_de_pos:
+	; Make HL positive
+	BIT	7,H
+	JR	Z,__sdiv16_hl_pos
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	INC	HL		; HL = -HL
+
+__sdiv16_hl_pos:
+	; Do unsigned division
+	CALL	__div16
+
+	; Check if we need to negate result
+	POP	AF
+	BIT	7,A
+	RET	Z		; Same signs, result positive
+
+	; Negate result
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	INC	HL
+	RET
+
+; ============================================================
+; 16-bit signed modulo: HL = DE % HL (signed)
+; Result has same sign as dividend (DE)
+; ============================================================
+	PUBLIC	__smod16
+__smod16:
+	; Save sign of dividend
+	LD	A,D
+	PUSH	AF
+
+	; Make DE positive
+	BIT	7,D
+	JR	Z,__smod16_de_pos
+	LD	A,E
+	CPL
+	LD	E,A
+	LD	A,D
+	CPL
+	LD	D,A
+	INC	DE
+
+__smod16_de_pos:
+	; Make HL positive
+	BIT	7,H
+	JR	Z,__smod16_hl_pos
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	INC	HL
+
+__smod16_hl_pos:
+	; Do unsigned division (remainder in __divrem)
+	CALL	__div16
+	LD	HL,(__divrem)
+
+	; Check if we need to negate remainder
+	POP	AF
+	BIT	7,A
+	RET	Z		; Dividend was positive
+
+	; Negate remainder
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	INC	HL
+	RET
+
+; ============================================================
 ; 16-bit arithmetic left shift: HL = DE << HL
 ; ============================================================
 	PUBLIC	__shl16
@@ -451,6 +556,128 @@ __mod32:
 	LD	HL,(__rem32)
 	LD	DE,(__rem32+2)
 	RET
+
+; ============================================================
+; 32-bit signed division: DEHL = DEHL / (__tmp32) (signed)
+; ============================================================
+	PUBLIC	__sdiv32
+__sdiv32:
+	; Check signs: XOR high bytes
+	LD	A,D
+	PUSH	AF		; Save sign of DEHL
+	LD	BC,(__tmp32+2)
+	XOR	B		; A bit 7 = 1 if signs differ
+	PUSH	AF		; Save result sign
+
+	; Make DEHL positive if negative
+	POP	AF
+	POP	AF		; Get DEHL sign
+	PUSH	AF
+	BIT	7,A
+	CALL	NZ,__neg32
+
+	; Make __tmp32 positive if negative
+	LD	A,(__tmp32+3)
+	BIT	7,A
+	JR	Z,__sdiv32_pos
+
+	; Negate __tmp32
+	PUSH	HL
+	PUSH	DE
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	DE
+	POP	HL
+
+__sdiv32_pos:
+	; Save the sign determination for result
+	POP	AF		; DEHL sign
+	LD	BC,(__tmp32+2)
+	XOR	B		; Recalculate result sign
+	PUSH	AF
+
+	; Do unsigned division
+	CALL	__div32
+
+	; Negate result if signs were different
+	POP	AF
+	BIT	7,A
+	RET	Z
+	JP	__neg32
+
+; ============================================================
+; 32-bit signed modulo: DEHL = DEHL % (__tmp32) (signed)
+; Result has same sign as dividend
+; ============================================================
+	PUBLIC	__smod32
+__smod32:
+	; Save sign of dividend
+	LD	A,D
+	PUSH	AF
+
+	; Make DEHL positive if negative
+	BIT	7,D
+	CALL	NZ,__neg32
+
+	; Make __tmp32 positive if negative
+	LD	A,(__tmp32+3)
+	BIT	7,A
+	JR	Z,__smod32_pos
+
+	; Negate __tmp32
+	PUSH	HL
+	PUSH	DE
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	DE
+	POP	HL
+
+__smod32_pos:
+	; Do unsigned division
+	CALL	__div32
+	; Remainder in __rem32
+	LD	HL,(__rem32)
+	LD	DE,(__rem32+2)
+
+	; Negate if dividend was negative
+	POP	AF
+	BIT	7,A
+	RET	Z
+	JP	__neg32
 
 ; ============================================================
 ; 32-bit compare: sets flags based on DEHL - (__tmp32)
