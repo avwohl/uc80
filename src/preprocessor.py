@@ -636,15 +636,43 @@ class Preprocessor:
 
     def _handle_token_pasting(self, body: str, params: list[str], args: list[str]) -> str:
         """Handle ## operator (token pasting)."""
-        # First substitute parameters that are part of ## operations
-        for param, arg in zip(params, args):
-            # param ## something
-            body = re.sub(rf'\b{re.escape(param)}\s*##', arg + '##', body)
-            # something ## param
-            body = re.sub(rf'##\s*{re.escape(param)}\b', '##' + arg, body)
+        # Build param->arg mapping
+        param_map = dict(zip(params, args))
 
-        # Now remove ## and concatenate tokens
-        body = re.sub(r'\s*##\s*', '', body)
+        # Process ## operators from left to right
+        # Token pattern: identifier or single punctuator
+        token_pat = r'([a-zA-Z_][a-zA-Z0-9_]*|[^\s])'
+        paste_pat = rf'{token_pat}\s*##\s*{token_pat}'
+
+        while '##' in body:
+            # Find the ## and get tokens on either side
+            match = re.search(paste_pat, body)
+            if not match:
+                # No valid ## pattern found, remove any stray ##
+                body = body.replace('##', '')
+                break
+
+            left_token = match.group(1)
+            right_token = match.group(2)
+
+            # Substitute parameters with their arguments
+            if left_token in param_map:
+                left_token = param_map[left_token]
+            if right_token in param_map:
+                right_token = param_map[right_token]
+
+            # Concatenate the tokens (empty tokens just disappear)
+            pasted = left_token + right_token
+
+            # Check if we need to preserve token boundary after paste
+            # If the right operand was empty and there's more text after,
+            # add a space to separate tokens
+            suffix = body[match.end():]
+            if not right_token and suffix and not suffix[0].isspace():
+                pasted = pasted + ' '
+
+            # Replace the entire match with the pasted result
+            body = body[:match.start()] + pasted + suffix
 
         return body
 
