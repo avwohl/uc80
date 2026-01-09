@@ -108,39 +108,39 @@ class TestIntegerLiterals:
 
     def test_decimal(self):
         tokens = tokenize("0 1 42 123456")
-        assert tokens[0].value == 0
-        assert tokens[1].value == 1
-        assert tokens[2].value == 42
-        assert tokens[3].value == 123456
+        assert tokens[0].value[0] == 0
+        assert tokens[1].value[0] == 1
+        assert tokens[2].value[0] == 42
+        assert tokens[3].value[0] == 123456
 
     def test_hexadecimal(self):
         tokens = tokenize("0x0 0x1a 0XFF 0xDEADBEEF")
-        assert tokens[0].value == 0x0
-        assert tokens[1].value == 0x1a
-        assert tokens[2].value == 0xFF
-        assert tokens[3].value == 0xDEADBEEF
+        assert tokens[0].value[0] == 0x0
+        assert tokens[1].value[0] == 0x1a
+        assert tokens[2].value[0] == 0xFF
+        assert tokens[3].value[0] == 0xDEADBEEF
 
     def test_octal(self):
         tokens = tokenize("00 07 0777 0123")
-        assert tokens[0].value == 0
-        assert tokens[1].value == 7
-        assert tokens[2].value == 0o777
-        assert tokens[3].value == 0o123
+        assert tokens[0].value[0] == 0
+        assert tokens[1].value[0] == 7
+        assert tokens[2].value[0] == 0o777
+        assert tokens[3].value[0] == 0o123
 
     def test_binary(self):
         """Test C24 binary literals."""
         tokens = tokenize("0b0 0b1 0b1010 0B11111111")
-        assert tokens[0].value == 0b0
-        assert tokens[1].value == 0b1
-        assert tokens[2].value == 0b1010
-        assert tokens[3].value == 0b11111111
+        assert tokens[0].value[0] == 0b0
+        assert tokens[1].value[0] == 0b1
+        assert tokens[2].value[0] == 0b1010
+        assert tokens[3].value[0] == 0b11111111
 
     def test_digit_separators(self):
         """Test C24 digit separators."""
         tokens = tokenize("1'000'000 0xFF'FF 0b1010'1010")
-        assert tokens[0].value == 1000000
-        assert tokens[1].value == 0xFFFF
-        assert tokens[2].value == 0b10101010
+        assert tokens[0].value[0] == 1000000
+        assert tokens[1].value[0] == 0xFFFF
+        assert tokens[2].value[0] == 0b10101010
 
     def test_suffixes(self):
         """Test integer suffixes (value is same, suffix recorded)."""
@@ -158,7 +158,8 @@ class TestFloatLiterals:
         assert tokens[0].value == pytest.approx(3.14)
         assert tokens[1].value == pytest.approx(0.5)
         # .5 won't parse as float - it's DOT then 5
-        assert tokens[4].value == pytest.approx(1.0)
+        # 1. is parsed as INT(1) then DOT, so 1.0 is at index 6
+        assert tokens[6].value == pytest.approx(1.0)
 
     def test_exponent(self):
         tokens = tokenize("1e10 1E10 1e+10 1e-10 1.5e3")

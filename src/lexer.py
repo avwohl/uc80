@@ -284,14 +284,14 @@ class Lexer:
             return ord('\t')
         elif ch == 'r':
             return ord('\r')
-        elif ch == '0':
-            # Octal or null
-            value = 0
-            count = 0
-            while self._is_octal_digit(self._peek()) and count < 2:
+        elif ch in '01234567':
+            # Octal escape sequence (1-3 digits)
+            value = int(ch)
+            count = 1
+            while self._is_octal_digit(self._peek()) and count < 3:
                 value = value * 8 + int(self._advance())
                 count += 1
-            return value
+            return value & 0xFF
         elif ch == 'x':
             # Hex escape
             value = 0

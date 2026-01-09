@@ -205,7 +205,7 @@ class Parser:
         return ast.StructType(name=name, is_union=is_union, members=members, location=loc)
 
     def _parse_enum_type(self) -> ast.EnumType:
-        """Parse enum type."""
+        """Parse enum type, including inline value definitions."""
         loc = self._current().location
         self._expect(TokenType.ENUM)
 
@@ -213,7 +213,21 @@ class Parser:
         if self._check(TokenType.IDENTIFIER):
             name = self._advance().value
 
-        return ast.EnumType(name=name, location=loc)
+        # Parse inline enum values if present
+        values = []
+        if self._check(TokenType.LBRACE):
+            self._advance()  # consume {
+            while not self._check(TokenType.RBRACE):
+                val_name = self._expect(TokenType.IDENTIFIER).value
+                value = None
+                if self._match(TokenType.ASSIGN):
+                    value = self._parse_assignment_expression()
+                values.append(ast.EnumValue(name=val_name, value=value, location=self._current().location))
+                if not self._match(TokenType.COMMA):
+                    break
+            self._expect(TokenType.RBRACE)
+
+        return ast.EnumType(name=name, values=values, location=loc)
 
     def _parse_declarator(self, base_type: ast.TypeNode) -> tuple[str, ast.TypeNode]:
         """Parse declarator, returning (name, full_type)."""
@@ -222,6 +236,8 @@ class Parser:
         while self._match(TokenType.STAR):
             is_const = self._match(TokenType.CONST) is not None
             is_volatile = self._match(TokenType.VOLATILE) is not None
+            # Also consume restrict - we store it but don't enforce semantics
+            self._match(TokenType.RESTRICT)
             pointer_stack.append((is_const, is_volatile))
 
         # If no grouping, apply pointers directly to base type
@@ -937,10 +953,38 @@ class Parser:
         base_type = self._parse_type_specifier()
 
         # Check for struct/union/enum definition
+        # Note: _parse_struct_type and _parse_enum_type may have already parsed inline definitions
         if isinstance(base_type, ast.StructType) and self._check(TokenType.LBRACE):
             return self._parse_struct_definition(base_type, storage_class, is_typedef)
         if isinstance(base_type, ast.EnumType) and self._check(TokenType.LBRACE):
             return self._parse_enum_definition(base_type, storage_class, is_typedef)
+
+        # Handle struct/enum definitions where members were already parsed inline
+        if isinstance(base_type, ast.StructType) and base_type.members:
+            if self._check(TokenType.SEMICOLON):
+                # Bare struct definition: struct Point { ... };
+                self._advance()  # consume semicolon
+                return ast.StructDecl(name=base_type.name, members=base_type.members,
+                                      is_union=base_type.is_union, is_definition=True, location=loc)
+            elif is_typedef:
+                # typedef struct { ... } Name;
+                name, _ = self._parse_declarator(base_type)
+                if name:
+                    self.typedefs[name] = base_type
+                    self._expect(TokenType.SEMICOLON)
+                    return ast.TypedefDecl(name=name, target_type=base_type, location=loc)
+        if isinstance(base_type, ast.EnumType) and base_type.values:
+            if self._check(TokenType.SEMICOLON):
+                # Bare enum definition: enum Color { ... };
+                self._advance()  # consume semicolon
+                return ast.EnumDecl(name=base_type.name, values=base_type.values, location=loc)
+            elif is_typedef:
+                # typedef enum { ... } Name;
+                name, _ = self._parse_declarator(base_type)
+                if name:
+                    self.typedefs[name] = base_type
+                    self._expect(TokenType.SEMICOLON)
+                    return ast.TypedefDecl(name=name, target_type=base_type, location=loc)
 
         # Declarators
         declarations = []

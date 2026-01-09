@@ -241,11 +241,21 @@ class Preprocessor:
         args = args.strip()
 
         # Determine include type and filename
-        if args.startswith('"') and args.endswith('"'):
-            filename = args[1:-1]
+        if args.startswith('"'):
+            # Find closing quote - handle trailing comments
+            end = args.find('"', 1)
+            if end == -1:
+                raise PreprocessorError(f"Invalid #include syntax: {args}",
+                                       self.current_file, self.current_line)
+            filename = args[1:end]
             search_paths = [os.path.dirname(self.current_file)] + self.include_paths
-        elif args.startswith('<') and args.endswith('>'):
-            filename = args[1:-1]
+        elif args.startswith('<'):
+            # Find closing angle bracket - handle trailing comments
+            end = args.find('>')
+            if end == -1:
+                raise PreprocessorError(f"Invalid #include syntax: {args}",
+                                       self.current_file, self.current_line)
+            filename = args[1:end]
             search_paths = self.include_paths
         else:
             raise PreprocessorError(f"Invalid #include syntax: {args}",

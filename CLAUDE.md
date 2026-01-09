@@ -12,3 +12,7 @@ it is linux program that runs cp/m programs and translates
 system calls.  If we made 80un.com then running cpmemu 80un.com args to 80un
 you could test 80un
 All of the above are in github on this accounts.
+
+External test suites are located at:
+- ../external/*test* (various test files)
+- ../external/z88dk (z88dk test suite)

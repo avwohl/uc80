@@ -401,6 +401,8 @@ class CodeGenerator:
         if isinstance(decl, ast.FunctionDecl):
             self.gen_function(decl)
         elif isinstance(decl, ast.VarDecl):
+            # Register any inline types (enums, etc.)
+            self._register_inline_types(decl.var_type)
             # Check if this is a function declaration (parsed as VarDecl with FunctionType)
             if isinstance(decl.var_type, ast.FunctionType):
                 # This is a function declaration without body - emit EXTRN
@@ -435,6 +437,21 @@ class CodeGenerator:
                     offset += self._type_size(member.member_type)
         self.ctx.structs[decl.name] = members
 
+    def _register_enum_type_values(self, enum_type: ast.EnumType) -> None:
+        """Register enum constants from an inline EnumType."""
+        if not enum_type.values:
+            return
+
+        next_value = 0
+        for enum_val in enum_type.values:
+            if enum_val.value is not None:
+                if isinstance(enum_val.value, ast.IntLiteral):
+                    next_value = enum_val.value.value
+                else:
+                    next_value = 0
+            self.ctx.enum_constants[enum_val.name] = next_value
+            next_value += 1
+
     def _register_enum(self, decl: ast.EnumDecl) -> None:
         """Register enum constants for later use."""
         if not decl.is_definition:
@@ -452,8 +469,28 @@ class CodeGenerator:
             self.ctx.enum_constants[enum_val.name] = next_value
             next_value += 1
 
+    def _register_inline_types(self, type_node: ast.TypeNode) -> None:
+        """Recursively register inline type definitions (enums in structs, etc.)."""
+        if isinstance(type_node, ast.EnumType):
+            self._register_enum_type_values(type_node)
+        elif isinstance(type_node, ast.StructType):
+            # Register inline struct members and any nested enums
+            for member in type_node.members:
+                self._register_inline_types(member.member_type)
+        elif isinstance(type_node, ast.PointerType):
+            self._register_inline_types(type_node.base_type)
+        elif isinstance(type_node, ast.ArrayType):
+            self._register_inline_types(type_node.base_type)
+        elif isinstance(type_node, ast.FunctionType):
+            self._register_inline_types(type_node.return_type)
+            for param_type in type_node.param_types:
+                self._register_inline_types(param_type)
+
     def _register_typedef(self, decl: ast.TypedefDecl) -> None:
         """Register typedef, especially for anonymous structs."""
+        # Register any inline types first
+        self._register_inline_types(decl.target_type)
+
         if isinstance(decl.target_type, ast.StructType):
             struct_type = decl.target_type
             # If it's an anonymous struct with inline members, register under typedef name
