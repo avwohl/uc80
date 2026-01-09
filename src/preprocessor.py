@@ -296,7 +296,9 @@ class Preprocessor:
                                    self.current_file, self.current_line)
 
         # Check for function-like macro: NAME(params)
-        match = re.match(r'(\w+)\s*\(\s*([^)]*)\s*\)\s*(.*)', args)
+        # Note: In C, the ( must immediately follow the name with NO whitespace
+        # for it to be a function-like macro. #define FOO (x) is object-like with value "(x)"
+        match = re.match(r'(\w+)\(\s*([^)]*)\s*\)\s*(.*)', args)
         if match:
             name = match.group(1)
             params_str = match.group(2).strip()
