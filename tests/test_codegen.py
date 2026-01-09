@@ -95,9 +95,9 @@ class TestExpressionGeneration:
         assert "CALL\t__mul16" in code
 
     def test_division_calls_runtime(self):
-        """Division calls runtime library."""
+        """Division calls runtime library (signed for int)."""
         code = gen("int main(void) { return 10 / 2; }")
-        assert "CALL\t__div16" in code
+        assert "CALL\t__sdiv16" in code  # Signed division for int
 
 
 class TestUnaryOperators:

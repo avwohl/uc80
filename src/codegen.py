@@ -655,6 +655,10 @@ class CodeGenerator:
             self.gen_switch(stmt)
         elif isinstance(stmt, ast.CaseStmt):
             self.gen_case(stmt)
+        elif isinstance(stmt, ast.LabelStmt):
+            self.gen_label(stmt)
+        elif isinstance(stmt, ast.GotoStmt):
+            self.gen_goto(stmt)
 
     def gen_return(self, stmt: ast.ReturnStmt) -> None:
         """Generate code for return statement."""
@@ -862,6 +866,16 @@ class CodeGenerator:
         # Generate the statement following the case label
         self.gen_statement(stmt.stmt)
 
+    def gen_label(self, stmt: ast.LabelStmt) -> None:
+        """Generate code for a labeled statement."""
+        # User labels are prefixed with @L_ to avoid conflicts
+        self.ctx.emit_label(f"@L_{stmt.label}")
+        self.gen_statement(stmt.stmt)
+
+    def gen_goto(self, stmt: ast.GotoStmt) -> None:
+        """Generate code for goto statement."""
+        self.ctx.emit_instr("JP", f"@L_{stmt.label}")
+
     def gen_expr(self, expr: ast.Expression, force_long: bool = False) -> None:
         """Generate code for an expression. Result in HL (16-bit) or DEHL (32-bit)."""
         if isinstance(expr, ast.IntLiteral):
@@ -1026,9 +1040,12 @@ class CodeGenerator:
         elif op == "*":
             self._call_runtime("__mul16")
         elif op == "/":
-            self._call_runtime("__div16")
+            # Use signed or unsigned division based on operand types
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            self._call_runtime("__div16" if is_unsigned else "__sdiv16")
         elif op == "%":
-            self._call_runtime("__mod16")
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            self._call_runtime("__mod16" if is_unsigned else "__smod16")
         elif op == "&":
             self.ctx.emit_instr("LD", "A,H")
             self.ctx.emit_instr("AND", "D")
@@ -1136,9 +1153,11 @@ class CodeGenerator:
             else:
                 self._call_runtime("__smul32")
         elif op == "/":
-            self._call_runtime("__div32")
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            self._call_runtime("__div32" if is_unsigned else "__sdiv32")
         elif op == "%":
-            self._call_runtime("__mod32")
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            self._call_runtime("__mod32" if is_unsigned else "__smod32")
         elif op == "&":
             self._call_runtime("__and32")
         elif op == "|":

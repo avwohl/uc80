@@ -436,11 +436,14 @@ class Preprocessor:
         try:
             # Use Python's eval with restricted globals
             # Support C-style operators
-            expr = expr.replace('&&', ' and ')
-            expr = expr.replace('||', ' or ')
+            # Note: C's || and && return 1 or 0, not the actual values like Python
+            # We need custom handling to preserve both short-circuit and 1/0 semantics
+            expr = self._convert_logical_ops(expr)
+            # Handle != before replacing ! with not, to avoid breaking !=
+            # Use a placeholder to preserve !=
+            expr = expr.replace('!=', ' __NE__ ')
             expr = expr.replace('!', ' not ')
-            # Handle C-style not-equal that wasn't replaced
-            expr = expr.replace(' not =', '!=')
+            expr = expr.replace(' __NE__ ', '!=')
 
             # Convert C ternary (cond ? then : else) to Python (then if cond else else)
             expr = self._convert_ternary(expr)
@@ -523,6 +526,145 @@ class Preprocessor:
             expr = expr[:cond_start] + replacement + expr[else_end:]
 
         return expr
+
+    def _convert_logical_ops(self, expr: str) -> str:
+        """Convert C's && and || to Python equivalents that return 1 or 0.
+
+        C's || returns 1 if either operand is true, 0 otherwise.
+        Python's 'or' returns the first truthy value or the last value.
+        We need to preserve short-circuit evaluation while returning 1/0.
+
+        Strategy: Use Python's conditional expression
+        a || b  ->  (1 if (a) else (1 if (b) else 0))
+        a && b  ->  (1 if ((a) and (b)) else 0)
+        """
+        # Process || and && from left to right, respecting parentheses
+        # This is a simple tokenizer approach
+        result = []
+        i = 0
+        while i < len(expr):
+            if expr[i:i+2] == '||':
+                # Found ||, need to wrap the left and right operands
+                # For simplicity, use Python's truthiness with explicit 1/0 result
+                # We'll process this after collecting all operators
+                result.append(' or ')
+                i += 2
+            elif expr[i:i+2] == '&&':
+                result.append(' and ')
+                i += 2
+            else:
+                result.append(expr[i])
+                i += 1
+
+        expr = ''.join(result)
+
+        # Now wrap the entire expression to normalize or/and results to 1/0
+        # This is done by replacing 'a or b' with '(1 if (a) else (1 if (b) else 0))'
+        # and 'a and b' with '(1 if (a) and (b) else 0)'
+        # However, this gets complex with nested expressions.
+        #
+        # Simpler approach: wrap each 'or' subexpression
+        # But we need to handle precedence: and binds tighter than or
+
+        # For now, use a simpler fix: make the result boolean by wrapping
+        # We'll fix the most common case: expr || expr where we need 1, not the value
+        # Use custom evaluation that normalizes 'or' results
+
+        # Actually, the cleanest solution is to provide helper functions in eval context
+        # But that doesn't work with short-circuit. Let's try a different approach.
+
+        # Use recursive conversion for each || and &&
+        expr = self._normalize_or(expr)
+        expr = self._normalize_and(expr)
+
+        return expr
+
+    def _normalize_or(self, expr: str) -> str:
+        """Convert a || b to (1 if (a) else (1 if (b) else 0)) preserving short-circuit."""
+        # First, recursively process any parenthesized subexpressions
+        result = []
+        i = 0
+        while i < len(expr):
+            if expr[i] == '(':
+                # Find matching close paren
+                depth = 1
+                start = i
+                i += 1
+                while i < len(expr) and depth > 0:
+                    if expr[i] == '(':
+                        depth += 1
+                    elif expr[i] == ')':
+                        depth -= 1
+                    i += 1
+                # Recursively process the content inside parens
+                inner = expr[start+1:i-1]
+                inner = self._normalize_or(inner)
+                inner = self._normalize_and(inner)
+                result.append('(' + inner + ')')
+            else:
+                result.append(expr[i])
+                i += 1
+        expr = ''.join(result)
+
+        # Now find 'or' at the top level (not inside parentheses)
+        paren_depth = 0
+        or_positions = []
+        i = 0
+        while i < len(expr):
+            c = expr[i]
+            if c == '(':
+                paren_depth += 1
+            elif c == ')':
+                paren_depth -= 1
+            elif paren_depth == 0 and expr[i:i+4] == ' or ':
+                or_positions.append(i)
+            i += 1
+
+        if not or_positions:
+            return expr
+
+        # Convert from right to left to handle nested cases
+        for pos in reversed(or_positions):
+            left = expr[:pos]
+            right = expr[pos+4:]
+            expr = f'(1 if ({left}) else (1 if ({right}) else 0))'
+
+        return expr
+
+    def _normalize_and(self, expr: str) -> str:
+        """Convert a and b to (1 if (a) and (b) else 0)."""
+        # Find 'and' at the top level (not inside parentheses)
+        paren_depth = 0
+        and_positions = []
+        i = 0
+        while i < len(expr):
+            c = expr[i]
+            if c == '(':
+                paren_depth += 1
+            elif c == ')':
+                paren_depth -= 1
+            elif paren_depth == 0 and expr[i:i+5] == ' and ':
+                and_positions.append(i)
+            i += 1
+
+        if not and_positions:
+            return expr
+
+        # Split by 'and' and wrap
+        parts = []
+        last_end = 0
+        for pos in and_positions:
+            parts.append(expr[last_end:pos])
+            last_end = pos + 5
+        parts.append(expr[last_end:])
+
+        # Build the and expression with proper parentheses
+        if len(parts) == 2:
+            return f'(1 if ({parts[0]}) and ({parts[1]}) else 0)'
+        else:
+            # Multiple ands: (1 if (a) and (b) and (c) else 0)
+            wrapped = ' and '.join(f'({p})' for p in parts)
+            return f'(1 if {wrapped} else 0)'
 
     def _expand_defined(self, expr: str) -> str:
         """Expand defined() operator in expression."""

@@ -273,9 +273,14 @@ class Parser:
                 # Grouped declarator like (*fptr)
                 # Parse inner declarator recursively with a placeholder
                 name, inner_type = self._parse_declarator(base_type)
+                # Save the function params from the inner declarator before they get overwritten
+                saved_params = getattr(self, '_last_params', [])
                 self._expect(TokenType.RPAREN)
                 # Parse suffix (array/function) with original base type
                 suffix_type = self._parse_declarator_suffix(base_type)
+                # Restore saved params (they belong to the actual function, not the return type)
+                if saved_params:
+                    self._last_params = saved_params
                 # Now substitute: inner_type wraps suffix_type
                 # inner_type has base_type somewhere inside; replace it with suffix_type
                 result_type = self._substitute_base_type(inner_type, base_type, suffix_type)
@@ -1004,7 +1009,7 @@ class Parser:
             if self._check(TokenType.SEMICOLON):
                 # Bare enum definition: enum Color { ... };
                 self._advance()  # consume semicolon
-                return ast.EnumDecl(name=base_type.name, values=base_type.values, location=loc)
+                return ast.EnumDecl(name=base_type.name, values=base_type.values, is_definition=True, location=loc)
             elif is_typedef:
                 # typedef enum { ... } Name;
                 name, _ = self._parse_declarator(base_type)
