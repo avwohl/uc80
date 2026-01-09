@@ -766,25 +766,23 @@ _fputc_file:
 
 _fputc_store:
 	; Store byte in buffer
-	LD	B,(HL)		; B = bufpos
-	LD	(HL),0		; Will increment below
+	LD	A,(HL)		; A = bufpos
 	POP	HL
 	PUSH	HL
 	LD	DE,FILE_BUFFER
 	ADD	HL,DE
-	LD	E,B
+	LD	E,A
 	LD	D,0
 	ADD	HL,DE		; HL = buffer[bufpos]
 	LD	A,(IX+4)
-	LD	(HL),A
+	LD	(HL),A		; Store the byte
 
 	; Increment bufpos
 	POP	HL
 	PUSH	HL
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
-	INC	B
-	LD	(HL),B
+	LD	DE,FILE_BUFPOS
+	ADD	HL,DE
+	INC	(HL)		; bufpos++
 
 	POP	HL
 	LD	L,(IX+4)
@@ -918,17 +916,19 @@ _fgets:
 _fgets_loop:
 	PUSH	BC
 	PUSH	DE
-	PUSH	HL
-	PUSH	HL
+	PUSH	HL		; Save stream
+	PUSH	HL		; Pass stream as arg
 	CALL	_fgetc
-	POP	BC		; Discard stream copy
-	POP	BC		; BC = stream
-	LD	A,H
+	POP	BC		; Discard arg
+	; HL = fgetc return value, save it
+	LD	A,H		; Check high byte first
+	LD	B,L		; B = character (save before POP)
+	POP	HL		; Restore stream to HL
 	OR	A
-	JR	NZ,_fgets_eof	; EOF
-	LD	A,L
-	POP	DE
-	POP	BC
+	JR	NZ,_fgets_eof	; EOF if H != 0 (return was 0xFFxx)
+	LD	A,B		; A = character
+	POP	DE		; Restore dest pointer
+	POP	BC		; Restore count
 
 	LD	(DE),A
 	INC	DE
@@ -953,9 +953,10 @@ _fgets_term:
 	RET
 
 _fgets_eof:
-	POP	DE
-	POP	BC
-	POP	HL
+	; Stack has: [BC_count][DE_dest]
+	; HL = stream (just restored)
+	POP	DE		; Restore dest pointer
+	POP	BC		; Restore count
 	; Check if we read anything
 	LD	A,(IX+4)
 	CP	E
@@ -963,8 +964,7 @@ _fgets_eof:
 	LD	A,(IX+5)
 	CP	D
 	JR	NZ,_fgets_term
-	; No data read - EOF
-	POP	HL		; Discard saved buffer
+	; No data read - return NULL
 _fgets_null:
 	LD	HL,0
 	POP	DE
