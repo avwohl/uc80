@@ -13,6 +13,9 @@ from .parser import Parser, ParseError
 from .codegen import generate
 from .preprocessor import Preprocessor, PreprocessorError
 
+# Import peephole optimizer from upeepz80 library
+from upeepz80 import PeepholeOptimizer
+
 
 def main() -> int:
     """Main entry point."""
@@ -56,6 +59,11 @@ def main() -> int:
         "-P", "--no-preprocess",
         action="store_true",
         help="Skip preprocessing"
+    )
+    parser.add_argument(
+        "-O0", "--no-optimize",
+        action="store_true",
+        help="Disable peephole optimization"
     )
 
     args = parser.parse_args()
@@ -134,6 +142,20 @@ def main() -> int:
 
         if args.verbose:
             print(f"  Generated {len(code.splitlines())} lines of assembly")
+
+        # Peephole optimization (enabled by default)
+        if not args.no_optimize:
+            if args.verbose:
+                print(f"  Peephole optimization...")
+
+            peephole = PeepholeOptimizer()
+            code = peephole.optimize(code)
+
+            if args.verbose:
+                for pattern, count in peephole.stats.items():
+                    if count > 0:
+                        print(f"    {pattern}: {count} applied")
+                print(f"  Optimized to {len(code.splitlines())} lines of assembly")
 
         # Write output
         output_path.write_text(code)
