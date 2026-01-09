@@ -161,6 +161,15 @@ class Symbol:
     offset: int = 0  # Stack offset for locals (negative from IX)
     is_global: bool = False
     is_param: bool = False
+    is_static: bool = False  # Static local - name already has underscore prefix
+
+    def label(self) -> str:
+        """Get the assembly label for this symbol."""
+        # Static locals already have __ prefix, don't add another _
+        if self.is_static:
+            return self.name
+        # Global symbols get _ prefix
+        return f"_{self.name}"
 
 
 @dataclass
@@ -185,6 +194,7 @@ class CodeGenContext:
 
     # Current function info
     current_function: Optional[str] = None
+    current_return_type: Optional[ast.TypeNode] = None  # Return type of current function
     local_offset: int = 0  # Current stack offset for locals
 
     # Loop context for break/continue
@@ -346,24 +356,8 @@ class CodeGenerator:
                 size = self._type_size(decl.var_type)
                 self.ctx.emit_label(f"_{decl.name}")
                 if decl.init:
-                    # Initialized global variable
-                    if isinstance(decl.init, ast.IntLiteral):
-                        if size == 1:
-                            self.ctx.emit_instr("DB", str(decl.init.value))
-                        elif size == 4:
-                            # 32-bit: emit low word first, then high word
-                            val = decl.init.value & 0xFFFFFFFF
-                            low = val & 0xFFFF
-                            high = (val >> 16) & 0xFFFF
-                            self.ctx.emit_instr("DW", str(low))
-                            self.ctx.emit_instr("DW", str(high))
-                        else:
-                            self.ctx.emit_instr("DW", str(decl.init.value))
-                    elif isinstance(decl.init, ast.CharLiteral):
-                        self.ctx.emit_instr("DB", str(decl.init.value))
-                    else:
-                        # Complex initializer - reserve space (would need runtime init)
-                        self.ctx.emit_instr("DS", str(size))
+                    # Initialized global variable - use helper to emit data
+                    self._emit_initializer(decl.init, decl.var_type)
                 else:
                     # Uninitialized global - just reserve space
                     self.ctx.emit_instr("DS", str(size))
@@ -377,17 +371,8 @@ class CodeGenerator:
             for label, (var_type, init) in self.ctx.static_locals.items():
                 self.ctx.emit_label(label)
                 size = self._type_size(var_type)
-                if init and isinstance(init, ast.IntLiteral):
-                    if size == 1:
-                        self.ctx.emit_instr("DB", str(init.value))
-                    elif size == 4:
-                        val = init.value & 0xFFFFFFFF
-                        low = val & 0xFFFF
-                        high = (val >> 16) & 0xFFFF
-                        self.ctx.emit_instr("DW", str(low))
-                        self.ctx.emit_instr("DW", str(high))
-                    else:
-                        self.ctx.emit_instr("DW", str(init.value))
+                if init:
+                    self._emit_initializer(init, var_type)
                 else:
                     self.ctx.emit_instr("DS", str(size))
 
@@ -517,6 +502,7 @@ class CodeGenerator:
             return
 
         self.ctx.current_function = func.name
+        self.ctx.current_return_type = func.return_type
         self.ctx.locals.clear()
         self.ctx.local_offset = 0
         self.ctx.regs.reset()  # Reset register allocator for new function
@@ -568,6 +554,7 @@ class CodeGenerator:
         self.ctx.emit()
 
         self.ctx.current_function = None
+        self.ctx.current_return_type = None
 
     def gen_compound_stmt(self, stmt: ast.CompoundStmt) -> None:
         """Generate code for a compound statement (block)."""
@@ -617,17 +604,21 @@ class CodeGenerator:
     def _gen_static_local(self, decl: ast.VarDecl) -> None:
         """Handle static local variable."""
         # Generate unique label for this static variable
-        label = f"@S{self.ctx.static_counter}"
+        # Use function name + counter to make globally unique, don't use @ prefix
+        func_name = self.ctx.current_function or "global"
+        label = f"__{func_name}_S{self.ctx.static_counter}"
         self.ctx.static_counter += 1
 
         # Store type and init value for data segment emission
         self.ctx.static_locals[label] = (decl.var_type, decl.init)
 
-        # Register as a "global" for access purposes
+        # Register as a "global" for access purposes, but mark is_static=True
+        # so we don't add another _ prefix when accessing
         self.ctx.locals[decl.name] = Symbol(
             name=label,  # Use label as name for global-style access
             sym_type=decl.var_type,
-            is_global=True
+            is_global=True,
+            is_static=True  # Mark as static to avoid double underscore
         )
 
     def gen_statement(self, stmt: ast.Statement) -> None:
@@ -663,7 +654,13 @@ class CodeGenerator:
     def gen_return(self, stmt: ast.ReturnStmt) -> None:
         """Generate code for return statement."""
         if stmt.value:
-            self.gen_expr(stmt.value)  # Result in HL (16-bit) or A (8-bit)
+            return_is_long = self._is_long_type(self.ctx.current_return_type)
+            # Generate expression, forcing long if return type is long
+            self.gen_expr(stmt.value, force_long=return_is_long)
+            # Extend to 32-bit if return type is long but expression is not
+            if return_is_long and not self._is_long_expr(stmt.value):
+                is_signed = self._is_signed_type(self._get_expr_type(stmt.value))
+                self._extend_hl_to_dehl(is_signed)
         # Jump to function epilogue
         self.ctx.emit_instr("JP", f"@{self.ctx.current_function}_ret")
 
@@ -793,6 +790,9 @@ class CodeGenerator:
 
         def collect_cases(s: ast.Statement) -> None:
             nonlocal default_label
+            if isinstance(s, ast.SwitchStmt):
+                # Don't recurse into nested switch statements
+                return
             if isinstance(s, ast.CaseStmt):
                 if s.value is None:
                     # default case
@@ -802,10 +802,29 @@ class CodeGenerator:
                     if isinstance(s.value, ast.IntLiteral):
                         label = self.ctx.new_label("CASE")
                         cases.append((s.value.value, label))
+                # Recurse into the statement following the case label
+                # This handles consecutive case labels like "case 0: case 1:"
+                if s.stmt:
+                    collect_cases(s.stmt)
             elif isinstance(s, ast.CompoundStmt):
                 for item in s.items:
                     if isinstance(item, ast.Statement):
                         collect_cases(item)
+            # Recurse through other control structures to find case statements
+            elif isinstance(s, ast.ForStmt):
+                if s.body:
+                    collect_cases(s.body)
+            elif isinstance(s, ast.WhileStmt):
+                if s.body:
+                    collect_cases(s.body)
+            elif isinstance(s, ast.DoWhileStmt):
+                if s.body:
+                    collect_cases(s.body)
+            elif isinstance(s, ast.IfStmt):
+                if s.then_branch:
+                    collect_cases(s.then_branch)
+                if s.else_branch:
+                    collect_cases(s.else_branch)
 
         collect_cases(stmt.body)
 
@@ -827,11 +846,13 @@ class CodeGenerator:
         else:
             self.ctx.emit_instr("JP", end_label)
 
+        # Save previous switch context (for nested switches)
+        saved_cases = getattr(self, '_switch_cases', [])
+        saved_default = getattr(self, '_switch_default', None)
+
         # Set up case label map for gen_case
-        case_idx = 0
         self._switch_cases = cases
         self._switch_default = default_label
-        self._switch_case_idx = 0
 
         # Push break label
         self.ctx.break_labels.append(end_label)
@@ -845,9 +866,9 @@ class CodeGenerator:
         # End label
         self.ctx.emit_label(end_label)
 
-        # Clean up
-        self._switch_cases = []
-        self._switch_default = None
+        # Restore previous switch context
+        self._switch_cases = saved_cases
+        self._switch_default = saved_default
 
     def gen_case(self, stmt: ast.CaseStmt) -> None:
         """Generate code for case label."""
@@ -863,8 +884,9 @@ class CodeGenerator:
                         self.ctx.emit_label(label)
                         break
 
-        # Generate the statement following the case label
-        self.gen_statement(stmt.stmt)
+        # Generate code for the statement following the case label
+        if stmt.stmt:
+            self.gen_statement(stmt.stmt)
 
     def gen_label(self, stmt: ast.LabelStmt) -> None:
         """Generate code for a labeled statement."""
@@ -919,8 +941,8 @@ class CodeGenerator:
             self.gen_ternary(expr)
 
         elif isinstance(expr, ast.Cast):
-            # For now, just generate the inner expression
-            self.gen_expr(expr.expr)
+            # Generate cast expression with proper type conversion
+            self.gen_cast(expr, force_long)
 
         elif isinstance(expr, ast.Index):
             self.gen_index(expr)
@@ -955,7 +977,7 @@ class CodeGenerator:
         # Arrays decay to pointers - return address, not value
         if isinstance(sym.sym_type, ast.ArrayType):
             if sym.is_global:
-                self.ctx.emit_instr("LD", f"HL,_{sym.name}")
+                self.ctx.emit_instr("LD", f"HL,{sym.label()}")
             else:
                 # Compute address IX+offset
                 if sym.offset >= 0:
@@ -967,19 +989,37 @@ class CodeGenerator:
                 self.ctx.emit_instr("ADD", "HL,DE")
             return
 
-        is_long = self._is_long_type(sym.sym_type) or force_long
+        type_is_long = self._is_long_type(sym.sym_type)
+        type_size = self._type_size(sym.sym_type)
+
         if sym.is_global:
-            if is_long:
-                self.ctx.emit_instr("LD", f"HL,(_{sym.name})")
-                self.ctx.emit_instr("LD", f"DE,(_{sym.name}+2)")
+            if type_is_long:
+                # Load 32-bit value
+                self.ctx.emit_instr("LD", f"HL,({sym.label()})")
+                self.ctx.emit_instr("LD", f"DE,({sym.label()}+2)")
+            elif type_size == 1:
+                # Load 8-bit value, zero-extend to HL
+                self.ctx.emit_instr("LD", f"A,({sym.label()})")
+                self.ctx.emit_instr("LD", "L,A")
+                self.ctx.emit_instr("LD", "H,0")
             else:
-                self.ctx.emit_instr("LD", f"HL,(_{sym.name})")
+                # Load 16-bit value
+                self.ctx.emit_instr("LD", f"HL,({sym.label()})")
         else:
             # Local variable: IX+offset
-            if is_long:
+            if type_is_long:
                 self._load_local_32(sym)
+            elif type_size == 1:
+                # Load 8-bit value, zero-extend to HL
+                self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
+                self.ctx.emit_instr("LD", "H,0")
             else:
                 self._load_local(sym)
+
+        # Extend to 32-bit if requested but type is not already long
+        if force_long and not type_is_long:
+            is_signed = self._is_signed_type(sym.sym_type)
+            self._extend_hl_to_dehl(is_signed)
 
     def gen_binary_op(self, expr: ast.BinaryOp) -> None:
         """Generate code for binary operation."""
@@ -1287,13 +1327,13 @@ class CodeGenerator:
             if sym:
                 if target_is_long:
                     if sym.is_global:
-                        self.ctx.emit_instr("LD", f"(_{sym.name}),HL")
-                        self.ctx.emit_instr("LD", f"(_{sym.name}+2),DE")
+                        self.ctx.emit_instr("LD", f"({sym.label()}),HL")
+                        self.ctx.emit_instr("LD", f"({sym.label()}+2),DE")
                     else:
                         self._store_local_32(sym)
                 else:
                     if sym.is_global:
-                        self.ctx.emit_instr("LD", f"(_{sym.name}),HL")
+                        self.ctx.emit_instr("LD", f"({sym.label()}),HL")
                     else:
                         self._store_local(sym)
         elif isinstance(expr.left, ast.UnaryOp) and expr.left.op == "*":
@@ -1457,7 +1497,7 @@ class CodeGenerator:
             if sym:
                 # Load current value
                 if sym.is_global:
-                    self.ctx.emit_instr("LD", f"HL,(_{sym.name})")
+                    self.ctx.emit_instr("LD", f"HL,({sym.label()})")
                 else:
                     self._load_local(sym)
 
@@ -1473,7 +1513,7 @@ class CodeGenerator:
 
                 # Store back
                 if sym.is_global:
-                    self.ctx.emit_instr("LD", f"(_{sym.name}),HL")
+                    self.ctx.emit_instr("LD", f"({sym.label()}),HL")
                 else:
                     self._store_local(sym)
 
@@ -1507,8 +1547,29 @@ class CodeGenerator:
             self._call_runtime("__callhl")
 
         # Clean up stack (caller cleanup)
+        # Check if return value is 32-bit to preserve DEHL
+        return_is_long = False
+        if isinstance(expr.func, ast.Identifier):
+            return_type = self._get_expr_type(expr)
+            return_is_long = self._is_long_type(return_type)
+
         if stack_size > 0:
-            if stack_size <= 6:
+            if return_is_long:
+                # Return value in DEHL - need to preserve both while cleaning stack
+                # Save DE to BC, clean up stack, restore DE
+                self.ctx.emit_instr("LD", "B,D")
+                self.ctx.emit_instr("LD", "C,E")
+                # Now HL has low word, BC has high word
+                # Adjust SP to clean up arguments
+                self.ctx.emit_instr("EX", "DE,HL")  # Save low word in DE
+                self.ctx.emit_instr("LD", f"HL,{stack_size}")
+                self.ctx.emit_instr("ADD", "HL,SP")
+                self.ctx.emit_instr("LD", "SP,HL")
+                self.ctx.emit_instr("EX", "DE,HL")  # Restore low word to HL
+                # Restore high word from BC to DE
+                self.ctx.emit_instr("LD", "D,B")
+                self.ctx.emit_instr("LD", "E,C")
+            elif stack_size <= 6:
                 for _ in range(stack_size // 2):
                     self.ctx.emit_instr("POP", "DE")  # Discard
             else:
@@ -1536,6 +1597,63 @@ class CodeGenerator:
 
         self.ctx.emit_label(end_label)
 
+    def gen_cast(self, expr: ast.Cast, force_long: bool = False) -> None:
+        """Generate code for cast expression with proper type conversion."""
+        source_type = self._get_expr_type(expr.expr)
+        target_type = expr.target_type
+        target_is_long = self._is_long_type(target_type) or force_long
+        source_is_long = self._is_long_expr(expr.expr)
+
+        # Generate the source expression without forcing long -
+        # the cast itself handles the extension
+        self.gen_expr(expr.expr, force_long=False)
+
+        source_size = self._type_size(source_type) if source_type else 2
+        target_size = self._type_size(target_type)
+        target_signed = self._is_signed_type(target_type)
+
+        # Handle narrowing conversions first (before widening if force_long)
+        if target_size == 1 and source_size > 1:
+            # Narrowing to char: truncate to L, clear H
+            self.ctx.emit_instr("LD", "H,0")
+        elif target_size == 2 and source_size == 4:
+            # Narrowing from long to short: just keep HL (DE is discarded)
+            pass
+
+        # Handle widening conversions
+        if target_is_long and target_size < 4:
+            # Need to extend to 32-bit DEHL after narrowing
+            # Use the target type's signedness for extension
+            self._extend_hl_to_dehl(target_signed)
+        elif target_is_long and not source_is_long:
+            # Direct extension to 32-bit
+            is_signed = self._is_signed_type(source_type) if source_type else True
+            self._extend_hl_to_dehl(is_signed)
+        elif target_size == 2 and source_size == 1:
+            # 8-bit to 16-bit: already in HL, but may need sign extension
+            # HL already has the value; L is the byte, H might need fixing
+            if source_type and self._is_signed_type(source_type):
+                # Sign extend L to HL
+                self.ctx.emit_instr("LD", "A,L")
+                self.ctx.emit_instr("RLCA")  # Get sign bit into carry
+                self.ctx.emit_instr("SBC", "A,A")  # A = 0xFF if sign, 0x00 if not
+                self.ctx.emit_instr("LD", "H,A")
+
+    def _is_signed_type(self, t: ast.TypeNode | None) -> bool:
+        """Check if a type is signed."""
+        if t is None:
+            return True  # Default to signed
+        if isinstance(t, ast.BasicType):
+            # Check if type has explicit is_signed attribute
+            if hasattr(t, 'is_signed') and t.is_signed is not None:
+                return t.is_signed
+            # Unsigned types are not signed
+            if t.name.startswith("unsigned") or t.name == "_Bool" or t.name == "bool":
+                return False
+            # char, short, int, long without unsigned prefix are signed
+            return True
+        return True  # Default to signed for other types
+
     def gen_index(self, expr: ast.Index) -> None:
         """Generate code for array indexing."""
         # Generate address, then dereference
@@ -1548,8 +1666,21 @@ class CodeGenerator:
             # 8-bit element, zero-extend to HL
             self.ctx.emit_instr("LD", "L,(HL)")
             self.ctx.emit_instr("LD", "H,0")
+        elif elem_size == 4:
+            # 32-bit element: load into DEHL (DE=high, HL=low)
+            self.ctx.emit_instr("LD", "E,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "D,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "A,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "H,(HL)")
+            self.ctx.emit_instr("LD", "L,A")
+            # Now HL = high word, DE = low word; need to swap
+            self.ctx.emit_instr("EX", "DE,HL")
+            # Now HL = low word, DE = high word (correct DEHL format)
         else:
-            # 16-bit or larger element
+            # 16-bit element
             self.ctx.emit_instr("LD", "E,(HL)")
             self.ctx.emit_instr("INC", "HL")
             self.ctx.emit_instr("LD", "D,(HL)")
@@ -1565,7 +1696,19 @@ class CodeGenerator:
         if member_size == 1:
             self.ctx.emit_instr("LD", "L,(HL)")
             self.ctx.emit_instr("LD", "H,0")
+        elif member_size == 4:
+            # 32-bit member: load into DEHL (DE=high, HL=low)
+            self.ctx.emit_instr("LD", "E,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "D,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "A,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "H,(HL)")
+            self.ctx.emit_instr("LD", "L,A")
+            self.ctx.emit_instr("EX", "DE,HL")
         else:
+            # 16-bit member
             self.ctx.emit_instr("LD", "E,(HL)")
             self.ctx.emit_instr("INC", "HL")
             self.ctx.emit_instr("LD", "D,(HL)")
@@ -1624,6 +1767,15 @@ class CodeGenerator:
                 return right_type
         elif isinstance(expr, ast.Cast):
             return expr.target_type
+        elif isinstance(expr, ast.Call):
+            # Get return type of function call
+            if isinstance(expr.func, ast.Identifier):
+                sym = self.ctx.lookup(expr.func.name)
+                if sym and isinstance(sym.sym_type, ast.FunctionType):
+                    return sym.sym_type.return_type
+                elif sym:
+                    # Function pointer or direct function symbol
+                    return sym.sym_type
         return None
 
     def _gen_address(self, expr: ast.Expression) -> None:
@@ -1632,7 +1784,7 @@ class CodeGenerator:
             sym = self.ctx.lookup(expr.name)
             if sym:
                 if sym.is_global:
-                    self.ctx.emit_instr("LD", f"HL,_{sym.name}")
+                    self.ctx.emit_instr("LD", f"HL,{sym.label()}")
                 else:
                     # Local: compute IX+offset
                     self.ctx.emit_instr("LD", f"HL,{sym.offset}")
@@ -1991,6 +2143,169 @@ class CodeGenerator:
                     return sum(self._type_size(mt) for _, mt, _ in members)
             return 0  # Unknown struct
         return 2  # Default
+
+    def _emit_initializer(self, init: ast.Expression, elem_type: ast.TypeNode) -> None:
+        """Emit initialized data for a global variable or array element."""
+        elem_size = self._type_size(elem_type)
+
+        if isinstance(init, ast.InitializerList):
+            # Handle array or struct initializer
+            if isinstance(elem_type, ast.ArrayType):
+                # Array initializer - emit each element
+                base_type = elem_type.base_type
+                for val in init.values:
+                    if isinstance(val, ast.DesignatedInit):
+                        self._emit_initializer(val.value, base_type)
+                    else:
+                        self._emit_initializer(val, base_type)
+                # Pad with zeros if initializer is shorter than array size
+                if elem_type.size and isinstance(elem_type.size, ast.IntLiteral):
+                    remaining = elem_type.size.value - len(init.values)
+                    if remaining > 0:
+                        pad_size = remaining * self._type_size(base_type)
+                        self.ctx.emit_instr("DS", str(pad_size))
+            elif isinstance(elem_type, ast.StructType):
+                # Struct initializer
+                if elem_type.name and elem_type.name in self.ctx.structs:
+                    members = self.ctx.structs[elem_type.name]
+                    for i, val in enumerate(init.values):
+                        if i < len(members):
+                            _, member_type, _ = members[i]
+                            if isinstance(val, ast.DesignatedInit):
+                                self._emit_initializer(val.value, member_type)
+                            else:
+                                self._emit_initializer(val, member_type)
+                else:
+                    # Unknown struct, just reserve space
+                    self.ctx.emit_instr("DS", str(elem_size))
+            else:
+                # Scalar with initializer list (e.g., int x = {1})
+                if init.values:
+                    self._emit_initializer(init.values[0], elem_type)
+                else:
+                    self.ctx.emit_instr("DS", str(elem_size))
+        elif isinstance(init, ast.IntLiteral):
+            self._emit_int_value(init.value, elem_size)
+        elif isinstance(init, ast.CharLiteral):
+            self.ctx.emit_instr("DB", str(init.value))
+        elif isinstance(init, ast.StringLiteral):
+            # String literal - emit as bytes
+            escaped = self._escape_string(init.value)
+            self.ctx.emit_instr("DB", f"'{escaped}',0")
+        elif isinstance(init, ast.UnaryOp) and init.op == "-":
+            # Handle negative literals
+            if isinstance(init.operand, ast.IntLiteral):
+                self._emit_int_value(-init.operand.value, elem_size)
+            else:
+                # Complex expression - reserve space (runtime init would be needed)
+                self.ctx.emit_instr("DS", str(elem_size))
+        elif isinstance(init, ast.Identifier):
+            # Address of a symbol - emit as label reference
+            self.ctx.emit_instr("DW", f"_{init.name}")
+        elif isinstance(init, ast.UnaryOp) and init.op == "&":
+            # Address-of expression
+            if isinstance(init.operand, ast.Identifier):
+                self.ctx.emit_instr("DW", f"_{init.operand.name}")
+            else:
+                self.ctx.emit_instr("DS", str(elem_size))
+        elif isinstance(init, ast.Cast):
+            # Cast expression - try to evaluate constant
+            const_val = self._eval_const_expr(init)
+            if const_val is not None:
+                self._emit_int_value(const_val, elem_size)
+            else:
+                self.ctx.emit_instr("DS", str(elem_size))
+        else:
+            # Complex initializer - reserve space
+            self.ctx.emit_instr("DS", str(elem_size))
+
+    def _emit_int_value(self, value: int, size: int) -> None:
+        """Emit an integer value with the specified size."""
+        if size == 1:
+            self.ctx.emit_instr("DB", str(value & 0xFF))
+        elif size == 4:
+            # 32-bit: emit low word first, then high word
+            val = value & 0xFFFFFFFF
+            low = val & 0xFFFF
+            high = (val >> 16) & 0xFFFF
+            self.ctx.emit_instr("DW", str(low))
+            self.ctx.emit_instr("DW", str(high))
+        else:
+            self.ctx.emit_instr("DW", str(value & 0xFFFF))
+
+    def _eval_const_expr(self, expr: ast.Expression) -> int | None:
+        """Try to evaluate a constant expression at compile time. Returns None if not constant."""
+        if isinstance(expr, ast.IntLiteral):
+            return expr.value
+        elif isinstance(expr, ast.CharLiteral):
+            return expr.value
+        elif isinstance(expr, ast.UnaryOp):
+            operand_val = self._eval_const_expr(expr.operand)
+            if operand_val is None:
+                return None
+            if expr.op == "-":
+                return -operand_val
+            elif expr.op == "+":
+                return operand_val
+            elif expr.op == "~":
+                return ~operand_val
+            elif expr.op == "!":
+                return 0 if operand_val else 1
+        elif isinstance(expr, ast.Cast):
+            # Evaluate the inner expression
+            inner_val = self._eval_const_expr(expr.expr)
+            if inner_val is None:
+                return None
+            # Apply type conversion based on target type
+            target_type = expr.target_type
+            if isinstance(target_type, ast.BasicType):
+                name = target_type.name
+                is_signed = self._is_signed_type(target_type)
+                if name == "char":
+                    # 8-bit: mask and sign extend if signed
+                    val = inner_val & 0xFF
+                    if is_signed and val >= 0x80:
+                        val = val - 0x100  # Sign extend
+                    return val
+                elif name in ("short", "int"):
+                    # 16-bit
+                    val = inner_val & 0xFFFF
+                    if is_signed and val >= 0x8000:
+                        val = val - 0x10000  # Sign extend
+                    return val
+                elif name == "long":
+                    # 32-bit
+                    val = inner_val & 0xFFFFFFFF
+                    if is_signed and val >= 0x80000000:
+                        val = val - 0x100000000  # Sign extend
+                    return val
+            return inner_val  # Fallback: no conversion
+        elif isinstance(expr, ast.BinaryOp):
+            left_val = self._eval_const_expr(expr.left)
+            right_val = self._eval_const_expr(expr.right)
+            if left_val is None or right_val is None:
+                return None
+            if expr.op == "+":
+                return left_val + right_val
+            elif expr.op == "-":
+                return left_val - right_val
+            elif expr.op == "*":
+                return left_val * right_val
+            elif expr.op == "/" and right_val != 0:
+                return left_val // right_val
+            elif expr.op == "%" and right_val != 0:
+                return left_val % right_val
+            elif expr.op == "&":
+                return left_val & right_val
+            elif expr.op == "|":
+                return left_val | right_val
+            elif expr.op == "^":
+                return left_val ^ right_val
+            elif expr.op == "<<":
+                return left_val << right_val
+            elif expr.op == ">>":
+                return left_val >> right_val
+        return None  # Not a constant expression
 
     def _escape_string(self, s: str) -> str:
         """Escape a string for assembly."""
