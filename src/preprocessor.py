@@ -442,11 +442,87 @@ class Preprocessor:
             # Handle C-style not-equal that wasn't replaced
             expr = expr.replace(' not =', '!=')
 
+            # Convert C ternary (cond ? then : else) to Python (then if cond else else)
+            expr = self._convert_ternary(expr)
+
             result = eval(expr, {"__builtins__": {}}, {})
             return bool(result)
         except Exception as e:
             raise PreprocessorError(f"Invalid condition expression: {expr} ({e})",
                                    self.current_file, self.current_line)
+
+    def _convert_ternary(self, expr: str) -> str:
+        """Convert C ternary (cond ? then : else) to Python (then if cond else else)."""
+        # Find and convert ternary operators from innermost out
+        while '?' in expr:
+            # Find the first ? and its matching :
+            q_pos = expr.find('?')
+            if q_pos == -1:
+                break
+
+            # Find the matching : (accounting for nested ternaries)
+            depth = 0
+            colon_pos = -1
+            for i in range(q_pos + 1, len(expr)):
+                if expr[i] == '?':
+                    depth += 1
+                elif expr[i] == ':':
+                    if depth == 0:
+                        colon_pos = i
+                        break
+                    depth -= 1
+
+            if colon_pos == -1:
+                break
+
+            # Find where the condition starts (work backwards from ?)
+            # Stop at operators or unmatched open paren
+            cond_start = 0
+            paren_depth = 0
+            for i in range(q_pos - 1, -1, -1):
+                c = expr[i]
+                if c == ')':
+                    paren_depth += 1
+                elif c == '(':
+                    if paren_depth == 0:
+                        cond_start = i + 1
+                        break
+                    paren_depth -= 1
+                # Stop at binary operators (but not unary - or !)
+                elif paren_depth == 0 and c in '&|<>=!+-*/%^' and i > 0:
+                    # Check if it's a two-char operator
+                    if expr[i-1:i+1] in ('&&', '||', '<=', '>=', '==', '!='):
+                        cond_start = i + 1
+                        break
+
+            # Find where the else part ends
+            # Stop at operators or unmatched close paren
+            else_end = len(expr)
+            paren_depth = 0
+            for i in range(colon_pos + 1, len(expr)):
+                c = expr[i]
+                if c == '(':
+                    paren_depth += 1
+                elif c == ')':
+                    if paren_depth == 0:
+                        else_end = i
+                        break
+                    paren_depth -= 1
+                # Stop at binary comparison operators
+                elif paren_depth == 0 and i + 1 < len(expr):
+                    if expr[i:i+2] in ('&&', '||', '<=', '>=', '==', '!='):
+                        else_end = i
+                        break
+
+            cond = expr[cond_start:q_pos].strip()
+            then_part = expr[q_pos + 1:colon_pos].strip()
+            else_part = expr[colon_pos + 1:else_end].strip()
+
+            # Convert to Python: (then if cond else else)
+            replacement = f'({then_part} if {cond} else {else_part})'
+            expr = expr[:cond_start] + replacement + expr[else_end:]
+
+        return expr
 
     def _expand_defined(self, expr: str) -> str:
         """Expand defined() operator in expression."""
