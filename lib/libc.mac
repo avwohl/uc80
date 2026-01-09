@@ -1938,6 +1938,301 @@ _printf_done:
 	RET
 
 ; ============================================================
+; int fprintf(FILE *stream, const char *fmt, ...)
+; Print formatted output to a file stream
+; Supports %d, %s, %c, %x, %%
+; ============================================================
+	PUBLIC	_fprintf
+_fprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; stream at IX+4, fmt at IX+6, first vararg at IX+8
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(_fprintf_stream),DE	; Save stream
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format string pointer
+	LD	C,8		; C = offset to next argument
+
+_fprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_fprintf_done
+
+	CP	'%'
+	JR	Z,_fprintf_format
+
+	; Regular character - output via fputc
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE		; stream arg
+	LD	E,A
+	LD	D,0
+	PUSH	DE		; char arg
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	HL
+	JR	_fprintf_loop
+
+_fprintf_format:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_fprintf_done
+
+	CP	'%'
+	JR	Z,_fprintf_pct
+
+	CP	's'
+	JR	Z,_fprintf_str
+
+	CP	'd'
+	JR	Z,_fprintf_dec
+
+	CP	'c'
+	JR	Z,_fprintf_chr
+
+	CP	'x'
+	JR	Z,_fprintf_hex
+
+	CP	'u'
+	JR	Z,_fprintf_dec	; %u same as %d for now
+
+	; Unknown format - skip
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_pct:
+	; Output literal %
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	DE,'%'
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_chr:
+	; Output character argument
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)		; E = char
+	LD	D,0
+	LD	BC,(_fprintf_stream)
+	PUSH	BC		; stream
+	PUSH	DE		; char
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_str:
+	; Output string argument
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = string pointer
+_fprintf_str_lp:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_fprintf_str_end
+	PUSH	DE
+	LD	BC,(_fprintf_stream)
+	PUSH	BC
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	DE
+	INC	DE
+	JR	_fprintf_str_lp
+_fprintf_str_end:
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_dec:
+	; Output decimal number
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value
+	CALL	_fprintf_prt_dec
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_hex:
+	; Output hex number
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value
+	CALL	_fprintf_prt_hex
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_done:
+	LD	HL,0		; Return 0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; fprintf helper: print HL as decimal to stream
+_fprintf_prt_dec:
+	PUSH	BC
+	PUSH	DE
+	; Check for negative
+	BIT	7,H
+	JR	Z,_fprintf_dec_pos
+	; Negative - print minus sign
+	PUSH	HL
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	DE,'-'
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	HL
+	; Negate HL
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	INC	HL
+_fprintf_dec_pos:
+	; Convert to decimal digits on stack
+	LD	DE,10
+	LD	B,0		; Digit counter
+_fprintf_dec_lp:
+	CALL	_div16		; HL = HL / 10, DE = remainder
+	PUSH	DE		; Push digit
+	INC	B
+	LD	A,H
+	OR	L
+	JR	NZ,_fprintf_dec_lp
+	; Pop and print digits
+_fprintf_dec_pr:
+	POP	DE		; Get digit
+	LD	A,E
+	ADD	A,'0'
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	DJNZ	_fprintf_dec_pr
+	POP	DE
+	POP	BC
+	RET
+
+; fprintf helper: print HL as hex to stream
+_fprintf_prt_hex:
+	PUSH	BC
+	PUSH	DE
+	LD	B,4		; 4 hex digits
+	LD	C,H		; Save high byte
+_fprintf_hex_lp:
+	; Rotate left 4 bits
+	ADD	HL,HL
+	RL	C
+	ADD	HL,HL
+	RL	C
+	ADD	HL,HL
+	RL	C
+	ADD	HL,HL
+	RL	C
+	; Get top nibble
+	LD	A,C
+	AND	0FH
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_fprintf_hex_dig
+	ADD	A,7		; A-F
+_fprintf_hex_dig:
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	DJNZ	_fprintf_hex_lp
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
 ; Internal: print HL as decimal
 ; ============================================================
 _prt_dec:
@@ -5624,6 +5919,9 @@ _sprintf_cnt:	DS	2	; Character count
 _snprintf_out:	DS	2	; Current output pointer
 _snprintf_max:	DS	2	; Remaining space in buffer
 _snprintf_cnt:	DS	2	; Total character count
+
+; fprintf working storage
+_fprintf_stream: DS	2	; Current output stream
 
 ; atol working storage
 _atol_acc:	DS	4
