@@ -174,7 +174,7 @@ class Parser:
                              is_const=is_const, is_volatile=is_volatile, location=loc)
 
     def _parse_struct_type(self) -> ast.StructType:
-        """Parse struct/union type."""
+        """Parse struct/union type, including inline member definitions."""
         loc = self._current().location
         is_union = self._match(TokenType.UNION) is not None
         if not is_union:
@@ -184,7 +184,25 @@ class Parser:
         if self._check(TokenType.IDENTIFIER):
             name = self._advance().value
 
-        return ast.StructType(name=name, is_union=is_union, location=loc)
+        # Parse inline member definitions if present
+        members = []
+        if self._check(TokenType.LBRACE):
+            self._advance()  # consume {
+            while not self._check(TokenType.RBRACE):
+                member_type = self._parse_type_specifier()
+                while True:
+                    member_name, full_type = self._parse_declarator(member_type)
+                    bit_width = None
+                    if self._match(TokenType.COLON):
+                        bit_width = self._parse_expression()
+                    members.append(ast.StructMember(name=member_name if member_name else None,
+                                                    member_type=full_type, bit_width=bit_width))
+                    if not self._match(TokenType.COMMA):
+                        break
+                self._expect(TokenType.SEMICOLON)
+            self._expect(TokenType.RBRACE)
+
+        return ast.StructType(name=name, is_union=is_union, members=members, location=loc)
 
     def _parse_enum_type(self) -> ast.EnumType:
         """Parse enum type."""
