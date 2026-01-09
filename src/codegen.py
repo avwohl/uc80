@@ -7,8 +7,15 @@ Uses IX as frame pointer, following the calling convention in implementation_pla
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, auto
+import struct
 from typing import Callable, Iterator, Optional
 from . import ast
+
+
+def float_to_ieee754(f: float) -> int:
+    """Convert a Python float to IEEE 754 single-precision (32-bit) integer representation."""
+    packed = struct.pack('>f', f)  # Big-endian single precision
+    return struct.unpack('>I', packed)[0]
 
 
 def ix_off(offset: int) -> str:
@@ -911,6 +918,14 @@ class CodeGenerator:
             else:
                 self.ctx.emit_instr("LD", f"HL,{expr.value}")
 
+        elif isinstance(expr, ast.FloatLiteral):
+            # Convert float to IEEE 754 single precision and load as 32-bit
+            ieee_val = float_to_ieee754(expr.value)
+            low = ieee_val & 0xFFFF
+            high = (ieee_val >> 16) & 0xFFFF
+            self.ctx.emit_instr("LD", f"HL,{low}")
+            self.ctx.emit_instr("LD", f"DE,{high}")
+
         elif isinstance(expr, ast.CharLiteral):
             self.ctx.emit_instr("LD", f"HL,{expr.value}")
 
@@ -1045,6 +1060,20 @@ class CodeGenerator:
             return
         if op == "||":
             self.gen_logical_or(expr)
+            return
+
+        # Check if this is a complex operation
+        is_complex = self._is_complex_expr(expr.left) or self._is_complex_expr(expr.right)
+
+        if is_complex:
+            self._gen_binary_op_complex(expr, op)
+            return
+
+        # Check if this is a floating-point operation
+        is_float = self._is_float_expr(expr.left) or self._is_float_expr(expr.right)
+
+        if is_float:
+            self._gen_binary_op_float(expr, op)
             return
 
         # Check if this is a 32-bit operation
@@ -1298,6 +1327,228 @@ class CodeGenerator:
         self.ctx.emit_instr("LD", "HL,1")
         self.ctx.emit_label(end_label)
         # Clear DE for 16-bit result
+        self.ctx.emit_instr("LD", "DE,0")
+
+    def _gen_binary_op_float(self, expr: ast.BinaryOp, op: str) -> None:
+        """Generate floating-point binary operation. Result in DEHL (IEEE 754)."""
+        # Float operations: right operand to __tmp32, left in DEHL, call float runtime
+
+        # Generate right operand first
+        self._gen_float_operand(expr.right)
+        # Store right operand to __tmp32
+        self._store_tmp32()
+
+        # Check if left operand is complex
+        left_is_complex = self._is_complex_expr(expr.left)
+        if left_is_complex:
+            # Save __tmp32 on stack before generating left operand
+            self.ctx.emit_instr("LD", "HL,(__tmp32)")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", "HL,(__tmp32+2)")
+            self.ctx.emit_instr("PUSH", "HL")
+
+        # Generate left operand
+        self._gen_float_operand(expr.left)
+
+        if left_is_complex:
+            # Restore __tmp32 from stack
+            self.ctx.emit_instr("PUSH", "DE")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", "HL,4")
+            self.ctx.emit_instr("ADD", "HL,SP")
+            self.ctx.emit_instr("LD", "E,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "D,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "(__tmp32+2),DE")
+            self.ctx.emit_instr("LD", "E,(HL)")
+            self.ctx.emit_instr("INC", "HL")
+            self.ctx.emit_instr("LD", "D,(HL)")
+            self.ctx.emit_instr("LD", "(__tmp32),DE")
+            self.ctx.emit_instr("POP", "HL")
+            self.ctx.emit_instr("POP", "DE")
+            self.ctx.emit_instr("INC", "SP")
+            self.ctx.emit_instr("INC", "SP")
+            self.ctx.emit_instr("INC", "SP")
+            self.ctx.emit_instr("INC", "SP")
+
+        # Now: left in DEHL, right in __tmp32
+        if op == "+":
+            self._call_runtime("__fadd")
+        elif op == "-":
+            self._call_runtime("__fsub")
+        elif op == "*":
+            self._call_runtime("__fmul")
+        elif op == "/":
+            self._call_runtime("__fdiv")
+        elif op in ("==", "!=", "<", ">", "<=", ">="):
+            self._gen_comparison_float(op)
+        elif op == ",":
+            pass  # Result is already in DEHL
+
+    def _gen_float_operand(self, expr: ast.Expression) -> None:
+        """Generate code for a float operand, converting from int if necessary."""
+        if self._is_float_expr(expr):
+            # Already float, just generate it
+            self.gen_expr(expr)
+        else:
+            # Integer expression, need to convert to float
+            self.gen_expr(expr, force_long=True)
+            if not self._is_long_expr(expr):
+                is_signed = not self._is_unsigned_expr(expr)
+                self._extend_hl_to_dehl(is_signed)
+            # Convert integer in DEHL to float
+            if self._is_unsigned_expr(expr):
+                self._call_runtime("__uitof")
+            else:
+                self._call_runtime("__itof")
+
+    def _gen_comparison_float(self, op: str) -> None:
+        """Generate float comparison. Left in DEHL, right in __tmp32. Result in HL."""
+        true_label = self.ctx.new_label("FCMP_T")
+        false_label = self.ctx.new_label("FCMP_F")
+        end_label = self.ctx.new_label("FCMP_E")
+
+        # Call float comparison - returns flags: Z if equal, C if left < right
+        self._call_runtime("__fcmp")
+
+        if op == "==":
+            self.ctx.emit_instr("JP", f"Z,{true_label}")
+        elif op == "!=":
+            self.ctx.emit_instr("JP", f"NZ,{true_label}")
+        elif op == "<":
+            self.ctx.emit_instr("JP", f"C,{true_label}")
+        elif op == ">=":
+            self.ctx.emit_instr("JP", f"NC,{true_label}")
+        elif op == ">":
+            self.ctx.emit_instr("JP", f"Z,{false_label}")
+            self.ctx.emit_instr("JP", f"NC,{true_label}")
+        elif op == "<=":
+            self.ctx.emit_instr("JP", f"Z,{true_label}")
+            self.ctx.emit_instr("JP", f"C,{true_label}")
+
+        self.ctx.emit_label(false_label)
+        self.ctx.emit_instr("LD", "HL,0")
+        self.ctx.emit_instr("JP", end_label)
+        self.ctx.emit_label(true_label)
+        self.ctx.emit_instr("LD", "HL,1")
+        self.ctx.emit_label(end_label)
+        self.ctx.emit_instr("LD", "DE,0")
+
+    def _gen_binary_op_complex(self, expr: ast.BinaryOp, op: str) -> None:
+        """Generate complex number binary operation.
+        Complex stored as: real part (4 bytes) + imaginary part (4 bytes).
+        Result stored in __cplx_result, address returned in HL.
+        """
+        # Generate right operand (complex) - address on stack
+        self._gen_complex_operand(expr.right)
+        # Store right operand to __cplx_r (8 bytes)
+        self.ctx.emit_instr("EX", "DE,HL")  # HL = source addr
+        self.ctx.emit_instr("LD", "DE,__cplx_r")  # DE = dest addr
+        self.ctx.emit_instr("LD", "BC,8")
+        self.ctx.emit_instr("LDIR")
+
+        # Generate left operand (complex) - address in HL
+        self._gen_complex_operand(expr.left)
+        # Store left operand to __cplx_l (8 bytes)
+        self.ctx.emit_instr("EX", "DE,HL")  # HL = source addr
+        self.ctx.emit_instr("LD", "DE,__cplx_l")  # DE = dest addr
+        self.ctx.emit_instr("LD", "BC,8")
+        self.ctx.emit_instr("LDIR")
+
+        # Now: left in __cplx_l, right in __cplx_r
+        if op == "+":
+            self._call_runtime("__cadd")
+        elif op == "-":
+            self._call_runtime("__csub")
+        elif op == "*":
+            self._call_runtime("__cmul")
+        elif op == "/":
+            self._call_runtime("__cdiv")
+        elif op in ("==", "!="):
+            self._gen_comparison_complex(op)
+            return
+        else:
+            # Other operators not supported for complex
+            self.ctx.emit_comment(f"Complex op '{op}' not supported")
+
+        # Result is in __cplx_result, return its address in HL
+        self.ctx.emit_instr("LD", "HL,__cplx_result")
+
+    def _gen_complex_operand(self, expr: ast.Expression) -> None:
+        """Generate code for a complex operand. Returns address in HL."""
+        if self._is_complex_expr(expr):
+            # Generate complex expression (should return address in HL)
+            self.gen_expr(expr)
+        else:
+            # Scalar (float or int) - convert to complex with 0 imaginary
+            self._gen_float_operand(expr)
+            # Store real part to __cplx_tmp
+            self.ctx.emit_instr("LD", "(__cplx_tmp),HL")
+            self.ctx.emit_instr("LD", "(__cplx_tmp+2),DE")
+            # Zero imaginary part
+            self.ctx.emit_instr("LD", "HL,0")
+            self.ctx.emit_instr("LD", "(__cplx_tmp+4),HL")
+            self.ctx.emit_instr("LD", "(__cplx_tmp+6),HL")
+            # Return address
+            self.ctx.emit_instr("LD", "HL,__cplx_tmp")
+
+    def _gen_comparison_complex(self, op: str) -> None:
+        """Generate complex comparison. Only == and != are valid."""
+        # Compare real parts
+        self.ctx.emit_instr("LD", "HL,(__cplx_l)")
+        self.ctx.emit_instr("LD", "DE,(__cplx_l+2)")
+        self.ctx.emit_instr("LD", "BC,(__cplx_r)")
+        self.ctx.emit_instr("LD", "A,L")
+        self.ctx.emit_instr("CP", "C")
+        ne_label = self.ctx.new_label("CNEQ")
+        self.ctx.emit_instr("JP", f"NZ,{ne_label}")
+        self.ctx.emit_instr("LD", "A,H")
+        self.ctx.emit_instr("LD", "BC,(__cplx_r)")
+        self.ctx.emit_instr("CP", "B")
+        self.ctx.emit_instr("JP", f"NZ,{ne_label}")
+        self.ctx.emit_instr("LD", "BC,(__cplx_r+2)")
+        self.ctx.emit_instr("LD", "A,E")
+        self.ctx.emit_instr("CP", "C")
+        self.ctx.emit_instr("JP", f"NZ,{ne_label}")
+        self.ctx.emit_instr("LD", "A,D")
+        self.ctx.emit_instr("CP", "B")
+        self.ctx.emit_instr("JP", f"NZ,{ne_label}")
+
+        # Compare imaginary parts
+        self.ctx.emit_instr("LD", "HL,(__cplx_l+4)")
+        self.ctx.emit_instr("LD", "DE,(__cplx_l+6)")
+        self.ctx.emit_instr("LD", "BC,(__cplx_r+4)")
+        self.ctx.emit_instr("LD", "A,L")
+        self.ctx.emit_instr("CP", "C")
+        self.ctx.emit_instr("JP", f"NZ,{ne_label}")
+        self.ctx.emit_instr("LD", "A,H")
+        self.ctx.emit_instr("CP", "B")
+        self.ctx.emit_instr("JP", f"NZ,{ne_label}")
+        self.ctx.emit_instr("LD", "BC,(__cplx_r+6)")
+        self.ctx.emit_instr("LD", "A,E")
+        self.ctx.emit_instr("CP", "C")
+        self.ctx.emit_instr("JP", f"NZ,{ne_label}")
+        self.ctx.emit_instr("LD", "A,D")
+        self.ctx.emit_instr("CP", "B")
+        self.ctx.emit_instr("JP", f"NZ,{ne_label}")
+
+        # Equal
+        eq_label = self.ctx.new_label("CEQ")
+        if op == "==":
+            self.ctx.emit_instr("LD", "HL,1")
+        else:  # !=
+            self.ctx.emit_instr("LD", "HL,0")
+        self.ctx.emit_instr("JP", eq_label)
+
+        # Not equal
+        self.ctx.emit_label(ne_label)
+        if op == "==":
+            self.ctx.emit_instr("LD", "HL,0")
+        else:  # !=
+            self.ctx.emit_instr("LD", "HL,1")
+
+        self.ctx.emit_label(eq_label)
         self.ctx.emit_instr("LD", "DE,0")
 
     def _emit_reg(self, instr: str, operand: str) -> None:
@@ -1845,6 +2096,52 @@ class CodeGenerator:
             return t.name in ("long", "long long")
         return False
 
+    def _is_float_type(self, t: ast.TypeNode | None) -> bool:
+        """Check if a type is floating-point (float or double)."""
+        if isinstance(t, ast.BasicType):
+            return t.name in ("float", "double", "long double")
+        return False
+
+    def _is_float_expr(self, expr: ast.Expression) -> bool:
+        """Check if an expression has floating-point type."""
+        if isinstance(expr, ast.FloatLiteral):
+            return True
+        if isinstance(expr, ast.UnaryOp):
+            if expr.op in ("-", "+"):
+                return self._is_float_expr(expr.operand)
+        if isinstance(expr, ast.BinaryOp):
+            # Comparison operators always return int
+            if expr.op in ("==", "!=", "<", ">", "<=", ">="):
+                return False
+            # Binary operation is float if either operand is float
+            if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
+                return self._is_float_expr(expr.left) or self._is_float_expr(expr.right)
+        if isinstance(expr, ast.Cast):
+            return self._is_float_type(expr.target_type)
+        expr_type = self._get_expr_type(expr)
+        return self._is_float_type(expr_type)
+
+    def _is_complex_type(self, t: ast.TypeNode | None) -> bool:
+        """Check if a type is a complex number type (_Complex)."""
+        return isinstance(t, ast.ComplexType)
+
+    def _is_complex_expr(self, expr: ast.Expression) -> bool:
+        """Check if an expression has complex type."""
+        if isinstance(expr, ast.UnaryOp):
+            if expr.op in ("-", "+"):
+                return self._is_complex_expr(expr.operand)
+        if isinstance(expr, ast.BinaryOp):
+            # Comparison operators always return int
+            if expr.op in ("==", "!=", "<", ">", "<=", ">="):
+                return False
+            # Binary operation is complex if either operand is complex
+            if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
+                return self._is_complex_expr(expr.left) or self._is_complex_expr(expr.right)
+        if isinstance(expr, ast.Cast):
+            return self._is_complex_type(expr.target_type)
+        expr_type = self._get_expr_type(expr)
+        return self._is_complex_type(expr_type)
+
     def _is_long_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has 32-bit type."""
         if isinstance(expr, ast.IntLiteral):
@@ -2142,6 +2439,9 @@ class CodeGenerator:
                     # Struct: size is sum of all members
                     return sum(self._type_size(mt) for _, mt, _ in members)
             return 0  # Unknown struct
+        elif isinstance(t, ast.ComplexType):
+            # Complex types are two floats (real + imaginary)
+            return 8  # 2 * 4 bytes
         return 2  # Default
 
     def _emit_initializer(self, init: ast.Expression, elem_type: ast.TypeNode) -> None:

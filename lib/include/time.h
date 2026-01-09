@@ -33,6 +33,15 @@ struct tm {
     int tm_isdst;   /* Daylight saving flag */
 };
 
+/* High-resolution time structure (C11) */
+struct timespec {
+    time_t tv_sec;  /* Seconds */
+    long tv_nsec;   /* Nanoseconds (0-999999999) */
+};
+
+/* Time base values for timespec_get */
+#define TIME_UTC 1
+
 /* Time functions (stubs - return dummy values on CP/M) */
 time_t time(time_t *tloc);
 clock_t clock(void);

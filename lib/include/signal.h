@@ -1,4 +1,4 @@
-/* signal.h - Signal handling stubs for uc80/CP-M */
+/* signal.h - Signal handling for uc80/CP-M */
 #ifndef _SIGNAL_H
 #define _SIGNAL_H
 
@@ -10,7 +10,7 @@ typedef void (*sig_handler_t)(int);
 #define SIG_IGN ((sig_handler_t)1)  /* Ignore signal */
 #define SIG_ERR ((sig_handler_t)-1) /* Error return */
 
-/* Signal numbers (CP/M doesn't support signals, but define for compatibility) */
+/* Signal numbers */
 #define SIGABRT 1  /* Abnormal termination */
 #define SIGFPE  2  /* Floating-point exception */
 #define SIGILL  3  /* Illegal instruction */
@@ -18,11 +18,13 @@ typedef void (*sig_handler_t)(int);
 #define SIGSEGV 5  /* Segmentation violation */
 #define SIGTERM 6  /* Termination request */
 
-/* Number of signals */
+/* Number of signals (internal) */
 #define _NSIG 7
 
-/* Signal functions (stubs - always succeed but do nothing on CP/M) */
+/* Set signal handler - returns previous handler or SIG_ERR on error */
 sig_handler_t signal(int sig, sig_handler_t handler);
+
+/* Raise a signal - returns 0 on success, non-zero on error */
 int raise(int sig);
 
 #endif /* _SIGNAL_H */

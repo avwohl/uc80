@@ -116,6 +116,7 @@ class Parser:
         is_long = 0
         is_const = False
         is_volatile = False
+        is_complex = False
         base_type = None
 
         while True:
@@ -132,6 +133,8 @@ class Parser:
                 is_short = True
             elif self._match(TokenType.LONG):
                 is_long += 1
+            elif self._match(TokenType.COMPLEX):
+                is_complex = True
             elif self._match(TokenType.VOID):
                 base_type = "void"
             elif self._match(TokenType.CHAR):
@@ -183,8 +186,21 @@ class Parser:
                 base_type = "long long"
             elif is_signed is not None or is_unsigned:
                 base_type = "int"
+            elif is_complex:
+                base_type = "double"  # _Complex alone defaults to double
             else:
                 raise self._error("Expected type specifier")
+
+        # Handle complex types
+        if is_complex:
+            # _Complex requires floating-point base type
+            if base_type not in ("float", "double", "long double"):
+                if is_long >= 1:
+                    base_type = "long double"
+                else:
+                    base_type = "double"  # Default to double for invalid combinations
+            return ast.ComplexType(base_type=base_type, is_const=is_const,
+                                   is_volatile=is_volatile, location=loc)
 
         return ast.BasicType(name=base_type, is_signed=is_signed,
                              is_const=is_const, is_volatile=is_volatile, location=loc)

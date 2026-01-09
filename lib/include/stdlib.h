@@ -47,11 +47,17 @@ typedef struct {
 div_t *div(int numer, int denom);
 ldiv_t *ldiv(long numer, long denom);
 
-/* String conversion */
+/* String conversion - integers */
 int atoi(const char *nptr);
 long atol(const char *nptr);
 long strtol(const char *nptr, char **endptr, int base);
 unsigned long strtoul(const char *nptr, char **endptr, int base);
+
+/* String conversion - floating point */
+double atof(const char *nptr);
+double strtod(const char *nptr, char **endptr);
+float strtof(const char *nptr, char **endptr);
+long double strtold(const char *nptr, char **endptr);
 
 /* Memory allocation */
 void *malloc(size_t size);
@@ -68,5 +74,21 @@ void qsort(void *base, size_t nmemb, size_t size,
            int (*compar)(const void *, const void *));
 void *bsearch(const void *key, const void *base, size_t nmemb,
               size_t size, int (*compar)(const void *, const void *));
+
+/* Wide character type (for multibyte functions) */
+#ifndef _WCHAR_T_DEFINED
+#define _WCHAR_T_DEFINED
+typedef unsigned int wchar_t;  /* 16-bit for Z80 */
+#endif
+
+/* Multibyte/wide character conversion limits */
+#define MB_CUR_MAX 1  /* C locale - single byte characters only */
+
+/* Multibyte character functions (minimal - C locale only) */
+int mblen(const char *s, size_t n);
+int mbtowc(wchar_t *pwc, const char *s, size_t n);
+int wctomb(char *s, wchar_t wc);
+size_t mbstowcs(wchar_t *dest, const char *src, size_t n);
+size_t wcstombs(char *dest, const wchar_t *src, size_t n);
 
 #endif /* _STDLIB_H */

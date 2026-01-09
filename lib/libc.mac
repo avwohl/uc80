@@ -176,6 +176,7 @@ _gets_done:
 BDOS_OPEN	EQU	15	; Open file
 BDOS_CLOSE	EQU	16	; Close file
 BDOS_DELETE	EQU	19	; Delete file
+BDOS_RENAME	EQU	23	; Rename file
 BDOS_READ	EQU	20	; Read sequential
 BDOS_WRITE	EQU	21	; Write sequential
 BDOS_MAKE	EQU	22	; Make (create) file
@@ -1573,6 +1574,512 @@ _rewind:
 	RET
 
 ; ============================================================
+; int remove(const char *pathname)
+; Delete a file
+; Returns 0 on success, -1 on error
+; ============================================================
+	PUBLIC	_remove
+_remove:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Parse pathname into temporary FCB
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = pathname
+	LD	HL,_tmp_fcb
+	CALL	_parse_fcb
+
+	; Delete the file
+	LD	DE,_tmp_fcb
+	LD	C,BDOS_DELETE
+	CALL	BDOS
+
+	; A = 0xFF on error
+	CP	0FFH
+	JR	Z,_remove_err
+	LD	HL,0
+	JR	_remove_ret
+_remove_err:
+	LD	HL,-1
+_remove_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int rename(const char *oldpath, const char *newpath)
+; Rename a file
+; Returns 0 on success, -1 on error
+; ============================================================
+	PUBLIC	_rename
+_rename:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Parse old pathname into FCB (first 16 bytes)
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = oldpath
+	LD	HL,_tmp_fcb
+	CALL	_parse_fcb
+
+	; Parse new pathname into FCB+16 (destination)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = newpath
+	LD	HL,_tmp_fcb+16
+	CALL	_parse_fcb
+
+	; CP/M rename uses DE pointing to FCB with old name in first 16 bytes
+	; and new name in second 16 bytes
+	LD	DE,_tmp_fcb
+	LD	C,BDOS_RENAME
+	CALL	BDOS
+
+	; A = 0xFF on error
+	CP	0FFH
+	JR	Z,_rename_err
+	LD	HL,0
+	JR	_rename_ret
+_rename_err:
+	LD	HL,-1
+_rename_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; FILE *tmpfile(void)
+; Create and open a temporary file for writing
+; File is automatically deleted when closed (by using $$$ extension)
+; ============================================================
+	PUBLIC	_tmpfile
+_tmpfile:
+	PUSH	IX
+	PUSH	BC
+	PUSH	DE
+
+	; Generate unique temp name
+	LD	HL,_tmpfile_name
+	CALL	_gen_tmpnam
+
+	; Open with "w+" mode (create new)
+	LD	HL,_tmpfile_name
+	PUSH	HL
+	LD	HL,_tmpfile_mode
+	PUSH	HL
+	CALL	_fopen
+	POP	BC
+	POP	BC
+
+	; Mark this file for delete on close (use $$$ extension)
+	; Actually, CP/M doesn't have auto-delete, so we rely on unique names
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_tmpfile_mode:
+	DB	'w',0
+
+; ============================================================
+; char *tmpnam(char *s)
+; Generate a unique temporary file name
+; If s is NULL, returns pointer to internal static buffer
+; ============================================================
+	PUBLIC	_tmpnam
+_tmpnam:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Get buffer pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	NZ,_tmpnam_usebuf
+	; Use internal buffer
+	LD	HL,_tmpnam_buf
+_tmpnam_usebuf:
+	PUSH	HL		; Save destination
+	CALL	_gen_tmpnam
+	POP	HL		; Return destination
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; Internal: Generate temp name into HL
+_gen_tmpnam:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+
+	; Format: TMP00000.$$$
+	LD	(HL),'T'
+	INC	HL
+	LD	(HL),'M'
+	INC	HL
+	LD	(HL),'P'
+	INC	HL
+
+	; Get counter and convert to 5 digits
+	LD	DE,(_tmpnam_cnt)
+	INC	DE
+	LD	(_tmpnam_cnt),DE
+
+	; Convert DE to 5 decimal digits
+	LD	BC,10000
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	; Remainder in DE
+	LD	BC,1000
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	LD	BC,100
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	LD	BC,10
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	LD	A,E
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+
+	; Add .$$$ extension
+	LD	(HL),'.'
+	INC	HL
+	LD	(HL),'$'
+	INC	HL
+	LD	(HL),'$'
+	INC	HL
+	LD	(HL),'$'
+	INC	HL
+	LD	(HL),0
+
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; Internal: Divide DE by BC, quotient in A, remainder in DE
+_div16:
+	XOR	A
+_div16_loop:
+	LD	H,D
+	LD	L,E
+	OR	A
+	SBC	HL,BC
+	JR	C,_div16_done
+	EX	DE,HL
+	INC	A
+	JR	_div16_loop
+_div16_done:
+	RET
+
+_tmpnam_cnt:
+	DW	0
+_tmpnam_buf:
+	DS	13		; TMP00000.$$$ + null
+_tmpfile_name:
+	DS	13
+
+; ============================================================
+; FILE *freopen(const char *pathname, const char *mode, FILE *stream)
+; Reopen stream with new file
+; ============================================================
+	PUBLIC	_freopen
+_freopen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Close current stream
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	PUSH	HL
+	CALL	_fclose
+	POP	BC
+
+	; Now reopen with new file
+	; Can't use the same FILE slot reliably, so just call fopen
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; pathname
+	PUSH	HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; mode
+	PUSH	HL
+	CALL	_fopen
+	POP	BC
+	POP	BC
+
+	; HL = new FILE* or NULL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int getc(FILE *stream)
+; Get character from stream (equivalent to fgetc)
+; ============================================================
+	PUBLIC	_getc
+_getc:
+	JP	_fgetc		; Just tail-call fgetc
+
+; ============================================================
+; int putc(int c, FILE *stream)
+; Put character to stream (equivalent to fputc)
+; ============================================================
+	PUBLIC	_putc
+_putc:
+	JP	_fputc		; Just tail-call fputc
+
+; ============================================================
+; int fgetpos(FILE *stream, fpos_t *pos)
+; Get current file position
+; Returns 0 on success, non-zero on error
+; ============================================================
+	PUBLIC	_fgetpos
+_fgetpos:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Call ftell to get position
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; stream
+	PUSH	HL
+	CALL	_ftell
+	POP	BC
+	; DEHL = position (long)
+
+	; Check for error (returns -1 as 0xFFFFFFFF)
+	LD	A,D
+	AND	E
+	AND	H
+	AND	L
+	INC	A
+	JR	Z,_fgetpos_err
+
+	; Store position at *pos
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = pos pointer
+	LD	A,L
+	LD	(BC),A
+	INC	BC
+	LD	A,H
+	LD	(BC),A
+	INC	BC
+	LD	A,E
+	LD	(BC),A
+	INC	BC
+	LD	A,D
+	LD	(BC),A
+
+	LD	HL,0		; Return success
+	JR	_fgetpos_ret
+
+_fgetpos_err:
+	LD	HL,-1
+_fgetpos_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int fsetpos(FILE *stream, const fpos_t *pos)
+; Set file position
+; Returns 0 on success, non-zero on error
+; ============================================================
+	PUBLIC	_fsetpos
+_fsetpos:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Load position from *pos
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = pos pointer
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = position
+	PUSH	BC		; High word
+	PUSH	DE		; Low word
+
+	; Call fseek(stream, pos, SEEK_SET)
+	LD	HL,0
+	PUSH	HL		; whence = SEEK_SET
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	; Stack: stream, whence(0), pos_low, pos_high
+	; fseek expects: stream, offset_low, offset_high, whence
+	; Need to rearrange...
+
+	; Actually let's redo this properly
+	POP	HL		; stream
+	POP	BC		; whence
+	POP	DE		; pos low
+	POP	BC		; pos high
+	; Now push in correct order for fseek(stream, offset, whence)
+	LD	A,0
+	PUSH	AF		; whence = SEEK_SET (use AF as 16-bit 0)
+	INC	SP		; Adjust for 1-byte push
+	DEC	SP
+	LD	HL,0
+	PUSH	HL		; whence = 0
+	PUSH	BC		; offset high
+	PUSH	DE		; offset low
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	CALL	_fseek
+	; Clean up stack (5 words = 10 bytes)
+	LD	HL,10
+	ADD	HL,SP
+	LD	SP,HL
+
+	; fseek returns 0 on success, -1 on error
+	; HL already has return value
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; void setbuf(FILE *stream, char *buf)
+; Set stream buffer (no-op on CP/M - fixed buffers)
+; ============================================================
+	PUBLIC	_setbuf
+_setbuf:
+	; No-op - CP/M uses fixed 128-byte buffers
+	RET
+
+; ============================================================
+; int setvbuf(FILE *stream, char *buf, int mode, size_t size)
+; Set stream buffering (limited support on CP/M)
+; ============================================================
+	PUBLIC	_setvbuf
+_setvbuf:
+	; No-op - CP/M uses fixed 128-byte buffers
+	; Always return 0 (success) for compatibility
+	LD	HL,0
+	RET
+
+; ============================================================
+; void perror(const char *s)
+; Print error message to stderr
+; ============================================================
+	PUBLIC	_perror
+_perror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Print user string if provided
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_perror_errmsg
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_errmsg
+
+	; Print user string
+_perror_uloop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_colon
+	LD	E,A
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	INC	HL
+	JR	_perror_uloop
+
+_perror_colon:
+	; Print ": "
+	LD	E,':'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,' '
+	LD	C,CONOUT
+	CALL	BDOS
+
+_perror_errmsg:
+	; Print generic error message (CP/M doesn't have errno)
+	LD	HL,_perror_msg
+_perror_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_nl
+	LD	E,A
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	INC	HL
+	JR	_perror_loop
+
+_perror_nl:
+	; Print newline
+	LD	E,13
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,10
+	LD	C,CONOUT
+	CALL	BDOS
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_perror_msg:
+	DB	'Error',0
+
+; Temporary FCB for remove/rename operations
+_tmp_fcb:
+	DS	36
+
+; ============================================================
 ; int printf(const char *fmt, ...)
 ; Minimal printf supporting %d, %s, %c, %x, %%
 ; Very simplified - no field width, precision, etc.
@@ -2230,6 +2737,486 @@ _fprintf_hex_dig:
 	DJNZ	_fprintf_hex_lp
 	POP	DE
 	POP	BC
+	RET
+
+; ============================================================
+; vprintf family - formatted output with va_list
+; int vprintf(const char *fmt, va_list ap)
+; int vfprintf(FILE *stream, const char *fmt, va_list ap)
+; int vsprintf(char *str, const char *fmt, va_list ap)
+; ============================================================
+
+; vprintf: output to stdout using va_list
+	PUBLIC	_vprintf
+_vprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; fmt at IX+4, ap at IX+6
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = format string
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = va_list (pointer to args)
+	LD	(_vprintf_ap),DE
+	LD	BC,0		; Character count
+
+_vprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vprintf_done
+
+	CP	'%'
+	JP	Z,_vprintf_fmt
+
+	; Regular char - output
+	PUSH	HL
+	PUSH	BC
+	LD	E,A
+	LD	C,2
+	CALL	5
+	POP	BC
+	POP	HL
+	INC	BC
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_fmt:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vprintf_done
+
+	CP	'%'
+	JR	NZ,_vprintf_fmt2
+	; Literal %
+	PUSH	HL
+	PUSH	BC
+	LD	E,'%'
+	LD	C,2
+	CALL	5
+	POP	BC
+	POP	HL
+	INC	BC
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_fmt2:
+	CP	's'
+	JP	Z,_vprintf_str
+	CP	'd'
+	JP	Z,_vprintf_dec
+	CP	'c'
+	JP	Z,_vprintf_chr
+	CP	'x'
+	JP	Z,_vprintf_hex
+	CP	'u'
+	JP	Z,_vprintf_uns
+	CP	'l'
+	JP	Z,_vprintf_long
+	; Unknown - skip
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_str:
+	; Print string
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL		; HL = string
+_vprintf_str_lp:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_vprintf_str_dn
+	LD	E,A
+	PUSH	HL
+	LD	C,2
+	CALL	5
+	POP	HL
+	INC	HL
+	JR	_vprintf_str_lp
+_vprintf_str_dn:
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_dec:
+	; Print signed int
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_prt_dec
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_chr:
+	; Print character
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	INC	HL
+	LD	(_vprintf_ap),HL
+	LD	C,2
+	CALL	5
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_hex:
+	; Print hex
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_prt_hex
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_uns:
+	; Same as dec for now
+	JP	_vprintf_dec
+
+_vprintf_long:
+	; Handle 'l' modifier
+	INC	HL
+	LD	A,(HL)
+	CP	'd'
+	JP	Z,_vprintf_ld
+	CP	'x'
+	JP	Z,_vprintf_lx
+	JP	_vprintf_loop
+
+_vprintf_ld:
+	; Print long decimal
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	; DEHL = low, BC = high (need to swap)
+	PUSH	BC
+	EX	DE,HL
+	POP	DE		; Now DEHL is 32-bit value
+	CALL	_prt_dec32
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_lx:
+	; Print long hex
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	; Print BC (high), then DE (low)
+	PUSH	DE
+	LD	H,B
+	LD	L,C
+	CALL	_prt_hex
+	POP	HL
+	CALL	_prt_hex
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_done:
+	LD	H,B
+	LD	L,C		; Return count
+	POP	IX
+	RET
+
+; vfprintf: output to file using va_list
+	PUBLIC	_vfprintf
+_vfprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; stream at IX+4, fmt at IX+6, ap at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_fprintf_stream),HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; DE = va_list
+	LD	(_vprintf_ap),DE
+	LD	BC,0		; Count
+
+_vfprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vfprintf_done
+	CP	'%'
+	JP	Z,_vfprintf_fmt
+	; Regular char
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	BC
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_fmt:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vfprintf_done
+	CP	'%'
+	JR	NZ,_vfprintf_fmt2
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	DE,'%'
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	BC
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_fmt2:
+	CP	's'
+	JP	Z,_vfprintf_str
+	CP	'd'
+	JP	Z,_vfprintf_dec
+	CP	'c'
+	JP	Z,_vfprintf_chr
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_str:
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+_vfprintf_str_lp:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_vfprintf_str_dn
+	PUSH	HL
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	HL
+	INC	HL
+	JR	_vfprintf_str_lp
+_vfprintf_str_dn:
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_dec:
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_fprintf_prt_dec
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_chr:
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	INC	HL
+	LD	(_vprintf_ap),HL
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_done:
+	LD	H,B
+	LD	L,C
+	POP	IX
+	RET
+
+; vsprintf: output to string using va_list
+	PUBLIC	_vsprintf
+_vsprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; str at IX+4, fmt at IX+6, ap at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_sprintf_out),HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; DE = va_list
+	LD	(_vprintf_ap),DE
+	LD	BC,0		; Count
+	LD	(_sprintf_cnt),BC
+
+_vsprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vsprintf_done
+	CP	'%'
+	JP	Z,_vsprintf_fmt
+	; Regular char
+	CALL	_sprintf_putc
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_fmt:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vsprintf_done
+	CP	'%'
+	JR	NZ,_vsprintf_fmt2
+	LD	A,'%'
+	CALL	_sprintf_putc
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_fmt2:
+	CP	's'
+	JP	Z,_vsprintf_str
+	CP	'd'
+	JP	Z,_vsprintf_dec
+	CP	'c'
+	JP	Z,_vsprintf_chr
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_str:
+	PUSH	HL
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+_vsprintf_str_lp:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_vsprintf_str_dn
+	CALL	_sprintf_putc
+	INC	HL
+	JR	_vsprintf_str_lp
+_vsprintf_str_dn:
+	POP	HL
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_dec:
+	PUSH	HL
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_sprintf_prt_dec
+	POP	HL
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_chr:
+	PUSH	HL
+	LD	HL,(_vprintf_ap)
+	LD	A,(HL)
+	INC	HL
+	INC	HL
+	LD	(_vprintf_ap),HL
+	CALL	_sprintf_putc
+	POP	HL
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_done:
+	; Null terminate
+	XOR	A
+	CALL	_sprintf_putc
+	; Return count
+	LD	HL,(_sprintf_cnt)
+	DEC	HL		; Don't count null
+	POP	IX
 	RET
 
 ; ============================================================
@@ -3919,6 +4906,811 @@ _strtoul_pref:
 	JP	_strtol_prefix	; Share the rest of strtol code
 
 ; ============================================================
+; double atof(const char *nptr)
+; Convert string to double (IEEE 754 single precision)
+; ============================================================
+	PUBLIC	_atof
+_atof:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Call strtod with NULL endptr
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = nptr
+	PUSH	HL
+	LD	HL,0
+	PUSH	HL		; endptr = NULL
+	CALL	_strtod
+	POP	BC
+	POP	BC
+
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; double strtod(const char *nptr, char **endptr)
+; Convert string to double (IEEE 754 single precision)
+; Format: [ws][sign][digits][.digits][e[sign]digits]
+; Returns result in DEHL
+; ============================================================
+	PUBLIC	_strtod
+	PUBLIC	_strtof		; Same as strtod for our implementation
+	PUBLIC	_strtold	; Same as strtod for our implementation
+_strtof:
+_strtold:
+_strtod:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = nptr
+	XOR	A
+	LD	(_strtod_neg),A	; Clear negative flag
+	LD	(_strtod_expneg),A	; Clear exponent negative
+	LD	A,1
+	LD	(_strtod_expadj),A	; Exponent adjustment (1.0 default)
+	LD	(_strtod_expadj+1),A
+
+	; Initialize result to 0.0
+	XOR	A
+	LD	(_strtod_result),A
+	LD	(_strtod_result+1),A
+	LD	(_strtod_result+2),A
+	LD	(_strtod_result+3),A
+
+	; Skip leading whitespace
+_strtod_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_strtod_skipnext
+	CP	09H
+	JR	Z,_strtod_skipnext
+	CP	0AH
+	JR	Z,_strtod_skipnext
+	CP	0DH
+	JR	Z,_strtod_skipnext
+	JR	_strtod_sign
+_strtod_skipnext:
+	INC	HL
+	JR	_strtod_skip
+
+_strtod_sign:
+	PUSH	HL		; Save start position for endptr
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_strtod_chkplus
+	LD	A,1
+	LD	(_strtod_neg),A
+	INC	HL
+	JR	_strtod_intpart
+_strtod_chkplus:
+	CP	'+'
+	JR	NZ,_strtod_intpart
+	INC	HL
+
+_strtod_intpart:
+	; Parse integer part: accumulate digits
+	; Use 32-bit integer accumulator first
+	XOR	A
+	LD	(_strtod_intacc),A
+	LD	(_strtod_intacc+1),A
+	LD	(_strtod_intacc+2),A
+	LD	(_strtod_intacc+3),A
+	LD	(_strtod_gotdigit),A	; No digits yet
+
+_strtod_intloop:
+	LD	A,(HL)
+	CP	'0'
+	JR	C,_strtod_intdone
+	CP	'9'+1
+	JR	NC,_strtod_intdone
+	; Got a digit
+	LD	B,1
+	LD	(_strtod_gotdigit),A
+	SUB	'0'
+	LD	C,A		; C = digit value
+
+	; Multiply accumulator by 10 and add digit
+	PUSH	HL
+	PUSH	BC
+
+	; Load accumulator
+	LD	HL,(_strtod_intacc)
+	LD	DE,(_strtod_intacc+2)
+	; Multiply by 10: DEHL * 10
+	; Save original
+	PUSH	DE
+	PUSH	HL
+	; *2
+	ADD	HL,HL
+	RL	E
+	RL	D
+	; *4
+	ADD	HL,HL
+	RL	E
+	RL	D
+	; *8 + *2 = *10
+	POP	BC		; Original low
+	EX	(SP),HL		; Swap with original high, get *8 low
+	ADD	HL,BC		; *8 low + *2 low
+	EX	DE,HL		; DE = new low
+	POP	BC		; Original high
+	LD	A,H
+	ADC	A,C
+	LD	H,A
+	LD	A,L
+	ADC	A,B
+	LD	L,A		; HL = high, DE = low (wrong order)
+	EX	DE,HL		; DEHL = result*10
+	; Now add digit in C
+	POP	BC		; Get digit back
+	LD	A,L
+	ADD	A,C
+	LD	L,A
+	JR	NC,_strtod_noc1
+	INC	H
+	JR	NZ,_strtod_noc1
+	INC	DE
+_strtod_noc1:
+	; Store back
+	LD	(_strtod_intacc),HL
+	LD	(_strtod_intacc+2),DE
+	POP	HL
+	INC	HL
+	JR	_strtod_intloop
+
+_strtod_intdone:
+	; Check for decimal point
+	LD	A,(HL)
+	CP	'.'
+	JR	NZ,_strtod_chkexp
+
+	INC	HL		; Skip decimal point
+	; Parse fractional part
+	LD	DE,1		; Divisor starts at 1
+	LD	(_strtod_divisor),DE
+	LD	DE,0
+	LD	(_strtod_divisor+2),DE
+	XOR	A
+	LD	(_strtod_fracacc),A
+	LD	(_strtod_fracacc+1),A
+	LD	(_strtod_fracacc+2),A
+	LD	(_strtod_fracacc+3),A
+
+_strtod_fracloop:
+	LD	A,(HL)
+	CP	'0'
+	JR	C,_strtod_fracdone
+	CP	'9'+1
+	JR	NC,_strtod_fracdone
+	; Got a fractional digit
+	LD	B,1
+	LD	(_strtod_gotdigit),A
+	SUB	'0'
+	LD	C,A
+
+	; Multiply divisor by 10
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_strtod_divisor)
+	LD	DE,(_strtod_divisor+2)
+	; *10 (same as above)
+	PUSH	DE
+	PUSH	HL
+	ADD	HL,HL
+	RL	E
+	RL	D
+	ADD	HL,HL
+	RL	E
+	RL	D
+	POP	BC
+	EX	(SP),HL
+	ADD	HL,BC
+	EX	DE,HL
+	POP	BC
+	LD	A,H
+	ADC	A,C
+	LD	H,A
+	LD	A,L
+	ADC	A,B
+	LD	L,A
+	EX	DE,HL
+	LD	(_strtod_divisor),HL
+	LD	(_strtod_divisor+2),DE
+
+	; Multiply fracacc by 10 and add digit
+	LD	HL,(_strtod_fracacc)
+	LD	DE,(_strtod_fracacc+2)
+	PUSH	DE
+	PUSH	HL
+	ADD	HL,HL
+	RL	E
+	RL	D
+	ADD	HL,HL
+	RL	E
+	RL	D
+	POP	BC
+	EX	(SP),HL
+	ADD	HL,BC
+	EX	DE,HL
+	POP	BC
+	LD	A,H
+	ADC	A,C
+	LD	H,A
+	LD	A,L
+	ADC	A,B
+	LD	L,A
+	EX	DE,HL
+	; Add digit
+	POP	BC
+	LD	A,L
+	ADD	A,C
+	LD	L,A
+	JR	NC,_strtod_noc2
+	INC	H
+	JR	NZ,_strtod_noc2
+	INC	DE
+_strtod_noc2:
+	LD	(_strtod_fracacc),HL
+	LD	(_strtod_fracacc+2),DE
+	POP	HL
+	INC	HL
+	JR	_strtod_fracloop
+
+_strtod_fracdone:
+
+_strtod_chkexp:
+	; Check for exponent
+	LD	A,(HL)
+	CP	'e'
+	JR	Z,_strtod_parseexp
+	CP	'E'
+	JR	Z,_strtod_parseexp
+	JR	_strtod_convert
+
+_strtod_parseexp:
+	INC	HL		; Skip 'e'
+	XOR	A
+	LD	(_strtod_expneg),A
+	LD	(_strtod_exp),A
+	LD	(_strtod_exp+1),A
+
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_strtod_expplus
+	LD	A,1
+	LD	(_strtod_expneg),A
+	INC	HL
+	JR	_strtod_expdigits
+_strtod_expplus:
+	CP	'+'
+	JR	NZ,_strtod_expdigits
+	INC	HL
+
+_strtod_expdigits:
+	LD	A,(HL)
+	CP	'0'
+	JR	C,_strtod_convert
+	CP	'9'+1
+	JR	NC,_strtod_convert
+	SUB	'0'
+	LD	C,A
+	; exp = exp * 10 + digit
+	PUSH	HL
+	LD	HL,(_strtod_exp)
+	LD	D,H
+	LD	E,L
+	ADD	HL,HL		; *2
+	ADD	HL,HL		; *4
+	ADD	HL,DE		; *5
+	ADD	HL,HL		; *10
+	LD	D,0
+	LD	E,C
+	ADD	HL,DE
+	LD	(_strtod_exp),HL
+	POP	HL
+	INC	HL
+	JR	_strtod_expdigits
+
+_strtod_convert:
+	; Save end position
+	EX	(SP),HL		; HL = start, (SP) = end
+
+	; Check if we got any digits
+	LD	A,(_strtod_gotdigit)
+	OR	A
+	JR	NZ,_strtod_hasdigits
+	; No digits - return 0.0 with endptr = nptr
+	POP	HL		; Discard end
+	; HL = start (nptr)
+	JR	_strtod_storendptr
+
+_strtod_hasdigits:
+	POP	HL		; HL = end position
+	PUSH	HL		; Save it back
+
+	; Convert integer part to float
+	PUSH	HL
+	LD	HL,(_strtod_intacc)
+	LD	DE,(_strtod_intacc+2)
+	CALL	__ltof		; Convert long to float
+	LD	(_strtod_result),HL
+	LD	(_strtod_result+2),DE
+	POP	HL
+
+	; Add fractional part if any
+	LD	A,(_strtod_divisor)
+	DEC	A
+	OR	A
+	JR	NZ,_strtod_addfrac
+	LD	A,(_strtod_divisor+1)
+	OR	A
+	JR	NZ,_strtod_addfrac
+	LD	A,(_strtod_divisor+2)
+	OR	A
+	JR	NZ,_strtod_addfrac
+	LD	A,(_strtod_divisor+3)
+	OR	A
+	JR	Z,_strtod_applyexp
+
+_strtod_addfrac:
+	; Convert fracacc to float
+	PUSH	HL
+	LD	HL,(_strtod_fracacc)
+	LD	DE,(_strtod_fracacc+2)
+	CALL	__ltof
+	; Divide by divisor
+	LD	(_strtod_tmp),HL
+	LD	(_strtod_tmp+2),DE
+	LD	HL,(_strtod_divisor)
+	LD	DE,(_strtod_divisor+2)
+	CALL	__ltof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_strtod_tmp)
+	LD	DE,(_strtod_tmp+2)
+	CALL	__fdiv
+	; Add to result
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_strtod_result)
+	LD	DE,(_strtod_result+2)
+	CALL	__fadd
+	LD	(_strtod_result),HL
+	LD	(_strtod_result+2),DE
+	POP	HL
+
+_strtod_applyexp:
+	; Apply exponent if any
+	LD	DE,(_strtod_exp)
+	LD	A,D
+	OR	E
+	JR	Z,_strtod_applysign
+
+	; Build 10^exp
+	PUSH	HL
+	LD	HL,(_strtod_result)
+	LD	DE,(_strtod_result+2)
+	LD	BC,(_strtod_exp)
+
+_strtod_exploop:
+	LD	A,B
+	OR	C
+	JR	Z,_strtod_expdone
+	; Multiply or divide by 10
+	LD	A,(_strtod_expneg)
+	OR	A
+	JR	NZ,_strtod_expdiv
+
+	; Multiply by 10
+	PUSH	BC
+	LD	BC,00004120H	; 10.0 in IEEE 754
+	LD	(__tmp32),BC
+	LD	BC,00000000H
+	LD	(__tmp32+2),BC
+	CALL	__fmul
+	POP	BC
+	DEC	BC
+	JR	_strtod_exploop
+
+_strtod_expdiv:
+	; Divide by 10
+	PUSH	BC
+	LD	BC,00004120H	; 10.0 in IEEE 754
+	LD	(__tmp32),BC
+	LD	BC,00000000H
+	LD	(__tmp32+2),BC
+	CALL	__fdiv
+	POP	BC
+	DEC	BC
+	JR	_strtod_exploop
+
+_strtod_expdone:
+	LD	(_strtod_result),HL
+	LD	(_strtod_result+2),DE
+	POP	HL
+
+_strtod_applysign:
+	; Apply negative sign if needed
+	LD	A,(_strtod_neg)
+	OR	A
+	JR	Z,_strtod_storendptr
+
+	; Negate: flip sign bit
+	LD	HL,(_strtod_result+2)
+	LD	A,H
+	XOR	80H
+	LD	H,A
+	LD	(_strtod_result+2),HL
+
+_strtod_storendptr:
+	; Store endptr if not NULL
+	POP	HL		; HL = end position
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = endptr
+	LD	A,B
+	OR	C
+	JR	Z,_strtod_retval
+	; Store HL at *endptr
+	LD	A,L
+	LD	(BC),A
+	INC	BC
+	LD	A,H
+	LD	(BC),A
+
+_strtod_retval:
+	LD	HL,(_strtod_result)
+	LD	DE,(_strtod_result+2)
+	POP	BC
+	POP	IX
+	RET
+
+	EXTRN	__ltof
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+
+; strtod work variables
+_strtod_neg:	DB	0
+_strtod_expneg:	DB	0
+_strtod_gotdigit: DB	0
+_strtod_exp:	DW	0
+_strtod_expadj:	DW	1
+_strtod_intacc:	DS	4
+_strtod_fracacc: DS	4
+_strtod_divisor: DS	4
+_strtod_result:	DS	4
+_strtod_tmp:	DS	4
+
+; ============================================================
+; Multibyte/Wide Character Conversion Functions
+; Minimal implementation for C locale (1:1 char mapping)
+; ============================================================
+
+; int mblen(const char *s, size_t n)
+; Determine bytes in multibyte character
+; C locale: always returns 1 for non-null char, 0 for null, -1 if s==NULL
+	PUBLIC	_mblen
+_mblen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_mblen_null	; s == NULL
+
+	; Check if n >= 1
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = n
+	LD	A,B
+	OR	C
+	JR	Z,_mblen_zero	; n == 0
+
+	; Check character
+	LD	A,(HL)
+	OR	A
+	JR	Z,_mblen_zero	; null character
+
+	; Valid single-byte character
+	LD	HL,1
+	POP	IX
+	RET
+
+_mblen_null:
+	; s == NULL: return 0 (stateless encoding)
+	LD	HL,0
+	POP	IX
+	RET
+
+_mblen_zero:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int mbtowc(wchar_t *pwc, const char *s, size_t n)
+; Convert multibyte to wide character
+; C locale: just copy byte to wchar_t
+	PUBLIC	_mbtowc
+_mbtowc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_null	; s == NULL
+
+	; Check n
+	LD	C,(IX+8)
+	LD	B,(IX+9)	; BC = n
+	LD	A,B
+	OR	C
+	JR	Z,_mbtowc_err	; n == 0
+
+	; Get character
+	LD	A,(HL)
+	OR	A
+	JR	Z,_mbtowc_nul	; null character
+
+	; Store in pwc if not NULL
+	LD	C,A		; Save char
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = pwc
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_ret1
+	; Store as wide char (16-bit)
+	LD	(HL),C
+	INC	HL
+	XOR	A
+	LD	(HL),A
+
+_mbtowc_ret1:
+	LD	HL,1
+	POP	IX
+	RET
+
+_mbtowc_nul:
+	; Store 0 in pwc if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_ret0
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+_mbtowc_ret0:
+	LD	HL,0
+	POP	IX
+	RET
+
+_mbtowc_null:
+	; s == NULL: return 0 (stateless)
+	LD	HL,0
+	POP	IX
+	RET
+
+_mbtowc_err:
+	LD	HL,-1
+	POP	IX
+	RET
+
+; int wctomb(char *s, wchar_t wc)
+; Convert wide character to multibyte
+; C locale: just copy low byte if <= 255
+	PUBLIC	_wctomb
+_wctomb:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_wctomb_null	; s == NULL
+
+	; Get wchar_t
+	LD	C,(IX+6)	; Low byte of wc
+	LD	A,(IX+7)	; High byte
+	OR	A
+	JR	NZ,_wctomb_err	; > 255: invalid for C locale
+
+	; Store character
+	LD	(HL),C
+	LD	HL,1
+	POP	IX
+	RET
+
+_wctomb_null:
+	; s == NULL: return 0 (stateless)
+	LD	HL,0
+	POP	IX
+	RET
+
+_wctomb_err:
+	LD	HL,-1
+	POP	IX
+	RET
+
+; size_t mbstowcs(wchar_t *dest, const char *src, size_t n)
+; Convert multibyte string to wide string
+; C locale: copy bytes to wchar_t array
+	PUBLIC	_mbstowcs
+_mbstowcs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = dest
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = src
+	LD	C,(IX+8)
+	LD	B,(IX+9)	; BC = n
+	PUSH	BC		; Save n
+
+	LD	BC,0		; Count = 0
+
+_mbstowcs_loop:
+	; Check if count < n
+	POP	HL		; n
+	PUSH	HL
+	OR	A
+	SBC	HL,BC
+	JR	Z,_mbstowcs_done
+	JR	C,_mbstowcs_done
+
+	; Get source pointer back
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	ADD	HL,BC		; HL = src + count
+	LD	A,(HL)		; Get char
+
+	; Check for null terminator
+	OR	A
+	JR	Z,_mbstowcs_term
+
+	; Store in dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = dest
+	LD	E,A
+	LD	A,H
+	OR	L
+	JR	Z,_mbstowcs_nodest
+	; dest[count] = char
+	PUSH	BC
+	SLA	C
+	RL	B		; BC * 2 for wchar_t offset
+	ADD	HL,BC
+	LD	(HL),E		; Low byte
+	INC	HL
+	XOR	A
+	LD	(HL),A		; High byte = 0
+	POP	BC
+
+_mbstowcs_nodest:
+	INC	BC		; count++
+	JR	_mbstowcs_loop
+
+_mbstowcs_term:
+	; Null terminate dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_mbstowcs_done
+	PUSH	BC
+	SLA	C
+	RL	B
+	ADD	HL,BC
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	POP	BC
+
+_mbstowcs_done:
+	POP	HL		; Discard saved n
+	LD	H,B
+	LD	L,C		; Return count
+	POP	BC
+	POP	IX
+	RET
+
+; size_t wcstombs(char *dest, const wchar_t *src, size_t n)
+; Convert wide string to multibyte string
+; C locale: copy low bytes if <= 255
+	PUBLIC	_wcstombs
+_wcstombs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	BC,0		; Count = 0
+
+_wcstombs_loop:
+	; Check if count < n
+	LD	L,(IX+8)
+	LD	H,(IX+9)	; HL = n
+	OR	A
+	SBC	HL,BC
+	JR	Z,_wcstombs_done
+	JR	C,_wcstombs_done
+
+	; Get wchar at src[count]
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = src
+	PUSH	BC
+	SLA	C
+	RL	B		; BC * 2 for wchar_t
+	ADD	HL,BC
+	POP	BC
+	LD	E,(HL)		; Low byte
+	INC	HL
+	LD	A,(HL)		; High byte
+	OR	A
+	JR	NZ,_wcstombs_err	; > 255
+
+	; Check for null terminator
+	LD	A,E
+	OR	A
+	JR	Z,_wcstombs_term
+
+	; Store in dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_wcstombs_nodest
+	ADD	HL,BC
+	LD	(HL),E
+
+_wcstombs_nodest:
+	INC	BC
+	JR	_wcstombs_loop
+
+_wcstombs_term:
+	; Null terminate
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_wcstombs_done
+	ADD	HL,BC
+	XOR	A
+	LD	(HL),A
+
+_wcstombs_done:
+	LD	H,B
+	LD	L,C
+	POP	BC
+	POP	IX
+	RET
+
+_wcstombs_err:
+	LD	HL,-1
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
 ; char *strrchr(const char *s, int c)
 ; Find last occurrence of c in s
 ; Returns: pointer to char, or NULL if not found
@@ -4406,6 +6198,67 @@ _strerror_nosys:
 
 _strerror_ret:
 	POP	IX
+	RET
+
+; ============================================================
+; Locale support (minimal "C" locale only)
+; ============================================================
+
+; char *setlocale(int category, const char *locale)
+; Only supports "C" and "" (null string = default = "C")
+; Returns "C" on success, NULL on failure
+	PUBLIC	_setlocale
+_setlocale:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; category at IX+4, locale at IX+6
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = locale string
+	; NULL means query current locale (return "C")
+	LD	A,H
+	OR	L
+	JR	Z,_setlocale_ok
+	; "" means use default (return "C")
+	LD	A,(HL)
+	OR	A
+	JR	Z,_setlocale_ok
+	; Check for "C"
+	CP	'C'
+	JR	NZ,_setlocale_check_posix
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JR	Z,_setlocale_ok
+	JR	_setlocale_fail
+_setlocale_check_posix:
+	; Check for "POSIX"
+	LD	DE,_locale_posix
+	LD	B,5
+_setlocale_cmp:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,_setlocale_fail
+	INC	HL
+	INC	DE
+	DJNZ	_setlocale_cmp
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_setlocale_fail
+_setlocale_ok:
+	LD	HL,_locale_c_str
+	POP	IX
+	RET
+_setlocale_fail:
+	LD	HL,0		; Return NULL
+	POP	IX
+	RET
+
+; struct lconv *localeconv(void)
+; Returns pointer to static lconv structure
+	PUBLIC	_localeconv
+_localeconv:
+	LD	HL,_lconv_data
 	RET
 
 ; ============================================================
@@ -5193,6 +7046,738 @@ _snprintf_hex_out:
 	JP	_snprintf_putc
 
 ; ============================================================
+; scanf family - formatted input
+; int scanf(const char *fmt, ...)
+; int sscanf(const char *str, const char *fmt, ...)
+; int fscanf(FILE *stream, const char *fmt, ...)
+; ============================================================
+
+	PUBLIC	_scanf
+_scanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; fmt at IX+4, args start at IX+6
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = format string
+	LD	C,6		; C = offset to next argument
+	XOR	A
+	LD	(_scanf_count),A ; matched count
+	LD	(_scanf_mode),A  ; mode=0: stdin
+
+_scanf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_scanf_done
+
+	CP	'%'
+	JP	Z,_scanf_format
+
+	CP	' '
+	JP	Z,_scanf_white
+	CP	9		; tab
+	JP	Z,_scanf_white
+	CP	10		; newline
+	JP	Z,_scanf_white
+	CP	13		; CR
+	JP	Z,_scanf_white
+
+	; Literal match required
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_getc
+	POP	BC
+	POP	HL
+	CP	(HL)
+	JP	NZ,_scanf_done	; Mismatch
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_white:
+	; Skip whitespace in format and input
+	INC	HL
+	PUSH	HL
+	PUSH	BC
+_scanf_skip_ws:
+	CALL	_scanf_getc
+	CP	' '
+	JR	Z,_scanf_skip_ws
+	CP	9
+	JR	Z,_scanf_skip_ws
+	CP	10
+	JR	Z,_scanf_skip_ws
+	CP	13
+	JR	Z,_scanf_skip_ws
+	; Unget non-whitespace char
+	CALL	_scanf_ungetc
+	POP	BC
+	POP	HL
+	JP	_scanf_loop
+
+_scanf_format:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_scanf_done
+
+	CP	'%'
+	JP	Z,_scanf_pct
+
+	CP	'd'
+	JP	Z,_scanf_int
+	CP	'i'
+	JP	Z,_scanf_int
+
+	CP	's'
+	JP	Z,_scanf_str
+
+	CP	'c'
+	JP	Z,_scanf_chr
+
+	CP	'u'
+	JP	Z,_scanf_uint
+
+	CP	'x'
+	JP	Z,_scanf_hex
+
+	CP	'l'
+	JP	Z,_scanf_long
+
+	CP	'*'
+	JP	Z,_scanf_star
+
+	; Unknown - skip
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_pct:
+	; Match literal %
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_getc
+	POP	BC
+	POP	HL
+	CP	'%'
+	JP	NZ,_scanf_done
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_star:
+	; Suppressed assignment - read but don't store
+	INC	HL
+	LD	A,(HL)
+	CP	'd'
+	JP	Z,_scanf_star_int
+	CP	's'
+	JP	Z,_scanf_star_str
+	; Default: skip one int
+_scanf_star_int:
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_int
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+_scanf_star_str:
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+_scanf_star_str_loop:
+	CALL	_scanf_getc
+	CP	' '
+	JR	Z,_scanf_star_str_done
+	CP	9
+	JR	Z,_scanf_star_str_done
+	CP	10
+	JR	Z,_scanf_star_str_done
+	CP	13
+	JR	Z,_scanf_star_str_done
+	OR	A
+	JR	NZ,_scanf_star_str_loop
+_scanf_star_str_done:
+	CALL	_scanf_ungetc
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_int:
+	; Read signed integer
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_int	; Result in HL
+	PUSH	HL
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = destination pointer
+	POP	HL		; HL = value
+	EX	DE,HL		; HL = dest, DE = value
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	; Increment count
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_uint:
+	; Read unsigned integer (same as int for now)
+	JP	_scanf_int
+
+_scanf_hex:
+	; Read hex integer
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_hex	; Result in HL
+	PUSH	HL
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	POP	HL
+	EX	DE,HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_str:
+	; Read string (non-whitespace)
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = destination pointer
+	EX	DE,HL		; HL = dest
+_scanf_str_loop:
+	PUSH	HL
+	CALL	_scanf_getc
+	POP	HL
+	CP	' '
+	JR	Z,_scanf_str_end
+	CP	9
+	JR	Z,_scanf_str_end
+	CP	10
+	JR	Z,_scanf_str_end
+	CP	13
+	JR	Z,_scanf_str_end
+	CP	0FFH
+	JR	Z,_scanf_str_end
+	OR	A
+	JR	Z,_scanf_str_end
+	LD	(HL),A
+	INC	HL
+	JR	_scanf_str_loop
+_scanf_str_end:
+	LD	(HL),0		; Null terminate
+	CALL	_scanf_ungetc
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_chr:
+	; Read single character
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_getc
+	PUSH	AF
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	POP	AF
+	LD	(HL),A
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_long:
+	; Handle 'l' modifier
+	INC	HL
+	LD	A,(HL)
+	CP	'd'
+	JP	Z,_scanf_ld
+	CP	'x'
+	JP	Z,_scanf_lx
+	; Unknown - skip
+	JP	_scanf_loop
+
+_scanf_ld:
+	; Read long signed integer
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_long	; Result in DEHL
+	PUSH	DE
+	PUSH	HL
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = dest
+	POP	DE		; DE = low word
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	POP	DE		; DE = high word
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_lx:
+	; Read long hex
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_long_hex
+	PUSH	DE
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	POP	DE
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	POP	DE
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_done:
+	LD	A,(_scanf_count)
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+; Internal: get a character based on mode
+_scanf_getc:
+	LD	A,(_scanf_mode)
+	OR	A
+	JR	NZ,_scanf_getc_str
+	; Mode 0: stdin
+	LD	C,1		; CONIN
+	CALL	5
+	RET
+_scanf_getc_str:
+	CP	1
+	JR	NZ,_scanf_getc_file
+	; Mode 1: string
+	LD	HL,(_scanf_src)
+	LD	A,(HL)
+	OR	A
+	JR	Z,_scanf_getc_eof
+	INC	HL
+	LD	(_scanf_src),HL
+	RET
+_scanf_getc_file:
+	; Mode 2: file
+	LD	HL,(_scanf_fp)
+	PUSH	HL
+	CALL	_fgetc
+	POP	BC
+	RET
+_scanf_getc_eof:
+	LD	A,0FFH
+	RET
+
+; Internal: unget character
+_scanf_ungetc:
+	LD	(_scanf_ungot),A
+	RET
+
+; Internal: read signed integer into HL
+_scanf_read_int:
+	LD	HL,0
+	LD	D,0		; D = sign (0=positive, 1=negative)
+	; Check for sign
+	CALL	_scanf_getc
+	CP	'-'
+	JR	NZ,_scanf_ri_notneg
+	LD	D,1
+	JR	_scanf_ri_loop
+_scanf_ri_notneg:
+	CP	'+'
+	JR	Z,_scanf_ri_loop
+	; Not a sign - first digit
+	JR	_scanf_ri_digit
+
+_scanf_ri_loop:
+	CALL	_scanf_getc
+_scanf_ri_digit:
+	CP	'0'
+	JR	C,_scanf_ri_done
+	CP	'9'+1
+	JR	NC,_scanf_ri_done
+	; Digit - accumulate
+	SUB	'0'
+	PUSH	DE
+	LD	E,A
+	; HL = HL * 10 + digit
+	ADD	HL,HL		; *2
+	LD	B,H
+	LD	C,L
+	ADD	HL,HL		; *4
+	ADD	HL,HL		; *8
+	ADD	HL,BC		; *10
+	LD	D,0
+	ADD	HL,DE
+	POP	DE
+	JR	_scanf_ri_loop
+
+_scanf_ri_done:
+	; Unget the non-digit
+	CALL	_scanf_ungetc
+	; Apply sign
+	LD	A,D
+	OR	A
+	RET	Z
+	; Negate HL
+	XOR	A
+	LD	D,A
+	LD	E,A
+	EX	DE,HL
+	SBC	HL,DE
+	RET
+
+; Internal: read hex integer into HL
+_scanf_read_hex:
+	LD	HL,0
+	; Skip optional 0x prefix
+	CALL	_scanf_getc
+	CP	'0'
+	JR	NZ,_scanf_rh_digit
+	CALL	_scanf_getc
+	CP	'x'
+	JR	Z,_scanf_rh_loop
+	CP	'X'
+	JR	Z,_scanf_rh_loop
+	; Not 0x - process as digit
+	CALL	_scanf_ungetc
+	LD	A,'0'
+	JR	_scanf_rh_digit
+
+_scanf_rh_loop:
+	CALL	_scanf_getc
+_scanf_rh_digit:
+	CP	'0'
+	JR	C,_scanf_rh_done
+	CP	'9'+1
+	JR	C,_scanf_rh_09
+	CP	'A'
+	JR	C,_scanf_rh_done
+	CP	'F'+1
+	JR	C,_scanf_rh_AF
+	CP	'a'
+	JR	C,_scanf_rh_done
+	CP	'f'+1
+	JR	NC,_scanf_rh_done
+	; a-f
+	SUB	'a'-10
+	JR	_scanf_rh_acc
+_scanf_rh_AF:
+	SUB	'A'-10
+	JR	_scanf_rh_acc
+_scanf_rh_09:
+	SUB	'0'
+_scanf_rh_acc:
+	; HL = HL * 16 + digit
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	OR	L
+	LD	L,A
+	JR	_scanf_rh_loop
+_scanf_rh_done:
+	CALL	_scanf_ungetc
+	RET
+
+; Internal: read long integer into DEHL
+_scanf_read_long:
+	LD	HL,0
+	LD	DE,0
+	LD	B,0		; sign
+	CALL	_scanf_getc
+	CP	'-'
+	JR	NZ,_scanf_rl_notneg
+	LD	B,1
+	JR	_scanf_rl_loop
+_scanf_rl_notneg:
+	CP	'+'
+	JR	Z,_scanf_rl_loop
+	JR	_scanf_rl_digit
+
+_scanf_rl_loop:
+	CALL	_scanf_getc
+_scanf_rl_digit:
+	CP	'0'
+	JP	C,_scanf_rl_done
+	CP	'9'+1
+	JP	NC,_scanf_rl_done
+	SUB	'0'
+	PUSH	BC
+	LD	C,A
+	; DEHL = DEHL * 10 + digit
+	; First *10 = *8 + *2
+	PUSH	DE
+	PUSH	HL		; Save original
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; *2
+	PUSH	DE
+	PUSH	HL		; Save *2
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; *4
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; *8
+	; Add *2
+	POP	BC		; BC = *2 low
+	ADD	HL,BC
+	EX	(SP),HL		; Stack *8+*2 low, get *2 high
+	EX	DE,HL
+	POP	BC		; BC = *8+*2 low
+	ADC	HL,DE		; HL = *10 high
+	EX	DE,HL		; DE = *10 high
+	LD	H,B
+	LD	L,C		; HL = *10 low
+	POP	BC		; Discard saved original high
+	POP	BC		; Discard saved original low
+	; Add digit
+	LD	B,0
+	ADD	HL,BC
+	JR	NC,_scanf_rl_noc
+	INC	DE
+_scanf_rl_noc:
+	POP	BC		; Restore sign
+	JP	_scanf_rl_loop
+
+_scanf_rl_done:
+	CALL	_scanf_ungetc
+	LD	A,B
+	OR	A
+	RET	Z
+	; Negate DEHL
+	PUSH	BC
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	A,E
+	CPL
+	LD	E,A
+	LD	A,D
+	CPL
+	LD	D,A
+	LD	BC,1
+	ADD	HL,BC
+	JR	NC,_scanf_rl_neg_done
+	INC	DE
+_scanf_rl_neg_done:
+	POP	BC
+	RET
+
+; Internal: read long hex into DEHL
+_scanf_read_long_hex:
+	LD	HL,0
+	LD	DE,0
+	; Skip optional 0x
+	CALL	_scanf_getc
+	CP	'0'
+	JR	NZ,_scanf_rlh_digit
+	CALL	_scanf_getc
+	CP	'x'
+	JR	Z,_scanf_rlh_loop
+	CP	'X'
+	JR	Z,_scanf_rlh_loop
+	CALL	_scanf_ungetc
+	LD	A,'0'
+	JR	_scanf_rlh_digit
+
+_scanf_rlh_loop:
+	CALL	_scanf_getc
+_scanf_rlh_digit:
+	CP	'0'
+	JR	C,_scanf_rlh_done
+	CP	'9'+1
+	JR	C,_scanf_rlh_09
+	CP	'A'
+	JR	C,_scanf_rlh_done
+	CP	'F'+1
+	JR	C,_scanf_rlh_AF
+	CP	'a'
+	JR	C,_scanf_rlh_done
+	CP	'f'+1
+	JR	NC,_scanf_rlh_done
+	SUB	'a'-10
+	JR	_scanf_rlh_acc
+_scanf_rlh_AF:
+	SUB	'A'-10
+	JR	_scanf_rlh_acc
+_scanf_rlh_09:
+	SUB	'0'
+_scanf_rlh_acc:
+	; DEHL = DEHL * 16 + digit
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	OR	L
+	LD	L,A
+	JR	_scanf_rlh_loop
+_scanf_rlh_done:
+	CALL	_scanf_ungetc
+	RET
+
+; ============================================================
+; sscanf - read from string
+; ============================================================
+	PUBLIC	_sscanf
+_sscanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; str at IX+4, fmt at IX+6, args at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_scanf_src),HL
+	LD	A,1
+	LD	(_scanf_mode),A
+	; Setup format and args offset
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format
+	LD	C,8		; args start at IX+8
+	XOR	A
+	LD	(_scanf_count),A
+	JP	_scanf_loop
+
+; ============================================================
+; fscanf - read from file
+; ============================================================
+	PUBLIC	_fscanf
+_fscanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; stream at IX+4, fmt at IX+6, args at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_scanf_fp),HL
+	LD	A,2
+	LD	(_scanf_mode),A
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	C,8
+	XOR	A
+	LD	(_scanf_count),A
+	JP	_scanf_loop
+
+; ============================================================
 ; void _assert_fail(const char *file, int line)
 ; Called when an assertion fails
 ; Prints message and exits
@@ -5878,38 +8463,189 @@ _isxdigit_no:
 	RET
 
 ; ============================================================
-; Signal handling stubs (CP/M doesn't support signals)
+; Signal handling for CP/M
+; Software signal system - no hardware signals but full API support
 ; ============================================================
 
+; Signal handler table - 7 entries (signals 0-6), each a 2-byte function pointer
+; Initialized to SIG_DFL (0) = default handling
+_sig_handlers:
+	DW	0		; Signal 0 (unused)
+	DW	0		; SIGABRT (1)
+	DW	0		; SIGFPE (2)
+	DW	0		; SIGILL (3)
+	DW	0		; SIGINT (4)
+	DW	0		; SIGSEGV (5)
+	DW	0		; SIGTERM (6)
+
 ; sig_handler_t signal(int sig, sig_handler_t handler)
-; Always returns SIG_DFL (0), ignoring arguments
+; Sets signal handler, returns previous handler
+; Returns SIG_ERR (-1) for invalid signal numbers
 	PUBLIC	_signal
 _signal:
-	LD	HL,0		; Return SIG_DFL
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; Get signal number
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Validate signal (must be 1-6)
+	LD	A,L
+	OR	H		; H must be 0
+	JR	NZ,_sig_err
+	LD	A,L
+	OR	A
+	JR	Z,_sig_err	; 0 is invalid
+	CP	7
+	JR	NC,_sig_err	; >= 7 is invalid
+	; Calculate table offset: sig * 2
+	ADD	A,A		; A = sig * 2
+	LD	E,A
+	LD	D,0
+	LD	HL,_sig_handlers
+	ADD	HL,DE		; HL = &_sig_handlers[sig]
+	; Save old handler to return
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL		; HL back to start
+	; Store new handler
+	LD	A,(IX+6)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)
+	LD	(HL),A
+	; Return old handler in HL
+	EX	DE,HL
+	POP	IX
+	RET
+_sig_err:
+	; Return SIG_ERR (-1)
+	LD	HL,-1
+	POP	IX
 	RET
 
 ; int raise(int sig)
-; SIGABRT causes exit, others do nothing
-; Returns 0 for success
+; Raises a signal - calls the registered handler
+; Returns 0 on success, -1 on error
 	PUBLIC	_raise
 _raise:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	LD	A,(IX+4)	; Get signal number
+	; Get signal number
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Validate signal (must be 1-6)
+	LD	A,L
+	OR	H
+	JR	NZ,_raise_err
+	LD	A,L
+	OR	A
+	JR	Z,_raise_err
+	CP	7
+	JR	NC,_raise_err
+	; Save signal number
+	PUSH	AF
+	; Get handler: _sig_handlers[sig]
+	ADD	A,A		; A = sig * 2
+	LD	E,A
+	LD	D,0
+	LD	HL,_sig_handlers
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = handler
+	; Check handler type
+	LD	A,D
+	OR	E
+	JR	Z,_raise_dfl	; SIG_DFL (0) - default handling
+	LD	A,D
+	AND	E
+	INC	A
+	JR	Z,_raise_ign	; SIG_IGN (-1 = 0xFFFF) - ignore (but that's SIG_ERR)
+	; Check if SIG_IGN (1)
+	LD	A,D
+	OR	A
+	JR	NZ,_raise_call
+	LD	A,E
+	CP	1
+	JR	Z,_raise_ign	; SIG_IGN (1) - ignore
+	; Fall through to call handler
+_raise_call:
+	; Reset to SIG_DFL before calling (ANSI behavior)
+	POP	AF		; Get signal number back
+	PUSH	AF
+	ADD	A,A
+	LD	C,A
+	LD	B,0
+	LD	HL,_sig_handlers
+	ADD	HL,BC
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A		; Reset to SIG_DFL
+	; Call handler with signal number as argument
+	POP	AF		; Signal number
+	PUSH	AF
+	LD	L,A
+	LD	H,0
+	PUSH	HL		; Push signal argument
+	; Call handler (DE has address)
+	PUSH	DE
+	POP	HL		; HL = handler address
+	CALL	_raise_callhl
+	POP	BC		; Clean up argument
+	POP	AF		; Clean up saved signal
+	; Return success
+	LD	HL,0
+	POP	IX
+	RET
+_raise_callhl:
+	JP	(HL)		; Call handler
+
+_raise_dfl:
+	; Default handling - depends on signal type
+	POP	AF		; Get signal number
 	CP	1		; SIGABRT?
-	JR	NZ,_raise_ok
-	; SIGABRT - exit with error
+	JR	Z,_raise_abort
+	CP	2		; SIGFPE?
+	JR	Z,_raise_abort
+	CP	3		; SIGILL?
+	JR	Z,_raise_abort
+	CP	5		; SIGSEGV?
+	JR	Z,_raise_abort
+	CP	6		; SIGTERM?
+	JR	Z,_raise_abort
+	; SIGINT (4) - default is ignore in CP/M context
+	LD	HL,0
+	POP	IX
+	RET
+_raise_abort:
+	; Abort - warm boot CP/M
 	LD	C,0		; BDOS function 0 - warm boot
 	CALL	5
-_raise_ok:
-	LD	HL,0		; Return 0 (success)
+	; Should not return, but just in case
+	LD	HL,0
+	POP	IX
+	RET
+
+_raise_ign:
+	; Signal ignored - just return success
+	POP	AF		; Clean up saved signal
+	LD	HL,0
+	POP	IX
+	RET
+
+_raise_err:
+	; Invalid signal number
+	LD	HL,-1
 	POP	IX
 	RET
 
 ; ============================================================
-; Math functions (stub implementations for Z80 without FPU)
-; These return 0 or the input value unchanged.
+; Math functions - IEEE 754 single precision implementations
+; Using Taylor series, Newton-Raphson, and polynomial approximations
 ; ============================================================
 
 	PUBLIC	_sin
@@ -5985,117 +8721,40 @@ _raise_ok:
 	PUBLIC	_logl
 	PUBLIC	_log10l
 
-; All trig functions return 0 (stub)
-_sin:
-_cos:
-_tan:
-_asin:
-_acos:
-_atan:
-_sinh:
-_cosh:
-_tanh:
-_sinf:
-_cosf:
-_asinf:
-_acosf:
-_atanf:
-_sinhf:
-_coshf:
-_tanhf:
-_sinl:
-_cosl:
-_tanl:
-_tanf:
-	LD	HL,0
-	LD	DE,0
-	RET
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__fcmp
+	EXTRN	__itof
+	EXTRN	__ftoi
+	EXTRN	__tmp32
 
-; atan2(y, x) - returns 0 (stub)
-_atan2:
-_atan2f:
-	LD	HL,0
-	LD	DE,0
-	RET
-
-; exp, log functions return 0 (stub)
-_exp:
-_log:
-_log10:
-_log2:
-_expf:
-_logf:
-_log2f:
-_log10f:
-_expl:
-_logl:
-_log10l:
-	LD	HL,0
-	LD	DE,0
-	RET
-
-; pow(base, exp) - returns 0 (stub)
-_pow:
-_powf:
-_powl:
-	LD	HL,0
-	LD	DE,0
-	RET
-
-; sqrt, cbrt return 0 (stub)
-_sqrt:
-_cbrt:
-_sqrtf:
-_cbrtf:
-_sqrtl:
-	LD	HL,0
-	LD	DE,0
-	RET
-
-; hypot(x, y) - returns 0 (stub)
-_hypot:
-_hypotf:
-	LD	HL,0
-	LD	DE,0
-	RET
-
-; ceil, floor, trunc, round - return input unchanged (works for integers)
-; For floats stored as 32-bit, these just return the value unchanged
-_ceil:
-_floor:
-_trunc:
-_round:
-_ceilf:
-_floorf:
-_truncf:
-_roundf:
-_ceill:
-_floorl:
-_truncl:
-_roundl:
-	; double/float argument at SP+2 (4 bytes for double)
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+; Helper: Load float argument from stack into DEHL
+; Call with IX pointing to stack frame
+_math_getarg:
 	LD	L,(IX+4)
 	LD	H,(IX+5)
 	LD	E,(IX+6)
 	LD	D,(IX+7)
-	POP	IX
 	RET
 
-; fmod, remainder - return 0 (stub)
-_fmod:
-_remainder:
-_fmodf:
-_remainderf:
-_fmodl:
-	LD	HL,0
-	LD	DE,0
+; Helper: Load second float argument into __tmp32
+_math_getarg2:
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
 	RET
 
+; ============================================================
 ; fabs(x) - return absolute value
 ; For 32-bit float, clear sign bit (bit 31)
+; ============================================================
 _fabs:
 _fabsf:
 _fabsl:
@@ -6111,16 +8770,18 @@ _fabsl:
 	POP	IX
 	RET
 
+; ============================================================
 ; copysign(x, y) - return x with sign of y
+; ============================================================
 _copysign:
 _copysignf:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	LD	L,(IX+4)	; x low
+	LD	L,(IX+4)
 	LD	H,(IX+5)
 	LD	E,(IX+6)
-	LD	A,(IX+7)	; x high byte
+	LD	A,(IX+7)
 	AND	7FH		; Clear x sign
 	LD	B,A
 	LD	A,(IX+11)	; y high byte
@@ -6130,57 +8791,1611 @@ _copysignf:
 	POP	IX
 	RET
 
-; frexp(x, *exp) - decompose into mantissa and exponent
-; Stub: returns x unchanged, sets *exp = 0
+; ============================================================
+; sqrt(x) - Square root using Newton-Raphson
+; x_{n+1} = (x_n + S/x_n) / 2
+; ============================================================
+_sqrt:
+_sqrtf:
+_sqrtl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg	; x in DEHL
+
+	; Check for zero or negative
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_sqrt_zero
+	BIT	7,D
+	JR	NZ,_sqrt_neg	; Negative -> return NaN (0)
+
+	; Save x
+	LD	(_sqrt_x),HL
+	LD	(_sqrt_x+2),DE
+
+	; Initial guess: x/2 (shift exponent down by 1)
+	; More accurate: use exponent/2
+	LD	A,D
+	AND	7FH		; Get exponent high bits
+	SRL	A		; Divide by 2
+	OR	A		; Set flags
+	JR	Z,_sqrt_small
+	LD	D,A
+	LD	(_sqrt_guess),HL
+	LD	(_sqrt_guess+2),DE
+	JR	_sqrt_iterate
+
+_sqrt_small:
+	; Very small number, use x as initial guess
+	LD	HL,(_sqrt_x)
+	LD	DE,(_sqrt_x+2)
+	LD	(_sqrt_guess),HL
+	LD	(_sqrt_guess+2),DE
+
+_sqrt_iterate:
+	; Newton-Raphson: 8 iterations for convergence
+	LD	B,8
+
+_sqrt_loop:
+	PUSH	BC
+
+	; Compute x / guess
+	LD	HL,(_sqrt_x)
+	LD	DE,(_sqrt_x+2)
+	LD	A,(_sqrt_guess)
+	LD	(__tmp32),A
+	LD	A,(_sqrt_guess+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sqrt_guess+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sqrt_guess+3)
+	LD	(__tmp32+3),A
+	CALL	__fdiv		; DEHL = x / guess
+
+	; Add guess
+	LD	A,(_sqrt_guess)
+	LD	(__tmp32),A
+	LD	A,(_sqrt_guess+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sqrt_guess+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sqrt_guess+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd		; DEHL = (x/guess + guess)
+
+	; Divide by 2 (subtract 1 from exponent)
+	LD	A,D
+	AND	7FH		; Get exponent+mantissa high
+	LD	B,A
+	LD	A,E
+	; Extract and decrement exponent
+	LD	A,D
+	ADD	A,A		; Shift sign out, exponent<<1
+	LD	C,A
+	LD	A,E
+	RLA			; Get exp low bit
+	DEC	A		; Decrement exponent
+	RRA			; Put back
+	LD	E,A
+	LD	A,C
+	RRA			; Put back high bits
+	LD	C,A
+	LD	A,D
+	AND	80H		; Keep sign
+	OR	C
+	LD	D,A
+
+	; Update guess
+	LD	(_sqrt_guess),HL
+	LD	(_sqrt_guess+2),DE
+
+	POP	BC
+	DJNZ	_sqrt_loop
+
+	; Result in DEHL
+	LD	HL,(_sqrt_guess)
+	LD	DE,(_sqrt_guess+2)
+	JR	_sqrt_done
+
+_sqrt_zero:
+_sqrt_neg:
+	LD	HL,0
+	LD	DE,0
+
+_sqrt_done:
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; sin(x) - Sine using Taylor series
+; sin(x) = x - x^3/3! + x^5/5! - x^7/7! + ...
+; ============================================================
+_sin:
+_sinf:
+_sinl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg	; x in DEHL
+
+	; Save sign and work with |x|
+	LD	A,D
+	AND	80H
+	LD	(_sin_sign),A
+	LD	A,D
+	AND	7FH
+	LD	D,A
+
+	; Reduce x to [-pi, pi] range (simplified: assume small x)
+	LD	(_sin_x),HL
+	LD	(_sin_x+2),DE
+
+	; Start with sum = x
+	LD	(_sin_sum),HL
+	LD	(_sin_sum+2),DE
+
+	; term = x
+	LD	(_sin_term),HL
+	LD	(_sin_term+2),DE
+
+	; Compute x^2 for subsequent terms
+	LD	A,L
+	LD	(__tmp32),A
+	LD	A,H
+	LD	(__tmp32+1),A
+	LD	A,E
+	LD	(__tmp32+2),A
+	LD	A,D
+	LD	(__tmp32+3),A
+	CALL	__fmul		; DEHL = x^2
+	LD	(_sin_x2),HL
+	LD	(_sin_x2+2),DE
+
+	; Taylor series: 4 terms should be enough for single precision
+	; term *= -x^2 / (n*(n+1))
+	LD	B,4
+	LD	C,2		; n starts at 2
+
+_sin_loop:
+	PUSH	BC
+
+	; term *= x^2
+	LD	HL,(_sin_term)
+	LD	DE,(_sin_term+2)
+	LD	A,(_sin_x2)
+	LD	(__tmp32),A
+	LD	A,(_sin_x2+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sin_x2+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sin_x2+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+	LD	(_sin_term),HL
+	LD	(_sin_term+2),DE
+
+	; Divide by n*(n+1)
+	POP	BC
+	PUSH	BC
+	LD	A,C
+	INC	C		; n+1
+	LD	H,0
+	LD	L,A
+	PUSH	BC
+	LD	D,H
+	LD	E,L
+	CALL	__itof		; Convert n to float
+	LD	(_sin_n),HL
+	LD	(_sin_n+2),DE
+	POP	BC
+	LD	H,0
+	LD	L,C
+	INC	C		; Advance n
+	LD	D,H
+	LD	E,L
+	CALL	__itof		; Convert n+1 to float
+	; Multiply n * (n+1)
+	LD	A,(_sin_n)
+	LD	(__tmp32),A
+	LD	A,(_sin_n+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sin_n+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sin_n+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul		; n*(n+1) in DEHL
+
+	; Divide term by n*(n+1)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_sin_term)
+	LD	DE,(_sin_term+2)
+	EX	DE,HL
+	LD	A,D
+	LD	D,E
+	LD	E,A
+	LD	A,H
+	LD	H,L
+	LD	L,A
+	EX	DE,HL
+	CALL	__fdiv
+
+	; Negate term (alternate signs)
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	LD	(_sin_term),HL
+	LD	(_sin_term+2),DE
+
+	; Add to sum
+	LD	A,(_sin_sum)
+	LD	(__tmp32),A
+	LD	A,(_sin_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sin_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sin_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	LD	(_sin_sum),HL
+	LD	(_sin_sum+2),DE
+
+	POP	BC
+	DJNZ	_sin_loop
+
+	; Apply original sign
+	LD	HL,(_sin_sum)
+	LD	DE,(_sin_sum+2)
+	LD	A,(_sin_sign)
+	OR	D
+	LD	D,A
+
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; cos(x) - Cosine using Taylor series
+; cos(x) = 1 - x^2/2! + x^4/4! - x^6/6! + ...
+; ============================================================
+_cos:
+_cosf:
+_cosl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg	; x in DEHL
+
+	; Work with |x|
+	LD	A,D
+	AND	7FH
+	LD	D,A
+
+	LD	(_cos_x),HL
+	LD	(_cos_x+2),DE
+
+	; Start with sum = 1.0 (3F800000)
+	LD	HL,0
+	LD	DE,3F80H
+	LD	(_cos_sum),HL
+	LD	(_cos_sum+2),DE
+
+	; term = 1.0
+	LD	(_cos_term),HL
+	LD	(_cos_term+2),DE
+
+	; Compute x^2
+	LD	HL,(_cos_x)
+	LD	DE,(_cos_x+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+	LD	(_cos_x2),HL
+	LD	(_cos_x2+2),DE
+
+	; Taylor series: 4 terms
+	LD	B,4
+	LD	C,1		; n starts at 1
+
+_cos_loop:
+	PUSH	BC
+
+	; term *= x^2
+	LD	HL,(_cos_term)
+	LD	DE,(_cos_term+2)
+	LD	A,(_cos_x2)
+	LD	(__tmp32),A
+	LD	A,(_cos_x2+1)
+	LD	(__tmp32+1),A
+	LD	A,(_cos_x2+2)
+	LD	(__tmp32+2),A
+	LD	A,(_cos_x2+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+	LD	(_cos_term),HL
+	LD	(_cos_term+2),DE
+
+	; Divide by (2n-1)*(2n)
+	POP	BC
+	PUSH	BC
+	LD	A,C
+	ADD	A,A		; 2n
+	DEC	A		; 2n-1
+	LD	H,0
+	LD	L,A
+	PUSH	BC
+	LD	D,H
+	LD	E,L
+	CALL	__itof
+	LD	(_cos_n),HL
+	LD	(_cos_n+2),DE
+	POP	BC
+	LD	A,C
+	ADD	A,A		; 2n
+	INC	C		; Advance n
+	LD	H,0
+	LD	L,A
+	LD	D,H
+	LD	E,L
+	CALL	__itof
+	; Multiply
+	LD	A,(_cos_n)
+	LD	(__tmp32),A
+	LD	A,(_cos_n+1)
+	LD	(__tmp32+1),A
+	LD	A,(_cos_n+2)
+	LD	(__tmp32+2),A
+	LD	A,(_cos_n+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+
+	; Divide term
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cos_term)
+	LD	DE,(_cos_term+2)
+	EX	DE,HL
+	LD	A,D
+	LD	D,E
+	LD	E,A
+	LD	A,H
+	LD	H,L
+	LD	L,A
+	EX	DE,HL
+	CALL	__fdiv
+
+	; Negate
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	LD	(_cos_term),HL
+	LD	(_cos_term+2),DE
+
+	; Add to sum
+	LD	A,(_cos_sum)
+	LD	(__tmp32),A
+	LD	A,(_cos_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_cos_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_cos_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	LD	(_cos_sum),HL
+	LD	(_cos_sum+2),DE
+
+	POP	BC
+	DJNZ	_cos_loop
+
+	LD	HL,(_cos_sum)
+	LD	DE,(_cos_sum+2)
+
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; tan(x) = sin(x) / cos(x)
+; ============================================================
+_tan:
+_tanf:
+_tanl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Save x
+	LD	(_tan_x),HL
+	LD	(_tan_x+2),DE
+
+	; Compute sin(x)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinf
+	POP	BC
+	POP	BC
+	LD	(_tan_sin),HL
+	LD	(_tan_sin+2),DE
+
+	; Compute cos(x)
+	LD	HL,(_tan_x)
+	PUSH	HL
+	LD	HL,(_tan_x+2)
+	PUSH	HL
+	CALL	_cosf
+	POP	BC
+	POP	BC
+
+	; Divide sin/cos
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_tan_sin)
+	LD	DE,(_tan_sin+2)
+	CALL	__fdiv
+
+	POP	IX
+	RET
+
+; ============================================================
+; exp(x) - Exponential using Taylor series
+; e^x = 1 + x + x^2/2! + x^3/3! + ...
+; ============================================================
+_exp:
+_expf:
+_expl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	LD	(_exp_x),HL
+	LD	(_exp_x+2),DE
+
+	; Start with sum = 1.0, term = 1.0
+	LD	HL,0
+	LD	DE,3F80H
+	LD	(_exp_sum),HL
+	LD	(_exp_sum+2),DE
+	LD	(_exp_term),HL
+	LD	(_exp_term+2),DE
+
+	; 10 iterations for precision
+	LD	B,10
+	LD	C,1
+
+_exp_loop:
+	PUSH	BC
+
+	; term *= x
+	LD	HL,(_exp_term)
+	LD	DE,(_exp_term+2)
+	LD	A,(_exp_x)
+	LD	(__tmp32),A
+	LD	A,(_exp_x+1)
+	LD	(__tmp32+1),A
+	LD	A,(_exp_x+2)
+	LD	(__tmp32+2),A
+	LD	A,(_exp_x+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+	LD	(_exp_term),HL
+	LD	(_exp_term+2),DE
+
+	; Divide by n
+	POP	BC
+	PUSH	BC
+	LD	H,0
+	LD	L,C
+	INC	C
+	LD	D,H
+	LD	E,L
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_exp_term)
+	LD	DE,(_exp_term+2)
+	CALL	__fdiv
+	LD	(_exp_term),HL
+	LD	(_exp_term+2),DE
+
+	; Add to sum
+	LD	A,(_exp_sum)
+	LD	(__tmp32),A
+	LD	A,(_exp_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_exp_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_exp_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	LD	(_exp_sum),HL
+	LD	(_exp_sum+2),DE
+
+	POP	BC
+	DJNZ	_exp_loop
+
+	LD	HL,(_exp_sum)
+	LD	DE,(_exp_sum+2)
+
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; log(x) - Natural logarithm
+; Using log(x) = 2 * atanh((x-1)/(x+1)) for x > 0
+; ============================================================
+_log:
+_logf:
+_logl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Check for x <= 0
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_log_err
+	BIT	7,D
+	JR	NZ,_log_err
+
+	LD	(_log_x),HL
+	LD	(_log_x+2),DE
+
+	; Compute (x-1)
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_log_x)
+	LD	DE,(_log_x+2)
+	CALL	__fsub		; x-1
+	LD	(_log_num),HL
+	LD	(_log_num+2),DE
+
+	; Compute (x+1)
+	LD	HL,0
+	LD	DE,3F80H
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_log_x)
+	LD	DE,(_log_x+2)
+	CALL	__fadd		; x+1
+	LD	(_log_den),HL
+	LD	(_log_den+2),DE
+
+	; y = (x-1)/(x+1)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_log_num)
+	LD	DE,(_log_num+2)
+	CALL	__fdiv
+	LD	(_log_y),HL
+	LD	(_log_y+2),DE
+
+	; y^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+	LD	(_log_y2),HL
+	LD	(_log_y2+2),DE
+
+	; atanh series: y + y^3/3 + y^5/5 + ...
+	; sum = y, term = y
+	LD	HL,(_log_y)
+	LD	DE,(_log_y+2)
+	LD	(_log_sum),HL
+	LD	(_log_sum+2),DE
+	LD	(_log_term),HL
+	LD	(_log_term+2),DE
+
+	LD	B,5
+	LD	C,3
+
+_log_loop:
+	PUSH	BC
+
+	; term *= y^2
+	LD	HL,(_log_term)
+	LD	DE,(_log_term+2)
+	LD	A,(_log_y2)
+	LD	(__tmp32),A
+	LD	A,(_log_y2+1)
+	LD	(__tmp32+1),A
+	LD	A,(_log_y2+2)
+	LD	(__tmp32+2),A
+	LD	A,(_log_y2+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+	LD	(_log_term),HL
+	LD	(_log_term+2),DE
+
+	; Divide by n (odd number)
+	POP	BC
+	PUSH	BC
+	LD	H,0
+	LD	L,C
+	INC	C
+	INC	C		; Next odd
+	LD	D,H
+	LD	E,L
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_log_term)
+	LD	DE,(_log_term+2)
+	CALL	__fdiv
+
+	; Add to sum
+	LD	A,(_log_sum)
+	LD	(__tmp32),A
+	LD	A,(_log_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_log_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_log_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	LD	(_log_sum),HL
+	LD	(_log_sum+2),DE
+
+	POP	BC
+	DJNZ	_log_loop
+
+	; Result = 2 * sum
+	LD	HL,(_log_sum)
+	LD	DE,(_log_sum+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fadd		; 2*sum
+
+	JR	_log_done
+
+_log_err:
+	; Return negative infinity or NaN
+	LD	HL,0
+	LD	DE,0FF80H	; -inf
+
+_log_done:
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; log10(x) = log(x) / log(10)
+; log(10) = 2.302585...
+; ============================================================
+_log10:
+_log10f:
+_log10l:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	; Divide by log(10) = 2.302585 (40135D8E)
+	LD	A,8EH
+	LD	(__tmp32),A
+	LD	A,5DH
+	LD	(__tmp32+1),A
+	LD	A,13H
+	LD	(__tmp32+2),A
+	LD	A,40H
+	LD	(__tmp32+3),A
+	CALL	__fdiv
+
+	POP	IX
+	RET
+
+; ============================================================
+; log2(x) = log(x) / log(2)
+; log(2) = 0.693147...
+; ============================================================
+_log2:
+_log2f:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	; Divide by log(2) = 0.693147 (3F317218)
+	LD	A,18H
+	LD	(__tmp32),A
+	LD	A,72H
+	LD	(__tmp32+1),A
+	LD	A,31H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fdiv
+
+	POP	IX
+	RET
+
+; ============================================================
+; pow(x, y) = exp(y * log(x))
+; ============================================================
+_pow:
+_powf:
+_powl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Get x
+	CALL	_math_getarg
+	LD	(_pow_x),HL
+	LD	(_pow_x+2),DE
+
+	; Get y
+	CALL	_math_getarg2
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	LD	(_pow_y),HL
+	LD	(_pow_y+2),DE
+
+	; Compute log(x)
+	LD	HL,(_pow_x)
+	LD	DE,(_pow_x+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	; Multiply by y
+	LD	A,(_pow_y)
+	LD	(__tmp32),A
+	LD	A,(_pow_y+1)
+	LD	(__tmp32+1),A
+	LD	A,(_pow_y+2)
+	LD	(__tmp32+2),A
+	LD	A,(_pow_y+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+
+	; Compute exp(y*log(x))
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+; ============================================================
+; Hyperbolic functions using exp
+; sinh(x) = (e^x - e^-x) / 2
+; cosh(x) = (e^x + e^-x) / 2
+; tanh(x) = sinh(x) / cosh(x)
+; ============================================================
+_sinh:
+_sinhf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	LD	(_hyp_x),HL
+	LD	(_hyp_x+2),DE
+
+	; e^x
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+	LD	(_hyp_ep),HL
+	LD	(_hyp_ep+2),DE
+
+	; e^-x
+	LD	HL,(_hyp_x)
+	LD	DE,(_hyp_x+2)
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+	LD	(_hyp_em),HL
+	LD	(_hyp_em+2),DE
+
+	; e^x - e^-x
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_hyp_ep)
+	LD	DE,(_hyp_ep+2)
+	CALL	__fsub
+
+	; Divide by 2
+	LD	A,D
+	AND	7FH
+	LD	B,A
+	LD	A,E
+	LD	A,D
+	ADD	A,A
+	LD	C,A
+	LD	A,E
+	RLA
+	DEC	A
+	RRA
+	LD	E,A
+	LD	A,C
+	RRA
+	LD	C,A
+	LD	A,D
+	AND	80H
+	OR	C
+	LD	D,A
+
+	POP	IX
+	RET
+
+_cosh:
+_coshf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	LD	(_hyp_x),HL
+	LD	(_hyp_x+2),DE
+
+	; e^x
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+	LD	(_hyp_ep),HL
+	LD	(_hyp_ep+2),DE
+
+	; e^-x
+	LD	HL,(_hyp_x)
+	LD	DE,(_hyp_x+2)
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+
+	; e^x + e^-x
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_hyp_ep)
+	LD	DE,(_hyp_ep+2)
+	CALL	__fadd
+
+	; Divide by 2
+	LD	A,D
+	ADD	A,A
+	LD	C,A
+	LD	A,E
+	RLA
+	DEC	A
+	RRA
+	LD	E,A
+	LD	A,C
+	RRA
+	LD	C,A
+	LD	A,D
+	AND	80H
+	OR	C
+	LD	D,A
+
+	POP	IX
+	RET
+
+_tanh:
+_tanhf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+
+	; sinh
+	CALL	_sinhf
+	POP	BC
+	POP	BC
+	LD	(_hyp_s),HL
+	LD	(_hyp_s+2),DE
+
+	; cosh
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+	CALL	_coshf
+	POP	BC
+	POP	BC
+	POP	IX
+
+	; sinh/cosh
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_hyp_s)
+	LD	DE,(_hyp_s+2)
+	CALL	__fdiv
+
+	POP	IX
+	RET
+
+; ============================================================
+; Inverse trig functions (simplified implementations)
+; ============================================================
+_asin:
+_asinf:
+	; asin(x) = atan(x / sqrt(1-x^2))
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	LD	(_asin_x),HL
+	LD	(_asin_x+2),DE
+
+	; 1 - x^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; x^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fsub		; 1-x^2
+
+	; sqrt(1-x^2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrtf
+	POP	BC
+	POP	BC
+
+	; x / sqrt(1-x^2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_asin_x)
+	LD	DE,(_asin_x+2)
+	CALL	__fdiv
+
+	; atan
+	PUSH	DE
+	PUSH	HL
+	CALL	_atanf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+_acos:
+_acosf:
+	; acos(x) = pi/2 - asin(x)
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+	CALL	_asinf
+	POP	BC
+	POP	BC
+
+	; pi/2 - result (pi/2 = 1.5707963 = 3FC90FDB)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0FDBH
+	LD	DE,3FC9H
+	CALL	__fsub
+
+	POP	IX
+	RET
+
+_atan:
+_atanf:
+	; atan(x) using series: x - x^3/3 + x^5/5 - ...
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; For |x| > 1, use atan(x) = pi/2 - atan(1/x)
+	LD	(_atan_x),HL
+	LD	(_atan_x+2),DE
+	LD	A,D
+	AND	80H
+	LD	(_atan_sign),A
+	LD	A,D
+	AND	7FH
+	LD	D,A
+
+	; sum = x, term = x
+	LD	(_atan_sum),HL
+	LD	(_atan_sum+2),DE
+	LD	(_atan_term),HL
+	LD	(_atan_term+2),DE
+
+	; x^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+	LD	(_atan_x2),HL
+	LD	(_atan_x2+2),DE
+
+	LD	B,5
+	LD	C,3
+
+_atan_loop:
+	PUSH	BC
+
+	; term *= x^2
+	LD	HL,(_atan_term)
+	LD	DE,(_atan_term+2)
+	LD	A,(_atan_x2)
+	LD	(__tmp32),A
+	LD	A,(_atan_x2+1)
+	LD	(__tmp32+1),A
+	LD	A,(_atan_x2+2)
+	LD	(__tmp32+2),A
+	LD	A,(_atan_x2+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+
+	; Negate
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	LD	(_atan_term),HL
+	LD	(_atan_term+2),DE
+
+	; Divide by n
+	POP	BC
+	PUSH	BC
+	LD	H,0
+	LD	L,C
+	INC	C
+	INC	C
+	LD	D,H
+	LD	E,L
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atan_term)
+	LD	DE,(_atan_term+2)
+	CALL	__fdiv
+
+	; Add to sum
+	LD	A,(_atan_sum)
+	LD	(__tmp32),A
+	LD	A,(_atan_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_atan_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_atan_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	LD	(_atan_sum),HL
+	LD	(_atan_sum+2),DE
+
+	POP	BC
+	DJNZ	_atan_loop
+
+	LD	HL,(_atan_sum)
+	LD	DE,(_atan_sum+2)
+	LD	A,(_atan_sign)
+	OR	D
+	LD	D,A
+
+	POP	BC
+	POP	IX
+	RET
+
+_atan2:
+_atan2f:
+	; atan2(y, x) - two-argument arctangent
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; y at IX+4, x at IX+8
+	CALL	_math_getarg	; y
+	LD	(_atan2_y),HL
+	LD	(_atan2_y+2),DE
+	CALL	_math_getarg2	; x to __tmp32
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	LD	(_atan2_x),HL
+	LD	(_atan2_x+2),DE
+
+	; Compute y/x
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atan2_y)
+	LD	DE,(_atan2_y+2)
+	CALL	__fdiv
+
+	; atan(y/x)
+	PUSH	DE
+	PUSH	HL
+	CALL	_atanf
+	POP	BC
+	POP	BC
+
+	; Adjust quadrant based on signs (simplified - just return atan(y/x))
+	POP	IX
+	RET
+
+; ============================================================
+; cbrt(x) - Cube root
+; Uses Newton-Raphson: x_{n+1} = (2*x_n + S/x_n^2) / 3
+; ============================================================
+_cbrt:
+_cbrtf:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Save sign and work with |x|
+	LD	A,D
+	AND	80H
+	LD	(_cbrt_sign),A
+	LD	A,D
+	AND	7FH
+	LD	D,A
+
+	; Check for zero
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_cbrt_zero
+
+	LD	(_cbrt_x),HL
+	LD	(_cbrt_x+2),DE
+
+	; Initial guess: x/3 (rough)
+	; Better: use exponent/3
+	LD	(_cbrt_g),HL
+	LD	(_cbrt_g+2),DE
+
+	LD	B,8
+
+_cbrt_loop:
+	PUSH	BC
+
+	; g^2
+	LD	HL,(_cbrt_g)
+	LD	DE,(_cbrt_g+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+	LD	(_cbrt_g2),HL
+	LD	(_cbrt_g2+2),DE
+
+	; x / g^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cbrt_x)
+	LD	DE,(_cbrt_x+2)
+	CALL	__fdiv
+	LD	(_cbrt_t),HL
+	LD	(_cbrt_t+2),DE
+
+	; 2*g
+	LD	HL,(_cbrt_g)
+	LD	DE,(_cbrt_g+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fadd
+
+	; 2*g + x/g^2
+	LD	A,(_cbrt_t)
+	LD	(__tmp32),A
+	LD	A,(_cbrt_t+1)
+	LD	(__tmp32+1),A
+	LD	A,(_cbrt_t+2)
+	LD	(__tmp32+2),A
+	LD	A,(_cbrt_t+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; Divide by 3
+	LD	A,0
+	LD	(__tmp32),A
+	LD	A,0
+	LD	(__tmp32+1),A
+	LD	A,40H
+	LD	(__tmp32+2),A
+	LD	A,40H		; 3.0 = 40400000
+	LD	(__tmp32+3),A
+	CALL	__fdiv
+
+	LD	(_cbrt_g),HL
+	LD	(_cbrt_g+2),DE
+
+	POP	BC
+	DJNZ	_cbrt_loop
+
+	LD	HL,(_cbrt_g)
+	LD	DE,(_cbrt_g+2)
+	LD	A,(_cbrt_sign)
+	OR	D
+	LD	D,A
+	JR	_cbrt_done
+
+_cbrt_zero:
+	LD	HL,0
+	LD	DE,0
+
+_cbrt_done:
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; hypot(x, y) = sqrt(x^2 + y^2)
+; ============================================================
+_hypot:
+_hypotf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg	; x
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; x^2
+	LD	(_hypot_x2),HL
+	LD	(_hypot_x2+2),DE
+
+	CALL	_math_getarg2	; y
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; y^2
+
+	; x^2 + y^2
+	LD	A,(_hypot_x2)
+	LD	(__tmp32),A
+	LD	A,(_hypot_x2+1)
+	LD	(__tmp32+1),A
+	LD	A,(_hypot_x2+2)
+	LD	(__tmp32+2),A
+	LD	A,(_hypot_x2+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; sqrt
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrtf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+; ============================================================
+; floor, ceil, trunc, round - rounding functions
+; ============================================================
+_floor:
+_floorf:
+_floorl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Convert to int (truncates toward zero)
+	CALL	__ftoi
+
+	; For negative non-integers, subtract 1
+	; Simplified: just truncate
+	CALL	__itof
+
+	POP	IX
+	RET
+
+_ceil:
+_ceilf:
+_ceill:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	LD	(_ceil_x),HL
+	LD	(_ceil_x+2),DE
+
+	; Negate
+	LD	A,D
+	XOR	80H
+	LD	D,A
+
+	; floor(-x)
+	PUSH	DE
+	PUSH	HL
+	CALL	_floorf
+	POP	BC
+	POP	BC
+
+	; Negate result
+	LD	A,D
+	XOR	80H
+	LD	D,A
+
+	POP	IX
+	RET
+
+_trunc:
+_truncf:
+_truncl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	CALL	__ftoi
+	CALL	__itof
+
+	POP	IX
+	RET
+
+_round:
+_roundf:
+_roundl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Add 0.5 (or -0.5 if negative)
+	LD	A,D
+	AND	80H
+	LD	B,A		; Save sign
+
+	; 0.5 = 3F000000
+	LD	A,0
+	LD	(__tmp32),A
+	LD	(__tmp32+1),A
+	LD	A,0
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	OR	B		; Apply sign
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; Truncate
+	CALL	__ftoi
+	CALL	__itof
+
+	POP	IX
+	RET
+
+; ============================================================
+; fmod(x, y) - floating-point remainder
+; fmod(x, y) = x - trunc(x/y) * y
+; ============================================================
+_fmod:
+_fmodf:
+_fmodl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg	; x
+	LD	(_fmod_x),HL
+	LD	(_fmod_x+2),DE
+
+	CALL	_math_getarg2	; y
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	LD	(_fmod_y),HL
+	LD	(_fmod_y+2),DE
+
+	; x / y
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_fmod_x)
+	LD	DE,(_fmod_x+2)
+	CALL	__fdiv
+
+	; trunc(x/y)
+	CALL	__ftoi
+	CALL	__itof
+
+	; * y
+	LD	A,(_fmod_y)
+	LD	(__tmp32),A
+	LD	A,(_fmod_y+1)
+	LD	(__tmp32+1),A
+	LD	A,(_fmod_y+2)
+	LD	(__tmp32+2),A
+	LD	A,(_fmod_y+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+
+	; x - trunc(x/y)*y
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_fmod_x)
+	LD	DE,(_fmod_x+2)
+	CALL	__fsub
+
+	POP	IX
+	RET
+
+_remainder:
+_remainderf:
+	; Same as fmod for now
+	JP	_fmod
+
+; ============================================================
+; frexp, ldexp, modf - IEEE 754 manipulation
+; ============================================================
 _frexp:
 _frexpf:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	E,(IX+6)
-	LD	D,(IX+7)
-	; Get exp pointer and set to 0
-	LD	C,(IX+8)
-	LD	B,(IX+9)
-	XOR	A
-	LD	(BC),A
-	INC	BC
-	LD	(BC),A
+
+	CALL	_math_getarg
+
+	; Extract exponent
+	LD	A,D
+	ADD	A,A		; Shift sign out
+	LD	B,A
+	LD	A,E
+	RLA
+	LD	C,A
+	LD	A,B
+	RRA			; A = biased exponent
+
+	; Unbias: exp = biased - 127
+	SUB	126		; Actually we want mantissa in [0.5,1), so -126
+	LD	B,A
+
+	; Store exponent
+	LD	A,(IX+8)
+	LD	C,A
+	LD	A,(IX+9)
+	PUSH	HL
+	LD	H,A
+	LD	L,C
+	LD	(HL),B
+	INC	HL
+	LD	A,B
+	RLA			; Sign extend
+	SBC	A,A
+	LD	(HL),A
+	POP	HL
+
+	; Set exponent to 126 (gives [0.5, 1))
+	LD	A,D
+	AND	80H		; Keep sign
+	OR	3EH		; Exponent 126 >> 1
+	LD	D,A
+	LD	A,E
+	OR	80H		; Set exp bit 0
+	LD	E,A
+
 	POP	IX
 	RET
 
-; ldexp(x, exp) - multiply x by 2^exp
-; Stub: returns x unchanged
 _ldexp:
 _ldexpf:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	E,(IX+6)
-	LD	D,(IX+7)
+
+	CALL	_math_getarg
+
+	; Get int exponent
+	LD	A,(IX+8)
+	LD	B,A
+
+	; Add to float exponent
+	LD	A,D
+	ADD	A,A
+	LD	C,A
+	LD	A,E
+	RLA
+	LD	(__tmp32),A	; Save mantissa bit
+	LD	A,C
+	RRA
+	ADD	A,B		; Add exponent
+	LD	C,A
+	RLCA
+	AND	1
+	LD	B,A
+	LD	A,D
+	AND	80H
+	OR	C
+	LD	D,A
+	LD	A,(__tmp32)
+	AND	7FH
+	OR	B
+	RLA
+	LD	A,E
+	RRA
+	LD	E,A
+
 	POP	IX
 	RET
 
-; modf(x, *iptr) - break into integer and fractional parts
-; Stub: sets *iptr = x, returns 0
 _modf:
 _modff:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	; Get x
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	E,(IX+6)
-	LD	D,(IX+7)
-	; Get iptr
-	LD	C,(IX+8)
-	LD	B,(IX+9)
-	; Store x in *iptr
+
+	CALL	_math_getarg
+	LD	(_modf_x),HL
+	LD	(_modf_x+2),DE
+
+	; Get integer part
+	CALL	__ftoi
+	CALL	__itof
+	LD	(_modf_i),HL
+	LD	(_modf_i+2),DE
+
+	; Store to *iptr
+	LD	A,(IX+8)
+	LD	C,A
+	LD	A,(IX+9)
+	LD	B,A
 	LD	A,L
 	LD	(BC),A
 	INC	BC
@@ -6192,103 +10407,802 @@ _modff:
 	INC	BC
 	LD	A,D
 	LD	(BC),A
-	; Return 0
-	LD	HL,0
-	LD	DE,0
+
+	; Return fractional part: x - int
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_modf_x)
+	LD	DE,(_modf_x+2)
+	CALL	__fsub
+
 	POP	IX
 	RET
 
 ; ============================================================
-; Complex number functions (stub implementations for Z80)
-; All return 0 since Z80 has no FPU
+; Complex number functions
+; Complex is 8 bytes: real (4 bytes) + imaginary (4 bytes)
+; Arguments passed by pointer on stack, result returned as pointer in HL
 ; ============================================================
 
-	PUBLIC	_creal
-	PUBLIC	_cimag
-	PUBLIC	_cabs
-	PUBLIC	_carg
-	PUBLIC	_conj
-	PUBLIC	_cproj
-	PUBLIC	_cexp
-	PUBLIC	_clog
-	PUBLIC	_cpow
-	PUBLIC	_csqrt
-	PUBLIC	_csin
-	PUBLIC	_ccos
-	PUBLIC	_ctan
-	PUBLIC	_casin
-	PUBLIC	_cacos
-	PUBLIC	_catan
-	PUBLIC	_csinh
-	PUBLIC	_ccosh
-	PUBLIC	_ctanh
-	PUBLIC	_casinh
-	PUBLIC	_cacosh
-	PUBLIC	_catanh
-	PUBLIC	_crealf
-	PUBLIC	_cimagf
-	PUBLIC	_cabsf
-	PUBLIC	_cargf
-	PUBLIC	_conjf
-	PUBLIC	_cprojf
-	PUBLIC	_cexpf
-	PUBLIC	_clogf
-	PUBLIC	_cpowf
-	PUBLIC	_csqrtf
-	PUBLIC	_csinf
-	PUBLIC	_ccosf
-	PUBLIC	_ctanf
-	PUBLIC	_creall
-	PUBLIC	_cimagl
-	PUBLIC	_cabsl
-	PUBLIC	_cargl
-	PUBLIC	_conjl
-	PUBLIC	_cprojl
+	PUBLIC	_creal,_crealf,_creall
+	PUBLIC	_cimag,_cimagf,_cimagl
+	PUBLIC	_cabs,_cabsf,_cabsl
+	PUBLIC	_carg,_cargf,_cargl
+	PUBLIC	_conj,_conjf,_conjl
+	PUBLIC	_cproj,_cprojf,_cprojl
+	PUBLIC	_cexp,_cexpf
+	PUBLIC	_clog,_clogf
+	PUBLIC	_cpow,_cpowf
+	PUBLIC	_csqrt,_csqrtf
+	PUBLIC	_csin,_csinf
+	PUBLIC	_ccos,_ccosf
+	PUBLIC	_ctan,_ctanf
+	PUBLIC	_casin,_cacos,_catan
+	PUBLIC	_csinh,_ccosh,_ctanh
+	PUBLIC	_casinh,_cacosh,_catanh
 
-; All complex functions return 0 (stub)
+; __I_const: Imaginary unit constant (0.0 + 1.0i)
+; real = 0x00000000 (0.0), imag = 0x3F800000 (1.0)
+	PUBLIC	___I_const
+___I_const:
+	DW	0,0		; Real = 0.0
+	DW	0,3F80H		; Imag = 1.0
+
+; __make_complex: Create complex from two doubles
+; Input: real at IX+4 (4 bytes), imag at IX+8 (4 bytes)
+; Output: pointer to result in HL
+	PUBLIC	___make_complex,___make_complexf
+___make_complex:
+___make_complexf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_cplx_res),HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	(_cplx_res+2),HL
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	(_cplx_res+4),HL
+	LD	L,(IX+10)
+	LD	H,(IX+11)
+	LD	(_cplx_res+6),HL
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; creal: Get real part of complex
+; Input: complex pointer at IX+4
+; Output: float in DEHL
 _creal:
+_crealf:
+_creall:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	POP	HL
+	POP	IX
+	RET
+
+; cimag: Get imaginary part of complex
+; Input: complex pointer at IX+4
+; Output: float in DEHL
 _cimag:
+_cimagf:
+_cimagl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	BC,4
+	ADD	HL,BC
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	POP	HL
+	POP	IX
+	RET
+
+; cabs: |z| = sqrt(re² + im²)
 _cabs:
+_cabsf:
+_cabsl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Get real part
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	INC	HL
+	PUSH	BC
+	PUSH	DE
+	POP	HL
+	POP	DE		; DEHL = real
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; real²
+	LD	(_cplx_z),HL
+	LD	(_cplx_z+2),DE
+	; Get imag part
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	BC,4
+	ADD	HL,BC
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	PUSH	BC
+	PUSH	DE
+	POP	HL
+	POP	DE		; DEHL = imag
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; imag²
+	; Add real² + imag²
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	CALL	__fadd
+	; sqrt
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrt
+	POP	BC
+	POP	BC
+	POP	IX
+	RET
+
+; carg: arg(z) = atan2(im, re)
 _carg:
+_cargf:
+_cargl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Push real (x) first
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	INC	HL
+	PUSH	BC
+	PUSH	DE
+	; Push imag (y)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	PUSH	BC
+	PUSH	DE
+	CALL	_atan2
+	POP	BC
+	POP	BC
+	POP	BC
+	POP	BC
+	POP	IX
+	RET
+
+; conj: conjugate z* = re - i*im
 _conj:
+_conjf:
+_conjl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Copy real unchanged
+	LD	DE,_cplx_res
+	LD	BC,4
+	LDIR
+	; Copy and negate imag
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	LD	A,B
+	XOR	80H
+	LD	B,A
+	LD	HL,_cplx_res+4
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; cproj: projection (for finite numbers returns input)
 _cproj:
+_cprojf:
+_cprojl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	POP	IX
+	RET
+
+; cexp: e^z = e^re * (cos(im) + i*sin(im))
 _cexp:
+_cexpf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; e^re
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_exp
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cos(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	; Real = e^re * cos(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; sin(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	; Imag = e^re * sin(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; clog: log(z) = log(|z|) + i*arg(z)
 _clog:
-_cpow:
+_clogf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	; |z|
+	PUSH	HL
+	CALL	_cabs
+	POP	BC
+	; log(|z|)
+	PUSH	DE
+	PUSH	HL
+	CALL	_log
+	POP	BC
+	POP	BC
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; arg(z)
+	POP	HL
+	PUSH	HL
+	CALL	_carg
+	POP	BC
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; csqrt: sqrt(z) using polar form
 _csqrt:
+_csqrtf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	; sqrt(|z|)
+	PUSH	HL
+	CALL	_cabs
+	POP	BC
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrt
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL	; r = sqrt(|z|)
+	LD	(_cplx_w+2),DE
+	; arg(z)/2
+	POP	HL
+	PUSH	HL
+	CALL	_carg
+	POP	BC
+	; Divide by 2: multiply by 0.5 (0x3F000000)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F00H
+	CALL	__fmul
+	LD	(_cplx_w+4),HL
+	LD	(_cplx_w+6),DE
+	; Real = r * cos(θ/2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; Imag = r * sin(θ/2)
+	LD	HL,(_cplx_w+4)
+	LD	DE,(_cplx_w+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; cpow: z^w = e^(w*log(z))
+_cpow:
+_cpowf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; z at IX+4, w at IX+6
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; log(z)
+	PUSH	HL
+	CALL	_clog
+	POP	BC
+	LD	DE,__cplx_l
+	LD	BC,8
+	LDIR
+	; Load w
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	DE,__cplx_r
+	LD	BC,8
+	LDIR
+	; w * log(z)
+	CALL	__cmul
+	; e^(w*log(z))
+	LD	HL,__cplx_result
+	PUSH	HL
+	CALL	_cexp
+	POP	BC
+	POP	IX
+	RET
+
+; csin: sin(z) = sin(re)*cosh(im) + i*cos(re)*sinh(im)
 _csin:
+_csinf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; sin(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cosh(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cosh
+	POP	BC
+	POP	BC
+	; Real = sin(re) * cosh(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; cos(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; sinh(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinh
+	POP	BC
+	POP	BC
+	; Imag = cos(re) * sinh(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; ccos: cos(z) = cos(re)*cosh(im) - i*sin(re)*sinh(im)
 _ccos:
+_ccosf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; cos(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cosh(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cosh
+	POP	BC
+	POP	BC
+	; Real = cos(re) * cosh(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; sin(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; sinh(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinh
+	POP	BC
+	POP	BC
+	; Imag = -sin(re) * sinh(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; ctan: tan(z) = sin(z) / cos(z)
 _ctan:
+_ctanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; sin(z)
+	PUSH	HL
+	CALL	_csin
+	POP	BC
+	LD	DE,__cplx_l
+	LD	BC,8
+	LDIR
+	; cos(z)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	CALL	_ccos
+	POP	BC
+	LD	DE,__cplx_r
+	LD	BC,8
+	LDIR
+	CALL	__cdiv
+	LD	DE,_cplx_res
+	LD	BC,8
+	LDIR
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; csinh: sinh(z) = sinh(re)*cos(im) + i*cosh(re)*sin(im)
+_csinh:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; sinh(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinh
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cos(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	; Real = sinh(re) * cos(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; cosh(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cosh
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; sin(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	; Imag = cosh(re) * sin(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; ccosh: cosh(z) = cosh(re)*cos(im) + i*sinh(re)*sin(im)
+_ccosh:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; cosh(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cosh
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cos(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	; Real = cosh(re) * cos(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; sinh(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinh
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; sin(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	; Imag = sinh(re) * sin(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; ctanh: tanh(z) = sinh(z) / cosh(z)
+_ctanh:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; sinh(z)
+	PUSH	HL
+	CALL	_csinh
+	POP	BC
+	LD	DE,__cplx_l
+	LD	BC,8
+	LDIR
+	; cosh(z)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	CALL	_ccosh
+	POP	BC
+	LD	DE,__cplx_r
+	LD	BC,8
+	LDIR
+	CALL	__cdiv
+	LD	DE,_cplx_res
+	LD	BC,8
+	LDIR
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; Inverse trig/hyperbolic - simplified placeholders that return input
 _casin:
 _cacos:
 _catan:
-_csinh:
-_ccosh:
-_ctanh:
 _casinh:
 _cacosh:
 _catanh:
-_crealf:
-_cimagf:
-_cabsf:
-_cargf:
-_conjf:
-_cprojf:
-_cexpf:
-_clogf:
-_cpowf:
-_csqrtf:
-_csinf:
-_ccosf:
-_ctanf:
-_creall:
-_cimagl:
-_cabsl:
-_cargl:
-_conjl:
-_cprojl:
-	LD	HL,0
-	LD	DE,0
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_res
+	LD	BC,8
+	LDIR
+	LD	HL,_cplx_res
+	POP	IX
 	RET
 
 	DSEG
@@ -6376,5 +11290,2048 @@ _errno:		DW	0
 ; Heap management
 _heap_ptr:	DS	2	; Current heap pointer (0 = uninitialized)
 _heap_start:			; Heap starts here (after all static data)
+
+; Math function work areas
+_sqrt_x:	DS	4
+_sqrt_guess:	DS	4
+_sin_sign:	DS	1
+_sin_x:		DS	4
+_sin_x2:	DS	4
+_sin_sum:	DS	4
+_sin_term:	DS	4
+_sin_n:		DS	4
+_cos_x:		DS	4
+_cos_x2:	DS	4
+_cos_sum:	DS	4
+_cos_term:	DS	4
+_cos_n:		DS	4
+_tan_x:		DS	4
+_tan_sin:	DS	4
+_exp_x:		DS	4
+_exp_sum:	DS	4
+_exp_term:	DS	4
+_log_x:		DS	4
+_log_num:	DS	4
+_log_den:	DS	4
+_log_y:		DS	4
+_log_y2:	DS	4
+_log_sum:	DS	4
+_log_term:	DS	4
+_pow_x:		DS	4
+_pow_y:		DS	4
+_hyp_x:		DS	4
+_hyp_ep:	DS	4
+_hyp_em:	DS	4
+_hyp_s:		DS	4
+_asin_x:	DS	4
+_atan_x:	DS	4
+_atan_x2:	DS	4
+_atan_sum:	DS	4
+_atan_term:	DS	4
+_atan_sign:	DS	1
+_atan2_x:	DS	4
+_atan2_y:	DS	4
+_cbrt_sign:	DS	1
+_cbrt_x:	DS	4
+_cbrt_g:	DS	4
+_cbrt_g2:	DS	4
+_cbrt_t:	DS	4
+_hypot_x2:	DS	4
+_ceil_x:	DS	4
+_fmod_x:	DS	4
+_fmod_y:	DS	4
+_modf_x:	DS	4
+_modf_i:	DS	4
+
+; Complex number work areas
+_cplx_z:	DS	8	; Input complex
+_cplx_w:	DS	8	; Second input / work area
+_cplx_res:	DS	8	; Result storage
+
+; scanf work areas
+_scanf_count:	DS	1	; Number of matched items
+_scanf_mode:	DS	1	; 0=stdin, 1=string, 2=file
+_scanf_src:	DS	2	; String source pointer
+_scanf_fp:	DS	2	; File pointer
+_scanf_ungot:	DS	1	; Ungetc'd character
+
+; vprintf work area
+_vprintf_ap:	DS	2	; Current va_list position
+
+; Locale data
+_locale_c_str:	DB	'C',0
+_locale_posix:	DB	'POSIX',0
+_locale_dot:	DB	'.',0
+_locale_empty:	DB	0
+
+; struct lconv data for "C" locale
+; All pointers point to empty strings except decimal_point = "."
+; All char values = CHAR_MAX (127 on this system)
+_lconv_data:
+	DW	_locale_dot	; decimal_point
+	DW	_locale_empty	; thousands_sep
+	DW	_locale_empty	; grouping
+	DW	_locale_empty	; int_curr_symbol
+	DW	_locale_empty	; currency_symbol
+	DW	_locale_empty	; mon_decimal_point
+	DW	_locale_empty	; mon_thousands_sep
+	DW	_locale_empty	; mon_grouping
+	DW	_locale_empty	; positive_sign
+	DW	_locale_empty	; negative_sign
+	DB	127		; int_frac_digits (CHAR_MAX)
+	DB	127		; frac_digits
+	DB	127		; p_cs_precedes
+	DB	127		; p_sep_by_space
+	DB	127		; n_cs_precedes
+	DB	127		; n_sep_by_space
+	DB	127		; p_sign_posn
+	DB	127		; n_sign_posn
+
+; ============================================================
+; Threading support (threads.h)
+; Supports MP/M 2 multi-processing or DI/EI for single-tasking
+; ============================================================
+
+; MP/M XDOS function numbers
+MPM_DISPATCH	EQU	141	; Dispatch (yield CPU)
+MPM_DELAY	EQU	148	; Delay for N ticks
+
+; Thread mode: 0 = DI/EI mode, 1 = MP/M mode
+_thread_mode:	DB	0
+
+; Current thread ID (always 0 in CP/M, actual PID in MP/M)
+_thread_current: DB	0
+
+; Thread-specific storage (8 slots)
+_tss_slots:	DS	16	; 8 slots of 2 bytes each
+_tss_dtors:	DS	16	; 8 destructor pointers
+
+; int __mpm_available(void)
+; Check if MP/M is available (BDOS function 12 returns 0x31 or higher for MP/M)
+	PUBLIC	___mpm_available
+___mpm_available:
+	PUSH	BC
+	LD	C,12		; Get CP/M version
+	CALL	5
+	; H = 0 for CP/M, non-zero for MP/M
+	LD	A,H
+	OR	A
+	JR	Z,_mpm_no
+	; Check if H has MP/M flag
+	LD	A,L
+	CP	31H		; MP/M 1.x
+	JR	NC,_mpm_yes
+_mpm_no:
+	LD	HL,0
+	POP	BC
+	RET
+_mpm_yes:
+	LD	HL,1
+	POP	BC
+	RET
+
+; void __threads_use_mpm(int enable)
+; Set thread mode
+	PUBLIC	___threads_use_mpm
+___threads_use_mpm:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	LD	(_thread_mode),A
+	POP	IX
+	RET
+
+; int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
+; Create a new thread - only works under MP/M
+; Under CP/M, returns thrd_error
+	PUBLIC	_thrd_create
+_thrd_create:
+	; Under plain CP/M, we can't create threads
+	; Return thrd_error (4)
+	LD	HL,4		; thrd_error
+	RET
+
+; int thrd_equal(thrd_t lhs, thrd_t rhs)
+; Compare two thread IDs
+	PUBLIC	_thrd_equal
+_thrd_equal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)	; lhs
+	CP	(IX+6)		; rhs
+	JR	Z,_thrd_eq_yes
+	LD	HL,0
+	POP	IX
+	RET
+_thrd_eq_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+; thrd_t thrd_current(void)
+; Get current thread ID
+	PUBLIC	_thrd_current
+_thrd_current:
+	LD	A,(_thread_current)
+	LD	L,A
+	LD	H,0
+	RET
+
+; int thrd_sleep(const struct timespec *duration, struct timespec *remaining)
+; Sleep for specified duration
+; Uses MPM_DELAY under MP/M, busy-wait under CP/M
+	PUBLIC	_thrd_sleep
+_thrd_sleep:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Get duration pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Load tv_sec (first 4 bytes)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	INC	HL
+	INC	HL		; Skip to tv_nsec (ignored for simplicity)
+
+	; Check thread mode
+	LD	A,(_thread_mode)
+	OR	A
+	JR	Z,_thrd_sleep_busy
+
+	; MP/M mode: use DELAY function
+	; Convert seconds to 1/60th second ticks
+	; DE = seconds, ticks = seconds * 60
+	PUSH	DE
+	POP	HL
+	ADD	HL,HL		; *2
+	LD	D,H
+	LD	E,L
+	ADD	HL,HL		; *4
+	ADD	HL,HL		; *8
+	ADD	HL,HL		; *16
+	ADD	HL,HL		; *32
+	ADD	HL,DE		; *32 + *2 = *34 (close to 60/2)
+	ADD	HL,HL		; *68... this is approximate
+	; Simpler: multiply by 64 (shift left 6 times)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D		; DE = seconds * 64 (approx 60)
+
+	LD	C,MPM_DELAY	; XDOS Delay
+	CALL	5
+
+	LD	HL,0		; Return 0 (success)
+	JR	_thrd_sleep_ret
+
+_thrd_sleep_busy:
+	; CP/M mode: busy wait (very crude)
+	; Just loop for a while
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	; DE = seconds, loop DE * 10000 times
+_thrd_sleep_outer:
+	LD	A,D
+	OR	E
+	JR	Z,_thrd_sleep_done
+	LD	BC,10000
+_thrd_sleep_inner:
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,_thrd_sleep_inner
+	DEC	DE
+	JR	_thrd_sleep_outer
+
+_thrd_sleep_done:
+	LD	HL,0
+
+_thrd_sleep_ret:
+	; Set remaining to 0 if pointer provided
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	A,H
+	OR	L
+	JR	Z,_thrd_sleep_noremain
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+_thrd_sleep_noremain:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; void thrd_yield(void)
+; Yield execution to other threads
+	PUBLIC	_thrd_yield
+_thrd_yield:
+	LD	A,(_thread_mode)
+	OR	A
+	RET	Z		; No-op under CP/M
+
+	; MP/M: dispatch (yield CPU)
+	PUSH	BC
+	LD	C,MPM_DISPATCH
+	CALL	5
+	POP	BC
+	RET
+
+; void thrd_exit(int res)
+; Exit current thread (exits program under CP/M)
+	PUBLIC	_thrd_exit
+_thrd_exit:
+	; Under CP/M, just exit the program
+	JP	_exit
+
+; int thrd_detach(thrd_t thr)
+; Detach a thread - returns thrd_error under CP/M
+	PUBLIC	_thrd_detach
+_thrd_detach:
+	LD	HL,4		; thrd_error
+	RET
+
+; int thrd_join(thrd_t thr, int *res)
+; Wait for thread to finish - returns thrd_error under CP/M
+	PUBLIC	_thrd_join
+_thrd_join:
+	LD	HL,4		; thrd_error
+	RET
+
+; ============================================================
+; Mutex functions - use DI/EI for synchronization
+; ============================================================
+
+; int mtx_init(mtx_t *mtx, int type)
+; Initialize a mutex
+	PUBLIC	_mtx_init
+_mtx_init:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+	; Clear the mutex structure
+	XOR	A
+	LD	(HL),A		; locked = 0
+	INC	HL
+	LD	A,(IX+6)	; type
+	LD	(HL),A
+	INC	HL
+	XOR	A
+	LD	(HL),A		; owner = 0
+	INC	HL
+	LD	(HL),A		; count = 0
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+; int mtx_lock(mtx_t *mtx)
+; Lock a mutex
+	PUBLIC	_mtx_lock
+_mtx_lock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+_mtx_lock_retry:
+	DI			; Disable interrupts
+	LD	A,(HL)		; locked flag
+	OR	A
+	JR	Z,_mtx_lock_acq
+
+	; Already locked - check if recursive
+	INC	HL
+	LD	A,(HL)		; type
+	DEC	HL
+	AND	1		; mtx_recursive
+	JR	Z,_mtx_lock_wait
+
+	; Check if we own it
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	CP	(HL)		; owner
+	POP	HL
+	JR	NZ,_mtx_lock_wait
+
+	; We own it, increment count
+	PUSH	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	(HL)		; count++
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+	JR	_mtx_lock_ret
+
+_mtx_lock_wait:
+	EI			; Re-enable interrupts
+	; Yield and retry
+	PUSH	HL
+	CALL	_thrd_yield
+	POP	HL
+	JR	_mtx_lock_retry
+
+_mtx_lock_acq:
+	; Acquire the lock
+	LD	(HL),1		; locked = 1
+	; Set owner
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	LD	(HL),A		; owner
+	INC	HL
+	LD	(HL),1		; count = 1
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+
+_mtx_lock_ret:
+	POP	BC
+	POP	IX
+	RET
+
+; int mtx_trylock(mtx_t *mtx)
+; Try to lock mutex without blocking
+	PUBLIC	_mtx_trylock
+_mtx_trylock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_mtx_try_busy
+
+	; Lock it
+	LD	(HL),1
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	LD	(HL),A
+	INC	HL
+	LD	(HL),1
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_mtx_try_busy:
+	; Check if recursive and we own it
+	INC	HL
+	LD	A,(HL)		; type
+	AND	1
+	JR	Z,_mtx_try_fail
+	INC	HL
+	LD	A,(_thread_current)
+	CP	(HL)
+	JR	NZ,_mtx_try_fail
+	; We own it
+	INC	HL
+	INC	(HL)
+	EI
+	LD	HL,0
+	POP	IX
+	RET
+
+_mtx_try_fail:
+	EI
+	LD	HL,3		; thrd_busy
+	POP	IX
+	RET
+
+; int mtx_timedlock(mtx_t *mtx, const struct timespec *ts)
+; Lock with timeout - simplified, just tries a few times then fails
+	PUBLIC	_mtx_timedlock
+_mtx_timedlock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	B,100		; Try 100 times
+_mtx_timed_loop:
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	CALL	_mtx_trylock
+	POP	BC
+	LD	A,H
+	OR	L
+	JR	Z,_mtx_timed_ok	; Got it
+	DJNZ	_mtx_timed_loop
+
+	; Timeout
+	LD	HL,2		; thrd_timedout
+	JR	_mtx_timed_ret
+
+_mtx_timed_ok:
+	LD	HL,0		; thrd_success
+
+_mtx_timed_ret:
+	POP	BC
+	POP	IX
+	RET
+
+; int mtx_unlock(mtx_t *mtx)
+; Unlock a mutex
+	PUBLIC	_mtx_unlock
+_mtx_unlock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+	DI
+	; Check if recursive
+	INC	HL
+	LD	A,(HL)		; type
+	AND	1
+	JR	Z,_mtx_unlock_do
+
+	; Recursive - decrement count
+	INC	HL
+	INC	HL
+	DEC	(HL)		; count--
+	JR	NZ,_mtx_unlock_recur
+	; Count reached 0, release
+	DEC	HL
+	DEC	HL
+	DEC	HL		; Back to start
+
+_mtx_unlock_do:
+	DEC	HL		; Back to locked flag
+	XOR	A
+	LD	(HL),A		; locked = 0
+
+_mtx_unlock_recur:
+	EI
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+; void mtx_destroy(mtx_t *mtx)
+; Destroy a mutex (no-op, just clear it)
+	PUBLIC	_mtx_destroy
+_mtx_destroy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	B,12		; Size of mtx_t
+_mtx_destroy_loop:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_mtx_destroy_loop
+
+	POP	IX
+	RET
+
+; ============================================================
+; Condition variable functions
+; ============================================================
+
+; int cnd_init(cnd_t *cond)
+	PUBLIC	_cnd_init
+_cnd_init:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	(HL),A		; waiters = 0
+	INC	HL
+	LD	(HL),A		; signaled = 0
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+; int cnd_signal(cnd_t *cond)
+	PUBLIC	_cnd_signal
+_cnd_signal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	INC	HL
+	LD	(HL),1		; signaled = 1
+
+	LD	HL,0
+	POP	IX
+	RET
+
+; int cnd_broadcast(cnd_t *cond)
+	PUBLIC	_cnd_broadcast
+_cnd_broadcast:
+	; Same as signal for our simple implementation
+	JP	_cnd_signal
+
+; int cnd_wait(cnd_t *cond, mtx_t *mtx)
+	PUBLIC	_cnd_wait
+_cnd_wait:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Unlock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; mtx
+	PUSH	HL
+	CALL	_mtx_unlock
+	POP	BC
+
+	; Wait for signal
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; cond
+	INC	HL		; Point to signaled
+
+_cnd_wait_loop:
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_cnd_wait_done
+	EI
+	CALL	_thrd_yield
+	JR	_cnd_wait_loop
+
+_cnd_wait_done:
+	XOR	A
+	LD	(HL),A		; Clear signal
+	EI
+
+	; Re-lock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+
+	LD	HL,0		; thrd_success
+	POP	BC
+	POP	IX
+	RET
+
+; int cnd_timedwait(cnd_t *cond, mtx_t *mtx, const struct timespec *ts)
+	PUBLIC	_cnd_timedwait
+_cnd_timedwait:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Unlock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_unlock
+	POP	BC
+
+	; Try a few times
+	LD	B,100
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	INC	HL
+
+_cnd_timed_loop:
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_cnd_timed_done
+	EI
+	PUSH	HL
+	PUSH	BC
+	CALL	_thrd_yield
+	POP	BC
+	POP	HL
+	DJNZ	_cnd_timed_loop
+
+	; Timeout
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+	LD	HL,2		; thrd_timedout
+	JR	_cnd_timed_ret
+
+_cnd_timed_done:
+	XOR	A
+	LD	(HL),A
+	EI
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+	LD	HL,0
+
+_cnd_timed_ret:
+	POP	BC
+	POP	IX
+	RET
+
+; void cnd_destroy(cnd_t *cond)
+	PUBLIC	_cnd_destroy
+_cnd_destroy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+	POP	IX
+	RET
+
+; ============================================================
+; Thread-specific storage functions
+; ============================================================
+
+; int tss_create(tss_t *key, tss_dtor_t dtor)
+	PUBLIC	_tss_create
+_tss_create:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Find free slot (value 0xFFFF means unused)
+	LD	HL,_tss_slots
+	LD	B,0		; Slot index
+_tss_create_loop:
+	LD	A,B
+	CP	8		; 8 slots max
+	JR	NC,_tss_create_fail
+
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,D
+	AND	E
+	INC	A
+	JR	Z,_tss_create_found
+	INC	B
+	JR	_tss_create_loop
+
+_tss_create_found:
+	; Store NULL initially
+	DEC	HL
+	DEC	HL
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+	; Store destructor
+	LD	HL,_tss_dtors
+	LD	A,B
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	LD	A,(IX+6)	; dtor low
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)	; dtor high
+	LD	(HL),A
+
+	; Store key
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),B		; key = slot index
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_tss_create_fail:
+	LD	HL,1		; thrd_nomem
+	POP	IX
+	RET
+
+; void *tss_get(tss_t key)
+	PUBLIC	_tss_get
+_tss_get:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; key
+	CP	8
+	JR	NC,_tss_get_null
+
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	POP	IX
+	RET
+
+_tss_get_null:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int tss_set(tss_t key, void *val)
+	PUBLIC	_tss_set
+_tss_set:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; key
+	CP	8
+	JR	NC,_tss_set_err
+
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	A,(IX+6)	; val low
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)	; val high
+	LD	(HL),A
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_tss_set_err:
+	LD	HL,4		; thrd_error
+	POP	IX
+	RET
+
+; void tss_delete(tss_t key)
+	PUBLIC	_tss_delete
+_tss_delete:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)
+	CP	8
+	JR	NC,_tss_del_done
+
+	ADD	A,A
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	A,0FFH
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A		; Mark as unused
+
+	; Clear destructor
+	LD	HL,_tss_dtors
+	ADD	HL,DE
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+_tss_del_done:
+	POP	IX
+	RET
+
+; ============================================================
+; call_once function
+; ============================================================
+
+; void call_once(once_flag *flag, void (*func)(void))
+	PUBLIC	_call_once
+_call_once:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; flag
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_call_once_done
+
+	; Mark as called
+	LD	(HL),1
+	EI
+
+	; Call function
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	CALL	_call_once_call
+	JR	_call_once_ret
+
+_call_once_done:
+	EI
+_call_once_ret:
+	POP	BC
+	POP	IX
+	RET
+
+_call_once_call:
+	JP	(HL)
+
+; ============================================================
+; Atomic operations (stdatomic.h)
+; All use DI/EI for atomicity on Z80
+; ============================================================
+
+; _Bool atomic_flag_test_and_set(volatile atomic_flag *obj)
+	PUBLIC	_atomic_flag_test_and_set
+	PUBLIC	_atomic_flag_test_and_set_explicit
+_atomic_flag_test_and_set_explicit:
+_atomic_flag_test_and_set:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = obj
+
+	DI
+	LD	A,(HL)		; Get current value
+	LD	E,A		; Save for return
+	LD	(HL),1		; Set flag
+	EI
+
+	LD	L,E
+	LD	H,0		; Return old value
+	POP	IX
+	RET
+
+; void atomic_flag_clear(volatile atomic_flag *obj)
+	PUBLIC	_atomic_flag_clear
+	PUBLIC	_atomic_flag_clear_explicit
+_atomic_flag_clear_explicit:
+_atomic_flag_clear:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	(HL),0		; Clear flag
+	EI
+
+	POP	IX
+	RET
+
+; ============================================================
+; 1-byte atomic operations
+; ============================================================
+
+; void __atomic_store_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_store_1
+___atomic_store_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = obj
+	LD	A,(IX+6)	; val
+
+	DI
+	LD	(HL),A
+	EI
+
+	POP	IX
+	RET
+
+; unsigned char __atomic_load_1(volatile void *obj)
+	PUBLIC	___atomic_load_1
+___atomic_load_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	A,(HL)
+	EI
+
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_exchange_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_exchange_1
+___atomic_exchange_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+
+	DI
+	LD	E,(HL)		; Get old value
+	LD	(HL),A		; Store new value
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; _Bool __atomic_compare_exchange_1(volatile void *obj, void *expected, unsigned char desired)
+	PUBLIC	___atomic_compare_exchange_1
+___atomic_compare_exchange_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; expected
+	LD	A,(IX+8)	; desired
+
+	DI
+	LD	C,(HL)		; Current value
+	PUSH	DE
+	EX	DE,HL
+	LD	B,(HL)		; Expected value
+	EX	DE,HL
+	POP	DE
+	LD	A,C
+	CP	B		; Compare
+	JR	NZ,_cmpxchg1_fail
+
+	; Equal - store desired
+	LD	A,(IX+8)
+	LD	(HL),A
+	EI
+	LD	HL,1
+	POP	IX
+	RET
+
+_cmpxchg1_fail:
+	; Not equal - store current in *expected
+	LD	A,C
+	LD	(DE),A
+	EI
+	LD	HL,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_add_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_add_1
+___atomic_fetch_add_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A		; C = val
+
+	DI
+	LD	A,(HL)		; Get old value
+	LD	E,A		; Save for return
+	ADD	A,C		; Add
+	LD	(HL),A		; Store result
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_sub_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_sub_1
+___atomic_fetch_sub_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	SUB	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_or_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_or_1
+___atomic_fetch_or_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	OR	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_xor_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_xor_1
+___atomic_fetch_xor_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	XOR	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_and_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_and_1
+___atomic_fetch_and_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	AND	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; ============================================================
+; 2-byte atomic operations
+; ============================================================
+
+; void __atomic_store_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_store_2
+___atomic_store_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; val
+
+	DI
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	IX
+	RET
+
+; unsigned int __atomic_load_2(volatile void *obj)
+	PUBLIC	___atomic_load_2
+___atomic_load_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EI
+
+	EX	DE,HL
+	POP	IX
+	RET
+
+; unsigned int __atomic_exchange_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_exchange_2
+___atomic_exchange_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; val
+
+	DI
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = old value
+	LD	(HL),D
+	DEC	HL
+	LD	(HL),E		; Store new
+	EI
+
+	LD	H,B
+	LD	L,C
+	POP	BC
+	POP	IX
+	RET
+
+; _Bool __atomic_compare_exchange_2(volatile void *obj, void *expected, unsigned int desired)
+	PUBLIC	___atomic_compare_exchange_2
+___atomic_compare_exchange_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = current value
+	DEC	HL
+
+	; Get expected
+	PUSH	HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; expected ptr
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = expected
+	POP	HL
+
+	; Compare BC with DE
+	LD	A,C
+	CP	E
+	JR	NZ,_cmpxchg2_fail
+	LD	A,B
+	CP	D
+	JR	NZ,_cmpxchg2_fail
+
+	; Equal - store desired
+	LD	E,(IX+8)
+	LD	D,(IX+9)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+	LD	HL,1
+	POP	BC
+	POP	IX
+	RET
+
+_cmpxchg2_fail:
+	; Store current in *expected
+	PUSH	HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	POP	HL
+	EI
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_add_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_add_2
+___atomic_fetch_add_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = old value
+	DEC	HL
+	PUSH	DE		; Save old
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = val
+	EX	DE,HL
+	ADD	HL,BC		; HL = old + val
+	EX	DE,HL		; DE = result
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL		; Return old value
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_sub_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_sub_2
+___atomic_fetch_sub_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = old
+	DEC	HL
+	PUSH	DE
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	EX	DE,HL
+	OR	A
+	SBC	HL,BC		; HL = old - val
+	EX	DE,HL
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_or_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_or_2
+___atomic_fetch_or_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL
+	PUSH	DE		; Save old
+
+	LD	A,E
+	OR	(IX+6)
+	LD	E,A
+	LD	A,D
+	OR	(IX+7)
+	LD	D,A
+
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_xor_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_xor_2
+___atomic_fetch_xor_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL
+	PUSH	DE
+
+	LD	A,E
+	XOR	(IX+6)
+	LD	E,A
+	LD	A,D
+	XOR	(IX+7)
+	LD	D,A
+
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_and_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_and_2
+___atomic_fetch_and_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL
+	PUSH	DE
+
+	LD	A,E
+	AND	(IX+6)
+	LD	E,A
+	LD	A,D
+	AND	(IX+7)
+	LD	D,A
+
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; 4-byte atomic operations (for long)
+; ============================================================
+
+; void __atomic_store_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_store_4
+___atomic_store_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	LD	A,(IX+6)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+8)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+9)
+	LD	(HL),A
+	EI
+
+	POP	IX
+	RET
+
+; unsigned long __atomic_load_4(volatile void *obj)
+	PUBLIC	___atomic_load_4
+___atomic_load_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	EI
+
+	; Return DEHL for long
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,B
+	POP	IX
+	RET
+
+; unsigned long __atomic_exchange_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_exchange_4
+___atomic_exchange_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	; Read old value
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = old
+	; Store new value
+	LD	A,(IX+9)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+8)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+7)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+6)
+	LD	(HL),A
+	EI
+
+	; Return old in DEHL
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,B
+	POP	BC
+	POP	IX
+	RET
+
+; _Bool __atomic_compare_exchange_4(volatile void *obj, void *expected, unsigned long desired)
+	PUBLIC	___atomic_compare_exchange_4
+___atomic_compare_exchange_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	; Load current value into stack temp area
+	PUSH	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = current
+	POP	HL
+
+	; Load expected
+	PUSH	HL
+	PUSH	BC
+	PUSH	DE
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; expected ptr
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = expected
+
+	; Compare (stack has current)
+	POP	HL		; current low
+	LD	A,L
+	CP	E
+	JR	NZ,_cmpxchg4_fail
+	LD	A,H
+	CP	D
+	JR	NZ,_cmpxchg4_fail
+	POP	HL		; current high
+	LD	A,L
+	CP	C
+	JR	NZ,_cmpxchg4_f2
+	LD	A,H
+	CP	B
+	JR	NZ,_cmpxchg4_f2
+
+	; Equal - store desired
+	POP	HL		; obj
+	LD	A,(IX+10)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+11)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+12)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+13)
+	LD	(HL),A
+	EI
+	LD	HL,1
+	POP	BC
+	POP	IX
+	RET
+
+_cmpxchg4_f2:
+	PUSH	HL		; Push back to balance stack
+_cmpxchg4_fail:
+	; Store current in *expected
+	POP	DE		; current high (or junk)
+	POP	HL		; current low (or high if came from f2)
+	; This is getting complex, let me simplify...
+	; Just re-read and store
+	POP	HL		; obj
+	PUSH	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = current
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	POP	HL		; Discard obj
+	EI
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_add_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_add_4
+___atomic_fetch_add_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	; Load current into temp
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE		; Save low word of old
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE		; Save high word of old
+
+	; Add val
+	POP	DE		; high
+	POP	HL		; low
+	PUSH	DE
+	PUSH	HL		; Save old for return
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	ADD	HL,BC		; Add low
+	EX	DE,HL
+	LD	C,(IX+8)
+	LD	B,(IX+9)
+	ADC	HL,BC		; Add high with carry
+	EX	DE,HL		; DEHL = result
+
+	; Store result
+	PUSH	HL
+	PUSH	DE
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	POP	DE
+	POP	BC		; DEBC = result
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	; Return old value
+	POP	HL		; low
+	POP	DE		; high
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_sub_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_sub_4
+___atomic_fetch_sub_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	POP	DE
+	POP	HL
+	PUSH	DE
+	PUSH	HL
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	OR	A
+	SBC	HL,BC
+	EX	DE,HL
+	LD	C,(IX+8)
+	LD	B,(IX+9)
+	SBC	HL,BC
+	EX	DE,HL
+
+	PUSH	HL
+	PUSH	DE
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	POP	DE
+	POP	BC
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_or_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_or_4
+___atomic_fetch_or_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	; Compute OR
+	POP	BC		; high
+	POP	DE		; low
+	PUSH	DE
+	PUSH	BC		; Save old
+
+	LD	A,E
+	OR	(IX+6)
+	LD	E,A
+	LD	A,D
+	OR	(IX+7)
+	LD	D,A
+	LD	A,C
+	OR	(IX+8)
+	LD	C,A
+	LD	A,B
+	OR	(IX+9)
+	LD	B,A		; BCDE = result
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	EI
+
+	POP	DE		; high of old
+	POP	HL		; low of old
+	; Swap for return convention
+	EX	DE,HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_xor_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_xor_4
+___atomic_fetch_xor_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	POP	BC
+	POP	DE
+	PUSH	DE
+	PUSH	BC
+
+	LD	A,E
+	XOR	(IX+6)
+	LD	E,A
+	LD	A,D
+	XOR	(IX+7)
+	LD	D,A
+	LD	A,C
+	XOR	(IX+8)
+	LD	C,A
+	LD	A,B
+	XOR	(IX+9)
+	LD	B,A
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	EI
+
+	POP	DE
+	POP	HL
+	EX	DE,HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_and_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_and_4
+___atomic_fetch_and_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	POP	BC
+	POP	DE
+	PUSH	DE
+	PUSH	BC
+
+	LD	A,E
+	AND	(IX+6)
+	LD	E,A
+	LD	A,D
+	AND	(IX+7)
+	LD	D,A
+	LD	A,C
+	AND	(IX+8)
+	LD	C,A
+	LD	A,B
+	AND	(IX+9)
+	LD	B,A
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	EI
+
+	POP	DE
+	POP	HL
+	EX	DE,HL
+	POP	BC
+	POP	IX
+	RET
 
 	END

@@ -70,6 +70,14 @@ class EnumType(TypeNode):
     is_volatile: bool = False
 
 
+@dataclass(kw_only=True)
+class ComplexType(TypeNode):
+    """Complex number type (_Complex)."""
+    base_type: str  # "float", "double", or "long double"
+    is_const: bool = False
+    is_volatile: bool = False
+
+
 # === Expression Nodes ===
 
 @dataclass(kw_only=True)

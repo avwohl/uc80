@@ -1000,6 +1000,806 @@ _longjmp_valok:
 	LD	L,C
 	RET
 
+; ============================================================
+; IEEE 754 Single-Precision Floating Point Library
+; ============================================================
+; Format: DEHL where D=high byte (sign+exp), E,H,L=mantissa
+; Sign: bit 7 of D
+; Exponent: bits 6-0 of D and bit 7 of E (8 bits total, bias 127)
+; Mantissa: bits 6-0 of E and all of H,L (23 bits, implied 1.)
+; ============================================================
+
+; ============================================================
+; Float Addition: DEHL = DEHL + (__tmp32)
+; ============================================================
+	PUBLIC	__fadd
+__fadd:
+	PUSH	BC
+	PUSH	IX
+
+	; Save operands to work area
+	LD	(__fop1),HL
+	LD	(__fop1+2),DE
+	LD	HL,(__tmp32)
+	LD	(__fop2),HL
+	LD	HL,(__tmp32+2)
+	LD	(__fop2+2),HL
+
+	; Check for zero operands
+	LD	A,D
+	AND	7FH		; Mask off sign
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fadd_op1nz
+	; Op1 is zero, return op2
+	LD	HL,(__fop2)
+	LD	DE,(__fop2+2)
+	JR	__fadd_done
+
+__fadd_op1nz:
+	LD	HL,(__fop2)
+	LD	DE,(__fop2+2)
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fadd_bothnonzero
+	; Op2 is zero, return op1
+	LD	HL,(__fop1)
+	LD	DE,(__fop1+2)
+	JR	__fadd_done
+
+__fadd_bothnonzero:
+	; Unpack both operands
+	LD	HL,(__fop1)
+	LD	DE,(__fop1+2)
+	CALL	__funpack
+	LD	(__fsgn1),A	; Sign
+	LD	(__fexp1),BC	; Exponent
+	LD	(__fman1),HL	; Mantissa low
+	LD	(__fman1+2),DE	; Mantissa high
+
+	LD	HL,(__fop2)
+	LD	DE,(__fop2+2)
+	CALL	__funpack
+	LD	(__fsgn2),A
+	LD	(__fexp2),BC
+	LD	(__fman2),HL
+	LD	(__fman2+2),DE
+
+	; Align exponents (shift smaller mantissa right)
+	LD	HL,(__fexp1)
+	LD	DE,(__fexp2)
+	OR	A
+	SBC	HL,DE		; HL = exp1 - exp2
+	JR	Z,__fadd_aligned
+	JR	C,__fadd_shift1	; exp1 < exp2
+
+	; exp1 > exp2: shift mantissa2 right by (exp1-exp2)
+	LD	B,L		; Shift count
+	LD	A,B
+	CP	24		; If shift >= 24, result is op1
+	JR	C,__fadd_doshift2
+	LD	HL,(__fop1)
+	LD	DE,(__fop1+2)
+	JR	__fadd_done
+
+__fadd_doshift2:
+	LD	HL,(__fman2)
+	LD	DE,(__fman2+2)
+__fadd_shloop2:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	DJNZ	__fadd_shloop2
+	LD	(__fman2),HL
+	LD	(__fman2+2),DE
+	LD	HL,(__fexp1)
+	LD	(__fexp2),HL	; Set exp2 = exp1
+	JR	__fadd_aligned
+
+__fadd_shift1:
+	; exp1 < exp2: shift mantissa1 right by (exp2-exp1)
+	LD	HL,(__fexp2)
+	LD	DE,(__fexp1)
+	OR	A
+	SBC	HL,DE
+	LD	B,L
+	LD	A,B
+	CP	24
+	JR	C,__fadd_doshift1
+	LD	HL,(__fop2)
+	LD	DE,(__fop2+2)
+	JR	__fadd_done
+
+__fadd_doshift1:
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+__fadd_shloop1:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	DJNZ	__fadd_shloop1
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+	LD	HL,(__fexp2)
+	LD	(__fexp1),HL
+
+__fadd_aligned:
+	; Add or subtract mantissas based on signs
+	LD	A,(__fsgn1)
+	LD	B,A
+	LD	A,(__fsgn2)
+	XOR	B
+	JR	NZ,__fadd_subtract
+
+	; Same signs: add mantissas
+	LD	HL,(__fman1)
+	LD	DE,(__fman2)
+	ADD	HL,DE
+	LD	(__fman1),HL
+	LD	HL,(__fman1+2)
+	LD	DE,(__fman2+2)
+	ADC	HL,DE
+	LD	(__fman1+2),HL
+	; Result sign is same as operands
+	JR	__fadd_normalize
+
+__fadd_subtract:
+	; Different signs: subtract mantissas
+	; Compare magnitudes first
+	LD	HL,(__fman1+2)
+	LD	DE,(__fman2+2)
+	OR	A
+	SBC	HL,DE
+	JR	NZ,__fadd_cmphi
+	LD	HL,(__fman1)
+	LD	DE,(__fman2)
+	OR	A
+	SBC	HL,DE
+__fadd_cmphi:
+	JR	NC,__fadd_sub_m1_m2
+
+	; man2 > man1: result = man2 - man1, sign = sgn2
+	LD	HL,(__fman2)
+	LD	DE,(__fman1)
+	OR	A
+	SBC	HL,DE
+	LD	(__fman1),HL
+	LD	HL,(__fman2+2)
+	LD	DE,(__fman1+2)
+	SBC	HL,DE
+	LD	(__fman1+2),HL
+	LD	A,(__fsgn2)
+	LD	(__fsgn1),A
+	JR	__fadd_normalize
+
+__fadd_sub_m1_m2:
+	; man1 >= man2: result = man1 - man2, sign = sgn1
+	LD	HL,(__fman1)
+	LD	DE,(__fman2)
+	OR	A
+	SBC	HL,DE
+	LD	(__fman1),HL
+	LD	HL,(__fman1+2)
+	LD	DE,(__fman2+2)
+	SBC	HL,DE
+	LD	(__fman1+2),HL
+
+__fadd_normalize:
+	; Normalize result in __fman1, __fexp1, __fsgn1
+	CALL	__fnorm
+	; Pack result
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	BC,(__fexp1)
+	LD	A,(__fsgn1)
+	CALL	__fpack
+
+__fadd_done:
+	POP	IX
+	POP	BC
+	RET
+
+; ============================================================
+; Float Subtraction: DEHL = DEHL - (__tmp32)
+; ============================================================
+	PUBLIC	__fsub
+__fsub:
+	; Negate op2 sign and call fadd
+	LD	A,(__tmp32+3)
+	XOR	80H
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	; Restore op2 sign
+	LD	A,(__tmp32+3)
+	XOR	80H
+	LD	(__tmp32+3),A
+	RET
+
+; ============================================================
+; Float Multiplication: DEHL = DEHL * (__tmp32)
+; ============================================================
+	PUBLIC	__fmul
+__fmul:
+	PUSH	BC
+	PUSH	IX
+
+	; Check for zero
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__fmul_zero
+	LD	A,(__tmp32+3)
+	AND	7FH
+	LD	B,A
+	LD	A,(__tmp32+2)
+	OR	B
+	LD	A,(__tmp32+1)
+	OR	B
+	LD	A,(__tmp32)
+	OR	B
+	JR	Z,__fmul_zero
+
+	; Unpack operands
+	CALL	__funpack
+	LD	(__fsgn1),A
+	LD	(__fexp1),BC
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	CALL	__funpack
+	LD	(__fsgn2),A
+	LD	(__fexp2),BC
+	LD	(__fman2),HL
+	LD	(__fman2+2),DE
+
+	; Result sign = xor of signs
+	LD	A,(__fsgn1)
+	LD	B,A
+	LD	A,(__fsgn2)
+	XOR	B
+	LD	(__fsgn1),A
+
+	; Result exponent = exp1 + exp2 - 127
+	LD	HL,(__fexp1)
+	LD	DE,(__fexp2)
+	ADD	HL,DE
+	LD	DE,127
+	OR	A
+	SBC	HL,DE
+	LD	(__fexp1),HL
+
+	; Multiply mantissas (24-bit x 24-bit -> 48-bit, take high 24)
+	; Simplified: use 16x16 multiplications
+	CALL	__fmul_man
+
+	; Normalize and pack
+	CALL	__fnorm
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	BC,(__fexp1)
+	LD	A,(__fsgn1)
+	CALL	__fpack
+	JR	__fmul_done
+
+__fmul_zero:
+	LD	HL,0
+	LD	DE,0
+
+__fmul_done:
+	POP	IX
+	POP	BC
+	RET
+
+; Mantissa multiplication helper
+__fmul_man:
+	; Multiply __fman1 by __fman2
+	; Using 32-bit multiplication and taking high bits
+	LD	HL,(__fman1)
+	LD	(__mul32_mcd),HL
+	LD	HL,(__fman1+2)
+	LD	(__mul32_mcd+2),HL
+	LD	HL,(__fman2)
+	LD	DE,(__fman2+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__mul32_mcd)
+	LD	DE,(__mul32_mcd+2)
+	CALL	__mul32
+	; Result high bits in DEHL - shift right 8 for proper alignment
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+	RET
+
+; ============================================================
+; Float Division: DEHL = DEHL / (__tmp32)
+; ============================================================
+	PUBLIC	__fdiv
+__fdiv:
+	PUSH	BC
+	PUSH	IX
+
+	; Check for zero divisor
+	LD	A,(__tmp32+3)
+	AND	7FH
+	LD	B,A
+	LD	A,(__tmp32+2)
+	OR	B
+	LD	A,(__tmp32+1)
+	OR	B
+	LD	A,(__tmp32)
+	OR	B
+	JR	Z,__fdiv_inf	; Division by zero
+
+	; Check for zero dividend
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__fdiv_zero
+
+	; Unpack operands
+	CALL	__funpack
+	LD	(__fsgn1),A
+	LD	(__fexp1),BC
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	CALL	__funpack
+	LD	(__fsgn2),A
+	LD	(__fexp2),BC
+	LD	(__fman2),HL
+	LD	(__fman2+2),DE
+
+	; Result sign
+	LD	A,(__fsgn1)
+	LD	B,A
+	LD	A,(__fsgn2)
+	XOR	B
+	LD	(__fsgn1),A
+
+	; Result exponent = exp1 - exp2 + 127
+	LD	HL,(__fexp1)
+	LD	DE,(__fexp2)
+	OR	A
+	SBC	HL,DE
+	LD	DE,127
+	ADD	HL,DE
+	LD	(__fexp1),HL
+
+	; Divide mantissas
+	CALL	__fdiv_man
+
+	; Normalize and pack
+	CALL	__fnorm
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	BC,(__fexp1)
+	LD	A,(__fsgn1)
+	CALL	__fpack
+	JR	__fdiv_done
+
+__fdiv_zero:
+	LD	HL,0
+	LD	DE,0
+	JR	__fdiv_done
+
+__fdiv_inf:
+	; Return infinity (max exponent)
+	LD	HL,0
+	LD	DE,7F80H	; +inf
+	JR	__fdiv_done
+
+__fdiv_done:
+	POP	IX
+	POP	BC
+	RET
+
+; Mantissa division helper
+__fdiv_man:
+	; Divide __fman1 by __fman2 using 32-bit division
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	; Shift left 8 bits for precision
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	LD	(__div32_dvd),HL
+	LD	(__div32_dvd+2),DE
+	LD	HL,(__fman2)
+	LD	(__tmp32),HL
+	LD	HL,(__fman2+2)
+	LD	(__tmp32+2),HL
+	LD	HL,(__div32_dvd)
+	LD	DE,(__div32_dvd+2)
+	CALL	__div32
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+	RET
+
+; ============================================================
+; Float Comparison: Compare DEHL with (__tmp32)
+; Returns: Z if equal, C if DEHL < __tmp32
+; ============================================================
+	PUBLIC	__fcmp
+__fcmp:
+	PUSH	BC
+
+	; Check signs first
+	LD	A,D
+	XOR	80H		; Flip sign for comparison trick
+	LD	B,A
+	LD	A,(__tmp32+3)
+	XOR	80H
+	CP	B
+	JR	NZ,__fcmp_diff
+
+	; High bytes equal, compare rest
+	LD	A,(__tmp32+2)
+	CP	E
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+1)
+	CP	H
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32)
+	CP	L
+
+__fcmp_diff:
+	POP	BC
+	RET
+
+; ============================================================
+; Integer to Float: DEHL = float(DEHL) (signed 32-bit)
+; Also known as __ltof for long to float conversion
+; ============================================================
+	PUBLIC	__itof
+	PUBLIC	__ltof
+__ltof:
+__itof:
+	PUSH	BC
+
+	; Check for zero
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__itof_nz
+	LD	DE,0
+	LD	HL,0
+	JR	__itof_done
+
+__itof_nz:
+	; Get sign
+	LD	A,D
+	AND	80H
+	LD	(__fsgn1),A
+
+	; Make positive if negative
+	BIT	7,D
+	JR	Z,__itof_pos
+	CALL	__neg32
+
+__itof_pos:
+	; Store mantissa
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+
+	; Initial exponent = 127 + 31 (for 32-bit integer)
+	LD	HL,127+31
+	LD	(__fexp1),HL
+
+	; Normalize (shift mantissa left until bit 23 is set)
+	CALL	__fnorm
+
+	; Pack result
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	BC,(__fexp1)
+	LD	A,(__fsgn1)
+	CALL	__fpack
+
+__itof_done:
+	POP	BC
+	RET
+
+; ============================================================
+; Unsigned Integer to Float: DEHL = float(DEHL) (unsigned 32-bit)
+; ============================================================
+	PUBLIC	__uitof
+__uitof:
+	PUSH	BC
+
+	; Check for zero
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__uitof_nz
+	LD	DE,0
+	LD	HL,0
+	JR	__uitof_done
+
+__uitof_nz:
+	; Sign is always positive
+	XOR	A
+	LD	(__fsgn1),A
+
+	; Store mantissa
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+
+	; Initial exponent
+	LD	HL,127+31
+	LD	(__fexp1),HL
+
+	; Normalize
+	CALL	__fnorm
+
+	; Pack
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	BC,(__fexp1)
+	LD	A,(__fsgn1)
+	CALL	__fpack
+
+__uitof_done:
+	POP	BC
+	RET
+
+; ============================================================
+; Float to Integer: DEHL = int(DEHL) (truncate towards zero)
+; ============================================================
+	PUBLIC	__ftoi
+__ftoi:
+	PUSH	BC
+
+	; Check for zero
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__ftoi_nz
+	LD	DE,0
+	LD	HL,0
+	JR	__ftoi_done
+
+__ftoi_nz:
+	; Unpack
+	CALL	__funpack
+	LD	(__fsgn1),A
+	LD	(__fexp1),BC
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+
+	; Check exponent range
+	LD	HL,(__fexp1)
+	LD	DE,127
+	OR	A
+	SBC	HL,DE		; HL = exp - 127 (actual exponent)
+	JR	C,__ftoi_zero	; exp < 0, result is 0
+
+	LD	A,L
+	CP	31
+	JR	NC,__ftoi_ovf	; exp >= 31, overflow
+
+	; Shift mantissa right by (23 - exp) positions
+	LD	B,A		; B = actual exponent
+	LD	A,23
+	SUB	B		; A = 23 - exp = shift count
+	JR	C,__ftoi_shleft
+	JR	Z,__ftoi_noshift
+
+	LD	B,A
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+__ftoi_shrloop:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	DJNZ	__ftoi_shrloop
+	JR	__ftoi_sign
+
+__ftoi_shleft:
+	; exp > 23, shift left
+	NEG
+	LD	B,A
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+__ftoi_shlloop:
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	DJNZ	__ftoi_shlloop
+	JR	__ftoi_sign
+
+__ftoi_noshift:
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+
+__ftoi_sign:
+	; Apply sign
+	LD	A,(__fsgn1)
+	OR	A
+	JR	Z,__ftoi_done
+	CALL	__neg32
+	JR	__ftoi_done
+
+__ftoi_zero:
+	LD	HL,0
+	LD	DE,0
+	JR	__ftoi_done
+
+__ftoi_ovf:
+	; Return max int
+	LD	HL,0FFFFH
+	LD	DE,7FFFH
+	LD	A,(__fsgn1)
+	OR	A
+	JR	Z,__ftoi_done
+	LD	DE,8000H
+	LD	HL,0
+
+__ftoi_done:
+	POP	BC
+	RET
+
+; ============================================================
+; Float Unpack: Extract sign, exponent, mantissa from DEHL
+; Input: DEHL = IEEE 754 float
+; Output: A = sign (0 or 80H), BC = exponent, DEHL = mantissa (with implied 1)
+; ============================================================
+__funpack:
+	; Extract sign
+	LD	A,D
+	AND	80H
+	PUSH	AF		; Save sign
+
+	; Extract exponent (8 bits)
+	LD	A,D
+	ADD	A,A		; Shift sign out
+	LD	B,A		; B = exponent high 7 bits << 1
+	LD	A,E
+	RLA			; Get exponent low bit with carry
+	LD	C,A		; Save
+	LD	A,B
+	RRA			; A = exponent
+	LD	B,0
+	LD	C,A
+
+	; Extract mantissa and add implied 1
+	LD	A,E
+	AND	7FH		; Clear exponent bit
+	OR	80H		; Add implied 1
+	LD	E,A
+	; DEHL now has mantissa with bit 23 = 1 (the implied 1)
+	; But we need it shifted properly - E has bits 23-16, H has 15-8, L has 7-0
+	; Actually mantissa is in bits 22-0, so we need to arrange
+	; Let's shift everything to put implied 1 at bit 23
+	; E.H.L has mantissa bits 22-0 with E bit 7 = 1 (implied)
+	; This is already in the right position
+
+	; Put mantissa in DEHL as 24-bit value in low 24 bits
+	LD	D,0
+
+	POP	AF		; Restore sign
+	RET
+
+; ============================================================
+; Float Pack: Combine sign, exponent, mantissa into IEEE 754
+; Input: A = sign (0 or 80H), BC = exponent, DEHL = mantissa
+; Output: DEHL = IEEE 754 float
+; ============================================================
+__fpack:
+	PUSH	AF		; Save sign
+
+	; Check for zero mantissa
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fpack_nz
+	; Return zero
+	LD	DE,0
+	LD	HL,0
+	POP	AF
+	RET
+
+__fpack_nz:
+	; Combine exponent and mantissa
+	; Exponent in C, mantissa in E.H.L (bit 23 is implied 1)
+	LD	A,E
+	AND	7FH		; Clear implied 1 bit
+	LD	E,A
+
+	; Shift exponent into position
+	LD	A,C		; Exponent low byte
+	RRCA			; Rotate right, low bit to carry
+	AND	7FH		; Keep 7 bits
+	LD	D,A
+	LD	A,E
+	RRA			; Rotate carry (exp bit 0) into mantissa high
+	LD	E,A
+
+	; Add sign
+	POP	AF
+	OR	D
+	LD	D,A
+	RET
+
+; ============================================================
+; Float Normalize: Normalize mantissa in __fman1 and adjust __fexp1
+; ============================================================
+__fnorm:
+	; Check for zero
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	RET	Z		; Zero stays zero
+
+	; Shift left until bit 23 is set (D bit 7 since we use DEHL)
+	; Actually we stored mantissa in DEHL with D=0, so check E bit 7
+__fnorm_loop:
+	BIT	7,E
+	RET	NZ		; Normalized when bit 23 set
+
+	; Shift mantissa left
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+
+	; Decrement exponent
+	PUSH	HL
+	LD	HL,(__fexp1)
+	DEC	HL
+	LD	(__fexp1),HL
+	POP	HL
+
+	; Check for underflow
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fnorm_loop
+
+	; Underflow to zero
+	LD	HL,0
+	LD	(__fexp1),HL
+	RET
+
+; ============================================================
+; Float Negation: DEHL = -DEHL
+; ============================================================
+	PUBLIC	__fneg
+__fneg:
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	RET
+
 	DSEG
 	PUBLIC	__tmp32
 __tmp32:
@@ -1012,5 +1812,294 @@ __div32_dvd:
 	DW	0,0
 __rem32:
 	DW	0,0
+
+; Float work area
+__fop1:
+	DW	0,0
+__fop2:
+	DW	0,0
+__fsgn1:
+	DB	0
+__fsgn2:
+	DB	0
+__fexp1:
+	DW	0
+__fexp2:
+	DW	0
+__fman1:
+	DW	0,0
+__fman2:
+	DW	0,0
+
+; Complex number work area
+	PUBLIC	__cplx_l,__cplx_r,__cplx_result,__cplx_tmp
+__cplx_l:
+	DW	0,0,0,0	; Left operand: real (4 bytes), imag (4 bytes)
+__cplx_r:
+	DW	0,0,0,0	; Right operand: real (4 bytes), imag (4 bytes)
+__cplx_result:
+	DW	0,0,0,0	; Result: real (4 bytes), imag (4 bytes)
+__cplx_tmp:
+	DW	0,0,0,0	; Temp for scalar-to-complex conversion
+__cplx_work:
+	DW	0,0,0,0	; Work area for complex multiplication/division
+
+	CSEG
+
+; ============================================================
+; Complex Addition: __cplx_result = __cplx_l + __cplx_r
+; (a+bi) + (c+di) = (a+c) + (b+d)i
+; ============================================================
+	PUBLIC	__cadd
+__cadd:
+	; Add real parts: result.real = l.real + r.real
+	LD	HL,(__cplx_l)		; l.real low
+	LD	DE,(__cplx_l+2)		; l.real high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_r)		; r.real low
+	LD	DE,(__cplx_r+2)		; r.real high
+	CALL	__fadd
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Add imag parts: result.imag = l.imag + r.imag
+	LD	HL,(__cplx_l+4)		; l.imag low
+	LD	DE,(__cplx_l+6)		; l.imag high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_r+4)		; r.imag low
+	LD	DE,(__cplx_r+6)		; r.imag high
+	CALL	__fadd
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+; ============================================================
+; Complex Subtraction: __cplx_result = __cplx_l - __cplx_r
+; (a+bi) - (c+di) = (a-c) + (b-d)i
+; ============================================================
+	PUBLIC	__csub
+__csub:
+	; Sub real parts: result.real = l.real - r.real
+	LD	HL,(__cplx_r)		; r.real low
+	LD	DE,(__cplx_r+2)		; r.real high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; l.real low
+	LD	DE,(__cplx_l+2)		; l.real high
+	CALL	__fsub
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Sub imag parts: result.imag = l.imag - r.imag
+	LD	HL,(__cplx_r+4)		; r.imag low
+	LD	DE,(__cplx_r+6)		; r.imag high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; l.imag low
+	LD	DE,(__cplx_l+6)		; l.imag high
+	CALL	__fsub
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+; ============================================================
+; Complex Multiplication: __cplx_result = __cplx_l * __cplx_r
+; (a+bi) * (c+di) = (ac-bd) + (ad+bc)i
+; Let: a=l.real, b=l.imag, c=r.real, d=r.imag
+; ============================================================
+	PUBLIC	__cmul
+__cmul:
+	; Calculate ac (a*c)
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*c
+	LD	(__cplx_work),HL	; store ac
+	LD	(__cplx_work+2),DE
+
+	; Calculate bd (b*d)
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*d
+	; Store bd in __tmp32 for subtraction
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; result.real = ac - bd
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	CALL	__fsub
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Calculate ad (a*d)
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*d
+	LD	(__cplx_work),HL	; store ad
+	LD	(__cplx_work+2),DE
+
+	; Calculate bc (b*c)
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*c
+	; Store bc in __tmp32 for addition
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; result.imag = ad + bc
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	CALL	__fadd
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+; ============================================================
+; Complex Division: __cplx_result = __cplx_l / __cplx_r
+; (a+bi) / (c+di) = (ac+bd)/(c²+d²) + (bc-ad)/(c²+d²)i
+; Let: a=l.real, b=l.imag, c=r.real, d=r.imag
+; ============================================================
+	PUBLIC	__cdiv
+__cdiv:
+	; First calculate denominator: c² + d²
+
+	; Calculate c²
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; c is already in DEHL, multiply by itself
+	CALL	__fmul			; DEHL = c²
+	PUSH	DE
+	PUSH	HL			; Save c² on stack
+
+	; Calculate d²
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; d is already in DEHL, multiply by itself
+	CALL	__fmul			; DEHL = d²
+	; Add c² + d²
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE			; Restore c²
+	CALL	__fadd			; DEHL = c² + d²
+	LD	(__cplx_work),HL	; Store denominator
+	LD	(__cplx_work+2),DE
+
+	; Calculate numerator real: ac + bd
+
+	; Calculate ac
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*c
+	PUSH	DE
+	PUSH	HL			; Save ac on stack
+
+	; Calculate bd
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*d
+	; Add ac + bd
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE			; Restore ac
+	CALL	__fadd			; DEHL = ac + bd
+
+	; Divide by denominator for real part
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	LD	(__cplx_work+4),HL	; Save denom
+	LD	(__cplx_work+6),DE
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	LD	BC,(__cplx_work)
+	LD	(__tmp32),BC
+	LD	BC,(__cplx_work+2)
+	LD	(__tmp32+2),BC
+	CALL	__fdiv			; DEHL = (ac+bd)/(c²+d²)
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Restore denominator
+	LD	HL,(__cplx_work+4)
+	LD	(__cplx_work),HL
+	LD	HL,(__cplx_work+6)
+	LD	(__cplx_work+2),HL
+
+	; Calculate numerator imag: bc - ad
+
+	; Calculate bc
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*c
+	PUSH	DE
+	PUSH	HL			; Save bc on stack
+
+	; Calculate ad
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*d
+	; Subtract bc - ad
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE			; Restore bc
+	CALL	__fsub			; DEHL = bc - ad
+
+	; Divide by denominator for imag part
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	LD	BC,(__tmp32)
+	LD	(__cplx_work+4),BC
+	LD	BC,(__tmp32+2)
+	LD	(__cplx_work+6),BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_work+4)
+	LD	DE,(__cplx_work+6)
+	CALL	__fdiv			; DEHL = (bc-ad)/(c²+d²)
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
 
 	END

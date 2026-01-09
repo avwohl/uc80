@@ -78,4 +78,51 @@ void rewind(FILE *stream);
 /* Buffer size */
 #define BUFSIZ 128
 
+/* Maximum file name length */
+#define FILENAME_MAX 12  /* CP/M 8.3 format */
+
+/* Maximum open files */
+#define FOPEN_MAX 8
+
+/* Maximum temporary file name length */
+#define L_tmpnam 13      /* TMP00000.$$$ + null */
+
+/* Temporary file count limit */
+#define TMP_MAX 32767
+
+/* File position type */
+typedef long fpos_t;
+
+/* File operations - additional ANSI C functions */
+int remove(const char *pathname);
+int rename(const char *oldpath, const char *newpath);
+FILE *tmpfile(void);
+char *tmpnam(char *s);
+FILE *freopen(const char *pathname, const char *mode, FILE *stream);
+
+/* Character I/O (can be macros, but implemented as functions for safety) */
+int getc(FILE *stream);
+int putc(int c, FILE *stream);
+
+/* File position using fpos_t */
+int fgetpos(FILE *stream, fpos_t *pos);
+int fsetpos(FILE *stream, const fpos_t *pos);
+
+/* Buffering control */
+void setbuf(FILE *stream, char *buf);
+int setvbuf(FILE *stream, char *buf, int mode, size_t size);
+
+/* Error reporting */
+void perror(const char *s);
+
+/* Variadic printf family (requires stdarg.h) */
+int vprintf(const char *format, ...);
+int vfprintf(FILE *stream, const char *format, ...);
+int vsprintf(char *str, const char *format, ...);
+
+/* Variadic scanf family (requires stdarg.h) */
+int scanf(const char *format, ...);
+int fscanf(FILE *stream, const char *format, ...);
+int sscanf(const char *str, const char *format, ...);
+
 #endif /* _STDIO_H */
