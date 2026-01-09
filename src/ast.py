@@ -57,12 +57,17 @@ class StructType(TypeNode):
     name: Optional[str] = None  # None for anonymous structs
     is_union: bool = False
     members: list['StructMember'] = field(default_factory=list)  # For inline definitions
+    is_const: bool = False
+    is_volatile: bool = False
 
 
 @dataclass(kw_only=True)
 class EnumType(TypeNode):
     """Enum type reference."""
     name: Optional[str] = None
+    values: list['EnumValue'] = field(default_factory=list)  # For inline definitions
+    is_const: bool = False
+    is_volatile: bool = False
 
 
 # === Expression Nodes ===

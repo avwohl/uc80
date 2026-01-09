@@ -235,8 +235,8 @@ class Lexer:
                 raise LexerError(f"Invalid integer literal: {text}", loc)
             return Token(TokenType.INT_LITERAL, (value, suffix_str), loc)
 
-    def _read_char_literal(self) -> Token:
-        """Read a character literal."""
+    def _read_char_literal(self, wide: bool = False) -> Token:
+        """Read a character literal. wide=True for L'x' wide character literals."""
         loc = self._location()
         self._advance()  # opening '
 
@@ -253,10 +253,11 @@ class Lexer:
             raise LexerError("Multi-character character literal", loc)
         self._advance()  # closing '
 
+        # For wide chars, we still return CHAR_LITERAL but could extend later
         return Token(TokenType.CHAR_LITERAL, value, loc)
 
-    def _read_string_literal(self) -> Token:
-        """Read a string literal."""
+    def _read_string_literal(self, wide: bool = False) -> Token:
+        """Read a string literal. wide=True for L"str" wide string literals."""
         loc = self._location()
         self._advance()  # opening "
         result = []
@@ -270,6 +271,7 @@ class Lexer:
                 result.append(self._advance())
 
         self._advance()  # closing "
+        # For wide strings, we still return STRING_LITERAL but could extend later
         return Token(TokenType.STRING_LITERAL, ''.join(result), loc)
 
     def _read_escape_sequence(self) -> int:
@@ -444,6 +446,14 @@ class Lexer:
 
         if self._peek() == '\0':
             return Token(TokenType.EOF, None, loc)
+
+        # Wide character/string literal (L'x' or L"str")
+        if self._peek() == 'L' and self._peek(1) in ("'", '"'):
+            self._advance()  # consume 'L'
+            if self._peek() == "'":
+                return self._read_char_literal(wide=True)
+            else:
+                return self._read_string_literal(wide=True)
 
         # Identifier or keyword
         if self._is_identifier_start(self._peek()):

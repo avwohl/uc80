@@ -145,9 +145,25 @@ class Parser:
             elif self._match(TokenType.BOOL):
                 base_type = "bool"
             elif self._check(TokenType.STRUCT, TokenType.UNION):
-                return self._parse_struct_type()
+                struct_type = self._parse_struct_type()
+                # Check for trailing qualifiers: struct S const
+                while self._match(TokenType.CONST):
+                    is_const = True
+                while self._match(TokenType.VOLATILE):
+                    is_volatile = True
+                struct_type.is_const = is_const
+                struct_type.is_volatile = is_volatile
+                return struct_type
             elif self._check(TokenType.ENUM):
-                return self._parse_enum_type()
+                enum_type = self._parse_enum_type()
+                # Check for trailing qualifiers: enum E const
+                while self._match(TokenType.CONST):
+                    is_const = True
+                while self._match(TokenType.VOLATILE):
+                    is_volatile = True
+                enum_type.is_const = is_const
+                enum_type.is_volatile = is_volatile
+                return enum_type
             elif self._check(TokenType.IDENTIFIER) and self._current().value in self.typedefs:
                 typedef_name = self._advance().value
                 target_type = self.typedefs[typedef_name]
@@ -312,10 +328,19 @@ class Parser:
         """Parse array brackets and function parameters."""
         while True:
             if self._match(TokenType.LBRACKET):
-                # Array
+                # Array - handle C99 array parameter qualifiers [static const N]
+                # Skip type qualifiers: static, const, volatile, restrict
+                while self._check(TokenType.STATIC, TokenType.CONST,
+                                  TokenType.VOLATILE, TokenType.RESTRICT):
+                    self._advance()
+                # Parse size expression if present
                 size = None
                 if not self._check(TokenType.RBRACKET):
-                    size = self._parse_expression()
+                    if self._match(TokenType.STAR):
+                        # VLA with [*] - variable length array placeholder
+                        pass
+                    else:
+                        size = self._parse_expression()
                 self._expect(TokenType.RBRACKET)
                 base_type = ast.ArrayType(base_type=base_type, size=size)
             elif self._match(TokenType.LPAREN):
