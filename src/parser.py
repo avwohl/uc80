@@ -942,7 +942,9 @@ class Parser:
         if self._check(*self.FUNCTION_SPECIFIERS):
             return True
         if self._check(TokenType.IDENTIFIER) and self._current().value in self.typedefs:
-            return True
+            # Check it's not a label (identifier followed by colon)
+            if self._peek(1).type != TokenType.COLON:
+                return True
         return False
 
     def _parse_declaration(self) -> ast.Declaration:
