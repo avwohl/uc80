@@ -51,16 +51,17 @@
 /* Convert to uppercase */
 #define toupper(c) (islower(c) ? ((c) - ('a' - 'A')) : (c))
 
-/* Function versions (for use as function pointers) */
-int isdigit(int c);
-int isalpha(int c);
-int isalnum(int c);
-int isspace(int c);
-int isupper(int c);
-int islower(int c);
-int isprint(int c);
-int isxdigit(int c);
-int toupper(int c);
-int tolower(int c);
+/* Function versions (for use as function pointers)
+ * Parentheses around names prevent macro expansion */
+int (isdigit)(int c);
+int (isalpha)(int c);
+int (isalnum)(int c);
+int (isspace)(int c);
+int (isupper)(int c);
+int (islower)(int c);
+int (isprint)(int c);
+int (isxdigit)(int c);
+int (toupper)(int c);
+int (tolower)(int c);
 
 #endif /* _CTYPE_H */
