@@ -3,7 +3,11 @@ Softare below are sister projects.
 See ../projectname for documentation
 For the programming languages there
 are pdfs of the language refrence
-(plm, m80, l80). DO NOT READ DIRECTLY you will loop 
+(plm, m80, l80). DO NOT READ DIRECTLY you will loop
+
+WARNING: Do not attempt to read large PDF files (like ISO C standards).
+Reading PDFs over a few pages causes the assistant to hang/loop indefinitely.
+Use web searches or summarized documentation instead. 
 In the path is our uplm80 compiler
 In the path is um80 assembler (asseble mac output of uplm80)
 In the path is ul80 linker

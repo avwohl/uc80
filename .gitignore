@@ -4,6 +4,7 @@ sample_code/
 # Python
 __pycache__/
 output/
+examples/*.mac
 docs/paid/
 *.pyc
 *.pyo
