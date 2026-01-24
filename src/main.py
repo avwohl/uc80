@@ -10,7 +10,8 @@ from pathlib import Path
 
 from .lexer import Lexer, LexerError
 from .parser import Parser, ParseError
-from .codegen import generate
+from .codegen import generate, CodeGenerator
+from . import ast as ast_module
 from .preprocessor import Preprocessor, PreprocessorError
 
 # Import peephole optimizer from upeepz80 library
@@ -25,7 +26,8 @@ def main() -> int:
     )
     parser.add_argument(
         "input",
-        help="Input C source file"
+        nargs='+',
+        help="Input C source file(s)"
     )
     parser.add_argument(
         "-o", "--output",
@@ -65,80 +67,114 @@ def main() -> int:
         action="store_true",
         help="Disable peephole optimization"
     )
+    parser.add_argument(
+        "--no-shared-storage",
+        action="store_true",
+        help="Disable shared storage optimization for non-recursive functions"
+    )
 
     args = parser.parse_args()
 
-    input_path = Path(args.input)
-    if not input_path.exists():
-        print(f"uc80: error: {args.input}: No such file", file=sys.stderr)
-        return 1
+    # Validate all input files exist
+    input_paths = [Path(f) for f in args.input]
+    for input_path in input_paths:
+        if not input_path.exists():
+            print(f"uc80: error: {input_path}: No such file", file=sys.stderr)
+            return 1
 
     # Determine output path
     if args.output:
         output_path = Path(args.output)
     else:
-        output_path = input_path.with_suffix(".mac")
+        # Use first input file's name for output
+        output_path = input_paths[0].with_suffix(".mac")
 
-    # Read source
-    try:
-        source = input_path.read_text()
-    except Exception as e:
-        print(f"uc80: error: Cannot read {args.input}: {e}", file=sys.stderr)
-        return 1
+    # Set up include paths
+    include_paths = list(args.include)
+    # Add lib/include as default include path
+    lib_include = Path(__file__).parent.parent / "lib" / "include"
+    if lib_include.exists():
+        include_paths.append(str(lib_include))
 
     # Compile
     try:
-        if args.verbose:
-            print(f"Compiling {input_path}...")
+        asts = []
+        total_tokens = 0
+        total_preprocessed_lines = 0
 
-        # Set up include paths
-        include_paths = list(args.include)
-        # Add lib/include as default include path
-        lib_include = Path(__file__).parent.parent / "lib" / "include"
-        if lib_include.exists():
-            include_paths.append(str(lib_include))
-
-        # Preprocessing
-        if not args.no_preprocess:
+        for input_path in input_paths:
             if args.verbose:
-                print(f"  Preprocessing...")
+                print(f"Compiling {input_path}...")
 
-            pp = Preprocessor(include_paths)
+            # Read source
+            try:
+                source = input_path.read_text()
+            except Exception as e:
+                print(f"uc80: error: Cannot read {input_path}: {e}", file=sys.stderr)
+                return 1
 
-            # Add command-line defines
-            for define in args.define:
-                if '=' in define:
-                    name, value = define.split('=', 1)
-                    pp.macros[name] = pp.macros.get(name) or type(pp.macros["__UC80__"])(name, body=value)
-                else:
-                    pp.macros[define] = type(pp.macros["__UC80__"])(define, body="1")
+            # Preprocessing
+            if not args.no_preprocess:
+                if args.verbose:
+                    print(f"  Preprocessing...")
 
-            source = pp.preprocess(source, str(input_path))
+                pp = Preprocessor(include_paths)
+
+                # Add command-line defines
+                for define in args.define:
+                    if '=' in define:
+                        name, value = define.split('=', 1)
+                        pp.macros[name] = pp.macros.get(name) or type(pp.macros["__UC80__"])(name, body=value)
+                    else:
+                        pp.macros[define] = type(pp.macros["__UC80__"])(define, body="1")
+
+                source = pp.preprocess(source, str(input_path))
+                total_preprocessed_lines += len(source.splitlines())
+
+                if args.verbose:
+                    print(f"  Preprocessed to {len(source.splitlines())} lines")
+
+                # If -E, just output preprocessed source
+                if args.preprocess_only:
+                    print(source)
+                    continue
+
+            # Lexical analysis
+            lexer = Lexer(source, str(input_path))
+            tokens = list(lexer.tokenize())
+            total_tokens += len(tokens)
 
             if args.verbose:
-                print(f"  Preprocessed to {len(source.splitlines())} lines")
+                print(f"  Lexed {len(tokens)} tokens")
 
-            # If -E, just output preprocessed source
-            if args.preprocess_only:
-                print(source)
-                return 0
+            # Parsing
+            p = Parser(tokens)
+            ast = p.parse()
+            asts.append(ast)
 
-        # Lexical analysis
-        lexer = Lexer(source, str(input_path))
-        tokens = list(lexer.tokenize())
+            if args.verbose:
+                print(f"  Parsed {len(ast.declarations)} declarations")
 
-        if args.verbose:
-            print(f"  Lexed {len(tokens)} tokens")
+        # If preprocess-only mode, we're done
+        if args.preprocess_only:
+            return 0
 
-        # Parsing
-        p = Parser(tokens)
-        ast = p.parse()
+        # Merge ASTs into single TranslationUnit
+        if len(asts) == 1:
+            merged_ast = asts[0]
+        else:
+            merged_ast = ast_module.TranslationUnit(declarations=[])
+            for unit in asts:
+                merged_ast.declarations.extend(unit.declarations)
+            if args.verbose:
+                print(f"Merged {len(asts)} files into {len(merged_ast.declarations)} declarations")
 
-        if args.verbose:
-            print(f"  Parsed {len(ast.declarations)} declarations")
+        # Determine module name from first input file
+        module_name = input_paths[0].stem
 
-        # Code generation
-        code = generate(ast, input_path.stem)
+        # Code generation with optional shared storage optimization
+        enable_shared_storage = not args.no_shared_storage
+        code = generate(merged_ast, module_name, enable_shared_storage=enable_shared_storage)
 
         if args.verbose:
             print(f"  Generated {len(code.splitlines())} lines of assembly")

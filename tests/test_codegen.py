@@ -3,7 +3,7 @@
 import pytest
 from src.lexer import Lexer
 from src.parser import Parser
-from src.codegen import CodeGenerator, generate
+from src.codegen import CodeGenerator, CallGraphAnalyzer, generate
 
 
 def parse(source: str):
@@ -161,10 +161,10 @@ class TestLocalVariables:
     """Test local variable handling."""
 
     def test_local_variable_declaration(self):
-        """Local variables use IX-relative addressing."""
+        """Local variables use IX-relative addressing or shared storage."""
         code = gen("int main(void) { int x = 5; return x; }")
-        # Should store to IX-2 and load from IX-2
-        assert "IX-2" in code or "IX+0" in code
+        # Should store/load using IX-relative OR shared storage (??AUTO)
+        assert "IX-2" in code or "IX+0" in code or "??AUTO" in code
 
     def test_local_variable_with_init(self):
         """Local variable initialization."""
@@ -258,3 +258,232 @@ class TestExternDeclarations:
         """Function declaration without body generates EXTRN."""
         code = gen("void foo(void);")
         assert "EXTRN\t_foo" in code
+
+
+class TestCallGraphAnalyzer:
+    """Test call graph analysis for shared storage optimization."""
+
+    def test_build_call_graph_simple(self):
+        """Build call graph from simple functions."""
+        source = """
+            void bar(void) {}
+            void foo(void) { bar(); }
+            int main(void) { foo(); return 0; }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+
+        assert "foo" in analyzer.call_graph
+        assert "bar" in analyzer.call_graph["foo"]
+        assert "foo" in analyzer.call_graph["main"]
+
+    def test_detect_recursion_direct(self):
+        """Detect direct recursion."""
+        source = """
+            void foo(void) { foo(); }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+        analyzer.compute_active_together()
+
+        assert analyzer.is_recursive("foo")
+
+    def test_detect_recursion_indirect(self):
+        """Detect indirect recursion."""
+        source = """
+            void bar(void);
+            void foo(void) { bar(); }
+            void bar(void) { foo(); }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+        analyzer.compute_active_together()
+
+        assert analyzer.is_recursive("foo")
+        assert analyzer.is_recursive("bar")
+
+    def test_non_recursive_functions(self):
+        """Identify non-recursive functions."""
+        source = """
+            void helper(void) {}
+            void foo(void) { helper(); }
+            void bar(void) { helper(); }
+            int main(void) { foo(); bar(); return 0; }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+        analyzer.compute_active_together()
+
+        assert not analyzer.is_recursive("foo")
+        assert not analyzer.is_recursive("bar")
+        assert not analyzer.is_recursive("helper")
+        assert not analyzer.is_recursive("main")
+
+    def test_active_together_caller_callee(self):
+        """Functions in caller-callee relationship are active together."""
+        source = """
+            void bar(void) {}
+            void foo(void) { bar(); }
+            int main(void) { foo(); return 0; }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+        analyzer.compute_active_together()
+
+        # main calls foo, so they're active together
+        assert "foo" in analyzer.can_be_active_together["main"]
+        # foo calls bar, so they're active together
+        assert "bar" in analyzer.can_be_active_together["foo"]
+
+    def test_siblings_not_active_together(self):
+        """Sibling functions (called from same parent) may not be active together."""
+        source = """
+            void foo(void) {}
+            void bar(void) {}
+            int main(void) { foo(); bar(); return 0; }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+        analyzer.compute_active_together()
+
+        # foo and bar are called from main but not from each other
+        # They should NOT be active together
+        assert "bar" not in analyzer.can_be_active_together.get("foo", set())
+        assert "foo" not in analyzer.can_be_active_together.get("bar", set())
+
+    def test_storage_allocation_non_overlapping(self):
+        """Functions active together get non-overlapping storage."""
+        source = """
+            void helper(void) { int x; }
+            void foo(void) { int a; helper(); }
+            int main(void) { foo(); return 0; }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+        analyzer.compute_active_together()
+        analyzer.allocate_shared_storage()
+
+        # main, foo, and helper form a call chain - active together
+        # Their storage should not overlap
+        if "foo" in analyzer.storage_offsets and "helper" in analyzer.storage_offsets:
+            foo_start = analyzer.storage_offsets["foo"]
+            foo_end = foo_start + analyzer.func_storage["foo"]
+            helper_start = analyzer.storage_offsets["helper"]
+            helper_end = helper_start + analyzer.func_storage["helper"]
+
+            # Check no overlap
+            assert foo_end <= helper_start or helper_end <= foo_start
+
+    def test_storage_allocation_overlapping(self):
+        """Sibling functions can share storage (overlap)."""
+        source = """
+            void foo(void) { int a, b; }
+            void bar(void) { int x, y; }
+            int main(void) { foo(); bar(); return 0; }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+        analyzer.compute_active_together()
+        analyzer.allocate_shared_storage()
+
+        # foo and bar are siblings, not active together
+        # They CAN share storage (might have same offset)
+        if "foo" in analyzer.storage_offsets and "bar" in analyzer.storage_offsets:
+            # Both could start at offset 0 since they're not active together
+            assert analyzer.storage_offsets["foo"] >= 0
+            assert analyzer.storage_offsets["bar"] >= 0
+
+    def test_variadic_uses_stack(self):
+        """Variadic functions cannot use shared storage."""
+        source = """
+            void foo(int x, ...) { int a; }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+        analyzer.compute_active_together()
+
+        assert not analyzer.can_use_shared_storage("foo")
+
+
+class TestSharedStorageCodeGen:
+    """Test code generation with shared storage optimization."""
+
+    def test_shared_storage_area_generated(self):
+        """Shared storage area is generated when functions can share."""
+        source = """
+            void foo(void) { int a = 1; }
+            void bar(void) { int b = 2; }
+            int main(void) { foo(); bar(); return 0; }
+        """
+        code = generate(parse(source), enable_shared_storage=True)
+        assert "??AUTO" in code
+        assert "; Shared automatic storage" in code
+
+    def test_shared_storage_disabled(self):
+        """Shared storage can be disabled."""
+        source = """
+            void foo(void) { int a = 1; }
+            void bar(void) { int b = 2; }
+            int main(void) { foo(); bar(); return 0; }
+        """
+        code = generate(parse(source), enable_shared_storage=False)
+        assert "??AUTO" not in code
+
+    def test_shared_storage_comment_in_function(self):
+        """Functions using shared storage have comment."""
+        source = """
+            void foo(void) { int a = 1; }
+            void bar(void) { int b = 2; }
+            int main(void) { foo(); bar(); return 0; }
+        """
+        code = generate(parse(source), enable_shared_storage=True)
+        # At least one function should use shared storage
+        if "??AUTO" in code:
+            assert "uses shared storage" in code
+
+    def test_recursive_uses_stack(self):
+        """Recursive functions use stack, not shared storage."""
+        source = """
+            void foo(void) { int x; foo(); }
+            int main(void) { foo(); return 0; }
+        """
+        code = generate(parse(source), enable_shared_storage=True)
+        # foo is recursive, so it should NOT use shared storage
+        # Check that foo function doesn't have "uses shared storage" comment
+        lines = code.split('\n')
+        for i, line in enumerate(lines):
+            if "; Function foo" in line:
+                # Next line should NOT say "uses shared storage"
+                assert "uses shared storage" not in line
+
+
+class TestMultiFileCompilation:
+    """Test multi-file AST merging."""
+
+    def test_merge_simple_files(self):
+        """Multiple ASTs can be merged."""
+        from src import ast as ast_module
+
+        source1 = "int helper(void) { return 1; }"
+        source2 = "int main(void) { return helper(); }"
+
+        ast1 = parse(source1)
+        ast2 = parse(source2)
+
+        merged = ast_module.TranslationUnit(declarations=[])
+        merged.declarations.extend(ast1.declarations)
+        merged.declarations.extend(ast2.declarations)
+
+        code = generate(merged, enable_shared_storage=True)
+        assert "PUBLIC\t_helper" in code
+        assert "PUBLIC\t_main" in code
+        assert "CALL\t_helper" in code

@@ -169,6 +169,8 @@ class Symbol:
     is_global: bool = False
     is_param: bool = False
     is_static: bool = False  # Static local - name already has underscore prefix
+    uses_shared_storage: bool = False  # True if using shared automatic storage
+    shared_offset: int = 0  # Offset within shared storage area
 
     def label(self) -> str:
         """Get the assembly label for this symbol."""
@@ -177,6 +179,352 @@ class Symbol:
             return self.name
         # Global symbols get _ prefix
         return f"_{self.name}"
+
+
+@dataclass
+class CallGraphAnalyzer:
+    """Analyzes call relationships between functions for shared storage optimization.
+
+    Builds a call graph and determines which functions can share automatic storage
+    by identifying functions that cannot be on the call stack simultaneously.
+    """
+
+    call_graph: dict[str, set[str]] = field(default_factory=dict)  # func -> set of called funcs
+    func_storage: dict[str, int] = field(default_factory=dict)  # func -> total local storage bytes
+    can_be_active_together: dict[str, set[str]] = field(default_factory=dict)  # func -> concurrent funcs
+    address_taken: set[str] = field(default_factory=set)  # functions whose address is taken
+    func_signatures: dict[str, tuple] = field(default_factory=dict)  # func -> (ret_type, param_types)
+    indirect_call_sigs: dict[str, set[tuple]] = field(default_factory=dict)  # func -> indirect call sigs
+    storage_offsets: dict[str, int] = field(default_factory=dict)  # func -> base offset in shared storage
+    total_shared_storage: int = 0  # Total size of shared storage area
+    is_variadic: dict[str, bool] = field(default_factory=dict)  # func -> is variadic
+    has_body: set[str] = field(default_factory=set)  # functions with definitions (not just declarations)
+
+    def build_call_graph(self, unit: ast.TranslationUnit) -> None:
+        """Build call graph by analyzing all function bodies."""
+        # Pass 1: Collect all function names, signatures, and storage sizes
+        for decl in unit.declarations:
+            self._collect_function_info(decl)
+
+        # Pass 2: For each function, find all calls and address-taken
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl) and decl.body:
+                self._analyze_function_body(decl)
+
+    def _collect_function_info(self, decl: ast.Declaration) -> None:
+        """Collect function names, signatures, and storage requirements."""
+        if isinstance(decl, ast.FunctionDecl):
+            self.call_graph[decl.name] = set()
+            self.is_variadic[decl.name] = decl.is_variadic
+
+            # Build signature tuple
+            ret_type = self._type_signature(decl.return_type)
+            param_types = tuple(self._type_signature(p.param_type) for p in decl.params)
+            self.func_signatures[decl.name] = (ret_type, param_types)
+
+            if decl.body:
+                self.has_body.add(decl.name)
+                self.func_storage[decl.name] = self._calc_locals_size(decl.body)
+            else:
+                self.func_storage[decl.name] = 0
+
+        elif isinstance(decl, ast.DeclarationList):
+            for d in decl.declarations:
+                self._collect_function_info(d)
+
+    def _type_signature(self, t: ast.TypeNode) -> str:
+        """Convert a type to a simple signature string for comparison."""
+        if isinstance(t, ast.BasicType):
+            prefix = "u" if t.is_signed is False else ""
+            return prefix + t.name
+        elif isinstance(t, ast.PointerType):
+            return "ptr"
+        elif isinstance(t, ast.ArrayType):
+            return "ptr"  # Arrays decay to pointers
+        elif isinstance(t, ast.FunctionType):
+            return "func"
+        elif isinstance(t, ast.StructType):
+            return f"struct_{t.name or 'anon'}"
+        elif isinstance(t, ast.EnumType):
+            return "int"
+        return "unknown"
+
+    def _calc_locals_size(self, body: ast.CompoundStmt) -> int:
+        """Calculate total size needed for local variables."""
+        size = 0
+        for item in body.items:
+            if isinstance(item, ast.VarDecl):
+                if item.storage_class != "static":  # Static vars use global storage
+                    size += self._var_size(item.var_type)
+            elif isinstance(item, ast.DeclarationList):
+                for decl in item.declarations:
+                    if isinstance(decl, ast.VarDecl) and decl.storage_class != "static":
+                        size += self._var_size(decl.var_type)
+            elif isinstance(item, ast.CompoundStmt):
+                size += self._calc_locals_size(item)
+            elif isinstance(item, ast.ForStmt):
+                if isinstance(item.init, ast.VarDecl):
+                    size += self._var_size(item.init.var_type)
+                elif isinstance(item.init, ast.DeclarationList):
+                    for decl in item.init.declarations:
+                        if isinstance(decl, ast.VarDecl):
+                            size += self._var_size(decl.var_type)
+                if isinstance(item.body, ast.CompoundStmt):
+                    size += self._calc_locals_size(item.body)
+        return size
+
+    def _var_size(self, t: ast.TypeNode) -> int:
+        """Return the size of a type in bytes."""
+        if isinstance(t, ast.BasicType):
+            name = t.name
+            if name in ("char", "_Bool", "bool"):
+                return 1
+            elif name in ("short", "int"):
+                return 2
+            elif name in ("long", "float", "double"):
+                return 4
+            elif name == "void":
+                return 0
+            return 2
+        elif isinstance(t, ast.PointerType):
+            return 2
+        elif isinstance(t, ast.ArrayType):
+            base_size = self._var_size(t.base_type)
+            if t.size and isinstance(t.size, ast.IntLiteral):
+                return base_size * t.size.value
+            return base_size
+        elif isinstance(t, ast.StructType):
+            # Would need struct table lookup - estimate
+            return 4
+        return 2
+
+    def _analyze_function_body(self, func: ast.FunctionDecl) -> None:
+        """Analyze a function body for calls and address-taken functions."""
+        if not func.body:
+            return
+
+        calls = set()
+        address_taken = set()
+        indirect_sigs: set[tuple] = set()
+
+        self._analyze_stmt(func.body, calls, address_taken, indirect_sigs)
+
+        self.call_graph[func.name] = calls
+        self.address_taken.update(address_taken)
+        self.indirect_call_sigs[func.name] = indirect_sigs
+
+    def _analyze_stmt(self, stmt: ast.Statement, calls: set[str],
+                      address_taken: set[str], indirect_sigs: set[tuple]) -> None:
+        """Recursively analyze a statement for calls and address-taken."""
+        if isinstance(stmt, ast.CompoundStmt):
+            for item in stmt.items:
+                if isinstance(item, ast.Statement):
+                    self._analyze_stmt(item, calls, address_taken, indirect_sigs)
+                elif isinstance(item, ast.VarDecl) and item.init:
+                    self._analyze_expr(item.init, calls, address_taken, indirect_sigs)
+                elif isinstance(item, ast.DeclarationList):
+                    for decl in item.declarations:
+                        if isinstance(decl, ast.VarDecl) and decl.init:
+                            self._analyze_expr(decl.init, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.ExpressionStmt) and stmt.expr:
+            self._analyze_expr(stmt.expr, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.ReturnStmt) and stmt.value:
+            self._analyze_expr(stmt.value, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.IfStmt):
+            self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
+            self._analyze_stmt(stmt.then_branch, calls, address_taken, indirect_sigs)
+            if stmt.else_branch:
+                self._analyze_stmt(stmt.else_branch, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.WhileStmt):
+            self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
+            self._analyze_stmt(stmt.body, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.DoWhileStmt):
+            self._analyze_stmt(stmt.body, calls, address_taken, indirect_sigs)
+            self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.ForStmt):
+            if stmt.init:
+                if isinstance(stmt.init, ast.Expression):
+                    self._analyze_expr(stmt.init, calls, address_taken, indirect_sigs)
+            if stmt.condition:
+                self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
+            if stmt.update:
+                self._analyze_expr(stmt.update, calls, address_taken, indirect_sigs)
+            self._analyze_stmt(stmt.body, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.SwitchStmt):
+            self._analyze_expr(stmt.expr, calls, address_taken, indirect_sigs)
+            self._analyze_stmt(stmt.body, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.CaseStmt) and stmt.stmt:
+            self._analyze_stmt(stmt.stmt, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.LabelStmt):
+            self._analyze_stmt(stmt.stmt, calls, address_taken, indirect_sigs)
+
+    def _analyze_expr(self, expr: ast.Expression, calls: set[str],
+                      address_taken: set[str], indirect_sigs: set[tuple]) -> None:
+        """Recursively analyze an expression for calls and address-taken."""
+        if isinstance(expr, ast.Call):
+            if isinstance(expr.func, ast.Identifier):
+                # Direct call
+                calls.add(expr.func.name)
+            else:
+                # Indirect call through pointer - track signature if possible
+                # For now, mark as having indirect calls
+                pass
+            # Analyze arguments
+            for arg in expr.args:
+                self._analyze_expr(arg, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.UnaryOp):
+            if expr.op == "&" and isinstance(expr.operand, ast.Identifier):
+                # Address-of operator on identifier
+                address_taken.add(expr.operand.name)
+            self._analyze_expr(expr.operand, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.BinaryOp):
+            self._analyze_expr(expr.left, calls, address_taken, indirect_sigs)
+            self._analyze_expr(expr.right, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.TernaryOp):
+            self._analyze_expr(expr.condition, calls, address_taken, indirect_sigs)
+            self._analyze_expr(expr.true_expr, calls, address_taken, indirect_sigs)
+            self._analyze_expr(expr.false_expr, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.Index):
+            self._analyze_expr(expr.array, calls, address_taken, indirect_sigs)
+            self._analyze_expr(expr.index, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.Member):
+            self._analyze_expr(expr.obj, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.Cast):
+            self._analyze_expr(expr.expr, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.SizeofExpr):
+            self._analyze_expr(expr.expr, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.InitializerList):
+            for val in expr.values:
+                if isinstance(val, ast.Expression):
+                    self._analyze_expr(val, calls, address_taken, indirect_sigs)
+                elif isinstance(val, ast.DesignatedInit):
+                    self._analyze_expr(val.value, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.Compound):
+            self._analyze_expr(expr.init, calls, address_taken, indirect_sigs)
+
+    def compute_active_together(self) -> None:
+        """Compute which functions can be on stack simultaneously.
+
+        Two functions can be active together if:
+        1. One calls the other (directly or transitively), OR
+        2. Both can be called from a common ancestor
+        """
+        # For each function, compute reachable set (transitive closure)
+        reachable: dict[str, set[str]] = {}
+        for func in self.call_graph:
+            reachable[func] = self._get_reachable(func, set())
+
+        # Two funcs are active together if one is reachable from the other
+        for func in self.call_graph:
+            self.can_be_active_together[func] = {func}
+            self.can_be_active_together[func].update(reachable[func])
+            # Also add callers
+            for other in self.call_graph:
+                if func in reachable.get(other, set()):
+                    self.can_be_active_together[func].add(other)
+
+    def _get_reachable(self, func: str, visited: set[str]) -> set[str]:
+        """Get all functions reachable from func via calls."""
+        if func in visited:
+            return set()  # Cycle detected (recursive)
+        visited = visited | {func}
+        result = set(self.call_graph.get(func, set()))
+        for callee in list(result):
+            result.update(self._get_reachable(callee, visited))
+        return result
+
+    def is_recursive(self, func: str) -> bool:
+        """Check if function is recursive (directly or indirectly)."""
+        # Check direct/indirect recursion via call graph
+        reachable = self._get_reachable(func, set())
+        if func in reachable:
+            return True
+
+        # Check potential recursion via function pointers
+        return self._can_recurse_via_pointer(func)
+
+    def _can_recurse_via_pointer(self, func: str) -> bool:
+        """Check if function can recurse through indirect calls."""
+        if func not in self.address_taken:
+            return False
+
+        sig = self.func_signatures.get(func)
+        if not sig:
+            return True  # Conservative: assume recursive if unknown
+
+        # Get all functions reachable from func
+        reachable = self._get_reachable(func, set())
+
+        # Check if any reachable function makes indirect calls
+        # that could potentially call back to func
+        for callee in reachable:
+            if self.indirect_call_sigs.get(callee):
+                return True  # Conservative: any indirect call could recurse
+
+        return False
+
+    def can_use_shared_storage(self, func: str) -> bool:
+        """Check if function can use shared storage optimization."""
+        # Must have a body (not just declaration)
+        if func not in self.has_body:
+            return False
+
+        # Variadic functions use stack frames
+        if self.is_variadic.get(func, False):
+            return False
+
+        # Must not be recursive
+        if self.is_recursive(func):
+            return False
+
+        # Must have local storage to share
+        if self.func_storage.get(func, 0) == 0:
+            return False
+
+        return True
+
+    def allocate_shared_storage(self) -> None:
+        """Allocate shared storage using graph coloring.
+
+        Functions that cannot be active together share the same memory.
+        """
+        # Get functions that can use shared storage
+        shareable_funcs = [(f, s) for f, s in self.func_storage.items()
+                          if self.can_use_shared_storage(f) and s > 0]
+
+        # Sort by storage size (descending) for better packing
+        shareable_funcs.sort(key=lambda x: -x[1])
+
+        # Track allocated intervals: (start, end, func)
+        allocated: list[tuple[int, int, str]] = []
+
+        for func, total_size in shareable_funcs:
+            # Find lowest offset without conflict
+            offset = 0
+            while True:
+                conflict = False
+                for start, end, other in allocated:
+                    if other in self.can_be_active_together.get(func, set()):
+                        if not (offset + total_size <= start or offset >= end):
+                            conflict = True
+                            offset = max(offset, end)
+                            break
+                if not conflict:
+                    break
+
+            self.storage_offsets[func] = offset
+            allocated.append((offset, offset + total_size, func))
+
+        self.total_shared_storage = max((end for _, end, _ in allocated), default=0)
 
 
 @dataclass
@@ -268,15 +616,24 @@ class CodeGenContext:
 class CodeGenerator:
     """Z80 code generator."""
 
-    def __init__(self, module_name: str = "main"):
+    def __init__(self, module_name: str = "main", enable_shared_storage: bool = True):
         self.module_name = module_name
         self.ctx = CodeGenContext()
+        self.enable_shared_storage = enable_shared_storage
+        self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
         # Switch statement context
         self._switch_cases: list[tuple[int, str]] = []
         self._switch_default: str | None = None
 
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
+        # Build call graph and allocate shared storage if enabled
+        if self.enable_shared_storage:
+            self.call_graph_analyzer = CallGraphAnalyzer()
+            self.call_graph_analyzer.build_call_graph(unit)
+            self.call_graph_analyzer.compute_active_together()
+            self.call_graph_analyzer.allocate_shared_storage()
+
         # Header
         self.ctx.emit(f"; C24 Compiler Output - {self.module_name}")
         self.ctx.emit("; Target: Z80")
@@ -382,6 +739,17 @@ class CodeGenerator:
                     self._emit_initializer(init, var_type)
                 else:
                     self.ctx.emit_instr("DS", str(size))
+
+        # Shared automatic storage for non-recursive functions
+        if self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0:
+            need_dseg = not global_vars and not self.ctx.strings and not self.ctx.static_locals
+            if need_dseg:
+                self.ctx.emit()
+                self.ctx.emit("\tDSEG")
+            self.ctx.emit()
+            self.ctx.emit("; Shared automatic storage for non-recursive functions")
+            self.ctx.emit_label("??AUTO")
+            self.ctx.emit_instr("DS", str(self.call_graph_analyzer.total_shared_storage))
 
         self.ctx.emit()
         self.ctx.emit("\tEND")
@@ -514,11 +882,30 @@ class CodeGenerator:
         self.ctx.local_offset = 0
         self.ctx.regs.reset()  # Reset register allocator for new function
 
+        # Check if this function uses shared storage optimization
+        use_shared_storage = (
+            self.call_graph_analyzer is not None and
+            self.call_graph_analyzer.can_use_shared_storage(func.name)
+        )
+
+        # Track shared storage base offset for this function
+        shared_base_offset = 0
+        if use_shared_storage:
+            shared_base_offset = self.call_graph_analyzer.storage_offsets.get(func.name, 0)
+
+        # Store in context for local variable allocation
+        self._use_shared_storage = use_shared_storage
+        self._shared_base_offset = shared_base_offset
+        self._shared_local_offset = 0  # Track offset within function's shared area
+
         # Make function public (unless static)
         if func.storage_class != "static":
             self.ctx.emit_instr("PUBLIC", f"_{func.name}")
         self.ctx.emit()
-        self.ctx.emit(f"; Function {func.name}")
+        if use_shared_storage:
+            self.ctx.emit(f"; Function {func.name} (uses shared storage)")
+        else:
+            self.ctx.emit(f"; Function {func.name}")
         self.ctx.emit_label(f"_{func.name}")
 
         # Function prologue: save IX, set up frame
@@ -526,12 +913,13 @@ class CodeGenerator:
         self.ctx.emit_instr("LD", "IX,0")
         self.ctx.emit_instr("ADD", "IX,SP")
 
-        # Calculate space needed for locals
-        local_size = self._calc_locals_size(func.body)
-        if local_size > 0:
-            self.ctx.emit_instr("LD", f"HL,-{local_size}")
-            self.ctx.emit_instr("ADD", "HL,SP")
-            self.ctx.emit_instr("LD", "SP,HL")
+        # Calculate space needed for locals (only for stack-based functions)
+        if not use_shared_storage:
+            local_size = self._calc_locals_size(func.body)
+            if local_size > 0:
+                self.ctx.emit_instr("LD", f"HL,-{local_size}")
+                self.ctx.emit_instr("ADD", "HL,SP")
+                self.ctx.emit_instr("LD", "SP,HL")
 
         # Set up parameters in symbol table
         # Parameters are at IX+4, IX+6, etc. (after saved IX and return address)
@@ -555,6 +943,7 @@ class CodeGenerator:
         self.ctx.emit_label(epilogue_label)
 
         # Function epilogue: restore SP, IX, return
+        # Note: For shared storage functions, SP hasn't changed, but this is still safe
         self.ctx.emit_instr("LD", "SP,IX")
         self.ctx.emit_instr("POP", "IX")
         self.ctx.emit_instr("RET")
@@ -562,6 +951,7 @@ class CodeGenerator:
 
         self.ctx.current_function = None
         self.ctx.current_return_type = None
+        self._use_shared_storage = False
 
     def gen_compound_stmt(self, stmt: ast.CompoundStmt) -> None:
         """Generate code for a compound statement (block)."""
@@ -586,12 +976,28 @@ class CodeGenerator:
                 return
 
             size = self._type_size(decl.var_type)
-            self.ctx.local_offset -= size
-            self.ctx.locals[decl.name] = Symbol(
-                name=decl.name,
-                sym_type=decl.var_type,
-                offset=self.ctx.local_offset
-            )
+
+            # Check if using shared storage
+            if getattr(self, '_use_shared_storage', False):
+                # Allocate in shared storage area
+                shared_offset = self._shared_base_offset + self._shared_local_offset
+                self._shared_local_offset += size
+                self.ctx.locals[decl.name] = Symbol(
+                    name=decl.name,
+                    sym_type=decl.var_type,
+                    offset=0,  # Not used for shared storage
+                    uses_shared_storage=True,
+                    shared_offset=shared_offset
+                )
+            else:
+                # Stack-based allocation
+                self.ctx.local_offset -= size
+                self.ctx.locals[decl.name] = Symbol(
+                    name=decl.name,
+                    sym_type=decl.var_type,
+                    offset=self.ctx.local_offset
+                )
+
             # Initialize if there's an initializer
             if decl.init:
                 is_long = self._is_long_type(decl.var_type)
@@ -993,6 +1399,9 @@ class CodeGenerator:
         if isinstance(sym.sym_type, ast.ArrayType):
             if sym.is_global:
                 self.ctx.emit_instr("LD", f"HL,{sym.label()}")
+            elif sym.uses_shared_storage:
+                # Load address of array in shared storage
+                self.ctx.emit_instr("LD", f"HL,??AUTO+{sym.shared_offset}")
             else:
                 # Compute address IX+offset
                 if sym.offset >= 0:
@@ -1021,13 +1430,18 @@ class CodeGenerator:
                 # Load 16-bit value
                 self.ctx.emit_instr("LD", f"HL,({sym.label()})")
         else:
-            # Local variable: IX+offset
+            # Local variable: IX+offset or shared storage
             if type_is_long:
                 self._load_local_32(sym)
             elif type_size == 1:
                 # Load 8-bit value, zero-extend to HL
-                self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
-                self.ctx.emit_instr("LD", "H,0")
+                if sym.uses_shared_storage:
+                    self.ctx.emit_instr("LD", f"A,(??AUTO+{sym.shared_offset})")
+                    self.ctx.emit_instr("LD", "L,A")
+                    self.ctx.emit_instr("LD", "H,0")
+                else:
+                    self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
+                    self.ctx.emit_instr("LD", "H,0")
             else:
                 self._load_local(sym)
 
@@ -2036,6 +2450,9 @@ class CodeGenerator:
             if sym:
                 if sym.is_global:
                     self.ctx.emit_instr("LD", f"HL,{sym.label()}")
+                elif sym.uses_shared_storage:
+                    # Shared storage: direct address
+                    self.ctx.emit_instr("LD", f"HL,??AUTO+{sym.shared_offset}")
                 else:
                     # Local: compute IX+offset
                     self.ctx.emit_instr("LD", f"HL,{sym.offset}")
@@ -2295,27 +2712,42 @@ class CodeGenerator:
 
     def _load_local(self, sym: Symbol) -> None:
         """Load a local variable into HL."""
-        self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
-        self.ctx.emit_instr("LD", f"H,({ix_off(sym.offset + 1)})")
+        if sym.uses_shared_storage:
+            self.ctx.emit_instr("LD", f"HL,(??AUTO+{sym.shared_offset})")
+        else:
+            self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
+            self.ctx.emit_instr("LD", f"H,({ix_off(sym.offset + 1)})")
 
     def _store_local(self, sym: Symbol) -> None:
         """Store HL into a local variable."""
-        self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
-        self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 1)}),H")
+        if sym.uses_shared_storage:
+            # Store to shared automatic storage
+            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset}),HL")
+        else:
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 1)}),H")
 
     def _load_local_32(self, sym: Symbol) -> None:
         """Load a 32-bit local variable into DEHL (DE=high, HL=low)."""
-        self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
-        self.ctx.emit_instr("LD", f"H,({ix_off(sym.offset + 1)})")
-        self.ctx.emit_instr("LD", f"E,({ix_off(sym.offset + 2)})")
-        self.ctx.emit_instr("LD", f"D,({ix_off(sym.offset + 3)})")
+        if sym.uses_shared_storage:
+            self.ctx.emit_instr("LD", f"HL,(??AUTO+{sym.shared_offset})")
+            self.ctx.emit_instr("LD", f"DE,(??AUTO+{sym.shared_offset + 2})")
+        else:
+            self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
+            self.ctx.emit_instr("LD", f"H,({ix_off(sym.offset + 1)})")
+            self.ctx.emit_instr("LD", f"E,({ix_off(sym.offset + 2)})")
+            self.ctx.emit_instr("LD", f"D,({ix_off(sym.offset + 3)})")
 
     def _store_local_32(self, sym: Symbol) -> None:
         """Store DEHL (32-bit) into a local variable."""
-        self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
-        self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 1)}),H")
-        self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 2)}),E")
-        self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 3)}),D")
+        if sym.uses_shared_storage:
+            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset}),HL")
+            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset + 2}),DE")
+        else:
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 1)}),H")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 2)}),E")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 3)}),D")
 
     def _call_runtime(self, name: str) -> None:
         """Call a runtime library function."""
@@ -2650,7 +3082,8 @@ class CodeGenerator:
         return "".join(result)
 
 
-def generate(unit: ast.TranslationUnit, module_name: str = "main") -> str:
+def generate(unit: ast.TranslationUnit, module_name: str = "main",
+             enable_shared_storage: bool = True) -> str:
     """Generate Z80 assembly for a translation unit."""
-    gen = CodeGenerator(module_name)
+    gen = CodeGenerator(module_name, enable_shared_storage)
     return gen.generate(unit)
