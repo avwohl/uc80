@@ -1590,7 +1590,8 @@ class CodeGenerator:
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
                  enable_dead_elimination: bool = True, enable_inlining: bool = True,
-                 enable_const_propagation: bool = True, whole_program: bool = True):
+                 enable_const_propagation: bool = True, whole_program: bool = True,
+                 embed_runtime: bool = False):
         self.module_name = module_name
         self.ctx = CodeGenContext()
         self.enable_shared_storage = enable_shared_storage
@@ -1598,6 +1599,7 @@ class CodeGenerator:
         self.enable_inlining = enable_inlining
         self.enable_const_propagation = enable_const_propagation
         self.whole_program = whole_program
+        self.embed_runtime = embed_runtime
         self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
         self.dead_functions_removed: int = 0
         self.inlined_calls: int = 0
@@ -1689,8 +1691,8 @@ class CodeGenerator:
         for decl in unit.declarations:
             self.gen_declaration(decl)
 
-        # Emit EXTRN for runtime functions used
-        if self.ctx.runtime_used:
+        # Emit EXTRN for runtime functions used (unless embedding runtime)
+        if self.ctx.runtime_used and not self.embed_runtime:
             self.ctx.emit()
             self.ctx.emit("; Runtime library functions")
             for name in sorted(self.ctx.runtime_used):
@@ -4103,8 +4105,9 @@ def generate(unit: ast.TranslationUnit, module_name: str = "main",
              enable_dead_elimination: bool = True,
              enable_inlining: bool = True,
              enable_const_propagation: bool = True,
-             whole_program: bool = True) -> str:
+             whole_program: bool = True,
+             embed_runtime: bool = False) -> str:
     """Generate Z80 assembly for a translation unit."""
     gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
-                       enable_inlining, enable_const_propagation, whole_program)
+                       enable_inlining, enable_const_propagation, whole_program, embed_runtime)
     return gen.generate(unit)
