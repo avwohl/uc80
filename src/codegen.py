@@ -1687,9 +1687,15 @@ class CodeGenerator:
         # First pass: collect global declarations
         for decl in unit.declarations:
             if isinstance(decl, ast.FunctionDecl):
+                # Create FunctionType with return type and parameter types
+                func_type = ast.FunctionType(
+                    return_type=decl.return_type,
+                    param_types=[p.param_type for p in decl.params],
+                    is_variadic=decl.is_variadic if hasattr(decl, 'is_variadic') else False
+                )
                 self.ctx.globals[decl.name] = Symbol(
                     name=decl.name,
-                    sym_type=decl.return_type,
+                    sym_type=func_type,
                     is_global=True
                 )
                 self.ctx.function_names.add(decl.name)
@@ -2063,19 +2069,37 @@ class CodeGenerator:
 
             # Initialize if there's an initializer
             if decl.init:
-                is_long = self._is_long_type(decl.var_type)
-                self.gen_expr(decl.init, force_long=is_long)
-
-                # Extend to 32-bit if target is long but source is not
-                if is_long and not self._is_long_expr(decl.init):
-                    is_signed = not self._is_unsigned_expr(decl.init)
-                    self._extend_hl_to_dehl(is_signed)
-
-                sym = self.ctx.locals[decl.name]
-                if is_long:
-                    self._store_local_32(sym)
+                # Handle array initialization specially
+                if isinstance(decl.var_type, ast.ArrayType) and isinstance(decl.init, ast.InitializerList):
+                    self._gen_local_array_init(decl)
                 else:
-                    self._store_local(sym)
+                    is_long = self._is_long_type(decl.var_type)
+                    init_is_float = self._is_float_expr(decl.init)
+                    target_is_int = not self._is_float_type(decl.var_type) and not is_long
+
+                    # Handle float-to-int conversion
+                    if init_is_float and target_is_int:
+                        if isinstance(decl.init, ast.FloatLiteral):
+                            # Compile-time conversion
+                            int_val = int(decl.init.value)
+                            self.ctx.emit_instr("LD", f"HL,{int_val}")
+                        else:
+                            # Runtime conversion
+                            self.gen_expr(decl.init, force_long=True)
+                            self._call_runtime("__ftoi")
+                    else:
+                        self.gen_expr(decl.init, force_long=is_long)
+
+                        # Extend to 32-bit if target is long but source is not
+                        if is_long and not self._is_long_expr(decl.init):
+                            is_signed = not self._is_unsigned_expr(decl.init)
+                            self._extend_hl_to_dehl(is_signed)
+
+                    sym = self.ctx.locals[decl.name]
+                    if is_long:
+                        self._store_local_32(sym)
+                    else:
+                        self._store_local(sym)
 
     def _gen_static_local(self, decl: ast.VarDecl) -> None:
         """Handle static local variable."""
@@ -2096,6 +2120,49 @@ class CodeGenerator:
             is_global=True,
             is_static=True  # Mark as static to avoid double underscore
         )
+
+    def _gen_local_array_init(self, decl: ast.VarDecl) -> None:
+        """Generate code to initialize a local array from an initializer list."""
+        sym = self.ctx.locals[decl.name]
+        init_list = decl.init
+        elem_type = decl.var_type.base_type
+        elem_size = self._type_size(elem_type)
+        is_long = self._is_long_type(elem_type)
+
+        for i, val in enumerate(init_list.values):
+            # Handle DesignatedInit if present
+            if isinstance(val, ast.DesignatedInit):
+                val = val.value
+
+            # Generate the value in HL (or DEHL for 32-bit)
+            self.gen_expr(val, force_long=is_long)
+
+            # Store at array[i]
+            offset = i * elem_size
+            if sym.uses_shared_storage:
+                # Store to shared storage: ??AUTO+base+offset
+                base = sym.shared_offset + offset
+                if is_long:
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base + 2}),DE")
+                elif elem_size == 1:
+                    self.ctx.emit_instr("LD", "A,L")
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base}),A")
+                else:
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
+            else:
+                # Stack-based: store at IX+base_offset+offset
+                frame_off = sym.offset + offset
+                if is_long:
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off + 2)}),E")
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off + 3)}),D")
+                elif elem_size == 1:
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                else:
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
 
     def gen_statement(self, stmt: ast.Statement) -> None:
         """Generate code for a statement."""
@@ -3262,20 +3329,48 @@ class CodeGenerator:
 
     def gen_call(self, expr: ast.Call) -> None:
         """Generate code for function call."""
+        # Get function parameter types if available
+        param_types: list[ast.TypeNode] = []
+        if isinstance(expr.func, ast.Identifier):
+            func_sym = self.ctx.lookup(expr.func.name)
+            if func_sym and isinstance(func_sym.sym_type, ast.FunctionType):
+                param_types = func_sym.sym_type.param_types
+
         # Push arguments right-to-left, tracking total stack size
         stack_size = 0
-        for arg in reversed(expr.args):
-            arg_is_long = self._is_long_expr(arg)
-            if arg_is_long:
-                self.gen_expr(arg, force_long=True)
-                # Push 32-bit value: high word (DE) first, then low word (HL)
-                self.ctx.emit_instr("PUSH", "DE")
-                self.ctx.emit_instr("PUSH", "HL")
-                stack_size += 4
-            else:
-                self.gen_expr(arg)
+        num_args = len(expr.args)
+        for i, arg in enumerate(reversed(expr.args)):
+            arg_idx = num_args - 1 - i  # Index in forward order
+            param_type = param_types[arg_idx] if arg_idx < len(param_types) else None
+
+            # Check if we need to convert float to int
+            arg_is_float = self._is_float_expr(arg)
+            param_is_int = param_type and not self._is_float_type(param_type) and not self._is_long_type(param_type)
+
+            if arg_is_float and param_is_int:
+                # Float argument to int parameter - convert float literal at compile time
+                if isinstance(arg, ast.FloatLiteral):
+                    int_val = int(arg.value)
+                    self.ctx.emit_instr("LD", f"HL,{int_val}")
+                else:
+                    # Runtime conversion needed
+                    self.gen_expr(arg, force_long=True)
+                    self._call_runtime("__ftoi")  # Convert DEHL float to HL int
                 self.ctx.emit_instr("PUSH", "HL")
                 stack_size += 2
+            else:
+                # Normal argument handling
+                arg_is_long = self._is_long_expr(arg)
+                if arg_is_long:
+                    self.gen_expr(arg, force_long=True)
+                    # Push 32-bit value: high word (DE) first, then low word (HL)
+                    self.ctx.emit_instr("PUSH", "DE")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    stack_size += 4
+                else:
+                    self.gen_expr(arg)
+                    self.ctx.emit_instr("PUSH", "HL")
+                    stack_size += 2
 
         # Call the function
         if isinstance(expr.func, ast.Identifier):
