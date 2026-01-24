@@ -77,6 +77,11 @@ def main() -> int:
         action="store_true",
         help="Disable dead function elimination"
     )
+    parser.add_argument(
+        "--no-inlining",
+        action="store_true",
+        help="Disable inline expansion of small functions"
+    )
 
     args = parser.parse_args()
 
@@ -180,11 +185,14 @@ def main() -> int:
         # Code generation with optional optimizations
         enable_shared_storage = not args.no_shared_storage
         enable_dead_elimination = not args.no_dead_elimination
+        enable_inlining = not args.no_inlining
 
-        gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination)
+        gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination, enable_inlining)
         code = gen.generate(merged_ast)
 
         if args.verbose:
+            if gen.inlined_calls > 0:
+                print(f"  Inlined {gen.inlined_calls} call(s)")
             if gen.dead_functions_removed > 0:
                 print(f"  Eliminated {gen.dead_functions_removed} dead function(s)")
             print(f"  Generated {len(code.splitlines())} lines of assembly")

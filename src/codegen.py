@@ -596,6 +596,453 @@ class CallGraphAnalyzer:
 
         return ast.TranslationUnit(declarations=new_decls)
 
+    def count_calls(self) -> dict[str, int]:
+        """Count how many times each function is called."""
+        call_counts: dict[str, int] = {}
+        for func, callees in self.call_graph.items():
+            for callee in callees:
+                call_counts[callee] = call_counts.get(callee, 0) + 1
+        return call_counts
+
+    def _count_statements(self, stmt: ast.Statement) -> int:
+        """Count the number of statements in a statement/block."""
+        if isinstance(stmt, ast.CompoundStmt):
+            count = 0
+            for item in stmt.items:
+                if isinstance(item, ast.Statement):
+                    count += self._count_statements(item)
+                else:
+                    count += 1  # Declaration counts as 1
+            return count
+        elif isinstance(stmt, ast.IfStmt):
+            count = 1
+            count += self._count_statements(stmt.then_branch)
+            if stmt.else_branch:
+                count += self._count_statements(stmt.else_branch)
+            return count
+        elif isinstance(stmt, (ast.WhileStmt, ast.DoWhileStmt)):
+            return 1 + self._count_statements(stmt.body)
+        elif isinstance(stmt, ast.ForStmt):
+            return 1 + self._count_statements(stmt.body)
+        elif isinstance(stmt, ast.SwitchStmt):
+            return 1 + self._count_statements(stmt.body)
+        elif isinstance(stmt, ast.CaseStmt):
+            return 1 + (self._count_statements(stmt.stmt) if stmt.stmt else 0)
+        elif isinstance(stmt, ast.LabelStmt):
+            return 1 + (self._count_statements(stmt.stmt) if stmt.stmt else 0)
+        else:
+            return 1
+
+    def should_inline(self, func_name: str, func_bodies: dict[str, ast.FunctionDecl],
+                     call_counts: dict[str, int]) -> bool:
+        """Determine if a function should be inlined.
+
+        Inline if:
+        - Not recursive
+        - Not variadic
+        - Address not taken (could be called indirectly)
+        - Body is very small (< 4 statements) OR
+          (body <= 10 statements AND called <= 2 times)
+        """
+        if func_name not in func_bodies:
+            return False
+
+        func = func_bodies[func_name]
+        if func.body is None:
+            return False
+
+        # Don't inline recursive functions
+        if self.is_recursive(func_name):
+            return False
+
+        # Don't inline variadic functions
+        if func.is_variadic:
+            return False
+
+        # Don't inline if address is taken (could be called via pointer)
+        if func_name in self.address_taken:
+            return False
+
+        # Count statements
+        stmt_count = self._count_statements(func.body)
+
+        # Always inline tiny functions
+        if stmt_count <= 3:
+            return True
+
+        # Inline small functions called infrequently
+        calls = call_counts.get(func_name, 0)
+        if stmt_count <= 10 and calls <= 2:
+            return True
+
+        return False
+
+    def _is_trivial_function(self, func: ast.FunctionDecl) -> bool:
+        """Check if function is trivial (single return statement with expression)."""
+        if func.body is None:
+            return False
+
+        items = func.body.items
+        if len(items) != 1:
+            return False
+
+        if not isinstance(items[0], ast.ReturnStmt):
+            return False
+
+        return items[0].value is not None
+
+    def _substitute_params(self, expr: ast.Expression,
+                          param_map: dict[str, ast.Expression]) -> ast.Expression:
+        """Substitute parameter references with argument expressions."""
+        if isinstance(expr, ast.Identifier):
+            if expr.name in param_map:
+                return param_map[expr.name]
+            return expr
+
+        elif isinstance(expr, ast.BinaryOp):
+            return ast.BinaryOp(
+                op=expr.op,
+                left=self._substitute_params(expr.left, param_map),
+                right=self._substitute_params(expr.right, param_map),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.UnaryOp):
+            return ast.UnaryOp(
+                op=expr.op,
+                operand=self._substitute_params(expr.operand, param_map),
+                is_prefix=expr.is_prefix,
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.TernaryOp):
+            return ast.TernaryOp(
+                condition=self._substitute_params(expr.condition, param_map),
+                true_expr=self._substitute_params(expr.true_expr, param_map),
+                false_expr=self._substitute_params(expr.false_expr, param_map),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Call):
+            return ast.Call(
+                func=self._substitute_params(expr.func, param_map),
+                args=[self._substitute_params(a, param_map) for a in expr.args],
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Index):
+            return ast.Index(
+                array=self._substitute_params(expr.array, param_map),
+                index=self._substitute_params(expr.index, param_map),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Member):
+            return ast.Member(
+                obj=self._substitute_params(expr.obj, param_map),
+                member=expr.member,
+                is_arrow=expr.is_arrow,
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Cast):
+            return ast.Cast(
+                target_type=expr.target_type,
+                expr=self._substitute_params(expr.expr, param_map),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.SizeofExpr):
+            return ast.SizeofExpr(
+                expr=self._substitute_params(expr.expr, param_map),
+                location=expr.location
+            )
+
+        # Literals and other expressions don't need substitution
+        return expr
+
+    def _inline_expr(self, expr: ast.Expression,
+                    func_bodies: dict[str, ast.FunctionDecl],
+                    inlineable: set[str]) -> ast.Expression:
+        """Recursively inline function calls in an expression."""
+        if isinstance(expr, ast.Call):
+            # First, inline any calls in the arguments
+            new_args = [self._inline_expr(a, func_bodies, inlineable) for a in expr.args]
+
+            # Check if this is a direct call to an inlineable function
+            if isinstance(expr.func, ast.Identifier) and expr.func.name in inlineable:
+                func = func_bodies[expr.func.name]
+                if self._is_trivial_function(func):
+                    # Build parameter -> argument map
+                    param_map: dict[str, ast.Expression] = {}
+                    for i, param in enumerate(func.params):
+                        if param.name and i < len(new_args):
+                            param_map[param.name] = new_args[i]
+
+                    # Get the return expression and substitute parameters
+                    ret_stmt = func.body.items[0]
+                    assert isinstance(ret_stmt, ast.ReturnStmt)
+                    return self._substitute_params(ret_stmt.value, param_map)
+
+            # Return call with inlined arguments
+            return ast.Call(
+                func=self._inline_expr(expr.func, func_bodies, inlineable),
+                args=new_args,
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.BinaryOp):
+            return ast.BinaryOp(
+                op=expr.op,
+                left=self._inline_expr(expr.left, func_bodies, inlineable),
+                right=self._inline_expr(expr.right, func_bodies, inlineable),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.UnaryOp):
+            return ast.UnaryOp(
+                op=expr.op,
+                operand=self._inline_expr(expr.operand, func_bodies, inlineable),
+                is_prefix=expr.is_prefix,
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.TernaryOp):
+            return ast.TernaryOp(
+                condition=self._inline_expr(expr.condition, func_bodies, inlineable),
+                true_expr=self._inline_expr(expr.true_expr, func_bodies, inlineable),
+                false_expr=self._inline_expr(expr.false_expr, func_bodies, inlineable),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Index):
+            return ast.Index(
+                array=self._inline_expr(expr.array, func_bodies, inlineable),
+                index=self._inline_expr(expr.index, func_bodies, inlineable),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Member):
+            return ast.Member(
+                obj=self._inline_expr(expr.obj, func_bodies, inlineable),
+                member=expr.member,
+                is_arrow=expr.is_arrow,
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Cast):
+            return ast.Cast(
+                target_type=expr.target_type,
+                expr=self._inline_expr(expr.expr, func_bodies, inlineable),
+                location=expr.location
+            )
+
+        return expr
+
+    def _inline_stmt(self, stmt: ast.Statement,
+                    func_bodies: dict[str, ast.FunctionDecl],
+                    inlineable: set[str]) -> ast.Statement:
+        """Recursively inline function calls in a statement."""
+        if isinstance(stmt, ast.ExpressionStmt):
+            if stmt.expr:
+                return ast.ExpressionStmt(
+                    expr=self._inline_expr(stmt.expr, func_bodies, inlineable),
+                    location=stmt.location
+                )
+            return stmt
+
+        elif isinstance(stmt, ast.ReturnStmt):
+            if stmt.value:
+                return ast.ReturnStmt(
+                    value=self._inline_expr(stmt.value, func_bodies, inlineable),
+                    location=stmt.location
+                )
+            return stmt
+
+        elif isinstance(stmt, ast.CompoundStmt):
+            new_items = []
+            for item in stmt.items:
+                if isinstance(item, ast.Statement):
+                    new_items.append(self._inline_stmt(item, func_bodies, inlineable))
+                elif isinstance(item, ast.VarDecl) and item.init:
+                    new_items.append(ast.VarDecl(
+                        name=item.name,
+                        var_type=item.var_type,
+                        init=self._inline_expr(item.init, func_bodies, inlineable),
+                        storage_class=item.storage_class,
+                        location=item.location
+                    ))
+                else:
+                    new_items.append(item)
+            return ast.CompoundStmt(items=new_items, location=stmt.location)
+
+        elif isinstance(stmt, ast.IfStmt):
+            return ast.IfStmt(
+                condition=self._inline_expr(stmt.condition, func_bodies, inlineable),
+                then_branch=self._inline_stmt(stmt.then_branch, func_bodies, inlineable),
+                else_branch=self._inline_stmt(stmt.else_branch, func_bodies, inlineable) if stmt.else_branch else None,
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.WhileStmt):
+            return ast.WhileStmt(
+                condition=self._inline_expr(stmt.condition, func_bodies, inlineable),
+                body=self._inline_stmt(stmt.body, func_bodies, inlineable),
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.DoWhileStmt):
+            return ast.DoWhileStmt(
+                body=self._inline_stmt(stmt.body, func_bodies, inlineable),
+                condition=self._inline_expr(stmt.condition, func_bodies, inlineable),
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.ForStmt):
+            new_init = stmt.init
+            if isinstance(stmt.init, ast.Expression):
+                new_init = self._inline_expr(stmt.init, func_bodies, inlineable)
+            return ast.ForStmt(
+                init=new_init,
+                condition=self._inline_expr(stmt.condition, func_bodies, inlineable) if stmt.condition else None,
+                update=self._inline_expr(stmt.update, func_bodies, inlineable) if stmt.update else None,
+                body=self._inline_stmt(stmt.body, func_bodies, inlineable),
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.SwitchStmt):
+            return ast.SwitchStmt(
+                expr=self._inline_expr(stmt.expr, func_bodies, inlineable),
+                body=self._inline_stmt(stmt.body, func_bodies, inlineable),
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.CaseStmt):
+            return ast.CaseStmt(
+                value=stmt.value,
+                stmt=self._inline_stmt(stmt.stmt, func_bodies, inlineable) if stmt.stmt else None,
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.LabelStmt):
+            return ast.LabelStmt(
+                label=stmt.label,
+                stmt=self._inline_stmt(stmt.stmt, func_bodies, inlineable),
+                location=stmt.location
+            )
+
+        return stmt
+
+    def inline_functions(self, unit: ast.TranslationUnit) -> tuple[ast.TranslationUnit, int]:
+        """Inline trivial functions into their call sites.
+
+        Iterates until no more inlining is possible.
+        Returns the modified AST and total count of inlined calls.
+        """
+        total_inlined = 0
+        max_iterations = 10  # Prevent infinite loops
+
+        for _ in range(max_iterations):
+            # Build function body map
+            func_bodies: dict[str, ast.FunctionDecl] = {}
+            for decl in unit.declarations:
+                if isinstance(decl, ast.FunctionDecl) and decl.body:
+                    func_bodies[decl.name] = decl
+
+            # Rebuild call graph for accurate counts
+            self.call_graph.clear()
+            self.address_taken.clear()
+            self.build_call_graph(unit)
+
+            # Count calls
+            call_counts = self.count_calls()
+
+            # Find inlineable functions (trivial functions that should be inlined)
+            inlineable: set[str] = set()
+            for name, func in func_bodies.items():
+                if self.should_inline(name, func_bodies, call_counts):
+                    if self._is_trivial_function(func):
+                        inlineable.add(name)
+
+            if not inlineable:
+                break
+
+            # Count inlined calls for this iteration
+            inlined_count = sum(call_counts.get(f, 0) for f in inlineable)
+            total_inlined += inlined_count
+
+            # Transform the AST
+            new_decls = []
+            for decl in unit.declarations:
+                if isinstance(decl, ast.FunctionDecl):
+                    if decl.body:
+                        new_body = self._inline_stmt(decl.body, func_bodies, inlineable)
+                        new_decls.append(ast.FunctionDecl(
+                            name=decl.name,
+                            return_type=decl.return_type,
+                            params=decl.params,
+                            body=new_body,
+                            is_variadic=decl.is_variadic,
+                            storage_class=decl.storage_class,
+                            is_inline=decl.is_inline,
+                            location=decl.location
+                        ))
+                    else:
+                        new_decls.append(decl)
+                else:
+                    new_decls.append(decl)
+
+            unit = ast.TranslationUnit(declarations=new_decls)
+
+        return unit, total_inlined
+
+    def _inline_functions_once(self, unit: ast.TranslationUnit) -> tuple[ast.TranslationUnit, int]:
+        """Single pass of inlining. Used internally."""
+        # Build function body map
+        func_bodies: dict[str, ast.FunctionDecl] = {}
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl) and decl.body:
+                func_bodies[decl.name] = decl
+
+        # Count calls
+        call_counts = self.count_calls()
+
+        # Find inlineable functions (trivial functions that should be inlined)
+        inlineable: set[str] = set()
+        for name, func in func_bodies.items():
+            if self.should_inline(name, func_bodies, call_counts):
+                if self._is_trivial_function(func):
+                    inlineable.add(name)
+
+        if not inlineable:
+            return unit, 0
+
+        # Count inlined calls
+        inlined_count = sum(call_counts.get(f, 0) for f in inlineable)
+
+        # Transform the AST
+        new_decls = []
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl):
+                if decl.body:
+                    new_body = self._inline_stmt(decl.body, func_bodies, inlineable)
+                    new_decls.append(ast.FunctionDecl(
+                        name=decl.name,
+                        return_type=decl.return_type,
+                        params=decl.params,
+                        body=new_body,
+                        is_variadic=decl.is_variadic,
+                        storage_class=decl.storage_class,
+                        is_inline=decl.is_inline,
+                        location=decl.location
+                    ))
+                else:
+                    new_decls.append(decl)
+            else:
+                new_decls.append(decl)
+
+        return ast.TranslationUnit(declarations=new_decls), inlined_count
+
 
 @dataclass
 class CodeGenContext:
@@ -687,13 +1134,15 @@ class CodeGenerator:
     """Z80 code generator."""
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
-                 enable_dead_elimination: bool = True):
+                 enable_dead_elimination: bool = True, enable_inlining: bool = True):
         self.module_name = module_name
         self.ctx = CodeGenContext()
         self.enable_shared_storage = enable_shared_storage
         self.enable_dead_elimination = enable_dead_elimination
+        self.enable_inlining = enable_inlining
         self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
         self.dead_functions_removed: int = 0
+        self.inlined_calls: int = 0
         # Switch statement context
         self._switch_cases: list[tuple[int, str]] = []
         self._switch_default: str | None = None
@@ -701,10 +1150,18 @@ class CodeGenerator:
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
         # Build call graph for optimizations
-        needs_call_graph = self.enable_shared_storage or self.enable_dead_elimination
+        needs_call_graph = self.enable_shared_storage or self.enable_dead_elimination or self.enable_inlining
         if needs_call_graph:
             self.call_graph_analyzer = CallGraphAnalyzer()
             self.call_graph_analyzer.build_call_graph(unit)
+
+        # Inline expansion (before dead elimination so inlined functions can be removed)
+        if self.enable_inlining and self.call_graph_analyzer:
+            unit, self.inlined_calls = self.call_graph_analyzer.inline_functions(unit)
+            # Rebuild call graph after inlining
+            if self.inlined_calls > 0:
+                self.call_graph_analyzer = CallGraphAnalyzer()
+                self.call_graph_analyzer.build_call_graph(unit)
 
         # Dead function elimination
         if self.enable_dead_elimination and self.call_graph_analyzer:
@@ -3175,7 +3632,8 @@ class CodeGenerator:
 
 def generate(unit: ast.TranslationUnit, module_name: str = "main",
              enable_shared_storage: bool = True,
-             enable_dead_elimination: bool = True) -> str:
+             enable_dead_elimination: bool = True,
+             enable_inlining: bool = True) -> str:
     """Generate Z80 assembly for a translation unit."""
-    gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination)
+    gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination, enable_inlining)
     return gen.generate(unit)

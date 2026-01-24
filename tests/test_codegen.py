@@ -4,6 +4,7 @@ import pytest
 from src.lexer import Lexer
 from src.parser import Parser
 from src.codegen import CodeGenerator, CallGraphAnalyzer, generate
+from src import ast as ast_module
 
 
 def parse(source: str):
@@ -436,7 +437,8 @@ class TestSharedStorageCodeGen:
             void bar(void) { int b = 2; }
             int main(void) { foo(); bar(); return 0; }
         """
-        code = generate(parse(source), enable_shared_storage=False, enable_dead_elimination=False)
+        code = generate(parse(source), enable_shared_storage=False,
+                       enable_dead_elimination=False, enable_inlining=False)
         assert "??AUTO" not in code
 
     def test_shared_storage_comment_in_function(self):
@@ -472,8 +474,6 @@ class TestMultiFileCompilation:
 
     def test_merge_simple_files(self):
         """Multiple ASTs can be merged."""
-        from src import ast as ast_module
-
         source1 = "int helper(void) { return 1; }"
         source2 = "int main(void) { return helper(); }"
 
@@ -484,7 +484,8 @@ class TestMultiFileCompilation:
         merged.declarations.extend(ast1.declarations)
         merged.declarations.extend(ast2.declarations)
 
-        code = generate(merged, enable_shared_storage=True)
+        # Disable inlining to test merging without optimization
+        code = generate(merged, enable_shared_storage=True, enable_inlining=False)
         assert "PUBLIC\t_helper" in code
         assert "PUBLIC\t_main" in code
         assert "CALL\t_helper" in code
@@ -588,3 +589,108 @@ class TestDeadFunctionElimination:
         assert "EXTRN\t_external" in code
         # Unused function should be eliminated
         assert "PUBLIC\t_unused" not in code
+
+
+class TestInlineExpansion:
+    """Test inline expansion of small functions."""
+
+    def test_inline_trivial_function(self):
+        """Trivial functions (single return) are inlined."""
+        source = """
+            int add(int a, int b) { return a + b; }
+            int main(void) { return add(1, 2); }
+        """
+        # With inlining, 'add' should be inlined and then eliminated as dead
+        code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True)
+        # add should be eliminated after inlining
+        assert "PUBLIC\t_add" not in code
+        # The addition should happen inline
+        assert "ADD\tHL,DE" in code
+
+    def test_inline_preserves_behavior(self):
+        """Inlining produces correct results."""
+        source = """
+            int double_it(int x) { return x + x; }
+            int main(void) { return double_it(5); }
+        """
+        code = generate(parse(source), enable_inlining=True)
+        # Should inline x + x with x = 5
+        assert "LD\tHL,5" in code
+
+    def test_no_inline_recursive(self):
+        """Recursive functions are not inlined."""
+        source = """
+            int factorial(int n) { return n; }  // Simplified
+            int main(void) { return factorial(5); }
+        """
+        # This trivial version should be inlined
+        code = generate(parse(source), enable_inlining=True)
+        # factorial is trivial and should be inlined
+        assert "PUBLIC\t_factorial" not in code
+
+    def test_no_inline_address_taken(self):
+        """Functions whose addresses are taken are not inlined."""
+        source = """
+            int helper(int x) { return x + 1; }
+            int main(void) {
+                int (*fp)(int) = &helper;
+                return helper(5);
+            }
+        """
+        code = generate(parse(source), enable_inlining=True, enable_dead_elimination=False)
+        # helper's address is taken, so it should not be inlined
+        assert "PUBLIC\t_helper" in code
+        assert "CALL\t_helper" in code
+
+    def test_disable_inlining(self):
+        """Inlining can be disabled."""
+        source = """
+            int add(int a, int b) { return a + b; }
+            int main(void) { return add(1, 2); }
+        """
+        code = generate(parse(source), enable_inlining=False, enable_dead_elimination=False)
+        # With inlining disabled, add should be called
+        assert "CALL\t_add" in code
+
+    def test_should_inline_criteria(self):
+        """Test should_inline function criteria."""
+        source = """
+            int tiny(void) { return 1; }
+            int small(int x) { return x + 1; }
+            int medium(int x) {
+                int a = x + 1;
+                int b = a + 2;
+                return b;
+            }
+            int main(void) {
+                return tiny() + small(1) + medium(2);
+            }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+
+        # Build func_bodies
+        func_bodies = {}
+        for decl in unit.declarations:
+            if isinstance(decl, ast_module.FunctionDecl) and decl.body:
+                func_bodies[decl.name] = decl
+
+        call_counts = analyzer.count_calls()
+
+        # tiny is trivial (1 statement), should inline
+        assert analyzer.should_inline("tiny", func_bodies, call_counts)
+        # small is trivial (1 statement), should inline
+        assert analyzer.should_inline("small", func_bodies, call_counts)
+
+    def test_inline_nested_calls(self):
+        """Nested inlined calls work correctly."""
+        source = """
+            int inc(int x) { return x + 1; }
+            int add2(int x) { return inc(inc(x)); }
+            int main(void) { return add2(5); }
+        """
+        code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True)
+        # Both inc and add2 should be inlined
+        assert "PUBLIC\t_inc" not in code
+        assert "PUBLIC\t_add2" not in code
