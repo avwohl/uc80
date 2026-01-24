@@ -47,11 +47,11 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
 
 6- [DONE] c-testsuite validation (00001-00220):
 - Total: 220 tests
-- PASS: 146/146 (100% of tests not needing missing libraries)
-- Libc needed: 64 tests (printf, malloc, etc.)
-- Float needed: 4 tests
+- PASS: 185/220 (84%)
 - Compile fail: 6 tests (unsupported language features)
-- ASM/Link/Runtime failures: 0
+- ASM fail: 4 tests (need float library)
+- Link fail: 7 tests (need libc: strcat, strcpy, sprintf, getc, fprintf)
+- Output mismatch: 18 tests (various issues)
 - Bug fixes made during testing:
   * Fixed _is_complex_expr duplicate causing function calls to use complex math
   * Fixed dead data elimination to trace data-to-data references
@@ -61,9 +61,11 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
   * Added automatic startup code (crt0) embedding in whole-program mode
   * Fixed local enum constants (typedef enum inside functions)
   * Fixed function pointer global initializers (address-taken analysis)
+  * Added minimal printf implementation in runtime.mac
+  * Fixed printf @print_uint bug (was restoring original value instead of remainder)
 
 7- Future enhancements:
 - Continue c-testsuite validation (00300+)
 - z88dk test suite integration
 - Floating point library integration (z88dk math48)
-- Printf/stdio library implementation
+- Additional libc functions (strcat, strcpy, sprintf, etc.)

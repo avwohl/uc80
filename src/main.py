@@ -316,7 +316,7 @@ def main() -> int:
 
         # Embed runtime library functions if requested
         runtime_funcs_embedded = 0
-        if embed_runtime and gen.ctx.runtime_used:
+        if embed_runtime:
             if args.verbose:
                 print(f"  Embedding runtime library...")
 
@@ -327,9 +327,21 @@ def main() -> int:
             else:
                 runtime_lib = load_runtime_library()
 
-            # Get required functions
-            needed = gen.ctx.runtime_used
-            funcs = runtime_lib.get_required_functions(needed)
+            # Get required functions from codegen AND from EXTRN references
+            needed = set(gen.ctx.runtime_used)
+
+            # Scan for EXTRN references to libc functions
+            import re
+            for line in code.splitlines():
+                match = re.match(r'\s*EXTRN\s+(.+)', line, re.IGNORECASE)
+                if match:
+                    labels = [l.strip() for l in match.group(1).split(',')]
+                    # Only add if the runtime library has this function
+                    for label in labels:
+                        if label in runtime_lib.functions:
+                            needed.add(label)
+
+            funcs = runtime_lib.get_required_functions(needed) if needed else []
             runtime_funcs_embedded = len(funcs)
 
             if funcs:
@@ -341,8 +353,21 @@ def main() -> int:
                         end_idx = i
                         break
 
+                # Add CP/M BDOS constants if any I/O functions are used
+                io_funcs = {'_printf', '_putchar', '_getchar', '_puts', '_gets'}
+                needs_bdos = any(f.name in io_funcs for f in funcs)
+
                 runtime_code = ["\n\tCSEG\n; Embedded runtime library functions"]
+                if needs_bdos:
+                    runtime_code.append("; CP/M BDOS constants")
+                    runtime_code.append("BDOS\tEQU\t5")
+                    runtime_code.append("CONOUT\tEQU\t2")
+                    runtime_code.append("CONIN\tEQU\t1")
+
                 for func in funcs:
+                    # Add PUBLIC declaration for the function
+                    if func.publics:
+                        runtime_code.append(f"\tPUBLIC\t{','.join(func.publics)}")
                     runtime_code.append(func.source)
 
                 # Add data section if needed

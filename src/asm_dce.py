@@ -101,15 +101,13 @@ class AssemblyDCE:
                 self.dseg_lines.append(line)
                 continue
 
-            # Track PUBLIC declarations
+            # Track PUBLIC declarations - always preserve
             match = re.match(r'\s*PUBLIC\s+(.+)', line, re.IGNORECASE)
             if match:
                 labels = [l.strip() for l in match.group(1).split(',')]
                 self.public_labels.update(labels)
-                if in_header:
-                    self.header_lines.append(line)
-                elif current_block:
-                    current_block.lines.append(line)
+                # Always add PUBLIC to header (they need to be at the top)
+                self.header_lines.append(line)
                 continue
 
             # Track EXTRN declarations
@@ -128,6 +126,11 @@ class AssemblyDCE:
                 if current_block:
                     self.blocks[current_block.label] = current_block
                 self.footer_lines.append(line)
+                continue
+
+            # EQU constants - always preserve in header
+            if '\tEQU\t' in upper or ' EQU ' in upper:
+                self.header_lines.append(line)
                 continue
 
             # Header directives
