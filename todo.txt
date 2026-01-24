@@ -47,11 +47,11 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
 
 6- [DONE] c-testsuite validation (00001-00220):
 - Total: 220 tests
-- PASS: 187/220 (85%)
+- PASS: 189/220 (86%)
 - Compile fail: 6 tests (unsupported language features)
 - ASM fail: 4 tests (need float library)
-- Link fail: 7 tests (need libc: strcat, strcpy, sprintf, getc, fprintf)
-- Output mismatch: 16 tests (various issues - mostly 32-bit overflow, struct init)
+- Link fail: 7 tests (need libc: strcat, strcpy, sprintf, etc.)
+- Output mismatch: 14 tests (32-bit overflow, float conversion, printf formats)
 - Bug fixes made during testing:
   * Fixed _is_complex_expr duplicate causing function calls to use complex math
   * Fixed dead data elimination to trace data-to-data references
@@ -64,6 +64,8 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
   * Added minimal printf implementation in runtime.mac
   * Fixed printf @print_uint bug (was restoring original value instead of remainder)
   * Fixed asm_dce to recognize conditional RET/JP/JR (RET Z was seen as unconditional)
+  * Fixed sizeof(expr) to compute actual type size instead of assuming int
+  * Fixed inline struct registration (struct ziggy {...} var; now works)
 
 7- Future enhancements:
 - Continue c-testsuite validation (00300+)

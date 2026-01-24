@@ -1877,7 +1877,17 @@ class CodeGenerator:
         if isinstance(type_node, ast.EnumType):
             self._register_enum_type_values(type_node)
         elif isinstance(type_node, ast.StructType):
-            # Register inline struct members and any nested enums
+            # Register the struct with member offsets if it has a name and members
+            if type_node.name and type_node.members and type_node.name not in self.ctx.structs:
+                members = []
+                offset = 0
+                for member in type_node.members:
+                    if member.name:
+                        members.append((member.name, member.member_type, offset))
+                        if not type_node.is_union:
+                            offset += self._type_size(member.member_type)
+                self.ctx.structs[type_node.name] = members
+            # Also register any nested inline types
             for member in type_node.members:
                 self._register_inline_types(member.member_type)
         elif isinstance(type_node, ast.PointerType):
