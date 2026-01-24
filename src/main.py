@@ -105,6 +105,13 @@ def main() -> int:
         help="Runtime library .mac file (default: lib/runtime.mac)"
     )
     parser.add_argument(
+        "--embed-lib",
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="Additional .mac library to embed (can specify multiple times)"
+    )
+    parser.add_argument(
         "--no-asm-dce",
         action="store_true",
         help="Disable assembly-level dead code elimination"
@@ -292,6 +299,74 @@ def main() -> int:
 
             if args.verbose:
                 print(f"  Embedded {runtime_funcs_embedded} runtime function(s)")
+
+        # Embed additional libraries if specified
+        additional_funcs_embedded = 0
+        if args.embed_lib and embed_runtime:
+            # Find all EXTRN references in the current code
+            import re
+            extrn_refs = set()
+            for line in code.splitlines():
+                match = re.match(r'\s*EXTRN\s+(.+)', line, re.IGNORECASE)
+                if match:
+                    labels = [l.strip() for l in match.group(1).split(',')]
+                    extrn_refs.update(labels)
+                # Also check for CALL instructions to undefined functions
+                match = re.search(r'\bCALL\s+(\w+)', line, re.IGNORECASE)
+                if match:
+                    extrn_refs.add(match.group(1))
+
+            # Load each additional library and try to resolve references
+            for lib_path in args.embed_lib:
+                if args.verbose:
+                    print(f"  Loading library {lib_path}...")
+
+                lib = RuntimeLibrary()
+                lib.load_file(Path(lib_path))
+
+                # Find functions from this library that are referenced
+                needed_from_lib = extrn_refs & set(lib.functions.keys())
+                if needed_from_lib:
+                    funcs = lib.get_required_functions(needed_from_lib)
+                    additional_funcs_embedded += len(funcs)
+
+                    if funcs:
+                        # Insert functions before END directive
+                        lines = code.splitlines()
+                        end_idx = None
+                        for i, line in enumerate(lines):
+                            if line.strip().upper() == 'END':
+                                end_idx = i
+                                break
+
+                        lib_code = [f"\n; Embedded from {lib_path}"]
+                        for func in funcs:
+                            lib_code.append(func.source)
+
+                        # Add data section if needed
+                        data_section = lib.get_data_section(funcs)
+                        if data_section:
+                            lib_code.append("\n\tDSEG")
+                            lib_code.append(data_section)
+
+                        if end_idx is not None:
+                            lines = lines[:end_idx] + lib_code + ["\n\tEND"]
+                        else:
+                            lines.extend(lib_code)
+                            lines.append("\n\tEND")
+
+                        code = '\n'.join(lines)
+
+                        # Remove satisfied EXTRN references
+                        embedded_names = {f.name for f in funcs}
+                        for name in embedded_names:
+                            extrn_refs.discard(name)
+
+                    if args.verbose:
+                        print(f"    Embedded {len(funcs)} function(s) from {Path(lib_path).name}")
+
+            if args.verbose and additional_funcs_embedded > 0:
+                print(f"  Total additional functions embedded: {additional_funcs_embedded}")
 
         # Append any .mac files from input
         if mac_files:
