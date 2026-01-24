@@ -45,5 +45,17 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
 - Works with ??AUTO+offset style references
 - FCB and other unused data structures are eliminated when not referenced
 
-6- Future enhancements:
-- Additional test suite work
+6- [WIP] c-testsuite validation:
+- Tests 00000-00099: 99/99 passing
+- Tests 00100-00299: running but not yet validated
+- Bug fixes made during testing:
+  * Fixed _is_complex_expr duplicate causing function calls to use complex math
+  * Fixed dead data elimination to trace data-to-data references
+  * Fixed address-taken detection for bare function names (without &)
+  * Fixed gen_identifier to load function addresses vs values
+  * Added function_names tracking to distinguish functions from variables
+
+7- Future enhancements:
+- Continue c-testsuite validation (00100+)
+- z88dk test suite integration
+- Floating point library integration (z88dk math48)
