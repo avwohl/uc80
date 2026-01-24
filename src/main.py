@@ -116,6 +116,16 @@ def main() -> int:
         action="store_true",
         help="Disable assembly-level dead code elimination"
     )
+    parser.add_argument(
+        "--no-embed-startup",
+        action="store_true",
+        help="Don't embed startup code (crt0) in whole-program mode"
+    )
+    parser.add_argument(
+        "--startup-lib",
+        metavar="FILE",
+        help="Startup code .mac file (default: lib/crt0.mac)"
+    )
 
     args = parser.parse_args()
 
@@ -237,6 +247,8 @@ def main() -> int:
         whole_program = not args.no_whole_program
         # Embed runtime by default when whole_program is enabled
         embed_runtime = whole_program and not args.no_embed_runtime
+        # Embed startup code (crt0) by default when whole_program is enabled
+        embed_startup = whole_program and not args.no_embed_startup
 
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                            enable_inlining, enable_const_propagation, whole_program,
@@ -251,6 +263,56 @@ def main() -> int:
             if gen.dead_functions_removed > 0:
                 print(f"  Eliminated {gen.dead_functions_removed} dead function(s)")
             print(f"  Generated {len(code.splitlines())} lines of assembly")
+
+        # Embed startup code (crt0) if requested - at beginning of code
+        if embed_startup:
+            if args.verbose:
+                print(f"  Embedding startup code...")
+
+            # Load startup code
+            if args.startup_lib:
+                startup_path = Path(args.startup_lib)
+            else:
+                # Default: lib/crt0.mac relative to package
+                startup_path = Path(__file__).parent.parent / "lib" / "crt0.mac"
+
+            if startup_path.exists():
+                startup_content = startup_path.read_text()
+
+                # Parse and filter startup code
+                startup_lines = []
+                for line in startup_content.splitlines():
+                    stripped = line.strip().upper()
+                    # Skip directives that are already in main output
+                    if stripped in {'.Z80', 'CSEG', 'DSEG'}:
+                        continue
+                    # Skip END directive
+                    if stripped.startswith('END'):
+                        continue
+                    # Skip EXTRN _main since we define it
+                    if 'EXTRN' in stripped and '_MAIN' in stripped:
+                        continue
+                    startup_lines.append(line)
+
+                # Insert startup code after header but before first function
+                lines = code.splitlines()
+                insert_idx = 0
+                for i, line in enumerate(lines):
+                    stripped = line.strip().upper()
+                    # Find first PUBLIC or actual code (after header comments)
+                    if stripped.startswith('PUBLIC') or (stripped and not stripped.startswith(';') and not stripped.startswith('.')):
+                        insert_idx = i
+                        break
+
+                # Insert startup code
+                lines = lines[:insert_idx] + ['\n; Embedded startup code (crt0)'] + startup_lines + [''] + lines[insert_idx:]
+                code = '\n'.join(lines)
+
+                if args.verbose:
+                    print(f"    Embedded from {startup_path}")
+            else:
+                if args.verbose:
+                    print(f"    Warning: startup file not found: {startup_path}")
 
         # Embed runtime library functions if requested
         runtime_funcs_embedded = 0

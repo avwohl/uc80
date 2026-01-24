@@ -217,6 +217,21 @@ class CallGraphAnalyzer:
             if isinstance(decl, ast.FunctionDecl) and decl.body:
                 self._analyze_function_body(decl)
 
+        # Pass 3: Analyze global variable initializers for address-taken functions
+        for decl in unit.declarations:
+            self._analyze_global_init(decl)
+
+    def _analyze_global_init(self, decl: ast.Declaration) -> None:
+        """Analyze global variable initializers for address-taken functions."""
+        if isinstance(decl, ast.VarDecl) and decl.init:
+            address_taken: set[str] = set()
+            self._analyze_expr(decl.init, set(), address_taken, set())
+            # Filter to only known functions
+            self.address_taken.update(address_taken & self.has_body)
+        elif isinstance(decl, ast.DeclarationList):
+            for d in decl.declarations:
+                self._analyze_global_init(d)
+
     def _collect_function_info(self, decl: ast.Declaration) -> None:
         """Collect function names, signatures, and storage requirements."""
         if isinstance(decl, ast.FunctionDecl):
@@ -1995,6 +2010,16 @@ class CodeGenerator:
             # Handle multiple declarations (e.g., 'int a, b;')
             for d in decl.declarations:
                 self.gen_local_decl(d)
+            return
+
+        if isinstance(decl, ast.EnumDecl):
+            # Register local enum constants
+            self._register_enum(decl)
+            return
+
+        if isinstance(decl, ast.TypedefDecl):
+            # Register local typedef (including inline enum types)
+            self._register_typedef(decl)
             return
 
         if isinstance(decl, ast.VarDecl):
