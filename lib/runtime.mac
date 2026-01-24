@@ -2439,5 +2439,55 @@ _printf:
 	LD	C,CONOUT
 	JP	BDOS
 
+; ============================================================
+; int strncmp(const char *s1, const char *s2, size_t n)
+; Compare at most n bytes of s1 and s2
+; ============================================================
+	PUBLIC	_strncmp
+_strncmp:
+	; Args at SP+2=s1, SP+4=s2, SP+6=n
+	LD	HL,6
+	ADD	HL,SP
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = n
+	LD	HL,4
+	ADD	HL,SP
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = s2
+	LD	HL,2
+	ADD	HL,SP
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A		; HL = s1
+	; HL = s1, DE = s2, BC = n
+@strncmp_lp:
+	LD	A,B
+	OR	C
+	JR	Z,@strncmp_eq	; n == 0, strings equal so far
+	LD	A,(HL)
+	PUSH	HL
+	EX	DE,HL
+	CP	(HL)
+	EX	DE,HL
+	POP	HL
+	JR	NZ,@strncmp_diff
+	OR	A
+	JR	Z,@strncmp_eq	; Both ended with NUL
+	INC	HL
+	INC	DE
+	DEC	BC
+	JR	@strncmp_lp
+@strncmp_eq:
+	LD	HL,0
+	RET
+@strncmp_diff:
+	; A = s1 char, compare was A - (DE)
+	LD	HL,1
+	RET	NC		; s1 > s2
+	LD	HL,-1		; s1 < s2
+	RET
 
 	END
