@@ -384,6 +384,26 @@ def main() -> int:
 
                 code = '\n'.join(lines)
 
+                # Remove EXTRN declarations for embedded functions
+                embedded_names = set()
+                for func in funcs:
+                    embedded_names.update(func.publics)
+                if embedded_names:
+                    lines = code.splitlines()
+                    filtered_lines = []
+                    for line in lines:
+                        match = re.match(r'\s*EXTRN\s+(.+)', line, re.IGNORECASE)
+                        if match:
+                            labels = [l.strip() for l in match.group(1).split(',')]
+                            # Keep only labels that weren't embedded
+                            remaining = [l for l in labels if l not in embedded_names]
+                            if remaining:
+                                filtered_lines.append(f"\tEXTRN\t{','.join(remaining)}")
+                            # else skip the line entirely
+                        else:
+                            filtered_lines.append(line)
+                    code = '\n'.join(filtered_lines)
+
             if args.verbose:
                 print(f"  Embedded {runtime_funcs_embedded} runtime function(s)")
 
