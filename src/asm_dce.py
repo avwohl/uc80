@@ -18,12 +18,22 @@ class AsmBlock:
     is_entry: bool = False  # main or address-taken
 
 
+@dataclass
+class DataBlock:
+    """A block of data in DSEG starting at a label."""
+    label: str
+    lines: list[str] = field(default_factory=list)
+    is_public: bool = False
+
+
 class AssemblyDCE:
     """Dead code elimination for Z80 assembly."""
 
     def __init__(self):
         self.blocks: dict[str, AsmBlock] = {}
+        self.data_blocks: dict[str, DataBlock] = {}
         self.public_labels: set[str] = set()
+        self.public_data_labels: set[str] = set()
         self.extrn_labels: set[str] = set()
         self.header_lines: list[str] = []
         self.footer_lines: list[str] = []
@@ -31,14 +41,14 @@ class AssemblyDCE:
         self.current_segment = "CSEG"
 
     def eliminate_dead_code(self, asm_text: str, entry_points: set[str] | None = None) -> str:
-        """Remove unreachable code from assembly.
+        """Remove unreachable code and data from assembly.
 
         Args:
             asm_text: The assembly source text
             entry_points: Set of entry point labels. If None, uses _main and all PUBLIC.
 
         Returns:
-            Assembly with dead code removed.
+            Assembly with dead code and data removed.
         """
         self._parse_assembly(asm_text)
 
@@ -50,11 +60,14 @@ class AssemblyDCE:
             # All PUBLIC labels are potential entry points
             entry_points.update(self.public_labels)
 
-        # Find reachable blocks
-        reachable = self._find_reachable(entry_points)
+        # Find reachable code blocks
+        reachable_code = self._find_reachable(entry_points)
 
-        # Rebuild assembly with only reachable blocks
-        return self._rebuild_assembly(reachable)
+        # Find referenced data blocks
+        referenced_data = self._find_referenced_data(reachable_code)
+
+        # Rebuild assembly with only reachable blocks and referenced data
+        return self._rebuild_assembly(reachable_code, referenced_data)
 
     def _parse_assembly(self, asm_text: str) -> None:
         """Parse assembly into blocks."""
@@ -126,7 +139,7 @@ class AssemblyDCE:
                 continue
 
             # Check for label
-            match = re.match(r'^(\@?\??\w+):', line)
+            match = re.match(r'^(\@?\?*\w+):', line)
             if match:
                 label = match.group(1)
                 in_header = False
@@ -161,46 +174,130 @@ class AssemblyDCE:
         if current_block:
             self.blocks[current_block.label] = current_block
 
+        # Parse DSEG into data blocks
+        self._parse_data_blocks()
+
+    def _parse_data_blocks(self) -> None:
+        """Parse DSEG lines into individual data blocks."""
+        current_data: DataBlock | None = None
+        pending_public: set[str] = set()
+
+        for line in self.dseg_lines:
+            stripped = line.strip()
+
+            # Track PUBLIC declarations in DSEG
+            match = re.match(r'\s*PUBLIC\s+(.+)', line, re.IGNORECASE)
+            if match:
+                labels = [l.strip() for l in match.group(1).split(',')]
+                pending_public.update(labels)
+                self.public_data_labels.update(labels)
+                if current_data:
+                    current_data.lines.append(line)
+                continue
+
+            # Check for label (with optional colon)
+            # Patterns: "label:" or "label:\tDS 2" or "label\tDW 0"
+            # Note: Labels may have @ or multiple ? prefixes (e.g., ??AUTO)
+            match = re.match(r'^(\@?\?*\w+):?\s*(DS|DW|DB)?', line)
+            if match and (match.group(2) or line.strip().endswith(':')):
+                label = match.group(1)
+
+                # Save previous block
+                if current_data:
+                    self.data_blocks[current_data.label] = current_data
+
+                # Start new block
+                is_pub = label in pending_public or label in self.public_data_labels
+                current_data = DataBlock(
+                    label=label,
+                    lines=[line],
+                    is_public=is_pub
+                )
+                pending_public.discard(label)
+                continue
+
+            # Regular line (data, comment, etc.) - add to current block
+            if current_data:
+                current_data.lines.append(line)
+
+        # Save final block
+        if current_data:
+            self.data_blocks[current_data.label] = current_data
+
+    def _find_referenced_data(self, reachable_code: set[str]) -> set[str]:
+        """Find all data labels referenced by reachable code blocks."""
+        referenced: set[str] = set()
+
+        # Collect all lines from reachable code blocks
+        for label in reachable_code:
+            if label not in self.blocks:
+                continue
+            block = self.blocks[label]
+            for line in block.lines:
+                # Skip full comment lines (may start with whitespace)
+                stripped = line.strip()
+                if stripped.startswith(';'):
+                    continue
+                # Remove inline comments before checking for references
+                code_part = line
+                if ';' in code_part:
+                    code_part = code_part[:code_part.index(';')]
+
+                # Look for references to data labels
+                for data_label in self.data_blocks:
+                    # Match label (not part of another label)
+                    # Use explicit boundary check since \b doesn't work with ?@ prefixes
+                    pattern = rf'(?<![a-zA-Z0-9_?@]){re.escape(data_label)}(?![a-zA-Z0-9_])'
+                    if re.search(pattern, code_part):
+                        referenced.add(data_label)
+
+        # Also preserve PUBLIC data labels (they may be referenced externally)
+        for data_label in self.data_blocks:
+            if self.data_blocks[data_label].is_public:
+                referenced.add(data_label)
+
+        return referenced
+
     def _analyze_control_flow(self, line: str, block: AsmBlock) -> None:
         """Analyze a line for control flow targets."""
         upper = line.upper()
 
         # CALL instruction
-        match = re.match(r'\s*CALL\s+(\@?\??\w+)', line, re.IGNORECASE)
+        match = re.match(r'\s*CALL\s+(\@?\?*\w+)', line, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
         # Unconditional JP
-        match = re.match(r'\s*JP\s+(\@?\??\w+)\s*$', line, re.IGNORECASE)
+        match = re.match(r'\s*JP\s+(\@?\?*\w+)\s*$', line, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
         # Conditional JP
-        match = re.match(r'\s*JP\s+\w+,\s*(\@?\??\w+)', line, re.IGNORECASE)
+        match = re.match(r'\s*JP\s+\w+,\s*(\@?\?*\w+)', line, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
         # JR instructions
-        match = re.match(r'\s*JR\s+(\@?\??\w+)\s*$', line, re.IGNORECASE)
+        match = re.match(r'\s*JR\s+(\@?\?*\w+)\s*$', line, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
-        match = re.match(r'\s*JR\s+\w+,\s*(\@?\??\w+)', line, re.IGNORECASE)
+        match = re.match(r'\s*JR\s+\w+,\s*(\@?\?*\w+)', line, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
         # DJNZ
-        match = re.match(r'\s*DJNZ\s+(\@?\??\w+)', line, re.IGNORECASE)
+        match = re.match(r'\s*DJNZ\s+(\@?\?*\w+)', line, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
@@ -263,23 +360,25 @@ class AssemblyDCE:
             pass
         return None
 
-    def _rebuild_assembly(self, reachable: set[str]) -> str:
-        """Rebuild assembly with only reachable blocks."""
+    def _rebuild_assembly(self, reachable_code: set[str], referenced_data: set[str]) -> str:
+        """Rebuild assembly with only reachable blocks and referenced data."""
         lines = []
 
         # Header (includes CSEG if present)
         lines.extend(self.header_lines)
 
-        # Reachable blocks in original order
+        # Reachable code blocks in original order
         for label, block in self.blocks.items():
-            if label in reachable:
+            if label in reachable_code:
                 lines.extend(block.lines)
 
-        # DSEG
-        if self.dseg_lines:
+        # DSEG - only include referenced data blocks
+        if self.data_blocks and referenced_data:
             lines.append("")
             lines.append("\tDSEG")
-            lines.extend(self.dseg_lines)
+            for label, data_block in self.data_blocks.items():
+                if label in referenced_data:
+                    lines.extend(data_block.lines)
 
         # Footer (END)
         if self.footer_lines:

@@ -38,7 +38,12 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
 - Assembly-level dead code elimination
 - .mac file inclusion in input list
 
-5- Future enhancements:
-- Assembly-level dead DATA elimination: When no fopen() calls are made,
-  FCB data structures could be eliminated. Similarly for other unused
-  data like float work areas when no float operations are used.
+5- [DONE] Assembly-level dead DATA elimination:
+- Data blocks in DSEG are parsed separately
+- Only data labels referenced by reachable code are kept
+- PUBLIC data labels are always preserved
+- Works with ??AUTO+offset style references
+- FCB and other unused data structures are eliminated when not referenced
+
+6- Future enhancements:
+- Additional test suite work

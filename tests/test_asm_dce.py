@@ -161,3 +161,150 @@ _dead:
         assert "_main:" in result
         assert "_next:" in result
         assert "_dead:" not in result
+
+    def test_remove_unreferenced_data(self):
+        """Unreferenced data blocks are removed."""
+        asm = """
+\t.Z80
+\tCSEG
+\tPUBLIC\t_main
+_main:
+\tRET
+
+\tDSEG
+_unused_data:
+\tDW\t0
+_another_unused:
+\tDS\t10
+
+\tEND
+"""
+        result = eliminate_dead_code(asm)
+        assert "_main:" in result
+        assert "_unused_data" not in result
+        assert "_another_unused" not in result
+        # DSEG should not be emitted if all data removed
+        assert "DSEG" not in result
+
+    def test_keep_referenced_remove_unreferenced_data(self):
+        """Referenced data is kept, unreferenced is removed."""
+        asm = """
+\t.Z80
+\tCSEG
+\tPUBLIC\t_main
+_main:
+\tLD\tHL,(_used_data)
+\tRET
+
+\tDSEG
+_used_data:
+\tDW\t42
+_unused_data:
+\tDW\t0
+
+\tEND
+"""
+        result = eliminate_dead_code(asm)
+        assert "_main:" in result
+        assert "_used_data" in result
+        assert "_unused_data" not in result
+
+    def test_preserve_public_data(self):
+        """PUBLIC data labels are always preserved."""
+        asm = """
+\t.Z80
+\tCSEG
+\tPUBLIC\t_main
+_main:
+\tRET
+
+\tDSEG
+\tPUBLIC\t_exported_data
+_exported_data:
+\tDW\t42
+_internal_data:
+\tDW\t0
+
+\tEND
+"""
+        result = eliminate_dead_code(asm)
+        assert "_exported_data" in result
+        assert "_internal_data" not in result
+
+    def test_data_reference_in_called_function(self):
+        """Data referenced from called function is kept."""
+        asm = """
+\t.Z80
+\tCSEG
+\tPUBLIC\t_main
+_main:
+\tCALL\t_helper
+\tRET
+
+_helper:
+\tLD\tHL,_buffer
+\tRET
+
+_dead:
+\tRET
+
+\tDSEG
+_buffer:
+\tDS\t256
+_unused:
+\tDS\t256
+
+\tEND
+"""
+        result = eliminate_dead_code(asm)
+        assert "_helper:" in result
+        assert "_buffer" in result
+        assert "_dead:" not in result
+        assert "_unused" not in result
+
+    def test_data_reference_in_comment_ignored(self):
+        """Data labels in comments are not considered references."""
+        asm = """
+\t.Z80
+\tCSEG
+\tPUBLIC\t_main
+_main:
+\t; This references _comment_data
+\tRET
+
+\tDSEG
+_comment_data:
+\tDW\t0
+
+\tEND
+"""
+        result = eliminate_dead_code(asm)
+        # The data block itself should not be included (no DSEG section)
+        # Note: _comment_data appears in the comment, but the actual data block is removed
+        assert "DSEG" not in result
+        assert "_comment_data:" not in result  # Data label definition removed
+
+    def test_shared_storage_with_offset(self):
+        """??AUTO style labels with +offset are properly recognized."""
+        asm = """
+\t.Z80
+\tCSEG
+\tPUBLIC\t_main
+_main:
+\tLD\tHL,(??AUTO+0)
+\tLD\tDE,(??AUTO+2)
+\tRET
+
+\tDSEG
+??AUTO:
+\tDS\t4
+_unused_data:
+\tDW\t0
+
+\tEND
+"""
+        result = eliminate_dead_code(asm)
+        assert "_main:" in result
+        assert "??AUTO:" in result
+        assert "DS\t4" in result
+        assert "_unused_data" not in result

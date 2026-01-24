@@ -279,7 +279,7 @@ def main() -> int:
                         end_idx = i
                         break
 
-                runtime_code = ["\n; Embedded runtime library functions"]
+                runtime_code = ["\n\tCSEG\n; Embedded runtime library functions"]
                 for func in funcs:
                     runtime_code.append(func.source)
 
