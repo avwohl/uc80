@@ -438,7 +438,8 @@ class TestSharedStorageCodeGen:
             int main(void) { foo(); bar(); return 0; }
         """
         code = generate(parse(source), enable_shared_storage=False,
-                       enable_dead_elimination=False, enable_inlining=False)
+                       enable_dead_elimination=False, enable_inlining=False,
+                       enable_const_propagation=False)
         assert "??AUTO" not in code
 
     def test_shared_storage_comment_in_function(self):
@@ -694,3 +695,87 @@ class TestInlineExpansion:
         # Both inc and add2 should be inlined
         assert "PUBLIC\t_inc" not in code
         assert "PUBLIC\t_add2" not in code
+
+
+class TestConstantPropagation:
+    """Tests for interprocedural constant propagation."""
+
+    def test_propagate_single_constant(self):
+        """A parameter always passed the same value is propagated."""
+        source = """
+            int foo(int x) { return x + 1; }
+            int main(void) { return foo(5) + foo(5); }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+
+        new_unit, count = analyzer.propagate_constants(unit)
+        # x is always 5 at both call sites
+        assert count >= 1
+
+    def test_no_propagate_varying_args(self):
+        """Parameters passed different values are not propagated."""
+        source = """
+            int foo(int x) { return x + 1; }
+            int main(void) { return foo(1) + foo(2); }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+
+        new_unit, count = analyzer.propagate_constants(unit)
+        # x varies between calls
+        assert count == 0
+
+    def test_propagate_multiple_params(self):
+        """Multiple constant parameters are propagated."""
+        source = """
+            int add(int a, int b) { return a + b; }
+            int main(void) { return add(2, 3); }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+
+        new_unit, count = analyzer.propagate_constants(unit)
+        # Both a and b are constant
+        assert count >= 2
+
+    def test_disable_const_propagation(self):
+        """Constant propagation can be disabled."""
+        source = """
+            int foo(int x) { return x + 1; }
+            int main(void) { return foo(5) + foo(5); }
+        """
+        gen = CodeGenerator("test", enable_const_propagation=False)
+        unit = parse(source)
+        gen.generate(unit)
+        assert gen.constants_propagated == 0
+
+    def test_enable_const_propagation(self):
+        """Constant propagation is enabled by default."""
+        source = """
+            int foo(int x) { return x + 1; }
+            int main(void) { return foo(5) + foo(5); }
+        """
+        gen = CodeGenerator("test", enable_const_propagation=True,
+                           enable_inlining=False, enable_dead_elimination=False)
+        unit = parse(source)
+        gen.generate(unit)
+        assert gen.constants_propagated >= 1
+
+    def test_find_constant_params(self):
+        """Test _find_constant_params directly."""
+        source = """
+            int always_ten(int x) { return x * 2; }
+            int main(void) { return always_ten(10) + always_ten(10); }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+
+        constant_params = analyzer._find_constant_params(unit)
+        assert "always_ten" in constant_params
+        assert 0 in constant_params["always_ten"]
+        assert constant_params["always_ten"][0] == 10

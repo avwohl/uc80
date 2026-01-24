@@ -82,6 +82,11 @@ def main() -> int:
         action="store_true",
         help="Disable inline expansion of small functions"
     )
+    parser.add_argument(
+        "--no-const-propagation",
+        action="store_true",
+        help="Disable interprocedural constant propagation"
+    )
 
     args = parser.parse_args()
 
@@ -186,13 +191,17 @@ def main() -> int:
         enable_shared_storage = not args.no_shared_storage
         enable_dead_elimination = not args.no_dead_elimination
         enable_inlining = not args.no_inlining
+        enable_const_propagation = not args.no_const_propagation
 
-        gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination, enable_inlining)
+        gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
+                           enable_inlining, enable_const_propagation)
         code = gen.generate(merged_ast)
 
         if args.verbose:
             if gen.inlined_calls > 0:
                 print(f"  Inlined {gen.inlined_calls} call(s)")
+            if gen.constants_propagated > 0:
+                print(f"  Propagated {gen.constants_propagated} constant(s)")
             if gen.dead_functions_removed > 0:
                 print(f"  Eliminated {gen.dead_functions_removed} dead function(s)")
             print(f"  Generated {len(code.splitlines())} lines of assembly")

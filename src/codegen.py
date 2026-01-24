@@ -1043,6 +1043,424 @@ class CallGraphAnalyzer:
 
         return ast.TranslationUnit(declarations=new_decls), inlined_count
 
+    def _collect_call_args(self, unit: ast.TranslationUnit) -> dict[str, list[list[ast.Expression]]]:
+        """Collect all argument lists for each function call.
+
+        Returns: dict mapping function name to list of argument lists from all call sites.
+        """
+        call_args: dict[str, list[list[ast.Expression]]] = {}
+
+        def collect_from_expr(expr: ast.Expression) -> None:
+            if isinstance(expr, ast.Call):
+                if isinstance(expr.func, ast.Identifier):
+                    func_name = expr.func.name
+                    if func_name not in call_args:
+                        call_args[func_name] = []
+                    call_args[func_name].append(list(expr.args))
+                # Recurse into function expression and arguments
+                collect_from_expr(expr.func)
+                for arg in expr.args:
+                    collect_from_expr(arg)
+            elif isinstance(expr, ast.BinaryOp):
+                collect_from_expr(expr.left)
+                collect_from_expr(expr.right)
+            elif isinstance(expr, ast.UnaryOp):
+                collect_from_expr(expr.operand)
+            elif isinstance(expr, ast.TernaryOp):
+                collect_from_expr(expr.condition)
+                collect_from_expr(expr.true_expr)
+                collect_from_expr(expr.false_expr)
+            elif isinstance(expr, ast.Index):
+                collect_from_expr(expr.array)
+                collect_from_expr(expr.index)
+            elif isinstance(expr, ast.Member):
+                collect_from_expr(expr.obj)
+            elif isinstance(expr, ast.Cast):
+                collect_from_expr(expr.expr)
+            elif isinstance(expr, ast.SizeofExpr):
+                collect_from_expr(expr.expr)
+            elif isinstance(expr, ast.InitializerList):
+                for val in expr.values:
+                    if isinstance(val, ast.Expression):
+                        collect_from_expr(val)
+                    elif isinstance(val, ast.DesignatedInit):
+                        collect_from_expr(val.value)
+
+        def collect_from_stmt(stmt: ast.Statement) -> None:
+            if isinstance(stmt, ast.ExpressionStmt) and stmt.expr:
+                collect_from_expr(stmt.expr)
+            elif isinstance(stmt, ast.ReturnStmt) and stmt.value:
+                collect_from_expr(stmt.value)
+            elif isinstance(stmt, ast.CompoundStmt):
+                for item in stmt.items:
+                    if isinstance(item, ast.Statement):
+                        collect_from_stmt(item)
+                    elif isinstance(item, ast.VarDecl) and item.init:
+                        collect_from_expr(item.init)
+                    elif isinstance(item, ast.DeclarationList):
+                        for d in item.declarations:
+                            if isinstance(d, ast.VarDecl) and d.init:
+                                collect_from_expr(d.init)
+            elif isinstance(stmt, ast.IfStmt):
+                collect_from_expr(stmt.condition)
+                collect_from_stmt(stmt.then_branch)
+                if stmt.else_branch:
+                    collect_from_stmt(stmt.else_branch)
+            elif isinstance(stmt, ast.WhileStmt):
+                collect_from_expr(stmt.condition)
+                collect_from_stmt(stmt.body)
+            elif isinstance(stmt, ast.DoWhileStmt):
+                collect_from_stmt(stmt.body)
+                collect_from_expr(stmt.condition)
+            elif isinstance(stmt, ast.ForStmt):
+                if isinstance(stmt.init, ast.Expression):
+                    collect_from_expr(stmt.init)
+                if stmt.condition:
+                    collect_from_expr(stmt.condition)
+                if stmt.update:
+                    collect_from_expr(stmt.update)
+                collect_from_stmt(stmt.body)
+            elif isinstance(stmt, ast.SwitchStmt):
+                collect_from_expr(stmt.expr)
+                collect_from_stmt(stmt.body)
+            elif isinstance(stmt, ast.CaseStmt) and stmt.stmt:
+                collect_from_stmt(stmt.stmt)
+            elif isinstance(stmt, ast.LabelStmt):
+                collect_from_stmt(stmt.stmt)
+
+        # Collect from all function bodies
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl) and decl.body:
+                collect_from_stmt(decl.body)
+
+        return call_args
+
+    def _eval_const_expr(self, expr: ast.Expression) -> int | None:
+        """Evaluate a constant expression. Returns None if not constant."""
+        if isinstance(expr, ast.IntLiteral):
+            return expr.value
+        elif isinstance(expr, ast.CharLiteral):
+            return expr.value
+        elif isinstance(expr, ast.BoolLiteral):
+            return 1 if expr.value else 0
+        elif isinstance(expr, ast.UnaryOp):
+            operand = self._eval_const_expr(expr.operand)
+            if operand is None:
+                return None
+            if expr.op == "-":
+                return -operand
+            elif expr.op == "+":
+                return operand
+            elif expr.op == "~":
+                return ~operand
+            elif expr.op == "!":
+                return 0 if operand else 1
+        elif isinstance(expr, ast.BinaryOp):
+            left = self._eval_const_expr(expr.left)
+            right = self._eval_const_expr(expr.right)
+            if left is None or right is None:
+                return None
+            if expr.op == "+":
+                return left + right
+            elif expr.op == "-":
+                return left - right
+            elif expr.op == "*":
+                return left * right
+            elif expr.op == "/" and right != 0:
+                return left // right
+            elif expr.op == "%" and right != 0:
+                return left % right
+            elif expr.op == "&":
+                return left & right
+            elif expr.op == "|":
+                return left | right
+            elif expr.op == "^":
+                return left ^ right
+            elif expr.op == "<<":
+                return left << right
+            elif expr.op == ">>":
+                return left >> right
+            elif expr.op == "==":
+                return 1 if left == right else 0
+            elif expr.op == "!=":
+                return 1 if left != right else 0
+            elif expr.op == "<":
+                return 1 if left < right else 0
+            elif expr.op == ">":
+                return 1 if left > right else 0
+            elif expr.op == "<=":
+                return 1 if left <= right else 0
+            elif expr.op == ">=":
+                return 1 if left >= right else 0
+            elif expr.op == "&&":
+                return 1 if left and right else 0
+            elif expr.op == "||":
+                return 1 if left or right else 0
+        elif isinstance(expr, ast.Cast):
+            return self._eval_const_expr(expr.expr)
+        return None
+
+    def _find_constant_params(self, unit: ast.TranslationUnit) -> dict[str, dict[int, int]]:
+        """Find parameters that are always the same constant at all call sites.
+
+        Returns: dict mapping function name to dict of (param_index -> constant_value).
+        """
+        call_args = self._collect_call_args(unit)
+        constant_params: dict[str, dict[int, int]] = {}
+
+        # Build function info map
+        func_info: dict[str, ast.FunctionDecl] = {}
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl) and decl.body:
+                func_info[decl.name] = decl
+
+        for func_name, all_args in call_args.items():
+            if func_name not in func_info:
+                continue  # External function
+
+            func = func_info[func_name]
+            if not all_args:
+                continue
+
+            # Don't propagate if function's address is taken
+            if func_name in self.address_taken:
+                continue
+
+            num_params = len(func.params)
+            param_constants: dict[int, int] = {}
+
+            for param_idx in range(num_params):
+                # Check if this parameter is the same constant at all call sites
+                first_value: int | None = None
+                all_same = True
+
+                for args in all_args:
+                    if param_idx >= len(args):
+                        all_same = False
+                        break
+                    const_val = self._eval_const_expr(args[param_idx])
+                    if const_val is None:
+                        all_same = False
+                        break
+                    if first_value is None:
+                        first_value = const_val
+                    elif const_val != first_value:
+                        all_same = False
+                        break
+
+                if all_same and first_value is not None:
+                    param_constants[param_idx] = first_value
+
+            if param_constants:
+                constant_params[func_name] = param_constants
+
+        return constant_params
+
+    def _substitute_param_constants(self, expr: ast.Expression,
+                                    param_names: list[str],
+                                    constants: dict[int, int]) -> ast.Expression:
+        """Substitute constant values for parameters in an expression."""
+        if isinstance(expr, ast.Identifier):
+            # Check if this is a parameter with a known constant
+            if expr.name in param_names:
+                param_idx = param_names.index(expr.name)
+                if param_idx in constants:
+                    return ast.IntLiteral(value=constants[param_idx], location=expr.location)
+            return expr
+
+        elif isinstance(expr, ast.BinaryOp):
+            return ast.BinaryOp(
+                op=expr.op,
+                left=self._substitute_param_constants(expr.left, param_names, constants),
+                right=self._substitute_param_constants(expr.right, param_names, constants),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.UnaryOp):
+            return ast.UnaryOp(
+                op=expr.op,
+                operand=self._substitute_param_constants(expr.operand, param_names, constants),
+                is_prefix=expr.is_prefix,
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.TernaryOp):
+            return ast.TernaryOp(
+                condition=self._substitute_param_constants(expr.condition, param_names, constants),
+                true_expr=self._substitute_param_constants(expr.true_expr, param_names, constants),
+                false_expr=self._substitute_param_constants(expr.false_expr, param_names, constants),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Call):
+            return ast.Call(
+                func=self._substitute_param_constants(expr.func, param_names, constants),
+                args=[self._substitute_param_constants(a, param_names, constants) for a in expr.args],
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Index):
+            return ast.Index(
+                array=self._substitute_param_constants(expr.array, param_names, constants),
+                index=self._substitute_param_constants(expr.index, param_names, constants),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Member):
+            return ast.Member(
+                obj=self._substitute_param_constants(expr.obj, param_names, constants),
+                member=expr.member,
+                is_arrow=expr.is_arrow,
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.Cast):
+            return ast.Cast(
+                target_type=expr.target_type,
+                expr=self._substitute_param_constants(expr.expr, param_names, constants),
+                location=expr.location
+            )
+
+        elif isinstance(expr, ast.SizeofExpr):
+            return ast.SizeofExpr(
+                expr=self._substitute_param_constants(expr.expr, param_names, constants),
+                location=expr.location
+            )
+
+        return expr
+
+    def _substitute_stmt_constants(self, stmt: ast.Statement,
+                                   param_names: list[str],
+                                   constants: dict[int, int]) -> ast.Statement:
+        """Substitute constant values for parameters in a statement."""
+        if isinstance(stmt, ast.ExpressionStmt):
+            if stmt.expr:
+                return ast.ExpressionStmt(
+                    expr=self._substitute_param_constants(stmt.expr, param_names, constants),
+                    location=stmt.location
+                )
+            return stmt
+
+        elif isinstance(stmt, ast.ReturnStmt):
+            if stmt.value:
+                return ast.ReturnStmt(
+                    value=self._substitute_param_constants(stmt.value, param_names, constants),
+                    location=stmt.location
+                )
+            return stmt
+
+        elif isinstance(stmt, ast.CompoundStmt):
+            new_items = []
+            for item in stmt.items:
+                if isinstance(item, ast.Statement):
+                    new_items.append(self._substitute_stmt_constants(item, param_names, constants))
+                elif isinstance(item, ast.VarDecl) and item.init:
+                    new_items.append(ast.VarDecl(
+                        name=item.name,
+                        var_type=item.var_type,
+                        init=self._substitute_param_constants(item.init, param_names, constants),
+                        storage_class=item.storage_class,
+                        location=item.location
+                    ))
+                else:
+                    new_items.append(item)
+            return ast.CompoundStmt(items=new_items, location=stmt.location)
+
+        elif isinstance(stmt, ast.IfStmt):
+            return ast.IfStmt(
+                condition=self._substitute_param_constants(stmt.condition, param_names, constants),
+                then_branch=self._substitute_stmt_constants(stmt.then_branch, param_names, constants),
+                else_branch=self._substitute_stmt_constants(stmt.else_branch, param_names, constants) if stmt.else_branch else None,
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.WhileStmt):
+            return ast.WhileStmt(
+                condition=self._substitute_param_constants(stmt.condition, param_names, constants),
+                body=self._substitute_stmt_constants(stmt.body, param_names, constants),
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.DoWhileStmt):
+            return ast.DoWhileStmt(
+                body=self._substitute_stmt_constants(stmt.body, param_names, constants),
+                condition=self._substitute_param_constants(stmt.condition, param_names, constants),
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.ForStmt):
+            new_init = stmt.init
+            if isinstance(stmt.init, ast.Expression):
+                new_init = self._substitute_param_constants(stmt.init, param_names, constants)
+            return ast.ForStmt(
+                init=new_init,
+                condition=self._substitute_param_constants(stmt.condition, param_names, constants) if stmt.condition else None,
+                update=self._substitute_param_constants(stmt.update, param_names, constants) if stmt.update else None,
+                body=self._substitute_stmt_constants(stmt.body, param_names, constants),
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.SwitchStmt):
+            return ast.SwitchStmt(
+                expr=self._substitute_param_constants(stmt.expr, param_names, constants),
+                body=self._substitute_stmt_constants(stmt.body, param_names, constants),
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.CaseStmt):
+            return ast.CaseStmt(
+                value=stmt.value,
+                stmt=self._substitute_stmt_constants(stmt.stmt, param_names, constants) if stmt.stmt else None,
+                location=stmt.location
+            )
+
+        elif isinstance(stmt, ast.LabelStmt):
+            return ast.LabelStmt(
+                label=stmt.label,
+                stmt=self._substitute_stmt_constants(stmt.stmt, param_names, constants),
+                location=stmt.location
+            )
+
+        return stmt
+
+    def propagate_constants(self, unit: ast.TranslationUnit) -> tuple[ast.TranslationUnit, int]:
+        """Propagate constant arguments into function bodies.
+
+        Returns the modified AST and count of propagated constants.
+        """
+        constant_params = self._find_constant_params(unit)
+
+        if not constant_params:
+            return unit, 0
+
+        total_propagated = sum(len(v) for v in constant_params.values())
+
+        # Transform the AST
+        new_decls = []
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl) and decl.body:
+                if decl.name in constant_params:
+                    constants = constant_params[decl.name]
+                    param_names = [p.name for p in decl.params if p.name]
+
+                    new_body = self._substitute_stmt_constants(decl.body, param_names, constants)
+                    new_decls.append(ast.FunctionDecl(
+                        name=decl.name,
+                        return_type=decl.return_type,
+                        params=decl.params,
+                        body=new_body,
+                        is_variadic=decl.is_variadic,
+                        storage_class=decl.storage_class,
+                        is_inline=decl.is_inline,
+                        location=decl.location
+                    ))
+                else:
+                    new_decls.append(decl)
+            else:
+                new_decls.append(decl)
+
+        return ast.TranslationUnit(declarations=new_decls), total_propagated
+
 
 @dataclass
 class CodeGenContext:
@@ -1134,15 +1552,18 @@ class CodeGenerator:
     """Z80 code generator."""
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
-                 enable_dead_elimination: bool = True, enable_inlining: bool = True):
+                 enable_dead_elimination: bool = True, enable_inlining: bool = True,
+                 enable_const_propagation: bool = True):
         self.module_name = module_name
         self.ctx = CodeGenContext()
         self.enable_shared_storage = enable_shared_storage
         self.enable_dead_elimination = enable_dead_elimination
         self.enable_inlining = enable_inlining
+        self.enable_const_propagation = enable_const_propagation
         self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
         self.dead_functions_removed: int = 0
         self.inlined_calls: int = 0
+        self.constants_propagated: int = 0
         # Switch statement context
         self._switch_cases: list[tuple[int, str]] = []
         self._switch_default: str | None = None
@@ -1150,7 +1571,8 @@ class CodeGenerator:
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
         # Build call graph for optimizations
-        needs_call_graph = self.enable_shared_storage or self.enable_dead_elimination or self.enable_inlining
+        needs_call_graph = (self.enable_shared_storage or self.enable_dead_elimination or
+                           self.enable_inlining or self.enable_const_propagation)
         if needs_call_graph:
             self.call_graph_analyzer = CallGraphAnalyzer()
             self.call_graph_analyzer.build_call_graph(unit)
@@ -1160,6 +1582,14 @@ class CodeGenerator:
             unit, self.inlined_calls = self.call_graph_analyzer.inline_functions(unit)
             # Rebuild call graph after inlining
             if self.inlined_calls > 0:
+                self.call_graph_analyzer = CallGraphAnalyzer()
+                self.call_graph_analyzer.build_call_graph(unit)
+
+        # Interprocedural constant propagation (after inlining, before dead elimination)
+        if self.enable_const_propagation and self.call_graph_analyzer:
+            unit, self.constants_propagated = self.call_graph_analyzer.propagate_constants(unit)
+            # Rebuild call graph after constant propagation if any changes
+            if self.constants_propagated > 0:
                 self.call_graph_analyzer = CallGraphAnalyzer()
                 self.call_graph_analyzer.build_call_graph(unit)
 
@@ -3633,7 +4063,9 @@ class CodeGenerator:
 def generate(unit: ast.TranslationUnit, module_name: str = "main",
              enable_shared_storage: bool = True,
              enable_dead_elimination: bool = True,
-             enable_inlining: bool = True) -> str:
+             enable_inlining: bool = True,
+             enable_const_propagation: bool = True) -> str:
     """Generate Z80 assembly for a translation unit."""
-    gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination, enable_inlining)
+    gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
+                       enable_inlining, enable_const_propagation)
     return gen.generate(unit)
