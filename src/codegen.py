@@ -2429,8 +2429,13 @@ class CodeGenerator:
             self.ctx.emit_instr("LD", f"HL,{size}")
 
         elif isinstance(expr, ast.SizeofExpr):
-            # Would need type inference; for now assume int
-            self.ctx.emit_instr("LD", "HL,2")
+            # Infer type of expression and compute its size
+            expr_type = self._get_expr_type(expr.expr)
+            if expr_type:
+                size = self._type_size(expr_type)
+            else:
+                size = 2  # Default to int if type cannot be inferred
+            self.ctx.emit_instr("LD", f"HL,{size}")
 
     def gen_identifier(self, expr: ast.Identifier, force_long: bool = False) -> None:
         """Generate code to load an identifier's value into HL (or DEHL for 32-bit)."""
