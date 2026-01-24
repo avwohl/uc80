@@ -418,6 +418,12 @@ class CallGraphAnalyzer:
         elif isinstance(expr, ast.Compound):
             self._analyze_expr(expr.init, calls, address_taken, indirect_sigs)
 
+        elif isinstance(expr, ast.Identifier):
+            # An identifier used as a value (not in a call context) might be
+            # a function whose address is taken (function name decays to pointer)
+            # We'll record it; the caller should filter to only known functions
+            address_taken.add(expr.name)
+
     def compute_active_together(self) -> None:
         """Compute which functions can be on stack simultaneously.
 
@@ -1534,6 +1540,9 @@ class CodeGenContext:
     # Struct definitions: name -> list of (member_name, member_type, offset)
     structs: dict[str, list[tuple[str, ast.TypeNode, int]]] = field(default_factory=dict)
 
+    # Function names (for distinguishing functions from variables)
+    function_names: set[str] = field(default_factory=set)
+
     # Enum constants: name -> integer value
     enum_constants: dict[str, int] = field(default_factory=dict)
 
@@ -1668,6 +1677,7 @@ class CodeGenerator:
                     sym_type=decl.return_type,
                     is_global=True
                 )
+                self.ctx.function_names.add(decl.name)
             elif isinstance(decl, ast.VarDecl):
                 self.ctx.globals[decl.name] = Symbol(
                     name=decl.name,
@@ -2409,8 +2419,14 @@ class CodeGenerator:
 
         sym = self.ctx.lookup(expr.name)
         if sym is None:
-            # Assume external function
+            # Assume external function - load its address
             self.ctx.emit_instr("LD", f"HL,_{expr.name}")
+            return
+
+        # Check if this is a function (name matches a function we've seen)
+        # Functions used as values decay to pointers - load address, not value
+        if isinstance(sym.sym_type, ast.FunctionType) or expr.name in self.ctx.function_names:
+            self.ctx.emit_instr("LD", f"HL,{sym.label()}")
             return
 
         # Arrays decay to pointers - return address, not value
@@ -2602,8 +2618,8 @@ class CodeGenerator:
         # Store right operand to __tmp32
         self._store_tmp32()
 
-        # Check if left operand is complex (might clobber __tmp32)
-        left_is_complex = self._is_complex_expr(expr.left)
+        # Check if left operand might clobber __tmp32
+        left_is_complex = self._uses_tmp32(expr.left)
         if left_is_complex:
             # Save __tmp32 on stack before generating left operand
             self.ctx.emit_instr("LD", "HL,(__tmp32)")
@@ -2770,8 +2786,8 @@ class CodeGenerator:
         # Store right operand to __tmp32
         self._store_tmp32()
 
-        # Check if left operand is complex
-        left_is_complex = self._is_complex_expr(expr.left)
+        # Check if left operand might clobber __tmp32
+        left_is_complex = self._uses_tmp32(expr.left)
         if left_is_complex:
             # Save __tmp32 on stack before generating left operand
             self.ctx.emit_instr("LD", "HL,(__tmp32)")
@@ -3604,7 +3620,7 @@ class CodeGenerator:
         expr_type = self._get_expr_type(expr)
         return self._is_long_type(expr_type)
 
-    def _is_complex_expr(self, expr: ast.Expression) -> bool:
+    def _uses_tmp32(self, expr: ast.Expression) -> bool:
         """Check if an expression might use __tmp32 (and thus clobber it)."""
         # Complex expressions that use __tmp32 internally
         if isinstance(expr, ast.BinaryOp):
@@ -3612,18 +3628,18 @@ class CodeGenerator:
             if self._is_long_expr(expr.left) or self._is_long_expr(expr.right):
                 return True
             # Check nested expressions
-            return self._is_complex_expr(expr.left) or self._is_complex_expr(expr.right)
+            return self._uses_tmp32(expr.left) or self._uses_tmp32(expr.right)
         if isinstance(expr, ast.UnaryOp):
-            return self._is_complex_expr(expr.operand)
+            return self._uses_tmp32(expr.operand)
         if isinstance(expr, ast.TernaryOp):
-            return (self._is_complex_expr(expr.condition) or
-                    self._is_complex_expr(expr.true_expr) or
-                    self._is_complex_expr(expr.false_expr))
+            return (self._uses_tmp32(expr.condition) or
+                    self._uses_tmp32(expr.true_expr) or
+                    self._uses_tmp32(expr.false_expr))
         if isinstance(expr, ast.Call):
             # Function calls might clobber __tmp32 (conservative)
             return True
         if isinstance(expr, ast.Cast):
-            return self._is_complex_expr(expr.expr)
+            return self._uses_tmp32(expr.expr)
         # Simple expressions (identifiers, literals) don't use __tmp32
         return False
 

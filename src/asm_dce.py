@@ -225,7 +225,7 @@ class AssemblyDCE:
             self.data_blocks[current_data.label] = current_data
 
     def _find_referenced_data(self, reachable_code: set[str]) -> set[str]:
-        """Find all data labels referenced by reachable code blocks."""
+        """Find all data labels referenced by reachable code and other data."""
         referenced: set[str] = set()
 
         # Collect all lines from reachable code blocks
@@ -255,6 +255,32 @@ class AssemblyDCE:
         for data_label in self.data_blocks:
             if self.data_blocks[data_label].is_public:
                 referenced.add(data_label)
+
+        # Iteratively find data referenced from other data (fixpoint)
+        changed = True
+        while changed:
+            changed = False
+            for data_label in list(referenced):
+                if data_label not in self.data_blocks:
+                    continue
+                data_block = self.data_blocks[data_label]
+                for line in data_block.lines:
+                    # Skip comments
+                    stripped = line.strip()
+                    if stripped.startswith(';'):
+                        continue
+                    code_part = line
+                    if ';' in code_part:
+                        code_part = code_part[:code_part.index(';')]
+
+                    # Check for references to other data labels
+                    for other_label in self.data_blocks:
+                        if other_label in referenced:
+                            continue
+                        pattern = rf'(?<![a-zA-Z0-9_?@]){re.escape(other_label)}(?![a-zA-Z0-9_])'
+                        if re.search(pattern, code_part):
+                            referenced.add(other_label)
+                            changed = True
 
         return referenced
 
