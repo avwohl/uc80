@@ -368,12 +368,25 @@ class AssemblyDCE:
             if not stripped or stripped.startswith(';'):
                 continue
             # Unconditional terminators
-            if stripped.startswith('RET') and ',' not in stripped:
+            # RET alone is unconditional, RET Z/NZ/C/NC/PE/PO/P/M are conditional
+            if stripped == 'RET':
                 return True
-            if stripped.startswith('JP ') and ',' not in stripped:
+            # JP (HL) or JP (IX) or JP (IY) are unconditional
+            if stripped.startswith('JP\t(') or stripped.startswith('JP ('):
                 return True
-            if stripped.startswith('JR ') and ',' not in stripped:
-                return True
+            # JP label (no condition) is unconditional
+            if stripped.startswith('JP\t') or stripped.startswith('JP '):
+                rest = stripped[3:].strip()
+                # Check if first part is a condition code
+                conds = ('Z,', 'NZ,', 'C,', 'NC,', 'PE,', 'PO,', 'P,', 'M,')
+                if not any(rest.startswith(c) for c in conds):
+                    return True
+            # JR label (no condition) is unconditional
+            if stripped.startswith('JR\t') or stripped.startswith('JR '):
+                rest = stripped[3:].strip()
+                conds = ('Z,', 'NZ,', 'C,', 'NC,')
+                if not any(rest.startswith(c) for c in conds):
+                    return True
             # Any other instruction - not a terminator
             return False
         return False

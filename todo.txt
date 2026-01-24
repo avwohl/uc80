@@ -47,11 +47,11 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
 
 6- [DONE] c-testsuite validation (00001-00220):
 - Total: 220 tests
-- PASS: 185/220 (84%)
+- PASS: 187/220 (85%)
 - Compile fail: 6 tests (unsupported language features)
 - ASM fail: 4 tests (need float library)
 - Link fail: 7 tests (need libc: strcat, strcpy, sprintf, getc, fprintf)
-- Output mismatch: 18 tests (various issues)
+- Output mismatch: 16 tests (various issues - mostly 32-bit overflow, struct init)
 - Bug fixes made during testing:
   * Fixed _is_complex_expr duplicate causing function calls to use complex math
   * Fixed dead data elimination to trace data-to-data references
@@ -63,6 +63,7 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
   * Fixed function pointer global initializers (address-taken analysis)
   * Added minimal printf implementation in runtime.mac
   * Fixed printf @print_uint bug (was restoring original value instead of remainder)
+  * Fixed asm_dce to recognize conditional RET/JP/JR (RET Z was seen as unconditional)
 
 7- Future enhancements:
 - Continue c-testsuite validation (00300+)
