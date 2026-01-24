@@ -25,7 +25,8 @@ class TestFunctionGeneration:
 
     def test_empty_function(self):
         """Empty function generates prologue/epilogue."""
-        code = gen("void foo(void) {}")
+        # Call foo from main so it's not eliminated as dead
+        code = gen("void foo(void) {} int main(void) { foo(); return 0; }")
         assert "PUBLIC\t_foo" in code
         assert "_foo:" in code
         assert "PUSH\tIX" in code
@@ -435,7 +436,7 @@ class TestSharedStorageCodeGen:
             void bar(void) { int b = 2; }
             int main(void) { foo(); bar(); return 0; }
         """
-        code = generate(parse(source), enable_shared_storage=False)
+        code = generate(parse(source), enable_shared_storage=False, enable_dead_elimination=False)
         assert "??AUTO" not in code
 
     def test_shared_storage_comment_in_function(self):
@@ -487,3 +488,103 @@ class TestMultiFileCompilation:
         assert "PUBLIC\t_helper" in code
         assert "PUBLIC\t_main" in code
         assert "CALL\t_helper" in code
+
+
+class TestDeadFunctionElimination:
+    """Test dead function elimination optimization."""
+
+    def test_eliminate_unused_function(self):
+        """Unused functions are eliminated."""
+        source = """
+            void unused(void) { }
+            int main(void) { return 0; }
+        """
+        code = generate(parse(source), enable_dead_elimination=True)
+        # unused function should not appear in output
+        assert "PUBLIC\t_unused" not in code
+        assert "_unused:" not in code
+        # main should still be there
+        assert "PUBLIC\t_main" in code
+
+    def test_keep_called_functions(self):
+        """Called functions are preserved."""
+        source = """
+            void helper(void) { }
+            int main(void) { helper(); return 0; }
+        """
+        code = generate(parse(source), enable_dead_elimination=True)
+        assert "PUBLIC\t_helper" in code
+        assert "PUBLIC\t_main" in code
+
+    def test_keep_transitively_called(self):
+        """Transitively called functions are preserved."""
+        source = """
+            void deep(void) { }
+            void middle(void) { deep(); }
+            void unused(void) { }
+            int main(void) { middle(); return 0; }
+        """
+        code = generate(parse(source), enable_dead_elimination=True)
+        assert "PUBLIC\t_deep" in code
+        assert "PUBLIC\t_middle" in code
+        assert "PUBLIC\t_main" in code
+        assert "PUBLIC\t_unused" not in code
+
+    def test_keep_address_taken(self):
+        """Functions whose addresses are taken are preserved."""
+        source = """
+            void callback(void) { }
+            void unused(void) { }
+            int main(void) {
+                void (*fp)(void) = &callback;
+                return 0;
+            }
+        """
+        code = generate(parse(source), enable_dead_elimination=True)
+        assert "PUBLIC\t_callback" in code
+        assert "PUBLIC\t_main" in code
+        assert "PUBLIC\t_unused" not in code
+
+    def test_disable_dead_elimination(self):
+        """Dead elimination can be disabled."""
+        source = """
+            void unused(void) { }
+            int main(void) { return 0; }
+        """
+        code = generate(parse(source), enable_dead_elimination=False)
+        # With elimination disabled, unused should be in output
+        assert "PUBLIC\t_unused" in code
+        assert "PUBLIC\t_main" in code
+
+    def test_find_live_functions(self):
+        """Test find_live_functions directly."""
+        source = """
+            void dead1(void) { }
+            void dead2(void) { dead1(); }
+            void live1(void) { }
+            void live2(void) { live1(); }
+            int main(void) { live2(); return 0; }
+        """
+        unit = parse(source)
+        analyzer = CallGraphAnalyzer()
+        analyzer.build_call_graph(unit)
+
+        live = analyzer.find_live_functions()
+        assert "main" in live
+        assert "live2" in live
+        assert "live1" in live
+        assert "dead1" not in live
+        assert "dead2" not in live
+
+    def test_eliminate_preserves_prototypes(self):
+        """Function prototypes (declarations without bodies) are preserved."""
+        source = """
+            void external(void);
+            void unused(void) { }
+            int main(void) { external(); return 0; }
+        """
+        code = generate(parse(source), enable_dead_elimination=True)
+        # External declaration should be preserved
+        assert "EXTRN\t_external" in code
+        # Unused function should be eliminated
+        assert "PUBLIC\t_unused" not in code

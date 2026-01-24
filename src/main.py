@@ -72,6 +72,11 @@ def main() -> int:
         action="store_true",
         help="Disable shared storage optimization for non-recursive functions"
     )
+    parser.add_argument(
+        "--no-dead-elimination",
+        action="store_true",
+        help="Disable dead function elimination"
+    )
 
     args = parser.parse_args()
 
@@ -172,11 +177,16 @@ def main() -> int:
         # Determine module name from first input file
         module_name = input_paths[0].stem
 
-        # Code generation with optional shared storage optimization
+        # Code generation with optional optimizations
         enable_shared_storage = not args.no_shared_storage
-        code = generate(merged_ast, module_name, enable_shared_storage=enable_shared_storage)
+        enable_dead_elimination = not args.no_dead_elimination
+
+        gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination)
+        code = gen.generate(merged_ast)
 
         if args.verbose:
+            if gen.dead_functions_removed > 0:
+                print(f"  Eliminated {gen.dead_functions_removed} dead function(s)")
             print(f"  Generated {len(code.splitlines())} lines of assembly")
 
         # Peephole optimization (enabled by default)

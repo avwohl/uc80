@@ -526,6 +526,76 @@ class CallGraphAnalyzer:
 
         self.total_shared_storage = max((end for _, end, _ in allocated), default=0)
 
+    def find_live_functions(self, entry_points: set[str] | None = None) -> set[str]:
+        """Find all functions reachable from entry points.
+
+        Args:
+            entry_points: Set of entry point function names. If None, uses 'main'
+                         plus any function whose address is taken.
+
+        Returns:
+            Set of function names that are reachable (live).
+        """
+        if entry_points is None:
+            entry_points = set()
+            # 'main' is always an entry point if it exists
+            if "main" in self.call_graph:
+                entry_points.add("main")
+            # Functions whose addresses are taken are also entry points
+            # (they could be called via function pointers)
+            entry_points.update(self.address_taken)
+
+        live: set[str] = set()
+        worklist = list(entry_points)
+
+        while worklist:
+            func = worklist.pop()
+            if func in live:
+                continue
+            if func not in self.call_graph:
+                continue  # External function or declaration only
+            live.add(func)
+            # Add all callees to worklist
+            for callee in self.call_graph.get(func, set()):
+                if callee not in live:
+                    worklist.append(callee)
+
+        return live
+
+    def eliminate_dead_functions(self, unit: ast.TranslationUnit) -> ast.TranslationUnit:
+        """Remove functions that are never called.
+
+        Returns a new TranslationUnit with dead functions removed.
+        """
+        live = self.find_live_functions()
+
+        # Filter declarations, keeping:
+        # - All non-function declarations (variables, types, etc.)
+        # - Function declarations that are live
+        # - Function declarations without bodies (prototypes) - keep for linking
+        new_decls = []
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl):
+                # Keep if live, or if it's just a prototype (no body)
+                if decl.name in live or decl.body is None:
+                    new_decls.append(decl)
+            elif isinstance(decl, ast.DeclarationList):
+                # Filter function declarations within a list
+                filtered = []
+                for d in decl.declarations:
+                    if isinstance(d, ast.FunctionDecl):
+                        if d.name in live or d.body is None:
+                            filtered.append(d)
+                    else:
+                        filtered.append(d)
+                if filtered:
+                    new_decls.append(ast.DeclarationList(declarations=filtered))
+            else:
+                # Keep all other declarations
+                new_decls.append(decl)
+
+        return ast.TranslationUnit(declarations=new_decls)
+
 
 @dataclass
 class CodeGenContext:
@@ -616,21 +686,42 @@ class CodeGenContext:
 class CodeGenerator:
     """Z80 code generator."""
 
-    def __init__(self, module_name: str = "main", enable_shared_storage: bool = True):
+    def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
+                 enable_dead_elimination: bool = True):
         self.module_name = module_name
         self.ctx = CodeGenContext()
         self.enable_shared_storage = enable_shared_storage
+        self.enable_dead_elimination = enable_dead_elimination
         self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
+        self.dead_functions_removed: int = 0
         # Switch statement context
         self._switch_cases: list[tuple[int, str]] = []
         self._switch_default: str | None = None
 
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
-        # Build call graph and allocate shared storage if enabled
-        if self.enable_shared_storage:
+        # Build call graph for optimizations
+        needs_call_graph = self.enable_shared_storage or self.enable_dead_elimination
+        if needs_call_graph:
             self.call_graph_analyzer = CallGraphAnalyzer()
             self.call_graph_analyzer.build_call_graph(unit)
+
+        # Dead function elimination
+        if self.enable_dead_elimination and self.call_graph_analyzer:
+            original_count = sum(1 for d in unit.declarations
+                                if isinstance(d, ast.FunctionDecl) and d.body)
+            unit = self.call_graph_analyzer.eliminate_dead_functions(unit)
+            new_count = sum(1 for d in unit.declarations
+                           if isinstance(d, ast.FunctionDecl) and d.body)
+            self.dead_functions_removed = original_count - new_count
+
+            # Rebuild call graph after elimination for accurate shared storage
+            if self.enable_shared_storage and self.dead_functions_removed > 0:
+                self.call_graph_analyzer = CallGraphAnalyzer()
+                self.call_graph_analyzer.build_call_graph(unit)
+
+        # Shared storage allocation
+        if self.enable_shared_storage and self.call_graph_analyzer:
             self.call_graph_analyzer.compute_active_together()
             self.call_graph_analyzer.allocate_shared_storage()
 
@@ -3083,7 +3174,8 @@ class CodeGenerator:
 
 
 def generate(unit: ast.TranslationUnit, module_name: str = "main",
-             enable_shared_storage: bool = True) -> str:
+             enable_shared_storage: bool = True,
+             enable_dead_elimination: bool = True) -> str:
     """Generate Z80 assembly for a translation unit."""
-    gen = CodeGenerator(module_name, enable_shared_storage)
+    gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination)
     return gen.generate(unit)
