@@ -36,7 +36,11 @@ class RuntimeLibrary:
         self._parse_assembly(content)
 
     def _parse_assembly(self, content: str) -> None:
-        """Parse assembly content into individual functions."""
+        """Parse assembly content into individual functions.
+
+        Each function is identified by a PUBLIC declaration followed by its label.
+        A new function begins when we see a label that was declared PUBLIC.
+        """
         lines = content.splitlines()
 
         current_func: str | None = None
@@ -45,13 +49,15 @@ class RuntimeLibrary:
         current_externs: set[str] = set()
         in_dseg = False
         dseg_lines: list[str] = []
+        pending_publics: set[str] = set()  # PUBLIC declarations not yet matched to labels
 
-        # Track all PUBLIC labels to identify function boundaries
+        # First pass: collect all PUBLIC labels
         all_publics: set[str] = set()
         for line in lines:
-            match = re.match(r'\s*PUBLIC\s+(\w+)', line, re.IGNORECASE)
+            match = re.match(r'\s*PUBLIC\s+([^\s,]+(?:\s*,\s*[^\s,]+)*)', line, re.IGNORECASE)
             if match:
-                all_publics.add(match.group(1))
+                labels = [l.strip() for l in match.group(1).split(',')]
+                all_publics.update(labels)
 
         for line in lines:
             stripped = line.strip()
@@ -65,6 +71,8 @@ class RuntimeLibrary:
                                        current_publics, current_externs, all_publics)
                 current_func = None
                 current_lines = []
+                current_publics = set()
+                pending_publics = set()
                 continue
             elif upper == 'CSEG':
                 in_dseg = False
@@ -79,38 +87,57 @@ class RuntimeLibrary:
                 continue
 
             # Check for PUBLIC declaration
-            match = re.match(r'\s*PUBLIC\s+(\w+)', line, re.IGNORECASE)
+            match = re.match(r'\s*PUBLIC\s+([^\s,]+(?:\s*,\s*[^\s,]+)*)', line, re.IGNORECASE)
             if match:
-                label = match.group(1)
-                if current_func is None:
-                    # Start of a new function
-                    current_func = label
-                    current_publics = {label}
-                    current_lines = [line]
-                else:
-                    # Additional PUBLIC in same function
-                    current_publics.add(label)
+                labels = [l.strip() for l in match.group(1).split(',')]
+
+                # If any of these labels are different from the current function,
+                # this might be the start of a new function section
+                new_func_labels = [l for l in labels if l in all_publics and l != current_func]
+                if new_func_labels and current_func is not None:
+                    # Save current function before starting to collect for new one
+                    if current_lines:
+                        self._save_function(current_func, current_lines,
+                                           current_publics, current_externs, all_publics)
+                    current_func = None
+                    current_lines = []
+                    current_publics = set()
+                    current_externs = set()
+
+                # These are pending until we see their labels
+                pending_publics.update(labels)
+                if current_func is not None:
                     current_lines.append(line)
                 continue
 
             # Check for EXTRN declaration
             match = re.match(r'\s*EXTRN\s+(\w+)', line, re.IGNORECASE)
             if match:
-                current_externs.add(match.group(1))
-                current_lines.append(line)
+                if current_func is not None:
+                    current_externs.add(match.group(1))
+                    current_lines.append(line)
                 continue
 
-            # Check for label that matches a PUBLIC (function boundary)
+            # Check for label
             match = re.match(r'^(\w+):', line)
             if match:
                 label = match.group(1)
-                if label in all_publics and label != current_func:
-                    # New function starts
+
+                # Is this a PUBLIC label (start of a new function)?
+                if label in all_publics:
+                    # Save previous function if any
                     if current_func and current_lines:
                         self._save_function(current_func, current_lines,
                                            current_publics, current_externs, all_publics)
+
+                    # Start new function
                     current_func = label
                     current_publics = {label}
+                    # Add any other pending publics that belong to this function
+                    # (multiple PUBLIC declarations before the label)
+                    for pub in list(pending_publics):
+                        if pub == label:
+                            pending_publics.discard(pub)
                     current_externs = set()
                     current_lines = [line]
                     continue
@@ -203,12 +230,67 @@ class RuntimeLibrary:
         return result
 
     def get_data_section(self, functions: list[AsmFunction]) -> str:
-        """Get DSEG content needed for the given functions."""
-        # For now, return all DSEG content if any functions use runtime
-        # A more sophisticated approach would track which data each function needs
-        if functions and self.data_sections:
-            return '\n'.join(self.data_sections)
-        return ''
+        """Get DSEG content needed for the given functions.
+
+        Only includes data labels that are referenced by the embedded functions.
+        """
+        if not functions or not self.data_sections:
+            return ''
+
+        # Collect all labels referenced by the embedded functions
+        referenced: set[str] = set()
+        for func in functions:
+            for line in func.source.splitlines():
+                # Skip comment lines
+                stripped = line.strip()
+                if stripped.startswith(';'):
+                    continue
+                # Remove inline comments
+                if ';' in line:
+                    line = line[:line.index(';')]
+                # Look for references to labels (in LD, CALL, etc.)
+                # Match patterns like (__label), label, etc.
+                matches = re.findall(r'\b(__\w+)\b', line)
+                referenced.update(matches)
+
+        # Parse DSEG into blocks and only include referenced ones
+        result_lines: list[str] = []
+        current_label: str | None = None
+        current_block: list[str] = []
+        in_block = False
+
+        for line in self.data_sections:
+            stripped = line.strip()
+
+            # Check for label definition
+            match = re.match(r'^(\w+):', stripped)
+            if match:
+                # Save previous block if referenced
+                if current_label and current_label in referenced:
+                    result_lines.extend(current_block)
+
+                current_label = match.group(1)
+                current_block = [line]
+                in_block = True
+                continue
+
+            # Check for PUBLIC declaration - include if any of its labels are referenced
+            match = re.match(r'\s*PUBLIC\s+(.+)', stripped, re.IGNORECASE)
+            if match:
+                labels = [l.strip() for l in match.group(1).split(',')]
+                if any(l in referenced for l in labels):
+                    result_lines.append(line)
+                continue
+
+            # Regular line in current block
+            if in_block:
+                current_block.append(line)
+
+        # Save last block if referenced
+        if current_label and current_label in referenced:
+            result_lines.extend(current_block)
+
+        return '\n'.join(result_lines)
 
 
 def load_runtime_library() -> RuntimeLibrary:

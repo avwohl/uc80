@@ -14,6 +14,7 @@ from .codegen import generate, CodeGenerator
 from . import ast as ast_module
 from .preprocessor import Preprocessor, PreprocessorError
 from .runtime import RuntimeLibrary, load_runtime_library
+from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
@@ -102,6 +103,11 @@ def main() -> int:
         "--runtime-lib",
         metavar="FILE",
         help="Runtime library .mac file (default: lib/runtime.mac)"
+    )
+    parser.add_argument(
+        "--no-asm-dce",
+        action="store_true",
+        help="Disable assembly-level dead code elimination"
     )
 
     args = parser.parse_args()
@@ -313,6 +319,18 @@ def main() -> int:
 
             if args.verbose:
                 print(f"  Appended {len(mac_files)} assembly file(s)")
+
+        # Assembly-level dead code elimination (after runtime embedding, before peephole)
+        if not args.no_asm_dce and (embed_runtime or mac_files):
+            if args.verbose:
+                print(f"  Assembly dead code elimination...")
+
+            lines_before = len(code.splitlines())
+            code = asm_eliminate_dead_code(code)
+            lines_after = len(code.splitlines())
+
+            if args.verbose and lines_before != lines_after:
+                print(f"    Removed {lines_before - lines_after} unreachable lines")
 
         # Peephole optimization (enabled by default)
         if not args.no_optimize:

@@ -1,17 +1,44 @@
-project: write a c compiler for the z80
-for the ansi c24 language
+You were working on getting the available c test suites to work and
+ran into some problems. In part it was importing the zk88dk floating point code.
 
-step 0:
-create a github depository in this directory. I already set a .gitignore.
-create with gh a private repository and push.
+1- [DONE] use of symbol eql external_symbol+offset
+This was implemented in um80_and_friends (um80.py and ul80.py):
+- um80: Symbol class extended with ext_alias_base/ext_alias_offset fields
+- um80: EQU directive now accepts external+offset expressions
+- um80: Aliased symbols used in code emit external+offset references
+- um80: PUBLIC aliased symbols emit special "NEWNAME=EXTERNAL+N" format
+- ul80: Module class has aliased_publics dict
+- ul80: resolve_aliased_publics() resolves aliases before external checking
+- Tests added in tests/test_ext_alias.py (4 tests, all passing)
 
-step 1:
-in docs/paid/ISO+IEC+9899-2024.pdf is the latest standard
-for c.  without reading it yourself and getting a loop
-convert it to text in the same directory.  We bought the standard
-but can not pass it on to anyone.  This will be an open source project
-eventually so this docs/paid/ is in git ignore.
+2-Our other compilers (../uplm80 ../uada80) handle optimizaiton of multiple
+compilation modules by listing all of them on the command line.  Given
+the target has to fit in a 64K address space this allows global optimzaiton
+of the entire program.  Also, given the lack of good baseregister+offset
+modes global analays can allow allocating static variables for routnine
+parameters and locals when the routine is not recursive.  in our ../ucow
+compiler this was used to great effect to make locals static.  Then when
+it found routines that are not live at the same time the different routines
+shared the static local space.
 
-step 2:
-read the .txt making a plan to implement it
+3-The runtime library is starting to look big and monolithic for a fitting into
+a 64k address space.  A few ideas: 1) seperate the library to many tiny .mac files
+and use ulib80 to merge them into a library that only pulls in what is needed.
+2) add something to the .mac lanaguage break the library into seperate linkable
+segments (not portable to other linkers/assembelrs) 3) given 2- above (compile all .c files at once and optimie), have our compiler pull in needed libraryes as z80 source.  Then update ./upeepz80 do global dead code optimziation (it may already do that).
 
+4- [DONE] Multi-module optimization enhancements:
+- Multi-file compilation (compile multiple .c files together)
+- Call graph analysis and shared storage allocation
+- Dead function elimination
+- Inline expansion of small functions
+- Interprocedural constant propagation
+- --whole-program mode (default: on)
+- Runtime library embedding (default: on in whole-program mode)
+- Assembly-level dead code elimination
+- .mac file inclusion in input list
+
+5- Future enhancements:
+- Assembly-level dead DATA elimination: When no fopen() calls are made,
+  FCB data structures could be eliminated. Similarly for other unused
+  data like float work areas when no float operations are used.
