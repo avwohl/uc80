@@ -187,6 +187,10 @@ class CallGraphAnalyzer:
 
     Builds a call graph and determines which functions can share automatic storage
     by identifying functions that cannot be on the call stack simultaneously.
+
+    When whole_program=True (default), assumes no other C files will be linked,
+    enabling aggressive optimizations. When False, treats all PUBLIC (non-static)
+    functions as potential entry points and is conservative about external calls.
     """
 
     call_graph: dict[str, set[str]] = field(default_factory=dict)  # func -> set of called funcs
@@ -199,6 +203,8 @@ class CallGraphAnalyzer:
     total_shared_storage: int = 0  # Total size of shared storage area
     is_variadic: dict[str, bool] = field(default_factory=dict)  # func -> is variadic
     has_body: set[str] = field(default_factory=set)  # functions with definitions (not just declarations)
+    is_static: dict[str, bool] = field(default_factory=dict)  # func -> is static (internal linkage)
+    whole_program: bool = True  # True = no other C files at link time
 
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
@@ -216,6 +222,7 @@ class CallGraphAnalyzer:
         if isinstance(decl, ast.FunctionDecl):
             self.call_graph[decl.name] = set()
             self.is_variadic[decl.name] = decl.is_variadic
+            self.is_static[decl.name] = (decl.storage_class == "static")
 
             # Build signature tuple
             ret_type = self._type_signature(decl.return_type)
@@ -417,6 +424,8 @@ class CallGraphAnalyzer:
         Two functions can be active together if:
         1. One calls the other (directly or transitively), OR
         2. Both can be called from a common ancestor
+        3. When not in whole_program mode: both are PUBLIC (external code could
+           call them on the same stack)
         """
         # For each function, compute reachable set (transitive closure)
         reachable: dict[str, set[str]] = {}
@@ -431,6 +440,14 @@ class CallGraphAnalyzer:
             for other in self.call_graph:
                 if func in reachable.get(other, set()):
                     self.can_be_active_together[func].add(other)
+
+        # When not in whole_program mode, all PUBLIC functions can be active together
+        # since external code could call any of them on the same stack
+        if not self.whole_program:
+            public_funcs = {f for f in self.call_graph
+                          if f in self.has_body and not self.is_static.get(f, False)}
+            for func in public_funcs:
+                self.can_be_active_together[func].update(public_funcs)
 
     def _get_reachable(self, func: str, visited: set[str]) -> set[str]:
         """Get all functions reachable from func via calls."""
@@ -531,7 +548,9 @@ class CallGraphAnalyzer:
 
         Args:
             entry_points: Set of entry point function names. If None, uses 'main'
-                         plus any function whose address is taken.
+                         plus any function whose address is taken. When not in
+                         whole_program mode, all PUBLIC (non-static) functions
+                         are also entry points.
 
         Returns:
             Set of function names that are reachable (live).
@@ -544,6 +563,13 @@ class CallGraphAnalyzer:
             # Functions whose addresses are taken are also entry points
             # (they could be called via function pointers)
             entry_points.update(self.address_taken)
+
+            # When not in whole_program mode, all PUBLIC functions are entry points
+            # since external code might call them
+            if not self.whole_program:
+                for func in self.call_graph:
+                    if func in self.has_body and not self.is_static.get(func, False):
+                        entry_points.add(func)
 
         live: set[str] = set()
         worklist = list(entry_points)
@@ -641,6 +667,7 @@ class CallGraphAnalyzer:
         - Not recursive
         - Not variadic
         - Address not taken (could be called indirectly)
+        - In whole_program mode OR function is static
         - Body is very small (< 4 statements) OR
           (body <= 10 statements AND called <= 2 times)
         """
@@ -661,6 +688,11 @@ class CallGraphAnalyzer:
 
         # Don't inline if address is taken (could be called via pointer)
         if func_name in self.address_taken:
+            return False
+
+        # When not in whole_program mode, don't inline PUBLIC functions
+        # (external code might call them)
+        if not self.whole_program and not self.is_static.get(func_name, False):
             return False
 
         # Count statements
@@ -1226,6 +1258,11 @@ class CallGraphAnalyzer:
             if func_name in self.address_taken:
                 continue
 
+            # When not in whole_program mode, don't propagate to PUBLIC functions
+            # (external code might pass different values)
+            if not self.whole_program and not self.is_static.get(func_name, False):
+                continue
+
             num_params = len(func.params)
             param_constants: dict[int, int] = {}
 
@@ -1553,13 +1590,14 @@ class CodeGenerator:
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
                  enable_dead_elimination: bool = True, enable_inlining: bool = True,
-                 enable_const_propagation: bool = True):
+                 enable_const_propagation: bool = True, whole_program: bool = True):
         self.module_name = module_name
         self.ctx = CodeGenContext()
         self.enable_shared_storage = enable_shared_storage
         self.enable_dead_elimination = enable_dead_elimination
         self.enable_inlining = enable_inlining
         self.enable_const_propagation = enable_const_propagation
+        self.whole_program = whole_program
         self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
         self.dead_functions_removed: int = 0
         self.inlined_calls: int = 0
@@ -1574,7 +1612,7 @@ class CodeGenerator:
         needs_call_graph = (self.enable_shared_storage or self.enable_dead_elimination or
                            self.enable_inlining or self.enable_const_propagation)
         if needs_call_graph:
-            self.call_graph_analyzer = CallGraphAnalyzer()
+            self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program)
             self.call_graph_analyzer.build_call_graph(unit)
 
         # Inline expansion (before dead elimination so inlined functions can be removed)
@@ -1582,7 +1620,7 @@ class CodeGenerator:
             unit, self.inlined_calls = self.call_graph_analyzer.inline_functions(unit)
             # Rebuild call graph after inlining
             if self.inlined_calls > 0:
-                self.call_graph_analyzer = CallGraphAnalyzer()
+                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program)
                 self.call_graph_analyzer.build_call_graph(unit)
 
         # Interprocedural constant propagation (after inlining, before dead elimination)
@@ -1590,7 +1628,7 @@ class CodeGenerator:
             unit, self.constants_propagated = self.call_graph_analyzer.propagate_constants(unit)
             # Rebuild call graph after constant propagation if any changes
             if self.constants_propagated > 0:
-                self.call_graph_analyzer = CallGraphAnalyzer()
+                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program)
                 self.call_graph_analyzer.build_call_graph(unit)
 
         # Dead function elimination
@@ -1604,7 +1642,7 @@ class CodeGenerator:
 
             # Rebuild call graph after elimination for accurate shared storage
             if self.enable_shared_storage and self.dead_functions_removed > 0:
-                self.call_graph_analyzer = CallGraphAnalyzer()
+                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program)
                 self.call_graph_analyzer.build_call_graph(unit)
 
         # Shared storage allocation
@@ -4064,8 +4102,9 @@ def generate(unit: ast.TranslationUnit, module_name: str = "main",
              enable_shared_storage: bool = True,
              enable_dead_elimination: bool = True,
              enable_inlining: bool = True,
-             enable_const_propagation: bool = True) -> str:
+             enable_const_propagation: bool = True,
+             whole_program: bool = True) -> str:
     """Generate Z80 assembly for a translation unit."""
     gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
-                       enable_inlining, enable_const_propagation)
+                       enable_inlining, enable_const_propagation, whole_program)
     return gen.generate(unit)

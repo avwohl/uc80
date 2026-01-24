@@ -87,6 +87,11 @@ def main() -> int:
         action="store_true",
         help="Disable interprocedural constant propagation"
     )
+    parser.add_argument(
+        "--no-whole-program",
+        action="store_true",
+        help="Assume other C files may be linked (disables some optimizations on PUBLIC functions)"
+    )
 
     args = parser.parse_args()
 
@@ -192,9 +197,10 @@ def main() -> int:
         enable_dead_elimination = not args.no_dead_elimination
         enable_inlining = not args.no_inlining
         enable_const_propagation = not args.no_const_propagation
+        whole_program = not args.no_whole_program
 
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
-                           enable_inlining, enable_const_propagation)
+                           enable_inlining, enable_const_propagation, whole_program)
         code = gen.generate(merged_ast)
 
         if args.verbose:

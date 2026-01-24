@@ -779,3 +779,99 @@ class TestConstantPropagation:
         assert "always_ten" in constant_params
         assert 0 in constant_params["always_ten"]
         assert constant_params["always_ten"][0] == 10
+
+
+class TestWholeProgramMode:
+    """Tests for whole_program compilation mode."""
+
+    def test_whole_program_eliminates_unused_public(self):
+        """In whole_program mode, unused PUBLIC functions are eliminated."""
+        source = """
+            void unused(void) { }
+            int main(void) { return 0; }
+        """
+        code = generate(parse(source), enable_dead_elimination=True, whole_program=True)
+        assert "PUBLIC\t_main" in code
+        assert "PUBLIC\t_unused" not in code
+
+    def test_no_whole_program_keeps_public(self):
+        """Without whole_program, PUBLIC functions are kept (external code might call them)."""
+        source = """
+            void unused(void) { }
+            int main(void) { return 0; }
+        """
+        code = generate(parse(source), enable_dead_elimination=True, whole_program=False)
+        assert "PUBLIC\t_main" in code
+        assert "PUBLIC\t_unused" in code  # Kept because external code might call it
+
+    def test_no_whole_program_eliminates_static(self):
+        """Without whole_program, unused static functions are still eliminated."""
+        source = """
+            static void unused(void) { }
+            int main(void) { return 0; }
+        """
+        code = generate(parse(source), enable_dead_elimination=True, whole_program=False)
+        assert "PUBLIC\t_main" in code
+        # Static functions without PUBLIC directive - check for label
+        assert "_unused:" not in code
+
+    def test_whole_program_inlines_public(self):
+        """In whole_program mode, PUBLIC trivial functions are inlined."""
+        source = """
+            int inc(int x) { return x + 1; }
+            int main(void) { return inc(5); }
+        """
+        code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True,
+                       whole_program=True)
+        # inc should be inlined and eliminated
+        assert "PUBLIC\t_inc" not in code
+
+    def test_no_whole_program_keeps_public_for_inline(self):
+        """Without whole_program, PUBLIC functions are not inlined (external might call)."""
+        source = """
+            int inc(int x) { return x + 1; }
+            int main(void) { return inc(5); }
+        """
+        code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True,
+                       whole_program=False)
+        # inc should NOT be inlined - kept for external callers
+        assert "PUBLIC\t_inc" in code
+
+    def test_no_whole_program_inlines_static(self):
+        """Without whole_program, static functions can still be inlined."""
+        source = """
+            static int inc(int x) { return x + 1; }
+            int main(void) { return inc(5); }
+        """
+        code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True,
+                       whole_program=False)
+        # Static function can be inlined even without whole_program
+        assert "_inc:" not in code
+
+    def test_no_whole_program_no_const_propagation_to_public(self):
+        """Without whole_program, constants are not propagated to PUBLIC functions."""
+        source = """
+            int foo(int x) { return x + 1; }
+            int main(void) { return foo(5) + foo(5); }
+        """
+        gen = CodeGenerator("test", enable_const_propagation=True,
+                           enable_inlining=False, enable_dead_elimination=False,
+                           whole_program=False)
+        unit = parse(source)
+        gen.generate(unit)
+        # foo is PUBLIC, so constants should NOT be propagated
+        assert gen.constants_propagated == 0
+
+    def test_no_whole_program_propagates_to_static(self):
+        """Without whole_program, constants can still be propagated to static functions."""
+        source = """
+            static int foo(int x) { return x + 1; }
+            int main(void) { return foo(5) + foo(5); }
+        """
+        gen = CodeGenerator("test", enable_const_propagation=True,
+                           enable_inlining=False, enable_dead_elimination=False,
+                           whole_program=False)
+        unit = parse(source)
+        gen.generate(unit)
+        # foo is static, so constants CAN be propagated
+        assert gen.constants_propagated >= 1
