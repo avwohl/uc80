@@ -47,11 +47,11 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
 
 6- [DONE] c-testsuite validation (00001-00220):
 - Total: 220 tests
-- PASS: 189/220 (86%)
+- PASS: 190/220 (86%)
 - Compile fail: 6 tests (unsupported language features)
 - ASM fail: 4 tests (need float library)
-- Link fail: 7 tests (need libc: strcat, strcpy, sprintf, etc.)
-- Output mismatch: 14 tests (32-bit overflow, float conversion, printf formats)
+- Link fail: 7 tests (need libc: strlen, calloc, strchr, strcpy, sprintf, fclose, fprintf, memset)
+- Output mismatch: 13 tests (32-bit overflow, float conversion, printf formats, VLA, bit-fields)
 - Bug fixes made during testing:
   * Fixed _is_complex_expr duplicate causing function calls to use complex math
   * Fixed dead data elimination to trace data-to-data references
@@ -66,9 +66,16 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
   * Fixed asm_dce to recognize conditional RET/JP/JR (RET Z was seen as unconditional)
   * Fixed sizeof(expr) to compute actual type size instead of assuming int
   * Fixed inline struct registration (struct ziggy {...} var; now works)
+  * Added local array initialization with initializer lists
+  * Store function parameter types in symbol table (FunctionType vs just return type)
+  * Added float-to-int conversion for function arguments and variable initialization
 
 7- Future enhancements:
 - Continue c-testsuite validation (00300+)
 - z88dk test suite integration
 - Floating point library integration (z88dk math48)
-- Additional libc functions (strcat, strcpy, sprintf, etc.)
+- Additional libc functions (strlen, calloc, strchr, strcpy, sprintf, fclose, fprintf, memset)
+- Printf width/precision specifiers (%.Ns, %04X, etc.)
+- Variable-length arrays (VLA)
+- Bit-field support improvements
+- 32-bit arithmetic overflow handling
