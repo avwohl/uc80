@@ -3364,6 +3364,14 @@ class CodeGenerator:
             # Pointer dereference
             self.gen_expr(expr.operand)  # Get address in HL
 
+            # Check if we're dereferencing a function pointer
+            # Dereferencing a function pointer is a no-op (functions decay to pointers)
+            operand_type = self._get_expr_type(expr.operand)
+            if isinstance(operand_type, ast.PointerType):
+                if isinstance(operand_type.base_type, ast.FunctionType):
+                    # *func_ptr is just func_ptr - no actual load needed
+                    return
+
             # Determine size of dereferenced type
             deref_size = self._get_deref_size(expr.operand)
 
