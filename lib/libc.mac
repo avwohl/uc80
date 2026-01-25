@@ -3524,32 +3524,70 @@ _prt_div16_dn:
 	RET
 
 ; ============================================================
-; Internal: print HL as 4-digit hex
+; Internal: print HL as hex (no leading zeros)
 ; ============================================================
 _prt_hex:
 	PUSH	BC
+	LD	B,0		; B=1 means we've printed a non-zero digit
 	LD	A,H
-	CALL	_prt_hex2
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_prt_hexd
+	LD	A,H
+	AND	0FH
+	CALL	_prt_hexd
 	LD	A,L
-	CALL	_prt_hex2
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_prt_hexd
+	LD	A,L
+	AND	0FH
+	; Always print last digit
+	OR	A
+	JR	NZ,_prt_hexf
+	LD	A,B
+	OR	A
+	JR	NZ,_prt_hexf
+	; Value is 0, print single '0'
+	LD	A,'0'
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
 	POP	BC
 	RET
-
-_prt_hex2:
-	PUSH	AF
-	RRCA
-	RRCA
-	RRCA
-	RRCA
-	CALL	_prt_hex1
-	POP	AF
-_prt_hex1:
-	AND	0FH
+_prt_hexf:
+	LD	B,1		; Mark we've printed
 	ADD	A,'0'
 	CP	'9'+1
-	JR	C,_prt_hex_out
+	JR	C,_prt_hex_o2
+	ADD	A,7
+_prt_hex_o2:
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	RET
+; Helper: print hex digit if non-zero or already printed
+_prt_hexd:
+	OR	A
+	JR	NZ,_prt_hexd1
+	LD	A,B
+	OR	A
+	RET	Z		; Skip leading zeros
+	XOR	A		; Print '0' if we've started
+_prt_hexd1:
+	LD	B,1		; Mark we've printed
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_prt_hexd2
 	ADD	A,7		; 'A' - '0' - 10
-_prt_hex_out:
+_prt_hexd2:
 	LD	E,A
 	PUSH	BC
 	LD	C,CONOUT

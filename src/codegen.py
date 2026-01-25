@@ -4484,6 +4484,12 @@ class CodeGenerator:
                     sym = self.ctx.lookup(expr.operand.name)
                     if sym:
                         return self._type_size(sym.sym_type)
+            # For p++ or p--, the type is the same as p
+            elif expr.op in ("++", "--"):
+                return self._get_deref_size(expr.operand)
+            # For *p, look through to get p's type
+            elif expr.op == "*":
+                return self._get_deref_size(expr.operand)
 
         elif isinstance(expr, ast.Cast):
             # Use the cast target type
@@ -4671,9 +4677,14 @@ class CodeGenerator:
                 value_index += 1
                 self._emit_initializer(val, member_type)
             elif isinstance(member_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
-                # Flat array init
-                consumed = self._emit_array_init_flat(values, value_index, member_type)
-                value_index += consumed
+                # Check for string literal initializing char array
+                if isinstance(val, ast.StringLiteral) and self._is_char_array(member_type):
+                    value_index += 1
+                    self._emit_string_for_array(val, member_type)
+                else:
+                    # Flat array init
+                    consumed = self._emit_array_init_flat(values, value_index, member_type)
+                    value_index += consumed
             elif isinstance(member_type, ast.StructType) and not isinstance(val, ast.InitializerList):
                 # Flat nested struct init
                 if member_type.name and member_type.name in self.ctx.structs:
@@ -4729,6 +4740,26 @@ class CodeGenerator:
                 self._emit_initializer(val, elem_type)
 
         return consumed
+
+    def _emit_string_for_array(self, string_lit: ast.StringLiteral, array_type: ast.ArrayType) -> None:
+        """Emit a string literal to fill a char array, with proper padding."""
+        array_size = 1
+        if array_type.size and isinstance(array_type.size, ast.IntLiteral):
+            array_size = array_type.size.value
+
+        string_val = string_lit.value
+        escaped = self._escape_string(string_val)
+
+        # Emit the string with null terminator
+        self.ctx.emit_instr("DB", f"'{escaped}',0")
+
+        # String length including null
+        string_len = len(string_val) + 1
+
+        # Pad remaining bytes with zeros
+        remaining = array_size - string_len
+        if remaining > 0:
+            self.ctx.emit_instr("DS", str(remaining))
 
     def _emit_int_value(self, value: int, size: int) -> None:
         """Emit an integer value with the specified size."""
