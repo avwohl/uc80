@@ -76,7 +76,13 @@ def run_test(c_file: Path, verbose: bool = False, test_num: str = "") -> tuple[s
     mac_file = Path("/tmp") / c_file.with_suffix(".mac").name
     rel_file = mac_file.with_suffix(".rel")
     com_file = mac_file.with_suffix(".com")
-    expected_file = c_file.with_suffix(".c.expected")
+
+    # Check for Z80-specific expected file first, then fall back to original
+    z80_expected = Z80_DIR / f"{test_num}.c.expected" if test_num else None
+    if z80_expected and z80_expected.exists():
+        expected_file = z80_expected
+    else:
+        expected_file = c_file.with_suffix(".c.expected")
 
     # Compile - use --no-whole-program to avoid ul80 linker bug with DSEG relocations
     result = subprocess.run(
