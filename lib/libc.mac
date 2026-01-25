@@ -625,6 +625,9 @@ _fgetc_nobuf:
 	LD	D,0
 	ADD	HL,DE		; HL = buffer[bufpos]
 	LD	A,(HL)
+	; Check for Ctrl-Z (CP/M EOF marker)
+	CP	1AH
+	JR	Z,_fgetc_seteof
 	LD	E,A		; Save char
 
 	; Increment bufpos
@@ -633,6 +636,11 @@ _fgetc_nobuf:
 	LD	BC,FILE_BUFPOS
 	ADD	HL,BC
 	INC	(HL)
+
+	; Skip CR characters for Unix text compatibility
+	LD	A,E
+	CP	0DH
+	JP	Z,_fgetc_nobuf	; Skip CR, get next char
 
 	POP	HL
 	LD	L,E
@@ -679,6 +687,9 @@ _fgetc_refill:
 	LD	DE,FILE_BUFFER
 	ADD	HL,DE
 	LD	A,(HL)
+	; Check for Ctrl-Z (CP/M EOF marker)
+	CP	1AH
+	JR	Z,_fgetc_seteof
 	LD	E,A
 
 	; Increment bufpos
@@ -687,6 +698,11 @@ _fgetc_refill:
 	LD	BC,FILE_BUFPOS
 	ADD	HL,BC
 	INC	(HL)
+
+	; Skip CR characters for Unix text compatibility
+	LD	A,E
+	CP	0DH
+	JP	Z,_fgetc_nobuf	; Skip CR, get next char
 
 	POP	HL
 	LD	L,E
