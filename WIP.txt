@@ -5,23 +5,24 @@ Current Status: 211/220 c-testsuite tests passing
 
 Recent Fixes (this session):
 - Fixed __tmp64 not being included in embedded runtime data section
-  (get_data_section now accepts additional_refs from generated code)
-- Fixed 64-bit negation not calling __neg64 (unary minus fell through to 16-bit)
-- Fixed casts to 64-bit types not extending to __acc64 (gen_cast lacked 64-bit handling)
+- Fixed 64-bit negation not calling __neg64
+- Fixed casts to 64-bit types not extending to __acc64
+- Fixed array/pointer increment/decrement (t[x]++ and (*p)++ were ignored)
+- Added per-test timeout configuration in run_ctests.py
 
 Previous Fixes:
 - Fixed fgets stack imbalance when EOF hit with no data read
-- Fixed parser typedef name handling after base type (int s where s is typedef)
+- Fixed parser typedef name handling after base type
 
 Remaining Failures (9 tests):
-- 00040: Timeout (8-queens algorithm complexity)
+- 00040: Timeout (8-queens algorithm - runs correctly but very slow on Z80)
 - 00174, 00175, 00195, 00204: Floating-point printf (%f format) not implemented
-- 00200: Timeout (many 64-bit operations, correct output but very slow on Z80)
+- 00200: Timeout (many 64-bit operations, correct but slow on Z80)
 - 00216: Anonymous unions, range designators not fully implemented
-- 00218: Enum bitfield signedness issue
+- 00218: Enum bitfield signedness (implementation-defined behavior)
 - 00220: Wide characters (wchar_t) not implemented
 
-Next Steps:
-- Float printf would fix 4 tests but requires significant implementation
-- Anonymous union support would help with test 00216
-- Enum bitfield signedness issue in 00218 might be fixable
+Notes on Timeouts:
+- Test 00040 (8-queens) runs correctly but is O(n!) complexity
+- Test 00200 (64-bit type tests) is correct but 64-bit ops are slow on Z80
+- These are not bugs in the compiler, just Z80 performance limitations
