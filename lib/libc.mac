@@ -6748,8 +6748,63 @@ _sprintf_format:
 	CP	'%'
 	JR	Z,_sprintf_pct
 
+	; Initialize width and zero-flag
+	PUSH	AF		; Save current char
+	XOR	A
+	LD	(_sprintf_width),A
+	LD	(_sprintf_zero),A
+	POP	AF		; Restore current char
+
 _sprintf_fmt2:
-	; Skip flags: -, +, space, #, 0
+	; Check for zero-padding flag (only at start)
+	CP	'0'
+	JR	NZ,_sprintf_chk_dig
+	; Check if we haven't started parsing width yet
+	LD	A,(_sprintf_width)
+	OR	A
+	JR	NZ,_sprintf_is_digit	; Already have width, this is a digit
+	; This is the zero-padding flag
+	LD	A,1
+	LD	(_sprintf_zero),A
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+	JR	_sprintf_fmt2
+
+_sprintf_chk_dig:
+	; Check for digit (1-9 first, then 0-9)
+	CP	'1'
+	JR	C,_sprintf_nodig
+	CP	'9'+1
+	JR	NC,_sprintf_nodig
+_sprintf_is_digit:
+	; Parse width digit: width = width * 10 + digit
+	SUB	'0'
+	PUSH	BC
+	LD	B,A		; B = new digit
+	LD	A,(_sprintf_width)
+	; A = A * 10
+	LD	C,A
+	ADD	A,A		; A * 2
+	ADD	A,A		; A * 4
+	ADD	A,C		; A * 5
+	ADD	A,A		; A * 10
+	ADD	A,B		; A * 10 + digit
+	LD	(_sprintf_width),A
+	POP	BC
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+	; Continue parsing - might be another digit
+	CP	'0'
+	JR	C,_sprintf_nodig
+	CP	'9'+1
+	JR	C,_sprintf_is_digit
+
+_sprintf_nodig:
+	; Skip flags: -, +, space, #
 	CP	'-'
 	JR	Z,_sprintf_fskip
 	CP	'+'
@@ -6758,14 +6813,6 @@ _sprintf_fmt2:
 	JR	Z,_sprintf_fskip
 	CP	'#'
 	JR	Z,_sprintf_fskip
-	CP	'0'
-	JR	Z,_sprintf_fskip
-	; Skip field width digits
-	CP	'1'
-	JR	C,_sprintf_nodig
-	CP	'9'+1
-	JR	C,_sprintf_fskip
-_sprintf_nodig:
 	; Skip precision
 	CP	'.'
 	JR	Z,_sprintf_fskip
@@ -6971,7 +7018,7 @@ _sprintf_putc:
 	POP	HL
 	RET
 
-; Internal: print HL as decimal to buffer
+; Internal: print HL as decimal to buffer with optional width padding
 _sprintf_prt_dec:
 	PUSH	BC
 	PUSH	DE
@@ -6987,6 +7034,30 @@ _sprintf_dec_loop:
 	LD	A,H
 	OR	L
 	JR	NZ,_sprintf_dec_loop
+
+	; B = digit count, check if we need padding
+	LD	A,(_sprintf_width)
+	OR	A
+	JR	Z,_sprintf_dec_out	; No width specified
+
+	; Calculate padding needed: width - digit_count
+	SUB	B		; A = width - digit_count
+	JR	Z,_sprintf_dec_out	; No padding needed
+	JR	C,_sprintf_dec_out	; Digit count > width, no padding
+
+	; A = number of padding chars needed
+	PUSH	BC		; Save digit count
+	LD	B,A		; B = padding count
+	LD	A,(_sprintf_zero)
+	OR	A
+	LD	A,' '		; Default pad with space
+	JR	Z,_sprintf_pad_lp
+	LD	A,'0'		; Pad with zero
+
+_sprintf_pad_lp:
+	CALL	_sprintf_putc
+	DJNZ	_sprintf_pad_lp
+	POP	BC		; Restore digit count
 
 	; Pop and output digits
 _sprintf_dec_out:
@@ -11584,6 +11655,8 @@ _assert_msg:	DB	'Assert: ',0
 ; sprintf working storage
 _sprintf_out:	DS	2	; Current output pointer
 _sprintf_cnt:	DS	2	; Character count
+_sprintf_width:	DS	1	; Field width (0 = no width)
+_sprintf_zero:	DS	1	; Zero-padding flag (non-zero = pad with '0')
 
 ; snprintf working storage
 _snprintf_out:	DS	2	; Current output pointer

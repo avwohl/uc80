@@ -305,6 +305,8 @@ class CallGraphAnalyzer:
                 return 2
             elif name in ("long", "float", "double"):
                 return 4
+            elif name == "long long":
+                return 8  # 64-bit
             elif name == "void":
                 return 0
             return 2
@@ -1645,6 +1647,68 @@ class CodeGenerator:
         self._switch_cases: list[tuple[int, str]] = []
         self._switch_default: str | None = None
 
+    def _infer_array_size(self, var_type: ast.TypeNode,
+                          init: ast.Expression | None) -> ast.TypeNode:
+        """Infer array size from initializer for unsized arrays."""
+        if not isinstance(var_type, ast.ArrayType):
+            return var_type
+        if var_type.size is not None:
+            return var_type
+        if not isinstance(init, ast.InitializerList):
+            return var_type
+
+        # Count elements in initializer
+        base_type = var_type.base_type
+        if isinstance(base_type, ast.StructType):
+            # Struct array with flat init - count struct elements
+            flat_count = self._count_struct_init_values(base_type)
+            if flat_count > 0:
+                array_size = (len(init.values) + flat_count - 1) // flat_count
+            else:
+                array_size = len(init.values)
+        else:
+            array_size = len(init.values)
+
+        # Create new ArrayType with inferred size
+        return ast.ArrayType(
+            base_type=base_type,
+            size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
+        )
+
+    def _count_struct_init_values(self, struct_type: ast.StructType) -> int:
+        """Count flat values needed to init a struct (for size inference)."""
+        # Get members from inline definition or registered structs
+        if struct_type.members:
+            members = struct_type.members
+        elif struct_type.name and struct_type.name in self.ctx.structs:
+            # Convert registered format to member format
+            registered = self.ctx.structs[struct_type.name]
+            count = 0
+            for name, member_type, offset in registered:
+                count += self._count_member_init_values(member_type)
+            return count
+        else:
+            return 1
+
+        count = 0
+        for m in members:
+            count += self._count_member_init_values(m.member_type)
+        return count
+
+    def _count_member_init_values(self, member_type: ast.TypeNode) -> int:
+        """Count flat values for a member type."""
+        if isinstance(member_type, ast.ArrayType):
+            array_size = 1
+            if member_type.size and isinstance(member_type.size, ast.IntLiteral):
+                array_size = member_type.size.value
+            base_type = member_type.base_type
+            if isinstance(base_type, ast.StructType):
+                return array_size * self._count_struct_init_values(base_type)
+            return array_size
+        elif isinstance(member_type, ast.StructType):
+            return self._count_struct_init_values(member_type)
+        return 1
+
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
         # Build call graph for optimizations
@@ -1713,17 +1777,19 @@ class CodeGenerator:
                 )
                 self.ctx.function_names.add(decl.name)
             elif isinstance(decl, ast.VarDecl):
+                var_type = self._infer_array_size(decl.var_type, decl.init)
                 self.ctx.globals[decl.name] = Symbol(
                     name=decl.name,
-                    sym_type=decl.var_type,
+                    sym_type=var_type,
                     is_global=True
                 )
             elif isinstance(decl, ast.DeclarationList):
                 for d in decl.declarations:
                     if isinstance(d, ast.VarDecl):
+                        var_type = self._infer_array_size(d.var_type, d.init)
                         self.ctx.globals[d.name] = Symbol(
                             name=d.name,
-                            sym_type=d.var_type,
+                            sym_type=var_type,
                             is_global=True
                         )
 
@@ -1792,11 +1858,14 @@ class CodeGenerator:
             self.ctx.emit("; Global variables")
             self.ctx.emit("\tDSEG")
             for name, decl in global_vars.items():
-                size = self._type_size(decl.var_type)
+                # Use the inferred type from the Symbol (which has array size from initializer)
+                sym = self.ctx.globals.get(name)
+                var_type = sym.sym_type if sym else decl.var_type
+                size = self._type_size(var_type)
                 self.ctx.emit_label(f"_{decl.name}")
                 if decl.init:
                     # Initialized global variable - use helper to emit data
-                    self._emit_initializer(decl.init, decl.var_type)
+                    self._emit_initializer(decl.init, var_type)
                 else:
                     # Uninitialized global - just reserve space
                     self.ctx.emit_instr("DS", str(size))
@@ -2120,8 +2189,9 @@ class CodeGenerator:
                     self._gen_struct_copy_from_expr(decl)
                 else:
                     is_long = self._is_long_type(decl.var_type)
+                    is_long_long = self._is_long_long_type(decl.var_type)
                     init_is_float = self._is_float_expr(decl.init)
-                    target_is_int = not self._is_float_type(decl.var_type) and not is_long
+                    target_is_int = not self._is_float_type(decl.var_type) and not is_long and not is_long_long
 
                     # Handle float-to-int conversion
                     if init_is_float and target_is_int:
@@ -2133,6 +2203,9 @@ class CodeGenerator:
                             # Runtime conversion
                             self.gen_expr(decl.init, force_long=True)
                             self._call_runtime("__ftoi")
+                    elif is_long_long:
+                        # 64-bit initialization
+                        self._gen_64bit_operand(decl.init, to_tmp=False)
                     else:
                         self.gen_expr(decl.init, force_long=is_long)
 
@@ -2142,7 +2215,9 @@ class CodeGenerator:
                             self._extend_hl_to_dehl(is_signed)
 
                     sym = self.ctx.locals[decl.name]
-                    if is_long:
+                    if is_long_long:
+                        self._store_local_64(sym)
+                    elif is_long:
                         self._store_local_32(sym)
                     else:
                         self._store_local(sym)
@@ -3189,6 +3264,13 @@ class CodeGenerator:
             self._gen_binary_op_float(expr, op)
             return
 
+        # Check if this is a 64-bit operation
+        is_long_long = self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right)
+
+        if is_long_long:
+            self._gen_binary_op_64(expr, op)
+            return
+
         # Check if this is a 32-bit operation
         is_long = self._is_long_expr(expr.left) or self._is_long_expr(expr.right)
 
@@ -3441,6 +3523,219 @@ class CodeGenerator:
         self.ctx.emit_label(end_label)
         # Clear DE for 16-bit result
         self.ctx.emit_instr("LD", "DE,0")
+
+    def _gen_binary_op_64(self, expr: ast.BinaryOp, op: str) -> None:
+        """Generate 64-bit binary operation. Result in __acc64."""
+        # For 64-bit: right operand goes to __tmp64, left to __acc64, call runtime
+        # Mark both 64-bit storage variables as used for EXTRN declarations
+        self.ctx.runtime_used.add("__acc64")
+        self.ctx.runtime_used.add("__tmp64")
+
+        # Generate right operand first and store to __tmp64
+        left_is_ll = self._is_long_long_expr(expr.left)
+        right_is_ll = self._is_long_long_expr(expr.right)
+
+        self._gen_64bit_operand(expr.right, to_tmp=True)
+
+        # Generate left operand to __acc64
+        self._gen_64bit_operand(expr.left, to_tmp=False)
+
+        # Now: left in __acc64, right in __tmp64
+        if op == "+":
+            self._call_runtime("__add64")
+        elif op == "-":
+            self._call_runtime("__sub64")
+        elif op == "*":
+            self._call_runtime("__mul64")
+        elif op == "/":
+            # 64-bit division not implemented - would need complex routine
+            self.ctx.emit("; WARNING: 64-bit division not implemented")
+        elif op == "%":
+            # 64-bit modulo not implemented
+            self.ctx.emit("; WARNING: 64-bit modulo not implemented")
+        elif op == "&":
+            self._call_runtime("__and64")
+        elif op == "|":
+            self._call_runtime("__or64")
+        elif op == "^":
+            self._call_runtime("__xor64")
+        elif op == "<<":
+            # Shift amount in A (low byte of __tmp64)
+            self.ctx.emit_instr("LD", "A,(__tmp64)")
+            self._call_runtime("__shl64")
+        elif op == ">>":
+            self.ctx.emit_instr("LD", "A,(__tmp64)")
+            is_unsigned = self._is_unsigned_expr(expr.left)
+            if is_unsigned:
+                self._call_runtime("__shr64")
+            else:
+                self._call_runtime("__sar64")
+        elif op in ("==", "!=", "<", ">", "<=", ">="):
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            self._gen_comparison_64(op, is_unsigned)
+        elif op == ",":
+            pass  # Result is already in __acc64
+
+        # For comparison result is in HL, otherwise load result from __acc64 to DEHL
+        if op not in ("==", "!=", "<", ">", "<=", ">="):
+            # Load lower 32 bits of result to DEHL for compatibility
+            self.ctx.emit_instr("LD", "HL,(__acc64)")
+            self.ctx.emit_instr("LD", "DE,(__acc64+2)")
+
+    def _gen_64bit_operand(self, expr: ast.Expression, to_tmp: bool) -> None:
+        """Generate a 64-bit operand, storing to __acc64 or __tmp64."""
+        target = "__tmp64" if to_tmp else "__acc64"
+
+        if self._is_long_long_expr(expr):
+            # Already 64-bit - generate and store
+            if isinstance(expr, ast.IntLiteral):
+                # Large literal - emit directly
+                val = expr.value & 0xFFFFFFFFFFFFFFFF
+                self.ctx.emit_instr("LD", f"HL,{val & 0xFFFF}")
+                self.ctx.emit_instr("LD", f"({target}),HL")
+                self.ctx.emit_instr("LD", f"HL,{(val >> 16) & 0xFFFF}")
+                self.ctx.emit_instr("LD", f"({target}+2),HL")
+                self.ctx.emit_instr("LD", f"HL,{(val >> 32) & 0xFFFF}")
+                self.ctx.emit_instr("LD", f"({target}+4),HL")
+                self.ctx.emit_instr("LD", f"HL,{(val >> 48) & 0xFFFF}")
+                self.ctx.emit_instr("LD", f"({target}+6),HL")
+            elif isinstance(expr, ast.Identifier):
+                # Load 64-bit variable
+                sym = self.ctx.lookup(expr.name)
+                if sym and sym.is_global:
+                    self.ctx.emit_instr("LD", f"HL,_{expr.name}")
+                    self._call_runtime("__load64")
+                    if to_tmp:
+                        # Copy from __acc64 to __tmp64
+                        self.ctx.emit_instr("LD", "HL,(__acc64)")
+                        self.ctx.emit_instr("LD", "(__tmp64),HL")
+                        self.ctx.emit_instr("LD", "HL,(__acc64+2)")
+                        self.ctx.emit_instr("LD", "(__tmp64+2),HL")
+                        self.ctx.emit_instr("LD", "HL,(__acc64+4)")
+                        self.ctx.emit_instr("LD", "(__tmp64+4),HL")
+                        self.ctx.emit_instr("LD", "HL,(__acc64+6)")
+                        self.ctx.emit_instr("LD", "(__tmp64+6),HL")
+                elif sym:
+                    # Local variable - check for shared storage
+                    if sym.uses_shared_storage:
+                        self.ctx.emit_instr("LD", f"HL,??AUTO+{sym.shared_offset}")
+                    else:
+                        offset = sym.offset
+                        self.ctx.emit_instr("LD", f"HL,{offset}")
+                        self.ctx.emit_instr("ADD", "HL,SP")
+                    self._call_runtime("__load64")
+                    if to_tmp:
+                        self.ctx.emit_instr("LD", "HL,(__acc64)")
+                        self.ctx.emit_instr("LD", "(__tmp64),HL")
+                        self.ctx.emit_instr("LD", "HL,(__acc64+2)")
+                        self.ctx.emit_instr("LD", "(__tmp64+2),HL")
+                        self.ctx.emit_instr("LD", "HL,(__acc64+4)")
+                        self.ctx.emit_instr("LD", "(__tmp64+4),HL")
+                        self.ctx.emit_instr("LD", "HL,(__acc64+6)")
+                        self.ctx.emit_instr("LD", "(__tmp64+6),HL")
+            else:
+                # Complex 64-bit expression - recursively generate
+                self.gen_expr(expr)
+                # Result should be in __acc64 for 64-bit or DEHL for 32-bit
+                if not self._is_long_long_expr(expr):
+                    # Need to extend from 32-bit
+                    is_signed = not self._is_unsigned_expr(expr)
+                    if is_signed:
+                        self._call_runtime("__sext64")
+                    else:
+                        self._call_runtime("__zext64")
+                if to_tmp:
+                    self.ctx.emit_instr("LD", "HL,(__acc64)")
+                    self.ctx.emit_instr("LD", "(__tmp64),HL")
+                    self.ctx.emit_instr("LD", "HL,(__acc64+2)")
+                    self.ctx.emit_instr("LD", "(__tmp64+2),HL")
+                    self.ctx.emit_instr("LD", "HL,(__acc64+4)")
+                    self.ctx.emit_instr("LD", "(__tmp64+4),HL")
+                    self.ctx.emit_instr("LD", "HL,(__acc64+6)")
+                    self.ctx.emit_instr("LD", "(__tmp64+6),HL")
+        else:
+            # Need to extend from smaller type
+            self.gen_expr(expr)
+            # Result in HL (16-bit) or DEHL (32-bit)
+            if self._is_long_expr(expr):
+                # 32-bit in DEHL - extend to 64-bit
+                is_signed = not self._is_unsigned_expr(expr)
+                if is_signed:
+                    self._call_runtime("__sext64")
+                else:
+                    self._call_runtime("__zext64")
+            else:
+                # 16-bit in HL - extend to 64-bit
+                is_signed = not self._is_unsigned_expr(expr)
+                if is_signed:
+                    # Sign extend HL to DEHL first
+                    self._extend_hl_to_dehl(True)
+                    self._call_runtime("__sext64")
+                else:
+                    self.ctx.emit_instr("LD", "DE,0")
+                    self._call_runtime("__zext64")
+            if to_tmp:
+                self.ctx.emit_instr("LD", "HL,(__acc64)")
+                self.ctx.emit_instr("LD", "(__tmp64),HL")
+                self.ctx.emit_instr("LD", "HL,(__acc64+2)")
+                self.ctx.emit_instr("LD", "(__tmp64+2),HL")
+                self.ctx.emit_instr("LD", "HL,(__acc64+4)")
+                self.ctx.emit_instr("LD", "(__tmp64+4),HL")
+                self.ctx.emit_instr("LD", "HL,(__acc64+6)")
+                self.ctx.emit_instr("LD", "(__tmp64+6),HL")
+
+    def _gen_comparison_64(self, op: str, is_unsigned: bool = False) -> None:
+        """Generate 64-bit comparison. Left in __acc64, right in __tmp64. Result in HL."""
+        # Use runtime comparison - returns -1, 0, or 1 in HL
+        if is_unsigned:
+            self._call_runtime("__ucmp64")
+        else:
+            self._call_runtime("__cmp64")
+
+        true_label = self.ctx.new_label("CMP64_T")
+        end_label = self.ctx.new_label("CMP64_E")
+
+        if op == "==":
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("OR", "L")
+            self.ctx.emit_instr("JR", f"Z,{true_label}")
+        elif op == "!=":
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("OR", "L")
+            self.ctx.emit_instr("JR", f"NZ,{true_label}")
+        elif op == "<":
+            # HL == -1 means less than
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("AND", "L")
+            self.ctx.emit_instr("INC", "A")  # -1 becomes 0
+            self.ctx.emit_instr("JR", f"Z,{true_label}")
+        elif op == ">=":
+            # HL >= 0 means greater or equal
+            self.ctx.emit_instr("BIT", "7,H")
+            self.ctx.emit_instr("JR", f"Z,{true_label}")
+        elif op == ">":
+            # HL == 1 means greater than
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("OR", "A")
+            self.ctx.emit_instr("JR", f"NZ,{end_label}")  # H must be 0
+            self.ctx.emit_instr("LD", "A,L")
+            self.ctx.emit_instr("DEC", "A")
+            self.ctx.emit_instr("JR", f"Z,{true_label}")
+        elif op == "<=":
+            # HL <= 0 means less or equal
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("OR", "A")
+            self.ctx.emit_instr("JR", f"NZ,{true_label}")  # Negative -> true
+            self.ctx.emit_instr("LD", "A,L")
+            self.ctx.emit_instr("OR", "A")
+            self.ctx.emit_instr("JR", f"Z,{true_label}")  # Zero -> true
+
+        # False
+        self.ctx.emit_instr("LD", "HL,0")
+        self.ctx.emit_instr("JR", end_label)
+        self.ctx.emit_label(true_label)
+        self.ctx.emit_instr("LD", "HL,1")
+        self.ctx.emit_label(end_label)
 
     def _gen_binary_op_float(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate floating-point binary operation. Result in DEHL (IEEE 754)."""
@@ -4118,8 +4413,14 @@ class CodeGenerator:
         # Generate address of the member
         self._gen_address(expr)
 
+        # Check if member is an array - arrays decay to pointers (return address, not value)
+        member_type = self._get_member_type(expr)
+        if isinstance(member_type, ast.ArrayType):
+            # Array member: address is already in HL, just return it
+            return
+
         # Determine member size and load appropriately
-        member_size = self._get_member_size(expr)
+        member_size = self._type_size(member_type) if member_type else 2
         if member_size == 1:
             self.ctx.emit_instr("LD", "L,(HL)")
             self.ctx.emit_instr("LD", "H,0")
@@ -4141,16 +4442,32 @@ class CodeGenerator:
             self.ctx.emit_instr("LD", "D,(HL)")
             self.ctx.emit_instr("EX", "DE,HL")
 
-    def _get_member_size(self, expr: ast.Member) -> int:
-        """Get the size of a struct member."""
+    def _get_member_type(self, expr: ast.Member) -> ast.TypeNode | None:
+        """Get the type of a struct member."""
         struct_type = self._get_expr_type(expr.obj)
+        # For arrow operator or array decay, get the element/base type
         if isinstance(struct_type, ast.PointerType):
             struct_type = struct_type.base_type
-        if isinstance(struct_type, ast.StructType) and struct_type.name:
-            if struct_type.name in self.ctx.structs:
+        elif isinstance(struct_type, ast.ArrayType):
+            struct_type = struct_type.base_type
+        if isinstance(struct_type, ast.StructType):
+            # Try inline members first
+            if struct_type.members:
+                for m in struct_type.members:
+                    if m.name == expr.member:
+                        return m.member_type
+            # Then try registered structs
+            if struct_type.name and struct_type.name in self.ctx.structs:
                 for name, member_type, _ in self.ctx.structs[struct_type.name]:
                     if name == expr.member:
-                        return self._type_size(member_type)
+                        return member_type
+        return None
+
+    def _get_member_size(self, expr: ast.Member) -> int:
+        """Get the size of a struct member."""
+        member_type = self._get_member_type(expr)
+        if member_type:
+            return self._type_size(member_type)
         return 2  # Default to 16-bit
 
     def _get_member_offset(self, struct_name: str, member_name: str) -> int:
@@ -4197,6 +4514,9 @@ class CodeGenerator:
                 return array_type.base_type
             elif isinstance(array_type, ast.PointerType):
                 return array_type.base_type
+        elif isinstance(expr, ast.Member):
+            # Member access: return member type
+            return self._get_member_type(expr)
         elif isinstance(expr, ast.BinaryOp):
             # For arithmetic/bitwise ops, result type is based on operand types
             # Apply C integer promotion rules: if either is long, result is long
@@ -4333,12 +4653,21 @@ class CodeGenerator:
             self.gen_expr(expr.index)
 
             # Scale index by element size
-            if elem_size == 2:
+            if elem_size == 1:
+                pass  # No scaling needed
+            elif elem_size == 2:
                 self.ctx.emit_instr("ADD", "HL,HL")  # index * 2
             elif elem_size == 4:
                 self.ctx.emit_instr("ADD", "HL,HL")  # index * 2
                 self.ctx.emit_instr("ADD", "HL,HL")  # index * 4
-            # For elem_size == 1, no scaling needed
+            elif elem_size == 8:
+                self.ctx.emit_instr("ADD", "HL,HL")  # * 2
+                self.ctx.emit_instr("ADD", "HL,HL")  # * 4
+                self.ctx.emit_instr("ADD", "HL,HL")  # * 8
+            else:
+                # Arbitrary size - use multiplication
+                self.ctx.emit_instr("LD", f"DE,{elem_size}")
+                self._call_runtime("__mul16")  # HL = HL * DE
 
             self.ctx.emit_instr("PUSH", "HL")
             self.gen_expr(expr.array)  # Get base address
@@ -4374,9 +4703,15 @@ class CodeGenerator:
         return False
 
     def _is_long_type(self, t: ast.TypeNode | None) -> bool:
-        """Check if a type is 32-bit (long)."""
+        """Check if a type is 32-bit (long but not long long)."""
         if isinstance(t, ast.BasicType):
-            return t.name in ("long", "long long")
+            return t.name == "long"
+        return False
+
+    def _is_long_long_type(self, t: ast.TypeNode | None) -> bool:
+        """Check if a type is 64-bit (long long)."""
+        if isinstance(t, ast.BasicType):
+            return t.name == "long long"
         return False
 
     def _is_float_type(self, t: ast.TypeNode | None) -> bool:
@@ -4425,14 +4760,48 @@ class CodeGenerator:
         expr_type = self._get_expr_type(expr)
         return self._is_complex_type(expr_type)
 
+    def _is_long_long_expr(self, expr: ast.Expression) -> bool:
+        """Check if an expression has 64-bit type (long long)."""
+        if isinstance(expr, ast.IntLiteral):
+            # Check for explicit LL suffix or value too large for 32-bit
+            if hasattr(expr, 'is_long_long') and expr.is_long_long:
+                return True
+            # Values too large for signed 32-bit
+            if expr.value > 2147483647 or expr.value < -2147483648:
+                return True
+            return False
+        if isinstance(expr, ast.UnaryOp):
+            if expr.op in ("-", "+", "~"):
+                return self._is_long_long_expr(expr.operand)
+            if expr.op == "!":
+                return False
+        if isinstance(expr, ast.BinaryOp):
+            if expr.op in ("==", "!=", "<", ">", "<=", ">="):
+                return False
+            if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
+                return self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right)
+        if isinstance(expr, ast.Cast):
+            return self._is_long_long_type(expr.target_type)
+        expr_type = self._get_expr_type(expr)
+        return self._is_long_long_type(expr_type)
+
     def _is_long_expr(self, expr: ast.Expression) -> bool:
-        """Check if an expression has 32-bit type."""
+        """Check if an expression has 32-bit type (long but not long long)."""
+        # First check if it's long long - if so, it's not just "long"
+        if self._is_long_long_expr(expr):
+            return False
         if isinstance(expr, ast.IntLiteral):
             # Check for explicit L suffix or value too large for signed 16-bit
             if expr.is_long:
                 return True
             # In C, decimal literals are int, long, long long (first that fits)
-            return expr.value > 32767 or expr.value < -32768
+            # But only up to 32-bit range for "long"
+            val = expr.value
+            if val > 32767 or val < -32768:
+                # Check if it fits in 32-bit
+                if val <= 2147483647 and val >= -2147483648:
+                    return True
+            return False
         if isinstance(expr, ast.UnaryOp):
             # Unary operators preserve operand size for -, +, ~
             if expr.op in ("-", "+", "~"):
@@ -4615,6 +4984,32 @@ class CodeGenerator:
             self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 2)}),E")
             self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 3)}),D")
 
+    def _store_local_64(self, sym: Symbol) -> None:
+        """Store __acc64 (64-bit) into a local variable."""
+        self.ctx.runtime_used.add("__acc64")
+        if sym.uses_shared_storage:
+            self.ctx.emit_instr("LD", "HL,(__acc64)")
+            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset}),HL")
+            self.ctx.emit_instr("LD", "HL,(__acc64+2)")
+            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset + 2}),HL")
+            self.ctx.emit_instr("LD", "HL,(__acc64+4)")
+            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset + 4}),HL")
+            self.ctx.emit_instr("LD", "HL,(__acc64+6)")
+            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset + 6}),HL")
+        else:
+            self.ctx.emit_instr("LD", "HL,(__acc64)")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 1)}),H")
+            self.ctx.emit_instr("LD", "HL,(__acc64+2)")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 2)}),L")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 3)}),H")
+            self.ctx.emit_instr("LD", "HL,(__acc64+4)")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 4)}),L")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 5)}),H")
+            self.ctx.emit_instr("LD", "HL,(__acc64+6)")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 6)}),L")
+            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 7)}),H")
+
     def _call_runtime(self, name: str) -> None:
         """Call a runtime library function."""
         self.ctx.runtime_used.add(name)
@@ -4684,6 +5079,21 @@ class CodeGenerator:
                     return self._type_size(sym.sym_type.base_type)
                 elif isinstance(sym.sym_type, ast.ArrayType):
                     return self._type_size(sym.sym_type.base_type)
+        elif isinstance(array_expr, ast.Member):
+            # Member expression like s.array or s->array
+            member_type = self._get_member_type(array_expr)
+            if member_type:
+                if isinstance(member_type, ast.ArrayType):
+                    return self._type_size(member_type.base_type)
+                elif isinstance(member_type, ast.PointerType):
+                    return self._type_size(member_type.base_type)
+        elif isinstance(array_expr, ast.Index):
+            # Nested index like arr[i][j] - get type of inner expression
+            array_type = self._get_expr_type(array_expr)
+            if isinstance(array_type, ast.ArrayType):
+                return self._type_size(array_type.base_type)
+            elif isinstance(array_type, ast.PointerType):
+                return self._type_size(array_type.base_type)
 
         # Default to 16-bit
         return 2
@@ -4721,6 +5131,8 @@ class CodeGenerator:
                 return 2
             elif name in ("long", "float", "double"):
                 return 4
+            elif name == "long long":
+                return 8  # 64-bit
             elif name == "void":
                 return 0
             return 2  # Default
@@ -4733,7 +5145,13 @@ class CodeGenerator:
                 return base_size * t.size.value
             return base_size  # Unsized array, return element size
         elif isinstance(t, ast.StructType):
-            # Look up struct definition
+            # Handle inline struct definitions with members
+            if t.members:
+                if t.is_union:
+                    return max((self._type_size(m.member_type) for m in t.members), default=0)
+                else:
+                    return sum(self._type_size(m.member_type) for m in t.members)
+            # Look up struct definition by name
             if t.name and t.name in self.ctx.structs:
                 members = self.ctx.structs[t.name]
                 if t.is_union:
@@ -4748,6 +5166,100 @@ class CodeGenerator:
             return 8  # 2 * 4 bytes
         return 2  # Default
 
+    def _get_struct_members(self, struct_type: ast.StructType) -> list:
+        """Get struct members as list of (name, type, offset) tuples.
+
+        Handles both inline struct definitions (with members) and named structs
+        (looked up in ctx.structs).
+        """
+        if struct_type.members:
+            # Inline struct definition - compute offsets from members
+            members = []
+            offset = 0
+            for m in struct_type.members:
+                if m.name:
+                    members.append((m.name, m.member_type, offset))
+                    if not struct_type.is_union:
+                        offset += self._type_size(m.member_type)
+            return members
+        elif struct_type.name and struct_type.name in self.ctx.structs:
+            return self.ctx.structs[struct_type.name]
+        return []
+
+    def _count_flat_struct_values(self, struct_type: ast.StructType) -> int:
+        """Count total scalar values needed to initialize a struct with flat init."""
+        members = self._get_struct_members(struct_type)
+        count = 0
+        for name, member_type, offset in members:
+            if isinstance(member_type, ast.ArrayType):
+                # Array member: count array elements
+                array_size = 1
+                if member_type.size and isinstance(member_type.size, ast.IntLiteral):
+                    array_size = member_type.size.value
+                base_type = member_type.base_type
+                if isinstance(base_type, ast.StructType):
+                    count += array_size * self._count_flat_struct_values(base_type)
+                else:
+                    count += array_size
+            elif isinstance(member_type, ast.StructType):
+                count += self._count_flat_struct_values(member_type)
+            else:
+                count += 1
+        return count
+
+    def _emit_array_init_flat_inline(self, values: list, start_index: int,
+                                      array_type: ast.ArrayType) -> int:
+        """Emit array initialization from flat values, handling inline struct types.
+
+        Returns number of values consumed.
+        """
+        elem_type = array_type.base_type
+        elem_size = self._type_size(elem_type)
+
+        # Get array size if known
+        array_size = 1
+        if array_type.size and isinstance(array_type.size, ast.IntLiteral):
+            array_size = array_type.size.value
+        else:
+            # Unsized array - infer from number of values remaining
+            # For struct arrays, count total flat values needed per struct
+            if isinstance(elem_type, ast.StructType):
+                flat_count = self._count_flat_struct_values(elem_type)
+                if flat_count > 0:
+                    remaining_values = len(values) - start_index
+                    array_size = (remaining_values + flat_count - 1) // flat_count
+                    array_size = max(1, array_size)
+
+        consumed = 0
+        for i in range(array_size):
+            idx = start_index + consumed
+            if idx >= len(values):
+                # No more values - zero-initialize remaining
+                self.ctx.emit_instr("DS", str(elem_size))
+                continue
+
+            val = values[idx]
+            if isinstance(val, ast.DesignatedInit):
+                val = val.value
+
+            # Handle nested types
+            if isinstance(elem_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+                members = self._get_struct_members(elem_type)
+                if members:
+                    nested_consumed = self._emit_struct_init_flat(values[idx:], members)
+                    consumed += nested_consumed
+                else:
+                    consumed += 1
+                    self._emit_initializer(val, elem_type)
+            elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+                nested_consumed = self._emit_array_init_flat_inline(values, idx, elem_type)
+                consumed += nested_consumed
+            else:
+                consumed += 1
+                self._emit_initializer(val, elem_type)
+
+        return consumed
+
     def _emit_initializer(self, init: ast.Expression, elem_type: ast.TypeNode) -> None:
         """Emit initialized data for a global variable or array element."""
         elem_size = self._type_size(elem_type)
@@ -4755,23 +5267,33 @@ class CodeGenerator:
         if isinstance(init, ast.InitializerList):
             # Handle array or struct initializer
             if isinstance(elem_type, ast.ArrayType):
-                # Array initializer - emit each element
                 base_type = elem_type.base_type
-                for val in init.values:
-                    if isinstance(val, ast.DesignatedInit):
-                        self._emit_initializer(val.value, base_type)
-                    else:
-                        self._emit_initializer(val, base_type)
-                # Pad with zeros if initializer is shorter than array size
-                if elem_type.size and isinstance(elem_type.size, ast.IntLiteral):
-                    remaining = elem_type.size.value - len(init.values)
-                    if remaining > 0:
-                        pad_size = remaining * self._type_size(base_type)
-                        self.ctx.emit_instr("DS", str(pad_size))
+                # Check if this is a flat init for array of structs
+                is_flat_struct_init = (
+                    isinstance(base_type, ast.StructType) and
+                    init.values and
+                    not isinstance(init.values[0], ast.InitializerList)
+                )
+                if is_flat_struct_init:
+                    # Flat init for array of structs - use flat handler
+                    consumed = self._emit_array_init_flat_inline(init.values, 0, elem_type)
+                else:
+                    # Normal array init - each value is a complete element
+                    for val in init.values:
+                        if isinstance(val, ast.DesignatedInit):
+                            self._emit_initializer(val.value, base_type)
+                        else:
+                            self._emit_initializer(val, base_type)
+                    # Pad with zeros if initializer is shorter than array size
+                    if elem_type.size and isinstance(elem_type.size, ast.IntLiteral):
+                        remaining = elem_type.size.value - len(init.values)
+                        if remaining > 0:
+                            pad_size = remaining * self._type_size(base_type)
+                            self.ctx.emit_instr("DS", str(pad_size))
             elif isinstance(elem_type, ast.StructType):
                 # Struct initializer
-                if elem_type.name and elem_type.name in self.ctx.structs:
-                    members = self.ctx.structs[elem_type.name]
+                members = self._get_struct_members(elem_type)
+                if members:
                     self._emit_struct_init_flat(init.values, members)
                 else:
                     # Unknown struct, just reserve space
@@ -4827,9 +5349,21 @@ class CodeGenerator:
         elif isinstance(init, ast.Compound):
             # Compound literal: (type){initializer} - extract the initializer
             self._emit_initializer(init.init, init.target_type)
+        elif isinstance(init, ast.BinaryOp):
+            # Binary expression - try to evaluate as constant
+            const_val = self._eval_const_expr(init)
+            if const_val is not None:
+                self._emit_int_value(const_val, elem_size)
+            else:
+                self.ctx.emit_instr("DS", str(elem_size))
         else:
-            # Complex initializer - reserve space
-            self.ctx.emit_instr("DS", str(elem_size))
+            # Try to evaluate as a constant expression before giving up
+            const_val = self._eval_const_expr(init)
+            if const_val is not None:
+                self._emit_int_value(const_val, elem_size)
+            else:
+                # Complex initializer - reserve space
+                self.ctx.emit_instr("DS", str(elem_size))
 
     def _emit_struct_init_flat(self, values: list, members: list) -> int:
         """Emit struct initialization with flat value list. Returns values consumed."""
@@ -4860,8 +5394,8 @@ class CodeGenerator:
                     value_index += consumed
             elif isinstance(member_type, ast.StructType) and not isinstance(val, ast.InitializerList):
                 # Flat nested struct init
-                if member_type.name and member_type.name in self.ctx.structs:
-                    nested_members = self.ctx.structs[member_type.name]
+                nested_members = self._get_struct_members(member_type)
+                if nested_members:
                     consumed = self._emit_struct_init_flat(values[value_index:], nested_members)
                     value_index += consumed
                 else:
@@ -4898,8 +5432,8 @@ class CodeGenerator:
 
             # Handle nested types
             if isinstance(elem_type, ast.StructType) and not isinstance(val, ast.InitializerList):
-                if elem_type.name and elem_type.name in self.ctx.structs:
-                    nested_members = self.ctx.structs[elem_type.name]
+                nested_members = self._get_struct_members(elem_type)
+                if nested_members:
                     nested_consumed = self._emit_struct_init_flat(values[idx:], nested_members)
                     consumed += nested_consumed
                 else:
