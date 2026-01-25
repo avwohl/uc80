@@ -2115,6 +2115,9 @@ class CodeGenerator:
                     decl.init = init
                     self._gen_local_struct_init(decl)
                     decl.init = old_init
+                elif isinstance(decl.var_type, ast.StructType):
+                    # Struct copy from expression (e.g., *ptr, or struct variable)
+                    self._gen_struct_copy_from_expr(decl)
                 else:
                     is_long = self._is_long_type(decl.var_type)
                     init_is_float = self._is_float_expr(decl.init)
@@ -2224,6 +2227,63 @@ class CodeGenerator:
         # Initialize struct with values from initializer list
         self._gen_struct_init_values(sym, struct_type, init_list.values, 0)
 
+    def _gen_struct_copy_from_expr(self, decl: ast.VarDecl) -> None:
+        """Copy a struct from an expression (e.g., *ptr, struct variable)."""
+        sym = self.ctx.locals[decl.name]
+        size = self._type_size(decl.var_type)
+        init = decl.init
+
+        # Get source address into HL
+        if isinstance(init, ast.UnaryOp) and init.op == "*":
+            # Dereference: *ptr - load pointer value into HL
+            self.gen_expr(init.operand)
+        elif isinstance(init, ast.Identifier):
+            # Simple identifier - load its address
+            src_sym = self.ctx.lookup(init.name)
+            if src_sym:
+                if src_sym.is_global:
+                    self.ctx.emit_instr("LD", f"HL,{src_sym.label()}")
+                elif src_sym.uses_shared_storage:
+                    self.ctx.emit_instr("LD", f"HL,??AUTO+{src_sym.shared_offset}")
+                else:
+                    # Stack-based: IX + offset
+                    self.ctx.emit_instr("PUSH", "IX")
+                    self.ctx.emit_instr("POP", "HL")
+                    if src_sym.offset != 0:
+                        self.ctx.emit_instr("LD", f"DE,{src_sym.offset}")
+                        self.ctx.emit_instr("ADD", "HL,DE")
+        else:
+            # Other complex expression - just eval and copy first bytes (fallback)
+            self.gen_expr(init)
+            # For now, just return - this case needs more work
+            sym_local = self.ctx.locals[decl.name]
+            if sym_local.uses_shared_storage:
+                self.ctx.emit_instr("LD", f"(??AUTO+{sym_local.shared_offset}),HL")
+            else:
+                self._store_local(sym_local)
+            return
+
+        # Now HL has source address, copy bytes to destination
+        # Use DE as destination pointer, BC for temp storage
+        self.ctx.emit_instr("PUSH", "HL")  # Save source
+
+        # Get destination address
+        if sym.uses_shared_storage:
+            self.ctx.emit_instr("LD", f"DE,??AUTO+{sym.shared_offset}")
+        elif sym.is_global:
+            self.ctx.emit_instr("LD", f"DE,{sym.label()}")
+        else:
+            self.ctx.emit_instr("PUSH", "IX")
+            self.ctx.emit_instr("POP", "DE")
+            if sym.offset != 0:
+                self.ctx.emit_instr("LD", f"HL,{sym.offset}")
+                self.ctx.emit_instr("ADD", "HL,DE")
+                self.ctx.emit_instr("EX", "DE,HL")
+
+        self.ctx.emit_instr("POP", "HL")  # Restore source
+        self.ctx.emit_instr("LD", f"BC,{size}")
+        self.ctx.emit_instr("LDIR")  # Copy BC bytes from HL to DE
+
     def _gen_struct_init_values(self, sym: 'Symbol', struct_type: ast.StructType,
                                 values: list, base_offset: int) -> int:
         """Generate code to store struct initializer values. Returns number of values consumed."""
@@ -2256,6 +2316,21 @@ class CodeGenerator:
                     consumed = self._gen_flat_array_init(sym, member_type, values, value_index, base_offset + member_offset)
                     value_index += consumed
             elif isinstance(member_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+                # Check if value is an identifier referring to a struct variable
+                if isinstance(val, ast.Identifier):
+                    src_sym = self.ctx.lookup(val.name)
+                    if src_sym and isinstance(src_sym.sym_type, ast.StructType):
+                        # Copy the struct
+                        value_index += 1
+                        member_size = self._type_size(member_type)
+                        self._gen_struct_copy(sym, base_offset + member_offset, src_sym, 0, member_size)
+                        continue
+                # Check for pointer dereference
+                if isinstance(val, ast.UnaryOp) and val.op == "*":
+                    value_index += 1
+                    member_size = self._type_size(member_type)
+                    self._gen_struct_copy_from_expr_to_member(sym, base_offset + member_offset, val, member_size)
+                    continue
                 # Flat initialization for nested struct - consume multiple values
                 consumed = self._gen_struct_init_values(sym, member_type, values[value_index:], base_offset + member_offset)
                 value_index += consumed
@@ -2265,6 +2340,77 @@ class CodeGenerator:
                 self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
 
         return value_index
+
+    def _gen_struct_copy(self, dest_sym: 'Symbol', dest_offset: int,
+                         src_sym: 'Symbol', src_offset: int, size: int) -> None:
+        """Copy bytes from one struct location to another."""
+        # Copy byte by byte
+        for i in range(size):
+            # Load source byte
+            if src_sym.uses_shared_storage:
+                src_addr = src_sym.shared_offset + src_offset + i
+                self.ctx.emit_instr("LD", f"A,(??AUTO+{src_addr})")
+            elif src_sym.is_global:
+                self.ctx.emit_instr("LD", f"A,(_{src_sym.name}+{src_offset + i})")
+            else:
+                frame_off = src_sym.offset + src_offset + i
+                self.ctx.emit_instr("LD", f"A,({ix_off(frame_off)})")
+
+            # Store to destination byte
+            if dest_sym.uses_shared_storage:
+                dest_addr = dest_sym.shared_offset + dest_offset + i
+                self.ctx.emit_instr("LD", f"(??AUTO+{dest_addr}),A")
+            elif dest_sym.is_global:
+                self.ctx.emit_instr("LD", f"(_{dest_sym.name}+{dest_offset + i}),A")
+            else:
+                frame_off = dest_sym.offset + dest_offset + i
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),A")
+
+    def _gen_struct_copy_from_expr_to_member(self, dest_sym: 'Symbol', dest_offset: int,
+                                              expr: ast.Expression, size: int) -> None:
+        """Copy struct from expression to a member offset within dest_sym."""
+        # Get source address into HL
+        if isinstance(expr, ast.UnaryOp) and expr.op == "*":
+            # Dereference: *ptr - load pointer value into HL
+            self.gen_expr(expr.operand)
+        elif isinstance(expr, ast.Identifier):
+            # Simple identifier - get its address
+            src_sym = self.ctx.lookup(expr.name)
+            if src_sym:
+                if src_sym.is_global:
+                    self.ctx.emit_instr("LD", f"HL,{src_sym.label()}")
+                elif src_sym.uses_shared_storage:
+                    self.ctx.emit_instr("LD", f"HL,??AUTO+{src_sym.shared_offset}")
+                else:
+                    self.ctx.emit_instr("PUSH", "IX")
+                    self.ctx.emit_instr("POP", "HL")
+                    if src_sym.offset != 0:
+                        self.ctx.emit_instr("LD", f"DE,{src_sym.offset}")
+                        self.ctx.emit_instr("ADD", "HL,DE")
+        else:
+            # Unsupported expression type - fall through with gen_expr
+            self.gen_expr(expr)
+
+        # HL has source address, copy bytes to destination using LDIR
+        self.ctx.emit_instr("PUSH", "HL")  # Save source
+
+        # Get destination address
+        if dest_sym.uses_shared_storage:
+            self.ctx.emit_instr("LD", f"DE,??AUTO+{dest_sym.shared_offset + dest_offset}")
+        elif dest_sym.is_global:
+            self.ctx.emit_instr("LD", f"DE,{dest_sym.label()}+{dest_offset}")
+        else:
+            self.ctx.emit_instr("PUSH", "IX")
+            self.ctx.emit_instr("POP", "DE")
+            frame_off = dest_sym.offset + dest_offset
+            if frame_off != 0:
+                self.ctx.emit_instr("LD", f"HL,{frame_off}")
+                self.ctx.emit_instr("ADD", "HL,DE")
+                self.ctx.emit_instr("EX", "DE,HL")
+
+        self.ctx.emit_instr("POP", "HL")  # Restore source
+        self.ctx.emit_instr("LD", f"BC,{size}")
+        self.ctx.emit_instr("LDIR")  # Copy BC bytes from HL to DE
 
     def _gen_flat_array_init(self, sym: 'Symbol', array_type: ast.ArrayType,
                              values: list, start_index: int, base_offset: int) -> int:
@@ -2294,6 +2440,14 @@ class CodeGenerator:
 
             # Handle nested types
             if isinstance(elem_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+                # Check if value is an identifier referring to a struct variable
+                if isinstance(val, ast.Identifier):
+                    src_sym = self.ctx.lookup(val.name)
+                    if src_sym and isinstance(src_sym.sym_type, ast.StructType):
+                        # Copy the struct
+                        self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
+                        consumed += 1
+                        continue
                 nested_consumed = self._gen_struct_init_values(sym, elem_type, values[idx:], offset)
                 consumed += nested_consumed
             elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
@@ -2401,6 +2555,18 @@ class CodeGenerator:
             self._gen_array_init_values(sym, member_type, val.values, offset)
             return
 
+        # Handle struct copy from another struct variable
+        if isinstance(member_type, ast.StructType) and isinstance(val, ast.Identifier):
+            src_sym = self.ctx.lookup(val.name)
+            if src_sym and isinstance(src_sym.sym_type, ast.StructType):
+                self._gen_struct_copy(sym, offset, src_sym, 0, member_size)
+                return
+
+        # Handle struct copy from pointer dereference
+        if isinstance(member_type, ast.StructType) and isinstance(val, ast.UnaryOp) and val.op == "*":
+            self._gen_struct_copy_from_expr_to_member(sym, offset, val, member_size)
+            return
+
         # Generate the value expression
         self.gen_expr(val, force_long=is_long)
 
@@ -2453,6 +2619,13 @@ class CodeGenerator:
             if isinstance(elem_type, ast.ArrayType) and isinstance(val, ast.InitializerList):
                 self._gen_array_init_values(sym, elem_type, val.values, offset)
                 continue
+
+            # Handle struct copy from identifier
+            if isinstance(elem_type, ast.StructType) and isinstance(val, ast.Identifier):
+                src_sym = self.ctx.lookup(val.name)
+                if src_sym and isinstance(src_sym.sym_type, ast.StructType):
+                    self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
+                    continue
 
             # Generate value
             self.gen_expr(val, force_long=is_long)
