@@ -47,11 +47,12 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
 
 6- [DONE] c-testsuite validation (00001-00220):
 - Total: 220 tests
-- PASS: 190/220 (86%)
-- Compile fail: 6 tests (unsupported language features)
-- ASM fail: 4 tests (need float library)
-- Link fail: 7 tests (need libc: strlen, calloc, strchr, strcpy, sprintf, fclose, fprintf, memset)
-- Output mismatch: 13 tests (32-bit overflow, float conversion, printf formats, VLA, bit-fields)
+- PASS: 195/220 (88.6%)
+- Compile fail: 6 tests (00152, 00210, 00213, 00214, 00216, 00219 - unsupported features)
+- ASM fail: 2 tests (00209 - function pointer params, 00215 - label naming collision)
+- Link fail: 1 test (00187 - file I/O functions)
+- Output mismatch: 14 tests (32-bit overflow, float conversion, printf formats)
+- Timeout: 2 tests (00040 - 8-queens too slow, 00205 - large data computation)
 - Bug fixes made during testing:
   * Fixed _is_complex_expr duplicate causing function calls to use complex math
   * Fixed dead data elimination to trace data-to-data references
@@ -69,6 +70,11 @@ segments (not portable to other linkers/assembelrs) 3) given 2- above (compile a
   * Added local array initialization with initializer lists
   * Store function parameter types in symbol table (FunctionType vs just return type)
   * Added float-to-int conversion for function arguments and variable initialization
+  * Removed duplicate libc functions from runtime.mac to fix link warnings
+  * Added run_ctests.py test runner script
+- Known issues:
+  * ul80 linker bug: DSEG relocations corrupted when linking multiple modules
+    (high byte of DW references becomes 0). Workaround: use --no-whole-program
 
 7- Future enhancements:
 - Continue c-testsuite validation (00300+)
