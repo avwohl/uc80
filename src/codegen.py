@@ -2190,8 +2190,9 @@ class CodeGenerator:
                 else:
                     is_long = self._is_long_type(decl.var_type)
                     is_long_long = self._is_long_long_type(decl.var_type)
+                    is_float = self._is_float_type(decl.var_type)
                     init_is_float = self._is_float_expr(decl.init)
-                    target_is_int = not self._is_float_type(decl.var_type) and not is_long and not is_long_long
+                    target_is_int = not is_float and not is_long and not is_long_long
 
                     # Handle float-to-int conversion
                     if init_is_float and target_is_int:
@@ -2207,17 +2208,20 @@ class CodeGenerator:
                         # 64-bit initialization
                         self._gen_64bit_operand(decl.init, to_tmp=False)
                     else:
-                        self.gen_expr(decl.init, force_long=is_long)
+                        # Both long and float need 32-bit handling
+                        need_32bit = is_long or is_float
+                        self.gen_expr(decl.init, force_long=need_32bit)
 
-                        # Extend to 32-bit if target is long but source is not
-                        if is_long and not self._is_long_expr(decl.init):
+                        # Extend to 32-bit if target is long (not float) but source is not 32-bit
+                        # (Don't extend for float targets - they're already 32-bit in DEHL)
+                        if is_long and not is_float and not self._is_long_expr(decl.init) and not self._is_float_expr(decl.init):
                             is_signed = not self._is_unsigned_expr(decl.init)
                             self._extend_hl_to_dehl(is_signed)
 
                     sym = self.ctx.locals[decl.name]
                     if is_long_long:
                         self._store_local_64(sym)
-                    elif is_long:
+                    elif is_long or is_float:
                         self._store_local_32(sym)
                     else:
                         self._store_local(sym)
@@ -3219,8 +3223,9 @@ class CodeGenerator:
             else:
                 self._load_local(sym)
 
-        # Extend to 32-bit if requested but type is not already long
-        if force_long and not type_is_long:
+        # Extend to 32-bit if requested but type is not already 32-bit
+        # (floats are already 32-bit, don't sign-extend them)
+        if force_long and not type_is_long and not type_is_float:
             is_signed = self._is_signed_type(sym.sym_type)
             self._extend_hl_to_dehl(is_signed)
 
@@ -3872,6 +3877,11 @@ class CodeGenerator:
         Complex stored as: real part (4 bytes) + imaginary part (4 bytes).
         Result stored in __cplx_result, address returned in HL.
         """
+        # Mark complex work areas as used
+        self.ctx.runtime_used.add("__cplx_l")
+        self.ctx.runtime_used.add("__cplx_r")
+        self.ctx.runtime_used.add("__cplx_result")
+
         # Generate right operand (complex) - address on stack
         self._gen_complex_operand(expr.right)
         # Store right operand to __cplx_r (8 bytes)
@@ -3916,6 +3926,7 @@ class CodeGenerator:
             # Scalar (float or int) - convert to complex with 0 imaginary
             self._gen_float_operand(expr)
             # Store real part to __cplx_tmp
+            self.ctx.runtime_used.add("__cplx_tmp")
             self.ctx.emit_instr("LD", "(__cplx_tmp),HL")
             self.ctx.emit_instr("LD", "(__cplx_tmp+2),DE")
             # Zero imaginary part
@@ -3989,18 +4000,24 @@ class CodeGenerator:
 
     def gen_assignment(self, expr: ast.BinaryOp) -> None:
         """Generate code for assignment."""
-        # Check if target is 32-bit
-        target_is_long = False
+        # Check if target is 32-bit (long or float)
+        target_is_32bit = False
+        target_is_float = False
         if isinstance(expr.left, ast.Identifier):
             sym = self.ctx.lookup(expr.left.name)
-            if sym and self._is_long_type(sym.sym_type):
-                target_is_long = True
+            if sym:
+                if self._is_long_type(sym.sym_type):
+                    target_is_32bit = True
+                elif self._is_float_type(sym.sym_type):
+                    target_is_32bit = True
+                    target_is_float = True
 
         # Generate the value (force_long if target is 32-bit)
-        self.gen_expr(expr.right, force_long=target_is_long)
+        self.gen_expr(expr.right, force_long=target_is_32bit)
 
-        # If target is 32-bit but source is not, extend
-        if target_is_long and not self._is_long_expr(expr.right):
+        # If target is 32-bit integer but source is not, extend
+        # (Don't extend for float targets - floats are already 32-bit in DEHL)
+        if target_is_32bit and not target_is_float and not self._is_long_expr(expr.right) and not self._is_float_expr(expr.right):
             is_signed = not self._is_unsigned_expr(expr.right)
             self._extend_hl_to_dehl(is_signed)
 
@@ -4008,7 +4025,7 @@ class CodeGenerator:
         if isinstance(expr.left, ast.Identifier):
             sym = self.ctx.lookup(expr.left.name)
             if sym:
-                if target_is_long:
+                if target_is_32bit:
                     if sym.is_global:
                         self.ctx.emit_instr("LD", f"({sym.label()}),HL")
                         self.ctx.emit_instr("LD", f"({sym.label()}+2),DE")
@@ -4325,7 +4342,9 @@ class CodeGenerator:
                 # Check if parameter type or argument expression is 32-bit
                 arg_is_long = self._is_long_expr(arg)
                 param_is_long = param_type and self._is_long_type(param_type)
-                if arg_is_long or param_is_long:
+                param_is_float = param_type and self._is_float_type(param_type)
+                # Floats are also 32-bit, need to push 4 bytes
+                if arg_is_long or param_is_long or arg_is_float or param_is_float:
                     self.gen_expr(arg, force_long=True)
                     # Extend to 32-bit if argument is smaller than parameter
                     if param_is_long and not arg_is_long:

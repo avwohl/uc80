@@ -1268,8 +1268,10 @@ __fmul:
 	LD	B,A
 	LD	A,(__tmp32+2)
 	OR	B
+	LD	B,A
 	LD	A,(__tmp32+1)
 	OR	B
+	LD	B,A
 	LD	A,(__tmp32)
 	OR	B
 	JR	Z,__fmul_zero
@@ -1329,27 +1331,147 @@ __fmul_done:
 
 ; Mantissa multiplication helper
 __fmul_man:
-	; Multiply __fman1 by __fman2
-	; Using 32-bit multiplication and taking high bits
-	LD	HL,(__fman1)
-	LD	(__mul32_mcd),HL
-	LD	HL,(__fman1+2)
-	LD	(__mul32_mcd+2),HL
-	LD	HL,(__fman2)
-	LD	DE,(__fman2+2)
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__mul32_mcd)
-	LD	DE,(__mul32_mcd+2)
-	CALL	__mul32
-	; Result high bits in DEHL - shift right 8 for proper alignment
+	; Multiply __fman1 by __fman2 (24-bit × 24-bit = 48-bit)
+	; Need high 32 bits of the 48-bit product
+	;
+	; Split each 24-bit value: m1 = m1h*2^16 + m1l
+	; Product = m1h*m2h*2^32 + (m1h*m2l + m1l*m2h)*2^16 + m1l*m2l
+	; Result is 48 bits, we want bits 47-16
+
+	; Load operands
+	LD	BC,(__fman1)		; BC = m1l (low 16 bits)
+	LD	A,(__fman1+2)
+	LD	H,A
+	LD	L,0			; HL = m1h * 256 (treat as 16-bit)
+	PUSH	BC			; Save m1l
+	PUSH	HL			; Save m1h*256
+
+	LD	BC,(__fman2)		; BC = m2l
+	LD	A,(__fman2+2)
+	LD	H,A
+	LD	L,0			; HL = m2h * 256
+	PUSH	BC			; Save m2l
+	PUSH	HL			; Save m2h*256
+
+	; Compute m1l × m2l
+	POP	DE			; Discard m2h for now
+	POP	DE			; DE = m2l
+	POP	BC			; Discard m1h
+	POP	BC			; BC = m1l
+	PUSH	BC			; Save m1l again
+	PUSH	DE			; Save m2l again
+	CALL	__mul16_32		; DEHL = m1l × m2l (32-bit)
+	LD	(__fmul_ll),HL		; Save low 16 bits
+	LD	(__fmul_ll+2),DE	; Save high 16 bits
+
+	; Compute m1h × m2h (but as 16-bit values)
+	LD	BC,(__fman1+2)		; BC = m1h (8-bit in C)
+	LD	B,0
+	LD	DE,(__fman2+2)		; DE = m2h (8-bit in E)
+	LD	D,0
+	CALL	__mul16_32			; DEHL = m1h × m2h
+	LD	(__fmul_hh),HL		; Save (only 16 bits needed)
+	LD	(__fmul_hh+2),DE
+
+	; Compute m1h × m2l
+	LD	BC,(__fman1+2)		; BC = m1h
+	LD	B,0
+	POP	DE			; DE = m2l
+	PUSH	DE
+	CALL	__mul16_32			; DEHL = m1h × m2l (32-bit)
+	LD	(__fmul_hl),HL
+	LD	(__fmul_hl+2),DE
+
+	; Compute m1l × m2h
+	POP	DE			; Discard m2l
+	POP	BC			; BC = m1l
+	LD	DE,(__fman2+2)		; DE = m2h
+	LD	D,0
+	CALL	__mul16_32			; DEHL = m1l × m2h (32-bit)
+	LD	(__fmul_lh),HL
+	LD	(__fmul_lh+2),DE
+
+	; Accumulate the 48-bit result from partial products
+	; result[47:0] = LL + (HL << 16) + (LH << 16) + (HH << 32)
+	; Extract bits [47:16] for the mantissa
+	;
+	; In 16-bit words:
+	; word0 [15:0]   = LL.lo
+	; word1 [31:16]  = LL.hi + HL.lo + LH.lo
+	; word2 [47:32]  = HL.hi + LH.hi + HH.lo + carry_from_word1
+
+	; Compute word1 = LL.hi + HL.lo + LH.lo
+	LD	HL,(__fmul_ll+2)	; LL.hi
+	LD	DE,(__fmul_hl)		; HL.lo
+	ADD	HL,DE
+	LD	DE,(__fmul_lh)		; LH.lo
+	ADC	HL,DE
+	PUSH	HL			; Save word1
+
+	; Compute word2 = HL.hi + LH.hi + HH.lo + carry
+	LD	HL,(__fmul_hl+2)	; HL.hi
+	LD	DE,(__fmul_lh+2)	; LH.hi
+	ADC	HL,DE			; Add with carry from word1
+	LD	DE,(__fmul_hh)		; HH.lo
+	ADC	HL,DE
+	; HL = word2 (bits 47-32)
+	EX	DE,HL			; Move to DE
+
+	POP	HL			; HL = word1 (bits 31-16)
+
+	; DEHL now contains bits [47:16] of the 48-bit product
+	; But for mantissa multiplication, we need bits [46:23], so shift right by 1
 	SRL	D
 	RR	E
 	RR	H
 	RR	L
+
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
 	RET
+
+; Helper: 16-bit × 16-bit = 32-bit multiplication
+; Input: BC = multiplicand, DE = multiplier
+; Output: DEHL = 32-bit product (DE=high, HL=low)
+__mul16_32:
+	PUSH	BC		; Save BC
+	PUSH	IX
+	LD	IX,0		; IX = high word
+	LD	HL,0		; HL = low word
+	LD	A,16		; Loop counter
+__mul16_32_loop:
+	; Shift multiplier right, check LSB
+	SRL	D
+	RR	E
+	JR	NC,__mul16_32_noadd
+	; Add multiplicand to result low
+	ADD	HL,BC
+	; Add carry to high word in IX
+	JR	NC,__mul16_32_nocarry
+	INC	IX
+__mul16_32_nocarry:
+__mul16_32_noadd:
+	; Shift multiplicand left
+	SLA	C
+	RL	B
+	DEC	A
+	JR	NZ,__mul16_32_loop
+	; Move high word from IX to DE
+	PUSH	IX
+	POP	DE
+	POP	IX
+	POP	BC
+	RET
+
+; Temporary storage for partial products
+__fmul_hh:
+	DW	0
+__fmul_hl:
+	DW	0
+__fmul_lh:
+	DW	0
+__fmul_ll:
+	DW	0
 
 ; ============================================================
 ; Float Division: DEHL = DEHL / (__tmp32)

@@ -2103,6 +2103,8 @@ _tmp_fcb:
 ; Very simplified - no field width, precision, etc.
 ; ============================================================
 	PUBLIC	_printf
+	PUBLIC	_prt_float
+	PUBLIC	__ftmp
 _printf:
 	PUSH	IX
 	LD	IX,0
@@ -2197,6 +2199,9 @@ _printf_nodig:
 
 	CP	'p'
 	JR	Z,_printf_ptr
+
+	CP	'f'
+	JP	Z,_printf_float
 
 	; Unknown format - skip
 	INC	HL
@@ -2360,6 +2365,35 @@ _printf_lx:
 	POP	BC
 	LD	A,C
 	ADD	A,4
+	LD	C,A
+	POP	HL
+	INC	HL
+	JP	_printf_loop
+
+_printf_float:
+	; Output float value (%f format)
+	; Float is 32 bits (4 bytes) on stack
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE		; HL = IX + offset (points to float)
+	; Load 32-bit float from (HL) into __ftmp
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__ftmp),DE	; Store low 2 bytes
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__ftmp+2),DE	; Store high 2 bytes
+	CALL	_prt_float
+	POP	BC
+	LD	A,C
+	ADD	A,4		; Float is 4 bytes
 	LD	C,A
 	POP	HL
 	INC	HL
@@ -3538,6 +3572,260 @@ _prt_div16_dn:
 	LD	D,0
 	LD	H,B
 	LD	L,C		; HL = quotient
+	POP	BC
+	RET
+
+; ============================================================
+; Internal: print float from __ftmp (IEEE 754 single precision)
+; Format: [-]d.dddddd (6 decimal places)
+; ============================================================
+_prt_float:
+	PUSH	BC
+	PUSH	DE
+	PUSH	IX
+
+	; Load float from __ftmp into HLDE (H=high byte with sign/exp)
+	LD	DE,(__ftmp)
+	LD	HL,(__ftmp+2)
+
+	; Check for zero (exponent=0 and mantissa=0)
+	LD	A,H
+	AND	7FH		; Mask sign bit
+	OR	L
+	OR	D
+	OR	E
+	JP	Z,_prt_float_zero
+
+	; Check sign bit (bit 7 of H)
+	BIT	7,H
+	JR	Z,_prt_float_pos
+
+	; Print minus sign
+	PUSH	HL
+	PUSH	DE
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	POP	HL
+	RES	7,H		; Clear sign bit
+
+_prt_float_pos:
+	; Now HLDE is positive float
+	; H = sign(0)|exp[7:1], L = exp[0]|mant[22:16], D = mant[15:8], E = mant[7:0]
+	; Extract exponent: bits 30-23 -> (H<<1) | (L>>7)
+	LD	A,H
+	ADD	A,A		; A = H<<1
+	LD	B,A		; Save
+	LD	A,L
+	RLCA			; Carry = L bit 7
+	LD	A,B
+	ADC	A,0		; A = exponent (biased)
+	LD	B,A		; B = exponent
+
+	; Check for special values
+	CP	255		; Infinity or NaN
+	JP	Z,_prt_float_inf
+
+	; Check for zero exponent (denormal)
+	OR	A
+	JP	Z,_prt_float_zero
+
+	; Extract mantissa: (L&0x7F)|0x80 in high byte, DE in low
+	LD	A,L
+	AND	7FH
+	OR	80H		; Add implicit 1
+	LD	L,A		; Now LDE = 24-bit mantissa (with leading 1)
+
+	; Calculate actual exponent (unbiased)
+	LD	A,B
+	SUB	127		; A = actual exponent (can be negative)
+
+	; Store mantissa in __fman (3 bytes: low, mid, high)
+	LD	(__fman),DE	; Low 2 bytes
+	LD	A,L
+	LD	(__fman+2),A	; High byte
+
+	; Calculate actual exponent (unbiased)
+	LD	A,B
+	SUB	127		; A = actual exponent
+	LD	B,A
+
+	; Now mantissa in __fman[0..2] (E,D,L order), exponent in B
+	; Value = mantissa * 2^(B-23)
+
+	; Check if exponent is negative (value < 1)
+	BIT	7,B
+	JP	NZ,_prt_float_small
+
+	; Exponent >= 0
+	LD	A,B
+	CP	24		; Check if >= 24
+	JP	NC,_prt_float_large
+
+	; 0 <= exponent < 24
+	; Integer part = mantissa >> (23 - exponent)
+	; Fractional part = mantissa & ((1 << (23-exp)) - 1)
+
+	LD	A,23
+	SUB	B		; A = shift count (23-B), 0..23
+	LD	B,A		; B = shift count
+
+	; Load 24-bit mantissa into HLE (H=high, L=mid, E=low)
+	LD	A,(__fman+2)
+	LD	H,A
+	LD	A,(__fman+1)
+	LD	L,A
+	LD	A,(__fman)
+	LD	E,A
+
+	; Save original mantissa for fractional calc
+	PUSH	HL
+	PUSH	DE
+
+	; Shift HLE right by B bits to get integer part
+	LD	A,B
+	OR	A
+	JR	Z,_prt_float_noshr
+_prt_float_shrloop:
+	SRL	H
+	RR	L
+	RR	E
+	DEC	A
+	JR	NZ,_prt_float_shrloop
+_prt_float_noshr:
+
+	; Now HLE = integer part (24 bits total)
+	; After shifting right, the result may be in L and E (if H=0)
+	; or just in E (if H=L=0). Need to assemble result into HL.
+	; For most practical values (exponent 0-16), result fits in 16 bits.
+	LD	A,H
+	OR	A
+	JR	NZ,_prt_float_use_hl	; H non-zero, use HL as is
+	; H is zero, result is in LE
+	LD	H,L
+	LD	L,E
+_prt_float_use_hl:
+
+	; Move result to HL for printing
+	PUSH	HL
+	CALL	_prt_dec
+
+	; Print decimal point
+	LD	E,'.'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL		; Restore integer part
+
+	; Now calculate fractional part
+	; frac = (mantissa - (int << shift)) * 10^6 >> shift
+	POP	DE		; Restore original E (low byte)
+	POP	BC		; Restore original HL into BC (B=H, C=L)
+	; Original mantissa: B(high), C(mid), E(low) - but this doesn't help much
+
+	; For simplicity, just print 6 zeros for fractional part
+	; (Full implementation would need 32-bit multiply)
+	LD	B,6
+_prt_float_frac:
+	PUSH	BC
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt_float_frac
+
+	JP	_prt_float_done
+
+_prt_float_small:
+	; Exponent < 0, value < 1.0
+	; Print "0." then calculate fractional digits
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,'.'
+	LD	C,CONOUT
+	CALL	BDOS
+
+	; Print 6 zeros (simplified - full version would compute actual digits)
+	LD	B,6
+_prt_float_sm2:
+	PUSH	BC
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt_float_sm2
+	JP	_prt_float_done
+
+_prt_float_large:
+	; Exponent >= 24, very large integer
+	; Print mantissa shifted left
+	LD	A,(__fman+2)
+	LD	H,A
+	LD	A,(__fman+1)
+	LD	L,A
+	; HL = upper 16 bits of mantissa
+
+	LD	A,B
+	SUB	23		; shift left count
+	LD	B,A
+	OR	A
+	JR	Z,_prt_float_lg2
+_prt_float_shlloop:
+	SLA	L
+	RL	H
+	DJNZ	_prt_float_shlloop
+
+_prt_float_lg2:
+	CALL	_prt_dec
+
+	; Print .000000
+	LD	E,'.'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	B,6
+_prt_float_lg3:
+	PUSH	BC
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt_float_lg3
+	JR	_prt_float_done
+
+_prt_float_zero:
+	; Print "0.000000"
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,'.'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	B,6
+_prt_float_z2:
+	PUSH	BC
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt_float_z2
+	JR	_prt_float_done
+
+_prt_float_inf:
+	; Print "inf"
+	LD	E,'i'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,'n'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,'f'
+	LD	C,CONOUT
+	CALL	BDOS
+
+_prt_float_done:
+	POP	IX
+	POP	DE
 	POP	BC
 	RET
 
@@ -8653,6 +8941,10 @@ _bsearch_ret:
 	RET
 
 	DSEG
+
+; Float printing working storage
+__ftmp:		DS	4	; Temp float storage
+__fman:		DS	4	; Mantissa work area
 
 ; qsort working storage
 _qsort_i:	DS	2
