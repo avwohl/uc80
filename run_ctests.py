@@ -1,5 +1,24 @@
 #!/usr/bin/env python3
-"""Run c-testsuite tests for uc80."""
+"""Run c-testsuite tests for uc80.
+
+Platform-specific test notes (Z80 16-bit):
+- 00166: Uses int for values >32767. Test expects 32-bit int.
+         With long variables and %ld format, values print correctly.
+- 00168: Factorial overflow - 8! exceeds 16-bit int range.
+- 00174, 00175, 00178, 00195: Float tests requiring %f format support.
+- 00186: Printf width formatting (%02d) not implemented.
+- 00187: File I/O - CP/M text mode differences (CR+LF, ^Z EOF).
+- 00189: Fixed - was DSEG relocation bug in ul80 linker.
+- 00200: 64-bit shift operations (long long).
+- 00204: ARM64 calling convention test.
+- 00205: Large long values exceed test assumptions.
+- 00206: Pragma push_macro/pop_macro not implemented.
+- 00212: Platform defines (__ILP32__, etc.) - we're ILP16.
+- 00216: Range designators [1...5], anonymous unions, complex init.
+- 00218: Bit-fields in enums.
+- 00220: Wide characters (wchar_t, L"...").
+- 00040: Timeout - 8-queens algorithm complexity.
+"""
 
 import subprocess
 import sys
