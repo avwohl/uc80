@@ -1146,6 +1146,33 @@ __fadd_aligned:
 	LD	DE,(__fman2+2)
 	ADC	HL,DE
 	LD	(__fman1+2),HL
+
+	; Check for mantissa overflow (carry into bit 24+)
+	; After ADC, HL contains high word. H=byte3 (bits 31-24), L=byte2 (bits 23-16)
+	; Check if H (bits 31-24) has any bits set
+	LD	A,H
+	OR	A
+	JR	Z,__fadd_normalize	; No overflow
+
+	; Overflow: need to shift mantissa right and increment exponent
+	; Most common case: single bit overflow (H=1)
+	LD	HL,(__fman1)		; Load low word
+	LD	DE,(__fman1+2)		; Load high word (D has overflow bits)
+
+	; Shift right by 1
+	SRL	D			; Shift D (bits 31-24) right
+	RR	E			; Rotate E (bits 23-16) right with carry
+	RR	H			; Rotate H (bits 15-8) right with carry
+	RR	L			; Rotate L (bits 7-0) right with carry
+
+	LD	(__fman1),HL		; Store back low word
+	LD	(__fman1+2),DE		; Store back high word
+
+	; Increment exponent
+	LD	HL,(__fexp1)
+	INC	HL
+	LD	(__fexp1),HL
+
 	; Result sign is same as operands
 	JR	__fadd_normalize
 
@@ -1668,6 +1695,7 @@ __ftoi_done:
 ; Input: DEHL = IEEE 754 float
 ; Output: A = sign (0 or 80H), BC = exponent, DEHL = mantissa (with implied 1)
 ; ============================================================
+	PUBLIC	__funpack
 __funpack:
 	; Extract sign
 	LD	A,D
@@ -1675,16 +1703,17 @@ __funpack:
 	PUSH	AF		; Save sign
 
 	; Extract exponent (8 bits)
+	; exp = (D & 0x7F) << 1 | (E >> 7)
+	; D = sign|exp[7:1], E = exp[0]|mant[22:16]
 	LD	A,D
-	ADD	A,A		; Shift sign out
-	LD	B,A		; B = exponent high 7 bits << 1
+	ADD	A,A		; A = exp[7:1] << 1 (sign shifted out)
+	LD	B,A		; B = exp[7:1] << 1
 	LD	A,E
-	RLA			; Get exponent low bit with carry
-	LD	C,A		; Save
-	LD	A,B
-	RRA			; A = exponent
-	LD	B,0
+	RLCA			; Rotate left, carry = bit 7 = exp[0]
+	LD	A,B		; A = exp[7:1] << 1
+	ADC	A,0		; A = exp[7:1] << 1 + exp[0] = full exponent
 	LD	C,A
+	LD	B,0		; BC = exponent
 
 	; Extract mantissa and add implied 1
 	LD	A,E
@@ -1709,6 +1738,7 @@ __funpack:
 ; Input: A = sign (0 or 80H), BC = exponent, DEHL = mantissa
 ; Output: DEHL = IEEE 754 float
 ; ============================================================
+	PUBLIC	__fpack
 __fpack:
 	PUSH	AF		; Save sign
 
@@ -1749,6 +1779,7 @@ __fpack_nz:
 ; ============================================================
 ; Float Normalize: Normalize mantissa in __fman1 and adjust __fexp1
 ; ============================================================
+	PUBLIC	__fnorm
 __fnorm:
 	; Check for zero
 	LD	HL,(__fman1)
@@ -1814,6 +1845,7 @@ __rem32:
 	DW	0,0
 
 ; Float work area
+	PUBLIC	__fop1,__fop2,__fsgn1,__fsgn2,__fexp1,__fexp2,__fman1,__fman2
 __fop1:
 	DW	0,0
 __fop2:
