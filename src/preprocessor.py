@@ -56,6 +56,7 @@ class Preprocessor:
         self.current_line = 0
         self.included_files: set[str] = set()  # For include guard tracking
         self.expanding: set[str] = set()  # Prevent recursive macro expansion
+        self.macro_stack: dict[str, list[Optional[Macro]]] = {}  # For push_macro/pop_macro
 
         # Initialize predefined macros
         self._init_predefined_macros()
@@ -912,8 +913,36 @@ class Preprocessor:
 
     def _process_pragma(self, args: str) -> None:
         """Process #pragma directive."""
-        # For now, just ignore pragmas
-        # Could implement: #pragma once, etc.
+        args = args.strip()
+
+        # Handle push_macro("name")
+        match = re.match(r'push_macro\s*\(\s*"([^"]+)"\s*\)', args)
+        if match:
+            macro_name = match.group(1)
+            # Push current definition (or None if undefined) onto stack
+            if macro_name not in self.macro_stack:
+                self.macro_stack[macro_name] = []
+            current_def = self.macros.get(macro_name)
+            self.macro_stack[macro_name].append(current_def)
+            return None
+
+        # Handle pop_macro("name")
+        match = re.match(r'pop_macro\s*\(\s*"([^"]+)"\s*\)', args)
+        if match:
+            macro_name = match.group(1)
+            # Pop definition from stack and restore it
+            if macro_name in self.macro_stack and self.macro_stack[macro_name]:
+                old_def = self.macro_stack[macro_name].pop()
+                if old_def is None:
+                    # Was undefined - remove it
+                    if macro_name in self.macros:
+                        del self.macros[macro_name]
+                else:
+                    # Restore previous definition
+                    self.macros[macro_name] = old_def
+            return None
+
+        # Other pragmas are ignored
         return None
 
     def _process_line(self, args: str) -> None:
