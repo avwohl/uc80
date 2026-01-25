@@ -3537,8 +3537,32 @@ class CodeGenerator:
 
         self._gen_64bit_operand(expr.right, to_tmp=True)
 
+        # Check if left operand might clobber __tmp64
+        left_is_complex = self._uses_tmp64(expr.left)
+        if left_is_complex:
+            # Save __tmp64 on stack before generating left operand (8 bytes = 4 words)
+            self.ctx.emit_instr("LD", "HL,(__tmp64)")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", "HL,(__tmp64+2)")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", "HL,(__tmp64+4)")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", "HL,(__tmp64+6)")
+            self.ctx.emit_instr("PUSH", "HL")
+
         # Generate left operand to __acc64
         self._gen_64bit_operand(expr.left, to_tmp=False)
+
+        if left_is_complex:
+            # Restore __tmp64 from stack
+            self.ctx.emit_instr("POP", "HL")
+            self.ctx.emit_instr("LD", "(__tmp64+6),HL")
+            self.ctx.emit_instr("POP", "HL")
+            self.ctx.emit_instr("LD", "(__tmp64+4),HL")
+            self.ctx.emit_instr("POP", "HL")
+            self.ctx.emit_instr("LD", "(__tmp64+2),HL")
+            self.ctx.emit_instr("POP", "HL")
+            self.ctx.emit_instr("LD", "(__tmp64),HL")
 
         # Now: left in __acc64, right in __tmp64
         if op == "+":
@@ -4842,6 +4866,29 @@ class CodeGenerator:
         if isinstance(expr, ast.Cast):
             return self._uses_tmp32(expr.expr)
         # Simple expressions (identifiers, literals) don't use __tmp32
+        return False
+
+    def _uses_tmp64(self, expr: ast.Expression) -> bool:
+        """Check if an expression might use __tmp64 (and thus clobber it)."""
+        # Complex expressions that use __tmp64 internally
+        if isinstance(expr, ast.BinaryOp):
+            # Any 64-bit binary op will use __tmp64
+            if self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right):
+                return True
+            # Check nested expressions
+            return self._uses_tmp64(expr.left) or self._uses_tmp64(expr.right)
+        if isinstance(expr, ast.UnaryOp):
+            return self._uses_tmp64(expr.operand)
+        if isinstance(expr, ast.TernaryOp):
+            return (self._uses_tmp64(expr.condition) or
+                    self._uses_tmp64(expr.true_expr) or
+                    self._uses_tmp64(expr.false_expr))
+        if isinstance(expr, ast.Call):
+            # Function calls might clobber __tmp64 (conservative)
+            return True
+        if isinstance(expr, ast.Cast):
+            return self._uses_tmp64(expr.expr)
+        # Simple expressions (identifiers, literals) don't use __tmp64
         return False
 
     def _get_expr_size(self, expr: ast.Expression) -> int:
