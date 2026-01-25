@@ -982,6 +982,8 @@ _fgets_eof:
 	CP	D
 	JR	NZ,_fgets_term
 	; No data read - return NULL
+	; Pop saved buffer before going to _fgets_null
+	POP	DE
 _fgets_null:
 	LD	HL,0
 	POP	DE

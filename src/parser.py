@@ -206,7 +206,9 @@ class Parser:
                 enum_type.is_const = is_const
                 enum_type.is_volatile = is_volatile
                 return enum_type
-            elif self._check(TokenType.IDENTIFIER) and self._current().value in self.typedefs:
+            elif base_type is None and self._check(TokenType.IDENTIFIER) and self._current().value in self.typedefs:
+                # Only match typedef name if we don't already have a base type
+                # e.g., "int s" where s is a typedef - s should be the variable name, not a type
                 typedef_name = self._advance().value
                 target_type = self.typedefs[typedef_name]
                 # Return a copy of the target type (applying any modifiers)
