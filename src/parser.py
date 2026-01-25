@@ -93,20 +93,59 @@ class Parser:
         """Create a parse error at current location."""
         return ParseError(message, self._current().location)
 
+    def _skip_gcc_attribute(self) -> None:
+        """Skip GCC __attribute__((...)) syntax."""
+        while (self._check(TokenType.IDENTIFIER) and
+               self._current().value in ('__attribute__', '__attribute')):
+            self._advance()  # __attribute__
+            if self._match(TokenType.LPAREN):
+                if self._match(TokenType.LPAREN):
+                    # Skip until matching ))
+                    depth = 2
+                    while depth > 0 and not self._check(TokenType.EOF):
+                        if self._match(TokenType.LPAREN):
+                            depth += 1
+                        elif self._match(TokenType.RPAREN):
+                            depth -= 1
+                        else:
+                            self._advance()
+
     def _is_type_name(self) -> bool:
         """Check if current position starts a type name."""
+        # Skip any leading __attribute__ for the check
+        saved_pos = self.pos
+        while (self._check(TokenType.IDENTIFIER) and
+               self._current().value in ('__attribute__', '__attribute')):
+            self._advance()  # __attribute__
+            if self._match(TokenType.LPAREN):
+                if self._match(TokenType.LPAREN):
+                    depth = 2
+                    while depth > 0 and not self._check(TokenType.EOF):
+                        if self._match(TokenType.LPAREN):
+                            depth += 1
+                        elif self._match(TokenType.RPAREN):
+                            depth -= 1
+                        else:
+                            self._advance()
+
+        result = False
         if self._check(*self.TYPE_SPECIFIERS):
-            return True
-        if self._check(*self.TYPE_QUALIFIERS):
-            return True
-        if self._check(TokenType.IDENTIFIER):
-            return self._current().value in self.typedefs
-        return False
+            result = True
+        elif self._check(*self.TYPE_QUALIFIERS):
+            result = True
+        elif self._check(TokenType.IDENTIFIER):
+            result = self._current().value in self.typedefs
+
+        self.pos = saved_pos  # Restore position
+        return result
 
     # === Type Parsing ===
 
     def _parse_type_specifier(self) -> ast.TypeNode:
         """Parse type specifier."""
+        # Skip leading __attribute__
+        self._skip_gcc_attribute()
+
         loc = self._current().location
 
         # Collect type specifiers
@@ -212,9 +251,15 @@ class Parser:
         if not is_union:
             self._expect(TokenType.STRUCT)
 
+        # Skip __attribute__ before name
+        self._skip_gcc_attribute()
+
         name = None
-        if self._check(TokenType.IDENTIFIER):
+        if self._check(TokenType.IDENTIFIER) and self._current().value not in ('__attribute__', '__attribute'):
             name = self._advance().value
+
+        # Skip __attribute__ after name, before brace
+        self._skip_gcc_attribute()
 
         # Parse inline member definitions if present
         members = []
@@ -233,6 +278,8 @@ class Parser:
                         break
                 self._expect(TokenType.SEMICOLON)
             self._expect(TokenType.RBRACE)
+            # Skip __attribute__ after closing brace
+            self._skip_gcc_attribute()
 
         return ast.StructType(name=name, is_union=is_union, members=members, location=loc)
 
@@ -263,13 +310,20 @@ class Parser:
 
     def _parse_declarator(self, base_type: ast.TypeNode) -> tuple[str, ast.TypeNode]:
         """Parse declarator, returning (name, full_type)."""
+        # Skip __attribute__ before declarator
+        self._skip_gcc_attribute()
+
         # Handle pointers
         pointer_stack = []  # Track pointer modifiers for later
         while self._match(TokenType.STAR):
+            # Skip __attribute__ after *
+            self._skip_gcc_attribute()
             is_const = self._match(TokenType.CONST) is not None
             is_volatile = self._match(TokenType.VOLATILE) is not None
             # Also consume restrict - we store it but don't enforce semantics
             self._match(TokenType.RESTRICT)
+            # Skip __attribute__ after qualifiers
+            self._skip_gcc_attribute()
             pointer_stack.append((is_const, is_volatile))
 
         # If no grouping, apply pointers directly to base type
@@ -277,6 +331,9 @@ class Parser:
             # Apply pointers to base_type
             for is_const, is_volatile in pointer_stack:
                 base_type = ast.PointerType(base_type=base_type, is_const=is_const, is_volatile=is_volatile)
+
+        # Skip __attribute__ before declarator name
+        self._skip_gcc_attribute()
 
         # Handle parenthesized declarator
         if self._match(TokenType.LPAREN):
@@ -374,6 +431,8 @@ class Parser:
                     else:
                         params, is_variadic = self._parse_parameter_list()
                 self._expect(TokenType.RPAREN)
+                # Skip __attribute__ after function parameters
+                self._skip_gcc_attribute()
                 # Store params for use by FunctionDecl creation
                 self._last_params = params
                 base_type = ast.FunctionType(return_type=base_type,
@@ -716,6 +775,10 @@ class Parser:
         """Parse primary expression."""
         loc = self._current().location
 
+        # _Generic selection (C11)
+        if self._match(TokenType.GENERIC):
+            return self._parse_generic_selection(loc)
+
         # Literals
         if self._check(TokenType.INT_LITERAL):
             token = self._advance()
@@ -744,8 +807,13 @@ class Parser:
         if self._check(TokenType.IDENTIFIER):
             return ast.Identifier(name=self._advance().value, location=loc)
 
-        # Parenthesized expression
+        # Parenthesized expression or statement expression
         if self._match(TokenType.LPAREN):
+            # Check for statement expression: ({ ... })
+            if self._check(TokenType.LBRACE):
+                body = self._parse_compound_statement()
+                self._expect(TokenType.RPAREN)
+                return ast.StmtExpr(body=body, location=loc)
             expr = self._parse_expression()
             self._expect(TokenType.RPAREN)
             return expr
@@ -755,6 +823,33 @@ class Parser:
             return self._parse_initializer_list()
 
         raise self._error(f"Unexpected token: {self._current().type.name}")
+
+    def _parse_generic_selection(self, loc: SourceLocation) -> ast.GenericSelection:
+        """Parse _Generic selection expression."""
+        self._expect(TokenType.LPAREN)
+        controlling_expr = self._parse_assignment_expression()
+        self._expect(TokenType.COMMA)
+
+        associations = []
+        while True:
+            if self._match(TokenType.DEFAULT):
+                # default: expr
+                self._expect(TokenType.COLON)
+                expr = self._parse_assignment_expression()
+                associations.append((None, expr))
+            else:
+                # type: expr
+                type_node = self._parse_type_name()
+                self._expect(TokenType.COLON)
+                expr = self._parse_assignment_expression()
+                associations.append((type_node, expr))
+
+            if not self._match(TokenType.COMMA):
+                break
+
+        self._expect(TokenType.RPAREN)
+        return ast.GenericSelection(controlling_expr=controlling_expr,
+                                    associations=associations, location=loc)
 
     def _parse_initializer_list(self) -> ast.InitializerList:
         """Parse initializer list { ... }."""
@@ -783,9 +878,15 @@ class Parser:
                 member = self._expect(TokenType.IDENTIFIER).value
                 designators.append(member)
             elif self._match(TokenType.LBRACKET):
-                index = self._parse_expression()
-                self._expect(TokenType.RBRACKET)
-                designators.append(index)
+                start_expr = self._parse_expression()
+                # Check for range designator [start ... end]
+                if self._match(TokenType.ELLIPSIS):
+                    end_expr = self._parse_expression()
+                    self._expect(TokenType.RBRACKET)
+                    designators.append(ast.RangeDesignator(start=start_expr, end=end_expr, location=loc))
+                else:
+                    self._expect(TokenType.RBRACKET)
+                    designators.append(start_expr)
             else:
                 break
 
@@ -999,6 +1100,9 @@ class Parser:
 
         # Type specifier
         base_type = self._parse_type_specifier()
+
+        # Skip __attribute__ after type specifier
+        self._skip_gcc_attribute()
 
         # Check for struct/union/enum definition
         # Note: _parse_struct_type and _parse_enum_type may have already parsed inline definitions

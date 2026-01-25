@@ -395,6 +395,26 @@ class DesignatedInit(Node):
     value: Expression
 
 
+@dataclass(kw_only=True)
+class RangeDesignator(Node):
+    """Range designator for array initialization [start ... end]."""
+    start: Expression
+    end: Expression
+
+
+@dataclass(kw_only=True)
+class StmtExpr(Expression):
+    """Statement expression (GCC extension): ({ ... })."""
+    body: 'CompoundStmt'
+
+
+@dataclass(kw_only=True)
+class GenericSelection(Expression):
+    """C11 _Generic selection expression."""
+    controlling_expr: Expression
+    associations: list[tuple[Optional[TypeNode], Expression]]  # (type, expr) pairs, None type = default
+
+
 # === Top Level ===
 
 @dataclass(kw_only=True)

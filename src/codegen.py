@@ -433,6 +433,19 @@ class CallGraphAnalyzer:
         elif isinstance(expr, ast.Compound):
             self._analyze_expr(expr.init, calls, address_taken, indirect_sigs)
 
+        elif isinstance(expr, ast.StmtExpr):
+            # Statement expression - analyze all items in the body
+            for item in expr.body.items:
+                if isinstance(item, ast.ExpressionStmt) and item.expr:
+                    self._analyze_expr(item.expr, calls, address_taken, indirect_sigs)
+                # Other statement types are handled by _analyze_stmt
+
+        elif isinstance(expr, ast.GenericSelection):
+            # Analyze controlling expression and all association expressions
+            self._analyze_expr(expr.controlling_expr, calls, address_taken, indirect_sigs)
+            for _, value_expr in expr.associations:
+                self._analyze_expr(value_expr, calls, address_taken, indirect_sigs)
+
         elif isinstance(expr, ast.Identifier):
             # An identifier used as a value (not in a call context) might be
             # a function whose address is taken (function name decays to pointer)
@@ -2529,6 +2542,68 @@ class CodeGenerator:
                 size = 2  # Default to int if type cannot be inferred
             self.ctx.emit_instr("LD", f"HL,{size}")
 
+        elif isinstance(expr, ast.StmtExpr):
+            # Statement expression: ({ ... }) - value is last expression
+            self.gen_stmt_expr(expr)
+
+        elif isinstance(expr, ast.GenericSelection):
+            # _Generic selection: evaluate matching expression
+            self.gen_generic_selection(expr, force_long)
+
+    def gen_stmt_expr(self, expr: ast.StmtExpr) -> None:
+        """Generate code for statement expression ({ ... })."""
+        # Statement expressions are like compound statements - use gen_compound_stmt
+        # for the body, and extract the value of the last expression
+        items = expr.body.items
+
+        # Generate all but last item normally
+        for item in items[:-1]:
+            if isinstance(item, ast.Declaration):
+                self.gen_local_decl(item)
+            else:
+                self.gen_statement(item)
+
+        # Last item should be an expression - generate it for its value
+        if items:
+            last = items[-1]
+            if isinstance(last, ast.ExpressionStmt) and last.expr:
+                self.gen_expr(last.expr)
+            elif isinstance(last, ast.Declaration):
+                # If last is a declaration, gen it and return 0
+                self.gen_local_decl(last)
+                self.ctx.emit_instr("LD", "HL,0")
+            else:
+                # Other statement type - execute and return 0
+                self.gen_statement(last)
+                self.ctx.emit_instr("LD", "HL,0")
+        else:
+            self.ctx.emit_instr("LD", "HL,0")
+
+    def gen_generic_selection(self, expr: ast.GenericSelection, force_long: bool = False) -> None:
+        """Generate code for _Generic selection expression."""
+        # Get the type of the controlling expression
+        ctrl_type = self._get_expr_type(expr.controlling_expr)
+
+        # Find the matching association
+        default_expr = None
+        matched_expr = None
+
+        for type_node, value_expr in expr.associations:
+            if type_node is None:
+                default_expr = value_expr
+            elif self._types_compatible(ctrl_type, type_node):
+                matched_expr = value_expr
+                break
+
+        # Generate code for the matched expression (or default)
+        if matched_expr is not None:
+            self.gen_expr(matched_expr, force_long)
+        elif default_expr is not None:
+            self.gen_expr(default_expr, force_long)
+        else:
+            # No match found - generate 0 (shouldn't happen in valid code)
+            self.ctx.emit_instr("LD", "HL,0")
+
     def gen_identifier(self, expr: ast.Identifier, force_long: bool = False) -> None:
         """Generate code to load an identifier's value into HL (or DEHL for 32-bit)."""
         # Check for enum constant first
@@ -3345,6 +3420,16 @@ class CodeGenerator:
 
     def gen_call(self, expr: ast.Call) -> None:
         """Generate code for function call."""
+        # Handle GCC builtins
+        if isinstance(expr.func, ast.Identifier):
+            if expr.func.name == '__builtin_expect':
+                # __builtin_expect(x, c) just returns x - it's a hint for branch prediction
+                if expr.args:
+                    self.gen_expr(expr.args[0])
+                else:
+                    self.ctx.emit_instr("LD", "HL,0")
+                return
+
         # Get function parameter types if available
         param_types: list[ast.TypeNode] = []
         if isinstance(expr.func, ast.Identifier):
@@ -3376,9 +3461,15 @@ class CodeGenerator:
                 stack_size += 2
             else:
                 # Normal argument handling
+                # Check if parameter type or argument expression is 32-bit
                 arg_is_long = self._is_long_expr(arg)
-                if arg_is_long:
+                param_is_long = param_type and self._is_long_type(param_type)
+                if arg_is_long or param_is_long:
                     self.gen_expr(arg, force_long=True)
+                    # Extend to 32-bit if argument is smaller than parameter
+                    if param_is_long and not arg_is_long:
+                        is_signed = not self._is_unsigned_expr(arg)
+                        self._extend_hl_to_dehl(is_signed)
                     # Push 32-bit value: high word (DE) first, then low word (HL)
                     self.ctx.emit_instr("PUSH", "DE")
                     self.ctx.emit_instr("PUSH", "HL")
@@ -3638,6 +3729,49 @@ class CodeGenerator:
                     # Function pointer or direct function symbol
                     return sym.sym_type
         return None
+
+    def _types_compatible(self, expr_type: ast.TypeNode | None, sel_type: ast.TypeNode) -> bool:
+        """Check if expression type matches selector type for _Generic."""
+        if expr_type is None:
+            return False
+
+        # Get base type name for comparison
+        def get_type_key(t: ast.TypeNode) -> tuple:
+            if isinstance(t, ast.BasicType):
+                return ('basic', t.name, t.is_signed, t.is_const)
+            elif isinstance(t, ast.PointerType):
+                base_key = get_type_key(t.base_type)
+                return ('pointer', base_key, t.is_const)
+            elif isinstance(t, ast.ArrayType):
+                base_key = get_type_key(t.base_type)
+                return ('array', base_key)
+            elif isinstance(t, ast.StructType):
+                return ('struct', t.name, t.is_union)
+            elif isinstance(t, ast.EnumType):
+                return ('enum', t.name)
+            elif isinstance(t, ast.FunctionType):
+                # Function type (for function pointers)
+                return ('function',)
+            return ('unknown',)
+
+        # Compare types - ignoring const qualifiers at top level for matching
+        expr_key = get_type_key(expr_type)
+        sel_key = get_type_key(sel_type)
+
+        # For basic types, also check compatibility with different signedness
+        if expr_key[0] == 'basic' and sel_key[0] == 'basic':
+            # Same base type (ignoring signedness for matching)
+            if expr_key[1] == sel_key[1]:
+                # Match if same signedness or signedness not specified
+                if expr_key[2] == sel_key[2] or sel_key[2] is None or expr_key[2] is None:
+                    return True
+            # 'int' also matches 'long' for z80 where both are 16-bit
+            if expr_key[1] in ('int', 'long') and sel_key[1] in ('int', 'long'):
+                if expr_key[2] == sel_key[2] or sel_key[2] is None or expr_key[2] is None:
+                    return True
+            return False
+
+        return expr_key == sel_key
 
     def _gen_address(self, expr: ast.Expression) -> None:
         """Generate code to compute address of an expression into HL."""
