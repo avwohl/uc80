@@ -4,13 +4,19 @@ Work In Progress Notes - uc80 C Compiler
 Current Status: 211/220 c-testsuite tests passing
 
 Recent Fixes (this session):
+- Fixed __tmp64 not being included in embedded runtime data section
+  (get_data_section now accepts additional_refs from generated code)
+- Fixed 64-bit negation not calling __neg64 (unary minus fell through to 16-bit)
+- Fixed casts to 64-bit types not extending to __acc64 (gen_cast lacked 64-bit handling)
+
+Previous Fixes:
 - Fixed fgets stack imbalance when EOF hit with no data read
 - Fixed parser typedef name handling after base type (int s where s is typedef)
 
 Remaining Failures (9 tests):
 - 00040: Timeout (8-queens algorithm complexity)
 - 00174, 00175, 00195, 00204: Floating-point printf (%f format) not implemented
-- 00200: 64-bit shift operations crash
+- 00200: Timeout (many 64-bit operations, correct output but very slow on Z80)
 - 00216: Anonymous unions, range designators not fully implemented
 - 00218: Enum bitfield signedness issue
 - 00220: Wide characters (wchar_t) not implemented
@@ -18,4 +24,4 @@ Remaining Failures (9 tests):
 Next Steps:
 - Float printf would fix 4 tests but requires significant implementation
 - Anonymous union support would help with test 00216
-- The 64-bit shift crash in 00200 might be fixable
+- Enum bitfield signedness issue in 00218 might be fixable

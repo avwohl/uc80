@@ -370,8 +370,8 @@ def main() -> int:
                         runtime_code.append(f"\tPUBLIC\t{','.join(func.publics)}")
                     runtime_code.append(func.source)
 
-                # Add data section if needed
-                data_section = runtime_lib.get_data_section(funcs)
+                # Add data section if needed (pass runtime_used for generated code refs)
+                data_section = runtime_lib.get_data_section(funcs, gen.ctx.runtime_used)
                 if data_section:
                     runtime_code.append("\n\tDSEG")
                     runtime_code.append(data_section)

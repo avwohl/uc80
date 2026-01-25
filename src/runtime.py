@@ -229,16 +229,20 @@ class RuntimeLibrary:
 
         return result
 
-    def get_data_section(self, functions: list[AsmFunction]) -> str:
+    def get_data_section(self, functions: list[AsmFunction],
+                         additional_refs: set[str] | None = None) -> str:
         """Get DSEG content needed for the given functions.
 
-        Only includes data labels that are referenced by the embedded functions.
+        Only includes data labels that are referenced by the embedded functions
+        or explicitly listed in additional_refs.
         """
-        if not functions or not self.data_sections:
+        if not self.data_sections:
+            return ''
+        if not functions and not additional_refs:
             return ''
 
         # Collect all labels referenced by the embedded functions
-        referenced: set[str] = set()
+        referenced: set[str] = set(additional_refs) if additional_refs else set()
         for func in functions:
             for line in func.source.splitlines():
                 # Skip comment lines

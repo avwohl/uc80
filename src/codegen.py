@@ -4109,12 +4109,17 @@ class CodeGenerator:
         op = expr.op
 
         if op == "-":
-            self.gen_expr(expr.operand)
-            if self._is_long_expr(expr.operand):
+            if self._is_long_long_expr(expr.operand):
+                # 64-bit negate: generate to __acc64, call __neg64
+                self._gen_64bit_operand(expr.operand, to_tmp=False)
+                self._call_runtime("__neg64")
+            elif self._is_long_expr(expr.operand):
                 # 32-bit negate using runtime
+                self.gen_expr(expr.operand)
                 self._call_runtime("__neg32")
             else:
                 # 16-bit negate: 0 - HL
+                self.gen_expr(expr.operand)
                 self.ctx.emit_instr("EX", "DE,HL")
                 self.ctx.emit_instr("LD", "HL,0")
                 self.ctx.emit_instr("OR", "A")
@@ -4366,8 +4371,22 @@ class CodeGenerator:
             # Narrowing from long to short: just keep HL (DE is discarded)
             pass
 
-        # Handle widening conversions
-        if target_is_long and target_size < 4:
+        # Handle 64-bit target type
+        target_is_64 = self._is_long_long_type(target_type)
+        source_is_64 = self._is_long_long_expr(expr.expr)
+
+        if target_is_64 and not source_is_64:
+            # Need to extend to 64-bit in __acc64
+            self.ctx.runtime_used.add("__acc64")
+            if source_size <= 2:
+                # From 16-bit or smaller: HL -> DEHL -> __acc64
+                self._extend_hl_to_dehl(target_signed)
+            # Now we have DEHL, extend to __acc64
+            if target_signed:
+                self._call_runtime("__sext64")
+            else:
+                self._call_runtime("__zext64")
+        elif target_is_long and target_size < 4:
             # Need to extend to 32-bit DEHL after narrowing
             # Use the target type's signedness for extension
             self._extend_hl_to_dehl(target_signed)
