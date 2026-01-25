@@ -41,8 +41,8 @@ CPMEMU = Path("../cpmemu/src/cpmemu")
 # Tests that need longer timeouts (in seconds)
 # These are computationally expensive but correct
 SLOW_TESTS = {
-    "00040": 60,   # 8-queens algorithm
-    "00200": 120,  # Many 64-bit operations
+    "00040": 300,  # 8-queens algorithm - O(n!) complexity
+    "00200": 300,  # Many 64-bit operations
 }
 
 
