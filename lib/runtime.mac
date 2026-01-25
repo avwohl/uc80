@@ -1311,8 +1311,7 @@ __fmul:
 	; Simplified: use 16x16 multiplications
 	CALL	__fmul_man
 
-	; Normalize and pack
-	CALL	__fnorm
+	; Pack result (normalization handled in __fmul_man)
 	LD	HL,(__fman1)
 	LD	DE,(__fman1+2)
 	LD	BC,(__fexp1)
@@ -1420,12 +1419,47 @@ __fmul_man:
 	POP	HL			; HL = word1 (bits 31-16)
 
 	; DEHL now contains bits [47:16] of the 48-bit product
-	; But for mantissa multiplication, we need bits [46:23], so shift right by 1
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
+	; Current: D=bits[47:40], E=bits[39:32], H=bits[31:24], L=bits[23:16]
+	;
+	; For mantissa multiply: product of two [1.0,2.0) values is in [1.0,4.0)
+	; If bit 47 is set (product >= 2.0), we need bits [47:24] and must increment exp
+	; If bit 47 is clear (product < 2.0), we need bits [46:23] (shift left by 1)
+	; Check bit 47 (D bit 7)
+	BIT	7,D
+	JR	Z,__fmul_man_no_overflow
 
+	; Overflow case: product >= 2.0, take bits [47:24], increment exponent
+	; Rearrange D.E.H -> E.H.L format
+	PUSH	BC
+	LD	C,H		; C = bits [31:24]
+	LD	H,E		; H = bits [39:32]
+	LD	L,C		; L = bits [31:24]
+	LD	E,D		; E = bits [47:40]
+	LD	D,0		; D = 0
+	POP	BC
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+
+	; Increment exponent for overflow
+	LD	HL,(__fexp1)
+	INC	HL
+	LD	(__fexp1),HL
+	RET
+
+__fmul_man_no_overflow:
+	; No overflow: product < 2.0, take bits [46:23] (shift DEHL left by 1)
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	; Now rearrange D.E.H -> E.H.L format
+	PUSH	BC
+	LD	C,H
+	LD	H,E
+	LD	L,C
+	LD	E,D
+	LD	D,0
+	POP	BC
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
 	RET
@@ -1462,16 +1496,6 @@ __mul16_32_noadd:
 	POP	IX
 	POP	BC
 	RET
-
-; Temporary storage for partial products
-__fmul_hh:
-	DW	0
-__fmul_hl:
-	DW	0
-__fmul_lh:
-	DW	0
-__fmul_ll:
-	DW	0
 
 ; ============================================================
 ; Float Division: DEHL = DEHL / (__tmp32)
@@ -2001,6 +2025,16 @@ __cplx_tmp:
 	DW	0,0,0,0	; Temp for scalar-to-complex conversion
 __cplx_work:
 	DW	0,0,0,0	; Work area for complex multiplication/division
+
+; Temporary storage for partial products in float multiplication (32-bit each)
+__fmul_hh:
+	DW	0,0
+__fmul_hl:
+	DW	0,0
+__fmul_lh:
+	DW	0,0
+__fmul_ll:
+	DW	0,0
 
 	CSEG
 
