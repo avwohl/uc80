@@ -3688,7 +3688,22 @@ class CodeGenerator:
 
     def _get_expr_type(self, expr: ast.Expression) -> ast.TypeNode | None:
         """Try to infer the type of an expression."""
-        if isinstance(expr, ast.Identifier):
+        if isinstance(expr, ast.IntLiteral):
+            # Integer literal type depends on suffix
+            if expr.is_long:
+                return ast.BasicType(name="long", is_signed=not expr.is_unsigned)
+            else:
+                return ast.BasicType(name="int", is_signed=not expr.is_unsigned)
+        elif isinstance(expr, ast.CharLiteral):
+            return ast.BasicType(name="char")
+        elif isinstance(expr, ast.StringLiteral):
+            # String literals are char* (or const char* in C99+)
+            return ast.PointerType(base_type=ast.BasicType(name="char"))
+        elif isinstance(expr, ast.FloatLiteral):
+            return ast.BasicType(name="float")
+        elif isinstance(expr, ast.BoolLiteral):
+            return ast.BasicType(name="bool")
+        elif isinstance(expr, ast.Identifier):
             sym = self.ctx.lookup(expr.name)
             if sym:
                 return sym.sym_type
@@ -3709,10 +3724,16 @@ class CodeGenerator:
                 return array_type.base_type
         elif isinstance(expr, ast.BinaryOp):
             # For arithmetic/bitwise ops, result type is based on operand types
-            # This is simplified - real C would have more complex rules
+            # Apply C integer promotion rules: if either is long, result is long
             left_type = self._get_expr_type(expr.left)
             right_type = self._get_expr_type(expr.right)
-            # If either operand is unsigned, result is unsigned
+
+            # Check if either operand is long - result should be long
+            left_is_long = isinstance(left_type, ast.BasicType) and left_type.name == 'long'
+            right_is_long = isinstance(right_type, ast.BasicType) and right_type.name == 'long'
+
+            if left_is_long or right_is_long:
+                return ast.BasicType(name="long")
             if left_type:
                 return left_type
             if right_type:
@@ -3731,47 +3752,87 @@ class CodeGenerator:
         return None
 
     def _types_compatible(self, expr_type: ast.TypeNode | None, sel_type: ast.TypeNode) -> bool:
-        """Check if expression type matches selector type for _Generic."""
+        """Check if expression type matches selector type for _Generic.
+
+        Note: The controlling expression undergoes lvalue conversion which:
+        - Strips cv-qualifiers from the top level of non-array types
+        - Arrays decay to pointers
+        - Functions decay to function pointers
+        """
         if expr_type is None:
             return False
 
-        # Get base type name for comparison
-        def get_type_key(t: ast.TypeNode) -> tuple:
-            if isinstance(t, ast.BasicType):
-                return ('basic', t.name, t.is_signed, t.is_const)
-            elif isinstance(t, ast.PointerType):
-                base_key = get_type_key(t.base_type)
-                return ('pointer', base_key, t.is_const)
-            elif isinstance(t, ast.ArrayType):
-                base_key = get_type_key(t.base_type)
-                return ('array', base_key)
-            elif isinstance(t, ast.StructType):
-                return ('struct', t.name, t.is_union)
-            elif isinstance(t, ast.EnumType):
-                return ('enum', t.name)
-            elif isinstance(t, ast.FunctionType):
-                # Function type (for function pointers)
-                return ('function',)
-            return ('unknown',)
+        # Helper to check basic type compatibility
+        def basic_types_match(t1: ast.BasicType, t2: ast.BasicType) -> bool:
+            # Name must match
+            if t1.name != t2.name:
+                return False
+            # For basic types, ignore const (lvalue conversion strips it)
+            # Check signedness for types where it matters
+            if t1.name == 'char':
+                # In C, char, signed char, and unsigned char are THREE distinct types
+                # None = plain char, True = signed char, False = unsigned char
+                if t1.is_signed != t2.is_signed:
+                    return False
+            elif t1.name in ('int', 'short', 'long', 'long long'):
+                # For int/short/long, default signedness is signed
+                s1 = t1.is_signed if t1.is_signed is not None else True
+                s2 = t2.is_signed if t2.is_signed is not None else True
+                if s1 != s2:
+                    return False
+            return True
 
-        # Compare types - ignoring const qualifiers at top level for matching
-        expr_key = get_type_key(expr_type)
-        sel_key = get_type_key(sel_type)
+        # Helper to check pointer type compatibility
+        def pointer_types_match(t1: ast.PointerType, t2: ast.PointerType) -> bool:
+            # For pointers, top-level const is stripped by lvalue conversion
+            # But pointed-to type must match including qualifiers
+            b1, b2 = t1.base_type, t2.base_type
 
-        # For basic types, also check compatibility with different signedness
-        if expr_key[0] == 'basic' and sel_key[0] == 'basic':
-            # Same base type (ignoring signedness for matching)
-            if expr_key[1] == sel_key[1]:
-                # Match if same signedness or signedness not specified
-                if expr_key[2] == sel_key[2] or sel_key[2] is None or expr_key[2] is None:
-                    return True
-            # 'int' also matches 'long' for z80 where both are 16-bit
-            if expr_key[1] in ('int', 'long') and sel_key[1] in ('int', 'long'):
-                if expr_key[2] == sel_key[2] or sel_key[2] is None or expr_key[2] is None:
-                    return True
+            # Check if both base types are the same kind
+            if type(b1) != type(b2):
+                return False
+
+            if isinstance(b1, ast.BasicType):
+                # For pointer-to-basic, check name, signedness, and constness of pointed-to type
+                if b1.name != b2.name:
+                    return False
+                # Check const qualification on the pointed-to type
+                if b1.is_const != b2.is_const:
+                    return False
+                # Check signedness - use same rules as basic_types_match
+                if b1.name == 'char':
+                    # char, signed char, and unsigned char are distinct types
+                    if b1.is_signed != b2.is_signed:
+                        return False
+                elif b1.name in ('int', 'short', 'long', 'long long'):
+                    s1 = b1.is_signed if b1.is_signed is not None else True
+                    s2 = b2.is_signed if b2.is_signed is not None else True
+                    if s1 != s2:
+                        return False
+                return True
+
+            return types_match(b1, b2)
+
+        def types_match(t1: ast.TypeNode, t2: ast.TypeNode) -> bool:
+            if type(t1) != type(t2):
+                # Special case: function type matches function pointer
+                if isinstance(t1, ast.FunctionType) and isinstance(t2, ast.PointerType):
+                    if isinstance(t2.base_type, ast.FunctionType):
+                        return True
+                return False
+            if isinstance(t1, ast.BasicType):
+                return basic_types_match(t1, t2)
+            if isinstance(t1, ast.PointerType):
+                return pointer_types_match(t1, t2)
+            if isinstance(t1, ast.StructType):
+                return t1.name == t2.name and t1.is_union == t2.is_union
+            if isinstance(t1, ast.EnumType):
+                return t1.name == t2.name
+            if isinstance(t1, ast.FunctionType):
+                return True  # Simplified - just check it's a function type
             return False
 
-        return expr_key == sel_key
+        return types_match(expr_type, sel_type)
 
     def _gen_address(self, expr: ast.Expression) -> None:
         """Generate code to compute address of an expression into HL."""

@@ -216,14 +216,16 @@ class Parser:
                 break
 
         # Determine final type name
-        if base_type is None:
-            if is_short:
-                base_type = "short"
-            elif is_long == 1:
-                base_type = "long"
-            elif is_long >= 2:
-                base_type = "long long"
-            elif is_signed is not None or is_unsigned:
+        # Note: 'long int' and 'short int' are just 'long' and 'short'
+        # The 'int' is optional and doesn't change the type
+        if is_short:
+            base_type = "short"
+        elif is_long == 1:
+            base_type = "long"
+        elif is_long >= 2:
+            base_type = "long long"
+        elif base_type is None:
+            if is_signed is not None or is_unsigned:
                 base_type = "int"
             elif is_complex:
                 base_type = "double"  # _Complex alone defaults to double
