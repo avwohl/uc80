@@ -1761,14 +1761,18 @@ __fpack_nz:
 	AND	7FH		; Clear implied 1 bit
 	LD	E,A
 
-	; Shift exponent into position
-	LD	A,C		; Exponent low byte
-	RRCA			; Rotate right, low bit to carry
-	AND	7FH		; Keep 7 bits
-	LD	D,A
-	LD	A,E
-	RRA			; Rotate carry (exp bit 0) into mantissa high
-	LD	E,A
+	; Insert exponent into result
+	; D will hold exp[7:1], E will hold exp[0]|mantissa[22:16]
+	LD	A,C		; Get exponent
+	SRL	A		; Shift right, bit 0 → carry, bits 7-1 → bits 6-0
+	LD	D,A		; D = exp[7:1] in bits 6-0
+
+	; Insert exponent bit 0 into E bit 7
+	LD	A,E		; A = mantissa bits 22-16 (cleared of implied 1)
+	JR	NC,__fpack_exp0_clear
+	SET	7,A		; Set bit 7 if exponent bit 0 was 1
+__fpack_exp0_clear:
+	LD	E,A		; E = exp[0]|mantissa[22:16]
 
 	; Add sign
 	POP	AF
