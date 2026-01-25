@@ -102,18 +102,26 @@ class Preprocessor:
         lines = source.split('\n')
         output_lines = []
 
+        # Track line offset for #line directive support
+        # virtual_line = actual_line + line_offset
+        line_offset = 0
+
         i = 0
         while i < len(lines):
-            self.current_line = i + 1
+            self.current_line = i + 1 + line_offset
             # Update __LINE__
             self.macros["__LINE__"] = Macro("__LINE__", body=str(self.current_line), is_predefined=True)
 
             line = lines[i]
+            actual_line = i + 1  # Actual line before continuation
 
             # Handle line continuation
             while line.endswith('\\') and i + 1 < len(lines):
                 line = line[:-1] + lines[i + 1]
                 i += 1
+
+            # Save current_line before processing directive (it may change via #line)
+            old_line = self.current_line
 
             # Check if this is a preprocessor directive
             stripped = line.lstrip()
@@ -121,6 +129,10 @@ class Preprocessor:
                 result = self._process_directive(stripped[1:].strip())
                 if result is not None:
                     output_lines.append(result)
+                # Check if #line changed current_line
+                if self.current_line != old_line:
+                    # Update line_offset so future lines use the new numbering
+                    line_offset = self.current_line - actual_line
             elif self._is_active():
                 # Regular line - expand macros
                 expanded = self._expand_macros(line)
@@ -231,7 +243,9 @@ class Preprocessor:
         elif name == 'pragma':
             return self._process_pragma(args)
         elif name == 'line':
-            return self._process_line(args)
+            # Expand macros in #line args (e.g., #line MACRO -> #line value)
+            expanded_args = self._expand_macros(args)
+            return self._process_line(expanded_args)
         else:
             raise PreprocessorError(f"Unknown directive: #{name}",
                                    self.current_file, self.current_line)

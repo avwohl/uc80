@@ -2433,13 +2433,15 @@ class CodeGenerator:
 
     def gen_label(self, stmt: ast.LabelStmt) -> None:
         """Generate code for a labeled statement."""
-        # User labels are prefixed with @L_ to avoid conflicts
-        self.ctx.emit_label(f"@L_{stmt.label}")
+        # User labels are prefixed with @L_{funcname}_ to be unique per function
+        func = self.ctx.current_function or "global"
+        self.ctx.emit_label(f"@L_{func}_{stmt.label}")
         self.gen_statement(stmt.stmt)
 
     def gen_goto(self, stmt: ast.GotoStmt) -> None:
         """Generate code for goto statement."""
-        self.ctx.emit_instr("JP", f"@L_{stmt.label}")
+        func = self.ctx.current_function or "global"
+        self.ctx.emit_instr("JP", f"@L_{func}_{stmt.label}")
 
     def gen_expr(self, expr: ast.Expression, force_long: bool = False) -> None:
         """Generate code for an expression. Result in HL (16-bit) or DEHL (32-bit)."""
@@ -2555,10 +2557,11 @@ class CodeGenerator:
             return
 
         type_is_long = self._is_long_type(sym.sym_type)
+        type_is_float = self._is_float_type(sym.sym_type)
         type_size = self._type_size(sym.sym_type)
 
         if sym.is_global:
-            if type_is_long:
+            if type_is_long or type_is_float:
                 # Load 32-bit value
                 self.ctx.emit_instr("LD", f"HL,({sym.label()})")
                 self.ctx.emit_instr("LD", f"DE,({sym.label()}+2)")
@@ -2572,7 +2575,7 @@ class CodeGenerator:
                 self.ctx.emit_instr("LD", f"HL,({sym.label()})")
         else:
             # Local variable: IX+offset or shared storage
-            if type_is_long:
+            if type_is_long or type_is_float:
                 self._load_local_32(sym)
             elif type_size == 1:
                 # Load 8-bit value, zero-extend to HL
@@ -3374,9 +3377,20 @@ class CodeGenerator:
 
         # Call the function
         if isinstance(expr.func, ast.Identifier):
-            self.ctx.emit_instr("CALL", f"_{expr.func.name}")
+            # Check if this is a direct function call or a call through a function pointer variable
+            func_sym = self.ctx.lookup(expr.func.name)
+            is_direct_function = (
+                expr.func.name in self.ctx.function_names or
+                (func_sym and isinstance(func_sym.sym_type, ast.FunctionType))
+            )
+            if is_direct_function:
+                self.ctx.emit_instr("CALL", f"_{expr.func.name}")
+            else:
+                # Function pointer variable - load pointer and call indirectly
+                self.gen_expr(expr.func)
+                self._call_runtime("__callhl")
         else:
-            # Indirect call
+            # Indirect call through complex expression
             self.gen_expr(expr.func)
             self._call_runtime("__callhl")
 
@@ -4086,7 +4100,13 @@ class CodeGenerator:
                 else:
                     self.ctx.emit_instr("DS", str(elem_size))
         elif isinstance(init, ast.IntLiteral):
-            self._emit_int_value(init.value, elem_size)
+            # Check if target type is float - if so, convert to float representation
+            if self._is_float_type(elem_type):
+                self._emit_float_value(float(init.value))
+            else:
+                self._emit_int_value(init.value, elem_size)
+        elif isinstance(init, ast.FloatLiteral):
+            self._emit_float_value(init.value)
         elif isinstance(init, ast.CharLiteral):
             self.ctx.emit_instr("DB", str(init.value))
         elif isinstance(init, ast.StringLiteral):
@@ -4096,7 +4116,12 @@ class CodeGenerator:
         elif isinstance(init, ast.UnaryOp) and init.op == "-":
             # Handle negative literals
             if isinstance(init.operand, ast.IntLiteral):
-                self._emit_int_value(-init.operand.value, elem_size)
+                if self._is_float_type(elem_type):
+                    self._emit_float_value(float(-init.operand.value))
+                else:
+                    self._emit_int_value(-init.operand.value, elem_size)
+            elif isinstance(init.operand, ast.FloatLiteral):
+                self._emit_float_value(-init.operand.value)
             else:
                 # Complex expression - reserve space (runtime init would be needed)
                 self.ctx.emit_instr("DS", str(elem_size))
@@ -4133,6 +4158,18 @@ class CodeGenerator:
             self.ctx.emit_instr("DW", str(high))
         else:
             self.ctx.emit_instr("DW", str(value & 0xFFFF))
+
+    def _emit_float_value(self, value: float) -> None:
+        """Emit a 32-bit IEEE-754 float value."""
+        import struct
+        # Pack as little-endian 32-bit float
+        packed = struct.pack('<f', value)
+        # Unpack as little-endian 32-bit unsigned integer
+        ieee_val = struct.unpack('<I', packed)[0]
+        low = ieee_val & 0xFFFF
+        high = (ieee_val >> 16) & 0xFFFF
+        self.ctx.emit_instr("DW", str(low))
+        self.ctx.emit_instr("DW", str(high))
 
     def _eval_const_expr(self, expr: ast.Expression) -> int | None:
         """Try to evaluate a constant expression at compile time. Returns None if not constant."""

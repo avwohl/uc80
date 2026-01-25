@@ -2672,7 +2672,7 @@ _fprintf_dec_pos:
 	LD	DE,10
 	LD	B,0		; Digit counter
 _fprintf_dec_lp:
-	CALL	_div16		; HL = HL / 10, DE = remainder
+	CALL	_prt_div16	; HL = HL / 10, DE = remainder
 	PUSH	DE		; Push digit
 	INC	B
 	LD	A,H
@@ -3231,7 +3231,7 @@ _prt_dec:
 	LD	B,0		; Digit counter
 
 _prt_dec_loop:
-	CALL	_div16		; HL = HL / 10, DE = remainder
+	CALL	_prt_div16	; HL = HL / 10, DE = remainder
 	PUSH	DE		; Push digit
 	INC	B
 	LD	A,H
@@ -3256,21 +3256,21 @@ _prt_dec_out:
 
 ; Simple division: HL = HL / 10, DE = HL % 10
 ; (Optimized for divide by 10)
-_div16:
+_prt_div16:
 	PUSH	BC
 	LD	BC,0		; Result
 	LD	DE,0		; Remainder
 
-_div16_lp:
+_prt_div16_lp:
 	; Subtract 10 from HL repeatedly
 	LD	A,H
 	OR	A
-	JR	NZ,_div16_sub
+	JR	NZ,_prt_div16_sub
 	LD	A,L
 	CP	10
-	JR	C,_div16_dn
+	JR	C,_prt_div16_dn
 
-_div16_sub:
+_prt_div16_sub:
 	LD	A,L
 	SUB	10
 	LD	L,A
@@ -3278,9 +3278,9 @@ _div16_sub:
 	SBC	A,0
 	LD	H,A
 	INC	BC
-	JR	_div16_lp
+	JR	_prt_div16_lp
 
-_div16_dn:
+_prt_div16_dn:
 	; Remainder in L
 	LD	E,L
 	LD	D,0
@@ -3386,21 +3386,19 @@ _div32_10_loop:
 	ADD	HL,HL
 	EX	DE,HL		; DE <<= 1
 
-	; Shift MSB of dividend into remainder LSB
-	LD	HL,(_prt32_val+2)
+	; Shift 32-bit dividend left by 1, MSB goes to remainder
+	; Low word first, its carry goes to high word
+	LD	HL,(_prt32_val)
 	ADD	HL,HL
+	LD	(_prt32_val),HL
+	; High word with carry from low word
+	LD	HL,(_prt32_val+2)
+	ADC	HL,HL
 	LD	(_prt32_val+2),HL
+	; Carry from high word goes to remainder
 	JR	NC,_div32_10_nc1
 	INC	DE
 _div32_10_nc1:
-	LD	HL,(_prt32_val)
-	ADC	HL,HL
-	LD	(_prt32_val),HL
-	JR	NC,_div32_10_nc2
-	LD	HL,(_prt32_val+2)
-	INC	HL
-	LD	(_prt32_val+2),HL
-_div32_10_nc2:
 
 	; Check if remainder >= 10
 	LD	A,D
@@ -11205,6 +11203,24 @@ _catanh:
 	POP	IX
 	RET
 
+; Complex multiply: __cplx_l * __cplx_r -> __cplx_result
+; Stub implementation - returns __cplx_l
+__cmul:
+	LD	HL,__cplx_l
+	LD	DE,__cplx_result
+	LD	BC,8
+	LDIR
+	RET
+
+; Complex divide: __cplx_l / __cplx_r -> __cplx_result
+; Stub implementation - returns __cplx_l
+__cdiv:
+	LD	HL,__cplx_l
+	LD	DE,__cplx_result
+	LD	BC,8
+	LDIR
+	RET
+
 	DSEG
 
 _assert_msg:	DB	'Assert: ',0
@@ -11347,6 +11363,9 @@ _modf_i:	DS	4
 _cplx_z:	DS	8	; Input complex
 _cplx_w:	DS	8	; Second input / work area
 _cplx_res:	DS	8	; Result storage
+__cplx_l:	DS	8	; Left operand for cmul/cdiv
+__cplx_r:	DS	8	; Right operand for cmul/cdiv
+__cplx_result:	DS	8	; Result from cmul/cdiv
 
 ; scanf work areas
 _scanf_count:	DS	1	; Number of matched items
