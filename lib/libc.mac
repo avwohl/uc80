@@ -3566,7 +3566,7 @@ _prt_hexf:
 	ADD	A,'0'
 	CP	'9'+1
 	JR	C,_prt_hex_o2
-	ADD	A,7
+	ADD	A,39		; 'a' - '0' - 10 = 39 (lowercase)
 _prt_hex_o2:
 	LD	E,A
 	LD	C,CONOUT
@@ -3586,7 +3586,7 @@ _prt_hexd1:
 	ADD	A,'0'
 	CP	'9'+1
 	JR	C,_prt_hexd2
-	ADD	A,7		; 'A' - '0' - 10
+	ADD	A,39		; 'a' - '0' - 10 = 39 (lowercase)
 _prt_hexd2:
 	LD	E,A
 	PUSH	BC
