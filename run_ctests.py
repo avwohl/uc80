@@ -22,12 +22,16 @@ Platform-specific test notes (Z80 16-bit):
 
 import subprocess
 import sys
+import shutil
+import tempfile
 from pathlib import Path
 import argparse
 
 UC80_DIR = Path(__file__).parent
 LIB_DIR = UC80_DIR / "lib"
 TEST_SUITE_DIR = Path("../external/c-testsuite/tests/single-exec")
+PATCH_DIR = UC80_DIR / "tests" / "c-testsuite-patches"
+Z80_DIR = UC80_DIR / "tests" / "c-testsuite-z80"
 
 CRT0 = LIB_DIR / "crt0.rel"
 LIBC = LIB_DIR / "libc.rel"
@@ -35,8 +39,40 @@ RUNTIME = LIB_DIR / "runtime.rel"
 CPMEMU = Path("../cpmemu/src/cpmemu")
 
 
-def run_test(c_file: Path, verbose: bool = False) -> tuple[str, str]:
+def apply_patch(c_file: Path, test_num: str) -> Path:
+    """Apply platform-specific adaptation if available. Returns path to use."""
+    # First check for pre-adapted Z80 version
+    z80_file = Z80_DIR / f"{test_num}.c"
+    if z80_file.exists():
+        return z80_file
+
+    # Then try patch file
+    patch_file = PATCH_DIR / f"{test_num}.patch"
+    if not patch_file.exists():
+        return c_file
+
+    # Create patched copy in /tmp
+    patched_file = Path("/tmp") / f"{test_num}_patched.c"
+    shutil.copy(c_file, patched_file)
+
+    # Apply patch using patch -p0 with input from file
+    result = subprocess.run(
+        ["patch", "-p0", "-i", str(patch_file), str(patched_file)],
+        capture_output=True, text=True,
+        cwd=patched_file.parent
+    )
+    if result.returncode == 0:
+        return patched_file
+    else:
+        # Patch failed, use original
+        return c_file
+
+
+def run_test(c_file: Path, verbose: bool = False, test_num: str = "") -> tuple[str, str]:
     """Run a single test. Returns (status, message)."""
+    # Apply platform-specific patch if available
+    source_file = apply_patch(c_file, test_num) if test_num else c_file
+
     mac_file = Path("/tmp") / c_file.with_suffix(".mac").name
     rel_file = mac_file.with_suffix(".rel")
     com_file = mac_file.with_suffix(".com")
@@ -44,7 +80,7 @@ def run_test(c_file: Path, verbose: bool = False) -> tuple[str, str]:
 
     # Compile - use --no-whole-program to avoid ul80 linker bug with DSEG relocations
     result = subprocess.run(
-        [sys.executable, "-m", "src.main", str(c_file), "-o", str(mac_file), "--no-whole-program"],
+        [sys.executable, "-m", "src.main", str(source_file), "-o", str(mac_file), "--no-whole-program"],
         capture_output=True, text=True, cwd=UC80_DIR
     )
     if result.returncode != 0:
@@ -121,7 +157,7 @@ def main():
         if not c_file.exists():
             continue
 
-        status, msg = run_test(c_file, args.verbose)
+        status, msg = run_test(c_file, args.verbose, num)
         results[status].append(num)
 
         if args.verbose or status != "pass":
