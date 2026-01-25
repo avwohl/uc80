@@ -4217,6 +4217,68 @@ class CodeGenerator:
                     # Postfix: restore original value as result
                     self.ctx.emit_instr("POP", "HL")
 
+        elif isinstance(expr.operand, ast.Index) or \
+             (isinstance(expr.operand, ast.UnaryOp) and expr.operand.op == "*"):
+            # Array index or pointer dereference: t[x]++ or (*p)++
+            # Get element size for pointer increment
+            elem_size = 1
+            if isinstance(expr.operand, ast.Index):
+                elem_size = self._get_index_elem_size(expr.operand.array)
+            else:
+                deref_type = self._get_expr_type(expr.operand)
+                if deref_type:
+                    elem_size = self._type_size(deref_type)
+
+            # Calculate address and save it
+            self._gen_address(expr.operand)
+            self.ctx.emit_instr("PUSH", "HL")  # Save address
+
+            # Load current value
+            if elem_size == 1:
+                self.ctx.emit_instr("LD", "L,(HL)")
+                self.ctx.emit_instr("LD", "H,0")
+            else:
+                self.ctx.emit_instr("LD", "E,(HL)")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "D,(HL)")
+                self.ctx.emit_instr("EX", "DE,HL")
+
+            if not expr.is_prefix:
+                # Postfix: save original value
+                self.ctx.emit_instr("PUSH", "HL")
+
+            # Increment or decrement
+            if is_inc:
+                self.ctx.emit_instr("INC", "HL")
+            else:
+                self.ctx.emit_instr("DEC", "HL")
+
+            # Store back: address is on stack (under original value if postfix)
+            if not expr.is_prefix:
+                self.ctx.emit_instr("EX", "DE,HL")  # DE = new value
+                self.ctx.emit_instr("POP", "HL")    # HL = original value
+                self.ctx.emit_instr("EX", "(SP),HL")  # HL = address, original on stack
+                self.ctx.emit_instr("EX", "DE,HL")  # HL = new value, DE = address
+                self.ctx.emit_instr("EX", "DE,HL")  # DE = new value, HL = address
+            else:
+                self.ctx.emit_instr("EX", "DE,HL")  # DE = new value
+                self.ctx.emit_instr("POP", "HL")    # HL = address
+
+            # Store new value at address
+            if elem_size == 1:
+                self.ctx.emit_instr("LD", "(HL),E")
+            else:
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+
+            if not expr.is_prefix:
+                # Postfix: restore original value as result
+                self.ctx.emit_instr("POP", "HL")
+            else:
+                # Prefix: result is the new value
+                self.ctx.emit_instr("EX", "DE,HL")
+
     def gen_call(self, expr: ast.Call) -> None:
         """Generate code for function call."""
         # Handle GCC builtins

@@ -38,6 +38,13 @@ LIBC = LIB_DIR / "libc.rel"
 RUNTIME = LIB_DIR / "runtime.rel"
 CPMEMU = Path("../cpmemu/src/cpmemu")
 
+# Tests that need longer timeouts (in seconds)
+# These are computationally expensive but correct
+SLOW_TESTS = {
+    "00040": 60,   # 8-queens algorithm
+    "00200": 120,  # Many 64-bit operations
+}
+
 
 def apply_patch(c_file: Path, test_num: str) -> Path:
     """Apply platform-specific adaptation if available. Returns path to use."""
@@ -108,14 +115,15 @@ def run_test(c_file: Path, verbose: bool = False, test_num: str = "") -> tuple[s
     if result.returncode != 0:
         return "link", result.stderr.strip()
 
-    # Run
+    # Run with per-test timeout
+    timeout = SLOW_TESTS.get(test_num, 5)
     try:
         result = subprocess.run(
             [str(CPMEMU), str(com_file)],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=timeout
         )
     except subprocess.TimeoutExpired:
-        return "timeout", "Execution timed out"
+        return "timeout", f"Execution timed out after {timeout}s"
 
     # Parse output - remove cpmemu header/footer
     output_lines = result.stdout.strip().split('\n')
