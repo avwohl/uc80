@@ -2095,9 +2095,26 @@ class CodeGenerator:
 
             # Initialize if there's an initializer
             if decl.init:
+                # Unwrap compound literal if needed
+                init = decl.init
+                init_type = decl.var_type
+                if isinstance(decl.init, ast.Compound):
+                    init = decl.init.init  # Get InitializerList from Compound
+                    init_type = decl.init.target_type
+
                 # Handle array initialization specially
-                if isinstance(decl.var_type, ast.ArrayType) and isinstance(decl.init, ast.InitializerList):
+                if isinstance(init_type, ast.ArrayType) and isinstance(init, ast.InitializerList):
+                    # Temporarily replace decl.init with unwrapped init
+                    old_init = decl.init
+                    decl.init = init
                     self._gen_local_array_init(decl)
+                    decl.init = old_init
+                elif isinstance(init_type, ast.StructType) and isinstance(init, ast.InitializerList):
+                    # Temporarily replace decl.init with unwrapped init
+                    old_init = decl.init
+                    decl.init = init
+                    self._gen_local_struct_init(decl)
+                    decl.init = old_init
                 else:
                     is_long = self._is_long_type(decl.var_type)
                     init_is_float = self._is_float_expr(decl.init)
@@ -2178,6 +2195,283 @@ class CodeGenerator:
                     self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
             else:
                 # Stack-based: store at IX+base_offset+offset
+                frame_off = sym.offset + offset
+                if is_long:
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off + 2)}),E")
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off + 3)}),D")
+                elif elem_size == 1:
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                else:
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
+
+    def _gen_local_struct_init(self, decl: ast.VarDecl) -> None:
+        """Generate code to initialize a local struct from an initializer list."""
+        sym = self.ctx.locals[decl.name]
+        struct_type = decl.var_type
+        init_list = decl.init
+
+        # Get struct members
+        if not isinstance(struct_type, ast.StructType) or not struct_type.name:
+            return
+        if struct_type.name not in self.ctx.structs:
+            return
+
+        members = self.ctx.structs[struct_type.name]
+
+        # Initialize struct with values from initializer list
+        self._gen_struct_init_values(sym, struct_type, init_list.values, 0)
+
+    def _gen_struct_init_values(self, sym: 'Symbol', struct_type: ast.StructType,
+                                values: list, base_offset: int) -> int:
+        """Generate code to store struct initializer values. Returns number of values consumed."""
+        if not struct_type.name or struct_type.name not in self.ctx.structs:
+            return 0
+
+        members = self.ctx.structs[struct_type.name]
+        value_index = 0
+
+        for member_name, member_type, member_offset in members:
+            if value_index >= len(values):
+                # No more values - zero-initialize remaining members
+                self._gen_zero_init_member(sym, member_type, base_offset + member_offset)
+                continue
+
+            val = values[value_index]
+
+            # Handle DesignatedInit - skip for now (complex)
+            if isinstance(val, ast.DesignatedInit):
+                val = val.value
+                value_index += 1
+                self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
+            elif isinstance(member_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+                # Check for string literal initializing char array
+                if isinstance(val, ast.StringLiteral) and self._is_char_array(member_type):
+                    value_index += 1
+                    self._gen_string_init(sym, member_type, val, base_offset + member_offset)
+                else:
+                    # Flat initialization for array member - consume multiple values
+                    consumed = self._gen_flat_array_init(sym, member_type, values, value_index, base_offset + member_offset)
+                    value_index += consumed
+            elif isinstance(member_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+                # Flat initialization for nested struct - consume multiple values
+                consumed = self._gen_struct_init_values(sym, member_type, values[value_index:], base_offset + member_offset)
+                value_index += consumed
+            else:
+                # Normal case - single value for member
+                value_index += 1
+                self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
+
+        return value_index
+
+    def _gen_flat_array_init(self, sym: 'Symbol', array_type: ast.ArrayType,
+                             values: list, start_index: int, base_offset: int) -> int:
+        """Initialize an array from flat values. Returns number of values consumed."""
+        elem_type = array_type.base_type
+        elem_size = self._type_size(elem_type)
+        is_long = self._is_long_type(elem_type)
+
+        # Get array size
+        array_size = 1
+        if array_type.size and isinstance(array_type.size, ast.IntLiteral):
+            array_size = array_type.size.value
+
+        consumed = 0
+        for i in range(array_size):
+            idx = start_index + consumed
+            if idx >= len(values):
+                # No more values - zero-initialize
+                self._gen_zero_init_member(sym, elem_type, base_offset + i * elem_size)
+                continue
+
+            val = values[idx]
+            if isinstance(val, ast.DesignatedInit):
+                val = val.value
+
+            offset = base_offset + i * elem_size
+
+            # Handle nested types
+            if isinstance(elem_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+                nested_consumed = self._gen_struct_init_values(sym, elem_type, values[idx:], offset)
+                consumed += nested_consumed
+            elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+                nested_consumed = self._gen_flat_array_init(sym, elem_type, values, idx, offset)
+                consumed += nested_consumed
+            else:
+                # Scalar element or nested InitializerList
+                consumed += 1
+                self.gen_expr(val, force_long=is_long)
+                if is_long and not self._is_long_expr(val):
+                    is_signed = not self._is_unsigned_expr(val)
+                    self._extend_hl_to_dehl(is_signed)
+
+                # Store
+                if sym.uses_shared_storage:
+                    base = sym.shared_offset + offset
+                    if is_long:
+                        self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
+                        self.ctx.emit_instr("LD", f"(??AUTO+{base + 2}),DE")
+                    elif elem_size == 1:
+                        self.ctx.emit_instr("LD", "A,L")
+                        self.ctx.emit_instr("LD", f"(??AUTO+{base}),A")
+                    else:
+                        self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
+                else:
+                    frame_off = sym.offset + offset
+                    if is_long:
+                        self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                        self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
+                        self.ctx.emit_instr("LD", f"({ix_off(frame_off + 2)}),E")
+                        self.ctx.emit_instr("LD", f"({ix_off(frame_off + 3)}),D")
+                    elif elem_size == 1:
+                        self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                    else:
+                        self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                        self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
+
+        return consumed
+
+    def _is_char_array(self, array_type: ast.ArrayType) -> bool:
+        """Check if array is a char array (can be initialized with string literal)."""
+        base = array_type.base_type
+        if isinstance(base, ast.BasicType) and base.name == "char":
+            return True
+        return False
+
+    def _gen_string_init(self, sym: 'Symbol', array_type: ast.ArrayType, string_lit: ast.StringLiteral, base_offset: int) -> None:
+        """Initialize a char array from a string literal."""
+        string_val = string_lit.value + '\0'  # Include null terminator
+        array_size = 1
+        if array_type.size and isinstance(array_type.size, ast.IntLiteral):
+            array_size = array_type.size.value
+
+        for i, ch in enumerate(string_val):
+            if i >= array_size:
+                break
+            char_val = ord(ch)
+            if sym.uses_shared_storage:
+                base = sym.shared_offset + base_offset + i
+                self.ctx.emit_instr("ld", f"a,{char_val}")
+                self.ctx.emit_instr("LD", f"(??AUTO+{base}),A")
+            else:
+                frame_off = sym.offset + base_offset + i
+                self.ctx.emit_instr("ld", f"a,{char_val}")
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),A")
+
+        # Zero-fill remaining bytes
+        for i in range(len(string_val), array_size):
+            if sym.uses_shared_storage:
+                base = sym.shared_offset + base_offset + i
+                self.ctx.emit_instr("xor", "a")
+                self.ctx.emit_instr("LD", f"(??AUTO+{base}),A")
+            else:
+                frame_off = sym.offset + base_offset + i
+                self.ctx.emit_instr("xor", "a")
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),A")
+
+    def _gen_zero_init_member(self, sym: 'Symbol', member_type: ast.TypeNode, offset: int) -> None:
+        """Zero-initialize a struct member."""
+        size = self._type_size(member_type)
+        # For now, just store zeros
+        self.ctx.emit_instr("LD", "HL,0")
+        if sym.uses_shared_storage:
+            base = sym.shared_offset + offset
+            for i in range(0, size, 2):
+                if i + 1 < size:
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base + i}),HL")
+                else:
+                    self.ctx.emit_instr("LD", "A,L")
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base + i}),A")
+
+    def _gen_store_member_value(self, sym: 'Symbol', member_type: ast.TypeNode,
+                                 offset: int, val: ast.Expression) -> None:
+        """Store a value at a struct member's location."""
+        is_long = self._is_long_type(member_type)
+        member_size = self._type_size(member_type)
+
+        # Handle nested struct initialization
+        if isinstance(member_type, ast.StructType) and isinstance(val, ast.InitializerList):
+            self._gen_struct_init_values(sym, member_type, val.values, offset)
+            return
+
+        # Handle nested array initialization
+        if isinstance(member_type, ast.ArrayType) and isinstance(val, ast.InitializerList):
+            self._gen_array_init_values(sym, member_type, val.values, offset)
+            return
+
+        # Generate the value expression
+        self.gen_expr(val, force_long=is_long)
+
+        # Extend to 32-bit if needed
+        if is_long and not self._is_long_expr(val):
+            is_signed = not self._is_unsigned_expr(val)
+            self._extend_hl_to_dehl(is_signed)
+
+        # Store at the appropriate offset
+        if sym.uses_shared_storage:
+            base = sym.shared_offset + offset
+            if is_long:
+                self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
+                self.ctx.emit_instr("LD", f"(??AUTO+{base + 2}),DE")
+            elif member_size == 1:
+                self.ctx.emit_instr("LD", "A,L")
+                self.ctx.emit_instr("LD", f"(??AUTO+{base}),A")
+            else:
+                self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
+        else:
+            frame_off = sym.offset + offset
+            if is_long:
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off + 2)}),E")
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off + 3)}),D")
+            elif member_size == 1:
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+            else:
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
+
+    def _gen_array_init_values(self, sym: 'Symbol', array_type: ast.ArrayType,
+                                values: list, base_offset: int) -> None:
+        """Generate code to store array initializer values at an offset."""
+        elem_type = array_type.base_type
+        elem_size = self._type_size(elem_type)
+        is_long = self._is_long_type(elem_type)
+
+        for i, val in enumerate(values):
+            if isinstance(val, ast.DesignatedInit):
+                val = val.value
+
+            offset = base_offset + i * elem_size
+
+            # Handle nested initialization
+            if isinstance(elem_type, ast.StructType) and isinstance(val, ast.InitializerList):
+                self._gen_struct_init_values(sym, elem_type, val.values, offset)
+                continue
+            if isinstance(elem_type, ast.ArrayType) and isinstance(val, ast.InitializerList):
+                self._gen_array_init_values(sym, elem_type, val.values, offset)
+                continue
+
+            # Generate value
+            self.gen_expr(val, force_long=is_long)
+            if is_long and not self._is_long_expr(val):
+                is_signed = not self._is_unsigned_expr(val)
+                self._extend_hl_to_dehl(is_signed)
+
+            # Store
+            if sym.uses_shared_storage:
+                base = sym.shared_offset + offset
+                if is_long:
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base + 2}),DE")
+                elif elem_size == 1:
+                    self.ctx.emit_instr("LD", "A,L")
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base}),A")
+                else:
+                    self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
+            else:
                 frame_off = sym.offset + offset
                 if is_long:
                     self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
@@ -4299,13 +4593,7 @@ class CodeGenerator:
                 # Struct initializer
                 if elem_type.name and elem_type.name in self.ctx.structs:
                     members = self.ctx.structs[elem_type.name]
-                    for i, val in enumerate(init.values):
-                        if i < len(members):
-                            _, member_type, _ = members[i]
-                            if isinstance(val, ast.DesignatedInit):
-                                self._emit_initializer(val.value, member_type)
-                            else:
-                                self._emit_initializer(val, member_type)
+                    self._emit_struct_init_flat(init.values, members)
                 else:
                     # Unknown struct, just reserve space
                     self.ctx.emit_instr("DS", str(elem_size))
@@ -4357,9 +4645,90 @@ class CodeGenerator:
                 self._emit_int_value(const_val, elem_size)
             else:
                 self.ctx.emit_instr("DS", str(elem_size))
+        elif isinstance(init, ast.Compound):
+            # Compound literal: (type){initializer} - extract the initializer
+            self._emit_initializer(init.init, init.target_type)
         else:
             # Complex initializer - reserve space
             self.ctx.emit_instr("DS", str(elem_size))
+
+    def _emit_struct_init_flat(self, values: list, members: list) -> int:
+        """Emit struct initialization with flat value list. Returns values consumed."""
+        value_index = 0
+
+        for member_name, member_type, member_offset in members:
+            if value_index >= len(values):
+                # No more values - zero-initialize
+                size = self._type_size(member_type)
+                self.ctx.emit_instr("DS", str(size))
+                continue
+
+            val = values[value_index]
+
+            # Handle DesignatedInit
+            if isinstance(val, ast.DesignatedInit):
+                val = val.value
+                value_index += 1
+                self._emit_initializer(val, member_type)
+            elif isinstance(member_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+                # Flat array init
+                consumed = self._emit_array_init_flat(values, value_index, member_type)
+                value_index += consumed
+            elif isinstance(member_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+                # Flat nested struct init
+                if member_type.name and member_type.name in self.ctx.structs:
+                    nested_members = self.ctx.structs[member_type.name]
+                    consumed = self._emit_struct_init_flat(values[value_index:], nested_members)
+                    value_index += consumed
+                else:
+                    value_index += 1
+                    self._emit_initializer(val, member_type)
+            else:
+                # Normal case
+                value_index += 1
+                self._emit_initializer(val, member_type)
+
+        return value_index
+
+    def _emit_array_init_flat(self, values: list, start_index: int, array_type: ast.ArrayType) -> int:
+        """Emit array initialization from flat values. Returns values consumed."""
+        elem_type = array_type.base_type
+        elem_size = self._type_size(elem_type)
+
+        # Get array size
+        array_size = 1
+        if array_type.size and isinstance(array_type.size, ast.IntLiteral):
+            array_size = array_type.size.value
+
+        consumed = 0
+        for i in range(array_size):
+            idx = start_index + consumed
+            if idx >= len(values):
+                # No more values - zero-initialize
+                self.ctx.emit_instr("DS", str(elem_size))
+                continue
+
+            val = values[idx]
+            if isinstance(val, ast.DesignatedInit):
+                val = val.value
+
+            # Handle nested types
+            if isinstance(elem_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+                if elem_type.name and elem_type.name in self.ctx.structs:
+                    nested_members = self.ctx.structs[elem_type.name]
+                    nested_consumed = self._emit_struct_init_flat(values[idx:], nested_members)
+                    consumed += nested_consumed
+                else:
+                    consumed += 1
+                    self._emit_initializer(val, elem_type)
+            elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+                nested_consumed = self._emit_array_init_flat(values, idx, elem_type)
+                consumed += nested_consumed
+            else:
+                consumed += 1
+                self._emit_initializer(val, elem_type)
+
+        return consumed
 
     def _emit_int_value(self, value: int, size: int) -> None:
         """Emit an integer value with the specified size."""
