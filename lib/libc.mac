@@ -2126,16 +2126,49 @@ _printf_format:
 	CP	'%'
 	JR	Z,_printf_pct
 
+_printf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_printf_skip
+	CP	'+'
+	JR	Z,_printf_skip
+	CP	' '
+	JR	Z,_printf_skip
+	CP	'#'
+	JR	Z,_printf_skip
+	CP	'0'
+	JR	Z,_printf_skip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_printf_nodig
+	CP	'9'+1
+	JR	C,_printf_skip
+_printf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_printf_skip
+	; Skip length modifiers: h, z (l handled separately for long)
+	CP	'h'
+	JR	Z,_printf_skip
+	CP	'z'
+	JR	Z,_printf_skip
+	; Now check format specifiers
 	CP	's'
 	JR	Z,_printf_str
 
 	CP	'd'
 	JR	Z,_printf_dec
 
+	CP	'i'
+	JR	Z,_printf_dec
+
 	CP	'c'
 	JR	Z,_printf_chr
 
 	CP	'x'
+	JR	Z,_printf_hex
+
+	CP	'X'
 	JR	Z,_printf_hex
 
 	CP	'u'
@@ -2150,6 +2183,13 @@ _printf_format:
 	; Unknown format - skip
 	INC	HL
 	JP	_printf_loop
+
+_printf_skip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JR	Z,_printf_done
+	JR	_printf_fmt2
 
 _printf_ptr:
 	; Output pointer as hex (same as %x but convention)
@@ -2498,10 +2538,42 @@ _fprintf_format:
 	CP	'%'
 	JR	Z,_fprintf_pct
 
+_fprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_fprintf_fskip
+	CP	'+'
+	JR	Z,_fprintf_fskip
+	CP	' '
+	JR	Z,_fprintf_fskip
+	CP	'#'
+	JR	Z,_fprintf_fskip
+	CP	'0'
+	JR	Z,_fprintf_fskip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_fprintf_nodig
+	CP	'9'+1
+	JR	C,_fprintf_fskip
+_fprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_fprintf_fskip
+	; Skip length modifiers: h, l, z
+	CP	'h'
+	JR	Z,_fprintf_fskip
+	CP	'l'
+	JR	Z,_fprintf_fskip
+	CP	'z'
+	JR	Z,_fprintf_fskip
+	; Now check format specifiers
 	CP	's'
 	JR	Z,_fprintf_str
 
 	CP	'd'
+	JR	Z,_fprintf_dec
+
+	CP	'i'
 	JR	Z,_fprintf_dec
 
 	CP	'c'
@@ -2510,12 +2582,22 @@ _fprintf_format:
 	CP	'x'
 	JR	Z,_fprintf_hex
 
+	CP	'X'
+	JR	Z,_fprintf_hex
+
 	CP	'u'
 	JR	Z,_fprintf_dec	; %u same as %d for now
 
 	; Unknown format - skip
 	INC	HL
 	JP	_fprintf_loop
+
+_fprintf_fskip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_fprintf_done
+	JR	_fprintf_fmt2
 
 _fprintf_pct:
 	; Output literal %
@@ -2801,13 +2883,43 @@ _vprintf_fmt:
 	JP	_vprintf_loop
 
 _vprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_vprintf_skip
+	CP	'+'
+	JR	Z,_vprintf_skip
+	CP	' '
+	JR	Z,_vprintf_skip
+	CP	'#'
+	JR	Z,_vprintf_skip
+	CP	'0'
+	JR	Z,_vprintf_skip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_vprintf_nodig
+	CP	'9'+1
+	JR	C,_vprintf_skip
+_vprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_vprintf_skip
+	; Skip length modifiers: h, z (l handled separately for long)
+	CP	'h'
+	JR	Z,_vprintf_skip
+	CP	'z'
+	JR	Z,_vprintf_skip
+	; Now check format specifiers
 	CP	's'
 	JP	Z,_vprintf_str
 	CP	'd'
 	JP	Z,_vprintf_dec
+	CP	'i'
+	JP	Z,_vprintf_dec
 	CP	'c'
 	JP	Z,_vprintf_chr
 	CP	'x'
+	JP	Z,_vprintf_hex
+	CP	'X'
 	JP	Z,_vprintf_hex
 	CP	'u'
 	JP	Z,_vprintf_uns
@@ -2816,6 +2928,12 @@ _vprintf_fmt2:
 	; Unknown - skip
 	INC	HL
 	JP	_vprintf_loop
+_vprintf_skip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vprintf_done
+	JP	_vprintf_fmt2
 
 _vprintf_str:
 	; Print string
@@ -3028,14 +3146,57 @@ _vfprintf_fmt:
 	JP	_vfprintf_loop
 
 _vfprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_vfprintf_skip
+	CP	'+'
+	JR	Z,_vfprintf_skip
+	CP	' '
+	JR	Z,_vfprintf_skip
+	CP	'#'
+	JR	Z,_vfprintf_skip
+	CP	'0'
+	JR	Z,_vfprintf_skip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_vfprintf_nodig
+	CP	'9'+1
+	JR	C,_vfprintf_skip
+_vfprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_vfprintf_skip
+	; Skip length modifiers: l, h, z
+	CP	'l'
+	JR	Z,_vfprintf_skip
+	CP	'h'
+	JR	Z,_vfprintf_skip
+	CP	'z'
+	JR	Z,_vfprintf_skip
+	; Now check format specifiers
 	CP	's'
 	JP	Z,_vfprintf_str
 	CP	'd'
 	JP	Z,_vfprintf_dec
+	CP	'i'
+	JP	Z,_vfprintf_dec
+	CP	'u'
+	JP	Z,_vfprintf_dec
+	CP	'x'
+	JP	Z,_vfprintf_hex
+	CP	'X'
+	JP	Z,_vfprintf_hex
 	CP	'c'
 	JP	Z,_vfprintf_chr
+	; Unknown specifier - skip it
 	INC	HL
 	JP	_vfprintf_loop
+_vfprintf_skip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vfprintf_done
+	JP	_vfprintf_fmt2
 
 _vfprintf_str:
 	PUSH	HL
@@ -3105,6 +3266,22 @@ _vfprintf_chr:
 	INC	HL
 	JP	_vfprintf_loop
 
+_vfprintf_hex:
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_fprintf_prt_hex
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vfprintf_loop
+
 _vfprintf_done:
 	LD	H,B
 	LD	L,C
@@ -3153,14 +3330,57 @@ _vsprintf_fmt:
 	JP	_vsprintf_loop
 
 _vsprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_vsprintf_skip
+	CP	'+'
+	JR	Z,_vsprintf_skip
+	CP	' '
+	JR	Z,_vsprintf_skip
+	CP	'#'
+	JR	Z,_vsprintf_skip
+	CP	'0'
+	JR	Z,_vsprintf_skip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_vsprintf_nodig
+	CP	'9'+1
+	JR	C,_vsprintf_skip
+_vsprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_vsprintf_skip
+	; Skip length modifiers: l, h, z
+	CP	'l'
+	JR	Z,_vsprintf_skip
+	CP	'h'
+	JR	Z,_vsprintf_skip
+	CP	'z'
+	JR	Z,_vsprintf_skip
+	; Now check format specifiers
 	CP	's'
 	JP	Z,_vsprintf_str
 	CP	'd'
 	JP	Z,_vsprintf_dec
+	CP	'i'
+	JP	Z,_vsprintf_dec
+	CP	'u'
+	JP	Z,_vsprintf_dec
+	CP	'x'
+	JP	Z,_vsprintf_hex
+	CP	'X'
+	JP	Z,_vsprintf_hex
 	CP	'c'
 	JP	Z,_vsprintf_chr
+	; Unknown specifier - skip it
 	INC	HL
 	JP	_vsprintf_loop
+_vsprintf_skip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vsprintf_done
+	JP	_vsprintf_fmt2
 
 _vsprintf_str:
 	PUSH	HL
@@ -3205,6 +3425,20 @@ _vsprintf_chr:
 	INC	HL
 	LD	(_vprintf_ap),HL
 	CALL	_sprintf_putc
+	POP	HL
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_hex:
+	PUSH	HL
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_sprintf_prt_hex
 	POP	HL
 	INC	HL
 	JP	_vsprintf_loop
@@ -6476,16 +6710,51 @@ _sprintf_format:
 	CP	'%'
 	JR	Z,_sprintf_pct
 
+_sprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_sprintf_fskip
+	CP	'+'
+	JR	Z,_sprintf_fskip
+	CP	' '
+	JR	Z,_sprintf_fskip
+	CP	'#'
+	JR	Z,_sprintf_fskip
+	CP	'0'
+	JR	Z,_sprintf_fskip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_sprintf_nodig
+	CP	'9'+1
+	JR	C,_sprintf_fskip
+_sprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_sprintf_fskip
+	; Skip length modifiers: h, l, z
+	CP	'h'
+	JR	Z,_sprintf_fskip
+	CP	'l'
+	JR	Z,_sprintf_fskip
+	CP	'z'
+	JR	Z,_sprintf_fskip
+	; Now check format specifiers
 	CP	's'
 	JR	Z,_sprintf_str
 
 	CP	'd'
 	JR	Z,_sprintf_dec
 
+	CP	'i'
+	JR	Z,_sprintf_dec
+
 	CP	'c'
 	JR	Z,_sprintf_chr
 
 	CP	'x'
+	JR	Z,_sprintf_hex
+
+	CP	'X'
 	JR	Z,_sprintf_hex
 
 	CP	'u'
@@ -6497,6 +6766,13 @@ _sprintf_format:
 	; Unknown format - skip
 	INC	HL
 	JP	_sprintf_loop
+
+_sprintf_fskip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+	JR	_sprintf_fmt2
 
 _sprintf_pct:
 	; Output literal %
@@ -6796,16 +7072,51 @@ _snprintf_format:
 	CP	'%'
 	JR	Z,_snprintf_pct
 
+_snprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_snprintf_fskip
+	CP	'+'
+	JR	Z,_snprintf_fskip
+	CP	' '
+	JR	Z,_snprintf_fskip
+	CP	'#'
+	JR	Z,_snprintf_fskip
+	CP	'0'
+	JR	Z,_snprintf_fskip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_snprintf_nodig
+	CP	'9'+1
+	JR	C,_snprintf_fskip
+_snprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_snprintf_fskip
+	; Skip length modifiers: h, l, z
+	CP	'h'
+	JR	Z,_snprintf_fskip
+	CP	'l'
+	JR	Z,_snprintf_fskip
+	CP	'z'
+	JR	Z,_snprintf_fskip
+	; Now check format specifiers
 	CP	's'
 	JR	Z,_snprintf_str
 
 	CP	'd'
 	JR	Z,_snprintf_dec
 
+	CP	'i'
+	JR	Z,_snprintf_dec
+
 	CP	'c'
 	JR	Z,_snprintf_chr
 
 	CP	'x'
+	JR	Z,_snprintf_hex
+
+	CP	'X'
 	JR	Z,_snprintf_hex
 
 	CP	'u'
@@ -6817,6 +7128,13 @@ _snprintf_format:
 	; Unknown format - skip
 	INC	HL
 	JP	_snprintf_loop
+
+_snprintf_fskip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_snprintf_done
+	JR	_snprintf_fmt2
 
 _snprintf_pct:
 	LD	A,'%'
@@ -11282,15 +11600,18 @@ _fwrite_cnt:	DS	2	; fwrite byte counter temp
 
 ; Standard FILE structures
 ; Each FILE: fd(1), flags(1), unget(1), mode(1) = 4 bytes
-	PUBLIC	_stdin
-	PUBLIC	_stdout
-	PUBLIC	_stderr
+	PUBLIC	_stdin_data
 _stdin_data:	DB	0,0,0FFH,0	; fd=0 (stdin), flags=0, unget=none, mode=0
+	PUBLIC	_stdout_data
 _stdout_data:	DB	1,0,0FFH,0	; fd=1 (stdout)
+	PUBLIC	_stderr_data
 _stderr_data:	DB	2,0,0FFH,0	; fd=2 (stderr)
 ; Pointers to FILE structures
+	PUBLIC	_stdin
 _stdin:		DW	_stdin_data
+	PUBLIC	_stdout
 _stdout:	DW	_stdout_data
+	PUBLIC	_stderr
 _stderr:	DW	_stderr_data
 
 ; printf 32-bit working storage

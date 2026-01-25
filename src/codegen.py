@@ -1745,6 +1745,8 @@ class CodeGenerator:
         # In C, multiple declarations of the same variable are allowed (tentative definitions)
         # Only one can have an initializer
         global_vars: dict[str, ast.VarDecl] = {}  # name -> decl with init (or first decl)
+        extern_only: set[str] = set()  # Names that only have extern declarations
+
         for d in unit.declarations:
             decls_to_check = []
             if isinstance(d, ast.VarDecl) and not isinstance(d.var_type, ast.FunctionType):
@@ -1754,12 +1756,23 @@ class CodeGenerator:
                     if isinstance(inner, ast.VarDecl) and not isinstance(inner.var_type, ast.FunctionType):
                         decls_to_check.append(inner)
             for decl in decls_to_check:
-                if decl.name in global_vars:
-                    # Already seen - prefer the one with initializer
-                    if decl.init and not global_vars[decl.name].init:
-                        global_vars[decl.name] = decl
+                if decl.storage_class == "extern" and not decl.init:
+                    # Pure extern declaration - track it but don't define yet
+                    if decl.name not in global_vars:
+                        extern_only.add(decl.name)
                 else:
-                    global_vars[decl.name] = decl
+                    # This is a definition (not extern, or extern with init)
+                    extern_only.discard(decl.name)  # Remove from extern-only
+                    if decl.name in global_vars:
+                        # Already seen - prefer the one with initializer
+                        if decl.init and not global_vars[decl.name].init:
+                            global_vars[decl.name] = decl
+                    else:
+                        global_vars[decl.name] = decl
+
+        # Emit EXTRN for symbols that are extern-only (declared but not defined)
+        for name in sorted(extern_only):
+            self.ctx.emit_instr("EXTRN", f"_{name}")
 
         if global_vars:
             self.ctx.emit()
