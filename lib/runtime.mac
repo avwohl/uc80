@@ -1746,24 +1746,40 @@ __fdiv_man:
 __fcmp:
 	PUSH	BC
 
-	; Check signs first
-	LD	A,D
-	XOR	80H		; Flip sign for comparison trick
-	LD	B,A
+	; Compare: left (DEHL) vs right (__tmp32)
+	; Sets Z if equal, C if left < right
+	; Flip sign bits to make unsigned comparison work for signed floats
+
+	; Compare high bytes (with sign bit flipped)
 	LD	A,(__tmp32+3)
-	XOR	80H
-	CP	B
+	XOR	80H		; Flip sign for comparison trick
+	LD	B,A		; B = right high byte (sign-flipped)
+	LD	A,D
+	XOR	80H		; A = left high byte (sign-flipped)
+	CP	B		; A - B = left - right, C if left < right
 	JR	NZ,__fcmp_diff
 
 	; High bytes equal, compare rest
+	LD	A,E
+	LD	B,A
 	LD	A,(__tmp32+2)
-	CP	E
+	LD	C,A
+	LD	A,B		; A = left E
+	CP	C		; Compare left vs right
 	JR	NZ,__fcmp_diff
+	LD	A,H
+	LD	B,A
 	LD	A,(__tmp32+1)
-	CP	H
+	LD	C,A
+	LD	A,B		; A = left H
+	CP	C
 	JR	NZ,__fcmp_diff
+	LD	A,L
+	LD	B,A
 	LD	A,(__tmp32)
-	CP	L
+	LD	C,A
+	LD	A,B		; A = left L
+	CP	C
 
 __fcmp_diff:
 	POP	BC
@@ -1805,8 +1821,8 @@ __itof_pos:
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
 
-	; Initial exponent = 127 + 31 (for 32-bit integer)
-	LD	HL,127+31
+	; Initial exponent = 127 + 23 (normalizing to bit 23)
+	LD	HL,127+23
 	LD	(__fexp1),HL
 
 	; Normalize (shift mantissa left until bit 23 is set)

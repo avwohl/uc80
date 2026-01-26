@@ -2218,6 +2218,18 @@ class CodeGenerator:
                             is_signed = not self._is_unsigned_expr(decl.init)
                             self._extend_hl_to_dehl(is_signed)
 
+                        # Convert int to float if target is float but source is integer
+                        if is_float and not self._is_float_expr(decl.init):
+                            # First extend integer to 32-bit if needed
+                            if not self._is_long_expr(decl.init):
+                                is_signed = not self._is_unsigned_expr(decl.init)
+                                self._extend_hl_to_dehl(is_signed)
+                            # Then convert to float
+                            if self._is_unsigned_expr(decl.init):
+                                self._call_runtime("__uitof")
+                            else:
+                                self._call_runtime("__itof")
+
                     sym = self.ctx.locals[decl.name]
                     if is_long_long:
                         self._store_local_64(sym)
@@ -2915,10 +2927,11 @@ class CodeGenerator:
                     # default case
                     default_label = self.ctx.new_label("DEFAULT")
                 else:
-                    # Regular case - evaluate constant
-                    if isinstance(s.value, ast.IntLiteral):
+                    # Regular case - evaluate constant expression
+                    const_val = self._eval_const_expr(s.value)
+                    if const_val is not None:
                         label = self.ctx.new_label("CASE")
-                        cases.append((s.value.value, label))
+                        cases.append((const_val, label))
                 # Recurse into the statement following the case label
                 # This handles consecutive case labels like "case 0: case 1:"
                 if s.stmt:
@@ -2994,10 +3007,11 @@ class CodeGenerator:
             if self._switch_default:
                 self.ctx.emit_label(self._switch_default)
         else:
-            # Find matching case label
-            if isinstance(stmt.value, ast.IntLiteral):
+            # Find matching case label using constant expression evaluation
+            const_val = self._eval_const_expr(stmt.value)
+            if const_val is not None:
                 for value, label in self._switch_cases:
-                    if value == stmt.value.value:
+                    if value == const_val:
                         self.ctx.emit_label(label)
                         break
 
@@ -4030,6 +4044,18 @@ class CodeGenerator:
             is_signed = not self._is_unsigned_expr(expr.right)
             self._extend_hl_to_dehl(is_signed)
 
+        # If target is float but source is integer, convert to float
+        if target_is_float and not self._is_float_expr(expr.right):
+            # First extend integer to 32-bit if needed
+            if not self._is_long_expr(expr.right):
+                is_signed = not self._is_unsigned_expr(expr.right)
+                self._extend_hl_to_dehl(is_signed)
+            # Then convert to float
+            if self._is_unsigned_expr(expr.right):
+                self._call_runtime("__uitof")
+            else:
+                self._call_runtime("__itof")
+
         # Store to the target
         if isinstance(expr.left, ast.Identifier):
             sym = self.ctx.lookup(expr.left.name)
@@ -4160,6 +4186,14 @@ class CodeGenerator:
                 # 64-bit negate: generate to __acc64, call __neg64
                 self._gen_64bit_operand(expr.operand, to_tmp=False)
                 self._call_runtime("__neg64")
+            elif self._is_float_expr(expr.operand):
+                # Float negate: flip sign bit (bit 31 = bit 7 of high byte of DE)
+                # Float stored as: HL=low word, DE=high word
+                self.gen_expr(expr.operand)
+                # Sign bit is bit 7 of D (high byte of high word)
+                self.ctx.emit_instr("LD", "A,D")
+                self.ctx.emit_instr("XOR", "80H")
+                self.ctx.emit_instr("LD", "D,A")
             elif self._is_long_expr(expr.operand):
                 # 32-bit negate using runtime
                 self.gen_expr(expr.operand)
@@ -5676,6 +5710,11 @@ class CodeGenerator:
         """Try to evaluate a constant expression at compile time. Returns None if not constant."""
         if isinstance(expr, ast.IntLiteral):
             return expr.value
+        elif isinstance(expr, ast.Identifier):
+            # Check for enum constant
+            if expr.name in self.ctx.enum_constants:
+                return self.ctx.enum_constants[expr.name]
+            return None  # Not a compile-time constant
         elif isinstance(expr, ast.CharLiteral):
             return expr.value
         elif isinstance(expr, ast.UnaryOp):
