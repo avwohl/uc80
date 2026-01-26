@@ -1467,27 +1467,43 @@ __fmul_man_no_overflow:
 ; Helper: 16-bit × 16-bit = 32-bit multiplication
 ; Input: BC = multiplicand, DE = multiplier
 ; Output: DEHL = 32-bit product (DE=high, HL=low)
+; Uses __mul_mcand for 32-bit multiplicand storage
 __mul16_32:
-	PUSH	BC		; Save BC
+	PUSH	BC		; Save original BC
 	PUSH	IX
-	LD	IX,0		; IX = high word
-	LD	HL,0		; HL = low word
+	; Store multiplicand in memory for 32-bit tracking
+	LD	(__mul_mcand),BC	; Low word
+	LD	BC,0
+	LD	(__mul_mcand+2),BC	; High word = 0
+	LD	IX,0		; Result high word
+	LD	HL,0		; Result low word
 	LD	A,16		; Loop counter
 __mul16_32_loop:
 	; Shift multiplier right, check LSB
 	SRL	D
 	RR	E
 	JR	NC,__mul16_32_noadd
-	; Add multiplicand to result low
+	; Add 32-bit multiplicand to 32-bit result (IX:HL)
+	LD	BC,(__mul_mcand)
 	ADD	HL,BC
-	; Add carry to high word in IX
-	JR	NC,__mul16_32_nocarry
-	INC	IX
-__mul16_32_nocarry:
+	LD	BC,(__mul_mcand+2)
+	PUSH	HL		; Save low result
+	PUSH	IX
+	POP	HL		; HL = result high
+	ADC	HL,BC		; Add multiplicand high with carry
+	PUSH	HL
+	POP	IX		; IX = new result high
+	POP	HL		; Restore low result
 __mul16_32_noadd:
-	; Shift multiplicand left
+	; Shift 32-bit multiplicand left
+	LD	BC,(__mul_mcand)
 	SLA	C
 	RL	B
+	LD	(__mul_mcand),BC
+	LD	BC,(__mul_mcand+2)
+	RL	C		; Carry from low word
+	RL	B
+	LD	(__mul_mcand+2),BC
 	DEC	A
 	JR	NZ,__mul16_32_loop
 	; Move high word from IX to DE
@@ -1619,10 +1635,16 @@ __fdiv_man:
 @fdiv_lp:
 	PUSH	BC
 
-	; Compare dividend (in __fdiv_rem) with divisor (in __fman2)
-	; Both are 24-bit values
+	; Compare dividend (in __fdiv_rem, 32-bit) with divisor (in __fman2, 24-bit)
+	; __fdiv_rem can overflow to 32 bits during shifts
 
-	; Compare high byte
+	; Check high byte (byte 3) of dividend - divisor is only 24-bit
+	LD	A,(__fdiv_rem+3)
+	OR	A
+	JR	NZ,@fdiv_sub		; dividend has bit 24+, definitely >= divisor
+
+	; High byte is 0, compare 24-bit portion
+	; Compare byte 2 (high of 24-bit portion)
 	LD	A,(__fdiv_rem+2)
 	LD	C,A
 	LD	A,(__fman2+2)
@@ -1630,7 +1652,7 @@ __fdiv_man:
 	JR	C,@fdiv_sub		; divisor < dividend, subtract
 	JR	NZ,@fdiv_nosub		; divisor > dividend, no subtract
 
-	; High bytes equal, compare middle
+	; Byte 2 equal, compare byte 1
 	LD	A,(__fdiv_rem+1)
 	LD	C,A
 	LD	A,(__fman2+1)
@@ -1638,7 +1660,7 @@ __fdiv_man:
 	JR	C,@fdiv_sub
 	JR	NZ,@fdiv_nosub
 
-	; Middle bytes equal, compare low
+	; Byte 1 equal, compare byte 0
 	LD	A,(__fdiv_rem)
 	LD	C,A
 	LD	A,(__fman2)
@@ -1648,7 +1670,7 @@ __fdiv_man:
 
 	; All equal: dividend == divisor, subtract
 @fdiv_sub:
-	; dividend -= divisor
+	; dividend (32-bit) -= divisor (24-bit)
 	LD	A,(__fdiv_rem)
 	LD	C,A
 	LD	A,(__fman2)
@@ -1673,10 +1695,14 @@ __fdiv_man:
 	SBC	A,E
 	LD	(__fdiv_rem+2),A
 
-	; Set quotient bit (shift left then set bit 0)
+	; Handle borrow into byte 3 (subtract 0 with carry)
+	LD	A,(__fdiv_rem+3)
+	SBC	A,0
+	LD	(__fdiv_rem+3),A
+
+	; Set quotient bit (shift left first to preserve carry chain, then set bit 0)
 	LD	A,(__fman1)
 	ADD	A,A
-	OR	1
 	LD	(__fman1),A
 	LD	A,(__fman1+1)
 	ADC	A,A
@@ -1684,6 +1710,10 @@ __fdiv_man:
 	LD	A,(__fman1+2)
 	ADC	A,A
 	LD	(__fman1+2),A
+	; Now set bit 0 of quotient
+	LD	A,(__fman1)
+	OR	1
+	LD	(__fman1),A
 	JR	@fdiv_next
 
 @fdiv_nosub:
@@ -1699,7 +1729,7 @@ __fdiv_man:
 	LD	(__fman1+2),A
 
 @fdiv_next:
-	; Shift dividend left by 1 for next iteration
+	; Shift dividend (32-bit) left by 1 for next iteration
 	LD	A,(__fdiv_rem)
 	ADD	A,A
 	LD	(__fdiv_rem),A
@@ -1709,6 +1739,9 @@ __fdiv_man:
 	LD	A,(__fdiv_rem+2)
 	ADC	A,A
 	LD	(__fdiv_rem+2),A
+	LD	A,(__fdiv_rem+3)
+	ADC	A,A
+	LD	(__fdiv_rem+3),A
 
 	POP	BC
 	DEC	B
@@ -1716,6 +1749,8 @@ __fdiv_man:
 
 	; Quotient is now in __fman1 (24 bits)
 	; Check if normalization needed (bit 23 should be 1)
+	; May need to shift multiple times if quotient is small
+@fdiv_norm:
 	LD	A,(__fman1+2)
 	BIT	7,A
 	JR	NZ,@fdiv_dn
@@ -1734,6 +1769,7 @@ __fdiv_man:
 	LD	HL,(__fexp1)
 	DEC	HL
 	LD	(__fexp1),HL
+	JP	@fdiv_norm		; Loop until normalized
 
 @fdiv_dn:
 	RET
@@ -2171,6 +2207,10 @@ __fman2:
 	DW	0,0
 __fdiv_rem:
 	DW	0,0	; 4 bytes for division remainder
+
+; Multiplication work area
+__mul_mcand:
+	DW	0,0	; 4 bytes for 32-bit multiplicand
 
 ; Complex number work area
 	PUBLIC	__cplx_l,__cplx_r,__cplx_result,__cplx_tmp

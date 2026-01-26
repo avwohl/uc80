@@ -3579,6 +3579,11 @@ _prt_div16_dn:
 ; Internal: print float from __ftmp (IEEE 754 single precision)
 ; Format: [-]d.dddddd (6 decimal places)
 ; ============================================================
+	EXTRN	__fmul
+	EXTRN	__fsub
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	__tmp32
 _prt_float:
 	PUSH	BC
 	PUSH	DE
@@ -3611,7 +3616,13 @@ _prt_float:
 	RES	7,H		; Clear sign bit
 
 _prt_float_pos:
-	; Now HLDE is positive float
+	; Now HLDE is positive float (HLDE format: H=high with sign/exp)
+	; Save in __fwork for later fractional printing (convert to DEHL format)
+	EX	DE,HL		; Now DEHL format: D=high
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	EX	DE,HL		; Back to HLDE format
+
 	; H = sign(0)|exp[7:1], L = exp[0]|mant[22:16], D = mant[15:8], E = mant[7:0]
 	; Extract exponent: bits 30-23 -> (H<<1) | (L>>7)
 	LD	A,H
@@ -3718,19 +3729,84 @@ _prt_float_use_hl:
 	POP	HL		; Restore integer part
 
 	; Now calculate fractional part
-	; frac = (mantissa - (int << shift)) * 10^6 >> shift
-	POP	DE		; Restore original E (low byte)
-	POP	BC		; Restore original HL into BC (B=H, C=L)
-	; Original mantissa: B(high), C(mid), E(low) - but this doesn't help much
+	; We saved original float in __fwork, integer part already in HL (from POP above)
+	; Need to: frac = original - integer, then print frac digits
+	; First discard the saved mantissa from stack
+	POP	DE		; Discard saved mantissa (from line 3695)
+	POP	DE		; Discard saved mantissa (from line 3694)
+	; HL still has integer part from line 3729
 
-	; For simplicity, just print 6 zeros for fractional part
-	; (Full implementation would need 32-bit multiply)
+	; Convert integer part to float
+	LD	DE,0		; DEHL = integer as 32-bit
+	CALL	__itof		; DEHL = integer as float
+
+	; Store in __tmp32 for subtraction
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+
+	; Load original float from __fwork
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	; DEHL = original float
+
+	; Subtract: DEHL = original - integer = fractional part
+	CALL	__fsub
+
+	; Store fractional float for digit extraction
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
+	; Print 6 fractional digits using multiply-by-10
 	LD	B,6
 _prt_float_frac:
 	PUSH	BC
-	LD	E,'0'
+
+	; Load current fractional value
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+
+	; Store in __tmp32 for multiplication
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+
+	; Load 10.0 (0x41200000) into DEHL
+	LD	DE,4120H
+	LD	HL,0
+	; Multiply: DEHL = DEHL * __tmp32
+	CALL	__fmul
+
+	; Save multiplied value
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
+	; Extract integer digit
+	CALL	__ftoi		; HL = integer part (0-9)
+	LD	A,L
+	PUSH	AF		; Save digit
+
+	; Print digit
+	ADD	A,'0'
+	LD	E,A
 	LD	C,CONOUT
 	CALL	BDOS
+
+	; Subtract digit from multiplied value to keep fractional part
+	POP	AF		; A = digit
+	LD	L,A
+	LD	H,0
+	LD	DE,0
+	CALL	__itof		; DEHL = digit as float
+
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fsub		; DEHL = value - digit
+
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
 	POP	BC
 	DJNZ	_prt_float_frac
 
@@ -3739,22 +3815,114 @@ _prt_float_frac:
 _prt_float_small:
 	; Exponent < 0, value < 1.0
 	; Print "0." then calculate fractional digits
+	PUSH	BC		; Save exponent
 	LD	E,'0'
 	LD	C,CONOUT
 	CALL	BDOS
 	LD	E,'.'
 	LD	C,CONOUT
 	CALL	BDOS
+	POP	BC		; Restore exponent
 
-	; Print 6 zeros (simplified - full version would compute actual digits)
+	; Reconstruct float from __fman (mantissa) and B (unbiased exponent)
+	; Runtime uses DEHL format: D=sign|exp[7:1], E=exp[0]|mant[22:16], H=mant[15:8], L=mant[7:0]
+	; Biased exponent = B + 127
+	LD	A,B
+	ADD	A,127		; A = biased exponent
+	LD	B,A		; B = biased exponent
+
+	; Pack into DEHL format (runtime format)
+	LD	A,B
+	SRL	A		; A = exp >> 1 (D gets sign=0 | exp[7:1])
+	LD	D,A
+
+	LD	A,B
+	AND	1		; A = exp[0]
+	RLCA
+	RLCA
+	RLCA
+	RLCA
+	RLCA
+	RLCA
+	RLCA			; A = exp[0] << 7
+	LD	C,A		; Save
+	LD	A,(__fman+2)	; High byte of mantissa (with implicit 1)
+	AND	7FH		; Remove implicit 1
+	OR	C		; Combine with exp[0]
+	LD	E,A		; E = exp[0] | mant[22:16]
+
+	LD	A,(__fman+1)
+	LD	H,A		; H = mant[15:8]
+	LD	A,(__fman)
+	LD	L,A		; L = mant[7:0]
+	; Now DEHL = packed positive float in runtime format
+
+	; Store in working area __fwork (as DEHL: __fwork[0..1]=HL, __fwork[2..3]=DE)
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
+	; Loop 6 times to print 6 digits
 	LD	B,6
-_prt_float_sm2:
+_prt_float_sm_lp:
 	PUSH	BC
-	LD	E,'0'
+
+	; Load current value from __fwork into DEHL
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	; DEHL = float in runtime format
+
+	; Store in __tmp32 for multiplication
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+
+	; Load 10.0 (0x41200000) into DEHL
+	; 10.0 = sign=0, exp=130, mant=0x200000
+	; D = 0|10000010>>1 = 0x41, E = 0<<7|0x20 = 0x20, H=0, L=0
+	LD	DE,4120H
+	LD	HL,0
+	; Multiply: DEHL = DEHL * __tmp32
+	CALL	__fmul
+
+	; Result in DEHL is value * 10
+	; Save result
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
+	; Extract integer part (0-9) using __ftoi
+	; DEHL already has the value
+	CALL	__ftoi		; HL = integer part
+	LD	A,L		; A = digit (should be 0-9)
+	PUSH	AF		; Save digit
+
+	; Print digit
+	ADD	A,'0'
+	LD	E,A
 	LD	C,CONOUT
 	CALL	BDOS
+
+	; Subtract integer part from float to get fractional part
+	; Need to convert integer back to float and subtract
+	POP	AF		; A = digit
+	LD	L,A
+	LD	H,0
+	LD	DE,0		; DEHL = digit as 32-bit integer
+	CALL	__itof		; DEHL = digit as float
+
+	; Store digit-as-float in __tmp32
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+
+	; Load current value and subtract
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fsub		; DEHL = value - digit
+
+	; Store back
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
 	POP	BC
-	DJNZ	_prt_float_sm2
+	DJNZ	_prt_float_sm_lp
 	JP	_prt_float_done
 
 _prt_float_large:
@@ -3855,11 +4023,18 @@ _prt_hex:
 	LD	A,L
 	AND	0FH
 	; Always print last digit
+	; A = digit value (0-15)
+	; If digit is non-zero, print it
 	OR	A
 	JR	NZ,_prt_hexf
+	; Digit is 0. If we've printed something, print '0'. Otherwise print single '0'.
+	; Either way, we need to print '0', so just fall through or jump with A=0
+	; Check if B is non-zero (already printed)
+	PUSH	AF		; Save A=0
 	LD	A,B
 	OR	A
-	JR	NZ,_prt_hexf
+	POP	AF		; Restore A=0
+	JR	NZ,_prt_hexf	; If B!=0, print the '0'
 	; Value is 0, print single '0'
 	LD	A,'0'
 	LD	E,A
@@ -8945,6 +9120,7 @@ _bsearch_ret:
 ; Float printing working storage
 __ftmp:		DS	4	; Temp float storage
 __fman:		DS	4	; Mantissa work area
+__fwork:	DS	4	; Float working storage for printf
 
 ; qsort working storage
 _qsort_i:	DS	2
@@ -9468,21 +9644,22 @@ _raise_err:
 ; Helper: Load float argument from stack into DEHL
 ; Call with IX pointing to stack frame
 _math_getarg:
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	E,(IX+6)
-	LD	D,(IX+7)
+	; Stack: +0,+1=BC, +2,+3=IX, +4,+5=retaddr, +6..+9=arg
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
 	RET
 
 ; Helper: Load second float argument into __tmp32
 _math_getarg2:
-	LD	A,(IX+8)
-	LD	(__tmp32),A
-	LD	A,(IX+9)
-	LD	(__tmp32+1),A
 	LD	A,(IX+10)
-	LD	(__tmp32+2),A
+	LD	(__tmp32),A
 	LD	A,(IX+11)
+	LD	(__tmp32+1),A
+	LD	A,(IX+12)
+	LD	(__tmp32+2),A
+	LD	A,(IX+13)
 	LD	(__tmp32+3),A
 	RET
 
@@ -9697,11 +9874,12 @@ _sinl:
 
 	; Taylor series: 4 terms should be enough for single precision
 	; term *= -x^2 / (n*(n+1))
-	LD	B,4
-	LD	C,2		; n starts at 2
+	LD	A,2
+	LD	(_sin_iter),A	; n starts at 2
+	LD	B,4		; loop count
 
 _sin_loop:
-	PUSH	BC
+	PUSH	BC		; Save loop counter only
 
 	; term *= x^2
 	LD	HL,(_sin_term)
@@ -9719,24 +9897,20 @@ _sin_loop:
 	LD	(_sin_term+2),DE
 
 	; Divide by n*(n+1)
-	POP	BC
-	PUSH	BC
-	LD	A,C
-	INC	C		; n+1
-	LD	H,0
+	LD	A,(_sin_iter)	; Get n
 	LD	L,A
-	PUSH	BC
-	LD	D,H
-	LD	E,L
+	LD	H,0
+	LD	D,0
+	LD	E,0		; DEHL = n as 32-bit integer
 	CALL	__itof		; Convert n to float
 	LD	(_sin_n),HL
 	LD	(_sin_n+2),DE
-	POP	BC
+	LD	A,(_sin_iter)
+	INC	A		; n+1
+	LD	L,A
 	LD	H,0
-	LD	L,C
-	INC	C		; Advance n
-	LD	D,H
-	LD	E,L
+	LD	D,0
+	LD	E,0		; DEHL = n+1 as 32-bit
 	CALL	__itof		; Convert n+1 to float
 	; Multiply n * (n+1)
 	LD	A,(_sin_n)
@@ -9749,20 +9923,19 @@ _sin_loop:
 	LD	(__tmp32+3),A
 	CALL	__fmul		; n*(n+1) in DEHL
 
+	; Advance n by 2 for next iteration
+	LD	A,(_sin_iter)
+	ADD	A,2
+	LD	(_sin_iter),A
+
 	; Divide term by n*(n+1)
-	LD	(__tmp32),HL
+	; __fdiv expects: DEHL = dividend, __tmp32 = divisor
+	; We have n*(n+1) in DEHL, need term / n*(n+1)
+	LD	(__tmp32),HL	; Store n*(n+1) as divisor
 	LD	(__tmp32+2),DE
-	LD	HL,(_sin_term)
+	LD	HL,(_sin_term)	; Load term as dividend
 	LD	DE,(_sin_term+2)
-	EX	DE,HL
-	LD	A,D
-	LD	D,E
-	LD	E,A
-	LD	A,H
-	LD	H,L
-	LD	L,A
-	EX	DE,HL
-	CALL	__fdiv
+	CALL	__fdiv		; DEHL = term / n*(n+1)
 
 	; Negate term (alternate signs)
 	LD	A,D
@@ -9784,7 +9957,7 @@ _sin_loop:
 	LD	(_sin_sum),HL
 	LD	(_sin_sum+2),DE
 
-	POP	BC
+	POP	BC		; Restore loop counter
 	DJNZ	_sin_loop
 
 	; Apply original sign
@@ -12058,6 +12231,7 @@ _sin_x2:	DS	4
 _sin_sum:	DS	4
 _sin_term:	DS	4
 _sin_n:		DS	4
+_sin_iter:	DS	1
 _cos_x:		DS	4
 _cos_x2:	DS	4
 _cos_sum:	DS	4

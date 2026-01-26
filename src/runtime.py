@@ -258,15 +258,98 @@ class RuntimeLibrary:
 
     def get_data_section(self, functions: list[AsmFunction],
                          additional_refs: set[str] | None = None) -> str:
-        """Get DSEG content needed for the given functions.
+        """Get data section for embedded functions.
 
-        Only includes data labels that are referenced by the embedded functions
-        or explicitly listed in additional_refs.
+        When embedding runtime functions, we need to:
+        1. Include LOCAL data (not PUBLIC) - these are private to the embedded functions
+        2. EXTRN SHARED data (PUBLIC) - these should come from runtime.rel to avoid
+           conflicts with library code that also uses them
+
+        This ensures embedded code shares the same storage as library code (like
+        libc's printf) for PUBLIC symbols like __tmp32, __fman1, etc.
         """
         if not self.data_sections:
             return ''
-        if not functions and not additional_refs:
+        if not functions:
             return ''
+
+        # Collect all data labels referenced by the embedded functions
+        referenced: set[str] = set()
+        for func in functions:
+            for line in func.source.splitlines():
+                stripped = line.strip()
+                if stripped.startswith(';'):
+                    continue
+                if ';' in line:
+                    line = line[:line.index(';')]
+                matches = re.findall(r'\b(__\w+)\b', line)
+                referenced.update(matches)
+
+        # Collect labels defined within the embedded function code (not data)
+        code_labels = set()
+        for func in functions:
+            code_labels.update(func.publics)
+            for line in func.source.splitlines():
+                stripped = line.strip()
+                match = re.match(r'^(\w+):', stripped)
+                if match:
+                    code_labels.add(match.group(1))
+                match = re.match(r'^(@\w+):', stripped)
+                if match:
+                    code_labels.add(match.group(1))
+
+        # Parse DSEG to find PUBLIC vs local data symbols
+        public_data: set[str] = set()  # Symbols that are PUBLIC in DSEG
+        local_data: dict[str, list[str]] = {}  # Local symbol -> definition lines
+        current_label: str | None = None
+        current_block: list[str] = []
+
+        for line in self.data_sections:
+            stripped = line.strip()
+
+            # Track PUBLIC declarations in DSEG
+            match = re.match(r'\s*PUBLIC\s+(.+)', stripped, re.IGNORECASE)
+            if match:
+                labels = [l.strip() for l in match.group(1).split(',')]
+                public_data.update(labels)
+                continue
+
+            # Track label definitions
+            match = re.match(r'^(\w+):', stripped)
+            if match:
+                if current_label and current_label not in public_data:
+                    local_data[current_label] = current_block
+                current_label = match.group(1)
+                current_block = [line]
+                continue
+
+            if current_label:
+                current_block.append(line)
+
+        # Save last block
+        if current_label and current_label not in public_data:
+            local_data[current_label] = current_block
+
+        result_lines: list[str] = []
+
+        # Emit EXTRN for PUBLIC data symbols that are referenced
+        data_refs = referenced - code_labels
+        public_refs = data_refs & public_data
+        if public_refs:
+            result_lines.append('; Shared data from runtime.rel')
+            for sym in sorted(public_refs):
+                result_lines.append(f'\tEXTRN\t{sym}')
+
+        # Include local data definitions that are referenced
+        local_refs = data_refs - public_data
+        local_needed = [sym for sym in local_refs if sym in local_data]
+        if local_needed:
+            result_lines.append('; Local data for embedded functions')
+            result_lines.append('\tDSEG')
+            for sym in sorted(local_needed):
+                result_lines.extend(local_data[sym])
+
+        return '\n'.join(result_lines)
 
         # Collect all labels referenced by the embedded functions
         referenced: set[str] = set(additional_refs) if additional_refs else set()
@@ -305,12 +388,13 @@ class RuntimeLibrary:
                 in_block = True
                 continue
 
-            # Check for PUBLIC declaration - include if any of its labels are referenced
+            # Check for PUBLIC declaration - skip data PUBLIC declarations to avoid
+            # conflicts with runtime.rel when linking. The embedded data will be
+            # local, and any external references will be resolved from runtime.rel.
             match = re.match(r'\s*PUBLIC\s+(.+)', stripped, re.IGNORECASE)
             if match:
-                labels = [l.strip() for l in match.group(1).split(',')]
-                if any(l in referenced for l in labels):
-                    result_lines.append(line)
+                # Don't emit PUBLIC for data symbols - they should be local
+                # to avoid multiple definition conflicts with runtime.rel
                 continue
 
             # Regular line in current block

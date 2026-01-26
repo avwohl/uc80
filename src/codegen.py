@@ -4411,9 +4411,22 @@ class CodeGenerator:
                 if arg_is_long or param_is_long or arg_is_float or param_is_float:
                     self.gen_expr(arg, force_long=True)
                     # Extend to 32-bit if argument is smaller than parameter
-                    if param_is_long and not arg_is_long:
+                    if param_is_long and not arg_is_long and not arg_is_float:
                         is_signed = not self._is_unsigned_expr(arg)
                         self._extend_hl_to_dehl(is_signed)
+                    # Convert int to float if needed
+                    if param_is_float and not arg_is_float:
+                        # Integer argument to float parameter - convert to IEEE 754
+                        if not arg_is_long:
+                            # 16-bit int needs sign extension first
+                            is_signed = not self._is_unsigned_expr(arg)
+                            self._extend_hl_to_dehl(is_signed)
+                        # Now DEHL contains signed/unsigned 32-bit int
+                        is_unsigned = self._is_unsigned_expr(arg)
+                        if is_unsigned:
+                            self._call_runtime("__uitof")
+                        else:
+                            self._call_runtime("__itof")
                     # Push 32-bit value: high word (DE) first, then low word (HL)
                     self.ctx.emit_instr("PUSH", "DE")
                     self.ctx.emit_instr("PUSH", "HL")
@@ -4444,13 +4457,13 @@ class CodeGenerator:
 
         # Clean up stack (caller cleanup)
         # Check if return value is 32-bit to preserve DEHL
-        return_is_long = False
+        return_is_32bit = False
         if isinstance(expr.func, ast.Identifier):
             return_type = self._get_expr_type(expr)
-            return_is_long = self._is_long_type(return_type)
+            return_is_32bit = self._is_long_type(return_type) or self._is_float_type(return_type)
 
         if stack_size > 0:
-            if return_is_long:
+            if return_is_32bit:
                 # Return value in DEHL - need to preserve both while cleaning stack
                 # Save DE to BC, clean up stack, restore DE
                 self.ctx.emit_instr("LD", "B,D")
@@ -4499,6 +4512,8 @@ class CodeGenerator:
         target_type = expr.target_type
         target_is_long = self._is_long_type(target_type) or force_long
         source_is_long = self._is_long_expr(expr.expr)
+        source_is_float = self._is_float_expr(expr.expr)
+        target_is_float = self._is_float_type(target_type)
 
         # Generate the source expression without forcing long -
         # the cast itself handles the extension
@@ -4507,6 +4522,27 @@ class CodeGenerator:
         source_size = self._type_size(source_type) if source_type else 2
         target_size = self._type_size(target_type)
         target_signed = self._is_signed_type(target_type)
+
+        # Handle float conversions first
+        if target_is_float and not source_is_float:
+            # Int to float conversion
+            if not source_is_long:
+                # 16-bit int needs sign extension first
+                is_signed = self._is_signed_type(source_type) if source_type else True
+                self._extend_hl_to_dehl(is_signed)
+            # Now DEHL contains 32-bit integer, convert to float
+            is_unsigned = source_type and not self._is_signed_type(source_type)
+            if is_unsigned:
+                self._call_runtime("__uitof")
+            else:
+                self._call_runtime("__itof")
+            return
+        elif not target_is_float and source_is_float:
+            # Float to int conversion
+            self._call_runtime("__ftoi")  # Convert DEHL float to HL int
+            if target_is_long:
+                self._extend_hl_to_dehl(target_signed)
+            return
 
         # Handle narrowing conversions first (before widening if force_long)
         if target_size == 1 and source_size > 1:
