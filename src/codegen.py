@@ -3286,15 +3286,19 @@ class CodeGenerator:
             return
 
         # Check if this is a 64-bit operation
-        is_long_long = self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right)
+        # For shift operations, only the LEFT operand determines result type (C99 6.5.7)
+        if op in ("<<", ">>"):
+            is_long_long = self._is_long_long_expr(expr.left)
+            is_long = self._is_long_expr(expr.left)
+        else:
+            is_long_long = self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right)
+            is_long = self._is_long_expr(expr.left) or self._is_long_expr(expr.right)
 
         if is_long_long:
             self._gen_binary_op_64(expr, op)
             return
 
         # Check if this is a 32-bit operation
-        is_long = self._is_long_expr(expr.left) or self._is_long_expr(expr.right)
-
         if is_long:
             self._gen_binary_op_32(expr, op)
         else:
@@ -4743,11 +4747,16 @@ class CodeGenerator:
             return self._get_member_type(expr)
         elif isinstance(expr, ast.BinaryOp):
             # For arithmetic/bitwise ops, result type is based on operand types
-            # Apply C integer promotion rules: if either is long, result is long
             left_type = self._get_expr_type(expr.left)
             right_type = self._get_expr_type(expr.right)
 
-            # Check if either operand is long - result should be long
+            # For shift operations, result type is the promoted LEFT operand (C99 6.5.7)
+            if expr.op in ("<<", ">>"):
+                if left_type:
+                    return left_type
+                return ast.BasicType(name="int")  # Default to int for literal 1
+
+            # For other ops, apply usual arithmetic conversions: if either is long, result is long
             left_is_long = isinstance(left_type, ast.BasicType) and left_type.name == 'long'
             right_is_long = isinstance(right_type, ast.BasicType) and right_type.name == 'long'
 
