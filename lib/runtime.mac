@@ -1499,39 +1499,53 @@ __mul16_32_noadd:
 
 ; ============================================================
 ; Float Division: DEHL = DEHL / (__tmp32)
+; Native implementation using long division
 ; ============================================================
 	PUBLIC	__fdiv
 __fdiv:
 	PUSH	BC
 	PUSH	IX
 
-	; Check for zero divisor
+	; Check for zero divisor -> infinity
 	LD	A,(__tmp32+3)
 	AND	7FH
 	LD	B,A
 	LD	A,(__tmp32+2)
 	OR	B
+	LD	B,A
 	LD	A,(__tmp32+1)
 	OR	B
+	LD	B,A
 	LD	A,(__tmp32)
 	OR	B
-	JR	Z,__fdiv_inf	; Division by zero
+	JR	NZ,__fdiv_check_dividend
+	; Divisor is zero - return infinity
+	LD	DE,07F80H		; +infinity
+	LD	HL,0
+	JR	@fdiv_exit
 
-	; Check for zero dividend
+__fdiv_check_dividend:
+	; Check for zero dividend -> zero
 	LD	A,D
 	AND	7FH
 	OR	E
 	OR	H
 	OR	L
-	JR	Z,__fdiv_zero
+	JR	NZ,__fdiv_do_div
+	; Dividend is zero
+	LD	DE,0
+	LD	HL,0
+	JR	@fdiv_exit
 
-	; Unpack operands
+__fdiv_do_div:
+	; Unpack dividend
 	CALL	__funpack
 	LD	(__fsgn1),A
 	LD	(__fexp1),BC
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
 
+	; Unpack divisor
 	LD	HL,(__tmp32)
 	LD	DE,(__tmp32+2)
 	CALL	__funpack
@@ -1540,7 +1554,7 @@ __fdiv:
 	LD	(__fman2),HL
 	LD	(__fman2+2),DE
 
-	; Result sign
+	; Result sign = xor of signs
 	LD	A,(__fsgn1)
 	LD	B,A
 	LD	A,(__fsgn2)
@@ -1556,55 +1570,172 @@ __fdiv:
 	ADD	HL,DE
 	LD	(__fexp1),HL
 
-	; Divide mantissas
+	; Divide mantissas using long division
 	CALL	__fdiv_man
 
-	; Normalize and pack
-	CALL	__fnorm
+	; Pack result
 	LD	HL,(__fman1)
 	LD	DE,(__fman1+2)
 	LD	BC,(__fexp1)
 	LD	A,(__fsgn1)
 	CALL	__fpack
-	JR	__fdiv_done
 
-__fdiv_zero:
-	LD	HL,0
-	LD	DE,0
-	JR	__fdiv_done
-
-__fdiv_inf:
-	; Return infinity (max exponent)
-	LD	HL,0
-	LD	DE,7F80H	; +inf
-	JR	__fdiv_done
-
-__fdiv_done:
+@fdiv_exit:
 	POP	IX
 	POP	BC
 	RET
 
 ; Mantissa division helper
+; Divides __fman1 by __fman2 (24-bit / 24-bit)
+; Both have implied 1 at bit 23 (E bit 7, D=0)
+; Result stored in __fman1
+;
+; Algorithm: Non-restoring division
+; We compute quo = dividend / divisor
+; where both have implied 1, so both are in [1, 2)
+; Result is in range (0.5, 2)
+;
+; Use __fdiv_rem[0..3] for temporary storage of dividend copy
+;
 __fdiv_man:
-	; Divide __fman1 by __fman2 using 32-bit division
-	LD	HL,(__fman1)
-	LD	DE,(__fman1+2)
-	; Shift left 8 bits for precision
-	SLA	L
-	RL	H
-	RL	E
-	RL	D
-	LD	(__div32_dvd),HL
-	LD	(__div32_dvd+2),DE
-	LD	HL,(__fman2)
-	LD	(__tmp32),HL
-	LD	HL,(__fman2+2)
-	LD	(__tmp32+2),HL
-	LD	HL,(__div32_dvd)
-	LD	DE,(__div32_dvd+2)
-	CALL	__div32
-	LD	(__fman1),HL
-	LD	(__fman1+2),DE
+	; Copy dividend to __fdiv_rem (we'll shift this and use as working copy)
+	LD	A,(__fman1)
+	LD	(__fdiv_rem),A
+	LD	A,(__fman1+1)
+	LD	(__fdiv_rem+1),A
+	LD	A,(__fman1+2)
+	LD	(__fdiv_rem+2),A
+	XOR	A
+	LD	(__fdiv_rem+3),A	; Clear high byte (for 32-bit shifts)
+
+	; Clear quotient (will be stored in __fman1)
+	LD	(__fman1),A
+	LD	(__fman1+1),A
+	LD	(__fman1+2),A
+
+	; Loop 24 times for 24 quotient bits
+	LD	B,24
+
+@fdiv_lp:
+	PUSH	BC
+
+	; Compare dividend (in __fdiv_rem) with divisor (in __fman2)
+	; Both are 24-bit values
+
+	; Compare high byte
+	LD	A,(__fdiv_rem+2)
+	LD	C,A
+	LD	A,(__fman2+2)
+	CP	C
+	JR	C,@fdiv_sub		; divisor < dividend, subtract
+	JR	NZ,@fdiv_nosub		; divisor > dividend, no subtract
+
+	; High bytes equal, compare middle
+	LD	A,(__fdiv_rem+1)
+	LD	C,A
+	LD	A,(__fman2+1)
+	CP	C
+	JR	C,@fdiv_sub
+	JR	NZ,@fdiv_nosub
+
+	; Middle bytes equal, compare low
+	LD	A,(__fdiv_rem)
+	LD	C,A
+	LD	A,(__fman2)
+	CP	C
+	JR	C,@fdiv_sub
+	JR	NZ,@fdiv_nosub
+
+	; All equal: dividend == divisor, subtract
+@fdiv_sub:
+	; dividend -= divisor
+	LD	A,(__fdiv_rem)
+	LD	C,A
+	LD	A,(__fman2)
+	LD	E,A
+	LD	A,C
+	SUB	E
+	LD	(__fdiv_rem),A
+
+	LD	A,(__fdiv_rem+1)
+	LD	C,A
+	LD	A,(__fman2+1)
+	LD	E,A
+	LD	A,C
+	SBC	A,E
+	LD	(__fdiv_rem+1),A
+
+	LD	A,(__fdiv_rem+2)
+	LD	C,A
+	LD	A,(__fman2+2)
+	LD	E,A
+	LD	A,C
+	SBC	A,E
+	LD	(__fdiv_rem+2),A
+
+	; Set quotient bit (shift left then set bit 0)
+	LD	A,(__fman1)
+	ADD	A,A
+	OR	1
+	LD	(__fman1),A
+	LD	A,(__fman1+1)
+	ADC	A,A
+	LD	(__fman1+1),A
+	LD	A,(__fman1+2)
+	ADC	A,A
+	LD	(__fman1+2),A
+	JR	@fdiv_next
+
+@fdiv_nosub:
+	; Don't subtract, just shift quotient left (bit 0 stays 0)
+	LD	A,(__fman1)
+	ADD	A,A
+	LD	(__fman1),A
+	LD	A,(__fman1+1)
+	ADC	A,A
+	LD	(__fman1+1),A
+	LD	A,(__fman1+2)
+	ADC	A,A
+	LD	(__fman1+2),A
+
+@fdiv_next:
+	; Shift dividend left by 1 for next iteration
+	LD	A,(__fdiv_rem)
+	ADD	A,A
+	LD	(__fdiv_rem),A
+	LD	A,(__fdiv_rem+1)
+	ADC	A,A
+	LD	(__fdiv_rem+1),A
+	LD	A,(__fdiv_rem+2)
+	ADC	A,A
+	LD	(__fdiv_rem+2),A
+
+	POP	BC
+	DEC	B
+	JP	NZ,@fdiv_lp
+
+	; Quotient is now in __fman1 (24 bits)
+	; Check if normalization needed (bit 23 should be 1)
+	LD	A,(__fman1+2)
+	BIT	7,A
+	JR	NZ,@fdiv_dn
+
+	; Bit 23 is 0, shift left and decrement exponent
+	LD	A,(__fman1)
+	ADD	A,A
+	LD	(__fman1),A
+	LD	A,(__fman1+1)
+	ADC	A,A
+	LD	(__fman1+1),A
+	LD	A,(__fman1+2)
+	ADC	A,A
+	LD	(__fman1+2),A
+
+	LD	HL,(__fexp1)
+	DEC	HL
+	LD	(__fexp1),HL
+
+@fdiv_dn:
 	RET
 
 ; ============================================================
@@ -1944,7 +2075,7 @@ __fnorm:
 	; Actually we stored mantissa in DEHL with D=0, so check E bit 7
 __fnorm_loop:
 	BIT	7,E
-	RET	NZ		; Normalized when bit 23 set
+	JR	NZ,__fnorm_done	; Normalized when bit 23 set
 
 	; Shift mantissa left
 	SLA	L
@@ -1953,11 +2084,13 @@ __fnorm_loop:
 	RL	D
 
 	; Decrement exponent
+	PUSH	DE
 	PUSH	HL
 	LD	HL,(__fexp1)
 	DEC	HL
 	LD	(__fexp1),HL
 	POP	HL
+	POP	DE
 
 	; Check for underflow
 	LD	A,D
@@ -1967,8 +2100,16 @@ __fnorm_loop:
 	JR	NZ,__fnorm_loop
 
 	; Underflow to zero
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
 	LD	HL,0
 	LD	(__fexp1),HL
+	RET
+
+__fnorm_done:
+	; Save normalized mantissa back to memory
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
 	RET
 
 ; ============================================================
@@ -2012,6 +2153,8 @@ __fman1:
 	DW	0,0
 __fman2:
 	DW	0,0
+__fdiv_rem:
+	DW	0,0	; 4 bytes for division remainder
 
 ; Complex number work area
 	PUBLIC	__cplx_l,__cplx_r,__cplx_result,__cplx_tmp

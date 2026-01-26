@@ -364,6 +364,13 @@ def main() -> int:
                     runtime_code.append("CONOUT\tEQU\t2")
                     runtime_code.append("CONIN\tEQU\t1")
 
+                # Add EXTRN declarations for external symbols needed by runtime
+                required_externs = runtime_lib.get_required_externs(funcs)
+                if required_externs:
+                    runtime_code.append("; External symbols needed by runtime")
+                    for ext in sorted(required_externs):
+                        runtime_code.append(f"\tEXTRN\t{ext}")
+
                 for func in funcs:
                     # Add PUBLIC declaration for the function
                     if func.publics:
@@ -447,6 +454,18 @@ def main() -> int:
                                 break
 
                         lib_code = [f"\n; Embedded from {lib_path}"]
+
+                        # Add CP/M BDOS constants if any I/O functions are used
+                        io_funcs = {'_printf', '_putchar', '_getchar', '_puts', '_gets'}
+                        needs_bdos = any(f.name in io_funcs for f in funcs)
+                        # Check if BDOS is already defined in the code
+                        bdos_defined = any('BDOS' in line and 'EQU' in line.upper() for line in lines)
+                        if needs_bdos and not bdos_defined:
+                            lib_code.append("; CP/M BDOS constants")
+                            lib_code.append("BDOS\tEQU\t5")
+                            lib_code.append("CONOUT\tEQU\t2")
+                            lib_code.append("CONIN\tEQU\t1")
+
                         for func in funcs:
                             lib_code.append(func.source)
 
@@ -464,8 +483,29 @@ def main() -> int:
 
                         code = '\n'.join(lines)
 
-                        # Remove satisfied EXTRN references
-                        embedded_names = {f.name for f in funcs}
+                        # Remove EXTRN declarations for embedded functions
+                        embedded_names = set()
+                        for func in funcs:
+                            embedded_names.add(func.name)
+                            if hasattr(func, 'publics'):
+                                embedded_names.update(func.publics)
+                        if embedded_names:
+                            lines = code.splitlines()
+                            filtered_lines = []
+                            for line in lines:
+                                match = re.match(r'\s*EXTRN\s+(.+)', line, re.IGNORECASE)
+                                if match:
+                                    labels = [l.strip() for l in match.group(1).split(',')]
+                                    # Keep only labels that weren't embedded
+                                    remaining = [l for l in labels if l not in embedded_names]
+                                    if remaining:
+                                        filtered_lines.append(f"\tEXTRN\t{','.join(remaining)}")
+                                    # else skip the line entirely
+                                else:
+                                    filtered_lines.append(line)
+                            code = '\n'.join(filtered_lines)
+
+                        # Also remove from extrn_refs set for tracking
                         for name in embedded_names:
                             extrn_refs.discard(name)
 

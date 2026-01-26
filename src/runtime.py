@@ -29,6 +29,7 @@ class RuntimeLibrary:
     def __init__(self):
         self.functions: dict[str, AsmFunction] = {}
         self.data_sections: list[str] = []  # DSEG content
+        self.file_level_externs: set[str] = set()  # EXTRN at file level (before any function)
 
     def load_file(self, path: Path) -> None:
         """Load and parse a .mac assembly file."""
@@ -110,12 +111,16 @@ class RuntimeLibrary:
                     current_lines.append(line)
                 continue
 
-            # Check for EXTRN declaration
-            match = re.match(r'\s*EXTRN\s+(\w+)', line, re.IGNORECASE)
+            # Check for EXTRN declaration (can have comma-separated symbols)
+            match = re.match(r'\s*EXTRN\s+([^\s,]+(?:\s*,\s*[^\s,]+)*)', line, re.IGNORECASE)
             if match:
+                externs_list = [e.strip() for e in match.group(1).split(',')]
                 if current_func is not None:
-                    current_externs.add(match.group(1))
+                    current_externs.update(externs_list)
                     current_lines.append(line)
+                else:
+                    # File-level EXTRN (before any function)
+                    self.file_level_externs.update(externs_list)
                 continue
 
             # Check for label
@@ -228,6 +233,28 @@ class RuntimeLibrary:
         result.sort(key=lambda f: len(f.dependencies))
 
         return result
+
+    def get_required_externs(self, functions: list[AsmFunction]) -> set[str]:
+        """Get all external symbols needed by the given functions.
+
+        Returns file-level externs plus function-specific externs,
+        minus any symbols that are defined by the functions themselves.
+        """
+        externs: set[str] = set()
+
+        # Add file-level externs
+        externs.update(self.file_level_externs)
+
+        # Add function-specific externs
+        for func in functions:
+            externs.update(func.externs)
+
+        # Remove any symbols that are defined by the embedded functions
+        defined: set[str] = set()
+        for func in functions:
+            defined.update(func.publics)
+
+        return externs - defined
 
     def get_data_section(self, functions: list[AsmFunction],
                          additional_refs: set[str] | None = None) -> str:

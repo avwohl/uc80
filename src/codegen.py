@@ -2622,6 +2622,8 @@ class CodeGenerator:
                                  offset: int, val: ast.Expression) -> None:
         """Store a value at a struct member's location."""
         is_long = self._is_long_type(member_type)
+        is_float = self._is_float_type(member_type)
+        is_32bit = is_long or is_float
         member_size = self._type_size(member_type)
 
         # Handle nested struct initialization
@@ -2647,17 +2649,17 @@ class CodeGenerator:
             return
 
         # Generate the value expression
-        self.gen_expr(val, force_long=is_long)
+        self.gen_expr(val, force_long=is_32bit)
 
-        # Extend to 32-bit if needed
-        if is_long and not self._is_long_expr(val):
+        # Extend to 32-bit if needed (for long but not float - float is already 32-bit)
+        if is_long and not is_float and not self._is_long_expr(val) and not self._is_float_expr(val):
             is_signed = not self._is_unsigned_expr(val)
             self._extend_hl_to_dehl(is_signed)
 
         # Store at the appropriate offset
         if sym.uses_shared_storage:
             base = sym.shared_offset + offset
-            if is_long:
+            if is_32bit:
                 self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
                 self.ctx.emit_instr("LD", f"(??AUTO+{base + 2}),DE")
             elif member_size == 1:
@@ -2667,7 +2669,7 @@ class CodeGenerator:
                 self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
         else:
             frame_off = sym.offset + offset
-            if is_long:
+            if is_32bit:
                 self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
                 self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
                 self.ctx.emit_instr("LD", f"({ix_off(frame_off + 2)}),E")
@@ -4011,6 +4013,13 @@ class CodeGenerator:
                 elif self._is_float_type(sym.sym_type):
                     target_is_32bit = True
                     target_is_float = True
+        elif isinstance(expr.left, ast.Member):
+            member_type = self._get_member_type(expr.left)
+            if self._is_long_type(member_type):
+                target_is_32bit = True
+            elif self._is_float_type(member_type):
+                target_is_32bit = True
+                target_is_float = True
 
         # Generate the value (force_long if target is 32-bit)
         self.gen_expr(expr.right, force_long=target_is_32bit)
@@ -4057,16 +4066,37 @@ class CodeGenerator:
         elif isinstance(expr.left, ast.Member):
             # Struct member assignment
             member_size = self._get_member_size(expr.left)
-            self.ctx.emit_instr("PUSH", "HL")  # Save value
-            self._gen_address(expr.left)       # Get member address in HL
-            self.ctx.emit_instr("POP", "DE")   # Value in DE
-            if member_size == 1:
-                self.ctx.emit_instr("LD", "(HL),E")
-            else:
+            member_type = self._get_member_type(expr.left)
+            member_is_32bit = self._is_long_type(member_type) or self._is_float_type(member_type)
+
+            if member_is_32bit:
+                # 32-bit member: save DEHL, get address, restore and store 4 bytes
+                self.ctx.emit_instr("PUSH", "DE")  # Save high word
+                self.ctx.emit_instr("PUSH", "HL")  # Save low word
+                self._gen_address(expr.left)       # Get member address in HL
+                self.ctx.emit_instr("EX", "DE,HL") # Address in DE
+                self.ctx.emit_instr("POP", "HL")   # Low word in HL
+                self.ctx.emit_instr("EX", "DE,HL") # Address in HL, low word in DE
                 self.ctx.emit_instr("LD", "(HL),E")
                 self.ctx.emit_instr("INC", "HL")
                 self.ctx.emit_instr("LD", "(HL),D")
-            self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("POP", "DE")   # High word in DE
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+                # Leave DEHL with the stored value for chained assignment
+            else:
+                self.ctx.emit_instr("PUSH", "HL")  # Save value
+                self._gen_address(expr.left)       # Get member address in HL
+                self.ctx.emit_instr("POP", "DE")   # Value in DE
+                if member_size == 1:
+                    self.ctx.emit_instr("LD", "(HL),E")
+                else:
+                    self.ctx.emit_instr("LD", "(HL),E")
+                    self.ctx.emit_instr("INC", "HL")
+                    self.ctx.emit_instr("LD", "(HL),D")
+                self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
 
     def gen_compound_assignment(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate code for compound assignment (+=, -=, etc.)."""
@@ -4949,8 +4979,9 @@ class CodeGenerator:
         """Check if an expression might use __tmp32 (and thus clobber it)."""
         # Complex expressions that use __tmp32 internally
         if isinstance(expr, ast.BinaryOp):
-            # Any 32-bit binary op will use __tmp32
-            if self._is_long_expr(expr.left) or self._is_long_expr(expr.right):
+            # Any 32-bit binary op (long or float) will use __tmp32
+            if (self._is_long_expr(expr.left) or self._is_long_expr(expr.right) or
+                self._is_float_expr(expr.left) or self._is_float_expr(expr.right)):
                 return True
             # Check nested expressions
             return self._uses_tmp32(expr.left) or self._uses_tmp32(expr.right)

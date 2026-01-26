@@ -110,15 +110,14 @@ class AssemblyDCE:
                 self.header_lines.append(line)
                 continue
 
-            # Track EXTRN declarations
+            # Track EXTRN declarations - always preserve in header
+            # (they may appear anywhere in the source but need to be at top of output)
             match = re.match(r'\s*EXTRN\s+(.+)', line, re.IGNORECASE)
             if match:
                 labels = [l.strip() for l in match.group(1).split(',')]
                 self.extrn_labels.update(labels)
-                if in_header:
-                    self.header_lines.append(line)
-                elif current_block:
-                    current_block.lines.append(line)
+                # Always add to header_lines to preserve them
+                self.header_lines.append(line)
                 continue
 
             # Check for END directive
