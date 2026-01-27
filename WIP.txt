@@ -1,28 +1,33 @@
 Work In Progress Notes - uc80 C Compiler
 =========================================
 
-Current Status: 211/220 c-testsuite tests passing
+Current Status: 216/220 c-testsuite tests passing
 
-Recent Fixes (this session):
+Recent Fixes:
+- Fixed shift operator result type (C99 6.5.7 compliance)
+- Fixed float function calls and sin() implementation
+- Fixed enum switch cases and float operations
+- Fixed float division and nested float operations
+- Fixed float multiplication
+- Tests 00040, 00174, 00175, 00195, 00218 now passing (were failing before)
+
+Previous Fixes:
 - Fixed __tmp64 not being included in embedded runtime data section
 - Fixed 64-bit negation not calling __neg64
 - Fixed casts to 64-bit types not extending to __acc64
 - Fixed array/pointer increment/decrement (t[x]++ and (*p)++ were ignored)
 - Added per-test timeout configuration in run_ctests.py
-
-Previous Fixes:
 - Fixed fgets stack imbalance when EOF hit with no data read
 - Fixed parser typedef name handling after base type
 
-Remaining Failures (9 tests):
-- 00040: Timeout (8-queens algorithm - runs correctly but very slow on Z80)
-- 00174, 00175, 00195, 00204: Floating-point printf (%f format) not implemented
-- 00200: Timeout (many 64-bit operations, correct but slow on Z80)
+Remaining Failures (4 tests):
+- 00200: 64-bit type tests - produces no output (likely still too slow or hangs on Z80)
+- 00204: Floating-point printf (%f format) - produces no output
 - 00216: Anonymous unions, range designators not fully implemented
-- 00218: Enum bitfield signedness (implementation-defined behavior)
 - 00220: Wide characters (wchar_t) not implemented
 
-Notes on Timeouts:
-- Test 00040 (8-queens) runs correctly but is O(n!) complexity
-- Test 00200 (64-bit type tests) is correct but 64-bit ops are slow on Z80
-- These are not bugs in the compiler, just Z80 performance limitations
+Notes:
+- Test 00200 involves many 64-bit operations which are very slow on Z80 emulation
+- Test 00204 requires %f printf format which isn't fully implemented
+- Test 00216 needs C99 designated initializer features (range designators, anonymous unions)
+- Test 00220 needs wchar_t and wide string support
