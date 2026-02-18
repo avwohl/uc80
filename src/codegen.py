@@ -4026,29 +4026,15 @@ class CodeGenerator:
         # Check if left operand might clobber __tmp64
         left_is_complex = self._uses_tmp64(expr.left)
         if left_is_complex:
-            # Save __tmp64 on stack before generating left operand (8 bytes = 4 words)
-            self.ctx.emit_instr("LD", "HL,(__tmp64)")
-            self.ctx.emit_instr("PUSH", "HL")
-            self.ctx.emit_instr("LD", "HL,(__tmp64+2)")
-            self.ctx.emit_instr("PUSH", "HL")
-            self.ctx.emit_instr("LD", "HL,(__tmp64+4)")
-            self.ctx.emit_instr("PUSH", "HL")
-            self.ctx.emit_instr("LD", "HL,(__tmp64+6)")
-            self.ctx.emit_instr("PUSH", "HL")
+            # Save __tmp64 on stack before generating left operand
+            self._call_runtime("__save_tmp64")
 
         # Generate left operand to __acc64
         self._gen_64bit_operand(expr.left, to_tmp=False)
 
         if left_is_complex:
             # Restore __tmp64 from stack
-            self.ctx.emit_instr("POP", "HL")
-            self.ctx.emit_instr("LD", "(__tmp64+6),HL")
-            self.ctx.emit_instr("POP", "HL")
-            self.ctx.emit_instr("LD", "(__tmp64+4),HL")
-            self.ctx.emit_instr("POP", "HL")
-            self.ctx.emit_instr("LD", "(__tmp64+2),HL")
-            self.ctx.emit_instr("POP", "HL")
-            self.ctx.emit_instr("LD", "(__tmp64),HL")
+            self._call_runtime("__restore_tmp64")
 
         # Now: left in __acc64, right in __tmp64
         if op == "+":
@@ -4114,17 +4100,10 @@ class CodeGenerator:
                 sym = self.ctx.lookup(expr.name)
                 if sym and sym.is_global:
                     self.ctx.emit_instr("LD", f"HL,_{expr.name}")
-                    self._call_runtime("__load64")
                     if to_tmp:
-                        # Copy from __acc64 to __tmp64
-                        self.ctx.emit_instr("LD", "HL,(__acc64)")
-                        self.ctx.emit_instr("LD", "(__tmp64),HL")
-                        self.ctx.emit_instr("LD", "HL,(__acc64+2)")
-                        self.ctx.emit_instr("LD", "(__tmp64+2),HL")
-                        self.ctx.emit_instr("LD", "HL,(__acc64+4)")
-                        self.ctx.emit_instr("LD", "(__tmp64+4),HL")
-                        self.ctx.emit_instr("LD", "HL,(__acc64+6)")
-                        self.ctx.emit_instr("LD", "(__tmp64+6),HL")
+                        self._call_runtime("__load64t")
+                    else:
+                        self._call_runtime("__load64")
                 elif sym:
                     # Local variable - check for shared storage
                     if sym.uses_shared_storage:
@@ -4133,16 +4112,10 @@ class CodeGenerator:
                         offset = sym.offset
                         self.ctx.emit_instr("LD", f"HL,{offset}")
                         self.ctx.emit_instr("ADD", "HL,SP")
-                    self._call_runtime("__load64")
                     if to_tmp:
-                        self.ctx.emit_instr("LD", "HL,(__acc64)")
-                        self.ctx.emit_instr("LD", "(__tmp64),HL")
-                        self.ctx.emit_instr("LD", "HL,(__acc64+2)")
-                        self.ctx.emit_instr("LD", "(__tmp64+2),HL")
-                        self.ctx.emit_instr("LD", "HL,(__acc64+4)")
-                        self.ctx.emit_instr("LD", "(__tmp64+4),HL")
-                        self.ctx.emit_instr("LD", "HL,(__acc64+6)")
-                        self.ctx.emit_instr("LD", "(__tmp64+6),HL")
+                        self._call_runtime("__load64t")
+                    else:
+                        self._call_runtime("__load64")
             else:
                 # Complex 64-bit expression - recursively generate
                 self.gen_expr(expr)
@@ -4155,14 +4128,7 @@ class CodeGenerator:
                     else:
                         self._call_runtime("__zext64")
                 if to_tmp:
-                    self.ctx.emit_instr("LD", "HL,(__acc64)")
-                    self.ctx.emit_instr("LD", "(__tmp64),HL")
-                    self.ctx.emit_instr("LD", "HL,(__acc64+2)")
-                    self.ctx.emit_instr("LD", "(__tmp64+2),HL")
-                    self.ctx.emit_instr("LD", "HL,(__acc64+4)")
-                    self.ctx.emit_instr("LD", "(__tmp64+4),HL")
-                    self.ctx.emit_instr("LD", "HL,(__acc64+6)")
-                    self.ctx.emit_instr("LD", "(__tmp64+6),HL")
+                    self._call_runtime("__mov64")
         else:
             # Need to extend from smaller type
             self.gen_expr(expr)
@@ -4178,21 +4144,11 @@ class CodeGenerator:
                 # 16-bit in HL - extend to 64-bit
                 is_signed = not self._is_unsigned_expr(expr)
                 if is_signed:
-                    # Sign extend HL to DEHL first
-                    self._extend_hl_to_dehl(True)
-                    self._call_runtime("__sext64")
+                    self._call_runtime("__sext64_hl")
                 else:
-                    self.ctx.emit_instr("LD", "DE,0")
-                    self._call_runtime("__zext64")
+                    self._call_runtime("__zext64_hl")
             if to_tmp:
-                self.ctx.emit_instr("LD", "HL,(__acc64)")
-                self.ctx.emit_instr("LD", "(__tmp64),HL")
-                self.ctx.emit_instr("LD", "HL,(__acc64+2)")
-                self.ctx.emit_instr("LD", "(__tmp64+2),HL")
-                self.ctx.emit_instr("LD", "HL,(__acc64+4)")
-                self.ctx.emit_instr("LD", "(__tmp64+4),HL")
-                self.ctx.emit_instr("LD", "HL,(__acc64+6)")
-                self.ctx.emit_instr("LD", "(__tmp64+6),HL")
+                self._call_runtime("__mov64")
 
     def _gen_comparison_64(self, op: str, is_unsigned: bool = False) -> None:
         """Generate 64-bit comparison. Left in __acc64, right in __tmp64. Result in HL."""
@@ -5026,66 +4982,38 @@ class CodeGenerator:
         elif isinstance(arg, ast.Identifier):
             sym = self.ctx.lookup(arg.name)
             if sym and self._is_long_long_type(sym.sym_type):
-                # Variable IS 64-bit - load 4 words from memory and push high to low
+                # Variable IS 64-bit - load to __acc64 and push
                 if sym.is_global:
                     label = sym.label()
-                    self.ctx.emit_instr("LD", f"HL,({label}+6)")
-                    self.ctx.emit_instr("PUSH", "HL")
-                    self.ctx.emit_instr("LD", f"HL,({label}+4)")
-                    self.ctx.emit_instr("PUSH", "HL")
-                    self.ctx.emit_instr("LD", f"HL,({label}+2)")
-                    self.ctx.emit_instr("PUSH", "HL")
-                    self.ctx.emit_instr("LD", f"HL,({label})")
-                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"HL,{label}")
                 elif sym.uses_shared_storage:
-                    base = sym.shared_offset
-                    self.ctx.emit_instr("LD", f"HL,(??AUTO+{base+6})")
-                    self.ctx.emit_instr("PUSH", "HL")
-                    self.ctx.emit_instr("LD", f"HL,(??AUTO+{base+4})")
-                    self.ctx.emit_instr("PUSH", "HL")
-                    self.ctx.emit_instr("LD", f"HL,(??AUTO+{base+2})")
-                    self.ctx.emit_instr("PUSH", "HL")
-                    self.ctx.emit_instr("LD", f"HL,(??AUTO+{base})")
-                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"HL,??AUTO+{sym.shared_offset}")
                 else:
                     # Stack frame parameter/local: IX+offset
                     off = sym.offset
-                    self.ctx.emit_instr("LD", f"L,(IX+{off+6})")
-                    self.ctx.emit_instr("LD", f"H,(IX+{off+7})")
-                    self.ctx.emit_instr("PUSH", "HL")
-                    self.ctx.emit_instr("LD", f"L,(IX+{off+4})")
-                    self.ctx.emit_instr("LD", f"H,(IX+{off+5})")
-                    self.ctx.emit_instr("PUSH", "HL")
-                    self.ctx.emit_instr("LD", f"L,(IX+{off+2})")
-                    self.ctx.emit_instr("LD", f"H,(IX+{off+3})")
-                    self.ctx.emit_instr("PUSH", "HL")
-                    self.ctx.emit_instr("LD", f"L,(IX+{off})")
-                    self.ctx.emit_instr("LD", f"H,(IX+{off+1})")
-                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("PUSH", "IX")
+                    self.ctx.emit_instr("POP", "HL")
+                    self.ctx.emit_instr("LD", f"DE,{off}")
+                    self.ctx.emit_instr("ADD", "HL,DE")
+                self._call_runtime("__load64")
+                self._call_runtime("__push64_acc")
             else:
                 # Non-64-bit variable: evaluate and extend to 64 bits
                 expr_is_long = self._is_long_expr(arg) or self._is_float_expr(arg)
+                expr_unsigned = self._is_unsigned_expr(arg)
                 if expr_is_long:
                     self.gen_expr(arg, force_long=True)
                 else:
                     self.gen_expr(arg)
-                    is_signed = not self._is_unsigned_expr(arg)
-                    self._extend_hl_to_dehl(is_signed)
-                is_unsigned = force_unsigned or self._is_unsigned_expr(arg)
+                    # Extend HL to DEHL based on expression type
+                    self._extend_hl_to_dehl(not expr_unsigned)
+                # Extend DEHL to 64-bit based on force_unsigned or expr type
+                is_unsigned = force_unsigned or expr_unsigned
                 if is_unsigned:
-                    self.ctx.emit_instr("LD", "BC,0")
-                    self.ctx.emit_instr("PUSH", "BC")  # w3
-                    self.ctx.emit_instr("PUSH", "BC")  # w2
+                    self._call_runtime("__zext64")
                 else:
-                    self.ctx.emit_instr("LD", "A,D")
-                    self.ctx.emit_instr("RLA")
-                    self.ctx.emit_instr("SBC", "A,A")
-                    self.ctx.emit_instr("LD", "B,A")
-                    self.ctx.emit_instr("LD", "C,A")
-                    self.ctx.emit_instr("PUSH", "BC")  # w3
-                    self.ctx.emit_instr("PUSH", "BC")  # w2
-                self.ctx.emit_instr("PUSH", "DE")  # w1
-                self.ctx.emit_instr("PUSH", "HL")  # w0
+                    self._call_runtime("__sext64")
+                self._call_runtime("__push64_acc")
         elif isinstance(arg, ast.UnaryOp) and arg.op == "-" and isinstance(arg.operand, ast.IntLiteral):
             # Negative constant
             val = (-arg.operand.value) & 0xFFFFFFFFFFFFFFFF
@@ -5106,48 +5034,28 @@ class CodeGenerator:
             # (e.g. a call to a function returning long long)
             expr_is_ll = self._is_long_long_expr(arg)
             if expr_is_ll:
-                # Expression computes 64-bit result: lower 32 in DEHL,
-                # upper 32 in __acc64+4..7 (static storage from 64-bit ops)
+                # Expression computes 64-bit result in __acc64
                 self.gen_expr(arg, force_long=True)
-                # Read all 4 words from __acc64 (DE/HL may be clobbered by stack cleanup)
-                self.ctx.emit_instr("LD", "HL,(__acc64+6)")
-                self.ctx.emit_instr("PUSH", "HL")  # w3 (highest)
-                self.ctx.emit_instr("LD", "HL,(__acc64+4)")
-                self.ctx.emit_instr("PUSH", "HL")  # w2
-                self.ctx.emit_instr("LD", "HL,(__acc64+2)")
-                self.ctx.emit_instr("PUSH", "HL")  # w1
-                self.ctx.emit_instr("LD", "HL,(__acc64)")
-                self.ctx.emit_instr("PUSH", "HL")  # w0 (lowest)
+                self._call_runtime("__push64_acc")
                 return
 
             # Expression that returns a value - evaluate and extend to 64 bits
             expr_is_long = self._is_long_expr(arg) or self._is_float_expr(arg)
+            expr_unsigned = self._is_unsigned_expr(arg)
             if expr_is_long:
                 # Already produces 32-bit result in DEHL
                 self.gen_expr(arg, force_long=True)
             else:
-                # 16-bit result in HL - DE may be dirty
+                # 16-bit result in HL - extend to DEHL based on expr type
                 self.gen_expr(arg)
-                # Extend HL to DEHL
-                is_signed = not self._is_unsigned_expr(arg)
-                self._extend_hl_to_dehl(is_signed)
-            # Now DEHL has valid 32-bit result, extend to 64 bits
-            is_unsigned = force_unsigned or self._is_unsigned_expr(arg)
+                self._extend_hl_to_dehl(not expr_unsigned)
+            # Extend DEHL to 64-bit based on force_unsigned or expr type
+            is_unsigned = force_unsigned or expr_unsigned
             if is_unsigned:
-                self.ctx.emit_instr("LD", "BC,0")
-                self.ctx.emit_instr("PUSH", "BC")  # w3
-                self.ctx.emit_instr("PUSH", "BC")  # w2
+                self._call_runtime("__zext64")
             else:
-                # Sign-extend bit 31 of DE into upper 32 bits
-                self.ctx.emit_instr("LD", "A,D")
-                self.ctx.emit_instr("RLA")
-                self.ctx.emit_instr("SBC", "A,A")
-                self.ctx.emit_instr("LD", "B,A")
-                self.ctx.emit_instr("LD", "C,A")
-                self.ctx.emit_instr("PUSH", "BC")  # w3 (highest)
-                self.ctx.emit_instr("PUSH", "BC")  # w2
-            self.ctx.emit_instr("PUSH", "DE")  # w1
-            self.ctx.emit_instr("PUSH", "HL")  # w0 (lowest)
+                self._call_runtime("__sext64")
+            self._call_runtime("__push64_acc")
 
     def gen_ternary(self, expr: ast.TernaryOp) -> None:
         """Generate code for ternary conditional."""
@@ -5973,27 +5881,14 @@ class CodeGenerator:
         """Store __acc64 (64-bit) into a local variable."""
         self.ctx.runtime_used.add("__acc64")
         if sym.uses_shared_storage:
-            self.ctx.emit_instr("LD", "HL,(__acc64)")
-            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset}),HL")
-            self.ctx.emit_instr("LD", "HL,(__acc64+2)")
-            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset + 2}),HL")
-            self.ctx.emit_instr("LD", "HL,(__acc64+4)")
-            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset + 4}),HL")
-            self.ctx.emit_instr("LD", "HL,(__acc64+6)")
-            self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset + 6}),HL")
+            self.ctx.emit_instr("LD", f"HL,??AUTO+{sym.shared_offset}")
+            self._call_runtime("__store64")
         else:
-            self.ctx.emit_instr("LD", "HL,(__acc64)")
-            self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
-            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 1)}),H")
-            self.ctx.emit_instr("LD", "HL,(__acc64+2)")
-            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 2)}),L")
-            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 3)}),H")
-            self.ctx.emit_instr("LD", "HL,(__acc64+4)")
-            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 4)}),L")
-            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 5)}),H")
-            self.ctx.emit_instr("LD", "HL,(__acc64+6)")
-            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 6)}),L")
-            self.ctx.emit_instr("LD", f"({ix_off(sym.offset + 7)}),H")
+            self.ctx.emit_instr("PUSH", "IX")
+            self.ctx.emit_instr("POP", "HL")
+            self.ctx.emit_instr("LD", f"DE,{sym.offset}")
+            self.ctx.emit_instr("ADD", "HL,DE")
+            self._call_runtime("__store64")
 
     def _call_runtime(self, name: str) -> None:
         """Call a runtime library function."""

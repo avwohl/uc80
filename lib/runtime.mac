@@ -3148,5 +3148,118 @@ __mul64_noadd:
 	POP	BC
 	RET
 
+; ============================================================
+; __mov64: Copy __acc64 to __tmp64
+; ============================================================
+	PUBLIC	__mov64
+__mov64:
+	LD	HL,(__acc64)
+	LD	(__tmp64),HL
+	LD	HL,(__acc64+2)
+	LD	(__tmp64+2),HL
+	LD	HL,(__acc64+4)
+	LD	(__tmp64+4),HL
+	LD	HL,(__acc64+6)
+	LD	(__tmp64+6),HL
+	RET
+
+; ============================================================
+; __sext64_hl: Sign-extend 16-bit HL to 64-bit in __acc64
+; ============================================================
+	PUBLIC	__sext64_hl
+__sext64_hl:
+	CALL	__sext32		; HL -> DEHL
+	JP	__sext64		; DEHL -> __acc64 (tail call)
+
+; ============================================================
+; __zext64_hl: Zero-extend 16-bit HL to 64-bit in __acc64
+; ============================================================
+	PUBLIC	__zext64_hl
+__zext64_hl:
+	LD	DE,0
+	JP	__zext64		; tail call
+
+; ============================================================
+; __push64_acc: Push __acc64 (8 bytes) onto caller's stack
+; Push order: w3 (highest) deepest, w0 (lowest) on top
+; ============================================================
+	PUBLIC	__push64_acc
+__push64_acc:
+	POP	BC			; save return address
+	LD	HL,(__acc64+6)
+	PUSH	HL			; w3 (highest, deepest on stack)
+	LD	HL,(__acc64+4)
+	PUSH	HL			; w2
+	LD	HL,(__acc64+2)
+	PUSH	HL			; w1
+	LD	HL,(__acc64)
+	PUSH	HL			; w0 (lowest, top of stack)
+	PUSH	BC			; return address
+	RET
+
+; ============================================================
+; __save_tmp64: Save __tmp64 to stack (for complex binary ops)
+; ============================================================
+	PUBLIC	__save_tmp64
+__save_tmp64:
+	POP	BC
+	LD	HL,(__tmp64)
+	PUSH	HL
+	LD	HL,(__tmp64+2)
+	PUSH	HL
+	LD	HL,(__tmp64+4)
+	PUSH	HL
+	LD	HL,(__tmp64+6)
+	PUSH	HL
+	PUSH	BC
+	RET
+
+; ============================================================
+; __restore_tmp64: Restore __tmp64 from stack
+; ============================================================
+	PUBLIC	__restore_tmp64
+__restore_tmp64:
+	POP	BC
+	POP	HL
+	LD	(__tmp64+6),HL
+	POP	HL
+	LD	(__tmp64+4),HL
+	POP	HL
+	LD	(__tmp64+2),HL
+	POP	HL
+	LD	(__tmp64),HL
+	PUSH	BC
+	RET
+
+; ============================================================
+; __load64t: Load 64-bit value from address to __tmp64
+; Input: HL = address of 64-bit value
+; Output: __tmp64 = value
+; ============================================================
+	PUBLIC	__load64t
+__load64t:
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__tmp64+6),DE
+	POP	DE
+	RET
+
 
 	END
