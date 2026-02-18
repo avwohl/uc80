@@ -110,6 +110,7 @@ class CharLiteral(Expression):
 class StringLiteral(Expression):
     """String literal."""
     value: str
+    is_wide: bool = False
 
 
 @dataclass(kw_only=True)

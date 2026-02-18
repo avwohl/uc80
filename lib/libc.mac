@@ -2139,15 +2139,52 @@ _printf_loop:
 
 _printf_format:
 	INC	HL
+	; Initialize format state
+	XOR	A
+	LD	(_printf_width),A
+	LD	(_printf_zero),A
+	LD	(_printf_upper),A
+	LD	(_printf_prec),A
+	LD	(_printf_hasprec),A
 	LD	A,(HL)
 	OR	A
-	JR	Z,_printf_done
+	JP	Z,_printf_done
 
 	CP	'%'
 	JR	Z,_printf_pct
 
 _printf_fmt2:
-	; Skip flags: -, +, space, #, 0
+	; Check for '0' flag (only when not in precision and width is 0)
+	CP	'0'
+	JR	NZ,_printf_not0
+	PUSH	AF		; save A='0'
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	NZ,_printf_0dig	; In precision, '0' is a digit
+	LD	A,(_printf_width)
+	OR	A
+	JR	NZ,_printf_0dig	; Already have width, treat as digit
+	; Set zero-padding flag
+	LD	A,1
+	LD	(_printf_zero),A
+	POP	AF
+	JR	_printf_skip
+_printf_0dig:
+	POP	AF		; restore A='0'
+	JR	_printf_isdig
+
+_printf_not0:
+	; Check for precision start
+	CP	'.'
+	JR	NZ,_printf_notdot
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_hasprec),A
+	POP	AF
+	JR	_printf_skip
+
+_printf_notdot:
+	; Skip other flags: -, +, space, #
 	CP	'-'
 	JR	Z,_printf_skip
 	CP	'+'
@@ -2156,21 +2193,18 @@ _printf_fmt2:
 	JR	Z,_printf_skip
 	CP	'#'
 	JR	Z,_printf_skip
-	CP	'0'
-	JR	Z,_printf_skip
-	; Skip field width digits
+	; Check for digits (1-9)
 	CP	'1'
 	JR	C,_printf_nodig
 	CP	'9'+1
-	JR	C,_printf_skip
+	JR	C,_printf_isdig
 _printf_nodig:
-	; Skip precision
-	CP	'.'
-	JR	Z,_printf_skip
-	; Skip length modifiers: h, z (l handled separately for long)
+	; Skip length modifiers: h, z, L (l handled separately)
 	CP	'h'
 	JR	Z,_printf_skip
 	CP	'z'
+	JR	Z,_printf_skip
+	CP	'L'
 	JR	Z,_printf_skip
 	; Now check format specifiers
 	CP	's'
@@ -2189,7 +2223,7 @@ _printf_nodig:
 	JR	Z,_printf_hex
 
 	CP	'X'
-	JR	Z,_printf_hex
+	JR	Z,_printf_hexup
 
 	CP	'u'
 	JR	Z,_printf_uns
@@ -2207,12 +2241,52 @@ _printf_nodig:
 	INC	HL
 	JP	_printf_loop
 
+_printf_isdig:
+	; Parse digit into width or precision
+	SUB	'0'
+	PUSH	BC
+	LD	B,A		; B = new digit
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	NZ,_printf_precdig
+	; Width digit
+	LD	A,(_printf_width)
+	LD	C,A
+	ADD	A,A		; *2
+	ADD	A,A		; *4
+	ADD	A,C		; *5
+	ADD	A,A		; *10
+	ADD	A,B		; + digit
+	LD	(_printf_width),A
+	POP	BC
+	JR	_printf_skip
+_printf_precdig:
+	; Precision digit
+	LD	A,(_printf_prec)
+	LD	C,A
+	ADD	A,A		; *2
+	ADD	A,A		; *4
+	ADD	A,C		; *5
+	ADD	A,A		; *10
+	ADD	A,B		; + digit
+	LD	(_printf_prec),A
+	POP	BC
+	; Fall through to _printf_skip
+
 _printf_skip:
 	INC	HL
 	LD	A,(HL)
 	OR	A
-	JR	Z,_printf_done
+	JP	Z,_printf_done
 	JR	_printf_fmt2
+
+_printf_hexup:
+	; Set uppercase flag and fall through to hex
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_upper),A
+	POP	AF
+	JR	_printf_hex
 
 _printf_ptr:
 	; Output pointer as hex (same as %x but convention)
@@ -2249,6 +2323,23 @@ _printf_long:
 	JR	Z,_printf_lx
 	CP	'u'
 	JR	Z,_printf_lu
+	CP	'l'
+	JR	Z,_printf_ll	; long long
+	CP	'f'
+	JP	Z,_printf_float	; %lf = same as %f (double == float on Z80)
+	; Unknown - skip
+	JP	_printf_loop
+
+_printf_ll:
+	; Handle 'll' modifier - check next char
+	INC	HL
+	LD	A,(HL)
+	CP	'x'
+	JP	Z,_printf_llx
+	CP	'd'
+	JP	Z,_printf_lld
+	CP	'u'
+	JP	Z,_printf_llu
 	; Unknown - skip
 	JP	_printf_loop
 
@@ -2356,15 +2447,147 @@ _printf_lx:
 	LD	H,(HL)
 	LD	L,A
 	EX	DE,HL		; DEHL = value (DE=high, HL=low)
-	; Print DE then HL as hex
+	; Print DE then HL as hex (skip leading zeros in DE)
 	PUSH	HL
 	EX	DE,HL
 	CALL	_prt_hex
 	POP	HL
-	CALL	_prt_hex
+	; Always print all 4 digits of low word after high word
+	CALL	_prt_hex4
 	POP	BC
 	LD	A,C
 	ADD	A,4
+	LD	C,A
+	POP	HL
+	INC	HL
+	JP	_printf_loop
+
+_printf_llx:
+	; Output 64-bit hex (%llx)
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	; Read 8 bytes (64 bits) from stack: bytes 0-1=word0, 2-3=word1, 4-5=word2, 6-7=word3
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_printf_ll_w0),DE	; Word 0 (lowest)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_printf_ll_w1),DE	; Word 1
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_printf_ll_w2),DE	; Word 2
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_printf_ll_w3),DE	; Word 3 (highest)
+	; Print from highest word to lowest, skipping leading zeros
+	; Word 3 (highest)
+	LD	HL,(_printf_ll_w3)
+	LD	A,H
+	OR	L
+	JR	Z,_printf_llx_w2
+	CALL	_prt_hex
+	LD	HL,(_printf_ll_w2)
+	CALL	_prt_hex4
+	LD	HL,(_printf_ll_w1)
+	CALL	_prt_hex4
+	LD	HL,(_printf_ll_w0)
+	CALL	_prt_hex4
+	JR	_printf_llx_done
+_printf_llx_w2:
+	LD	HL,(_printf_ll_w2)
+	LD	A,H
+	OR	L
+	JR	Z,_printf_llx_w1
+	CALL	_prt_hex
+	LD	HL,(_printf_ll_w1)
+	CALL	_prt_hex4
+	LD	HL,(_printf_ll_w0)
+	CALL	_prt_hex4
+	JR	_printf_llx_done
+_printf_llx_w1:
+	LD	HL,(_printf_ll_w1)
+	LD	A,H
+	OR	L
+	JR	Z,_printf_llx_w0
+	CALL	_prt_hex
+	LD	HL,(_printf_ll_w0)
+	CALL	_prt_hex4
+	JR	_printf_llx_done
+_printf_llx_w0:
+	LD	HL,(_printf_ll_w0)
+	CALL	_prt_hex
+_printf_llx_done:
+	POP	BC
+	LD	A,C
+	ADD	A,8		; Long long is 8 bytes
+	LD	C,A
+	POP	HL
+	INC	HL
+	JP	_printf_loop
+
+_printf_lld:
+	; Output signed 64-bit decimal (%lld) - just consume 8 bytes, print lower 32 bits
+	; (Full 64-bit decimal would require huge routine - use 32-bit approximation)
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	; Just read lower 32 bits
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A
+	EX	DE,HL		; DEHL = lower 32 bits
+	CALL	_prt_dec32
+	POP	BC
+	LD	A,C
+	ADD	A,8
+	LD	C,A
+	POP	HL
+	INC	HL
+	JP	_printf_loop
+
+_printf_llu:
+	; Output unsigned 64-bit decimal (%llu) - same approach as lld
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A
+	EX	DE,HL
+	CALL	_prt_dec32
+	POP	BC
+	LD	A,C
+	ADD	A,8
 	LD	C,A
 	POP	HL
 	INC	HL
@@ -2390,6 +2613,17 @@ _printf_float:
 	INC	HL
 	LD	D,(HL)
 	LD	(__ftmp+2),DE	; Store high 2 bytes
+	; Set precision: if specified use it, else default 6
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_printf_float_defprec
+	LD	A,(_printf_prec)
+	LD	(_prt_float_prec),A
+	JR	_printf_float_go
+_printf_float_defprec:
+	LD	A,6
+	LD	(_prt_float_prec),A
+_printf_float_go:
 	CALL	_prt_float
 	POP	BC
 	LD	A,C
@@ -2432,7 +2666,7 @@ _printf_chr:
 	JR	_printf_loop
 
 _printf_str:
-	; Output string
+	; Output string with optional precision limit
 	PUSH	HL
 	; Get argument (pointer)
 	LD	H,0
@@ -2445,15 +2679,36 @@ _printf_str:
 	INC	HL
 	LD	D,(HL)		; DE = string pointer
 
+	; Load precision limit into B (0 = unlimited)
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_printf_str_nop
+	LD	A,(_printf_prec)
+	LD	B,A
+	JR	_printf_str_loop
+_printf_str_nop:
+	LD	B,0		; B=0 means no limit
+
 	; Output string
 _printf_str_loop:
+	; Check precision limit
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_printf_str_nolim
+	LD	A,B
+	OR	A
+	JR	Z,_printf_str_done	; Hit precision limit
+	DEC	B
+_printf_str_nolim:
 	LD	A,(DE)
 	OR	A
 	JR	Z,_printf_str_done
 	PUSH	DE
+	PUSH	BC
 	LD	E,A
 	LD	C,CONOUT
 	CALL	BDOS
+	POP	BC
 	POP	DE
 	INC	DE
 	JR	_printf_str_loop
@@ -2464,7 +2719,7 @@ _printf_str_done:
 	INC	C
 	POP	HL
 	INC	HL
-	JR	_printf_loop
+	JP	_printf_loop
 
 _printf_dec:
 	; Output signed decimal
@@ -2509,7 +2764,7 @@ _printf_dec_pos:
 	JP	_printf_loop
 
 _printf_hex:
-	; Output hex
+	; Output hex with width/zero-padding/uppercase support
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -2521,7 +2776,7 @@ _printf_hex:
 	INC	HL
 	LD	D,(HL)
 	EX	DE,HL
-	CALL	_prt_hex
+	CALL	_printf_prt_hex
 	POP	BC
 	INC	C
 	INC	C
@@ -2534,6 +2789,150 @@ _printf_done:
 	POP	DE
 	POP	BC
 	POP	IX
+	RET
+
+; Printf hex with width/zero-padding/uppercase support
+; Input: HL = value to print
+_printf_prt_hex:
+	PUSH	BC
+	; Convert 4 hex nibbles to ASCII in buffer
+	LD	DE,_printf_hexbuf
+	LD	A,H
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,H
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,L
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,L
+	AND	0FH
+	CALL	_printf_nib2a
+	; Buffer has 4 ASCII hex chars
+	; Find first significant digit (skip leading '0' but keep last)
+	LD	HL,_printf_hexbuf
+	LD	B,4		; Digits remaining
+_printf_hx_lz:
+	LD	A,B
+	CP	1
+	JR	Z,_printf_hx_pad	; Last digit, always print
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_printf_hx_pad	; Non-zero, stop skipping
+	INC	HL
+	DEC	B
+	JR	_printf_hx_lz
+_printf_hx_pad:
+	; B = significant digits, HL = pointer to first
+	; Check if padding is needed
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_printf_hx_out	; No width, just print
+	SUB	B		; A = width - sig_digits
+	JR	Z,_printf_hx_out	; Exact fit
+	JR	C,_printf_hx_out	; More digits than width
+	; A = padding count
+	PUSH	HL
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_zero)
+	OR	A
+	LD	A,' '
+	JR	Z,_printf_hx_plp
+	LD	A,'0'
+_printf_hx_plp:
+	LD	E,A
+	PUSH	AF
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	AF
+	DJNZ	_printf_hx_plp
+	POP	BC
+	POP	HL
+_printf_hx_out:
+	; Print B digits starting at HL
+	LD	A,(HL)
+	LD	E,A
+	PUSH	BC
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	BC
+	INC	HL
+	DJNZ	_printf_hx_out
+	POP	BC
+	RET
+
+; Convert nibble (0-15) in A to ASCII hex char, store at (DE), advance DE
+_printf_nib2a:
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_printf_nib_ok
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_upper)
+	OR	A
+	LD	A,B
+	POP	BC
+	JR	Z,_printf_nib_lo
+	ADD	A,7		; Uppercase: 'A'-'0'-10 = 7
+	JR	_printf_nib_ok
+_printf_nib_lo:
+	ADD	A,39		; Lowercase: 'a'-'0'-10 = 39
+_printf_nib_ok:
+	LD	(DE),A
+	INC	DE
+	RET
+
+_printf_hexbuf:	DS	4
+_printf_width:	DB	0
+_printf_zero:	DB	0
+_printf_upper:	DB	0
+_printf_prec:	DB	0
+_printf_hasprec:	DB	0
+_printf_ll_w0:	DS	2
+_printf_ll_w1:	DS	2
+_printf_ll_w2:	DS	2
+_printf_ll_w3:	DS	2
+_prt_float_prec:	DB	6	; Default float precision
+
+; Print HL as 4-digit hex (always prints all 4 digits with leading zeros)
+_prt_hex4:
+	PUSH	BC
+	LD	A,H
+	CALL	_prt_hex4_byte
+	LD	A,L
+	CALL	_prt_hex4_byte
+	POP	BC
+	RET
+_prt_hex4_byte:
+	PUSH	AF
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	CALL	_prt_hex4_nib
+	POP	AF
+_prt_hex4_nib:
+	AND	0FH
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_prt_hex4_out
+	ADD	A,39		; lowercase a-f
+_prt_hex4_out:
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
 	RET
 
 ; ============================================================
@@ -3621,7 +4020,41 @@ _prt_float_pos:
 	EX	DE,HL		; Now DEHL format: D=high
 	LD	(__fwork),HL
 	LD	(__fwork+2),DE
-	EX	DE,HL		; Back to HLDE format
+
+	; Pre-round: add 0.5 * 10^(-precision) for correct rounding
+	; Start with 0.5f = 0x3F000000
+	PUSH	DE
+	PUSH	HL
+	LD	DE,3F00H
+	LD	HL,0
+	; Divide by 10 for each precision digit
+	LD	A,(_prt_float_prec)
+	OR	A
+	JR	Z,_prt_round_add
+	LD	B,A
+_prt_round_lp:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	DE,3DCCH	; 0.1f = 0x3DCCCCCD
+	LD	HL,0CCCDH
+	CALL	__fmul
+	DJNZ	_prt_round_lp
+_prt_round_add:
+	; DEHL = rounding value, add to __fwork
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fadd
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	POP	HL		; Discard saved float
+	POP	DE
+
+	; Reload rounded value into HLDE format
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	EX	DE,HL		; DEHL -> HLDE
 
 	; H = sign(0)|exp[7:1], L = exp[0]|mant[22:16], D = mant[15:8], E = mant[7:0]
 	; Extract exponent: bits 30-23 -> (H<<1) | (L>>7)
@@ -3756,8 +4189,11 @@ _prt_float_use_hl:
 	LD	(__fwork),HL
 	LD	(__fwork+2),DE
 
-	; Print 6 fractional digits using multiply-by-10
-	LD	B,6
+	; Print fractional digits using multiply-by-10
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JP	Z,_prt_float_done	; Precision 0: no decimal point or digits
 _prt_float_frac:
 	PUSH	BC
 
@@ -3861,8 +4297,11 @@ _prt_float_small:
 	LD	(__fwork),HL
 	LD	(__fwork+2),DE
 
-	; Loop 6 times to print 6 digits
-	LD	B,6
+	; Loop precision times to print digits
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JP	Z,_prt_float_done
 _prt_float_sm_lp:
 	PUSH	BC
 
@@ -3947,11 +4386,14 @@ _prt_float_shlloop:
 _prt_float_lg2:
 	CALL	_prt_dec
 
-	; Print .000000
+	; Print .000... (precision digits)
 	LD	E,'.'
 	LD	C,CONOUT
 	CALL	BDOS
-	LD	B,6
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JR	Z,_prt_float_done
 _prt_float_lg3:
 	PUSH	BC
 	LD	E,'0'
@@ -3962,14 +4404,17 @@ _prt_float_lg3:
 	JR	_prt_float_done
 
 _prt_float_zero:
-	; Print "0.000000"
+	; Print "0.000..."
 	LD	E,'0'
 	LD	C,CONOUT
 	CALL	BDOS
 	LD	E,'.'
 	LD	C,CONOUT
 	CALL	BDOS
-	LD	B,6
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JR	Z,_prt_float_done
 _prt_float_z2:
 	PUSH	BC
 	LD	E,'0'
@@ -9121,6 +9566,10 @@ _bsearch_ret:
 __ftmp:		DS	4	; Temp float storage
 __fman:		DS	4	; Mantissa work area
 __fwork:	DS	4	; Float working storage for printf
+
+; Static return buffer for struct-by-value returns
+	PUBLIC	__sret_buf
+__sret_buf:	DS	64	; Enough for any returned struct
 
 ; qsort working storage
 _qsort_i:	DS	2

@@ -25,10 +25,11 @@ typedef char *va_list;
 /*
  * va_arg: Get next argument of type 'type' and advance pointer
  * For Z80: all arguments are at least 16-bit aligned on stack
+ * Round up to 2-byte alignment since PUSH works in word units
  */
 #define va_arg(ap, type) \
-    (*(type *)((ap) += sizeof(type) < 2 ? 2 : sizeof(type), \
-               (ap) - (sizeof(type) < 2 ? 2 : sizeof(type))))
+    (*(type *)((ap) += ((sizeof(type) + 1) & ~1), \
+               (ap) - ((sizeof(type) + 1) & ~1)))
 
 /*
  * va_end: Clean up (no-op on Z80)

@@ -253,8 +253,8 @@ class Lexer:
             raise LexerError("Multi-character character literal", loc)
         self._advance()  # closing '
 
-        # For wide chars, we still return CHAR_LITERAL but could extend later
-        return Token(TokenType.CHAR_LITERAL, value, loc)
+        tok_type = TokenType.WIDE_CHAR_LITERAL if wide else TokenType.CHAR_LITERAL
+        return Token(tok_type, value, loc)
 
     def _read_string_literal(self, wide: bool = False) -> Token:
         """Read a string literal. wide=True for L"str" wide string literals."""
@@ -271,8 +271,8 @@ class Lexer:
                 result.append(self._advance())
 
         self._advance()  # closing "
-        # For wide strings, we still return STRING_LITERAL but could extend later
-        return Token(TokenType.STRING_LITERAL, ''.join(result), loc)
+        tok_type = TokenType.WIDE_STRING_LITERAL if wide else TokenType.STRING_LITERAL
+        return Token(tok_type, ''.join(result), loc)
 
     def _read_escape_sequence(self) -> int:
         """Read an escape sequence and return its value."""

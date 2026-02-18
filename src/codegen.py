@@ -205,9 +205,14 @@ class CallGraphAnalyzer:
     has_body: set[str] = field(default_factory=set)  # functions with definitions (not just declarations)
     is_static: dict[str, bool] = field(default_factory=dict)  # func -> is static (internal linkage)
     whole_program: bool = True  # True = no other C files at link time
+    struct_sizes: dict[str, int] = field(default_factory=dict)  # struct name -> size in bytes
 
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
+        # Pass 0: Collect struct definitions for accurate size calculation
+        for decl in unit.declarations:
+            self._collect_struct_defs(decl)
+
         # Pass 1: Collect all function names, signatures, and storage sizes
         for decl in unit.declarations:
             self._collect_function_info(decl)
@@ -231,6 +236,84 @@ class CallGraphAnalyzer:
         elif isinstance(decl, ast.DeclarationList):
             for d in decl.declarations:
                 self._analyze_global_init(d)
+
+    def _collect_struct_defs(self, decl: ast.Declaration) -> None:
+        """Collect struct definitions for accurate size calculation."""
+        if isinstance(decl, ast.StructDecl) and decl.is_definition and decl.name:
+            size = 0
+            if decl.is_union:
+                for m in decl.members:
+                    size = max(size, self._var_size(m.member_type))
+            else:
+                for m in decl.members:
+                    size += self._var_size(m.member_type)
+            self.struct_sizes[decl.name] = size
+        elif isinstance(decl, ast.VarDecl):
+            # Collect struct defs from variable type declarations
+            self._collect_struct_from_type(decl.var_type)
+        elif isinstance(decl, ast.DeclarationList):
+            for d in decl.declarations:
+                self._collect_struct_defs(d)
+        elif isinstance(decl, ast.FunctionDecl):
+            # Collect struct defs from parameters and return type
+            self._collect_struct_from_type(decl.return_type)
+            for p in decl.params:
+                self._collect_struct_from_type(p.param_type)
+            # Collect struct defs from local variables
+            if decl.body:
+                self._collect_struct_defs_from_body(decl.body)
+
+    def _collect_struct_from_type(self, t: ast.TypeNode) -> None:
+        """Collect struct definition from a type node."""
+        if isinstance(t, ast.StructType) and t.name and t.members:
+            if t.name not in self.struct_sizes:
+                size = 0
+                if t.is_union:
+                    for m in t.members:
+                        size = max(size, self._var_size(m.member_type))
+                else:
+                    for m in t.members:
+                        size += self._var_size(m.member_type)
+                self.struct_sizes[t.name] = size
+        elif isinstance(t, ast.PointerType):
+            self._collect_struct_from_type(t.base_type)
+        elif isinstance(t, ast.ArrayType):
+            self._collect_struct_from_type(t.base_type)
+
+    def _collect_struct_defs_from_body(self, body: ast.CompoundStmt) -> None:
+        """Collect struct definitions from function body statements."""
+        for item in body.items:
+            if isinstance(item, ast.VarDecl):
+                self._collect_struct_from_type(item.var_type)
+            elif isinstance(item, ast.DeclarationList):
+                for d in item.declarations:
+                    if isinstance(d, ast.VarDecl):
+                        self._collect_struct_from_type(d.var_type)
+                    elif isinstance(d, ast.StructDecl) and d.is_definition and d.name:
+                        size = 0
+                        if d.is_union:
+                            for m in d.members:
+                                size = max(size, self._var_size(m.member_type))
+                        else:
+                            for m in d.members:
+                                size += self._var_size(m.member_type)
+                        self.struct_sizes[d.name] = size
+            elif isinstance(item, ast.CompoundStmt):
+                self._collect_struct_defs_from_body(item)
+            elif isinstance(item, ast.ForStmt):
+                if isinstance(item.init, ast.VarDecl):
+                    self._collect_struct_from_type(item.init.var_type)
+                if isinstance(item.body, ast.CompoundStmt):
+                    self._collect_struct_defs_from_body(item.body)
+            elif isinstance(item, ast.StructDecl) and item.is_definition and item.name:
+                size = 0
+                if item.is_union:
+                    for m in item.members:
+                        size = max(size, self._var_size(m.member_type))
+                else:
+                    for m in item.members:
+                        size += self._var_size(m.member_type)
+                self.struct_sizes[item.name] = size
 
     def _collect_function_info(self, decl: ast.Declaration) -> None:
         """Collect function names, signatures, and storage requirements."""
@@ -277,23 +360,39 @@ class CallGraphAnalyzer:
         for item in body.items:
             if isinstance(item, ast.VarDecl):
                 if item.storage_class != "static":  # Static vars use global storage
-                    size += self._var_size(item.var_type)
+                    size += self._var_size_with_init(item)
             elif isinstance(item, ast.DeclarationList):
                 for decl in item.declarations:
                     if isinstance(decl, ast.VarDecl) and decl.storage_class != "static":
-                        size += self._var_size(decl.var_type)
+                        size += self._var_size_with_init(decl)
             elif isinstance(item, ast.CompoundStmt):
                 size += self._calc_locals_size(item)
             elif isinstance(item, ast.ForStmt):
                 if isinstance(item.init, ast.VarDecl):
-                    size += self._var_size(item.init.var_type)
+                    size += self._var_size_with_init(item.init)
                 elif isinstance(item.init, ast.DeclarationList):
                     for decl in item.init.declarations:
                         if isinstance(decl, ast.VarDecl):
-                            size += self._var_size(decl.var_type)
+                            size += self._var_size_with_init(decl)
                 if isinstance(item.body, ast.CompoundStmt):
                     size += self._calc_locals_size(item.body)
         return size
+
+    def _var_size_with_init(self, decl: ast.VarDecl) -> int:
+        """Return the size of a variable, inferring unsized array size from initializer."""
+        t = decl.var_type
+        if isinstance(t, ast.ArrayType) and t.size is None and decl.init:
+            # Infer array size from initializer
+            init = decl.init
+            if isinstance(init, ast.Compound):
+                init = init.init
+            if isinstance(init, ast.StringLiteral):
+                is_wide = getattr(init, 'is_wide', False)
+                elem_size = 2 if is_wide else 1
+                return (len(init.value) + 1) * elem_size
+            elif isinstance(init, ast.InitializerList):
+                return self._var_size(t.base_type) * len(init.values)
+        return self._var_size(t)
 
     def _var_size(self, t: ast.TypeNode) -> int:
         """Return the size of a type in bytes."""
@@ -318,8 +417,16 @@ class CallGraphAnalyzer:
                 return base_size * t.size.value
             return base_size
         elif isinstance(t, ast.StructType):
-            # Would need struct table lookup - estimate
-            return 4
+            # Check inline members first
+            if t.members:
+                if t.is_union:
+                    return max((self._var_size(m.member_type) for m in t.members), default=0)
+                else:
+                    return sum(self._var_size(m.member_type) for m in t.members)
+            # Look up from collected struct definitions
+            if t.name and t.name in self.struct_sizes:
+                return self.struct_sizes[t.name]
+            return 4  # Fallback estimate
         return 2
 
     def _analyze_function_body(self, func: ast.FunctionDecl) -> None:
@@ -757,7 +864,26 @@ class CallGraphAnalyzer:
         if not isinstance(items[0], ast.ReturnStmt):
             return False
 
-        return items[0].value is not None
+        if items[0].value is None:
+            return False
+
+        # Don't inline functions with 64-bit params or return type -
+        # the compiler can't do 64-bit arithmetic, and inlining loses
+        # the type widening needed for correct results
+        if self._is_long_long_type_node(func.return_type):
+            return False
+        for param in func.params:
+            if self._is_long_long_type_node(param.param_type):
+                return False
+
+        return True
+
+    @staticmethod
+    def _is_long_long_type_node(t: ast.TypeNode) -> bool:
+        """Check if a type node is a 64-bit type."""
+        if isinstance(t, ast.BasicType) and t.name == "long long":
+            return True
+        return False
 
     def _substitute_params(self, expr: ast.Expression,
                           param_map: dict[str, ast.Expression]) -> ast.Expression:
@@ -1550,6 +1676,7 @@ class CodeGenContext:
 
     # String literals: label -> string value
     strings: dict[str, str] = field(default_factory=dict)
+    wide_strings: set[str] = field(default_factory=set)  # Labels of wide string literals
     string_counter: int = 0
 
     # Label generation
@@ -1569,6 +1696,9 @@ class CodeGenContext:
 
     # Struct definitions: name -> list of (member_name, member_type, offset)
     structs: dict[str, list[tuple[str, ast.TypeNode, int]]] = field(default_factory=dict)
+
+    # Anonymous struct/union members: struct_name -> list of (anon_struct_type, offset)
+    anon_members: dict[str, list[tuple[ast.StructType, int]]] = field(default_factory=dict)
 
     # Function names (for distinguishing functions from variables)
     function_names: set[str] = field(default_factory=set)
@@ -1605,14 +1735,17 @@ class CodeGenContext:
         self.string_counter += 1
         return f"@STR{self.string_counter}"
 
-    def add_string(self, value: str) -> str:
+    def add_string(self, value: str, is_wide: bool = False) -> str:
         """Add a string literal and return its label."""
-        # Check if string already exists
+        # Check if string already exists (wide and narrow are distinct)
         for label, s in self.strings.items():
-            if s == value:
+            is_existing_wide = label in self.wide_strings
+            if s == value and is_existing_wide == is_wide:
                 return label
         label = self.new_string_label()
         self.strings[label] = value
+        if is_wide:
+            self.wide_strings.add(label)
         return label
 
     def lookup(self, name: str) -> Optional[Symbol]:
@@ -1654,6 +1787,15 @@ class CodeGenerator:
             return var_type
         if var_type.size is not None:
             return var_type
+
+        # String literal initializing char/wchar_t array
+        if isinstance(init, ast.StringLiteral):
+            array_size = len(init.value) + 1  # +1 for null terminator
+            return ast.ArrayType(
+                base_type=var_type.base_type,
+                size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
+            )
+
         if not isinstance(init, ast.InitializerList):
             return var_type
 
@@ -1815,9 +1957,15 @@ class CodeGenerator:
             self.ctx.emit("\tDSEG")
             for label, value in self.ctx.strings.items():
                 self.ctx.emit_label(label)
-                # Emit string bytes with null terminator
-                escaped = self._escape_string(value)
-                self.ctx.emit_instr("DB", f"'{escaped}',0")
+                if label in self.ctx.wide_strings:
+                    # Wide string: emit each character as a 16-bit word (little-endian)
+                    for ch in value:
+                        self.ctx.emit_instr("DW", str(ord(ch)))
+                    self.ctx.emit_instr("DW", "0")  # 16-bit null terminator
+                else:
+                    # Narrow string: emit as bytes with null terminator
+                    escaped = self._escape_string(value)
+                    self.ctx.emit_instr("DB", f"'{escaped}',0")
 
         # Data segment for global variables
         # Collect global variable declarations, merging tentative definitions
@@ -1929,17 +2077,24 @@ class CodeGenerator:
             return
 
         members = []
+        anon_list = []
         offset = 0
         for member in decl.members:
             if member.name:
                 members.append((member.name, member.member_type, offset))
-                if decl.is_union:
-                    # Union: all members at offset 0
-                    pass
-                else:
-                    # Struct: sequential layout
-                    offset += self._type_size(member.member_type)
+            else:
+                # Anonymous struct/union member - track for member lookup
+                if isinstance(member.member_type, ast.StructType):
+                    anon_list.append((member.member_type, offset))
+            if decl.is_union:
+                # Union: all members at offset 0
+                pass
+            else:
+                # Struct: sequential layout
+                offset += self._type_size(member.member_type)
         self.ctx.structs[decl.name] = members
+        if anon_list:
+            self.ctx.anon_members[decl.name] = anon_list
 
     def _register_enum_type_values(self, enum_type: ast.EnumType) -> None:
         """Register enum constants from an inline EnumType."""
@@ -1981,13 +2136,18 @@ class CodeGenerator:
             # Register the struct with member offsets if it has a name and members
             if type_node.name and type_node.members and type_node.name not in self.ctx.structs:
                 members = []
+                anon_list = []
                 offset = 0
                 for member in type_node.members:
                     if member.name:
                         members.append((member.name, member.member_type, offset))
-                        if not type_node.is_union:
-                            offset += self._type_size(member.member_type)
+                    elif isinstance(member.member_type, ast.StructType):
+                        anon_list.append((member.member_type, offset))
+                    if not type_node.is_union:
+                        offset += self._type_size(member.member_type)
                 self.ctx.structs[type_node.name] = members
+                if anon_list:
+                    self.ctx.anon_members[type_node.name] = anon_list
             # Also register any nested inline types
             for member in type_node.members:
                 self._register_inline_types(member.member_type)
@@ -2012,15 +2172,20 @@ class CodeGenerator:
                 struct_name = decl.name
                 struct_type.name = struct_name  # Set name for later lookup
                 members = []
+                anon_list = []
                 offset = 0
                 for member in struct_type.members:
                     if member.name:
                         members.append((member.name, member.member_type, offset))
-                        if struct_type.is_union:
-                            pass  # Union: all at offset 0
-                        else:
-                            offset += self._type_size(member.member_type)
+                    elif isinstance(member.member_type, ast.StructType):
+                        anon_list.append((member.member_type, offset))
+                    if struct_type.is_union:
+                        pass  # Union: all at offset 0
+                    else:
+                        offset += self._type_size(member.member_type)
                 self.ctx.structs[struct_name] = members
+                if anon_list:
+                    self.ctx.anon_members[struct_name] = anon_list
         # For enum types, nothing special needed - enum values are already constants
 
     def gen_function(self, func: ast.FunctionDecl) -> None:
@@ -2087,7 +2252,8 @@ class CodeGenerator:
                     offset=param_offset,
                     is_param=True
                 )
-                param_offset += size
+                # Round up to even for stack alignment (PUSH works in 2-byte words)
+                param_offset += (size + 1) & ~1
 
         # Generate function body
         self.gen_compound_stmt(func.body)
@@ -2139,6 +2305,10 @@ class CodeGenerator:
                 self._gen_static_local(decl)
                 return
 
+            # Infer array size from initializer for unsized arrays (e.g., char s[] = "hello")
+            if isinstance(decl.var_type, ast.ArrayType) and decl.var_type.size is None and decl.init:
+                decl.var_type = self._infer_array_size(decl.var_type, decl.init)
+
             size = self._type_size(decl.var_type)
 
             # Check if using shared storage
@@ -2171,8 +2341,12 @@ class CodeGenerator:
                     init = decl.init.init  # Get InitializerList from Compound
                     init_type = decl.init.target_type
 
+                # Handle string literal initializing an array (char[] or wchar_t[])
+                if isinstance(init_type, ast.ArrayType) and isinstance(init, ast.StringLiteral):
+                    sym = self.ctx.locals[decl.name]
+                    self._gen_local_string_array_init(sym, init_type, init)
                 # Handle array initialization specially
-                if isinstance(init_type, ast.ArrayType) and isinstance(init, ast.InitializerList):
+                elif isinstance(init_type, ast.ArrayType) and isinstance(init, ast.InitializerList):
                     # Temporarily replace decl.init with unwrapped init
                     old_init = decl.init
                     decl.init = init
@@ -2257,6 +2431,35 @@ class CodeGenerator:
             is_global=True,
             is_static=True  # Mark as static to avoid double underscore
         )
+
+    def _gen_local_string_array_init(self, sym: 'Symbol', array_type: ast.ArrayType,
+                                      string_lit: ast.StringLiteral) -> None:
+        """Initialize a local char/wchar_t array from a string literal."""
+        is_wide = getattr(string_lit, 'is_wide', False)
+        elem_size = self._type_size(array_type.base_type)
+        value = string_lit.value
+
+        if is_wide:
+            # Wide string: store the string data in the data segment, then LDIR
+            label = self.ctx.add_string(value, is_wide=True)
+            total_size = (len(value) + 1) * elem_size  # +1 for null terminator
+        else:
+            # Narrow string: same approach - store in data segment, LDIR
+            label = self.ctx.add_string(value)
+            total_size = len(value) + 1  # +1 for null terminator
+
+        # Source: string literal in data segment
+        self.ctx.emit_instr("LD", f"HL,{label}")
+        # Destination: local variable address
+        if sym.uses_shared_storage:
+            self.ctx.emit_instr("LD", f"DE,??AUTO+{sym.shared_offset}")
+        else:
+            self.ctx.emit_instr("PUSH", "HL")
+            self._gen_lea_ix_offset(sym.offset)
+            self.ctx.emit_instr("EX", "DE,HL")
+            self.ctx.emit_instr("POP", "HL")
+        self.ctx.emit_instr("LD", f"BC,{total_size}")
+        self.ctx.emit_instr("LDIR")
 
     def _gen_local_array_init(self, decl: ast.VarDecl) -> None:
         """Generate code to initialize a local array from an initializer list."""
@@ -2343,16 +2546,30 @@ class CodeGenerator:
                     if src_sym.offset != 0:
                         self.ctx.emit_instr("LD", f"DE,{src_sym.offset}")
                         self.ctx.emit_instr("ADD", "HL,DE")
-        else:
-            # Other complex expression - just eval and copy first bytes (fallback)
+        elif isinstance(init, ast.Call):
+            # Function call returning struct - for structs > 2 bytes,
+            # gen_return copies to __sret_buf and returns address in HL
             self.gen_expr(init)
-            # For now, just return - this case needs more work
-            sym_local = self.ctx.locals[decl.name]
-            if sym_local.uses_shared_storage:
-                self.ctx.emit_instr("LD", f"(??AUTO+{sym_local.shared_offset}),HL")
-            else:
-                self._store_local(sym_local)
-            return
+            if size <= 2:
+                # Small struct fits in HL
+                sym_local = self.ctx.locals[decl.name]
+                if sym_local.uses_shared_storage:
+                    self.ctx.emit_instr("LD", f"(??AUTO+{sym_local.shared_offset}),HL")
+                else:
+                    self._store_local(sym_local)
+                return
+            # HL = address of struct return buffer, fall through to copy
+        else:
+            # Other complex expression - evaluate and use as address
+            self.gen_expr(init)
+            if size <= 2:
+                sym_local = self.ctx.locals[decl.name]
+                if sym_local.uses_shared_storage:
+                    self.ctx.emit_instr("LD", f"(??AUTO+{sym_local.shared_offset}),HL")
+                else:
+                    self._store_local(sym_local)
+                return
+            # HL = address, fall through to copy
 
         # Now HL has source address, copy bytes to destination
         # Use DE as destination pointer, BC for temp storage
@@ -2382,6 +2599,15 @@ class CodeGenerator:
             return 0
 
         members = self.ctx.structs[struct_type.name]
+
+        # Check for member designators - use non-sequential handling
+        has_member_desig = any(
+            isinstance(v, ast.DesignatedInit) and v.designators and isinstance(v.designators[0], str)
+            for v in values
+        )
+        if has_member_desig:
+            return self._gen_struct_init_designated(sym, struct_type, members, values, base_offset)
+
         value_index = 0
 
         for member_name, member_type, member_offset in members:
@@ -2392,11 +2618,12 @@ class CodeGenerator:
 
             val = values[value_index]
 
-            # Handle DesignatedInit - skip for now (complex)
+            # Handle DesignatedInit (non-member, e.g. array index designator)
             if isinstance(val, ast.DesignatedInit):
                 val = val.value
                 value_index += 1
                 self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
+                continue
             elif isinstance(member_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
                 # Check for string literal initializing char array
                 if isinstance(val, ast.StringLiteral) and self._is_char_array(member_type):
@@ -2406,7 +2633,7 @@ class CodeGenerator:
                     # Flat initialization for array member - consume multiple values
                     consumed = self._gen_flat_array_init(sym, member_type, values, value_index, base_offset + member_offset)
                     value_index += consumed
-            elif isinstance(member_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+            elif isinstance(member_type, ast.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
                 # Check if value is an identifier referring to a struct variable
                 if isinstance(val, ast.Identifier):
                     src_sym = self.ctx.lookup(val.name)
@@ -2422,6 +2649,18 @@ class CodeGenerator:
                     member_size = self._type_size(member_type)
                     self._gen_struct_copy_from_expr_to_member(sym, base_offset + member_offset, val, member_size)
                     continue
+                # Check for member access (e.g., phdr->daddr)
+                if isinstance(val, ast.Member):
+                    value_index += 1
+                    member_size = self._type_size(member_type)
+                    self._gen_struct_copy_from_addr_expr(sym, base_offset + member_offset, val, member_size)
+                    continue
+                # Check for cast of addressable expression (e.g., (struct S)w->t.s)
+                if isinstance(val, ast.Cast) and isinstance(val.expr, (ast.Member, ast.UnaryOp, ast.Identifier)):
+                    value_index += 1
+                    member_size = self._type_size(member_type)
+                    self._gen_struct_copy_from_addr_expr(sym, base_offset + member_offset, val.expr, member_size)
+                    continue
                 # Flat initialization for nested struct - consume multiple values
                 consumed = self._gen_struct_init_values(sym, member_type, values[value_index:], base_offset + member_offset)
                 value_index += consumed
@@ -2431,6 +2670,105 @@ class CodeGenerator:
                 self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
 
         return value_index
+
+    def _gen_struct_init_designated(self, sym: 'Symbol', struct_type: ast.StructType,
+                                     members: list, values: list, base_offset: int) -> int:
+        """Handle local struct init with member designators (e.g., .a.j = 5).
+
+        Zero-initializes the entire struct first, then applies designated values.
+        """
+        # Zero-initialize the entire struct first
+        struct_size = self._type_size(struct_type)
+        self._gen_zero_init_region(sym, base_offset, struct_size)
+
+        # Build member -> value mapping, handling nested designators
+        member_vals = {}  # member_name -> value or (nested_designators, value)
+        next_member_idx = 0
+        for val in values:
+            if isinstance(val, ast.DesignatedInit) and val.designators and isinstance(val.designators[0], str):
+                desig_name = val.designators[0]
+                if len(val.designators) > 1:
+                    # Nested designator like .a.j = 5
+                    # Collect sub-designators for the same member
+                    if desig_name not in member_vals:
+                        member_vals[desig_name] = []
+                    member_vals[desig_name].append((val.designators[1:], val.value))
+                else:
+                    member_vals[desig_name] = val.value
+                # Update next member index
+                for idx, (mname, mtype, moff) in enumerate(members):
+                    if mname == desig_name:
+                        next_member_idx = idx + 1
+                        break
+            else:
+                # Non-designated value
+                if next_member_idx < len(members):
+                    mname = members[next_member_idx][0]
+                    actual_val = val.value if isinstance(val, ast.DesignatedInit) else val
+                    if mname:
+                        member_vals[mname] = actual_val
+                    next_member_idx += 1
+
+        # Apply designated values
+        for member_name, member_type, member_offset in members:
+            if member_name not in member_vals:
+                continue  # Already zeroed
+            val = member_vals[member_name]
+            if isinstance(val, list):
+                # Nested designators - recursively apply to sub-members
+                if isinstance(member_type, ast.StructType) and member_type.name and member_type.name in self.ctx.structs:
+                    sub_members = self.ctx.structs[member_type.name]
+                    for sub_desigs, sub_val in val:
+                        if len(sub_desigs) == 1 and isinstance(sub_desigs[0], str):
+                            # Simple sub-member designator like .j
+                            for smname, smtype, smoffset in sub_members:
+                                if smname == sub_desigs[0]:
+                                    self._gen_store_member_value(sym, smtype,
+                                        base_offset + member_offset + smoffset, sub_val)
+                                    break
+                        # Could handle deeper nesting here if needed
+            else:
+                self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
+
+        return len(values)
+
+    def _gen_zero_init_region(self, sym: 'Symbol', offset: int, size: int) -> None:
+        """Zero-initialize a region of memory for a local variable."""
+        if size <= 0:
+            return
+        if sym.uses_shared_storage:
+            base = sym.shared_offset + offset
+            for i in range(size):
+                self.ctx.emit_instr("XOR", "A")
+                self.ctx.emit_instr("LD", f"(??AUTO+{base + i}),A")
+        else:
+            # Use LDIR for efficiency if size > 4
+            if size > 4:
+                frame_off = sym.offset + offset
+                # Zero first byte
+                self.ctx.emit_instr("XOR", "A")
+                self._gen_lea_ix_offset(frame_off)  # HL = dest address
+                self.ctx.emit_instr("LD", "(HL),A")
+                if size > 1:
+                    # Copy first byte to rest using LDIR
+                    self.ctx.emit_instr("LD", "D,H")
+                    self.ctx.emit_instr("LD", "E,L")
+                    self.ctx.emit_instr("INC", "DE")
+                    self.ctx.emit_instr("LD", f"BC,{size - 1}")
+                    self.ctx.emit_instr("LDIR")
+            else:
+                frame_off = sym.offset + offset
+                self.ctx.emit_instr("XOR", "A")
+                for i in range(size):
+                    self.ctx.emit_instr("LD", f"({ix_off(frame_off + i)}),A")
+
+    def _gen_lea_ix_offset(self, offset: int) -> None:
+        """Load effective address IX+offset into HL."""
+        self.ctx.emit_instr("PUSH", "IX")
+        self.ctx.emit_instr("POP", "HL")
+        if offset != 0:
+            self.ctx.emit_instr("LD", f"DE,{offset}")
+            self.ctx.emit_instr("ADD", "HL,DE")
 
     def _gen_struct_copy(self, dest_sym: 'Symbol', dest_offset: int,
                          src_sym: 'Symbol', src_offset: int, size: int) -> None:
@@ -2481,6 +2819,33 @@ class CodeGenerator:
         else:
             # Unsupported expression type - fall through with gen_expr
             self.gen_expr(expr)
+
+        # HL has source address, copy bytes to destination using LDIR
+        self.ctx.emit_instr("PUSH", "HL")  # Save source
+
+        # Get destination address
+        if dest_sym.uses_shared_storage:
+            self.ctx.emit_instr("LD", f"DE,??AUTO+{dest_sym.shared_offset + dest_offset}")
+        elif dest_sym.is_global:
+            self.ctx.emit_instr("LD", f"DE,{dest_sym.label()}+{dest_offset}")
+        else:
+            self.ctx.emit_instr("PUSH", "IX")
+            self.ctx.emit_instr("POP", "DE")
+            frame_off = dest_sym.offset + dest_offset
+            if frame_off != 0:
+                self.ctx.emit_instr("LD", f"HL,{frame_off}")
+                self.ctx.emit_instr("ADD", "HL,DE")
+                self.ctx.emit_instr("EX", "DE,HL")
+
+        self.ctx.emit_instr("POP", "HL")  # Restore source
+        self.ctx.emit_instr("LD", f"BC,{size}")
+        self.ctx.emit_instr("LDIR")  # Copy BC bytes from HL to DE
+
+    def _gen_struct_copy_from_addr_expr(self, dest_sym: 'Symbol', dest_offset: int,
+                                          expr: ast.Expression, size: int) -> None:
+        """Copy struct from an addressable expression (member access, etc.) to dest."""
+        # Get source address into HL using _gen_address
+        self._gen_address(expr)
 
         # HL has source address, copy bytes to destination using LDIR
         self.ctx.emit_instr("PUSH", "HL")  # Save source
@@ -2643,6 +3008,12 @@ class CodeGenerator:
             self._gen_struct_init_values(sym, member_type, val.values, offset)
             return
 
+        # Handle compound literal: (struct S){...}
+        if isinstance(member_type, ast.StructType) and isinstance(val, ast.Compound):
+            if isinstance(val.init, ast.InitializerList):
+                self._gen_struct_init_values(sym, member_type, val.init.values, offset)
+            return
+
         # Handle nested array initialization
         if isinstance(member_type, ast.ArrayType) and isinstance(val, ast.InitializerList):
             self._gen_array_init_values(sym, member_type, val.values, offset)
@@ -2659,6 +3030,18 @@ class CodeGenerator:
         if isinstance(member_type, ast.StructType) and isinstance(val, ast.UnaryOp) and val.op == "*":
             self._gen_struct_copy_from_expr_to_member(sym, offset, val, member_size)
             return
+
+        # Handle struct copy from member access (e.g., phdr->daddr)
+        if isinstance(member_type, ast.StructType) and isinstance(val, ast.Member):
+            self._gen_struct_copy_from_addr_expr(sym, offset, val, member_size)
+            return
+
+        # Handle struct copy from cast of addressable expression (e.g., (struct S)w->t.s)
+        if isinstance(member_type, ast.StructType) and isinstance(val, ast.Cast):
+            inner = val.expr
+            if isinstance(inner, (ast.Member, ast.UnaryOp, ast.Identifier)):
+                self._gen_struct_copy_from_addr_expr(sym, offset, inner, member_size)
+                return
 
         # Generate the value expression
         self.gen_expr(val, force_long=is_32bit)
@@ -2698,6 +3081,22 @@ class CodeGenerator:
         elem_type = array_type.base_type
         elem_size = self._type_size(elem_type)
         is_long = self._is_long_type(elem_type)
+
+        # Check for designated initializers with index/range designators
+        has_index_designators = any(
+            isinstance(v, ast.DesignatedInit) and v.designators and
+            not isinstance(v.designators[0], str)
+            for v in values
+        )
+        if has_index_designators:
+            # Zero-initialize the entire array first (undesignated elements must be zero per C99)
+            array_size = 1
+            if array_type.size and isinstance(array_type.size, ast.IntLiteral):
+                array_size = array_type.size.value
+            total_size = array_size * elem_size
+            self._gen_zero_init_region(sym, base_offset, total_size)
+            self._gen_designated_array_init_local(sym, array_type, values, base_offset)
+            return
 
         for i, val in enumerate(values):
             if isinstance(val, ast.DesignatedInit):
@@ -2750,6 +3149,36 @@ class CodeGenerator:
                     self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
                     self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
 
+    def _gen_designated_array_init_local(self, sym: 'Symbol', array_type: ast.ArrayType,
+                                          values: list, base_offset: int) -> None:
+        """Generate code for local array init with designated [index] or [start...end] designators."""
+        elem_type = array_type.base_type
+        elem_size = self._type_size(elem_type)
+        next_index = 0
+
+        for val in values:
+            if isinstance(val, ast.DesignatedInit):
+                actual_val = val.value
+                for desig in val.designators:
+                    if isinstance(desig, ast.RangeDesignator):
+                        start = self._eval_const_expr(desig.start)
+                        end = self._eval_const_expr(desig.end)
+                        if start is not None and end is not None:
+                            for idx in range(start, end + 1):
+                                offset = base_offset + idx * elem_size
+                                self._gen_store_member_value(sym, elem_type, offset, actual_val)
+                            next_index = end + 1
+                    else:
+                        idx = self._eval_const_expr(desig)
+                        if idx is not None:
+                            offset = base_offset + idx * elem_size
+                            self._gen_store_member_value(sym, elem_type, offset, actual_val)
+                            next_index = idx + 1
+            else:
+                offset = base_offset + next_index * elem_size
+                self._gen_store_member_value(sym, elem_type, offset, val)
+                next_index += 1
+
     def gen_statement(self, stmt: ast.Statement) -> None:
         """Generate code for a statement."""
         if isinstance(stmt, ast.ReturnStmt):
@@ -2783,13 +3212,27 @@ class CodeGenerator:
     def gen_return(self, stmt: ast.ReturnStmt) -> None:
         """Generate code for return statement."""
         if stmt.value:
-            return_is_long = self._is_long_type(self.ctx.current_return_type)
-            # Generate expression, forcing long if return type is long
-            self.gen_expr(stmt.value, force_long=return_is_long)
-            # Extend to 32-bit if return type is long but expression is not
-            if return_is_long and not self._is_long_expr(stmt.value):
-                is_signed = self._is_signed_type(self._get_expr_type(stmt.value))
-                self._extend_hl_to_dehl(is_signed)
+            ret_type = self.ctx.current_return_type
+            # Check for struct return > 2 bytes
+            if isinstance(ret_type, ast.StructType) and self._type_size(ret_type) > 2:
+                struct_size = self._type_size(ret_type)
+                self.ctx.runtime_used.add("__sret_buf")
+                # Get source address of the struct value
+                self._gen_address(stmt.value)
+                # Copy struct to __sret_buf: HL = source, DE = __sret_buf, BC = size
+                self.ctx.emit_instr("LD", "DE,__sret_buf")
+                self.ctx.emit_instr("LD", f"BC,{struct_size}")
+                self.ctx.emit_instr("LDIR")
+                # Return address of __sret_buf
+                self.ctx.emit_instr("LD", "HL,__sret_buf")
+            else:
+                return_is_long = self._is_long_type(ret_type)
+                # Generate expression, forcing long if return type is long
+                self.gen_expr(stmt.value, force_long=return_is_long)
+                # Extend to 32-bit if return type is long but expression is not
+                if return_is_long and not self._is_long_expr(stmt.value):
+                    is_signed = self._is_signed_type(self._get_expr_type(stmt.value))
+                    self._extend_hl_to_dehl(is_signed)
         # Jump to function epilogue
         self.ctx.emit_instr("JP", f"@{self.ctx.current_function}_ret")
 
@@ -3056,7 +3499,7 @@ class CodeGenerator:
             self.ctx.emit_instr("LD", f"HL,{expr.value}")
 
         elif isinstance(expr, ast.StringLiteral):
-            label = self.ctx.add_string(expr.value)
+            label = self.ctx.add_string(expr.value, is_wide=expr.is_wide)
             self.ctx.emit_instr("LD", f"HL,{label}")
 
         elif isinstance(expr, ast.BoolLiteral):
@@ -3103,6 +3546,24 @@ class CodeGenerator:
             else:
                 size = 2  # Default to int if type cannot be inferred
             self.ctx.emit_instr("LD", f"HL,{size}")
+
+        elif isinstance(expr, ast.Compound):
+            # Compound literal: (type){initializer}
+            # For simple structs with one value, just evaluate that value
+            if isinstance(expr.init, ast.InitializerList) and len(expr.init.values) == 1:
+                val = expr.init.values[0]
+                if isinstance(val, ast.DesignatedInit):
+                    val = val.value
+                self.gen_expr(val, force_long)
+            elif isinstance(expr.init, ast.InitializerList) and len(expr.init.values) > 1:
+                # Multi-member struct compound literal - evaluate first value
+                # (used as an expression, struct gets truncated to first member)
+                val = expr.init.values[0]
+                if isinstance(val, ast.DesignatedInit):
+                    val = val.value
+                self.gen_expr(val, force_long)
+            else:
+                self.ctx.emit_instr("LD", "HL,0")
 
         elif isinstance(expr, ast.StmtExpr):
             # Statement expression: ({ ... }) - value is last expression
@@ -4286,11 +4747,26 @@ class CodeGenerator:
                     # Postfix: save original value
                     self.ctx.emit_instr("PUSH", "HL")
 
+                # Determine step size (for pointer types, scale by pointee size)
+                step = 1
+                if isinstance(sym.sym_type, ast.PointerType):
+                    step = self._type_size(sym.sym_type.base_type)
+                    if step == 0:
+                        step = 1
+
                 # Increment or decrement
-                if is_inc:
-                    self.ctx.emit_instr("INC", "HL")
+                if step <= 4:
+                    for _ in range(step):
+                        if is_inc:
+                            self.ctx.emit_instr("INC", "HL")
+                        else:
+                            self.ctx.emit_instr("DEC", "HL")
                 else:
-                    self.ctx.emit_instr("DEC", "HL")
+                    if is_inc:
+                        self.ctx.emit_instr("LD", f"DE,{step}")
+                    else:
+                        self.ctx.emit_instr("LD", f"DE,{(-step) & 0xFFFF}")
+                    self.ctx.emit_instr("ADD", "HL,DE")
 
                 # Store back
                 if sym.is_global:
@@ -4407,6 +4883,17 @@ class CodeGenerator:
                 stack_size += 2
             else:
                 # Normal argument handling
+                # Check if parameter type or argument expression is 64-bit
+                arg_is_ll = self._is_long_long_expr(arg)
+                param_is_ll = param_type and self._is_long_long_type(param_type)
+                if arg_is_ll or param_is_ll:
+                    # 64-bit argument: push 4 words (8 bytes)
+                    param_unsigned = (param_type and isinstance(param_type, ast.BasicType)
+                                     and param_type.is_signed == False)
+                    self._push_long_long_arg(arg, force_unsigned=param_unsigned)
+                    stack_size += 8
+                    continue
+
                 # Check if parameter type or argument expression is 32-bit
                 arg_is_long = self._is_long_expr(arg)
                 param_is_long = param_type and self._is_long_type(param_type)
@@ -4436,9 +4923,35 @@ class CodeGenerator:
                     self.ctx.emit_instr("PUSH", "HL")
                     stack_size += 4
                 else:
-                    self.gen_expr(arg)
-                    self.ctx.emit_instr("PUSH", "HL")
-                    stack_size += 2
+                    # Check if argument is a struct type (pass by value)
+                    arg_type = self._get_expr_type(arg)
+                    if isinstance(arg_type, ast.StructType):
+                        struct_size = self._type_size(arg_type)
+                        push_size = (struct_size + 1) & ~1  # Round up to word boundary
+                        # Get the address of the struct data
+                        self._gen_address(arg)
+                        # HL = address of struct data
+                        # Push from high end to low end (so low bytes end up at lower stack address)
+                        if push_size > 0:
+                            self.ctx.emit_instr("LD", f"DE,{push_size - 2}")
+                            self.ctx.emit_instr("ADD", "HL,DE")
+                            # HL points to last word
+                            remaining = push_size
+                            while remaining > 0:
+                                self.ctx.emit_instr("LD", "E,(HL)")
+                                self.ctx.emit_instr("INC", "HL")
+                                self.ctx.emit_instr("LD", "D,(HL)")
+                                self.ctx.emit_instr("DEC", "HL")
+                                self.ctx.emit_instr("PUSH", "DE")
+                                remaining -= 2
+                                if remaining > 0:
+                                    self.ctx.emit_instr("DEC", "HL")
+                                    self.ctx.emit_instr("DEC", "HL")
+                        stack_size += push_size
+                    else:
+                        self.gen_expr(arg)
+                        self.ctx.emit_instr("PUSH", "HL")
+                        stack_size += 2
 
         # Call the function
         if isinstance(expr.func, ast.Identifier):
@@ -4491,6 +5004,150 @@ class CodeGenerator:
                 self.ctx.emit_instr("ADD", "HL,SP")
                 self.ctx.emit_instr("LD", "SP,HL")
                 self.ctx.emit_instr("EX", "DE,HL")  # Restore return value
+
+    def _push_long_long_arg(self, arg: ast.Expression, force_unsigned: bool = False) -> None:
+        """Push an 8-byte (long long) argument onto the stack (4 words, high to low)."""
+        if isinstance(arg, ast.IntLiteral):
+            # Constant: split into 4 words
+            val = arg.value & 0xFFFFFFFFFFFFFFFF
+            w0 = val & 0xFFFF          # lowest word
+            w1 = (val >> 16) & 0xFFFF
+            w2 = (val >> 32) & 0xFFFF
+            w3 = (val >> 48) & 0xFFFF  # highest word
+            # Push high to low (highest word first)
+            self.ctx.emit_instr("LD", f"HL,{w3}")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", f"HL,{w2}")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", f"HL,{w1}")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", f"HL,{w0}")
+            self.ctx.emit_instr("PUSH", "HL")
+        elif isinstance(arg, ast.Identifier):
+            sym = self.ctx.lookup(arg.name)
+            if sym and self._is_long_long_type(sym.sym_type):
+                # Variable IS 64-bit - load 4 words from memory and push high to low
+                if sym.is_global:
+                    label = sym.label()
+                    self.ctx.emit_instr("LD", f"HL,({label}+6)")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"HL,({label}+4)")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"HL,({label}+2)")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"HL,({label})")
+                    self.ctx.emit_instr("PUSH", "HL")
+                elif sym.uses_shared_storage:
+                    base = sym.shared_offset
+                    self.ctx.emit_instr("LD", f"HL,(??AUTO+{base+6})")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"HL,(??AUTO+{base+4})")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"HL,(??AUTO+{base+2})")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"HL,(??AUTO+{base})")
+                    self.ctx.emit_instr("PUSH", "HL")
+                else:
+                    # Stack frame parameter/local: IX+offset
+                    off = sym.offset
+                    self.ctx.emit_instr("LD", f"L,(IX+{off+6})")
+                    self.ctx.emit_instr("LD", f"H,(IX+{off+7})")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"L,(IX+{off+4})")
+                    self.ctx.emit_instr("LD", f"H,(IX+{off+5})")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"L,(IX+{off+2})")
+                    self.ctx.emit_instr("LD", f"H,(IX+{off+3})")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    self.ctx.emit_instr("LD", f"L,(IX+{off})")
+                    self.ctx.emit_instr("LD", f"H,(IX+{off+1})")
+                    self.ctx.emit_instr("PUSH", "HL")
+            else:
+                # Non-64-bit variable: evaluate and extend to 64 bits
+                expr_is_long = self._is_long_expr(arg) or self._is_float_expr(arg)
+                if expr_is_long:
+                    self.gen_expr(arg, force_long=True)
+                else:
+                    self.gen_expr(arg)
+                    is_signed = not self._is_unsigned_expr(arg)
+                    self._extend_hl_to_dehl(is_signed)
+                is_unsigned = force_unsigned or self._is_unsigned_expr(arg)
+                if is_unsigned:
+                    self.ctx.emit_instr("LD", "BC,0")
+                    self.ctx.emit_instr("PUSH", "BC")  # w3
+                    self.ctx.emit_instr("PUSH", "BC")  # w2
+                else:
+                    self.ctx.emit_instr("LD", "A,D")
+                    self.ctx.emit_instr("RLA")
+                    self.ctx.emit_instr("SBC", "A,A")
+                    self.ctx.emit_instr("LD", "B,A")
+                    self.ctx.emit_instr("LD", "C,A")
+                    self.ctx.emit_instr("PUSH", "BC")  # w3
+                    self.ctx.emit_instr("PUSH", "BC")  # w2
+                self.ctx.emit_instr("PUSH", "DE")  # w1
+                self.ctx.emit_instr("PUSH", "HL")  # w0
+        elif isinstance(arg, ast.UnaryOp) and arg.op == "-" and isinstance(arg.operand, ast.IntLiteral):
+            # Negative constant
+            val = (-arg.operand.value) & 0xFFFFFFFFFFFFFFFF
+            w0 = val & 0xFFFF
+            w1 = (val >> 16) & 0xFFFF
+            w2 = (val >> 32) & 0xFFFF
+            w3 = (val >> 48) & 0xFFFF
+            self.ctx.emit_instr("LD", f"HL,{w3}")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", f"HL,{w2}")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", f"HL,{w1}")
+            self.ctx.emit_instr("PUSH", "HL")
+            self.ctx.emit_instr("LD", f"HL,{w0}")
+            self.ctx.emit_instr("PUSH", "HL")
+        else:
+            # Check if expression itself produces a 64-bit result
+            # (e.g. a call to a function returning long long)
+            expr_is_ll = self._is_long_long_expr(arg)
+            if expr_is_ll:
+                # Expression computes 64-bit result: lower 32 in DEHL,
+                # upper 32 in __acc64+4..7 (static storage from 64-bit ops)
+                self.gen_expr(arg, force_long=True)
+                # Read all 4 words from __acc64 (DE/HL may be clobbered by stack cleanup)
+                self.ctx.emit_instr("LD", "HL,(__acc64+6)")
+                self.ctx.emit_instr("PUSH", "HL")  # w3 (highest)
+                self.ctx.emit_instr("LD", "HL,(__acc64+4)")
+                self.ctx.emit_instr("PUSH", "HL")  # w2
+                self.ctx.emit_instr("LD", "HL,(__acc64+2)")
+                self.ctx.emit_instr("PUSH", "HL")  # w1
+                self.ctx.emit_instr("LD", "HL,(__acc64)")
+                self.ctx.emit_instr("PUSH", "HL")  # w0 (lowest)
+                return
+
+            # Expression that returns a value - evaluate and extend to 64 bits
+            expr_is_long = self._is_long_expr(arg) or self._is_float_expr(arg)
+            if expr_is_long:
+                # Already produces 32-bit result in DEHL
+                self.gen_expr(arg, force_long=True)
+            else:
+                # 16-bit result in HL - DE may be dirty
+                self.gen_expr(arg)
+                # Extend HL to DEHL
+                is_signed = not self._is_unsigned_expr(arg)
+                self._extend_hl_to_dehl(is_signed)
+            # Now DEHL has valid 32-bit result, extend to 64 bits
+            is_unsigned = force_unsigned or self._is_unsigned_expr(arg)
+            if is_unsigned:
+                self.ctx.emit_instr("LD", "BC,0")
+                self.ctx.emit_instr("PUSH", "BC")  # w3
+                self.ctx.emit_instr("PUSH", "BC")  # w2
+            else:
+                # Sign-extend bit 31 of DE into upper 32 bits
+                self.ctx.emit_instr("LD", "A,D")
+                self.ctx.emit_instr("RLA")
+                self.ctx.emit_instr("SBC", "A,A")
+                self.ctx.emit_instr("LD", "B,A")
+                self.ctx.emit_instr("LD", "C,A")
+                self.ctx.emit_instr("PUSH", "BC")  # w3 (highest)
+                self.ctx.emit_instr("PUSH", "BC")  # w2
+            self.ctx.emit_instr("PUSH", "DE")  # w1
+            self.ctx.emit_instr("PUSH", "HL")  # w0 (lowest)
 
     def gen_ternary(self, expr: ast.TernaryOp) -> None:
         """Generate code for ternary conditional."""
@@ -4684,11 +5341,22 @@ class CodeGenerator:
                 for m in struct_type.members:
                     if m.name == expr.member:
                         return m.member_type
+                # Search anonymous struct/union members inline
+                for m in struct_type.members:
+                    if m.name is None and isinstance(m.member_type, ast.StructType):
+                        if m.member_type.members:
+                            for sm in m.member_type.members:
+                                if sm.name == expr.member:
+                                    return sm.member_type
             # Then try registered structs
             if struct_type.name and struct_type.name in self.ctx.structs:
                 for name, member_type, _ in self.ctx.structs[struct_type.name]:
                     if name == expr.member:
                         return member_type
+                # Search anonymous members
+                result = self._find_anon_member_type(struct_type.name, expr.member)
+                if result is not None:
+                    return result
         return None
 
     def _get_member_size(self, expr: ast.Member) -> int:
@@ -4699,12 +5367,65 @@ class CodeGenerator:
         return 2  # Default to 16-bit
 
     def _get_member_offset(self, struct_name: str, member_name: str) -> int:
-        """Get the offset of a member within a struct."""
+        """Get the offset of a member within a struct.
+
+        Also searches through anonymous struct/union members recursively.
+        """
         if struct_name in self.ctx.structs:
-            for name, _, offset in self.ctx.structs[struct_name]:
+            for name, member_type, offset in self.ctx.structs[struct_name]:
                 if name == member_name:
                     return offset
+            # Search anonymous struct/union members
+            result = self._find_anon_member_offset(struct_name, member_name)
+            if result is not None:
+                return result
         return 0
+
+    def _find_anon_member_offset(self, struct_name: str, member_name: str) -> int | None:
+        """Search for a member in anonymous struct/union sub-members.
+
+        Looks at the original AST members to find anonymous struct/union members,
+        then searches their sub-members recursively.
+        """
+        # We need to look at the original struct declaration to find anonymous members
+        # Check registered structs for any member whose type is a struct/union
+        # that contains the target member name
+        if struct_name not in self.ctx.structs:
+            return None
+
+        # Look through all registered members for struct/union types that might
+        # contain anonymous sub-members. But we need the original AST to find
+        # anonymous members. Store them during registration.
+        if struct_name in self.ctx.anon_members:
+            for anon_type, anon_offset in self.ctx.anon_members[struct_name]:
+                # Search this anonymous struct/union for the member
+                anon_members = self._get_struct_members(anon_type)
+                for name, mtype, moffset in anon_members:
+                    if name == member_name:
+                        return anon_offset + moffset
+                # Recursively search nested anonymous members
+                if hasattr(anon_type, 'members') and anon_type.members:
+                    for m in anon_type.members:
+                        if m.name is None and isinstance(m.member_type, ast.StructType):
+                            sub_members = self._get_struct_members(m.member_type)
+                            sub_offset = 0 if anon_type.is_union else sum(
+                                self._type_size(sm.member_type) for sm in anon_type.members
+                                if sm.name is not None and sm is not m
+                            )
+                            for sname, stype, soffset in sub_members:
+                                if sname == member_name:
+                                    return anon_offset + soffset
+        return None
+
+    def _find_anon_member_type(self, struct_name: str, member_name: str) -> ast.TypeNode | None:
+        """Search for a member type in anonymous struct/union sub-members."""
+        if struct_name in self.ctx.anon_members:
+            for anon_type, anon_offset in self.ctx.anon_members[struct_name]:
+                anon_members = self._get_struct_members(anon_type)
+                for name, mtype, moffset in anon_members:
+                    if name == member_name:
+                        return mtype
+        return None
 
     def _get_expr_type(self, expr: ast.Expression) -> ast.TypeNode | None:
         """Try to infer the type of an expression."""
@@ -4911,9 +5632,16 @@ class CodeGenerator:
             # Address of *p is p
             self.gen_expr(expr.operand)
 
+        elif isinstance(expr, ast.Call):
+            # Function call returning struct: HL = address of __sret_buf
+            self.gen_expr(expr)
+
         elif isinstance(expr, ast.Member):
             if expr.is_arrow:
                 self.gen_expr(expr.obj)  # p->member: p is the address
+            elif isinstance(expr.obj, ast.Call):
+                # Call returning struct > 2 bytes: HL = address of __sret_buf
+                self.gen_expr(expr.obj)
             else:
                 self._gen_address(expr.obj)  # s.member: address of s
 
@@ -5376,6 +6104,20 @@ class CodeGenerator:
                             size += self._type_size(decl.var_type)
                 if isinstance(item.body, ast.CompoundStmt):
                     size += self._calc_locals_size(item.body)
+            elif isinstance(item, ast.IfStmt):
+                if isinstance(item.then_branch, ast.CompoundStmt):
+                    size += self._calc_locals_size(item.then_branch)
+                if isinstance(item.else_branch, ast.CompoundStmt):
+                    size += self._calc_locals_size(item.else_branch)
+                elif isinstance(item.else_branch, ast.IfStmt):
+                    fake = ast.CompoundStmt(items=[item.else_branch])
+                    size += self._calc_locals_size(fake)
+            elif isinstance(item, (ast.WhileStmt, ast.DoWhileStmt)):
+                if isinstance(item.body, ast.CompoundStmt):
+                    size += self._calc_locals_size(item.body)
+            elif isinstance(item, ast.SwitchStmt):
+                if isinstance(item.body, ast.CompoundStmt):
+                    size += self._calc_locals_size(item.body)
         return size
 
     def _type_size(self, t: ast.TypeNode) -> int:
@@ -5400,7 +6142,7 @@ class CodeGenerator:
             base_size = self._type_size(t.base_type)
             if t.size and isinstance(t.size, ast.IntLiteral):
                 return base_size * t.size.value
-            return base_size  # Unsized array, return element size
+            return 0  # Unsized/flexible array member - zero size for sizeof
         elif isinstance(t, ast.StructType):
             # Handle inline struct definitions with members
             if t.members:
@@ -5517,6 +6259,50 @@ class CodeGenerator:
 
         return consumed
 
+    def _emit_designated_array_init(self, init_list: ast.InitializerList,
+                                       array_type: ast.ArrayType) -> None:
+        """Emit array initialization with designated initializers (including ranges).
+
+        Handles [index] and [start ... end] designators, with proper overriding
+        for overlapping ranges.
+        """
+        base_type = array_type.base_type
+        base_size = self._type_size(base_type)
+        array_size = array_type.size.value if (array_type.size and isinstance(array_type.size, ast.IntLiteral)) else 1
+
+        # Build final element array: index -> value (None means zero)
+        elements = [None] * array_size
+        next_index = 0
+
+        for val in init_list.values:
+            if isinstance(val, ast.DesignatedInit):
+                for desig in val.designators:
+                    if isinstance(desig, ast.RangeDesignator):
+                        start = self._eval_const_expr(desig.start)
+                        end = self._eval_const_expr(desig.end)
+                        if start is not None and end is not None:
+                            for idx in range(start, end + 1):
+                                if idx < array_size:
+                                    elements[idx] = val.value
+                            next_index = end + 1
+                    else:
+                        idx = self._eval_const_expr(desig)
+                        if idx is not None:
+                            if idx < array_size:
+                                elements[idx] = val.value
+                            next_index = idx + 1
+            else:
+                if next_index < array_size:
+                    elements[next_index] = val
+                next_index += 1
+
+        # Emit elements
+        for elem in elements:
+            if elem is None:
+                self.ctx.emit_instr("DS", str(base_size))
+            else:
+                self._emit_initializer(elem, base_type)
+
     def _emit_initializer(self, init: ast.Expression, elem_type: ast.TypeNode) -> None:
         """Emit initialized data for a global variable or array element."""
         elem_size = self._type_size(elem_type)
@@ -5525,33 +6311,87 @@ class CodeGenerator:
             # Handle array or struct initializer
             if isinstance(elem_type, ast.ArrayType):
                 base_type = elem_type.base_type
-                # Check if this is a flat init for array of structs
-                is_flat_struct_init = (
-                    isinstance(base_type, ast.StructType) and
-                    init.values and
-                    not isinstance(init.values[0], ast.InitializerList)
+                base_size = self._type_size(base_type)
+
+                # Check for designated initializers with index/range designators
+                has_index_designators = any(
+                    isinstance(v, ast.DesignatedInit) and v.designators and
+                    not isinstance(v.designators[0], str)
+                    for v in init.values
                 )
-                if is_flat_struct_init:
-                    # Flat init for array of structs - use flat handler
-                    consumed = self._emit_array_init_flat_inline(init.values, 0, elem_type)
+
+                if has_index_designators and elem_type.size and isinstance(elem_type.size, ast.IntLiteral):
+                    # Designated array init with [index] or [start...end] designators
+                    self._emit_designated_array_init(init, elem_type)
                 else:
-                    # Normal array init - each value is a complete element
-                    for val in init.values:
-                        if isinstance(val, ast.DesignatedInit):
-                            self._emit_initializer(val.value, base_type)
-                        else:
-                            self._emit_initializer(val, base_type)
-                    # Pad with zeros if initializer is shorter than array size
-                    if elem_type.size and isinstance(elem_type.size, ast.IntLiteral):
-                        remaining = elem_type.size.value - len(init.values)
-                        if remaining > 0:
-                            pad_size = remaining * self._type_size(base_type)
-                            self.ctx.emit_instr("DS", str(pad_size))
+                    # Check if this is a flat init for array of structs
+                    is_flat_struct_init = (
+                        isinstance(base_type, ast.StructType) and
+                        init.values and
+                        not isinstance(init.values[0], ast.InitializerList)
+                    )
+                    if is_flat_struct_init:
+                        # Flat init for array of structs - use flat handler
+                        consumed = self._emit_array_init_flat_inline(init.values, 0, elem_type)
+                    else:
+                        # Normal array init - each value is a complete element
+                        for val in init.values:
+                            if isinstance(val, ast.DesignatedInit):
+                                self._emit_initializer(val.value, base_type)
+                            else:
+                                self._emit_initializer(val, base_type)
+                        # Pad with zeros if initializer is shorter than array size
+                        if elem_type.size and isinstance(elem_type.size, ast.IntLiteral):
+                            remaining = elem_type.size.value - len(init.values)
+                            if remaining > 0:
+                                pad_size = remaining * base_size
+                                self.ctx.emit_instr("DS", str(pad_size))
             elif isinstance(elem_type, ast.StructType):
-                # Struct initializer
+                # Struct/union initializer
                 members = self._get_struct_members(elem_type)
                 if members:
-                    self._emit_struct_init_flat(init.values, members)
+                    if elem_type.is_union:
+                        # Union: determine which member to initialize
+                        target_member = members[0]  # Default: first named member
+                        target_sub_members = None
+
+                        # Check if init values have designators targeting anonymous members
+                        if init.values and isinstance(init.values[0], ast.DesignatedInit):
+                            desig = init.values[0]
+                            if desig.designators and isinstance(desig.designators[0], str):
+                                desig_name = desig.designators[0]
+                                # Check if designator matches a direct member
+                                found_direct = False
+                                for m in members:
+                                    if m[0] == desig_name:
+                                        target_member = m
+                                        found_direct = True
+                                        break
+                                if not found_direct and elem_type.name:
+                                    # Check anonymous struct/union sub-members
+                                    if elem_type.name in self.ctx.anon_members:
+                                        for anon_type, anon_offset in self.ctx.anon_members[elem_type.name]:
+                                            anon_mems = self._get_struct_members(anon_type)
+                                            for aname, atype, aoff in anon_mems:
+                                                if aname == desig_name:
+                                                    # Designator targets anonymous member's sub-member
+                                                    target_member = (None, anon_type, anon_offset)
+                                                    target_sub_members = anon_mems
+                                                    break
+                                            if target_sub_members:
+                                                break
+
+                        target_size = self._type_size(target_member[1])
+                        if target_sub_members is not None:
+                            # Initialize anonymous struct/union sub-members
+                            self._emit_struct_init_flat(init.values, target_sub_members)
+                        else:
+                            self._emit_struct_init_flat(init.values, [target_member])
+                        union_size = self._type_size(elem_type)
+                        if union_size > target_size:
+                            self.ctx.emit_instr("DS", str(union_size - target_size))
+                    else:
+                        self._emit_struct_init_flat(init.values, members)
                 else:
                     # Unknown struct, just reserve space
                     self.ctx.emit_instr("DS", str(elem_size))
@@ -5624,18 +6464,28 @@ class CodeGenerator:
 
     def _emit_struct_init_flat(self, values: list, members: list) -> int:
         """Emit struct initialization with flat value list. Returns values consumed."""
+        # Check for member designators requiring non-sequential emit
+        has_member_desig = any(
+            isinstance(v, ast.DesignatedInit) and v.designators and isinstance(v.designators[0], str)
+            for v in values
+        )
+
+        if has_member_desig:
+            return self._emit_struct_init_designated(values, members)
+
         value_index = 0
 
         for member_name, member_type, member_offset in members:
             if value_index >= len(values):
                 # No more values - zero-initialize
                 size = self._type_size(member_type)
-                self.ctx.emit_instr("DS", str(size))
+                if size > 0:
+                    self.ctx.emit_instr("DS", str(size))
                 continue
 
             val = values[value_index]
 
-            # Handle DesignatedInit
+            # Handle DesignatedInit (without member name - e.g. array index designator)
             if isinstance(val, ast.DesignatedInit):
                 val = val.value
                 value_index += 1
@@ -5649,8 +6499,8 @@ class CodeGenerator:
                     # Flat array init
                     consumed = self._emit_array_init_flat(values, value_index, member_type)
                     value_index += consumed
-            elif isinstance(member_type, ast.StructType) and not isinstance(val, ast.InitializerList):
-                # Flat nested struct init
+            elif isinstance(member_type, ast.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
+                # Flat nested struct init (but not compound literals - those are complete values)
                 nested_members = self._get_struct_members(member_type)
                 if nested_members:
                     consumed = self._emit_struct_init_flat(values[value_index:], nested_members)
@@ -5659,11 +6509,61 @@ class CodeGenerator:
                     value_index += 1
                     self._emit_initializer(val, member_type)
             else:
-                # Normal case
+                # Normal case (includes InitializerList and Compound for struct members)
                 value_index += 1
                 self._emit_initializer(val, member_type)
 
         return value_index
+
+    def _emit_struct_init_designated(self, values: list, members: list) -> int:
+        """Emit struct init with member designators. Values go to designated member positions."""
+        # Build member -> value mapping (last value wins per C rules)
+        member_vals = {}
+        next_idx = 0
+        for val in values:
+            if isinstance(val, ast.DesignatedInit) and val.designators and isinstance(val.designators[0], str):
+                name = val.designators[0]
+                if len(val.designators) > 1:
+                    # Nested designator like .a.j - store with remaining designators
+                    member_vals[name] = ast.DesignatedInit(
+                        designators=val.designators[1:], value=val.value, location=val.location)
+                else:
+                    member_vals[name] = val.value
+                # Update next_idx for sequential continuation after this member
+                for idx, (mname, mtype, moff) in enumerate(members):
+                    if mname == name:
+                        next_idx = idx + 1
+                        break
+            else:
+                # Non-designated value - goes to next sequential member
+                if next_idx < len(members):
+                    mname = members[next_idx][0]
+                    if mname:
+                        actual_val = val.value if isinstance(val, ast.DesignatedInit) else val
+                        member_vals[mname] = actual_val
+                    next_idx += 1
+
+        # Emit members in declaration order
+        for member_name, member_type, member_offset in members:
+            if member_name and member_name in member_vals:
+                val = member_vals[member_name]
+                if isinstance(val, ast.DesignatedInit):
+                    # Nested designator - emit as struct init with remaining designators
+                    if isinstance(member_type, ast.StructType):
+                        sub_members = self._get_struct_members(member_type)
+                        if sub_members:
+                            self._emit_struct_init_designated([val], sub_members)
+                            continue
+                    # Fallback: just emit the value
+                    self._emit_initializer(val.value, member_type)
+                else:
+                    self._emit_initializer(val, member_type)
+            else:
+                size = self._type_size(member_type)
+                if size > 0:
+                    self.ctx.emit_instr("DS", str(size))
+
+        return len(values)
 
     def _emit_array_init_flat(self, values: list, start_index: int, array_type: ast.ArrayType) -> int:
         """Emit array initialization from flat values. Returns values consumed."""

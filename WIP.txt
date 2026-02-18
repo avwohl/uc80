@@ -1,3 +1,6 @@
+Note: do not adapt tests (other than timeout) to z80
+Ask a human before adapting, modifying, working around, or skipping any test.
+
 Work In Progress Notes - uc80 C Compiler
 =========================================
 

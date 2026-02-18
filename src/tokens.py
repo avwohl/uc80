@@ -14,6 +14,8 @@ class TokenType(Enum):
     FLOAT_LITERAL = auto()
     CHAR_LITERAL = auto()
     STRING_LITERAL = auto()
+    WIDE_STRING_LITERAL = auto()
+    WIDE_CHAR_LITERAL = auto()
 
     # Identifier
     IDENTIFIER = auto()

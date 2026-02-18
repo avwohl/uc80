@@ -792,14 +792,19 @@ class Parser:
             return ast.IntLiteral(value=value, is_long=is_long, is_unsigned=is_unsigned, location=loc)
         if self._check(TokenType.FLOAT_LITERAL):
             return ast.FloatLiteral(value=self._advance().value, location=loc)
-        if self._check(TokenType.CHAR_LITERAL):
+        if self._check(TokenType.CHAR_LITERAL) or self._check(TokenType.WIDE_CHAR_LITERAL):
             return ast.CharLiteral(value=self._advance().value, location=loc)
-        if self._check(TokenType.STRING_LITERAL):
-            # Concatenate adjacent string literals
-            value = self._advance().value
-            while self._check(TokenType.STRING_LITERAL):
-                value += self._advance().value
-            return ast.StringLiteral(value=value, location=loc)
+        if self._check(TokenType.STRING_LITERAL) or self._check(TokenType.WIDE_STRING_LITERAL):
+            # Concatenate adjacent string literals; wide if any is wide
+            tok = self._advance()
+            is_wide = tok.type == TokenType.WIDE_STRING_LITERAL
+            value = tok.value
+            while self._check(TokenType.STRING_LITERAL) or self._check(TokenType.WIDE_STRING_LITERAL):
+                tok = self._advance()
+                if tok.type == TokenType.WIDE_STRING_LITERAL:
+                    is_wide = True
+                value += tok.value
+            return ast.StringLiteral(value=value, is_wide=is_wide, location=loc)
         if self._match(TokenType.TRUE):
             return ast.BoolLiteral(value=True, location=loc)
         if self._match(TokenType.FALSE):
