@@ -3849,7 +3849,20 @@ class CodeGenerator:
             else:
                 self._call_runtime("__shl16")
         elif op == ">>":
-            self._call_runtime("__shr16")
+            # Strength reduction: right shift by small constant → inline shifts
+            # At this point: left in DE, right (shift count) in HL
+            if isinstance(expr.right, ast.IntLiteral) and 1 <= expr.right.value <= 4:
+                shift = expr.right.value
+                is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+                self.ctx.emit_instr("EX", "DE,HL")  # value to HL
+                for _ in range(shift):
+                    if is_unsigned:
+                        self.ctx.emit_instr("SRL", "H")
+                    else:
+                        self.ctx.emit_instr("SRA", "H")
+                    self.ctx.emit_instr("RR", "L")
+            else:
+                self._call_runtime("__shr16")
         elif op in ("==", "!=", "<", ">", "<=", ">="):
             # Check if either operand is unsigned for proper comparison
             is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)

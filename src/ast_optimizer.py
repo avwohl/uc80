@@ -136,17 +136,19 @@ class ASTOptimizer:
         if op in ("&&", "||", ","):
             return expr
 
-        # === Constant folding: both operands are IntLiteral (16-bit only) ===
-        # Skip long/long-long: AST can't distinguish 32 vs 64-bit reliably
-        if (isinstance(left, ast.IntLiteral) and isinstance(right, ast.IntLiteral)
-                and not left.is_long and not right.is_long):
-            result = self._fold_constants(op, left.value, right.value,
-                                          left.is_unsigned or right.is_unsigned)
+        # === Constant folding: both operands are IntLiteral ===
+        if isinstance(left, ast.IntLiteral) and isinstance(right, ast.IntLiteral):
+            # Use wider mask of the two operands
+            mask = max(self._literal_mask(left), self._literal_mask(right))
+            unsigned = left.is_unsigned or right.is_unsigned
+            is_long = left.is_long or right.is_long
+            result = self._fold_constants(op, left.value, right.value, unsigned, mask)
             if result is not None:
                 self._stat("const_fold")
                 return ast.IntLiteral(
                     value=result,
-                    is_unsigned=left.is_unsigned or right.is_unsigned,
+                    is_long=is_long,
+                    is_unsigned=unsigned,
                     location=expr.location,
                 )
 
@@ -218,23 +220,24 @@ class ASTOptimizer:
         op = expr.op
         operand = expr.operand
 
-        # Constant folding (only for non-long values; long/long long can't
-        # be reliably folded since the AST doesn't distinguish 32 vs 64-bit)
-        if isinstance(operand, ast.IntLiteral) and not operand.is_long:
+        # Constant folding for unary operations
+        if isinstance(operand, ast.IntLiteral):
             val = operand.value
+            mask = self._literal_mask(operand)
             result = None
             if op == "-":
-                result = (-val) & 0xFFFF
+                result = (-val) & mask
             elif op == "+":
                 result = val
             elif op == "~":
-                result = (~val) & 0xFFFF
+                result = (~val) & mask
             elif op == "!":
                 result = 1 if val == 0 else 0
             if result is not None:
                 self._stat("const_fold_unary")
                 return ast.IntLiteral(
                     value=result,
+                    is_long=operand.is_long,
                     is_unsigned=operand.is_unsigned,
                     location=expr.location,
                 )
@@ -383,26 +386,24 @@ class ASTOptimizer:
 
         if not isinstance(right, ast.IntLiteral):
             return None
-        # Skip long/long-long to avoid 32 vs 64-bit ambiguity
-        if right.is_long:
-            return None
 
         c2 = right.value
 
         if isinstance(left, ast.BinaryOp) and isinstance(left.right, ast.IntLiteral):
-            if left.right.is_long:
-                return None
             inner_op = left.op
             c1 = left.right.value
             x = left.left
-            mask = 0xFFFF
+            # Use wider mask of the two constants
+            is_long = right.is_long or left.right.is_long
+            mask = max(self._literal_mask(right), self._literal_mask(left.right))
 
             # (x + c1) + c2 → x + (c1 + c2)
             if op == "+" and inner_op == "+":
                 combined = (c1 + c2) & mask
                 self._stat("nested_fold")
                 return ast.BinaryOp(op="+", left=x, right=ast.IntLiteral(
-                    value=combined, location=right.location), location=expr.location)
+                    value=combined, is_long=is_long, location=right.location),
+                    location=expr.location)
 
             # (x - c1) + c2 → x + (c2 - c1)  [or x - (c1 - c2)]
             if op == "+" and inner_op == "-":
@@ -411,7 +412,8 @@ class ASTOptimizer:
                 if combined == 0:
                     return x
                 return ast.BinaryOp(op="+", left=x, right=ast.IntLiteral(
-                    value=combined, location=right.location), location=expr.location)
+                    value=combined, is_long=is_long, location=right.location),
+                    location=expr.location)
 
             # (x + c1) - c2 → x + (c1 - c2)
             if op == "-" and inner_op == "+":
@@ -420,28 +422,32 @@ class ASTOptimizer:
                 if combined == 0:
                     return x
                 return ast.BinaryOp(op="+", left=x, right=ast.IntLiteral(
-                    value=combined, location=right.location), location=expr.location)
+                    value=combined, is_long=is_long, location=right.location),
+                    location=expr.location)
 
             # (x * c1) * c2 → x * (c1 * c2)
             if op == "*" and inner_op == "*":
                 combined = (c1 * c2) & mask
                 self._stat("nested_fold")
                 return ast.BinaryOp(op="*", left=x, right=ast.IntLiteral(
-                    value=combined, location=right.location), location=expr.location)
+                    value=combined, is_long=is_long, location=right.location),
+                    location=expr.location)
 
             # (x << c1) << c2 → x << (c1 + c2)
             if op == "<<" and inner_op == "<<":
                 combined = c1 + c2
                 self._stat("nested_fold")
                 return ast.BinaryOp(op="<<", left=x, right=ast.IntLiteral(
-                    value=combined, location=right.location), location=expr.location)
+                    value=combined, location=right.location),
+                    location=expr.location)
 
             # (x >> c1) >> c2 → x >> (c1 + c2)
             if op == ">>" and inner_op == ">>":
                 combined = c1 + c2
                 self._stat("nested_fold")
                 return ast.BinaryOp(op=">>", left=x, right=ast.IntLiteral(
-                    value=combined, location=right.location), location=expr.location)
+                    value=combined, location=right.location),
+                    location=expr.location)
 
         return None
 
@@ -465,9 +471,24 @@ class ASTOptimizer:
         """Check if any IntLiteral is unsigned."""
         return any(isinstance(e, ast.IntLiteral) and e.is_unsigned for e in exprs)
 
-    def _fold_constants(self, op: str, a: int, b: int, unsigned: bool) -> int | None:
-        """Evaluate a constant 16-bit binary expression. Returns None if not foldable."""
-        mask = 0xFFFF
+    @staticmethod
+    def _literal_mask(lit: ast.IntLiteral) -> int:
+        """Get bitmask for an IntLiteral based on its type width.
+
+        Matches codegen's _is_long_long_expr heuristic:
+        - is_long=False → 16-bit (int)
+        - is_long=True, value fits 32-bit signed → 32-bit (long)
+        - is_long=True, value exceeds 32-bit signed → 64-bit (long long)
+        """
+        if not lit.is_long:
+            return 0xFFFF
+        if lit.value > 2147483647 or lit.value < -2147483648:
+            return 0xFFFFFFFFFFFFFFFF
+        return 0xFFFFFFFF
+
+    def _fold_constants(self, op: str, a: int, b: int, unsigned: bool,
+                        mask: int = 0xFFFF) -> int | None:
+        """Evaluate a constant binary expression. Returns None if not foldable."""
         try:
             if op == "+":
                 return (a + b) & mask
