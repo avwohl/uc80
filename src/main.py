@@ -123,6 +123,11 @@ def main() -> int:
         help="Disable AST-level expression optimization"
     )
     parser.add_argument(
+        "-O3", "--aggressive-optimize",
+        action="store_true",
+        help="Enable aggressive AST optimizations (CSE, copy propagation, dead stores, loop opts)"
+    )
+    parser.add_argument(
         "--no-embed-startup",
         action="store_true",
         help="Don't embed startup code (crt0) in whole-program mode"
@@ -244,7 +249,8 @@ def main() -> int:
 
         # AST-level expression optimization
         if not args.no_ast_optimize:
-            ast_opt = ASTOptimizer()
+            opt_level = 3
+            ast_opt = ASTOptimizer(opt_level)
             merged_ast = ast_opt.optimize(merged_ast)
             if args.verbose and ast_opt.stats:
                 print(f"  AST optimizations:")
