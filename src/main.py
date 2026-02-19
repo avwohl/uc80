@@ -283,6 +283,12 @@ def main() -> int:
                 print(f"  Propagated {gen.constants_propagated} constant(s)")
             if gen.dead_functions_removed > 0:
                 print(f"  Eliminated {gen.dead_functions_removed} dead function(s)")
+            if gen.call_graph_analyzer and gen.call_graph_analyzer.total_shared_storage > 0:
+                cga = gen.call_graph_analyzer
+                shared_count = len(cga.storage_offsets)
+                individual_total = sum(cga.func_storage.get(f, 0) for f in cga.storage_offsets)
+                print(f"  Shared storage: {shared_count} function(s), "
+                      f"{individual_total} bytes reduced to {cga.total_shared_storage} bytes")
             print(f"  Generated {len(code.splitlines())} lines of assembly")
 
         # Embed startup code (crt0) if requested - at beginning of code
@@ -335,6 +341,17 @@ def main() -> int:
                 if args.verbose:
                     print(f"    Warning: startup file not found: {startup_path}")
 
+        # Collect program's own PUBLIC labels before embedding libraries.
+        # These become the entry points for assembly DCE in whole-program mode,
+        # allowing unreachable library functions to be trimmed.
+        import re
+        program_public_labels = set()
+        for line in code.splitlines():
+            match = re.match(r'\s*PUBLIC\s+(.+)', line, re.IGNORECASE)
+            if match:
+                for label in match.group(1).split(','):
+                    program_public_labels.add(label.strip())
+
         # Embed runtime library functions if requested
         runtime_funcs_embedded = 0
         if embed_runtime:
@@ -352,7 +369,6 @@ def main() -> int:
             needed = set(gen.ctx.runtime_used)
 
             # Scan for EXTRN references to libc functions
-            import re
             for line in code.splitlines():
                 match = re.match(r'\s*EXTRN\s+(.+)', line, re.IGNORECASE)
                 if match:
@@ -439,7 +455,6 @@ def main() -> int:
         additional_funcs_embedded = 0
         if args.embed_lib and embed_runtime:
             # Find all EXTRN references in the current code
-            import re
             extrn_refs = set()
             for line in code.splitlines():
                 match = re.match(r'\s*EXTRN\s+(.+)', line, re.IGNORECASE)
@@ -554,6 +569,11 @@ def main() -> int:
                     if stripped == 'END':
                         continue
                     filtered.append(line)
+                    # Also collect PUBLIC labels from appended .mac files
+                    match = re.match(r'\s*PUBLIC\s+(.+)', line, re.IGNORECASE)
+                    if match:
+                        for label in match.group(1).split(','):
+                            program_public_labels.add(label.strip())
                 code_lines.extend(['', '; Included assembly file'])
                 code_lines.extend(filtered)
 
@@ -569,7 +589,12 @@ def main() -> int:
                 print(f"  Assembly dead code elimination...")
 
             lines_before = len(code.splitlines())
-            code = asm_eliminate_dead_code(code)
+            if whole_program:
+                # In whole-program mode, only the program's own PUBLIC labels
+                # are entry points. Library functions are kept only if reachable.
+                code = asm_eliminate_dead_code(code, entry_points=program_public_labels)
+            else:
+                code = asm_eliminate_dead_code(code)
             lines_after = len(code.splitlines())
 
             if args.verbose and lines_before != lines_after:

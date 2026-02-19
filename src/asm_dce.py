@@ -39,6 +39,7 @@ class AssemblyDCE:
         self.footer_lines: list[str] = []
         self.dseg_lines: list[str] = []
         self.current_segment = "CSEG"
+        self._explicit_entry = False  # True when caller provides entry points
 
     def eliminate_dead_code(self, asm_text: str, entry_points: set[str] | None = None) -> str:
         """Remove unreachable code and data from assembly.
@@ -53,7 +54,9 @@ class AssemblyDCE:
         self._parse_assembly(asm_text)
 
         # Determine entry points
-        if entry_points is None:
+        if entry_points is not None:
+            self._explicit_entry = True
+        else:
             entry_points = set()
             if "_main" in self.blocks:
                 entry_points.add("_main")
@@ -253,10 +256,13 @@ class AssemblyDCE:
                     if re.search(pattern, code_part):
                         referenced.add(data_label)
 
-        # Also preserve PUBLIC data labels (they may be referenced externally)
-        for data_label in self.data_blocks:
-            if self.data_blocks[data_label].is_public:
-                referenced.add(data_label)
+        # Preserve PUBLIC data labels only in non-explicit mode
+        # (when explicit entry points are given, we're in whole-program mode
+        # and data should only survive if actually referenced by live code)
+        if not self._explicit_entry:
+            for data_label in self.data_blocks:
+                if self.data_blocks[data_label].is_public:
+                    referenced.add(data_label)
 
         # Iteratively find data referenced from other data (fixpoint)
         changed = True
@@ -405,8 +411,42 @@ class AssemblyDCE:
         """Rebuild assembly with only reachable blocks and referenced data."""
         lines = []
 
-        # Header (includes CSEG if present)
-        lines.extend(self.header_lines)
+        # Compute surviving labels for filtering PUBLIC/EXTRN
+        surviving = reachable_code | referenced_data
+        # EQU constants are always preserved (they're in header_lines),
+        # so their PUBLIC declarations should survive too
+        for line in self.header_lines:
+            m = re.match(r'^(\@?\?*\w+)\s+EQU\s', line, re.IGNORECASE)
+            if m:
+                surviving.add(m.group(1))
+
+        # All labels defined by eliminated blocks (for EXTRN cleanup)
+        eliminated_defined = set()
+        for label in self.blocks:
+            if label not in reachable_code:
+                eliminated_defined.add(label)
+        for label in self.data_blocks:
+            if label not in referenced_data:
+                eliminated_defined.add(label)
+
+        # Header — filter PUBLIC/EXTRN for eliminated blocks
+        for line in self.header_lines:
+            match = re.match(r'\s*PUBLIC\s+(.+)', line, re.IGNORECASE)
+            if match:
+                labels = [l.strip() for l in match.group(1).split(',')]
+                kept = [l for l in labels if l in surviving]
+                if kept:
+                    lines.append(f"\tPUBLIC\t{','.join(kept)}")
+                continue
+            match = re.match(r'\s*EXTRN\s+(.+)', line, re.IGNORECASE)
+            if match:
+                labels = [l.strip() for l in match.group(1).split(',')]
+                # Remove labels that were defined by now-eliminated blocks
+                kept = [l for l in labels if l not in eliminated_defined]
+                if kept:
+                    lines.append(f"\tEXTRN\t{','.join(kept)}")
+                continue
+            lines.append(line)
 
         # Reachable code blocks in original order
         for label, block in self.blocks.items():
