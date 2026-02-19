@@ -33,5 +33,13 @@ Previous Fixes:
 Remaining Failures (1 test):
 - 00204: Floating-point printf (%f format) - produces no output
 
+Fujitsu Compiler Test Suite (../external/compiler-test-suite/C/):
+- 186 test directories, ~30K individual .c files with .reference_output
+- Designed for 64-bit AArch64; many tests use long (64-bit), float/double, OpenMP, ARM SVE
+- run_fujitsu.py written but not yet run - needs trial to determine hit rate
+- Likely ~20-30% of tests compatible with 16-bit Z80 (no float, no 64-bit long)
+- Test format: single .c file, compare stdout against .reference_output (strip "exit 0" line)
+- Next step: run sample directories (0000, 0001, 0005, 0140, 0150) to gauge pass rate
+
 Notes:
 - Test 00204 requires %f printf format which isn't fully implemented
