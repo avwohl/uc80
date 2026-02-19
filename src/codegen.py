@@ -4488,22 +4488,14 @@ class CodeGenerator:
 
     def gen_assignment(self, expr: ast.BinaryOp) -> None:
         """Generate code for assignment."""
-        # Check if target is 32-bit (long or float)
+        # Check if target is 32-bit (long or float) using type inference
         target_is_32bit = False
         target_is_float = False
-        if isinstance(expr.left, ast.Identifier):
-            sym = self.ctx.lookup(expr.left.name)
-            if sym:
-                if self._is_long_type(sym.sym_type):
-                    target_is_32bit = True
-                elif self._is_float_type(sym.sym_type):
-                    target_is_32bit = True
-                    target_is_float = True
-        elif isinstance(expr.left, ast.Member):
-            member_type = self._get_member_type(expr.left)
-            if self._is_long_type(member_type):
+        target_type = self._get_expr_type(expr.left)
+        if target_type:
+            if self._is_long_type(target_type):
                 target_is_32bit = True
-            elif self._is_float_type(member_type):
+            elif self._is_float_type(target_type):
                 target_is_32bit = True
                 target_is_float = True
 
@@ -4545,22 +4537,54 @@ class CodeGenerator:
                         self._store_local(sym)
         elif isinstance(expr.left, ast.UnaryOp) and expr.left.op == "*":
             # Pointer dereference assignment: *p = value
-            self.ctx.emit_instr("PUSH", "HL")  # Save value
-            self.gen_expr(expr.left.operand)   # Get address in HL
-            self.ctx.emit_instr("POP", "DE")   # Value in DE
-            self.ctx.emit_instr("LD", "(HL),E")
-            self.ctx.emit_instr("INC", "HL")
-            self.ctx.emit_instr("LD", "(HL),D")
-            self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
+            if target_is_32bit:
+                self.ctx.emit_instr("PUSH", "DE")  # Save high word
+                self.ctx.emit_instr("PUSH", "HL")  # Save low word
+                self.gen_expr(expr.left.operand)   # Get address in HL
+                self.ctx.emit_instr("EX", "DE,HL") # Address in DE
+                self.ctx.emit_instr("POP", "HL")   # Low word in HL
+                self.ctx.emit_instr("EX", "DE,HL") # Address in HL, low word in DE
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("POP", "DE")   # High word in DE
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+            else:
+                self.ctx.emit_instr("PUSH", "HL")  # Save value
+                self.gen_expr(expr.left.operand)   # Get address in HL
+                self.ctx.emit_instr("POP", "DE")   # Value in DE
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+                self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
         elif isinstance(expr.left, ast.Index):
             # Array element assignment
-            self.ctx.emit_instr("PUSH", "HL")  # Save value
-            self._gen_address(expr.left)       # Get address in HL
-            self.ctx.emit_instr("POP", "DE")   # Value in DE
-            self.ctx.emit_instr("LD", "(HL),E")
-            self.ctx.emit_instr("INC", "HL")
-            self.ctx.emit_instr("LD", "(HL),D")
-            self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
+            if target_is_32bit:
+                self.ctx.emit_instr("PUSH", "DE")  # Save high word
+                self.ctx.emit_instr("PUSH", "HL")  # Save low word
+                self._gen_address(expr.left)       # Get address in HL
+                self.ctx.emit_instr("EX", "DE,HL") # Address in DE
+                self.ctx.emit_instr("POP", "HL")   # Low word in HL
+                self.ctx.emit_instr("EX", "DE,HL") # Address in HL, low word in DE
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("POP", "DE")   # High word in DE
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+            else:
+                self.ctx.emit_instr("PUSH", "HL")  # Save value
+                self._gen_address(expr.left)       # Get address in HL
+                self.ctx.emit_instr("POP", "DE")   # Value in DE
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+                self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
         elif isinstance(expr.left, ast.Member):
             # Struct member assignment
             member_size = self._get_member_size(expr.left)
@@ -5166,8 +5190,16 @@ class CodeGenerator:
 
         # Handle narrowing conversions first (before widening if force_long)
         if target_size == 1 and source_size > 1:
-            # Narrowing to char: truncate to L, clear H
-            self.ctx.emit_instr("LD", "H,0")
+            # Narrowing to char: truncate to L, sign or zero extend H
+            if target_signed:
+                # Signed char: sign-extend L to HL
+                self.ctx.emit_instr("LD", "A,L")
+                self.ctx.emit_instr("RLCA")      # Move bit 7 to carry
+                self.ctx.emit_instr("SBC", "A,A") # A = 0xFF if carry, 0x00 if not
+                self.ctx.emit_instr("LD", "H,A")
+            else:
+                # Unsigned char: zero-extend
+                self.ctx.emit_instr("LD", "H,0")
         elif target_size == 2 and source_size == 4:
             # Narrowing from long to short: just keep HL (DE is discarded)
             pass

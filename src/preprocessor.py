@@ -457,6 +457,9 @@ class Preprocessor:
         # Then replace any remaining simple identifiers
         expr = re.sub(r'\b[a-zA-Z_]\w*\b', '0', expr)
 
+        # Strip C integer suffixes (L, U, LL, UL, ULL, etc.) before eval
+        expr = re.sub(r'\b(\d+)[UuLl]+\b', r'\1', expr)
+
         # Evaluate the expression
         try:
             # Use Python's eval with restricted globals
@@ -631,7 +634,7 @@ class Preprocessor:
                 i += 1
         expr = ''.join(result)
 
-        # Now find 'or' at the top level (not inside parentheses)
+        # Split by top-level 'or' into parts
         paren_depth = 0
         or_positions = []
         i = 0
@@ -648,13 +651,21 @@ class Preprocessor:
         if not or_positions:
             return expr
 
-        # Convert from right to left to handle nested cases
-        for pos in reversed(or_positions):
-            left = expr[:pos]
-            right = expr[pos+4:]
-            expr = f'(1 if ({left}) else (1 if ({right}) else 0))'
+        # Split into parts first, then build nested ternary
+        parts = []
+        last_end = 0
+        for pos in or_positions:
+            parts.append(expr[last_end:pos])
+            last_end = pos + 4
+        parts.append(expr[last_end:])
 
-        return expr
+        # Build nested ternary from right to left
+        # (1 if (a) else (1 if (b) else (1 if (c) else 0)))
+        result_expr = '0'
+        for part in reversed(parts):
+            result_expr = f'(1 if ({part}) else {result_expr})'
+
+        return result_expr
 
     def _normalize_and(self, expr: str) -> str:
         """Convert a and b to (1 if (a) and (b) else 0)."""

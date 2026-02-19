@@ -159,9 +159,9 @@ class Lexer:
                     result.append(self._advance())
                 while self._is_digit(self._peek()):
                     result.append(self._advance())
-            # Handle float suffix (f, F, l, L)
+            # Handle float suffix (f, F, l, L, i, I for imaginary)
             text = ''.join(result)
-            if self._peek().lower() in 'fl':
+            while self._peek().lower() in 'fli':
                 self._advance()  # consume suffix
             return Token(TokenType.FLOAT_LITERAL, float(text), loc)
 
@@ -235,9 +235,9 @@ class Lexer:
             while self._is_digit(self._peek()):
                 result.append(self._advance())
 
-        # Read suffix
+        # Read suffix (including 'i' for GCC imaginary extension - ignored)
         suffix = []
-        while self._peek().lower() in 'uljf':
+        while self._peek().lower() in 'uljfi':
             suffix.append(self._advance())
 
         text = ''.join(result)
@@ -485,6 +485,25 @@ class Lexer:
                 return self._read_char_literal(wide=True)
             else:
                 return self._read_string_literal(wide=True)
+
+        # u8"str", u"str", U"str" string prefixes (treat as regular strings on Z80)
+        if self._peek() == 'u':
+            if self._peek(1) == '8' and self._peek(2) == '"':
+                self._advance()  # consume 'u'
+                self._advance()  # consume '8'
+                return self._read_string_literal()
+            elif self._peek(1) == '"':
+                self._advance()  # consume 'u'
+                return self._read_string_literal()
+            elif self._peek(1) == "'":
+                self._advance()  # consume 'u'
+                return self._read_char_literal()
+        if self._peek() == 'U' and self._peek(1) in ('"', "'"):
+            self._advance()  # consume 'U'
+            if self._peek() == "'":
+                return self._read_char_literal()
+            else:
+                return self._read_string_literal()
 
         # Identifier or keyword
         if self._is_identifier_start(self._peek()):

@@ -110,6 +110,20 @@ class Parser:
                         else:
                             self._advance()
 
+    def _skip_alignas(self) -> None:
+        """Skip _Alignas(...) specifier (Z80 has no alignment requirements)."""
+        while self._check(TokenType.ALIGNAS):
+            self._advance()  # _Alignas
+            self._expect(TokenType.LPAREN)
+            depth = 1
+            while depth > 0 and not self._check(TokenType.EOF):
+                if self._match(TokenType.LPAREN):
+                    depth += 1
+                elif self._match(TokenType.RPAREN):
+                    depth -= 1
+                else:
+                    self._advance()
+
     def _is_type_name(self) -> bool:
         """Check if current position starts a type name."""
         # Skip any leading __attribute__ for the check
@@ -172,6 +186,17 @@ class Parser:
                 is_short = True
             elif self._match(TokenType.LONG):
                 is_long += 1
+            elif self._check(TokenType.ATOMIC):
+                # _Atomic type qualifier / specifier (ignored on Z80 - single threaded)
+                self._advance()  # consume _Atomic
+                if self._match(TokenType.LPAREN):
+                    # _Atomic(type-name) form: parse inner type and use it
+                    inner_type = self._parse_type_name()
+                    self._expect(TokenType.RPAREN)
+                    inner_type.is_const = inner_type.is_const or is_const
+                    inner_type.is_volatile = inner_type.is_volatile or is_volatile
+                    return inner_type
+                # _Atomic without parens: just a qualifier, continue parsing
             elif self._match(TokenType.COMPLEX):
                 is_complex = True
             elif self._match(TokenType.VOID):
@@ -336,8 +361,9 @@ class Parser:
             for is_const, is_volatile in pointer_stack:
                 base_type = ast.PointerType(base_type=base_type, is_const=is_const, is_volatile=is_volatile)
 
-        # Skip __attribute__ before declarator name
+        # Skip __attribute__ and _Alignas before declarator name
         self._skip_gcc_attribute()
+        self._skip_alignas()
 
         # Handle parenthesized declarator
         if self._match(TokenType.LPAREN):
@@ -467,6 +493,8 @@ class Parser:
     def _parse_parameter_declaration(self) -> ast.ParamDecl:
         """Parse a single parameter declaration."""
         loc = self._current().location
+        # C standard allows 'register' as storage-class specifier in parameters
+        self._match(TokenType.REGISTER)
         base_type = self._parse_type_specifier()
         name, full_type = self._parse_declarator(base_type)
         return ast.ParamDecl(name=name if name else None, param_type=full_type, location=loc)
@@ -1072,6 +1100,10 @@ class Parser:
             return True
         if self._check(*self.FUNCTION_SPECIFIERS):
             return True
+        if self._check(TokenType.STATIC_ASSERT):
+            return True
+        if self._check(TokenType.ALIGNAS):
+            return True
         if self._check(TokenType.IDENTIFIER) and self._current().value in self.typedefs:
             # Check it's not a label (identifier followed by colon)
             if self._peek(1).type != TokenType.COLON:
@@ -1081,6 +1113,19 @@ class Parser:
     def _parse_declaration(self) -> ast.Declaration:
         """Parse a declaration."""
         loc = self._current().location
+
+        # _Static_assert / static_assert
+        if self._match(TokenType.STATIC_ASSERT):
+            self._expect(TokenType.LPAREN)
+            expr = self._parse_expression()
+            msg = ""
+            if self._match(TokenType.COMMA):
+                msg_tok = self._expect(TokenType.STRING_LITERAL)
+                msg = msg_tok.value
+            self._expect(TokenType.RPAREN)
+            self._expect(TokenType.SEMICOLON)
+            # Evaluate at compile time - for now just skip (accept always)
+            return ast.ExpressionStmt(expr=None, location=loc)
 
         # Storage class
         storage_class = None
@@ -1104,14 +1149,26 @@ class Parser:
                 is_inline = True
             elif self._match(TokenType.NORETURN):
                 pass  # Attribute, ignore for now
+            elif self._match(TokenType.ALIGNAS):
+                # _Alignas(N) or _Alignas(type) - skip alignment specifier (Z80 has no alignment)
+                self._expect(TokenType.LPAREN)
+                depth = 1
+                while depth > 0 and not self._check(TokenType.EOF):
+                    if self._match(TokenType.LPAREN):
+                        depth += 1
+                    elif self._match(TokenType.RPAREN):
+                        depth -= 1
+                    else:
+                        self._advance()
             else:
                 break
 
         # Type specifier
         base_type = self._parse_type_specifier()
 
-        # Skip __attribute__ after type specifier
+        # Skip __attribute__ and _Alignas after type specifier
         self._skip_gcc_attribute()
+        self._skip_alignas()
 
         # Check for struct/union/enum definition
         # Note: _parse_struct_type and _parse_enum_type may have already parsed inline definitions

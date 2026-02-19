@@ -16,6 +16,9 @@ typedef int ptrdiff_t;
 #define NULL ((void *)0)
 #endif
 
+/* Maximum alignment type (on Z80, alignment is always 1) */
+typedef long double max_align_t;
+
 /* Offset of member in struct */
 #define offsetof(type, member) ((size_t)&((type *)0)->member)
 

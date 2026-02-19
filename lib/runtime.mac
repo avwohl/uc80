@@ -221,8 +221,12 @@ __smod16_hl_pos:
 	PUBLIC	__shl16
 __shl16:
 	; Shift DE left by HL positions
-	LD	A,L		; Only use low byte (0-15 makes sense)
-	AND	0FH		; Limit to 15 shifts
+	LD	A,L		; Only use low byte
+	CP	16		; Shift >= 16?
+	JR	C,__shl16_ok
+	LD	HL,0		; Result is 0 for shift >= 16
+	RET
+__shl16_ok:
 	EX	DE,HL		; HL = value to shift
 	OR	A
 	RET	Z		; No shift needed
@@ -240,7 +244,11 @@ __shl16_loop:
 __shr16:
 	; Shift DE right by HL positions (logical/unsigned)
 	LD	A,L
-	AND	0FH
+	CP	16		; Shift >= 16?
+	JR	C,__shr16_ok
+	LD	HL,0		; Result is 0 for shift >= 16
+	RET
+__shr16_ok:
 	EX	DE,HL
 	OR	A
 	RET	Z
@@ -259,7 +267,17 @@ __shr16_loop:
 __sar16:
 	; Shift DE right by HL positions (arithmetic/signed)
 	LD	A,L
-	AND	0FH
+	CP	16		; Shift >= 16?
+	JR	C,__sar16_ok
+	EX	DE,HL
+	BIT	7,H		; Check sign
+	JR	NZ,__sar16_neg
+	LD	HL,0		; Positive: result is 0
+	RET
+__sar16_neg:
+	LD	HL,0FFFFH	; Negative: result is -1
+	RET
+__sar16_ok:
 	EX	DE,HL
 	OR	A
 	RET	Z
@@ -711,7 +729,14 @@ __cmp32_done:
 	PUBLIC	__shl32
 __shl32:
 	; Shift count in A
-	AND	1FH		; Limit to 31
+	CP	32		; Shift >= 32?
+	JR	C,__shl32_ok
+	LD	HL,0		; Result is 0 for shift >= 32
+	LD	D,H
+	LD	E,L
+	RET
+__shl32_ok:
+	OR	A
 	RET	Z
 __shl32_loop:
 	ADD	HL,HL		; Shift low left
@@ -727,7 +752,14 @@ __shl32_loop:
 ; ============================================================
 	PUBLIC	__shr32
 __shr32:
-	AND	1FH
+	CP	32		; Shift >= 32?
+	JR	C,__shr32_ok
+	LD	HL,0		; Result is 0 for shift >= 32
+	LD	D,H
+	LD	E,L
+	RET
+__shr32_ok:
+	OR	A
 	RET	Z
 __shr32_loop:
 	SRL	D		; Shift high right
@@ -743,7 +775,21 @@ __shr32_loop:
 ; ============================================================
 	PUBLIC	__sar32
 __sar32:
-	AND	1FH
+	CP	32		; Shift >= 32?
+	JR	C,__sar32_ok
+	BIT	7,D		; Check sign
+	JR	NZ,__sar32_neg
+	LD	HL,0		; Positive: result is 0
+	LD	D,H
+	LD	E,L
+	RET
+__sar32_neg:
+	LD	HL,0FFFFH	; Negative: result is -1
+	LD	D,H
+	LD	E,L
+	RET
+__sar32_ok:
+	OR	A
 	RET	Z
 __sar32_loop:
 	SRA	D		; Arithmetic shift preserves sign

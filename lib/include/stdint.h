@@ -37,6 +37,9 @@ typedef unsigned long long uint_fast64_t;
 typedef int intptr_t;
 typedef unsigned int uintptr_t;
 
+/* GCC/glibc internal types */
+typedef int __intptr_t;
+
 /* Greatest-width integer types */
 typedef long intmax_t;
 typedef unsigned long uintmax_t;

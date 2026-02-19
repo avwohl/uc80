@@ -8,6 +8,11 @@
 typedef unsigned int size_t;
 #endif
 
+/* GCC internal types used by some test suites */
+#ifndef __intptr_t
+typedef int __intptr_t;
+#endif
+
 /* NULL pointer */
 #ifndef NULL
 #define NULL ((void *)0)

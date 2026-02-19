@@ -181,6 +181,7 @@ KEYWORDS = {
     'alignof': TokenType.ALIGNOF,
     '_Alignof': TokenType.ALIGNOF,
     '_Atomic': TokenType.ATOMIC,
+    'atomic': TokenType.ATOMIC,
     'bool': TokenType.BOOL,
     '_Bool': TokenType.BOOL,
     '_Complex': TokenType.COMPLEX,
