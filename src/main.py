@@ -15,6 +15,7 @@ from . import ast as ast_module
 from .preprocessor import Preprocessor, PreprocessorError
 from .runtime import RuntimeLibrary, load_runtime_library
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
+from .ast_optimizer import ASTOptimizer
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
@@ -115,6 +116,11 @@ def main() -> int:
         "--no-asm-dce",
         action="store_true",
         help="Disable assembly-level dead code elimination"
+    )
+    parser.add_argument(
+        "--no-ast-optimize",
+        action="store_true",
+        help="Disable AST-level expression optimization"
     )
     parser.add_argument(
         "--no-embed-startup",
@@ -235,6 +241,15 @@ def main() -> int:
                 merged_ast.declarations.extend(unit.declarations)
             if args.verbose:
                 print(f"Merged {len(asts)} files into {len(merged_ast.declarations)} declarations")
+
+        # AST-level expression optimization
+        if not args.no_ast_optimize:
+            ast_opt = ASTOptimizer()
+            merged_ast = ast_opt.optimize(merged_ast)
+            if args.verbose and ast_opt.stats:
+                print(f"  AST optimizations:")
+                for name, count in sorted(ast_opt.stats.items()):
+                    print(f"    {name}: {count}")
 
         # Determine module name from first input file
         module_name = input_paths[0].stem

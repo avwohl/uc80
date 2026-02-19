@@ -3788,7 +3788,28 @@ class CodeGenerator:
             self.ctx.emit_instr("OR", "A")  # Clear carry
             self.ctx.emit_instr("SBC", "HL,DE")
         elif op == "*":
-            self._call_runtime("__mul16")
+            # Strength reduction: multiply by power-of-2 → repeated ADD HL,HL
+            # At this point left is in DE, right is in HL.
+            # Check if right operand is a power-of-2 constant
+            shift = self._mul_shift_count(expr.right)
+            if shift is None:
+                # Check if left operand is power-of-2 (commutative)
+                shift = self._mul_shift_count(expr.left)
+                if shift is not None:
+                    # Swap: we want the non-constant in HL
+                    # Left (constant) is in DE, right (variable) is in HL - already correct
+                    pass
+                else:
+                    self._call_runtime("__mul16")
+            if shift is not None:
+                # Emit repeated ADD HL,HL if left was constant,
+                # or EX DE,HL + repeated ADD if right was constant
+                if self._mul_shift_count(expr.right) is not None:
+                    # Right is constant in HL, variable in DE → swap
+                    self.ctx.emit_instr("EX", "DE,HL")
+                # Now variable is in HL
+                for _ in range(shift):
+                    self.ctx.emit_instr("ADD", "HL,HL")
         elif op == "/":
             # Use signed or unsigned division based on operand types
             is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
@@ -3818,7 +3839,15 @@ class CodeGenerator:
             self.ctx.emit_instr("XOR", "E")
             self.ctx.emit_instr("LD", "L,A")
         elif op == "<<":
-            self._call_runtime("__shl16")
+            # Strength reduction: shift left by small constant → repeated ADD HL,HL
+            # At this point: left in DE, right (shift count) in HL
+            if isinstance(expr.right, ast.IntLiteral) and 1 <= expr.right.value <= 8:
+                shift = expr.right.value
+                self.ctx.emit_instr("EX", "DE,HL")  # value to HL
+                for _ in range(shift):
+                    self.ctx.emit_instr("ADD", "HL,HL")
+            else:
+                self._call_runtime("__shl16")
         elif op == ">>":
             self._call_runtime("__shr16")
         elif op in ("==", "!=", "<", ">", "<=", ">="):
@@ -5562,6 +5591,15 @@ class CodeGenerator:
                 if offset > 0:
                     self.ctx.emit_instr("LD", f"DE,{offset}")
                     self.ctx.emit_instr("ADD", "HL,DE")
+
+    @staticmethod
+    def _mul_shift_count(expr: ast.Expression) -> int | None:
+        """If expr is an IntLiteral power-of-2 > 1, return log2. Else None."""
+        if isinstance(expr, ast.IntLiteral):
+            v = expr.value
+            if v > 1 and (v & (v - 1)) == 0:
+                return v.bit_length() - 1
+        return None
 
     def _is_unsigned_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has unsigned type."""
