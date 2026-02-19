@@ -4,9 +4,16 @@ Ask a human before adapting, modifying, working around, or skipping any test.
 Work In Progress Notes - uc80 C Compiler
 =========================================
 
-Current Status: 216/220 c-testsuite tests passing
+Current Status: 219/220 c-testsuite tests passing
 
 Recent Fixes:
+- Fixed negative constant comparison bug in AST optimizer constant folding
+  Unary minus and bitwise NOT folded values like -(1) to 65535 (masked unsigned)
+  instead of -1 (signed). _is_long_expr saw 65535 > 32767 and promoted to 32-bit,
+  where zero-extension (0x0000FFFF) mismatched sign-extended variables (0xFFFFFFFF).
+  This caused infinite loops in fgetc() != EOF and other negative comparisons.
+  Fixed both unary and binary constant folding to convert results back to signed.
+  Tests 00187, 00200, 00216, 00220 now passing (were failing before).
 - Fixed shift operator result type (C99 6.5.7 compliance)
 - Fixed float function calls and sin() implementation
 - Fixed enum switch cases and float operations
@@ -23,14 +30,8 @@ Previous Fixes:
 - Fixed fgets stack imbalance when EOF hit with no data read
 - Fixed parser typedef name handling after base type
 
-Remaining Failures (4 tests):
-- 00200: 64-bit type tests - produces no output (likely still too slow or hangs on Z80)
+Remaining Failures (1 test):
 - 00204: Floating-point printf (%f format) - produces no output
-- 00216: Anonymous unions, range designators not fully implemented
-- 00220: Wide characters (wchar_t) not implemented
 
 Notes:
-- Test 00200 involves many 64-bit operations which are very slow on Z80 emulation
 - Test 00204 requires %f printf format which isn't fully implemented
-- Test 00216 needs C99 designated initializer features (range designators, anonymous unions)
-- Test 00220 needs wchar_t and wide string support

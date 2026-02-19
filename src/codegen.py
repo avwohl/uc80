@@ -3634,7 +3634,11 @@ class CodeGenerator:
             val = self.ctx.enum_constants[expr.name]
             self.ctx.emit_instr("LD", f"HL,{val}")
             if force_long:
-                self.ctx.emit_instr("LD", "DE,0")
+                # Sign-extend negative enum values to 32-bit
+                if val < 0:
+                    self.ctx.emit_instr("LD", "DE,65535")
+                else:
+                    self.ctx.emit_instr("LD", "DE,0")
             return
 
         sym = self.ctx.lookup(expr.name)

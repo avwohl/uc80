@@ -42,6 +42,7 @@ CPMEMU = Path("../cpmemu/src/cpmemu")
 # These are computationally expensive but correct
 SLOW_TESTS = {
     "00040": 300,  # 8-queens algorithm - O(n!) complexity
+    "00041": 30,   # Prime sieve to 5000 - many multiplications and modulos
     "00200": 30,   # 64-bit shift operations - many test cases
 }
 

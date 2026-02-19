@@ -313,6 +313,13 @@ class ASTOptimizer:
             is_long = left.is_long or right.is_long
             result = self._fold_constants(op, left.value, right.value, unsigned, mask)
             if result is not None:
+                # Convert masked result back to signed representation so that
+                # _is_long_expr doesn't incorrectly promote to 32-bit.
+                # e.g., (1 - 2) & 0xFFFF = 65535 must be stored as -1.
+                if not unsigned:
+                    half = (mask + 1) >> 1
+                    if result >= half:
+                        result -= (mask + 1)
                 self._stat("const_fold")
                 self._changed = True
                 return ast.IntLiteral(
@@ -427,6 +434,14 @@ class ASTOptimizer:
                 result = (~val) & mask
             elif op == "!":
                 result = 1 if val == 0 else 0
+            # Convert masked result back to signed representation so that
+            # _is_long_expr doesn't incorrectly promote to 32-bit.
+            # e.g., -(1) & 0xFFFF = 65535 must be stored as -1, not 65535,
+            # otherwise 65535 > 32767 triggers unwanted long promotion.
+            if result is not None and not operand.is_unsigned and op in ("-", "~"):
+                half = (mask + 1) >> 1
+                if result >= half:
+                    result -= (mask + 1)
             if result is not None:
                 self._stat("const_fold_unary")
                 self._changed = True
