@@ -2,8 +2,8 @@
 """Run Fujitsu compiler test suite C tests for uc80.
 
 The Fujitsu suite has ~30K single-source C tests with .reference_output files.
-Many assume 64-bit long, float, OpenMP, etc. We compile what we can and skip
-the rest.
+Tests use #ifdef to handle both 32-bit and 64-bit long. We attempt all tests
+and report results - do not exclude/skip any without a human checking first.
 """
 
 import subprocess
@@ -101,7 +101,7 @@ def run_test(c_file: Path, ref_file: Path, verbose: bool = False) -> tuple[str, 
     actual = '\n'.join(actual_lines).strip()
 
     # Parse expected - strip "exit 0" line
-    expected_text = ref_file.read_text().strip()
+    expected_text = ref_file.read_text(errors='replace').strip()
     expected_lines = [l for l in expected_text.split('\n') if l.strip() != "exit 0"]
     expected = '\n'.join(expected_lines).strip()
 

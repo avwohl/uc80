@@ -2004,6 +2004,11 @@ class CodeGenerator:
         if global_vars:
             self.ctx.emit()
             self.ctx.emit("; Global variables")
+            # Emit PUBLIC for non-static global variables so linker can resolve
+            # cross-module references (same as we do for functions)
+            for name, decl in global_vars.items():
+                if decl.storage_class != "static":
+                    self.ctx.emit_instr("PUBLIC", f"_{decl.name}")
             self.ctx.emit("\tDSEG")
             for name, decl in global_vars.items():
                 # Use the inferred type from the Symbol (which has array size from initializer)
