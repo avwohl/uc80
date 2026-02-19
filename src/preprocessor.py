@@ -447,6 +447,14 @@ class Preprocessor:
         expr = self._expand_macros(expr)
 
         # Replace remaining identifiers with 0 (undefined macros)
+        # First handle function-like calls on undefined macros: IDENT(...) -> 0
+        # This prevents "0(args)" which Python can't evaluate
+        while True:
+            new_expr = re.sub(r'\b[a-zA-Z_]\w*\s*\([^()]*\)', '0', expr)
+            if new_expr == expr:
+                break
+            expr = new_expr
+        # Then replace any remaining simple identifiers
         expr = re.sub(r'\b[a-zA-Z_]\w*\b', '0', expr)
 
         # Evaluate the expression

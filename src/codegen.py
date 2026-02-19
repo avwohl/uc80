@@ -5268,6 +5268,13 @@ class CodeGenerator:
         if member_size == 1:
             self.ctx.emit_instr("LD", "L,(HL)")
             self.ctx.emit_instr("LD", "H,0")
+        elif member_size == 8:
+            # 64-bit member: HL has address, call __load64 to load into __acc64
+            self._call_runtime("__load64")
+            self.ctx.runtime_used.add("__acc64")
+            # Return low 32 bits in DEHL for use as rvalue
+            self.ctx.emit_instr("LD", "HL,(__acc64)")
+            self.ctx.emit_instr("LD", "DE,(__acc64+2)")
         elif member_size == 4:
             # 32-bit member: load into DEHL (DE=high, HL=low)
             self.ctx.emit_instr("LD", "E,(HL)")
@@ -6584,6 +6591,8 @@ class CodeGenerator:
         """Emit an integer value with the specified size."""
         if size == 1:
             self.ctx.emit_instr("DB", str(value & 0xFF))
+        elif size == 2:
+            self.ctx.emit_instr("DW", str(value & 0xFFFF))
         elif size == 4:
             # 32-bit: emit low word first, then high word
             val = value & 0xFFFFFFFF
@@ -6591,8 +6600,18 @@ class CodeGenerator:
             high = (val >> 16) & 0xFFFF
             self.ctx.emit_instr("DW", str(low))
             self.ctx.emit_instr("DW", str(high))
+        elif size == 8:
+            # 64-bit: emit four words, low to high
+            val = value & 0xFFFFFFFFFFFFFFFF
+            self.ctx.emit_instr("DW", str(val & 0xFFFF))
+            self.ctx.emit_instr("DW", str((val >> 16) & 0xFFFF))
+            self.ctx.emit_instr("DW", str((val >> 32) & 0xFFFF))
+            self.ctx.emit_instr("DW", str((val >> 48) & 0xFFFF))
         else:
+            # Unknown size - emit as words, pad to size
             self.ctx.emit_instr("DW", str(value & 0xFFFF))
+            if size > 2:
+                self.ctx.emit_instr("DS", str(size - 2))
 
     def _emit_float_value(self, value: float) -> None:
         """Emit a 32-bit IEEE-754 float value."""

@@ -143,6 +143,28 @@ class Lexer:
         is_float = False
         base = 10
 
+        # Handle float literals starting with dot (e.g., .5, .123e10)
+        if self._peek() == '.':
+            is_float = True
+            result.append(self._advance())  # .
+            while self._is_digit(self._peek()) or self._peek() == "'":
+                if self._peek() == "'":
+                    self._advance()
+                else:
+                    result.append(self._advance())
+            # Check for exponent
+            if self._peek().lower() == 'e':
+                result.append(self._advance())
+                if self._peek() in '+-':
+                    result.append(self._advance())
+                while self._is_digit(self._peek()):
+                    result.append(self._advance())
+            # Handle float suffix (f, F, l, L)
+            text = ''.join(result)
+            if self._peek().lower() in 'fl':
+                self._advance()  # consume suffix
+            return Token(TokenType.FLOAT_LITERAL, float(text), loc)
+
         # Check for hex, octal, or binary prefix
         if self._peek() == '0':
             result.append(self._advance())
@@ -183,14 +205,18 @@ class Lexer:
                     result.append(self._advance())
 
         # Check for fractional part (only for decimal)
-        if base == 10 and self._peek() == '.' and self._is_digit(self._peek(1)):
-            is_float = True
-            result.append(self._advance())  # .
-            while self._is_digit(self._peek()) or self._peek() == "'":
-                if self._peek() == "'":
-                    self._advance()
-                else:
-                    result.append(self._advance())
+        # Accept "1." (no digits after dot) as a valid float literal,
+        # but not "1.member" (dot followed by identifier start)
+        if base == 10 and self._peek() == '.':
+            next_after_dot = self._peek(1)
+            if self._is_digit(next_after_dot) or not self._is_identifier_start(next_after_dot):
+                is_float = True
+                result.append(self._advance())  # .
+                while self._is_digit(self._peek()) or self._peek() == "'":
+                    if self._peek() == "'":
+                        self._advance()
+                    else:
+                        result.append(self._advance())
 
         # Check for exponent (decimal or hex float)
         if base == 10 and self._peek().lower() == 'e':
@@ -352,6 +378,11 @@ class Lexer:
                 self._advance()
                 self._advance()
                 return Token(TokenType.ELLIPSIS, '...', loc)
+            if self._is_digit(self._peek()):
+                # Float literal starting with dot (e.g., .5, .123)
+                self.pos -= 1  # Back up to re-read the dot
+                self.column -= 1
+                return self._read_number()
             return Token(TokenType.DOT, '.', loc)
         elif ch == '-':
             if self._match('>'):
