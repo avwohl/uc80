@@ -98,6 +98,7 @@ class IntLiteral(Expression):
 class FloatLiteral(Expression):
     """Floating-point literal."""
     value: float
+    is_float: bool = False  # True if 'f'/'F' suffixed (type float), False = type double
 
 
 @dataclass(kw_only=True)

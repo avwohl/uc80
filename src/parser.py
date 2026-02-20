@@ -819,7 +819,9 @@ class Parser:
             is_unsigned = 'u' in suffix
             return ast.IntLiteral(value=value, is_long=is_long, is_unsigned=is_unsigned, location=loc)
         if self._check(TokenType.FLOAT_LITERAL):
-            return ast.FloatLiteral(value=self._advance().value, location=loc)
+            tok = self._advance()
+            fval, has_f = tok.value if isinstance(tok.value, tuple) else (tok.value, False)
+            return ast.FloatLiteral(value=fval, is_float=has_f, location=loc)
         if self._check(TokenType.CHAR_LITERAL) or self._check(TokenType.WIDE_CHAR_LITERAL):
             return ast.CharLiteral(value=self._advance().value, location=loc)
         if self._check(TokenType.STRING_LITERAL) or self._check(TokenType.WIDE_STRING_LITERAL):

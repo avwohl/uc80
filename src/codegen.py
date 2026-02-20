@@ -413,8 +413,12 @@ class CallGraphAnalyzer:
             return 2
         elif isinstance(t, ast.ArrayType):
             base_size = self._var_size(t.base_type)
-            if t.size and isinstance(t.size, ast.IntLiteral):
-                return base_size * t.size.value
+            if t.size:
+                if isinstance(t.size, ast.IntLiteral):
+                    return base_size * t.size.value
+                size_val = self._eval_const_expr(t.size)
+                if size_val is not None:
+                    return base_size * size_val
             return base_size
         elif isinstance(t, ast.StructType):
             # Check inline members first
@@ -1841,8 +1845,13 @@ class CodeGenerator:
         """Count flat values for a member type."""
         if isinstance(member_type, ast.ArrayType):
             array_size = 1
-            if member_type.size and isinstance(member_type.size, ast.IntLiteral):
-                array_size = member_type.size.value
+            if member_type.size:
+                if isinstance(member_type.size, ast.IntLiteral):
+                    array_size = member_type.size.value
+                else:
+                    sz = self._eval_const_expr(member_type.size)
+                    if sz is not None:
+                        array_size = sz
             base_type = member_type.base_type
             if isinstance(base_type, ast.StructType):
                 return array_size * self._count_struct_init_values(base_type)
@@ -2063,7 +2072,9 @@ class CodeGenerator:
             # Check if this is a function declaration (parsed as VarDecl with FunctionType)
             if isinstance(decl.var_type, ast.FunctionType):
                 # This is a function declaration without body - emit EXTRN
-                self.ctx.emit_instr("EXTRN", f"_{decl.name}")
+                # (but not for static functions, which are defined locally)
+                if decl.storage_class != "static":
+                    self.ctx.emit_instr("EXTRN", f"_{decl.name}")
             # Other global variables are handled in data segment
             pass
         elif isinstance(decl, ast.DeclarationList):
@@ -2196,8 +2207,9 @@ class CodeGenerator:
     def gen_function(self, func: ast.FunctionDecl) -> None:
         """Generate code for a function."""
         if func.body is None:
-            # Just a declaration, emit EXTRN
-            self.ctx.emit_instr("EXTRN", f"_{func.name}")
+            # Just a declaration, emit EXTRN (but not for static functions)
+            if func.storage_class != "static":
+                self.ctx.emit_instr("EXTRN", f"_{func.name}")
             return
 
         self.ctx.current_function = func.name
@@ -2882,8 +2894,13 @@ class CodeGenerator:
 
         # Get array size
         array_size = 1
-        if array_type.size and isinstance(array_type.size, ast.IntLiteral):
-            array_size = array_type.size.value
+        if array_type.size:
+            if isinstance(array_type.size, ast.IntLiteral):
+                array_size = array_type.size.value
+            else:
+                sz = self._eval_const_expr(array_type.size)
+                if sz is not None:
+                    array_size = sz
 
         consumed = 0
         for i in range(array_size):
@@ -2959,8 +2976,13 @@ class CodeGenerator:
         """Initialize a char array from a string literal."""
         string_val = string_lit.value + '\0'  # Include null terminator
         array_size = 1
-        if array_type.size and isinstance(array_type.size, ast.IntLiteral):
-            array_size = array_type.size.value
+        if array_type.size:
+            if isinstance(array_type.size, ast.IntLiteral):
+                array_size = array_type.size.value
+            else:
+                sz = self._eval_const_expr(array_type.size)
+                if sz is not None:
+                    array_size = sz
 
         for i, ch in enumerate(string_val):
             if i >= array_size:
@@ -3096,8 +3118,13 @@ class CodeGenerator:
         if has_index_designators:
             # Zero-initialize the entire array first (undesignated elements must be zero per C99)
             array_size = 1
-            if array_type.size and isinstance(array_type.size, ast.IntLiteral):
-                array_size = array_type.size.value
+            if array_type.size:
+                if isinstance(array_type.size, ast.IntLiteral):
+                    array_size = array_type.size.value
+                else:
+                    sz = self._eval_const_expr(array_type.size)
+                    if sz is not None:
+                        array_size = sz
             total_size = array_size * elem_size
             self._gen_zero_init_region(sym, base_offset, total_size)
             self._gen_designated_array_init_local(sym, array_type, values, base_offset)
@@ -5498,6 +5525,30 @@ class CodeGenerator:
                 return result
         return 0
 
+    def _resolve_member_offset(self, struct_type: ast.StructType, member_name: str) -> int:
+        """Get offset of a member, searching inline members first then registry.
+
+        Works for anonymous structs (no tag name) by computing offsets from
+        the StructType's inline member list.
+        """
+        # Try inline members first
+        if struct_type.members:
+            offset = 0
+            for m in struct_type.members:
+                if m.name == member_name:
+                    return offset
+                if m.name is None and isinstance(m.member_type, ast.StructType):
+                    # Anonymous sub-member - search recursively
+                    sub_result = self._resolve_member_offset(m.member_type, member_name)
+                    if sub_result >= 0:
+                        return offset + sub_result
+                if not struct_type.is_union:
+                    offset += self._type_size(m.member_type)
+        # Fall back to registered structs
+        if struct_type.name:
+            return self._get_member_offset(struct_type.name, member_name)
+        return -1
+
     def _find_anon_member_offset(self, struct_name: str, member_name: str) -> int | None:
         """Search for a member in anonymous struct/union sub-members.
 
@@ -5558,7 +5609,7 @@ class CodeGenerator:
             # String literals are char* (or const char* in C99+)
             return ast.PointerType(base_type=ast.BasicType(name="char"))
         elif isinstance(expr, ast.FloatLiteral):
-            return ast.BasicType(name="float")
+            return ast.BasicType(name="float" if expr.is_float else "double")
         elif isinstance(expr, ast.BoolLiteral):
             return ast.BasicType(name="bool")
         elif isinstance(expr, ast.Identifier):
@@ -5615,6 +5666,18 @@ class CodeGenerator:
                 elif sym:
                     # Function pointer or direct function symbol
                     return sym.sym_type
+        elif isinstance(expr, ast.GenericSelection):
+            # Resolve the _Generic to get matched expression's type
+            ctrl_type = self._get_expr_type(expr.controlling_expr)
+            for type_node, value_expr in expr.associations:
+                if type_node is None:
+                    continue
+                if self._types_compatible(ctrl_type, type_node):
+                    return self._get_expr_type(value_expr)
+            # Try default
+            for type_node, value_expr in expr.associations:
+                if type_node is None:
+                    return self._get_expr_type(value_expr)
         return None
 
     def _types_compatible(self, expr_type: ast.TypeNode | None, sel_type: ast.TypeNode) -> bool:
@@ -5766,8 +5829,8 @@ class CodeGenerator:
             struct_type = self._get_expr_type(expr.obj)
             if expr.is_arrow and isinstance(struct_type, ast.PointerType):
                 struct_type = struct_type.base_type
-            if isinstance(struct_type, ast.StructType) and struct_type.name:
-                offset = self._get_member_offset(struct_type.name, expr.member)
+            if isinstance(struct_type, ast.StructType):
+                offset = self._resolve_member_offset(struct_type, expr.member)
                 if offset > 0:
                     self.ctx.emit_instr("LD", f"DE,{offset}")
                     self.ctx.emit_instr("ADD", "HL,DE")
@@ -6253,8 +6316,12 @@ class CodeGenerator:
         elif isinstance(t, ast.ArrayType):
             # Array size * element size
             base_size = self._type_size(t.base_type)
-            if t.size and isinstance(t.size, ast.IntLiteral):
-                return base_size * t.size.value
+            if t.size:
+                if isinstance(t.size, ast.IntLiteral):
+                    return base_size * t.size.value
+                size_val = self._eval_const_expr(t.size)
+                if size_val is not None:
+                    return base_size * size_val
             return 0  # Unsized/flexible array member - zero size for sizeof
         elif isinstance(t, ast.StructType):
             # Handle inline struct definitions with members
@@ -6306,8 +6373,13 @@ class CodeGenerator:
             if isinstance(member_type, ast.ArrayType):
                 # Array member: count array elements
                 array_size = 1
-                if member_type.size and isinstance(member_type.size, ast.IntLiteral):
-                    array_size = member_type.size.value
+                if member_type.size:
+                    if isinstance(member_type.size, ast.IntLiteral):
+                        array_size = member_type.size.value
+                    else:
+                        sz = self._eval_const_expr(member_type.size)
+                        if sz is not None:
+                            array_size = sz
                 base_type = member_type.base_type
                 if isinstance(base_type, ast.StructType):
                     count += array_size * self._count_flat_struct_values(base_type)
@@ -6381,7 +6453,14 @@ class CodeGenerator:
         """
         base_type = array_type.base_type
         base_size = self._type_size(base_type)
-        array_size = array_type.size.value if (array_type.size and isinstance(array_type.size, ast.IntLiteral)) else 1
+        array_size = 1
+        if array_type.size:
+            if isinstance(array_type.size, ast.IntLiteral):
+                array_size = array_type.size.value
+            else:
+                sz = self._eval_const_expr(array_type.size)
+                if sz is not None:
+                    array_size = sz
 
         # Build final element array: index -> value (None means zero)
         elements = [None] * array_size
@@ -6433,7 +6512,10 @@ class CodeGenerator:
                     for v in init.values
                 )
 
-                if has_index_designators and elem_type.size and isinstance(elem_type.size, ast.IntLiteral):
+                has_known_size = False
+                if elem_type.size:
+                    has_known_size = isinstance(elem_type.size, ast.IntLiteral) or self._eval_const_expr(elem_type.size) is not None
+                if has_index_designators and has_known_size:
                     # Designated array init with [index] or [start...end] designators
                     self._emit_designated_array_init(init, elem_type)
                 else:
@@ -6454,8 +6536,14 @@ class CodeGenerator:
                             else:
                                 self._emit_initializer(val, base_type)
                         # Pad with zeros if initializer is shorter than array size
-                        if elem_type.size and isinstance(elem_type.size, ast.IntLiteral):
-                            remaining = elem_type.size.value - len(init.values)
+                        declared_size = None
+                        if elem_type.size:
+                            if isinstance(elem_type.size, ast.IntLiteral):
+                                declared_size = elem_type.size.value
+                            else:
+                                declared_size = self._eval_const_expr(elem_type.size)
+                        if declared_size is not None:
+                            remaining = declared_size - len(init.values)
                             if remaining > 0:
                                 pad_size = remaining * base_size
                                 self.ctx.emit_instr("DS", str(pad_size))
@@ -6694,8 +6782,13 @@ class CodeGenerator:
 
         # Get array size
         array_size = 1
-        if array_type.size and isinstance(array_type.size, ast.IntLiteral):
-            array_size = array_type.size.value
+        if array_type.size:
+            if isinstance(array_type.size, ast.IntLiteral):
+                array_size = array_type.size.value
+            else:
+                sz = self._eval_const_expr(array_type.size)
+                if sz is not None:
+                    array_size = sz
 
         consumed = 0
         for i in range(array_size):
@@ -6730,8 +6823,13 @@ class CodeGenerator:
     def _emit_string_for_array(self, string_lit: ast.StringLiteral, array_type: ast.ArrayType) -> None:
         """Emit a string literal to fill a char array, with proper padding."""
         array_size = 1
-        if array_type.size and isinstance(array_type.size, ast.IntLiteral):
-            array_size = array_type.size.value
+        if array_type.size:
+            if isinstance(array_type.size, ast.IntLiteral):
+                array_size = array_type.size.value
+            else:
+                sz = self._eval_const_expr(array_type.size)
+                if sz is not None:
+                    array_size = sz
 
         string_val = string_lit.value
         escaped = self._escape_string(string_val)

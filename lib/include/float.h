@@ -63,4 +63,19 @@
 /* Decimal digits needed for round-trip */
 #define DECIMAL_DIG 9
 
+/* C11: Per-type decimal digits for round-trip */
+#define FLT_DECIMAL_DIG 9
+#define DBL_DECIMAL_DIG 9
+#define LDBL_DECIMAL_DIG 9
+
+/* C11: Subnormal support (1 = yes) */
+#define FLT_HAS_SUBNORM 1
+#define DBL_HAS_SUBNORM 1
+#define LDBL_HAS_SUBNORM 1
+
+/* C11: Minimum positive subnormal value */
+#define FLT_TRUE_MIN 1.40129846e-45F
+#define DBL_TRUE_MIN 1.40129846e-45
+#define LDBL_TRUE_MIN 1.40129846e-45L
+
 #endif /* _FLOAT_H */

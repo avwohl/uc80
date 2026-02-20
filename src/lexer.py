@@ -161,9 +161,12 @@ class Lexer:
                     result.append(self._advance())
             # Handle float suffix (f, F, l, L, i, I for imaginary)
             text = ''.join(result)
+            has_f_suffix = False
             while self._peek().lower() in 'fli':
-                self._advance()  # consume suffix
-            return Token(TokenType.FLOAT_LITERAL, float(text), loc)
+                ch = self._advance()
+                if ch.lower() == 'f':
+                    has_f_suffix = True
+            return Token(TokenType.FLOAT_LITERAL, (float(text), has_f_suffix), loc)
 
         # Check for hex, octal, or binary prefix
         if self._peek() == '0':
@@ -252,7 +255,8 @@ class Lexer:
                     value = float(text)
             except ValueError:
                 raise LexerError(f"Invalid float literal: {text}", loc)
-            return Token(TokenType.FLOAT_LITERAL, value, loc)
+            has_f_suffix = 'f' in suffix_str
+            return Token(TokenType.FLOAT_LITERAL, (value, has_f_suffix), loc)
         else:
             # Integer literal - store (value, suffix) tuple
             try:
