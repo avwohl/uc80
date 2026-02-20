@@ -10,6 +10,9 @@
 #ifndef _THREADS_H
 #define _THREADS_H
 
+/* C11/C23 thread_local storage class specifier */
+#define thread_local _Thread_local
+
 /* Include time.h for timespec if available */
 #include <time.h>
 

@@ -83,6 +83,11 @@ class Preprocessor:
 
         # C23/C24 compliance
         self.macros["__STDC_HOSTED__"] = Macro("__STDC_HOSTED__", body="1", is_predefined=True)
+        self.macros["__STDC_IEC_559__"] = Macro("__STDC_IEC_559__", body="1", is_predefined=True)
+        self.macros["__STDC_IEC_559_COMPLEX__"] = Macro("__STDC_IEC_559_COMPLEX__", body="1", is_predefined=True)
+        self.macros["__STDC_IEC_60559_COMPLEX__"] = Macro("__STDC_IEC_60559_COMPLEX__", body="1", is_predefined=True)
+        self.macros["__STDC_NO_ATOMICS__"] = Macro("__STDC_NO_ATOMICS__", body="1", is_predefined=True)
+        self.macros["__STDC_NO_VLA__"] = Macro("__STDC_NO_VLA__", body="1", is_predefined=True)
 
         # Useful for version strings - timestamp as integer YYYYMMDD
         date_int = now.strftime("%Y%m%d")
