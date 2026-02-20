@@ -4206,8 +4206,13 @@ class CodeGenerator:
         else:
             # Need to extend from smaller type
             self.gen_expr(expr)
-            # Result in HL (16-bit) or DEHL (32-bit)
-            if self._is_long_expr(expr):
+            # If source is float, convert to int first (DEHL float -> DEHL int)
+            if self._is_float_expr(expr):
+                self._call_runtime("__ftoi")
+                # Now DEHL has 32-bit signed integer
+                is_signed = True
+                self._call_runtime("__sext64")
+            elif self._is_long_expr(expr):
                 # 32-bit in DEHL - extend to 64-bit
                 is_signed = not self._is_unsigned_expr(expr)
                 if is_signed:
@@ -4530,17 +4535,25 @@ class CodeGenerator:
             self._gen_assignment_64(expr)
             return
 
-        # Generate the value (force_long if target is 32-bit)
-        self.gen_expr(expr.right, force_long=target_is_32bit)
+        # Check if source is float/double
+        source_is_float = self._is_float_expr(expr.right)
 
+        # Generate the value (force_long if target is 32-bit, or source is float)
+        self.gen_expr(expr.right, force_long=(target_is_32bit or source_is_float))
+
+        # If source is float but target is integer, convert float to int
+        if source_is_float and not target_is_float:
+            # DEHL has IEEE float, convert to signed 32-bit int in DEHL
+            self._call_runtime("__ftoi")
+            # If target is 16-bit, HL already has the low word (truncated)
+            # If target is 32-bit, DEHL has the full value
         # If target is 32-bit integer but source is not, extend
         # (Don't extend for float targets - floats are already 32-bit in DEHL)
-        if target_is_32bit and not target_is_float and not self._is_long_expr(expr.right) and not self._is_float_expr(expr.right):
+        elif target_is_32bit and not target_is_float and not self._is_long_expr(expr.right) and not source_is_float:
             is_signed = not self._is_unsigned_expr(expr.right)
             self._extend_hl_to_dehl(is_signed)
-
         # If target is float but source is integer, convert to float
-        if target_is_float and not self._is_float_expr(expr.right):
+        elif target_is_float and not source_is_float:
             # First extend integer to 32-bit if needed
             if not self._is_long_expr(expr.right):
                 is_signed = not self._is_unsigned_expr(expr.right)
@@ -5299,8 +5312,8 @@ class CodeGenerator:
             else:
                 # Unsigned char: zero-extend
                 self.ctx.emit_instr("LD", "H,0")
-        elif target_size == 2 and source_size == 4:
-            # Narrowing from long to short: just keep HL (DE is discarded)
+        elif target_size == 2 and source_size >= 4:
+            # Narrowing from long/long long to short: just keep HL (DE is discarded)
             pass
 
         # Handle 64-bit target type
@@ -6540,7 +6553,10 @@ class CodeGenerator:
             # Cast expression - try to evaluate constant
             const_val = self._eval_const_expr(init)
             if const_val is not None:
-                self._emit_int_value(const_val, elem_size)
+                if self._is_float_type(elem_type):
+                    self._emit_float_value(float(const_val))
+                else:
+                    self._emit_int_value(const_val, elem_size)
             else:
                 self.ctx.emit_instr("DS", str(elem_size))
         elif isinstance(init, ast.Compound):
@@ -6550,14 +6566,20 @@ class CodeGenerator:
             # Binary expression - try to evaluate as constant
             const_val = self._eval_const_expr(init)
             if const_val is not None:
-                self._emit_int_value(const_val, elem_size)
+                if self._is_float_type(elem_type):
+                    self._emit_float_value(float(const_val))
+                else:
+                    self._emit_int_value(const_val, elem_size)
             else:
                 self.ctx.emit_instr("DS", str(elem_size))
         else:
             # Try to evaluate as a constant expression before giving up
             const_val = self._eval_const_expr(init)
             if const_val is not None:
-                self._emit_int_value(const_val, elem_size)
+                if self._is_float_type(elem_type):
+                    self._emit_float_value(float(const_val))
+                else:
+                    self._emit_int_value(const_val, elem_size)
             else:
                 # Complex initializer - reserve space
                 self.ctx.emit_instr("DS", str(elem_size))

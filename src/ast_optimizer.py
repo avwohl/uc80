@@ -33,6 +33,7 @@ class ASTOptimizer:
         self._cse_cache: dict[str, ast.Expression] = {}
         self._cse_deps: dict[str, set[str]] = {}
         self._copies: dict[str, str] = {}
+        self._var_types: dict[str, ast.TypeNode] = {}  # Track declared types for safe copy prop
         self._address_taken_vars: set[str] = set()
 
     def optimize(self, tu: ast.TranslationUnit) -> ast.TranslationUnit:
@@ -53,6 +54,10 @@ class ASTOptimizer:
             if decl.body is not None:
                 if self.opt_level >= 3:
                     self._reset_level3_state()
+                    # Track parameter types for copy propagation safety
+                    for param in decl.params:
+                        if param.name is not None:
+                            self._var_types[param.name] = param.param_type
                     self._collect_address_taken(decl.body)
                 self._optimize_stmt(decl.body)
         elif isinstance(decl, ast.VarDecl):
@@ -752,6 +757,7 @@ class ASTOptimizer:
         self._cse_cache.clear()
         self._cse_deps.clear()
         self._copies.clear()
+        self._var_types.clear()
         self._address_taken_vars.clear()
 
     def _collect_address_taken(self, node) -> None:
@@ -1144,9 +1150,13 @@ class ASTOptimizer:
             # Variable declaration with init: x is assigned
             self._invalidate_cse_for_var(item.name)
             self._invalidate_copies_for_var(item.name)
-            # Track copy: if init is simple identifier
+            # Track variable type
+            if item.var_type is not None:
+                self._var_types[item.name] = item.var_type
+            # Track copy: if init is simple identifier with compatible type
             if isinstance(item.init, ast.Identifier):
-                self._copies[item.name] = item.init.name
+                if self._types_compatible_for_copy(item.name, item.init.name):
+                    self._copies[item.name] = item.init.name
         elif isinstance(item, (ast.IfStmt, ast.WhileStmt, ast.DoWhileStmt,
                                ast.ForStmt, ast.SwitchStmt)):
             # Control flow structures: conservatively clear caches
@@ -1163,9 +1173,10 @@ class ASTOptimizer:
                     name = expr.left.name
                     self._invalidate_cse_for_var(name)
                     self._invalidate_copies_for_var(name)
-                    # Track simple copy: x = y
+                    # Track simple copy: x = y (only if types are compatible)
                     if expr.op == "=" and isinstance(expr.right, ast.Identifier):
-                        self._copies[name] = expr.right.name
+                        if self._types_compatible_for_copy(name, expr.right.name):
+                            self._copies[name] = expr.right.name
                 elif isinstance(expr.left, (ast.UnaryOp, ast.Index)):
                     # Pointer/array write: clear all caches
                     self._clear_all_caches()
@@ -1200,6 +1211,26 @@ class ASTOptimizer:
         to_remove = [k for k, v in self._copies.items() if v == name]
         for k in to_remove:
             del self._copies[k]
+
+    def _types_compatible_for_copy(self, target: str, source: str) -> bool:
+        """Check if copy propagation is safe between two variables.
+
+        Only propagate when both variables have the same basic type category
+        (both int-like, both float, both pointers, etc.) to avoid miscompilation
+        when assignments perform implicit type conversion (e.g., float -> int).
+        """
+        t1 = self._var_types.get(target)
+        t2 = self._var_types.get(source)
+        if t1 is None or t2 is None:
+            return False  # Unknown type, don't propagate
+        # Both must be BasicType with the same name, or both PointerType, etc.
+        if type(t1) != type(t2):
+            return False
+        if isinstance(t1, ast.BasicType) and isinstance(t2, ast.BasicType):
+            # Must be same type category (e.g., both "int", both "float")
+            return t1.name == t2.name
+        # For pointers, arrays, structs - same type means compatible
+        return True
 
     # === Level 3: Dead store elimination ===
 

@@ -1947,8 +1947,8 @@ __uitof_nz:
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
 
-	; Initial exponent
-	LD	HL,127+31
+	; Initial exponent = 127 + 23 (normalizing to bit 23)
+	LD	HL,127+23
 	LD	(__fexp1),HL
 
 	; Normalize
