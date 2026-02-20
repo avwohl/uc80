@@ -247,10 +247,13 @@ class Parser:
         # The 'int' is optional and doesn't change the type
         if is_short:
             base_type = "short"
-        elif is_long == 1:
-            base_type = "long"
         elif is_long >= 2:
             base_type = "long long"
+        elif is_long == 1:
+            if base_type == "double":
+                base_type = "long double"
+            else:
+                base_type = "long"
         elif base_type is None:
             if is_signed is not None or is_unsigned:
                 base_type = "int"
@@ -435,22 +438,29 @@ class Parser:
     def _parse_declarator_suffix(self, base_type: ast.TypeNode) -> ast.TypeNode:
         """Parse array brackets and function parameters."""
         while True:
-            if self._match(TokenType.LBRACKET):
-                # Array - handle C99 array parameter qualifiers [static const N]
-                # Skip type qualifiers: static, const, volatile, restrict
-                while self._check(TokenType.STATIC, TokenType.CONST,
-                                  TokenType.VOLATILE, TokenType.RESTRICT):
-                    self._advance()
-                # Parse size expression if present
-                size = None
-                if not self._check(TokenType.RBRACKET):
-                    if self._match(TokenType.STAR):
-                        # VLA with [*] - variable length array placeholder
-                        pass
-                    else:
-                        size = self._parse_expression()
-                self._expect(TokenType.RBRACKET)
-                base_type = ast.ArrayType(base_type=base_type, size=size)
+            if self._check(TokenType.LBRACKET):
+                # Collect all consecutive array dimensions
+                dims = []
+                while self._match(TokenType.LBRACKET):
+                    # Array - handle C99 array parameter qualifiers [static const N]
+                    # Skip type qualifiers: static, const, volatile, restrict
+                    while self._check(TokenType.STATIC, TokenType.CONST,
+                                      TokenType.VOLATILE, TokenType.RESTRICT):
+                        self._advance()
+                    # Parse size expression if present
+                    size = None
+                    if not self._check(TokenType.RBRACKET):
+                        if self._match(TokenType.STAR):
+                            # VLA with [*] - variable length array placeholder
+                            pass
+                        else:
+                            size = self._parse_expression()
+                    self._expect(TokenType.RBRACKET)
+                    dims.append(size)
+                # Build type from right to left: first dimension is outermost
+                # e.g. int arr[3][4] -> ArrayType(size=3, base=ArrayType(size=4, base=int))
+                for size in reversed(dims):
+                    base_type = ast.ArrayType(base_type=base_type, size=size)
             elif self._match(TokenType.LPAREN):
                 # Function
                 params = []
@@ -497,6 +507,12 @@ class Parser:
         self._match(TokenType.REGISTER)
         base_type = self._parse_type_specifier()
         name, full_type = self._parse_declarator(base_type)
+        # C11 6.7.6.3p7: Array parameters are adjusted to pointer type
+        if isinstance(full_type, ast.ArrayType):
+            full_type = ast.PointerType(base_type=full_type.base_type)
+        # C11 6.7.6.3p8: Function parameters are adjusted to pointer-to-function
+        elif isinstance(full_type, ast.FunctionType):
+            full_type = ast.PointerType(base_type=full_type)
         return ast.ParamDecl(name=name if name else None, param_type=full_type, location=loc)
 
     def _parse_type_name(self) -> ast.TypeNode:

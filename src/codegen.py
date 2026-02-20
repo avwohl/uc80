@@ -402,7 +402,7 @@ class CallGraphAnalyzer:
                 return 1
             elif name in ("short", "int"):
                 return 2
-            elif name in ("long", "float", "double"):
+            elif name in ("long", "float", "double", "long double"):
                 return 4
             elif name == "long long":
                 return 8  # 64-bit
@@ -3735,10 +3735,10 @@ class CodeGenerator:
                 self.ctx.emit_instr("LD", f"HL,({sym.label()})")
                 self.ctx.emit_instr("LD", f"DE,({sym.label()}+2)")
             elif type_size == 1:
-                # Load 8-bit value, zero-extend to HL
+                # Load 8-bit value, sign/zero-extend to HL
                 self.ctx.emit_instr("LD", f"A,({sym.label()})")
                 self.ctx.emit_instr("LD", "L,A")
-                self.ctx.emit_instr("LD", "H,0")
+                self._emit_char_to_hl(self._is_signed_type(sym.sym_type))
             else:
                 # Load 16-bit value
                 self.ctx.emit_instr("LD", f"HL,({sym.label()})")
@@ -3747,14 +3747,14 @@ class CodeGenerator:
             if type_is_long or type_is_float:
                 self._load_local_32(sym)
             elif type_size == 1:
-                # Load 8-bit value, zero-extend to HL
+                # Load 8-bit value, sign/zero-extend to HL
+                char_signed = self._is_signed_type(sym.sym_type)
                 if sym.uses_shared_storage:
                     self.ctx.emit_instr("LD", f"A,(??AUTO+{sym.shared_offset})")
                     self.ctx.emit_instr("LD", "L,A")
-                    self.ctx.emit_instr("LD", "H,0")
                 else:
                     self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
-                    self.ctx.emit_instr("LD", "H,0")
+                self._emit_char_to_hl(char_signed)
             else:
                 self._load_local(sym)
 
@@ -4265,6 +4265,7 @@ class CodeGenerator:
             self._call_runtime("__cmp64")
 
         true_label = self.ctx.new_label("CMP64_T")
+        false_label = self.ctx.new_label("CMP64_F")
         end_label = self.ctx.new_label("CMP64_E")
 
         if op == "==":
@@ -4289,7 +4290,7 @@ class CodeGenerator:
             # HL == 1 means greater than
             self.ctx.emit_instr("LD", "A,H")
             self.ctx.emit_instr("OR", "A")
-            self.ctx.emit_instr("JR", f"NZ,{end_label}")  # H must be 0
+            self.ctx.emit_instr("JR", f"NZ,{false_label}")  # H != 0 -> not 1 -> false
             self.ctx.emit_instr("LD", "A,L")
             self.ctx.emit_instr("DEC", "A")
             self.ctx.emit_instr("JR", f"Z,{true_label}")
@@ -4303,6 +4304,7 @@ class CodeGenerator:
             self.ctx.emit_instr("JR", f"Z,{true_label}")  # Zero -> true
 
         # False
+        self.ctx.emit_label(false_label)
         self.ctx.emit_instr("LD", "HL,0")
         self.ctx.emit_instr("JR", end_label)
         self.ctx.emit_label(true_label)
@@ -4608,6 +4610,7 @@ class CodeGenerator:
                         self._store_local(sym)
         elif isinstance(expr.left, ast.UnaryOp) and expr.left.op == "*":
             # Pointer dereference assignment: *p = value
+            target_size = self._type_size(target_type) if target_type else 2
             if target_is_32bit:
                 self.ctx.emit_instr("PUSH", "DE")  # Save high word
                 self.ctx.emit_instr("PUSH", "HL")  # Save low word
@@ -4623,6 +4626,12 @@ class CodeGenerator:
                 self.ctx.emit_instr("LD", "(HL),E")
                 self.ctx.emit_instr("INC", "HL")
                 self.ctx.emit_instr("LD", "(HL),D")
+            elif target_size == 1:
+                self.ctx.emit_instr("PUSH", "HL")  # Save value
+                self.gen_expr(expr.left.operand)   # Get address in HL
+                self.ctx.emit_instr("POP", "DE")   # Value in DE
+                self.ctx.emit_instr("LD", "(HL),E")  # Store only 1 byte
+                self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
             else:
                 self.ctx.emit_instr("PUSH", "HL")  # Save value
                 self.gen_expr(expr.left.operand)   # Get address in HL
@@ -4648,6 +4657,12 @@ class CodeGenerator:
                 self.ctx.emit_instr("LD", "(HL),E")
                 self.ctx.emit_instr("INC", "HL")
                 self.ctx.emit_instr("LD", "(HL),D")
+            elif target_type and self._type_size(target_type) == 1:
+                self.ctx.emit_instr("PUSH", "HL")  # Save value
+                self._gen_address(expr.left)       # Get address in HL
+                self.ctx.emit_instr("POP", "DE")   # Value in DE
+                self.ctx.emit_instr("LD", "(HL),E")  # Store only 1 byte
+                self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
             else:
                 self.ctx.emit_instr("PUSH", "HL")  # Save value
                 self._gen_address(expr.left)       # Get address in HL
@@ -4850,9 +4865,12 @@ class CodeGenerator:
             deref_size = self._get_deref_size(expr.operand)
 
             if deref_size == 1:
-                # 8-bit load, zero-extend to HL
+                # 8-bit load, sign/zero-extend to HL
+                deref_signed = True
+                if isinstance(operand_type, ast.PointerType):
+                    deref_signed = self._is_signed_type(operand_type.base_type)
                 self.ctx.emit_instr("LD", "L,(HL)")
-                self.ctx.emit_instr("LD", "H,0")
+                self._emit_char_to_hl(deref_signed)
             elif deref_size == 8:
                 # 64-bit load: HL has address, load into __acc64
                 self._call_runtime("__load64")
@@ -4936,14 +4954,19 @@ class CodeGenerator:
         elif isinstance(expr.operand, ast.Index) or \
              (isinstance(expr.operand, ast.UnaryOp) and expr.operand.op == "*"):
             # Array index or pointer dereference: t[x]++ or (*p)++
-            # Get element size for pointer increment
+            # Get element size and type for pointer increment
             elem_size = 1
+            elem_type = None
             if isinstance(expr.operand, ast.Index):
                 elem_size = self._get_index_elem_size(expr.operand.array)
+                arr_type = self._get_expr_type(expr.operand.array)
+                if isinstance(arr_type, (ast.ArrayType, ast.PointerType)):
+                    elem_type = arr_type.base_type
             else:
                 deref_type = self._get_expr_type(expr.operand)
                 if deref_type:
                     elem_size = self._type_size(deref_type)
+                    elem_type = deref_type
 
             # Calculate address and save it
             self._gen_address(expr.operand)
@@ -4952,7 +4975,7 @@ class CodeGenerator:
             # Load current value
             if elem_size == 1:
                 self.ctx.emit_instr("LD", "L,(HL)")
-                self.ctx.emit_instr("LD", "H,0")
+                self._emit_char_to_hl(self._is_signed_type(elem_type))
             else:
                 self.ctx.emit_instr("LD", "E,(HL)")
                 self.ctx.emit_instr("INC", "HL")
@@ -5322,8 +5345,15 @@ class CodeGenerator:
             return
         elif not target_is_float and source_is_float:
             # Float to int conversion
-            self._call_runtime("__ftoi")  # Convert DEHL float to HL int
-            if target_is_long:
+            self._call_runtime("__ftoi")  # Convert DEHL float to DEHL 32-bit int
+            if self._is_long_long_type(target_type):
+                # Extend 32-bit result in DEHL to 64-bit in __acc64
+                self.ctx.runtime_used.add("__acc64")
+                if target_signed:
+                    self._call_runtime("__sext64")
+                else:
+                    self._call_runtime("__zext64")
+            elif target_is_long:
                 self._extend_hl_to_dehl(target_signed)
             return
 
@@ -5391,18 +5421,39 @@ class CodeGenerator:
             return True
         return True  # Default to signed for other types
 
+    def _emit_char_to_hl(self, is_signed: bool) -> None:
+        """Extend 8-bit value in L to full HL with sign or zero extension."""
+        if is_signed:
+            self.ctx.emit_instr("LD", "A,L")
+            self.ctx.emit_instr("RLCA")
+            self.ctx.emit_instr("SBC", "A,A")
+            self.ctx.emit_instr("LD", "H,A")
+        else:
+            self.ctx.emit_instr("LD", "H,0")
+
     def gen_index(self, expr: ast.Index) -> None:
         """Generate code for array indexing."""
         # Generate address, then dereference
         self._gen_address(expr)
 
+        # Check if element is itself an array (multi-dimensional arrays):
+        # array-to-pointer decay means we return the address, not a value
+        arr_type = self._get_expr_type(expr.array)
+        if isinstance(arr_type, (ast.ArrayType, ast.PointerType)):
+            if isinstance(arr_type.base_type, ast.ArrayType):
+                return  # Address already in HL, no dereference needed
+
         # Determine element size for proper load
         elem_size = self._get_index_elem_size(expr.array)
 
         if elem_size == 1:
-            # 8-bit element, zero-extend to HL
+            # 8-bit element, sign/zero-extend to HL
+            elem_signed = True
+            arr_type = self._get_expr_type(expr.array)
+            if isinstance(arr_type, (ast.ArrayType, ast.PointerType)):
+                elem_signed = self._is_signed_type(arr_type.base_type)
             self.ctx.emit_instr("LD", "L,(HL)")
-            self.ctx.emit_instr("LD", "H,0")
+            self._emit_char_to_hl(elem_signed)
         elif elem_size == 8:
             # 64-bit element: HL has address, load into __acc64
             self._call_runtime("__load64")
@@ -5445,7 +5496,7 @@ class CodeGenerator:
         member_size = self._type_size(member_type) if member_type else 2
         if member_size == 1:
             self.ctx.emit_instr("LD", "L,(HL)")
-            self.ctx.emit_instr("LD", "H,0")
+            self._emit_char_to_hl(self._is_signed_type(member_type))
         elif member_size == 8:
             # 64-bit member: HL has address, call __load64 to load into __acc64
             self._call_runtime("__load64")
@@ -6304,7 +6355,7 @@ class CodeGenerator:
                 return 1
             elif name in ("short", "int"):
                 return 2
-            elif name in ("long", "float", "double"):
+            elif name in ("long", "float", "double", "long double"):
                 return 4
             elif name == "long long":
                 return 8  # 64-bit
