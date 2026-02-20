@@ -3230,6 +3230,10 @@ class CodeGenerator:
                 self.ctx.emit_instr("LDIR")
                 # Return address of __sret_buf
                 self.ctx.emit_instr("LD", "HL,__sret_buf")
+            elif self._is_long_long_type(ret_type):
+                # 64-bit return: generate value into __acc64
+                self._gen_64bit_operand(stmt.value, to_tmp=False)
+                # Caller retrieves from __acc64
             else:
                 return_is_long = self._is_long_type(ret_type)
                 # Generate expression, forcing long if return type is long
@@ -3676,9 +3680,27 @@ class CodeGenerator:
                 self.ctx.emit_instr("ADD", "HL,DE")
             return
 
+        type_is_long_long = self._is_long_long_type(sym.sym_type)
         type_is_long = self._is_long_type(sym.sym_type)
         type_is_float = self._is_float_type(sym.sym_type)
         type_size = self._type_size(sym.sym_type)
+
+        if type_is_long_long:
+            # 64-bit variable: load via __load64, return low 32 bits in DEHL
+            if sym.is_global:
+                self.ctx.emit_instr("LD", f"HL,{sym.label()}")
+            elif sym.uses_shared_storage:
+                self.ctx.emit_instr("LD", f"HL,??AUTO+{sym.shared_offset}")
+            else:
+                self.ctx.emit_instr("PUSH", "IX")
+                self.ctx.emit_instr("POP", "HL")
+                self.ctx.emit_instr("LD", f"DE,{sym.offset}")
+                self.ctx.emit_instr("ADD", "HL,DE")
+            self._call_runtime("__load64")
+            self.ctx.runtime_used.add("__acc64")
+            self.ctx.emit_instr("LD", "HL,(__acc64)")
+            self.ctx.emit_instr("LD", "DE,(__acc64+2)")
+            return
 
         if sym.is_global:
             if type_is_long or type_is_float:
@@ -4160,9 +4182,10 @@ class CodeGenerator:
                     if sym.uses_shared_storage:
                         self.ctx.emit_instr("LD", f"HL,??AUTO+{sym.shared_offset}")
                     else:
-                        offset = sym.offset
-                        self.ctx.emit_instr("LD", f"HL,{offset}")
-                        self.ctx.emit_instr("ADD", "HL,SP")
+                        self.ctx.emit_instr("PUSH", "IX")
+                        self.ctx.emit_instr("POP", "HL")
+                        self.ctx.emit_instr("LD", f"DE,{sym.offset}")
+                        self.ctx.emit_instr("ADD", "HL,DE")
                     if to_tmp:
                         self._call_runtime("__load64t")
                     else:
@@ -4488,16 +4511,24 @@ class CodeGenerator:
 
     def gen_assignment(self, expr: ast.BinaryOp) -> None:
         """Generate code for assignment."""
-        # Check if target is 32-bit (long or float) using type inference
+        # Check if target is 64-bit, 32-bit, or float using type inference
+        target_is_64bit = False
         target_is_32bit = False
         target_is_float = False
         target_type = self._get_expr_type(expr.left)
         if target_type:
-            if self._is_long_type(target_type):
+            if self._is_long_long_type(target_type):
+                target_is_64bit = True
+            elif self._is_long_type(target_type):
                 target_is_32bit = True
             elif self._is_float_type(target_type):
                 target_is_32bit = True
                 target_is_float = True
+
+        # 64-bit assignment path
+        if target_is_64bit:
+            self._gen_assignment_64(expr)
+            return
 
         # Generate the value (force_long if target is 32-bit)
         self.gen_expr(expr.right, force_long=target_is_32bit)
@@ -4619,6 +4650,41 @@ class CodeGenerator:
                     self.ctx.emit_instr("INC", "HL")
                     self.ctx.emit_instr("LD", "(HL),D")
                 self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
+
+    def _gen_assignment_64(self, expr: ast.BinaryOp) -> None:
+        """Generate code for 64-bit assignment. Value goes into __acc64, then stored."""
+        if isinstance(expr.left, ast.Identifier):
+            sym = self.ctx.lookup(expr.left.name)
+            if sym:
+                # Generate value into __acc64
+                self._gen_64bit_operand(expr.right, to_tmp=False)
+                # Store __acc64 to target
+                if sym.is_global:
+                    self.ctx.emit_instr("LD", f"HL,{sym.label()}")
+                    self._call_runtime("__store64")
+                else:
+                    self._store_local_64(sym)
+        elif isinstance(expr.left, ast.Index):
+            # Array element: compute address first, push it, then generate value
+            self._gen_address(expr.left)        # Get address in HL
+            self.ctx.emit_instr("PUSH", "HL")   # Save address
+            self._gen_64bit_operand(expr.right, to_tmp=False)  # Value into __acc64
+            self.ctx.emit_instr("POP", "HL")    # Restore address
+            self._call_runtime("__store64")
+        elif isinstance(expr.left, ast.UnaryOp) and expr.left.op == "*":
+            # Pointer dereference: compute address first, push it, then generate value
+            self.gen_expr(expr.left.operand)     # Get address in HL
+            self.ctx.emit_instr("PUSH", "HL")   # Save address
+            self._gen_64bit_operand(expr.right, to_tmp=False)  # Value into __acc64
+            self.ctx.emit_instr("POP", "HL")    # Restore address
+            self._call_runtime("__store64")
+        elif isinstance(expr.left, ast.Member):
+            # Struct member: compute address first, push it, then generate value
+            self._gen_address(expr.left)         # Get member address in HL
+            self.ctx.emit_instr("PUSH", "HL")   # Save address
+            self._gen_64bit_operand(expr.right, to_tmp=False)  # Value into __acc64
+            self.ctx.emit_instr("POP", "HL")    # Restore address
+            self._call_runtime("__store64")
 
     def gen_compound_assignment(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate code for compound assignment (+=, -=, etc.)."""
@@ -4747,6 +4813,24 @@ class CodeGenerator:
                 # 8-bit load, zero-extend to HL
                 self.ctx.emit_instr("LD", "L,(HL)")
                 self.ctx.emit_instr("LD", "H,0")
+            elif deref_size == 8:
+                # 64-bit load: HL has address, load into __acc64
+                self._call_runtime("__load64")
+                self.ctx.runtime_used.add("__acc64")
+                # Return low 32 bits in DEHL for use as rvalue
+                self.ctx.emit_instr("LD", "HL,(__acc64)")
+                self.ctx.emit_instr("LD", "DE,(__acc64+2)")
+            elif deref_size == 4:
+                # 32-bit load
+                self.ctx.emit_instr("LD", "E,(HL)")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "D,(HL)")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "A,(HL)")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "H,(HL)")
+                self.ctx.emit_instr("LD", "L,A")
+                self.ctx.emit_instr("EX", "DE,HL")
             else:
                 # 16-bit load
                 self.ctx.emit_instr("LD", "E,(HL)")
@@ -5004,14 +5088,23 @@ class CodeGenerator:
             self._call_runtime("__callhl")
 
         # Clean up stack (caller cleanup)
-        # Check if return value is 32-bit to preserve DEHL
+        # Check if return value is 64-bit or 32-bit to preserve appropriately
+        return_is_64bit = False
         return_is_32bit = False
         if isinstance(expr.func, ast.Identifier):
             return_type = self._get_expr_type(expr)
-            return_is_32bit = self._is_long_type(return_type) or self._is_float_type(return_type)
+            if self._is_long_long_type(return_type):
+                return_is_64bit = True
+            elif self._is_long_type(return_type) or self._is_float_type(return_type):
+                return_is_32bit = True
 
         if stack_size > 0:
-            if return_is_32bit:
+            if return_is_64bit:
+                # Return value in __acc64 - registers are free, just clean stack
+                self.ctx.emit_instr("LD", f"HL,{stack_size}")
+                self.ctx.emit_instr("ADD", "HL,SP")
+                self.ctx.emit_instr("LD", "SP,HL")
+            elif return_is_32bit:
                 # Return value in DEHL - need to preserve both while cleaning stack
                 # Save DE to BC, clean up stack, restore DE
                 self.ctx.emit_instr("LD", "B,D")
@@ -5035,6 +5128,12 @@ class CodeGenerator:
                 self.ctx.emit_instr("ADD", "HL,SP")
                 self.ctx.emit_instr("LD", "SP,HL")
                 self.ctx.emit_instr("EX", "DE,HL")  # Restore return value
+
+        # For 64-bit return, load low 32 bits from __acc64 into DEHL
+        if return_is_64bit:
+            self.ctx.runtime_used.add("__acc64")
+            self.ctx.emit_instr("LD", "HL,(__acc64)")
+            self.ctx.emit_instr("LD", "DE,(__acc64+2)")
 
     def _push_long_long_arg(self, arg: ast.Expression, force_unsigned: bool = False) -> None:
         """Push an 8-byte (long long) argument onto the stack (4 words, high to low)."""
@@ -5264,6 +5363,13 @@ class CodeGenerator:
             # 8-bit element, zero-extend to HL
             self.ctx.emit_instr("LD", "L,(HL)")
             self.ctx.emit_instr("LD", "H,0")
+        elif elem_size == 8:
+            # 64-bit element: HL has address, load into __acc64
+            self._call_runtime("__load64")
+            self.ctx.runtime_used.add("__acc64")
+            # Return low 32 bits in DEHL for use as rvalue
+            self.ctx.emit_instr("LD", "HL,(__acc64)")
+            self.ctx.emit_instr("LD", "DE,(__acc64+2)")
         elif elem_size == 4:
             # 32-bit element: load into DEHL (DE=high, HL=low)
             self.ctx.emit_instr("LD", "E,(HL)")
