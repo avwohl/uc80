@@ -362,12 +362,8 @@ class Lexer:
 
         # Two/three character operators
         if ch == '[':
-            if self._match('['):
-                return Token(TokenType.LBRACKET2, '[[', loc)
             return Token(TokenType.LBRACKET, '[', loc)
         elif ch == ']':
-            if self._match(']'):
-                return Token(TokenType.RBRACKET2, ']]', loc)
             return Token(TokenType.RBRACKET, ']', loc)
         elif ch == '(':
             return Token(TokenType.LPAREN, '(', loc)

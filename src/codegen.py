@@ -1965,23 +1965,6 @@ class CodeGenerator:
             for name in sorted(self.ctx.runtime_used):
                 self.ctx.emit_instr("EXTRN", name)
 
-        # Data segment with string literals
-        if self.ctx.strings:
-            self.ctx.emit()
-            self.ctx.emit("; String literals")
-            self.ctx.emit("\tDSEG")
-            for label, value in self.ctx.strings.items():
-                self.ctx.emit_label(label)
-                if label in self.ctx.wide_strings:
-                    # Wide string: emit each character as a 16-bit word (little-endian)
-                    for ch in value:
-                        self.ctx.emit_instr("DW", str(ord(ch)))
-                    self.ctx.emit_instr("DW", "0")  # 16-bit null terminator
-                else:
-                    # Narrow string: emit as bytes with null terminator
-                    escaped = self._escape_string(value)
-                    self.ctx.emit_instr("DB", f"'{escaped}',0")
-
         # Data segment for global variables
         # Collect global variable declarations, merging tentative definitions
         # In C, multiple declarations of the same variable are allowed (tentative definitions)
@@ -2051,6 +2034,26 @@ class CodeGenerator:
                     self._emit_initializer(init, var_type)
                 else:
                     self.ctx.emit_instr("DS", str(size))
+
+        # Data segment with string literals (emitted after globals so that
+        # strings created during global initializer emission are included)
+        if self.ctx.strings:
+            if not global_vars and not self.ctx.static_locals:
+                self.ctx.emit()
+                self.ctx.emit("\tDSEG")
+            self.ctx.emit()
+            self.ctx.emit("; String literals")
+            for label, value in self.ctx.strings.items():
+                self.ctx.emit_label(label)
+                if label in self.ctx.wide_strings:
+                    # Wide string: emit each character as a 16-bit word (little-endian)
+                    for ch in value:
+                        self.ctx.emit_instr("DW", str(ord(ch)))
+                    self.ctx.emit_instr("DW", "0")  # 16-bit null terminator
+                else:
+                    # Narrow string: emit as bytes with null terminator
+                    escaped = self._escape_string(value)
+                    self.ctx.emit_instr("DB", f"'{escaped}',0")
 
         # Shared automatic storage for non-recursive functions
         if self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0:
@@ -4611,10 +4614,15 @@ class CodeGenerator:
                     else:
                         self._store_local_32(sym)
                 else:
+                    target_size = self._type_size(target_type) if target_type else 2
                     if sym.is_global:
-                        self.ctx.emit_instr("LD", f"({sym.label()}),HL")
+                        if target_size == 1:
+                            self.ctx.emit_instr("LD", "A,L")
+                            self.ctx.emit_instr("LD", f"({sym.label()}),A")
+                        else:
+                            self.ctx.emit_instr("LD", f"({sym.label()}),HL")
                     else:
-                        self._store_local(sym)
+                        self._store_local(sym, size=target_size)
         elif isinstance(expr.left, ast.UnaryOp) and expr.left.op == "*":
             # Pointer dereference assignment: *p = value
             target_size = self._type_size(target_type) if target_type else 2
@@ -6192,9 +6200,15 @@ class CodeGenerator:
             self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
             self.ctx.emit_instr("LD", f"H,({ix_off(sym.offset + 1)})")
 
-    def _store_local(self, sym: Symbol) -> None:
+    def _store_local(self, sym: Symbol, size: int = 2) -> None:
         """Store HL into a local variable."""
-        if sym.uses_shared_storage:
+        if size == 1:
+            if sym.uses_shared_storage:
+                self.ctx.emit_instr("LD", "A,L")
+                self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset}),A")
+            else:
+                self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
+        elif sym.uses_shared_storage:
             # Store to shared automatic storage
             self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset}),HL")
         else:
@@ -6678,9 +6692,14 @@ class CodeGenerator:
         elif isinstance(init, ast.CharLiteral):
             self.ctx.emit_instr("DB", str(init.value))
         elif isinstance(init, ast.StringLiteral):
-            # String literal - emit as bytes
-            escaped = self._escape_string(init.value)
-            self.ctx.emit_instr("DB", f"'{escaped}',0")
+            if isinstance(elem_type, ast.PointerType):
+                # Pointer member initialized with string literal - emit pointer to string
+                label = self.ctx.add_string(init.value, is_wide=getattr(init, 'is_wide', False))
+                self.ctx.emit_instr("DW", label)
+            else:
+                # Array or char member - emit as bytes
+                escaped = self._escape_string(init.value)
+                self.ctx.emit_instr("DB", f"'{escaped}',0")
         elif isinstance(init, ast.UnaryOp) and init.op == "-":
             # Handle negative literals
             if isinstance(init.operand, ast.IntLiteral):
@@ -6829,6 +6848,11 @@ class CodeGenerator:
                         if sub_members:
                             self._emit_struct_init_designated([val], sub_members)
                             continue
+                    elif isinstance(member_type, ast.ArrayType):
+                        # Nested array designator like .a[1] = value
+                        init_list = ast.InitializerList(values=[val], location=val.location)
+                        self._emit_initializer(init_list, member_type)
+                        continue
                     # Fallback: just emit the value
                     self._emit_initializer(val.value, member_type)
                 else:

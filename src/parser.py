@@ -483,7 +483,15 @@ class Parser:
         return base_type
 
     def _parse_parameter_list(self) -> tuple[list[ast.ParamDecl], bool]:
-        """Parse function parameter list."""
+        """Parse function parameter list (ANSI or K&R style)."""
+        # Detect K&R style: first token is an identifier that's not a type keyword or typedef,
+        # and the next token is ',' or ')'
+        if (self._check(TokenType.IDENTIFIER) and
+            self._current().value not in self.typedefs and
+            self._peek(1).type in (TokenType.COMMA, TokenType.RPAREN)):
+            # K&R-style identifier list
+            return self._parse_kr_identifier_list()
+
         params = []
         is_variadic = False
 
@@ -499,6 +507,59 @@ class Parser:
                 break
 
         return params, is_variadic
+
+    def _parse_kr_identifier_list(self) -> tuple[list[ast.ParamDecl], bool]:
+        """Parse K&R-style identifier list: func(a, b, c)."""
+        params = []
+        while True:
+            loc = self._current().location
+            name = self._expect(TokenType.IDENTIFIER).value
+            # Default to int type (will be updated by K&R declarations)
+            params.append(ast.ParamDecl(name=name,
+                param_type=ast.BasicType(name="int", location=loc), location=loc))
+            if not self._match(TokenType.COMMA):
+                break
+        return params, False
+
+    # Type keywords that start a declaration (used for K&R detection)
+    _TYPE_START_TOKENS = {
+        TokenType.VOID, TokenType.CHAR, TokenType.SHORT, TokenType.INT,
+        TokenType.LONG, TokenType.FLOAT, TokenType.DOUBLE, TokenType.SIGNED,
+        TokenType.UNSIGNED, TokenType.STRUCT, TokenType.UNION, TokenType.ENUM,
+        TokenType.CONST, TokenType.VOLATILE, TokenType.BOOL, TokenType.COMPLEX,
+        TokenType.REGISTER, TokenType.STATIC, TokenType.ATOMIC,
+    }
+
+    def _is_kr_declaration_start(self) -> bool:
+        """Check if the current position has K&R parameter declarations."""
+        tok = self._current()
+        if tok.type in self._TYPE_START_TOKENS:
+            return True
+        if tok.type == TokenType.IDENTIFIER and tok.value in self.typedefs:
+            return True
+        return False
+
+    def _parse_kr_declarations(self, params: list[ast.ParamDecl]) -> None:
+        """Parse K&R-style parameter declarations and update param types."""
+        while not self._check(TokenType.LBRACE) and not self._check(TokenType.EOF):
+            base_type = self._parse_type_specifier()
+            # Parse one or more declarators
+            first = True
+            while first or self._match(TokenType.COMMA):
+                first = False
+                name, full_type = self._parse_declarator(base_type)
+                # Array parameters adjust to pointer type (C11 6.7.6.3p7)
+                if isinstance(full_type, ast.ArrayType):
+                    full_type = ast.PointerType(base_type=full_type.base_type)
+                elif isinstance(full_type, ast.FunctionType):
+                    full_type = ast.PointerType(base_type=full_type)
+                # Update the matching parameter
+                if name:
+                    for p in params:
+                        if p.name == name:
+                            p.param_type = full_type
+                            break
+            self._expect(TokenType.SEMICOLON)
 
     def _parse_parameter_declaration(self) -> ast.ParamDecl:
         """Parse a single parameter declaration."""
@@ -1150,6 +1211,10 @@ class Parser:
         is_typedef = False
         is_inline = False
 
+        # Track type qualifiers that appear before the type specifier
+        pre_const = False
+        pre_volatile = False
+
         while True:
             if self._match(TokenType.TYPEDEF):
                 is_typedef = True
@@ -1167,6 +1232,10 @@ class Parser:
                 is_inline = True
             elif self._match(TokenType.NORETURN):
                 pass  # Attribute, ignore for now
+            elif self._match(TokenType.CONST):
+                pre_const = True
+            elif self._match(TokenType.VOLATILE):
+                pre_volatile = True
             elif self._match(TokenType.ALIGNAS):
                 # _Alignas(N) or _Alignas(type) - skip alignment specifier (Z80 has no alignment)
                 self._expect(TokenType.LPAREN)
@@ -1183,6 +1252,11 @@ class Parser:
 
         # Type specifier
         base_type = self._parse_type_specifier()
+        # Apply pre-consumed qualifiers
+        if pre_const:
+            base_type.is_const = True
+        if pre_volatile:
+            base_type.is_volatile = True
 
         # Skip __attribute__ and _Alignas after type specifier
         self._skip_gcc_attribute()
@@ -1234,11 +1308,13 @@ class Parser:
                     break
                 raise self._error("Expected declarator name")
 
-            # Check for function definition
-            if isinstance(full_type, ast.FunctionType) and self._check(TokenType.LBRACE):
-                body = self._parse_compound_statement()
-                # Use stored params with names from declarator parsing
+            # Check for function definition (ANSI or K&R style)
+            if isinstance(full_type, ast.FunctionType) and (self._check(TokenType.LBRACE) or self._is_kr_declaration_start()):
                 params = self._last_params
+                # Parse K&R-style parameter declarations if present
+                if not self._check(TokenType.LBRACE):
+                    self._parse_kr_declarations(params)
+                body = self._parse_compound_statement()
                 return ast.FunctionDecl(
                     name=name, return_type=full_type.return_type, params=params,
                     body=body, is_variadic=full_type.is_variadic,
