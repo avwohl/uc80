@@ -2626,6 +2626,32 @@ class CodeGenerator:
         self.ctx.emit_instr("LD", f"BC,{size}")
         self.ctx.emit_instr("LDIR")  # Copy BC bytes from HL to DE
 
+    def _gen_struct_assignment(self, expr: ast.BinaryOp, struct_size: int) -> None:
+        """Generate struct/union assignment via LDIR copy."""
+        # Evaluate source expression to get source address in HL
+        right = expr.right
+        if isinstance(right, ast.Call):
+            # Function call returning struct - returns address in HL
+            self.gen_expr(right)
+        elif isinstance(right, ast.Identifier):
+            self._gen_address(right)
+        elif isinstance(right, ast.UnaryOp) and right.op == "*":
+            self.gen_expr(right.operand)
+        elif isinstance(right, ast.Member):
+            self._gen_address(right)
+        else:
+            self.gen_expr(right)
+
+        self.ctx.emit_instr("PUSH", "HL")  # Save source address
+
+        # Get destination address
+        self._gen_address(expr.left)
+        self.ctx.emit_instr("EX", "DE,HL")  # DE = destination
+
+        self.ctx.emit_instr("POP", "HL")    # HL = source
+        self.ctx.emit_instr("LD", f"BC,{struct_size}")
+        self.ctx.emit_instr("LDIR")
+
     def _gen_struct_init_values(self, sym: 'Symbol', struct_type: ast.StructType,
                                 values: list, base_offset: int) -> int:
         """Generate code to store struct initializer values. Returns number of values consumed."""
@@ -4608,6 +4634,13 @@ class CodeGenerator:
             self._gen_assignment_64(expr)
             return
 
+        # Struct/union assignment: copy entire struct via LDIR
+        if isinstance(target_type, ast.StructType):
+            struct_size = self._type_size(target_type)
+            if struct_size > 2:
+                self._gen_struct_assignment(expr, struct_size)
+                return
+
         # Check if source is float/double
         source_is_float = self._is_float_expr(expr.right)
 
@@ -5444,8 +5477,8 @@ class CodeGenerator:
             # Need to extend to 32-bit DEHL after narrowing
             # Use the target type's signedness for extension
             self._extend_hl_to_dehl(target_signed)
-        elif target_is_long and not source_is_long:
-            # Direct extension to 32-bit
+        elif target_is_long and not source_is_long and not source_is_float:
+            # Direct extension to 32-bit (skip if source is float - already 32-bit)
             is_signed = self._is_signed_type(source_type) if source_type else True
             self._extend_hl_to_dehl(is_signed)
         elif target_size == 2 and source_size == 1:
