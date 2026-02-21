@@ -100,12 +100,12 @@ def run_test(c_file: Path, ref_file: Path, verbose: bool = False) -> tuple[str, 
         actual_lines.append(line)
     actual = '\n'.join(actual_lines).strip()
 
-    # Parse expected - strip "exit 0" suffix (may or may not be on its own line)
+    # Parse expected - strip "exit N" suffix (may or may not be on its own line)
     expected_text = ref_file.read_text(errors='replace').strip()
-    # Remove trailing "exit 0" whether it's on its own line or appended
-    if expected_text.endswith("exit 0"):
-        expected_text = expected_text[:-len("exit 0")]
-    expected_lines = [l for l in expected_text.split('\n') if l.strip() != "exit 0"]
+    import re
+    # Remove trailing "exit N" whether it's on its own line or appended
+    expected_text = re.sub(r'exit \d+\s*$', '', expected_text)
+    expected_lines = [l for l in expected_text.split('\n') if not re.match(r'^exit \d+$', l.strip())]
     expected = '\n'.join(expected_lines).strip()
 
     if actual == expected:

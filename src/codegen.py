@@ -1719,6 +1719,8 @@ class CodeGenContext:
     # Static local variables: label -> (type, init_value)
     static_locals: dict[str, tuple[ast.TypeNode, Optional[ast.Expression]]] = field(default_factory=dict)
     static_counter: int = 0
+    # Map from original variable name (func:varname) to static local label
+    static_local_labels: dict[str, str] = field(default_factory=dict)
 
     def emit(self, line: str = "") -> None:
         """Emit a line of assembly."""
@@ -2021,11 +2023,15 @@ class CodeGenerator:
                     # Uninitialized global - just reserve space
                     self.ctx.emit_instr("DS", str(size))
 
+        # Track whether DSEG has been emitted (global_vars emit it above)
+        in_dseg = bool(global_vars)
+
         # Static local variables (in DSEG)
         if self.ctx.static_locals:
-            if not global_vars and not self.ctx.strings:
+            if not in_dseg:
                 self.ctx.emit()
                 self.ctx.emit("\tDSEG")
+                in_dseg = True
             self.ctx.emit("; Static local variables")
             for label, (var_type, init) in self.ctx.static_locals.items():
                 self.ctx.emit_label(label)
@@ -2038,9 +2044,10 @@ class CodeGenerator:
         # Data segment with string literals (emitted after globals so that
         # strings created during global initializer emission are included)
         if self.ctx.strings:
-            if not global_vars and not self.ctx.static_locals:
+            if not in_dseg:
                 self.ctx.emit()
                 self.ctx.emit("\tDSEG")
+                in_dseg = True
             self.ctx.emit()
             self.ctx.emit("; String literals")
             for label, value in self.ctx.strings.items():
@@ -2057,8 +2064,7 @@ class CodeGenerator:
 
         # Shared automatic storage for non-recursive functions
         if self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0:
-            need_dseg = not global_vars and not self.ctx.strings and not self.ctx.static_locals
-            if need_dseg:
+            if not in_dseg:
                 self.ctx.emit()
                 self.ctx.emit("\tDSEG")
             self.ctx.emit()
@@ -2448,6 +2454,8 @@ class CodeGenerator:
 
         # Store type and init value for data segment emission
         self.ctx.static_locals[label] = (decl.var_type, decl.init)
+        # Record mapping from variable name to label for late-binding initializers
+        self.ctx.static_local_labels[decl.name] = label
 
         # Register as a "global" for access purposes, but mark is_static=True
         # so we don't add another _ prefix when accessing
@@ -2708,32 +2716,40 @@ class CodeGenerator:
         self._gen_zero_init_region(sym, base_offset, struct_size)
 
         # Build member -> value mapping, handling nested designators
-        member_vals = {}  # member_name -> value or (nested_designators, value)
+        member_vals = {}  # member_name -> value or list of (nested_designators, value)
         next_member_idx = 0
+        active_nested_member = None  # Track current member for continuation
+
         for val in values:
             if isinstance(val, ast.DesignatedInit) and val.designators and isinstance(val.designators[0], str):
                 desig_name = val.designators[0]
                 if len(val.designators) > 1:
-                    # Nested designator like .a.j = 5
-                    # Collect sub-designators for the same member
-                    if desig_name not in member_vals:
+                    # Nested designator like .a[1] = 5 or .a.j = 5
+                    if desig_name not in member_vals or not isinstance(member_vals[desig_name], list):
                         member_vals[desig_name] = []
                     member_vals[desig_name].append((val.designators[1:], val.value))
+                    active_nested_member = desig_name
                 else:
                     member_vals[desig_name] = val.value
+                    active_nested_member = None
                 # Update next member index
                 for idx, (mname, mtype, moff) in enumerate(members):
                     if mname == desig_name:
                         next_member_idx = idx + 1
                         break
             else:
-                # Non-designated value
-                if next_member_idx < len(members):
-                    mname = members[next_member_idx][0]
-                    actual_val = val.value if isinstance(val, ast.DesignatedInit) else val
-                    if mname:
-                        member_vals[mname] = actual_val
-                    next_member_idx += 1
+                actual_val = val.value if isinstance(val, ast.DesignatedInit) else val
+                if active_nested_member is not None:
+                    # Continuation after nested designator - add to same member
+                    # Use None designators to indicate "next sequential element"
+                    member_vals[active_nested_member].append((None, actual_val))
+                else:
+                    # Non-designated value
+                    if next_member_idx < len(members):
+                        mname = members[next_member_idx][0]
+                        if mname:
+                            member_vals[mname] = actual_val
+                        next_member_idx += 1
 
         # Apply designated values
         for member_name, member_type, member_offset in members:
@@ -2741,11 +2757,29 @@ class CodeGenerator:
                 continue  # Already zeroed
             val = member_vals[member_name]
             if isinstance(val, list):
-                # Nested designators - recursively apply to sub-members
-                if isinstance(member_type, ast.StructType) and member_type.name and member_type.name in self.ctx.structs:
+                # Nested designators - list of (designators, value)
+                if isinstance(member_type, ast.ArrayType):
+                    # Build index -> value map for array
+                    elem_type = member_type.base_type
+                    elem_size = self._type_size(elem_type)
+                    next_idx = 0
+                    for sub_desigs, sub_val in val:
+                        if sub_desigs is None:
+                            # Continuation value at next_idx
+                            offset = base_offset + member_offset + next_idx * elem_size
+                            self._gen_store_member_value(sym, elem_type, offset, sub_val)
+                            next_idx += 1
+                        elif len(sub_desigs) == 1 and not isinstance(sub_desigs[0], str):
+                            # Array index designator like [1]
+                            idx_val = self._eval_const_expr(sub_desigs[0])
+                            if idx_val is not None:
+                                offset = base_offset + member_offset + idx_val * elem_size
+                                self._gen_store_member_value(sym, elem_type, offset, sub_val)
+                                next_idx = idx_val + 1
+                elif isinstance(member_type, ast.StructType) and member_type.name and member_type.name in self.ctx.structs:
                     sub_members = self.ctx.structs[member_type.name]
                     for sub_desigs, sub_val in val:
-                        if len(sub_desigs) == 1 and isinstance(sub_desigs[0], str):
+                        if sub_desigs is not None and len(sub_desigs) == 1 and isinstance(sub_desigs[0], str):
                             # Simple sub-member designator like .j
                             for smname, smtype, smoffset in sub_members:
                                 if smname == sub_desigs[0]:
@@ -4209,7 +4243,7 @@ class CodeGenerator:
                 # Load 64-bit variable
                 sym = self.ctx.lookup(expr.name)
                 if sym and sym.is_global:
-                    self.ctx.emit_instr("LD", f"HL,_{expr.name}")
+                    self.ctx.emit_instr("LD", f"HL,{sym.label()}")
                     if to_tmp:
                         self._call_runtime("__load64t")
                     else:
@@ -5686,9 +5720,11 @@ class CodeGenerator:
             if sym:
                 return sym.sym_type
         elif isinstance(expr, ast.UnaryOp) and expr.op == "*":
-            # Dereference - get base type of pointer
+            # Dereference - get base type of pointer (or array decayed to pointer)
             ptr_type = self._get_expr_type(expr.operand)
             if isinstance(ptr_type, ast.PointerType):
+                return ptr_type.base_type
+            elif isinstance(ptr_type, ast.ArrayType):
                 return ptr_type.base_type
         elif isinstance(expr, ast.UnaryOp) and expr.op in ("-", "+", "~"):
             # These preserve the operand type
@@ -6279,6 +6315,9 @@ class CodeGenerator:
             sym = self.ctx.lookup(expr.name)
             if sym and isinstance(sym.sym_type, ast.PointerType):
                 return self._type_size(sym.sym_type.base_type)
+            elif sym and isinstance(sym.sym_type, ast.ArrayType):
+                # Arrays decay to pointers; deref size is element size
+                return self._type_size(sym.sym_type.base_type)
 
         elif isinstance(expr, ast.BinaryOp):
             # For pointer arithmetic (ptr + n), get type from left operand
@@ -6714,11 +6753,25 @@ class CodeGenerator:
                 self.ctx.emit_instr("DS", str(elem_size))
         elif isinstance(init, ast.Identifier):
             # Address of a symbol - emit as label reference
-            self.ctx.emit_instr("DW", f"_{init.name}")
+            sym = self.ctx.lookup(init.name)
+            if sym:
+                label = sym.label()
+            elif init.name in self.ctx.static_local_labels:
+                label = self.ctx.static_local_labels[init.name]
+            else:
+                label = f"_{init.name}"
+            self.ctx.emit_instr("DW", label)
         elif isinstance(init, ast.UnaryOp) and init.op == "&":
             # Address-of expression
             if isinstance(init.operand, ast.Identifier):
-                self.ctx.emit_instr("DW", f"_{init.operand.name}")
+                sym = self.ctx.lookup(init.operand.name)
+                if sym:
+                    label = sym.label()
+                elif init.operand.name in self.ctx.static_local_labels:
+                    label = self.ctx.static_local_labels[init.operand.name]
+                else:
+                    label = f"_{init.operand.name}"
+                self.ctx.emit_instr("DW", label)
             else:
                 self.ctx.emit_instr("DS", str(elem_size))
         elif isinstance(init, ast.Cast):
@@ -6811,52 +6864,74 @@ class CodeGenerator:
 
     def _emit_struct_init_designated(self, values: list, members: list) -> int:
         """Emit struct init with member designators. Values go to designated member positions."""
-        # Build member -> value mapping (last value wins per C rules)
-        member_vals = {}
+        # Build member -> value list mapping
+        # Each member maps to a list of values (DesignatedInit or plain) to allow
+        # continuation after nested designators (e.g., .a[1]=4, 7 -> a gets both)
+        member_vals = {}  # member_name -> list of values
         next_idx = 0
+        # Track the current "active" member for continuation after nested designators
+        active_nested_member = None  # member name if last desig was nested
+
         for val in values:
             if isinstance(val, ast.DesignatedInit) and val.designators and isinstance(val.designators[0], str):
                 name = val.designators[0]
                 if len(val.designators) > 1:
-                    # Nested designator like .a.j - store with remaining designators
-                    member_vals[name] = ast.DesignatedInit(
+                    # Nested designator like .a[1] or .a.j
+                    sub_desig = ast.DesignatedInit(
                         designators=val.designators[1:], value=val.value, location=val.location)
+                    if name in member_vals and len(member_vals[name]) == 1 and isinstance(member_vals[name][0], ast.InitializerList):
+                        # Merge into existing InitializerList (e.g., {[1]=4,5} then .a[4]=1)
+                        member_vals[name][0].values.append(sub_desig)
+                    else:
+                        if name not in member_vals:
+                            member_vals[name] = []
+                        member_vals[name].append(sub_desig)
+                    active_nested_member = name
                 else:
-                    member_vals[name] = val.value
+                    member_vals[name] = [val.value]
+                    active_nested_member = None
                 # Update next_idx for sequential continuation after this member
                 for idx, (mname, mtype, moff) in enumerate(members):
                     if mname == name:
                         next_idx = idx + 1
                         break
             else:
-                # Non-designated value - goes to next sequential member
-                if next_idx < len(members):
-                    mname = members[next_idx][0]
-                    if mname:
-                        actual_val = val.value if isinstance(val, ast.DesignatedInit) else val
-                        member_vals[mname] = actual_val
-                    next_idx += 1
+                actual_val = val.value if isinstance(val, ast.DesignatedInit) else val
+                if active_nested_member is not None:
+                    # Continuation after nested designator - add to same member
+                    member_vals[active_nested_member].append(actual_val)
+                else:
+                    # Non-designated value - goes to next sequential member
+                    if next_idx < len(members):
+                        mname = members[next_idx][0]
+                        if mname:
+                            member_vals[mname] = [actual_val]
+                        next_idx += 1
 
         # Emit members in declaration order
         for member_name, member_type, member_offset in members:
             if member_name and member_name in member_vals:
-                val = member_vals[member_name]
-                if isinstance(val, ast.DesignatedInit):
-                    # Nested designator - emit as struct init with remaining designators
+                vals = member_vals[member_name]
+                if len(vals) == 1 and not isinstance(vals[0], ast.DesignatedInit):
+                    # Single plain value
+                    self._emit_initializer(vals[0], member_type)
+                elif any(isinstance(v, ast.DesignatedInit) for v in vals):
+                    # Has designated inits - wrap in InitializerList and delegate
                     if isinstance(member_type, ast.StructType):
                         sub_members = self._get_struct_members(member_type)
                         if sub_members:
-                            self._emit_struct_init_designated([val], sub_members)
+                            self._emit_struct_init_designated(vals, sub_members)
                             continue
                     elif isinstance(member_type, ast.ArrayType):
-                        # Nested array designator like .a[1] = value
-                        init_list = ast.InitializerList(values=[val], location=val.location)
+                        init_list = ast.InitializerList(values=vals, location=vals[0].location if hasattr(vals[0], 'location') else None)
                         self._emit_initializer(init_list, member_type)
                         continue
-                    # Fallback: just emit the value
-                    self._emit_initializer(val.value, member_type)
+                    # Fallback for single designated init
+                    self._emit_initializer(vals[0].value if isinstance(vals[0], ast.DesignatedInit) else vals[0], member_type)
                 else:
-                    self._emit_initializer(val, member_type)
+                    # Multiple plain values - wrap as InitializerList
+                    init_list = ast.InitializerList(values=vals, location=None)
+                    self._emit_initializer(init_list, member_type)
             else:
                 size = self._type_size(member_type)
                 if size > 0:
