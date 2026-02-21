@@ -599,7 +599,14 @@ class ASTOptimizer:
         return None
 
     def _simplify_full_mask(self, expr: ast.BinaryOp) -> ast.Expression | None:
-        """Simplify full-mask identities: x & 0xFFFF → x, x | 0xFFFF → 0xFFFF, etc."""
+        """Simplify full-mask identities: x & 0xFFFF → x, x | 0xFFFF → 0xFFFF, etc.
+
+        IMPORTANT: These are only safe when the other operand is also 16-bit.
+        If the other operand could be wider (32/64-bit), these are WRONG:
+        - (long long)x & 0xFFFF ≠ x  (truncates upper bits)
+        - (long long)x | 0xFFFF ≠ 0xFFFF  (loses upper bits)
+        Only apply when the other operand is a non-long IntLiteral.
+        """
         op = expr.op
         left = expr.left
         right = expr.right
@@ -608,33 +615,37 @@ class ASTOptimizer:
         r_full = isinstance(right, ast.IntLiteral) and (right.value & 0xFFFF) == 0xFFFF and not right.is_long
         l_full = isinstance(left, ast.IntLiteral) and (left.value & 0xFFFF) == 0xFFFF and not left.is_long
 
+        # Only safe when the OTHER operand is known to be 16-bit
+        r_safe_16 = isinstance(right, ast.IntLiteral) and not right.is_long
+        l_safe_16 = isinstance(left, ast.IntLiteral) and not left.is_long
+
         if op == "&":
-            # x & 0xFFFF → x
-            if r_full:
+            # x & 0xFFFF → x (only when x is 16-bit)
+            if r_full and l_safe_16:
                 self._stat("full_mask")
                 self._changed = True
                 return left
-            if l_full:
+            if l_full and r_safe_16:
                 self._stat("full_mask")
                 self._changed = True
                 return right
         elif op == "|":
-            # x | 0xFFFF → 0xFFFF
-            if r_full:
+            # x | 0xFFFF → 0xFFFF (only when x is 16-bit)
+            if r_full and l_safe_16:
                 self._stat("full_mask")
                 self._changed = True
                 return ast.IntLiteral(value=0xFFFF, location=expr.location)
-            if l_full:
+            if l_full and r_safe_16:
                 self._stat("full_mask")
                 self._changed = True
                 return ast.IntLiteral(value=0xFFFF, location=expr.location)
         elif op == "^":
-            # x ^ 0xFFFF → ~x
-            if r_full:
+            # x ^ 0xFFFF → ~x (only when x is 16-bit)
+            if r_full and l_safe_16:
                 self._stat("full_mask")
                 self._changed = True
                 return ast.UnaryOp(op="~", operand=left, location=expr.location)
-            if l_full:
+            if l_full and r_safe_16:
                 self._stat("full_mask")
                 self._changed = True
                 return ast.UnaryOp(op="~", operand=right, location=expr.location)

@@ -1396,6 +1396,12 @@ class CallGraphAnalyzer:
                 return 1 if left or right else 0
         elif isinstance(expr, ast.Cast):
             return self._eval_const_expr(expr.expr)
+        elif isinstance(expr, ast.SizeofType):
+            return self._var_size(expr.target_type)
+        elif isinstance(expr, ast.SizeofExpr):
+            # For sizeof(expr), we need to infer the expression type
+            # This is a simplified version - handles common cases
+            return None
         return None
 
     def _find_constant_params(self, unit: ast.TranslationUnit) -> dict[str, dict[int, int]]:
@@ -3685,7 +3691,8 @@ class CodeGenerator:
 
         # Check if this is a function (name matches a function we've seen)
         # Functions used as values decay to pointers - load address, not value
-        if isinstance(sym.sym_type, ast.FunctionType) or expr.name in self.ctx.function_names:
+        # Only apply to global symbols - local variables can shadow function names
+        if isinstance(sym.sym_type, ast.FunctionType) or (sym.is_global and expr.name in self.ctx.function_names):
             self.ctx.emit_instr("LD", f"HL,{sym.label()}")
             return
 
@@ -4837,7 +4844,10 @@ class CodeGenerator:
 
         elif op == "~":
             self.gen_expr(expr.operand)
-            if self._is_long_expr(expr.operand):
+            if self._is_long_long_expr(expr.operand):
+                # 64-bit bitwise NOT using runtime
+                self._call_runtime("__not64")
+            elif self._is_long_expr(expr.operand):
                 # 32-bit bitwise NOT using runtime
                 self._call_runtime("__not32")
             else:
@@ -7010,7 +7020,68 @@ class CodeGenerator:
             elif expr.op == "<<":
                 return left_val << right_val
             elif expr.op == ">>":
-                return left_val >> right_val
+                # Need to determine signedness of left operand for arithmetic vs logical shift
+                left_type = self._get_expr_type(expr.left)
+                is_signed = True  # C default is signed
+                if left_type and isinstance(left_type, ast.BasicType):
+                    if left_type.is_signed is False:
+                        is_signed = False
+                elif isinstance(expr.left, ast.IntLiteral) and expr.left.is_unsigned:
+                    is_signed = False
+                if is_signed:
+                    # Determine width and do arithmetic shift
+                    width = 16  # default int
+                    if left_type:
+                        sz = self._type_size(left_type)
+                        width = sz * 8
+                    elif isinstance(expr.left, ast.IntLiteral) and expr.left.is_long:
+                        if left_val > 0x7FFFFFFF or left_val < -0x80000000:
+                            width = 64
+                        else:
+                            width = 32
+                    mask = (1 << width) - 1
+                    sign_bit = 1 << (width - 1)
+                    val = left_val & mask
+                    if val & sign_bit:
+                        # Negative in signed representation - arithmetic shift
+                        val = val - (1 << width)  # Convert to negative Python int
+                    return (val >> right_val) & mask
+                else:
+                    # Unsigned logical shift - mask to appropriate width first
+                    width = 16  # default int
+                    if left_type:
+                        sz = self._type_size(left_type)
+                        width = sz * 8
+                    elif isinstance(expr.left, ast.IntLiteral) and expr.left.is_long:
+                        if left_val > 0x7FFFFFFF or left_val < -0x80000000:
+                            width = 64
+                        else:
+                            width = 32
+                    mask = (1 << width) - 1
+                    return (left_val & mask) >> right_val
+            elif expr.op == "==":
+                return 1 if left_val == right_val else 0
+            elif expr.op == "!=":
+                return 1 if left_val != right_val else 0
+            elif expr.op == "<":
+                return 1 if left_val < right_val else 0
+            elif expr.op == ">":
+                return 1 if left_val > right_val else 0
+            elif expr.op == "<=":
+                return 1 if left_val <= right_val else 0
+            elif expr.op == ">=":
+                return 1 if left_val >= right_val else 0
+            elif expr.op == "&&":
+                return 1 if left_val and right_val else 0
+            elif expr.op == "||":
+                return 1 if left_val or right_val else 0
+        elif isinstance(expr, ast.SizeofType):
+            return self._type_size(expr.target_type)
+        elif isinstance(expr, ast.SizeofExpr):
+            expr_type = self._get_expr_type(expr.expr)
+            if expr_type:
+                return self._type_size(expr_type)
+            return None
         return None  # Not a constant expression
 
     def _escape_string(self, s: str) -> str:
