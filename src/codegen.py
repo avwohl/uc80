@@ -5744,10 +5744,10 @@ class CodeGenerator:
     def _types_compatible(self, expr_type: ast.TypeNode | None, sel_type: ast.TypeNode) -> bool:
         """Check if expression type matches selector type for _Generic.
 
-        Note: The controlling expression undergoes lvalue conversion which:
-        - Strips cv-qualifiers from the top level of non-array types
-        - Arrays decay to pointers
-        - Functions decay to function pointers
+        C23 semantics (6.5.1.1): The controlling expression's type is used
+        directly for matching - qualifiers (const/volatile) are preserved,
+        unlike C11 which applied lvalue conversion to strip them.
+        Arrays still decay to pointers, functions to function pointers.
         """
         if expr_type is None:
             return False
@@ -5757,7 +5757,11 @@ class CodeGenerator:
             # Name must match
             if t1.name != t2.name:
                 return False
-            # For basic types, ignore const (lvalue conversion strips it)
+            # C23: qualifiers must match (const, volatile)
+            if t1.is_const != t2.is_const:
+                return False
+            if t1.is_volatile != t2.is_volatile:
+                return False
             # Check signedness for types where it matters
             if t1.name == 'char':
                 # In C, char, signed char, and unsigned char are THREE distinct types
