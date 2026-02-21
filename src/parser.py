@@ -891,10 +891,16 @@ class Parser:
         # Literals
         if self._check(TokenType.INT_LITERAL):
             token = self._advance()
-            value, suffix = token.value
+            if len(token.value) == 3:
+                value, suffix, base = token.value
+            else:
+                value, suffix = token.value
+                base = 10
             is_long = 'l' in suffix
             is_unsigned = 'u' in suffix
-            return ast.IntLiteral(value=value, is_long=is_long, is_unsigned=is_unsigned, location=loc)
+            is_hex = base in (16, 8, 2)
+            return ast.IntLiteral(value=value, is_long=is_long, is_unsigned=is_unsigned,
+                                  is_hex=is_hex, location=loc)
         if self._check(TokenType.FLOAT_LITERAL):
             tok = self._advance()
             fval, has_f = tok.value if isinstance(tok.value, tuple) else (tok.value, False)

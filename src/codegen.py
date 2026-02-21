@@ -2332,6 +2332,9 @@ class CodeGenerator:
             return
 
         if isinstance(decl, ast.VarDecl):
+            # Register any inline types (e.g., struct defined in local variable decl)
+            self._register_inline_types(decl.var_type)
+
             # Check for static local variable
             if decl.storage_class == "static":
                 self._gen_static_local(decl)
@@ -2667,6 +2670,30 @@ class CodeGenerator:
         )
         if has_member_desig:
             return self._gen_struct_init_designated(sym, struct_type, members, values, base_offset)
+
+        # For unions: zero-init the whole region first, then only initialize the first member.
+        # All union members share offset 0, so we must not zero-init remaining members
+        # after storing the first member's values (that would overwrite them).
+        if struct_type.is_union:
+            union_size = self._type_size(struct_type)
+            self._gen_zero_init_region(sym, base_offset, union_size)
+            if values and members:
+                member_name, member_type, member_offset = members[0]
+                val = values[0]
+                if isinstance(val, ast.DesignatedInit):
+                    val = val.value
+                if isinstance(member_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+                    if isinstance(val, ast.StringLiteral) and self._is_char_array(member_type):
+                        self._gen_string_init(sym, member_type, val, base_offset + member_offset)
+                        return 1
+                    else:
+                        return self._gen_flat_array_init(sym, member_type, values, 0, base_offset + member_offset)
+                elif isinstance(member_type, ast.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
+                    return self._gen_struct_init_values(sym, member_type, values, base_offset + member_offset)
+                else:
+                    self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
+                    return 1
+            return 0
 
         value_index = 0
 
@@ -5734,11 +5761,13 @@ class CodeGenerator:
     def _get_expr_type(self, expr: ast.Expression) -> ast.TypeNode | None:
         """Try to infer the type of an expression."""
         if isinstance(expr, ast.IntLiteral):
-            # Integer literal type depends on suffix
+            # Integer literal type depends on suffix and value
             if expr.is_long:
                 return ast.BasicType(name="long", is_signed=not expr.is_unsigned)
-            else:
-                return ast.BasicType(name="int", is_signed=not expr.is_unsigned)
+            # C standard: hex/octal literals try unsigned int before long
+            if expr.is_hex and not expr.is_unsigned and 32768 <= expr.value <= 65535:
+                return ast.BasicType(name="int", is_signed=False)
+            return ast.BasicType(name="int", is_signed=not expr.is_unsigned)
         elif isinstance(expr, ast.CharLiteral):
             return ast.BasicType(name="char")
         elif isinstance(expr, ast.StringLiteral):
@@ -6086,12 +6115,19 @@ class CodeGenerator:
             # Check for explicit L suffix or value too large for signed 16-bit
             if expr.is_long:
                 return True
-            # In C, decimal literals are int, long, long long (first that fits)
-            # But only up to 32-bit range for "long"
+            # C standard type promotion for literals:
+            # Decimal: int -> long -> long long
+            # Hex/octal: int -> unsigned int -> long -> unsigned long -> long long -> unsigned long long
             val = expr.value
             if val > 32767 or val < -32768:
+                # For hex/octal literals, check if it fits in unsigned int (16-bit) first
+                if expr.is_hex and 0 <= val <= 65535:
+                    return False  # Fits in unsigned int, stays 16-bit
                 # Check if it fits in 32-bit
                 if val <= 2147483647 and val >= -2147483648:
+                    return True
+                # For hex/octal, check unsigned long (32-bit)
+                if expr.is_hex and 0 <= val <= 4294967295:
                     return True
             return False
         if isinstance(expr, ast.UnaryOp):
@@ -6881,13 +6917,37 @@ class CodeGenerator:
                     value_index += consumed
             elif isinstance(member_type, ast.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
                 # Flat nested struct init (but not compound literals - those are complete values)
-                nested_members = self._get_struct_members(member_type)
-                if nested_members:
-                    consumed = self._emit_struct_init_flat(values[value_index:], nested_members)
-                    value_index += consumed
+                if member_type.is_union:
+                    # Union: only init the first member, pad the rest
+                    nested_members = self._get_struct_members(member_type)
+                    if nested_members:
+                        first_member = nested_members[0]
+                        first_size = self._type_size(first_member[1])
+                        if isinstance(first_member[1], ast.StructType):
+                            sub_members = self._get_struct_members(first_member[1])
+                            if sub_members:
+                                consumed = self._emit_struct_init_flat(values[value_index:], sub_members)
+                                value_index += consumed
+                            else:
+                                value_index += 1
+                                self._emit_initializer(val, first_member[1])
+                        else:
+                            value_index += 1
+                            self._emit_initializer(val, first_member[1])
+                        union_size = self._type_size(member_type)
+                        if union_size > first_size:
+                            self.ctx.emit_instr("DS", str(union_size - first_size))
+                    else:
+                        value_index += 1
+                        self._emit_initializer(val, member_type)
                 else:
-                    value_index += 1
-                    self._emit_initializer(val, member_type)
+                    nested_members = self._get_struct_members(member_type)
+                    if nested_members:
+                        consumed = self._emit_struct_init_flat(values[value_index:], nested_members)
+                        value_index += consumed
+                    else:
+                        value_index += 1
+                        self._emit_initializer(val, member_type)
             else:
                 # Normal case (includes InitializerList and Compound for struct members)
                 value_index += 1

@@ -263,7 +263,7 @@ class Lexer:
                 value = int(text, base)
             except ValueError:
                 raise LexerError(f"Invalid integer literal: {text}", loc)
-            return Token(TokenType.INT_LITERAL, (value, suffix_str), loc)
+            return Token(TokenType.INT_LITERAL, (value, suffix_str, base), loc)
 
     def _read_char_literal(self, wide: bool = False) -> Token:
         """Read a character literal. wide=True for L'x' wide character literals."""

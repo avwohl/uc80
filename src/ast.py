@@ -92,6 +92,7 @@ class IntLiteral(Expression):
     value: int
     is_long: bool = False     # True if has L/LL suffix
     is_unsigned: bool = False  # True if has U suffix
+    is_hex: bool = False      # True if hex/octal literal (affects type promotion)
 
 
 @dataclass(kw_only=True)
