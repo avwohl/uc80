@@ -5762,11 +5762,26 @@ class CodeGenerator:
         """Try to infer the type of an expression."""
         if isinstance(expr, ast.IntLiteral):
             # Integer literal type depends on suffix and value
+            # C standard type promotion for hex/octal:
+            #   int -> unsigned int -> long -> unsigned long -> long long -> unsigned long long
             if expr.is_long:
                 return ast.BasicType(name="long", is_signed=not expr.is_unsigned)
-            # C standard: hex/octal literals try unsigned int before long
-            if expr.is_hex and not expr.is_unsigned and 32768 <= expr.value <= 65535:
-                return ast.BasicType(name="int", is_signed=False)
+            val = expr.value
+            if expr.is_hex and not expr.is_unsigned:
+                if 32768 <= val <= 65535:
+                    return ast.BasicType(name="int", is_signed=False)  # unsigned int
+                if val > 65535 and val <= 2147483647:
+                    return ast.BasicType(name="long", is_signed=True)  # long
+                if val > 2147483647 and val <= 4294967295:
+                    return ast.BasicType(name="long", is_signed=False)  # unsigned long
+                if val > 4294967295:
+                    return ast.BasicType(name="long long", is_signed=False)  # unsigned long long
+            elif not expr.is_hex and not expr.is_unsigned:
+                # Decimal: int -> long -> long long
+                if val > 32767 and val <= 2147483647:
+                    return ast.BasicType(name="long", is_signed=True)
+                if val > 2147483647:
+                    return ast.BasicType(name="long long", is_signed=True)
             return ast.BasicType(name="int", is_signed=not expr.is_unsigned)
         elif isinstance(expr, ast.CharLiteral):
             return ast.BasicType(name="char")
@@ -6087,7 +6102,10 @@ class CodeGenerator:
             # Check for explicit LL suffix or value too large for 32-bit
             if hasattr(expr, 'is_long_long') and expr.is_long_long:
                 return True
-            # Values too large for signed 32-bit
+            # For hex literals, values up to 4294967295 fit in unsigned long (32-bit)
+            if expr.is_hex and 0 <= expr.value <= 4294967295:
+                return False
+            # Values too large for signed 32-bit (and not hex unsigned long)
             if expr.value > 2147483647 or expr.value < -2147483648:
                 return True
             return False
