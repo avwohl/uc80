@@ -3392,10 +3392,7 @@ class CodeGenerator:
                 self.gen_expr(stmt.value, force_long=return_is_long or return_is_float)
                 # Convert float expression to int/long return type
                 if expr_is_float and not return_is_float:
-                    if return_is_long:
-                        self._call_runtime("__ftol")
-                    else:
-                        self._call_runtime("__ftoi")
+                    self._call_runtime("__ftoi")  # returns 32-bit in DEHL
                 # Convert int expression to float return type
                 elif return_is_float and not expr_is_float:
                     if not self._is_long_expr(stmt.value):
