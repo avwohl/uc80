@@ -1408,9 +1408,12 @@ class CallGraphAnalyzer:
             # This is a simplified version - handles common cases
             return None
         elif isinstance(expr, ast.Identifier):
-            # Check if this is an enum constant
-            if expr.name in self.ctx.enum_constants:
+            # Check if this is an enum constant (only available in CodeGenerator context)
+            if hasattr(self, 'ctx') and expr.name in self.ctx.enum_constants:
                 return self.ctx.enum_constants[expr.name]
+            # Also check if CallGraphAnalyzer has collected enum values
+            if hasattr(self, 'enum_values') and expr.name in self.enum_values:
+                return self.enum_values[expr.name]
         return None
 
     def _find_constant_params(self, unit: ast.TranslationUnit) -> dict[str, dict[int, int]]:
