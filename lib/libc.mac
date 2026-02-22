@@ -2293,7 +2293,7 @@ _printf_ptr:
 	JR	_printf_hex
 
 _printf_uns:
-	; Output unsigned decimal (same as %d for now but no sign check)
+	; Output unsigned decimal with width/zero-padding support
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -2305,8 +2305,74 @@ _printf_uns:
 	INC	HL
 	LD	D,(HL)
 	EX	DE,HL		; HL = value
-	CALL	_prt_dec
+	; Convert HL to decimal digits in _printf_decbuf
+	PUSH	IX		; Save frame pointer
+	PUSH	BC
+	LD	DE,10
+	LD	B,0		; digit count
+	LD	IX,_printf_decbuf+5	; write pointer (end of buffer)
+_printf_uns_cvt:
+	CALL	_prt_div16	; HL = HL / 10, DE = remainder
+	LD	A,E
+	ADD	A,'0'
+	DEC	IX
+	LD	(IX+0),A
+	INC	B
+	LD	DE,10
+	LD	A,H
+	OR	L
+	JR	NZ,_printf_uns_cvt
+	; B = number of digits, IX = start of digits in buffer
+	LD	(_printf_dstart),IX
+	LD	A,B
+	LD	(_printf_dcnt),A
 	POP	BC
+	; Now handle width padding
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_printf_uns_nopad
+	LD	B,A
+	LD	A,(_printf_dcnt)
+	LD	C,A
+	LD	A,B
+	SUB	C		; A = padding needed
+	JR	Z,_printf_uns_nopad
+	JR	C,_printf_uns_nopad
+	; A = padding count
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_zero)
+	OR	A
+	LD	A,' '
+	JR	Z,_printf_uns_plp
+	LD	A,'0'
+_printf_uns_plp:
+	LD	E,A
+	PUSH	AF
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	AF
+	DJNZ	_printf_uns_plp
+	POP	BC
+_printf_uns_nopad:
+	; Output digits from buffer using HL as pointer
+	LD	HL,(_printf_dstart)
+	LD	A,(_printf_dcnt)
+	LD	B,A
+_printf_uns_digs:
+	LD	E,(HL)
+	PUSH	BC
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	BC
+	INC	HL
+	DJNZ	_printf_uns_digs
+	POP	IX		; Restore frame pointer
+	POP	BC		; Restore printf BC
 	INC	C
 	INC	C
 	POP	HL
@@ -2722,7 +2788,7 @@ _printf_str_done:
 	JP	_printf_loop
 
 _printf_dec:
-	; Output signed decimal
+	; Output signed decimal with width/zero-padding support
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -2736,17 +2802,14 @@ _printf_dec:
 	EX	DE,HL		; HL = value
 
 	; Check for negative
+	XOR	A
+	LD	(_printf_neg),A
 	BIT	7,H
 	JR	Z,_printf_dec_pos
 
-	; Negative - output minus sign and negate
-	PUSH	HL
-	LD	E,'-'
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	HL
-
-	; Negate HL (0 - HL)
+	; Negative - set flag and negate
+	LD	A,1
+	LD	(_printf_neg),A
 	PUSH	DE
 	EX	DE,HL
 	LD	HL,0
@@ -2755,8 +2818,116 @@ _printf_dec:
 	POP	DE
 
 _printf_dec_pos:
-	CALL	_prt_dec
+	; Convert HL to decimal digits in _printf_decbuf
+	; Write digits right-to-left into buffer
+	PUSH	IX		; Save frame pointer
+	PUSH	BC
+	LD	DE,10
+	LD	B,0		; digit count
+	LD	(_printf_dptr),IX	; Save IX
+	LD	IX,_printf_decbuf+5	; write pointer (end of buffer)
+_printf_dec_cvt:
+	CALL	_prt_div16	; HL = HL / 10, DE = remainder
+	LD	A,E
+	ADD	A,'0'
+	DEC	IX
+	LD	(IX+0),A
+	INC	B
+	LD	DE,10
+	LD	A,H
+	OR	L
+	JR	NZ,_printf_dec_cvt
+	; B = number of digits, IX = start of digits in buffer
+	; Save digit start pointer
+	LD	(_printf_dstart),IX
+	LD	A,B
+	LD	(_printf_dcnt),A
+	LD	IX,(_printf_dptr)	; Restore frame pointer
 	POP	BC
+
+	; Now handle width padding
+	LD	A,(_printf_neg)
+	LD	D,A		; D = neg flag (1 if negative)
+	; Total chars = digits + sign
+	LD	A,(_printf_dcnt)
+	ADD	A,D		; A = total output chars
+	LD	E,A		; E = total output chars
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_printf_dec_nopad
+	SUB	E		; A = padding needed
+	JR	Z,_printf_dec_nopad
+	JR	C,_printf_dec_nopad
+	; A = padding count
+	PUSH	BC
+	LD	B,A		; B = pad count
+	LD	A,(_printf_zero)
+	OR	A
+	JR	NZ,_printf_dec_zpad
+	; Space padding (before sign)
+_printf_dec_spad:
+	PUSH	BC
+	PUSH	DE
+	LD	E,' '
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	POP	BC
+	DJNZ	_printf_dec_spad
+	POP	BC
+	JR	_printf_dec_nopad
+_printf_dec_zpad:
+	; Zero padding: output sign first, then zeros
+	LD	A,D
+	OR	A
+	JR	Z,_printf_dec_zpd2
+	; Output minus sign before zeros
+	PUSH	BC
+	PUSH	DE
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	POP	BC
+	XOR	A
+	LD	D,A		; Clear neg flag (already output)
+_printf_dec_zpd2:
+	PUSH	BC
+	PUSH	DE
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	POP	BC
+	DJNZ	_printf_dec_zpd2
+	POP	BC
+_printf_dec_nopad:
+	; Output minus sign if negative and not already output
+	LD	A,D
+	OR	A
+	JR	Z,_printf_dec_digs
+	PUSH	BC
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+_printf_dec_digs:
+	; Output digits from buffer using HL as pointer
+	LD	HL,(_printf_dstart)
+	LD	A,(_printf_dcnt)
+	LD	B,A
+_printf_dec_dlp:
+	LD	E,(HL)
+	PUSH	BC
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	BC
+	INC	HL
+	DJNZ	_printf_dec_dlp
+	POP	IX		; Restore frame pointer
+	POP	BC		; Restore printf BC
 	INC	C
 	INC	C
 	POP	HL
@@ -2895,6 +3066,11 @@ _printf_nib_ok:
 	RET
 
 _printf_hexbuf:	DS	4
+_printf_decbuf:	DS	6	; Buffer for decimal digits (max 5 for 16-bit + 1)
+_printf_neg:	DB	0	; Negative flag for decimal
+_printf_dptr:	DS	2	; Saved IX frame pointer
+_printf_dstart:	DS	2	; Start of digits in buffer
+_printf_dcnt:	DB	0	; Number of digits
 _printf_width:	DB	0
 _printf_zero:	DB	0
 _printf_upper:	DB	0
