@@ -695,6 +695,10 @@ class ASTOptimizer:
             # (x + c1) + c2 → x + (c1 + c2)
             if op == "+" and inner_op == "+":
                 combined = (c1 + c2) & mask
+                # Sign-extend: if high bit set, convert to negative
+                sign_bit = (mask + 1) >> 1
+                if combined >= sign_bit and not (right.is_unsigned or left.right.is_unsigned):
+                    combined -= (mask + 1)
                 self._stat("nested_fold")
                 self._changed = True
                 return ast.BinaryOp(op="+", left=x, right=ast.IntLiteral(
@@ -704,6 +708,9 @@ class ASTOptimizer:
             # (x - c1) + c2 → x + (c2 - c1)
             if op == "+" and inner_op == "-":
                 combined = (c2 - c1) & mask
+                sign_bit = (mask + 1) >> 1
+                if combined >= sign_bit and not (right.is_unsigned or left.right.is_unsigned):
+                    combined -= (mask + 1)
                 self._stat("nested_fold")
                 self._changed = True
                 if combined == 0:
@@ -715,6 +722,9 @@ class ASTOptimizer:
             # (x + c1) - c2 → x + (c1 - c2)
             if op == "-" and inner_op == "+":
                 combined = (c1 - c2) & mask
+                sign_bit = (mask + 1) >> 1
+                if combined >= sign_bit and not (right.is_unsigned or left.right.is_unsigned):
+                    combined -= (mask + 1)
                 self._stat("nested_fold")
                 self._changed = True
                 if combined == 0:

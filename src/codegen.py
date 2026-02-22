@@ -2115,8 +2115,8 @@ class CodeGenerator:
             # Check if this is a function declaration (parsed as VarDecl with FunctionType)
             if isinstance(decl.var_type, ast.FunctionType):
                 # This is a function declaration without body - emit EXTRN
-                # (but not for static functions, which are defined locally)
-                if decl.storage_class != "static":
+                # (but not for static functions or functions defined in this file)
+                if decl.storage_class != "static" and decl.name not in self.ctx.function_names:
                     self.ctx.emit_instr("EXTRN", f"_{decl.name}")
             # Other global variables are handled in data segment
             pass
@@ -2250,8 +2250,8 @@ class CodeGenerator:
     def gen_function(self, func: ast.FunctionDecl) -> None:
         """Generate code for a function."""
         if func.body is None:
-            # Just a declaration, emit EXTRN (but not for static functions)
-            if func.storage_class != "static":
+            # Just a declaration, emit EXTRN (but not for static or locally-defined functions)
+            if func.storage_class != "static" and func.name not in self.ctx.function_names:
                 self.ctx.emit_instr("EXTRN", f"_{func.name}")
             return
 
@@ -2347,6 +2347,11 @@ class CodeGenerator:
             # Handle multiple declarations (e.g., 'int a, b;')
             for d in decl.declarations:
                 self.gen_local_decl(d)
+            return
+
+        if isinstance(decl, ast.StructDecl):
+            # Register local struct/union type declarations
+            self._register_struct(decl)
             return
 
         if isinstance(decl, ast.EnumDecl):
@@ -4047,6 +4052,22 @@ class CodeGenerator:
 
     def _gen_binary_op_16(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate 16-bit binary operation."""
+        # Pointer arithmetic: scale integer operand by sizeof(*ptr)
+        ptr_elem_size = 0
+        ptr_sub = False  # True if this is ptr - ptr (result needs division)
+        if op in ("+", "-"):
+            left_type = self._get_expr_type(expr.left)
+            right_type = self._get_expr_type(expr.right)
+            if isinstance(left_type, (ast.PointerType, ast.ArrayType)):
+                base = left_type.base_type
+                ptr_elem_size = self._type_size(base) if base else 1
+                if isinstance(right_type, (ast.PointerType, ast.ArrayType)):
+                    # ptr - ptr: result is element count
+                    ptr_sub = True
+            elif isinstance(right_type, (ast.PointerType, ast.ArrayType)):
+                base = right_type.base_type
+                ptr_elem_size = self._type_size(base) if base else 1
+
         # Generate left operand (result in HL)
         self.gen_expr(expr.left)
 
@@ -4055,6 +4076,24 @@ class CodeGenerator:
 
         # Generate right operand (result in HL)
         self.gen_expr(expr.right)
+
+        # Scale integer operand for pointer arithmetic (ptr + n -> ptr + n*size)
+        if ptr_elem_size > 1 and not ptr_sub:
+            right_type = self._get_expr_type(expr.right)
+            if not isinstance(right_type, (ast.PointerType, ast.ArrayType)):
+                # Right is the integer - scale it
+                self._gen_mul_const(ptr_elem_size)
+            # else: left is the integer, already on stack - need different approach
+            # Actually left was pushed, right is in HL. If left is int, we need to
+            # scale left instead. But we already pushed it. Let's handle this:
+            else:
+                # Left is the integer (on stack), right is the pointer (in HL)
+                # Pop left, scale it, push back
+                self.ctx.emit_instr("EX", "DE,HL")  # Save pointer in DE
+                self.ctx.emit_instr("POP", "HL")     # Get integer
+                self._gen_mul_const(ptr_elem_size)
+                self.ctx.emit_instr("PUSH", "HL")    # Push scaled integer
+                self.ctx.emit_instr("EX", "DE,HL")   # Restore pointer to HL
 
         # Restore left operand to DE
         self.ctx.emit_instr("POP", "DE")
@@ -4067,6 +4106,9 @@ class CodeGenerator:
             self.ctx.emit_instr("EX", "DE,HL")
             self.ctx.emit_instr("OR", "A")  # Clear carry
             self.ctx.emit_instr("SBC", "HL,DE")
+            # For ptr - ptr, divide result by element size
+            if ptr_sub and ptr_elem_size > 1:
+                self._gen_div_const(ptr_elem_size)
         elif op == "*":
             # Strength reduction: multiply by power-of-2 → repeated ADD HL,HL
             # At this point left is in DE, right is in HL.
@@ -5412,12 +5454,11 @@ class CodeGenerator:
         # Check if return value is 64-bit or 32-bit to preserve appropriately
         return_is_64bit = False
         return_is_32bit = False
-        if isinstance(expr.func, ast.Identifier):
-            return_type = self._get_expr_type(expr)
-            if self._is_long_long_type(return_type):
-                return_is_64bit = True
-            elif self._is_long_type(return_type) or self._is_float_type(return_type):
-                return_is_32bit = True
+        return_type = self._get_expr_type(expr)
+        if self._is_long_long_type(return_type):
+            return_is_64bit = True
+        elif self._is_long_type(return_type) or self._is_float_type(return_type):
+            return_is_32bit = True
 
         if stack_size > 0:
             if return_is_64bit:
@@ -5994,6 +6035,28 @@ class CodeGenerator:
                 elif sym:
                     # Function pointer or direct function symbol
                     return sym.sym_type
+            else:
+                # Function pointer call: (*p)(...) or similar
+                func_type = self._get_expr_type(expr.func)
+                if isinstance(func_type, ast.FunctionType):
+                    return func_type.return_type
+                elif isinstance(func_type, ast.PointerType) and isinstance(func_type.base_type, ast.FunctionType):
+                    return func_type.base_type.return_type
+        elif isinstance(expr, ast.TernaryOp):
+            # Result type is the common type of true/false branches
+            true_type = self._get_expr_type(expr.true_expr)
+            false_type = self._get_expr_type(expr.false_expr)
+            # Apply usual arithmetic conversions
+            if self._is_float_type(true_type) or self._is_float_type(false_type):
+                return ast.BasicType(name="double")
+            if self._is_long_type(true_type) or self._is_long_type(false_type):
+                return ast.BasicType(name="long")
+            # Pointer types
+            if isinstance(true_type, ast.PointerType):
+                return true_type
+            if isinstance(false_type, ast.PointerType):
+                return false_type
+            return true_type or false_type
         elif isinstance(expr, ast.GenericSelection):
             # Resolve the _Generic to get matched expression's type
             ctrl_type = self._get_expr_type(expr.controlling_expr)
@@ -6187,6 +6250,44 @@ class CodeGenerator:
             if v > 1 and (v & (v - 1)) == 0:
                 return v.bit_length() - 1
         return None
+
+    def _gen_mul_const(self, n: int) -> None:
+        """Multiply HL by constant n. Result in HL."""
+        if n == 1:
+            return
+        if n == 2:
+            self.ctx.emit_instr("ADD", "HL,HL")
+        elif n == 4:
+            self.ctx.emit_instr("ADD", "HL,HL")
+            self.ctx.emit_instr("ADD", "HL,HL")
+        elif n == 8:
+            self.ctx.emit_instr("ADD", "HL,HL")
+            self.ctx.emit_instr("ADD", "HL,HL")
+            self.ctx.emit_instr("ADD", "HL,HL")
+        elif n > 1 and (n & (n - 1)) == 0:
+            # Power of 2
+            shift = n.bit_length() - 1
+            for _ in range(shift):
+                self.ctx.emit_instr("ADD", "HL,HL")
+        else:
+            # General case: use DE * HL multiply
+            self.ctx.emit_instr("LD", f"DE,{n}")
+            self._call_runtime("__mul16")
+
+    def _gen_div_const(self, n: int) -> None:
+        """Divide HL by constant n (signed). Result in HL."""
+        if n == 1:
+            return
+        if n > 1 and (n & (n - 1)) == 0:
+            # Power of 2 - use arithmetic right shift
+            shift = n.bit_length() - 1
+            for _ in range(shift):
+                self.ctx.emit_instr("SRA", "H")
+                self.ctx.emit_instr("RR", "L")
+        else:
+            self.ctx.emit_instr("LD", f"DE,{n}")
+            self.ctx.emit_instr("EX", "DE,HL")
+            self._call_runtime("__sdiv16")
 
     def _is_unsigned_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has unsigned type."""
