@@ -4204,11 +4204,13 @@ class CodeGenerator:
         # Generate right operand first
         left_is_long = self._is_long_expr(expr.left)
         right_is_long = self._is_long_expr(expr.right)
+        right_is_long_long = self._is_long_long_expr(expr.right)
 
         # Generate right operand, extend to 32-bit if needed
         self.gen_expr(expr.right, force_long=True)
-        if not right_is_long:
+        if not right_is_long and not right_is_long_long:
             # Need to extend 16-bit to 32-bit
+            # (long long already produces 32-bit in DEHL via __load64)
             is_signed = not self._is_unsigned_expr(expr.right)
             self._extend_hl_to_dehl(is_signed)
 
@@ -4225,8 +4227,9 @@ class CodeGenerator:
             self.ctx.emit_instr("PUSH", "HL")
 
         # Generate left operand, extend to 32-bit if needed
+        left_is_long_long = self._is_long_long_expr(expr.left)
         self.gen_expr(expr.left, force_long=True)
-        if not left_is_long:
+        if not left_is_long and not left_is_long_long:
             is_signed = not self._is_unsigned_expr(expr.left)
             self._extend_hl_to_dehl(is_signed)
 
@@ -5687,6 +5690,9 @@ class CodeGenerator:
                 self._call_runtime("__sext64")
             else:
                 self._call_runtime("__zext64")
+            # Reload DEHL from __acc64 so low 32 bits are available to callers
+            self.ctx.emit_instr("LD", "HL,(__acc64)")
+            self.ctx.emit_instr("LD", "DE,(__acc64+2)")
         elif target_is_long and target_size < 4:
             # Need to extend to 32-bit DEHL after narrowing
             # Use the target type's signedness for extension
@@ -6376,6 +6382,9 @@ class CodeGenerator:
         if isinstance(expr, ast.BinaryOp):
             if expr.op in ("==", "!=", "<", ">", "<=", ">="):
                 return False
+            # For shift operations, result type is determined only by LEFT operand (C99 6.5.7)
+            if expr.op in ("<<", ">>"):
+                return self._is_long_long_expr(expr.left)
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
                 return self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right)
         if isinstance(expr, ast.Cast):
@@ -6419,6 +6428,9 @@ class CodeGenerator:
             # Comparison operators always return int (0 or 1), not long
             if expr.op in ("==", "!=", "<", ">", "<=", ">="):
                 return False
+            # For shift operations, result type is determined only by LEFT operand (C99 6.5.7)
+            if expr.op in ("<<", ">>"):
+                return self._is_long_expr(expr.left)
             # Binary operation is long if either operand is long
             # (excluding assignment operators which return target type)
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
