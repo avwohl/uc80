@@ -2049,10 +2049,15 @@ class CodeGenerator:
                 self.ctx.emit("\tDSEG")
                 in_dseg = True
             self.ctx.emit("; Static local variables")
-            for label, (var_type, init) in self.ctx.static_locals.items():
+            for label, entry in self.ctx.static_locals.items():
+                var_type, init = entry[0], entry[1]
+                resolved_addr = entry[2] if len(entry) > 2 else None
                 self.ctx.emit_label(label)
                 size = self._type_size(var_type)
-                if init:
+                if resolved_addr and isinstance(var_type, ast.PointerType):
+                    # Use pre-resolved address (from when local scope was active)
+                    self._emit_address_const(*resolved_addr)
+                elif init:
                     self._emit_initializer(init, var_type)
                 else:
                     self.ctx.emit_instr("DS", str(size))
@@ -2482,8 +2487,6 @@ class CodeGenerator:
         label = f"__{func_name}_S{self.ctx.static_counter}"
         self.ctx.static_counter += 1
 
-        # Store type and init value for data segment emission
-        self.ctx.static_locals[label] = (decl.var_type, decl.init)
         # Record mapping from variable name to label for late-binding initializers
         self.ctx.static_local_labels[decl.name] = label
 
@@ -2495,6 +2498,17 @@ class CodeGenerator:
             is_global=True,
             is_static=True  # Mark as static to avoid double underscore
         )
+
+        # Pre-resolve address constant inits while local scope is active,
+        # since ctx.locals will be cleared when processing subsequent functions.
+        resolved_addr = None
+        if decl.init:
+            addr = self._try_resolve_address_const(decl.init)
+            if addr[0] is not None:
+                resolved_addr = addr
+
+        # Store type, init value, and pre-resolved address for data segment emission
+        self.ctx.static_locals[label] = (decl.var_type, decl.init, resolved_addr)
 
     def _gen_local_string_array_init(self, sym: 'Symbol', array_type: ast.ArrayType,
                                       string_lit: ast.StringLiteral) -> None:
@@ -2574,13 +2588,12 @@ class CodeGenerator:
         struct_type = decl.var_type
         init_list = decl.init
 
-        # Get struct members
-        if not isinstance(struct_type, ast.StructType) or not struct_type.name:
+        # Get struct members (handles both named and anonymous structs)
+        if not isinstance(struct_type, ast.StructType):
             return
-        if struct_type.name not in self.ctx.structs:
+        members = self._get_struct_members(struct_type)
+        if not members:
             return
-
-        members = self.ctx.structs[struct_type.name]
 
         # Initialize struct with values from initializer list
         self._gen_struct_init_values(sym, struct_type, init_list.values, 0)
@@ -2685,10 +2698,9 @@ class CodeGenerator:
     def _gen_struct_init_values(self, sym: 'Symbol', struct_type: ast.StructType,
                                 values: list, base_offset: int) -> int:
         """Generate code to store struct initializer values. Returns number of values consumed."""
-        if not struct_type.name or struct_type.name not in self.ctx.structs:
+        members = self._get_struct_members(struct_type)
+        if not members:
             return 0
-
-        members = self.ctx.structs[struct_type.name]
 
         # Check for member designators - use non-sequential handling
         has_member_desig = any(
@@ -6809,16 +6821,18 @@ class CodeGenerator:
                         isinstance(base_type, ast.BasicType) and
                         base_type.name in ("char", "signed char", "unsigned char")
                     )
-                    # Check if this is a flat init for array of structs
-                    is_flat_struct_init = (
-                        isinstance(base_type, ast.StructType) and
+                    # Check if this is a flat/mixed init for array of aggregates
+                    # (structs or sub-arrays with some non-braced values)
+                    is_flat_aggregate_init = (
+                        isinstance(base_type, (ast.StructType, ast.ArrayType)) and
                         init.values and
-                        not isinstance(init.values[0], ast.InitializerList)
+                        any(not isinstance(v, (ast.InitializerList, ast.DesignatedInit))
+                            for v in init.values)
                     )
                     if is_braced_string:
                         self._emit_string_for_array(init.values[0], elem_type)
-                    elif is_flat_struct_init:
-                        # Flat init for array of structs - use flat handler
+                    elif is_flat_aggregate_init:
+                        # Flat/mixed init for array of structs or sub-arrays
                         consumed = self._emit_array_init_flat_inline(init.values, 0, elem_type)
                     else:
                         # Normal array init - each value is a complete element
@@ -6937,15 +6951,9 @@ class CodeGenerator:
             self.ctx.emit_instr("DW", label)
         elif isinstance(init, ast.UnaryOp) and init.op == "&":
             # Address-of expression
-            if isinstance(init.operand, ast.Identifier):
-                sym = self.ctx.lookup(init.operand.name)
-                if sym:
-                    label = sym.label()
-                elif init.operand.name in self.ctx.static_local_labels:
-                    label = self.ctx.static_local_labels[init.operand.name]
-                else:
-                    label = f"_{init.operand.name}"
-                self.ctx.emit_instr("DW", label)
+            label, offset = self._try_resolve_address_const(init)
+            if label is not None:
+                self._emit_address_const(label, offset)
             else:
                 self.ctx.emit_instr("DS", str(elem_size))
         elif isinstance(init, ast.Cast):
@@ -6962,7 +6970,7 @@ class CodeGenerator:
             # Compound literal: (type){initializer} - extract the initializer
             self._emit_initializer(init.init, init.target_type)
         elif isinstance(init, ast.BinaryOp):
-            # Binary expression - try to evaluate as constant
+            # Try to evaluate as pure constant first
             const_val = self._eval_const_expr(init)
             if const_val is not None:
                 if self._is_float_type(elem_type):
@@ -6970,7 +6978,12 @@ class CodeGenerator:
                 else:
                     self._emit_int_value(const_val, elem_size)
             else:
-                self.ctx.emit_instr("DS", str(elem_size))
+                # Try to resolve as address constant (e.g., &a+1, &st.x-&st)
+                label, offset = self._try_resolve_address_const(init)
+                if label is not None:
+                    self._emit_address_const(label, offset)
+                else:
+                    self.ctx.emit_instr("DS", str(elem_size))
         else:
             # Try to evaluate as a constant expression before giving up
             const_val = self._eval_const_expr(init)
@@ -6982,6 +6995,89 @@ class CodeGenerator:
             else:
                 # Complex initializer - reserve space
                 self.ctx.emit_instr("DS", str(elem_size))
+
+    def _try_resolve_address_const(self, expr) -> tuple:
+        """Try to resolve an expression as (label, offset) for static initialization.
+        Returns (label_str, offset_int) or (None, 0) if not resolvable.
+        Handles: &var, &var.member, &var+N, var (for arrays/functions).
+        """
+        if isinstance(expr, ast.UnaryOp) and expr.op == "&":
+            operand = expr.operand
+            if isinstance(operand, ast.Identifier):
+                sym = self.ctx.lookup(operand.name)
+                if sym:
+                    return (sym.label(), 0)
+                elif operand.name in self.ctx.static_local_labels:
+                    return (self.ctx.static_local_labels[operand.name], 0)
+                else:
+                    return (f"_{operand.name}", 0)
+            elif isinstance(operand, ast.Member) and not operand.is_arrow:
+                # &struct.member
+                if isinstance(operand.obj, ast.Identifier):
+                    sym = self.ctx.lookup(operand.obj.name)
+                    if sym and isinstance(sym.sym_type, ast.StructType):
+                        offset = self._resolve_member_offset(sym.sym_type, operand.member)
+                        if offset >= 0:
+                            return (sym.label(), offset)
+            elif isinstance(operand, ast.Index):
+                # &array[index] - try to resolve as base + index*elem_size
+                if isinstance(operand.array, ast.Identifier):
+                    sym = self.ctx.lookup(operand.array.name)
+                    if sym:
+                        idx_val = self._eval_const_expr(operand.index)
+                        if idx_val is not None:
+                            arr_type = sym.sym_type
+                            if isinstance(arr_type, ast.ArrayType):
+                                elem_size = self._type_size(arr_type.base_type)
+                                return (sym.label(), idx_val * elem_size)
+        elif isinstance(expr, ast.Identifier):
+            # For function pointers or array names
+            sym = self.ctx.lookup(expr.name)
+            if sym and isinstance(sym.sym_type, (ast.FunctionType, ast.ArrayType)):
+                return (sym.label(), 0)
+            elif expr.name in self.ctx.static_local_labels:
+                return (self.ctx.static_local_labels[expr.name], 0)
+        elif isinstance(expr, ast.BinaryOp) and expr.op in ('+', '-'):
+            # Address +/- constant offset
+            label, base_offset = self._try_resolve_address_const(expr.left)
+            if label is not None:
+                const_val = self._eval_const_expr(expr.right)
+                if const_val is not None:
+                    # Scale by pointed-to type size for pointer arithmetic
+                    left_type = self._get_expr_type(expr.left)
+                    if isinstance(left_type, ast.PointerType):
+                        scale = self._type_size(left_type.base_type)
+                    else:
+                        scale = 1
+                    if expr.op == '+':
+                        return (label, base_offset + const_val * scale)
+                    else:
+                        return (label, base_offset - const_val * scale)
+            # Try const + address (commutative for +)
+            if expr.op == '+':
+                const_val = self._eval_const_expr(expr.left)
+                if const_val is not None:
+                    label, base_offset = self._try_resolve_address_const(expr.right)
+                    if label is not None:
+                        right_type = self._get_expr_type(expr.right)
+                        if isinstance(right_type, ast.PointerType):
+                            scale = self._type_size(right_type.base_type)
+                        else:
+                            scale = 1
+                        return (label, base_offset + const_val * scale)
+        elif isinstance(expr, ast.Cast):
+            # Cast of address expression (e.g., (int *)&x)
+            return self._try_resolve_address_const(expr.expr)
+        return (None, 0)
+
+    def _emit_address_const(self, label: str, offset: int) -> None:
+        """Emit a DW directive for a label+offset address constant."""
+        if offset > 0:
+            self.ctx.emit_instr("DW", f"{label}+{offset}")
+        elif offset < 0:
+            self.ctx.emit_instr("DW", f"{label}-{-offset}")
+        else:
+            self.ctx.emit_instr("DW", label)
 
     def _emit_struct_init_flat(self, values: list, members: list) -> int:
         """Emit struct initialization with flat value list. Returns values consumed."""

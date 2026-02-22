@@ -52,26 +52,35 @@ def run_test(c_file: Path, ref_file: Path, verbose: bool = False) -> tuple[str, 
     com_file = mac_file.with_suffix(".com")
 
     # Compile
-    result = subprocess.run(
-        [sys.executable, "-m", "src.main", str(c_file), "-o", str(mac_file), "--no-whole-program"],
-        capture_output=True, text=True, cwd=UC80_DIR
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "src.main", str(c_file), "-o", str(mac_file), "--no-whole-program"],
+            capture_output=True, text=True, cwd=UC80_DIR, timeout=15
+        )
+    except subprocess.TimeoutExpired:
+        return "compile", "compilation timed out after 30s"
     if result.returncode != 0:
         return "compile", result.stderr.strip()[:200]
 
     # Assemble
-    result = subprocess.run(
-        ["um80", str(mac_file)],
-        capture_output=True, text=True
-    )
+    try:
+        result = subprocess.run(
+            ["um80", str(mac_file)],
+            capture_output=True, text=True, timeout=30
+        )
+    except subprocess.TimeoutExpired:
+        return "asm", "assembly timed out after 30s"
     if result.returncode != 0:
         return "asm", result.stderr.strip()[:200]
 
     # Link
-    result = subprocess.run(
-        ["ul80", str(CRT0), str(rel_file), str(LIBC), str(RUNTIME), "-o", str(com_file)],
-        capture_output=True, text=True
-    )
+    try:
+        result = subprocess.run(
+            ["ul80", str(CRT0), str(rel_file), str(LIBC), str(RUNTIME), "-o", str(com_file)],
+            capture_output=True, text=True, timeout=30
+        )
+    except subprocess.TimeoutExpired:
+        return "link", "link timed out after 30s"
     if result.returncode != 0:
         return "link", result.stderr.strip()[:200]
 
