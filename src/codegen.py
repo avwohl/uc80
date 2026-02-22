@@ -5254,9 +5254,10 @@ class CodeGenerator:
                     # Postfix: restore original value as result
                     self.ctx.emit_instr("POP", "HL")
 
-        elif isinstance(expr.operand, ast.Index) or \
+        elif isinstance(expr.operand, ast.Member) or \
+             isinstance(expr.operand, ast.Index) or \
              (isinstance(expr.operand, ast.UnaryOp) and expr.operand.op == "*"):
-            # Array index or pointer dereference: t[x]++ or (*p)++
+            # Struct member, array index, or pointer dereference: s.x++, t[x]++, (*p)++
             # Get element size and type for pointer increment
             elem_size = 1
             elem_type = None
