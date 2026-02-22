@@ -391,6 +391,11 @@ class CallGraphAnalyzer:
                 elem_size = 2 if is_wide else 1
                 return (len(init.value) + 1) * elem_size
             elif isinstance(init, ast.InitializerList):
+                # Braced string literal: char x[] = {"XXX"} -> size is string length + 1
+                if (len(init.values) == 1 and isinstance(init.values[0], ast.StringLiteral)
+                        and isinstance(t.base_type, ast.BasicType)
+                        and t.base_type.name in ("char", "signed char", "unsigned char")):
+                    return len(init.values[0].value) + 1
                 return self._var_size(t.base_type) * len(init.values)
         return self._var_size(t)
 
@@ -1811,8 +1816,19 @@ class CodeGenerator:
         if not isinstance(init, ast.InitializerList):
             return var_type
 
-        # Count elements in initializer
+        # C standard: char x[] = {"string"} is equivalent to char x[] = "string"
+        # A braced string literal initializer for a char array
         base_type = var_type.base_type
+        if (len(init.values) == 1 and isinstance(init.values[0], ast.StringLiteral)
+                and isinstance(base_type, ast.BasicType)
+                and base_type.name in ("char", "signed char", "unsigned char")):
+            array_size = len(init.values[0].value) + 1  # +1 for null terminator
+            return ast.ArrayType(
+                base_type=base_type,
+                size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
+            )
+
+        # Count elements in initializer
         if isinstance(base_type, ast.StructType):
             # Struct array with flat init - count struct elements
             flat_count = self._count_struct_init_values(base_type)
@@ -2380,6 +2396,13 @@ class CodeGenerator:
                 if isinstance(init_type, ast.ArrayType) and isinstance(init, ast.StringLiteral):
                     sym = self.ctx.locals[decl.name]
                     self._gen_local_string_array_init(sym, init_type, init)
+                # Handle braced string literal: char x[] = {"XXX"}
+                elif (isinstance(init_type, ast.ArrayType) and isinstance(init, ast.InitializerList)
+                      and len(init.values) == 1 and isinstance(init.values[0], ast.StringLiteral)
+                      and isinstance(init_type.base_type, ast.BasicType)
+                      and init_type.base_type.name in ("char", "signed char", "unsigned char")):
+                    sym = self.ctx.locals[decl.name]
+                    self._gen_local_string_array_init(sym, init_type, init.values[0])
                 # Handle array initialization specially
                 elif isinstance(init_type, ast.ArrayType) and isinstance(init, ast.InitializerList):
                     # Temporarily replace decl.init with unwrapped init
@@ -2449,6 +2472,10 @@ class CodeGenerator:
 
     def _gen_static_local(self, decl: ast.VarDecl) -> None:
         """Handle static local variable."""
+        # Infer array size from initializer for unsized arrays
+        if isinstance(decl.var_type, ast.ArrayType) and decl.var_type.size is None and decl.init:
+            decl.var_type = self._infer_array_size(decl.var_type, decl.init)
+
         # Generate unique label for this static variable
         # Use function name + counter to make globally unique, don't use @ prefix
         func_name = self.ctx.current_function or "global"
@@ -6001,13 +6028,25 @@ class CodeGenerator:
         elif isinstance(expr, ast.Call):
             # Function call returning struct: HL = address of __sret_buf
             self.gen_expr(expr)
+            # For small structs (≤2 bytes), value is returned in HL, not address
+            ret_type = self._get_expr_type(expr)
+            if isinstance(ret_type, ast.StructType) and self._type_size(ret_type) <= 2:
+                self.ctx.runtime_used.add("__sret_buf")
+                self.ctx.emit_instr("LD", "(__sret_buf),HL")
+                self.ctx.emit_instr("LD", "HL,__sret_buf")
 
         elif isinstance(expr, ast.Member):
             if expr.is_arrow:
                 self.gen_expr(expr.obj)  # p->member: p is the address
             elif isinstance(expr.obj, ast.Call):
-                # Call returning struct > 2 bytes: HL = address of __sret_buf
+                # Call returning struct: generate the call
                 self.gen_expr(expr.obj)
+                # For small structs (≤2 bytes), value is in HL not address
+                ret_type = self._get_expr_type(expr.obj)
+                if isinstance(ret_type, ast.StructType) and self._type_size(ret_type) <= 2:
+                    self.ctx.runtime_used.add("__sret_buf")
+                    self.ctx.emit_instr("LD", "(__sret_buf),HL")
+                    self.ctx.emit_instr("LD", "HL,__sret_buf")
             else:
                 self._gen_address(expr.obj)  # s.member: address of s
 
@@ -6430,6 +6469,13 @@ class CodeGenerator:
             if isinstance(expr.target_type, ast.PointerType):
                 return self._type_size(expr.target_type.base_type)
 
+        # General fallback: use _get_expr_type to determine the pointer/array type
+        expr_type = self._get_expr_type(expr)
+        if isinstance(expr_type, ast.PointerType):
+            return self._type_size(expr_type.base_type)
+        elif isinstance(expr_type, ast.ArrayType):
+            return self._type_size(expr_type.base_type)
+
         # Default to 16-bit (int)
         return 2
 
@@ -6724,13 +6770,22 @@ class CodeGenerator:
                     # Designated array init with [index] or [start...end] designators
                     self._emit_designated_array_init(init, elem_type)
                 else:
+                    # Check for braced string literal: char x[] = {"XXX"}
+                    is_braced_string = (
+                        len(init.values) == 1 and
+                        isinstance(init.values[0], ast.StringLiteral) and
+                        isinstance(base_type, ast.BasicType) and
+                        base_type.name in ("char", "signed char", "unsigned char")
+                    )
                     # Check if this is a flat init for array of structs
                     is_flat_struct_init = (
                         isinstance(base_type, ast.StructType) and
                         init.values and
                         not isinstance(init.values[0], ast.InitializerList)
                     )
-                    if is_flat_struct_init:
+                    if is_braced_string:
+                        self._emit_string_for_array(init.values[0], elem_type)
+                    elif is_flat_struct_init:
                         # Flat init for array of structs - use flat handler
                         consumed = self._emit_array_init_flat_inline(init.values, 0, elem_type)
                     else:
