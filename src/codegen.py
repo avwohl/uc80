@@ -5213,46 +5213,120 @@ class CodeGenerator:
         if isinstance(expr.operand, ast.Identifier):
             sym = self.ctx.lookup(expr.operand.name)
             if sym:
-                # Load current value
-                if sym.is_global:
-                    self.ctx.emit_instr("LD", f"HL,({sym.label()})")
-                else:
-                    self._load_local(sym)
+                is_float = self._is_float_type(sym.sym_type)
+                is_long = self._is_long_type(sym.sym_type)
 
-                if not expr.is_prefix:
-                    # Postfix: save original value
-                    self.ctx.emit_instr("PUSH", "HL")
-
-                # Determine step size (for pointer types, scale by pointee size)
-                step = 1
-                if isinstance(sym.sym_type, ast.PointerType):
-                    step = self._type_size(sym.sym_type.base_type)
-                    if step == 0:
-                        step = 1
-
-                # Increment or decrement
-                if step <= 4:
-                    for _ in range(step):
-                        if is_inc:
-                            self.ctx.emit_instr("INC", "HL")
-                        else:
-                            self.ctx.emit_instr("DEC", "HL")
-                else:
-                    if is_inc:
-                        self.ctx.emit_instr("LD", f"DE,{step}")
+                if is_float:
+                    # Float increment/decrement: use __fadd/__fsub with 1.0
+                    if sym.is_global:
+                        self.ctx.emit_instr("LD", f"HL,({sym.label()})")
+                        self.ctx.emit_instr("LD", f"DE,({sym.label()}+2)")
                     else:
-                        self.ctx.emit_instr("LD", f"DE,{(-step) & 0xFFFF}")
-                    self.ctx.emit_instr("ADD", "HL,DE")
+                        self._load_local_32(sym)
+                    if not expr.is_prefix:
+                        self.ctx.emit_instr("PUSH", "DE")
+                        self.ctx.emit_instr("PUSH", "HL")
+                    # Load 1.0 (0x3F800000) into __tmp32
+                    self.ctx.runtime_used.add("__tmp32")
+                    self.ctx.emit_instr("LD", "HL,0")
+                    self.ctx.emit_instr("LD", "(__tmp32),HL")
+                    self.ctx.emit_instr("LD", "HL,16256")  # 0x3F80
+                    self.ctx.emit_instr("LD", "(__tmp32+2),HL")
+                    # Reload value into DEHL
+                    if sym.is_global:
+                        self.ctx.emit_instr("LD", f"HL,({sym.label()})")
+                        self.ctx.emit_instr("LD", f"DE,({sym.label()}+2)")
+                    else:
+                        self._load_local_32(sym)
+                    self._call_runtime("__fadd" if is_inc else "__fsub")
+                    # Store result
+                    if sym.is_global:
+                        self.ctx.emit_instr("LD", f"({sym.label()}),HL")
+                        self.ctx.emit_instr("LD", f"({sym.label()}+2),DE")
+                    else:
+                        self._store_local_32(sym)
+                    if not expr.is_prefix:
+                        self.ctx.emit_instr("POP", "HL")
+                        self.ctx.emit_instr("POP", "DE")
 
-                # Store back
-                if sym.is_global:
-                    self.ctx.emit_instr("LD", f"({sym.label()}),HL")
+                elif is_long:
+                    # Long (32-bit) increment/decrement
+                    if sym.is_global:
+                        self.ctx.emit_instr("LD", f"HL,({sym.label()})")
+                        self.ctx.emit_instr("LD", f"DE,({sym.label()}+2)")
+                    else:
+                        self._load_local_32(sym)
+                    if not expr.is_prefix:
+                        self.ctx.emit_instr("PUSH", "DE")
+                        self.ctx.emit_instr("PUSH", "HL")
+                    # Determine step
+                    step = 1
+                    if isinstance(sym.sym_type, ast.PointerType):
+                        step = self._type_size(sym.sym_type.base_type)
+                        if step == 0:
+                            step = 1
+                    # Add/subtract step using __tmp32
+                    self.ctx.runtime_used.add("__tmp32")
+                    self.ctx.emit_instr("LD", f"(__tmp32),HL")
+                    self.ctx.emit_instr("LD", f"(__tmp32+2),DE")
+                    if is_inc:
+                        self.ctx.emit_instr("LD", f"HL,{step}")
+                    else:
+                        self.ctx.emit_instr("LD", f"HL,{(-step) & 0xFFFF}")
+                    self.ctx.emit_instr("LD", "DE,0" if is_inc else "DE,65535")
+                    self._call_runtime("__add32")
+                    # Store result
+                    if sym.is_global:
+                        self.ctx.emit_instr("LD", f"({sym.label()}),HL")
+                        self.ctx.emit_instr("LD", f"({sym.label()}+2),DE")
+                    else:
+                        self._store_local_32(sym)
+                    if not expr.is_prefix:
+                        self.ctx.emit_instr("POP", "HL")
+                        self.ctx.emit_instr("POP", "DE")
+
                 else:
-                    self._store_local(sym)
+                    # 16-bit increment/decrement (original code path)
+                    # Load current value
+                    if sym.is_global:
+                        self.ctx.emit_instr("LD", f"HL,({sym.label()})")
+                    else:
+                        self._load_local(sym)
 
-                if not expr.is_prefix:
-                    # Postfix: restore original value as result
-                    self.ctx.emit_instr("POP", "HL")
+                    if not expr.is_prefix:
+                        # Postfix: save original value
+                        self.ctx.emit_instr("PUSH", "HL")
+
+                    # Determine step size (for pointer types, scale by pointee size)
+                    step = 1
+                    if isinstance(sym.sym_type, ast.PointerType):
+                        step = self._type_size(sym.sym_type.base_type)
+                        if step == 0:
+                            step = 1
+
+                    # Increment or decrement
+                    if step <= 4:
+                        for _ in range(step):
+                            if is_inc:
+                                self.ctx.emit_instr("INC", "HL")
+                            else:
+                                self.ctx.emit_instr("DEC", "HL")
+                    else:
+                        if is_inc:
+                            self.ctx.emit_instr("LD", f"DE,{step}")
+                        else:
+                            self.ctx.emit_instr("LD", f"DE,{(-step) & 0xFFFF}")
+                        self.ctx.emit_instr("ADD", "HL,DE")
+
+                    # Store back
+                    if sym.is_global:
+                        self.ctx.emit_instr("LD", f"({sym.label()}),HL")
+                    else:
+                        self._store_local(sym)
+
+                    if not expr.is_prefix:
+                        # Postfix: restore original value as result
+                        self.ctx.emit_instr("POP", "HL")
 
         elif isinstance(expr.operand, ast.Member) or \
              isinstance(expr.operand, ast.Index) or \
