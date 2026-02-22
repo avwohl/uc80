@@ -1407,6 +1407,10 @@ class CallGraphAnalyzer:
             # For sizeof(expr), we need to infer the expression type
             # This is a simplified version - handles common cases
             return None
+        elif isinstance(expr, ast.Identifier):
+            # Check if this is an enum constant
+            if expr.name in self.ctx.enum_constants:
+                return self.ctx.enum_constants[expr.name]
         return None
 
     def _find_constant_params(self, unit: ast.TranslationUnit) -> dict[str, dict[int, int]]:
@@ -2361,6 +2365,22 @@ class CodeGenerator:
                 self._gen_static_local(decl)
                 return
 
+            # Handle extern declarations inside functions - reference the global symbol
+            # rather than allocating local storage (e.g., extern int v1; inside main())
+            if decl.storage_class == "extern":
+                if decl.name not in self.ctx.globals:
+                    # Not yet seen as a global - register it as an external global
+                    self.ctx.globals[decl.name] = Symbol(
+                        name=decl.name,
+                        sym_type=decl.var_type,
+                        is_global=True
+                    )
+                    # Track for EXTRN emission
+                    if not hasattr(self.ctx, '_local_externs'):
+                        self.ctx._local_externs = set()
+                    self.ctx._local_externs.add(decl.name)
+                return
+
             # Infer array size from initializer for unsized arrays (e.g., char s[] = "hello")
             if isinstance(decl.var_type, ast.ArrayType) and decl.var_type.size is None and decl.init:
                 decl.var_type = self._infer_array_size(decl.var_type, decl.init)
@@ -2552,11 +2572,17 @@ class CodeGenerator:
             if isinstance(val, ast.DesignatedInit):
                 val = val.value
 
+            offset = i * elem_size
+
+            # Handle aggregate element types (struct/array) with InitializerList
+            if isinstance(elem_type, (ast.StructType, ast.ArrayType)) and isinstance(val, ast.InitializerList):
+                self._gen_store_member_value(sym, elem_type, offset, val)
+                continue
+
             # Generate the value in HL (or DEHL for 32-bit)
             self.gen_expr(val, force_long=is_long)
 
             # Store at array[i]
-            offset = i * elem_size
             if sym.uses_shared_storage:
                 # Store to shared storage: ??AUTO+base+offset
                 base = sym.shared_offset + offset
@@ -4762,6 +4788,11 @@ class CodeGenerator:
                         if target_size == 1:
                             self.ctx.emit_instr("LD", "A,L")
                             self.ctx.emit_instr("LD", f"({sym.label()}),A")
+                            # Restore HL from A - the peephole optimizer may merge
+                            # LD HL,N / LD A,L into LD A,N, destroying HL.
+                            # Chained assignments need the result in HL.
+                            self.ctx.emit_instr("LD", "L,A")
+                            self.ctx.emit_instr("LD", "H,0")
                         else:
                             self.ctx.emit_instr("LD", f"({sym.label()}),HL")
                     else:
@@ -4770,8 +4801,11 @@ class CodeGenerator:
             # Pointer dereference assignment: *p = value
             target_size = self._type_size(target_type) if target_type else 2
             if target_is_32bit:
-                self.ctx.emit_instr("PUSH", "DE")  # Save high word
-                self.ctx.emit_instr("PUSH", "HL")  # Save low word
+                # Save value twice: one for storing, one to restore result
+                self.ctx.emit_instr("PUSH", "DE")  # Result high word
+                self.ctx.emit_instr("PUSH", "HL")  # Result low word
+                self.ctx.emit_instr("PUSH", "DE")  # Store high word
+                self.ctx.emit_instr("PUSH", "HL")  # Store low word
                 self.gen_expr(expr.left.operand)   # Get address in HL
                 self.ctx.emit_instr("EX", "DE,HL") # Address in DE
                 self.ctx.emit_instr("POP", "HL")   # Low word in HL
@@ -4784,6 +4818,9 @@ class CodeGenerator:
                 self.ctx.emit_instr("LD", "(HL),E")
                 self.ctx.emit_instr("INC", "HL")
                 self.ctx.emit_instr("LD", "(HL),D")
+                # Restore DEHL for chained assignments
+                self.ctx.emit_instr("POP", "HL")   # Result low word
+                self.ctx.emit_instr("POP", "DE")   # Result high word
             elif target_size == 1:
                 self.ctx.emit_instr("PUSH", "HL")  # Save value
                 self.gen_expr(expr.left.operand)   # Get address in HL
@@ -4801,8 +4838,11 @@ class CodeGenerator:
         elif isinstance(expr.left, ast.Index):
             # Array element assignment
             if target_is_32bit:
-                self.ctx.emit_instr("PUSH", "DE")  # Save high word
-                self.ctx.emit_instr("PUSH", "HL")  # Save low word
+                # Save value twice: one for storing, one to restore result
+                self.ctx.emit_instr("PUSH", "DE")  # Result high word
+                self.ctx.emit_instr("PUSH", "HL")  # Result low word
+                self.ctx.emit_instr("PUSH", "DE")  # Store high word
+                self.ctx.emit_instr("PUSH", "HL")  # Store low word
                 self._gen_address(expr.left)       # Get address in HL
                 self.ctx.emit_instr("EX", "DE,HL") # Address in DE
                 self.ctx.emit_instr("POP", "HL")   # Low word in HL
@@ -4815,6 +4855,9 @@ class CodeGenerator:
                 self.ctx.emit_instr("LD", "(HL),E")
                 self.ctx.emit_instr("INC", "HL")
                 self.ctx.emit_instr("LD", "(HL),D")
+                # Restore DEHL for chained assignments
+                self.ctx.emit_instr("POP", "HL")   # Result low word
+                self.ctx.emit_instr("POP", "DE")   # Result high word
             elif target_type and self._type_size(target_type) == 1:
                 self.ctx.emit_instr("PUSH", "HL")  # Save value
                 self._gen_address(expr.left)       # Get address in HL
@@ -4836,9 +4879,11 @@ class CodeGenerator:
             member_is_32bit = self._is_long_type(member_type) or self._is_float_type(member_type)
 
             if member_is_32bit:
-                # 32-bit member: save DEHL, get address, restore and store 4 bytes
-                self.ctx.emit_instr("PUSH", "DE")  # Save high word
-                self.ctx.emit_instr("PUSH", "HL")  # Save low word
+                # 32-bit member: save DEHL twice, store, restore result
+                self.ctx.emit_instr("PUSH", "DE")  # Result high word
+                self.ctx.emit_instr("PUSH", "HL")  # Result low word
+                self.ctx.emit_instr("PUSH", "DE")  # Store high word
+                self.ctx.emit_instr("PUSH", "HL")  # Store low word
                 self._gen_address(expr.left)       # Get member address in HL
                 self.ctx.emit_instr("EX", "DE,HL") # Address in DE
                 self.ctx.emit_instr("POP", "HL")   # Low word in HL
@@ -4851,7 +4896,9 @@ class CodeGenerator:
                 self.ctx.emit_instr("LD", "(HL),E")
                 self.ctx.emit_instr("INC", "HL")
                 self.ctx.emit_instr("LD", "(HL),D")
-                # Leave DEHL with the stored value for chained assignment
+                # Restore DEHL for chained assignments
+                self.ctx.emit_instr("POP", "HL")   # Result low word
+                self.ctx.emit_instr("POP", "DE")   # Result high word
             else:
                 self.ctx.emit_instr("PUSH", "HL")  # Save value
                 self._gen_address(expr.left)       # Get member address in HL
@@ -6390,6 +6437,9 @@ class CodeGenerator:
             if sym.uses_shared_storage:
                 self.ctx.emit_instr("LD", "A,L")
                 self.ctx.emit_instr("LD", f"(??AUTO+{sym.shared_offset}),A")
+                # Restore HL from A for peephole safety (chained assignments)
+                self.ctx.emit_instr("LD", "L,A")
+                self.ctx.emit_instr("LD", "H,0")
             else:
                 self.ctx.emit_instr("LD", f"({ix_off(sym.offset)}),L")
         elif sym.uses_shared_storage:
@@ -6940,15 +6990,23 @@ class CodeGenerator:
                 # Complex expression - reserve space (runtime init would be needed)
                 self.ctx.emit_instr("DS", str(elem_size))
         elif isinstance(init, ast.Identifier):
-            # Address of a symbol - emit as label reference
-            sym = self.ctx.lookup(init.name)
-            if sym:
-                label = sym.label()
-            elif init.name in self.ctx.static_local_labels:
-                label = self.ctx.static_local_labels[init.name]
+            # Check for enum constant first
+            if init.name in self.ctx.enum_constants:
+                val = self.ctx.enum_constants[init.name]
+                if self._is_float_type(elem_type):
+                    self._emit_float_value(float(val))
+                else:
+                    self._emit_int_value(val, elem_size)
             else:
-                label = f"_{init.name}"
-            self.ctx.emit_instr("DW", label)
+                # Address of a symbol - emit as label reference
+                sym = self.ctx.lookup(init.name)
+                if sym:
+                    label = sym.label()
+                elif init.name in self.ctx.static_local_labels:
+                    label = self.ctx.static_local_labels[init.name]
+                else:
+                    label = f"_{init.name}"
+                self.ctx.emit_instr("DW", label)
         elif isinstance(init, ast.UnaryOp) and init.op == "&":
             # Address-of expression
             label, offset = self._try_resolve_address_const(init)
