@@ -3386,10 +3386,23 @@ class CodeGenerator:
                 # Caller retrieves from __acc64
             else:
                 return_is_long = self._is_long_type(ret_type)
+                return_is_float = self._is_float_type(ret_type)
+                expr_is_float = self._is_float_expr(stmt.value)
                 # Generate expression, forcing long if return type is long
-                self.gen_expr(stmt.value, force_long=return_is_long)
+                self.gen_expr(stmt.value, force_long=return_is_long or return_is_float)
+                # Convert float expression to int/long return type
+                if expr_is_float and not return_is_float:
+                    if return_is_long:
+                        self._call_runtime("__ftol")
+                    else:
+                        self._call_runtime("__ftoi")
+                # Convert int expression to float return type
+                elif return_is_float and not expr_is_float:
+                    if not self._is_long_expr(stmt.value):
+                        self._extend_hl_to_dehl(self._is_signed_type(self._get_expr_type(stmt.value)))
+                    self._call_runtime("__itof")
                 # Extend to 32-bit if return type is long but expression is not
-                if return_is_long and not self._is_long_expr(stmt.value):
+                elif return_is_long and not self._is_long_expr(stmt.value) and not expr_is_float:
                     is_signed = self._is_signed_type(self._get_expr_type(stmt.value))
                     self._extend_hl_to_dehl(is_signed)
         # Jump to function epilogue
@@ -6681,8 +6694,30 @@ class CodeGenerator:
             if isinstance(elem_type, ast.StructType) and not isinstance(val, ast.InitializerList):
                 members = self._get_struct_members(elem_type)
                 if members:
-                    nested_consumed = self._emit_struct_init_flat(values[idx:], members)
-                    consumed += nested_consumed
+                    if elem_type.is_union:
+                        # Union: only initialize the first member, pad the rest
+                        first_member = members[0]
+                        first_size = self._type_size(first_member[1])
+                        if isinstance(first_member[1], ast.StructType):
+                            sub_members = self._get_struct_members(first_member[1])
+                            if sub_members:
+                                nested_consumed = self._emit_struct_init_flat(values[idx:], sub_members)
+                                consumed += nested_consumed
+                            else:
+                                consumed += 1
+                                self._emit_initializer(val, first_member[1])
+                        elif isinstance(first_member[1], ast.ArrayType):
+                            nested_consumed = self._emit_array_init_flat_inline(values, idx, first_member[1])
+                            consumed += nested_consumed
+                        else:
+                            consumed += 1
+                            self._emit_initializer(val, first_member[1])
+                        union_size = self._type_size(elem_type)
+                        if union_size > first_size:
+                            self.ctx.emit_instr("DS", str(union_size - first_size))
+                    else:
+                        nested_consumed = self._emit_struct_init_flat(values[idx:], members)
+                        consumed += nested_consumed
                 else:
                     consumed += 1
                     self._emit_initializer(val, elem_type)
