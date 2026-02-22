@@ -2566,6 +2566,19 @@ class CodeGenerator:
         elem_type = decl.var_type.base_type
         elem_size = self._type_size(elem_type)
         is_long = self._is_long_type(elem_type)
+        is_float = self._is_float_type(elem_type)
+        is_32bit = is_long or is_float
+
+        # Detect flat/mixed init for arrays of aggregates (sub-arrays or structs)
+        # e.g., float y[4][3] = { 1, 3, 5, 2, 4, 6, 3, 5, 7 }
+        if isinstance(elem_type, (ast.StructType, ast.ArrayType)) and init_list.values:
+            has_flat = any(not isinstance(v, (ast.InitializerList, ast.DesignatedInit))
+                          for v in init_list.values)
+            if has_flat:
+                # Use _gen_store_member_value to handle flat/mixed init
+                # by delegating to the struct/array flat init path
+                self._gen_store_member_value(sym, decl.var_type, 0, init_list)
+                return
 
         for i, val in enumerate(init_list.values):
             # Handle DesignatedInit if present
@@ -2579,14 +2592,18 @@ class CodeGenerator:
                 self._gen_store_member_value(sym, elem_type, offset, val)
                 continue
 
+            # Convert int literal to float if target is float
+            if is_float and isinstance(val, ast.IntLiteral):
+                val = ast.FloatLiteral(value=float(val.value))
+
             # Generate the value in HL (or DEHL for 32-bit)
-            self.gen_expr(val, force_long=is_long)
+            self.gen_expr(val, force_long=is_32bit)
 
             # Store at array[i]
             if sym.uses_shared_storage:
                 # Store to shared storage: ??AUTO+base+offset
                 base = sym.shared_offset + offset
-                if is_long:
+                if is_32bit:
                     self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
                     self.ctx.emit_instr("LD", f"(??AUTO+{base + 2}),DE")
                 elif elem_size == 1:
@@ -2597,7 +2614,7 @@ class CodeGenerator:
             else:
                 # Stack-based: store at IX+base_offset+offset
                 frame_off = sym.offset + offset
-                if is_long:
+                if is_32bit:
                     self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
                     self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
                     self.ctx.emit_instr("LD", f"({ix_off(frame_off + 2)}),E")
@@ -3052,6 +3069,8 @@ class CodeGenerator:
         elem_type = array_type.base_type
         elem_size = self._type_size(elem_type)
         is_long = self._is_long_type(elem_type)
+        is_float = self._is_float_type(elem_type)
+        is_32bit = is_long or is_float
 
         # Get array size
         array_size = 1
@@ -3095,15 +3114,23 @@ class CodeGenerator:
             else:
                 # Scalar element or nested InitializerList
                 consumed += 1
-                self.gen_expr(val, force_long=is_long)
-                if is_long and not self._is_long_expr(val):
+                # Convert int literal to float if target is float
+                if is_float and isinstance(val, ast.IntLiteral):
+                    val = ast.FloatLiteral(value=float(val.value))
+                self.gen_expr(val, force_long=is_32bit)
+                if is_long and not is_float and not self._is_long_expr(val) and not self._is_float_expr(val):
                     is_signed = not self._is_unsigned_expr(val)
                     self._extend_hl_to_dehl(is_signed)
+                if is_float and not self._is_float_expr(val):
+                    if not self._is_long_expr(val):
+                        is_signed = not self._is_unsigned_expr(val)
+                        self._extend_hl_to_dehl(is_signed)
+                    self._call_runtime("__itof")
 
                 # Store
                 if sym.uses_shared_storage:
                     base = sym.shared_offset + offset
-                    if is_long:
+                    if is_32bit:
                         self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
                         self.ctx.emit_instr("LD", f"(??AUTO+{base + 2}),DE")
                     elif elem_size == 1:
@@ -3113,7 +3140,7 @@ class CodeGenerator:
                         self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
                 else:
                     frame_off = sym.offset + offset
-                    if is_long:
+                    if is_32bit:
                         self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
                         self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
                         self.ctx.emit_instr("LD", f"({ix_off(frame_off + 2)}),E")
@@ -3269,6 +3296,8 @@ class CodeGenerator:
         elem_type = array_type.base_type
         elem_size = self._type_size(elem_type)
         is_long = self._is_long_type(elem_type)
+        is_float = self._is_float_type(elem_type)
+        is_32bit = is_long or is_float
 
         # Check for designated initializers with index/range designators
         has_index_designators = any(
@@ -3291,6 +3320,14 @@ class CodeGenerator:
             self._gen_designated_array_init_local(sym, array_type, values, base_offset)
             return
 
+        # Detect flat init: scalar values for aggregate element types
+        if isinstance(elem_type, (ast.StructType, ast.ArrayType)) and values:
+            has_flat = any(not isinstance(v, (ast.InitializerList, ast.DesignatedInit))
+                          for v in values)
+            if has_flat:
+                self._gen_flat_array_init(sym, array_type, values, 0, base_offset)
+                return
+
         for i, val in enumerate(values):
             if isinstance(val, ast.DesignatedInit):
                 val = val.value
@@ -3312,16 +3349,26 @@ class CodeGenerator:
                     self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                     continue
 
+            # Convert int literal to float if target is float
+            if is_float and isinstance(val, ast.IntLiteral):
+                val = ast.FloatLiteral(value=float(val.value))
+
             # Generate value
-            self.gen_expr(val, force_long=is_long)
-            if is_long and not self._is_long_expr(val):
+            self.gen_expr(val, force_long=is_32bit)
+            if is_long and not is_float and not self._is_long_expr(val) and not self._is_float_expr(val):
                 is_signed = not self._is_unsigned_expr(val)
                 self._extend_hl_to_dehl(is_signed)
+            # Convert int to float if needed
+            if is_float and not self._is_float_expr(val):
+                if not self._is_long_expr(val):
+                    is_signed = not self._is_unsigned_expr(val)
+                    self._extend_hl_to_dehl(is_signed)
+                self._call_runtime("__itof")
 
             # Store
             if sym.uses_shared_storage:
                 base = sym.shared_offset + offset
-                if is_long:
+                if is_32bit:
                     self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
                     self.ctx.emit_instr("LD", f"(??AUTO+{base + 2}),DE")
                 elif elem_size == 1:
@@ -3331,7 +3378,7 @@ class CodeGenerator:
                     self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
             else:
                 frame_off = sym.offset + offset
-                if is_long:
+                if is_32bit:
                     self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
                     self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
                     self.ctx.emit_instr("LD", f"({ix_off(frame_off + 2)}),E")
