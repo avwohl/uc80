@@ -4844,6 +4844,17 @@ class CodeGenerator:
         # Generate the value (force_long if target is 32-bit, or source is float)
         self.gen_expr(expr.right, force_long=(target_is_32bit or source_is_float))
 
+        # If the right side was a 64-bit assignment (chain assignment like
+        # a = b = long_long_var = 2), __store64 leaves DEHL as garbage (the
+        # address it stored to). Extract low 32 bits from __acc64 into DEHL.
+        source_is_64bit_assign = (isinstance(expr.right, ast.BinaryOp) and
+                                  expr.right.op == "=" and
+                                  self._is_long_long_expr(expr.right))
+        if source_is_64bit_assign:
+            self.ctx.runtime_used.add("__acc64")
+            self.ctx.emit_instr("LD", "HL,(__acc64)")
+            self.ctx.emit_instr("LD", "DE,(__acc64+2)")
+
         # If source is float but target is integer, convert float to int
         if source_is_float and not target_is_float:
             # DEHL has IEEE float, convert to signed 32-bit int in DEHL
@@ -4852,13 +4863,14 @@ class CodeGenerator:
             # If target is 32-bit, DEHL has the full value
         # If target is 32-bit integer but source is not, extend
         # (Don't extend for float targets - floats are already 32-bit in DEHL)
-        elif target_is_32bit and not target_is_float and not self._is_long_expr(expr.right) and not source_is_float:
+        # (Don't extend for 64-bit sources - already extracted from __acc64)
+        elif target_is_32bit and not target_is_float and not self._is_long_expr(expr.right) and not source_is_64bit_assign and not source_is_float:
             is_signed = not self._is_unsigned_expr(expr.right)
             self._extend_hl_to_dehl(is_signed)
         # If target is float but source is integer, convert to float
         elif target_is_float and not source_is_float:
             # First extend integer to 32-bit if needed
-            if not self._is_long_expr(expr.right):
+            if not self._is_long_expr(expr.right) and not source_is_64bit_assign:
                 is_signed = not self._is_unsigned_expr(expr.right)
                 self._extend_hl_to_dehl(is_signed)
             # Then convert to float

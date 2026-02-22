@@ -107,7 +107,7 @@ def run_test(c_file: Path, ref_file: Path, verbose: bool = False) -> tuple[str, 
         if line.startswith("Program exit"):
             continue
         actual_lines.append(line)
-    actual = '\n'.join(actual_lines).strip()
+    actual = '\n'.join(actual_lines).strip().replace('\r', '')
 
     # Parse expected - strip "exit N" suffix (may or may not be on its own line)
     expected_text = ref_file.read_text(errors='replace').strip()
@@ -115,7 +115,7 @@ def run_test(c_file: Path, ref_file: Path, verbose: bool = False) -> tuple[str, 
     # Remove trailing "exit N" whether it's on its own line or appended
     expected_text = re.sub(r'exit \d+\s*$', '', expected_text)
     expected_lines = [l for l in expected_text.split('\n') if not re.match(r'^exit \d+$', l.strip())]
-    expected = '\n'.join(expected_lines).strip()
+    expected = '\n'.join(expected_lines).strip().replace('\r', '')
 
     if actual == expected:
         return "pass", ""
