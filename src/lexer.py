@@ -210,9 +210,13 @@ class Lexer:
         # Check for fractional part (only for decimal)
         # Accept "1." (no digits after dot) as a valid float literal,
         # but not "1.member" (dot followed by identifier start)
+        # Special case: "5.f" and "5.F" are float literals (suffix), not member access
         if base == 10 and self._peek() == '.':
             next_after_dot = self._peek(1)
-            if self._is_digit(next_after_dot) or not self._is_identifier_start(next_after_dot):
+            # Check for float suffix: 5.f, 5.F, 5.l, 5.L (not followed by identifier part)
+            is_float_suffix = (next_after_dot.lower() in ('f', 'l') and
+                               not self._is_identifier_part(self._peek(2)))
+            if self._is_digit(next_after_dot) or not self._is_identifier_start(next_after_dot) or is_float_suffix:
                 is_float = True
                 result.append(self._advance())  # .
                 while self._is_digit(self._peek()) or self._peek() == "'":
