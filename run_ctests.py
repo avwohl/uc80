@@ -34,8 +34,8 @@ PATCH_DIR = UC80_DIR / "tests" / "c-testsuite-patches"
 Z80_DIR = UC80_DIR / "tests" / "c-testsuite-z80"
 
 CRT0 = LIB_DIR / "crt0.rel"
-LIBC = LIB_DIR / "libc.rel"
-RUNTIME = LIB_DIR / "runtime.rel"
+LIBC = LIB_DIR / "libc.lib"
+RUNTIME = LIB_DIR / "runtime.lib"
 CPMEMU = Path("../cpmemu/src/cpmemu")
 
 # Tests that need longer timeouts (in seconds)

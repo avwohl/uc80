@@ -1,0 +1,458 @@
+; lc_sprintf.mac - sprintf
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+
+	EXTRN	_printf
+
+	CSEG
+
+; ============================================================
+; int sprintf(char *str, const char *fmt, ...)
+; Format string into buffer
+; Supports %d, %s, %c, %x, %%
+; Returns: number of characters written (excluding null)
+; ============================================================
+	PUBLIC	_sprintf
+	PUBLIC	_sprintf_out
+	PUBLIC	_sprintf_cnt
+	PUBLIC	_sprintf_putc
+	PUBLIC	_sprintf_prt_dec
+	PUBLIC	_sprintf_prt_hex
+	PUBLIC	_sprintf_div16
+_sprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; str is at IX+4, fmt at IX+6, first vararg at IX+8
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = output buffer pointer
+	LD	(_sprintf_out),DE
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format string pointer
+	LD	C,8		; C = offset to next argument
+
+	; Character counter
+	LD	DE,0
+	LD	(_sprintf_cnt),DE
+
+_sprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+
+	CP	'%'
+	JR	Z,_sprintf_format
+
+	; Regular character - output it
+	CALL	_sprintf_putc
+	INC	HL
+	JR	_sprintf_loop
+
+_sprintf_format:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+
+	CP	'%'
+	JR	Z,_sprintf_pct
+
+	; Initialize width and zero-flag
+	PUSH	AF		; Save current char
+	XOR	A
+	LD	(_sprintf_width),A
+	LD	(_sprintf_zero),A
+	POP	AF		; Restore current char
+
+_sprintf_fmt2:
+	; Check for zero-padding flag (only at start)
+	CP	'0'
+	JR	NZ,_sprintf_chk_dig
+	; Check if we haven't started parsing width yet
+	LD	A,(_sprintf_width)
+	OR	A
+	JR	NZ,_sprintf_is_digit	; Already have width, this is a digit
+	; This is the zero-padding flag
+	LD	A,1
+	LD	(_sprintf_zero),A
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+	JR	_sprintf_fmt2
+
+_sprintf_chk_dig:
+	; Check for digit (1-9 first, then 0-9)
+	CP	'1'
+	JR	C,_sprintf_nodig
+	CP	'9'+1
+	JR	NC,_sprintf_nodig
+_sprintf_is_digit:
+	; Parse width digit: width = width * 10 + digit
+	SUB	'0'
+	PUSH	BC
+	LD	B,A		; B = new digit
+	LD	A,(_sprintf_width)
+	; A = A * 10
+	LD	C,A
+	ADD	A,A		; A * 2
+	ADD	A,A		; A * 4
+	ADD	A,C		; A * 5
+	ADD	A,A		; A * 10
+	ADD	A,B		; A * 10 + digit
+	LD	(_sprintf_width),A
+	POP	BC
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+	; Continue parsing - might be another digit
+	CP	'0'
+	JR	C,_sprintf_nodig
+	CP	'9'+1
+	JR	C,_sprintf_is_digit
+
+_sprintf_nodig:
+	; Skip flags: -, +, space, #
+	CP	'-'
+	JR	Z,_sprintf_fskip
+	CP	'+'
+	JR	Z,_sprintf_fskip
+	CP	' '
+	JR	Z,_sprintf_fskip
+	CP	'#'
+	JR	Z,_sprintf_fskip
+	; Skip precision
+	CP	'.'
+	JR	Z,_sprintf_fskip
+	; Skip length modifiers: h, l, z
+	CP	'h'
+	JR	Z,_sprintf_fskip
+	CP	'l'
+	JR	Z,_sprintf_fskip
+	CP	'z'
+	JR	Z,_sprintf_fskip
+	; Now check format specifiers
+	CP	's'
+	JR	Z,_sprintf_str
+
+	CP	'd'
+	JR	Z,_sprintf_dec
+
+	CP	'i'
+	JR	Z,_sprintf_dec
+
+	CP	'c'
+	JR	Z,_sprintf_chr
+
+	CP	'x'
+	JR	Z,_sprintf_hex
+
+	CP	'X'
+	JR	Z,_sprintf_hex
+
+	CP	'u'
+	JR	Z,_sprintf_uns
+
+	CP	'p'
+	JR	Z,_sprintf_hex	; %p is same as %x
+
+	; Unknown format - skip
+	INC	HL
+	JP	_sprintf_loop
+
+_sprintf_fskip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+	JR	_sprintf_fmt2
+
+_sprintf_pct:
+	; Output literal %
+	LD	A,'%'
+	CALL	_sprintf_putc
+	INC	HL
+	JP	_sprintf_loop
+
+_sprintf_chr:
+	; Output character
+	PUSH	HL
+	; Get argument
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE		; HL = IX + offset
+	LD	A,(HL)		; Get character
+	CALL	_sprintf_putc
+	POP	BC
+	INC	C
+	INC	C		; Advance to next arg
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
+_sprintf_str:
+	; Output string
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE		; HL = IX + offset
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = string pointer
+
+_sprintf_str_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_sprintf_str_done
+	CALL	_sprintf_putc
+	INC	DE
+	JR	_sprintf_str_loop
+
+_sprintf_str_done:
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
+_sprintf_dec:
+	; Output signed decimal
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = value
+	EX	DE,HL		; HL = value
+
+	; Check for negative
+	BIT	7,H
+	JR	Z,_sprintf_dec_pos
+
+	; Negative - output minus and negate
+	LD	A,'-'
+	CALL	_sprintf_putc
+	PUSH	DE
+	EX	DE,HL
+	LD	HL,0
+	OR	A
+	SBC	HL,DE
+	POP	DE
+
+_sprintf_dec_pos:
+	CALL	_sprintf_prt_dec
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
+_sprintf_uns:
+	; Output unsigned decimal
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value
+	CALL	_sprintf_prt_dec
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
+_sprintf_hex:
+	; Output hex
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	CALL	_sprintf_prt_hex
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
+_sprintf_done:
+	; Null terminate
+	LD	HL,(_sprintf_out)
+	LD	(HL),0
+
+	; Return count
+	LD	HL,(_sprintf_cnt)
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; Internal: put character to buffer
+_sprintf_putc:
+	PUSH	HL
+	LD	HL,(_sprintf_out)
+	LD	(HL),A
+	INC	HL
+	LD	(_sprintf_out),HL
+	LD	HL,(_sprintf_cnt)
+	INC	HL
+	LD	(_sprintf_cnt),HL
+	POP	HL
+	RET
+
+; Internal: print HL as decimal to buffer with optional width padding
+_sprintf_prt_dec:
+	PUSH	BC
+	PUSH	DE
+
+	; Convert to decimal digits on stack
+	LD	DE,10
+	LD	B,0		; Digit counter
+
+_sprintf_dec_loop:
+	CALL	_sprintf_div16
+	PUSH	DE		; Push digit
+	INC	B
+	LD	A,H
+	OR	L
+	JR	NZ,_sprintf_dec_loop
+
+	; B = digit count, check if we need padding
+	LD	A,(_sprintf_width)
+	OR	A
+	JR	Z,_sprintf_dec_out	; No width specified
+
+	; Calculate padding needed: width - digit_count
+	SUB	B		; A = width - digit_count
+	JR	Z,_sprintf_dec_out	; No padding needed
+	JR	C,_sprintf_dec_out	; Digit count > width, no padding
+
+	; A = number of padding chars needed
+	PUSH	BC		; Save digit count
+	LD	B,A		; B = padding count
+	LD	A,(_sprintf_zero)
+	OR	A
+	LD	A,' '		; Default pad with space
+	JR	Z,_sprintf_pad_lp
+	LD	A,'0'		; Pad with zero
+
+_sprintf_pad_lp:
+	CALL	_sprintf_putc
+	DJNZ	_sprintf_pad_lp
+	POP	BC		; Restore digit count
+
+	; Pop and output digits
+_sprintf_dec_out:
+	POP	DE
+	LD	A,E
+	ADD	A,'0'
+	CALL	_sprintf_putc
+	DJNZ	_sprintf_dec_out
+
+	POP	DE
+	POP	BC
+	RET
+
+; Simple division: HL = HL / 10, DE = HL % 10
+_sprintf_div16:
+	PUSH	BC
+	LD	BC,0		; Result
+
+_sprintf_div_lp:
+	LD	A,H
+	OR	A
+	JR	NZ,_sprintf_div_sub
+	LD	A,L
+	CP	10
+	JR	C,_sprintf_div_dn
+
+_sprintf_div_sub:
+	LD	A,L
+	SUB	10
+	LD	L,A
+	LD	A,H
+	SBC	A,0
+	LD	H,A
+	INC	BC
+	JR	_sprintf_div_lp
+
+_sprintf_div_dn:
+	LD	E,L
+	LD	D,0
+	LD	H,B
+	LD	L,C
+	POP	BC
+	RET
+
+; Internal: print HL as 4-digit hex to buffer
+_sprintf_prt_hex:
+	PUSH	BC
+	LD	A,H
+	CALL	_sprintf_hex2
+	LD	A,L
+	CALL	_sprintf_hex2
+	POP	BC
+	RET
+
+_sprintf_hex2:
+	PUSH	AF
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	CALL	_sprintf_hex1
+	POP	AF
+_sprintf_hex1:
+	AND	0FH
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_sprintf_hex_out
+	ADD	A,7
+_sprintf_hex_out:
+	JP	_sprintf_putc
+
+
+	DSEG
+; sprintf working storage
+_sprintf_out:	DS	2	; Current output pointer
+_sprintf_cnt:	DS	2	; Character count
+_sprintf_width:	DS	1	; Field width (0 = no width)
+_sprintf_zero:	DS	1	; Zero-padding flag
+
+	END

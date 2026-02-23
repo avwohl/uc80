@@ -1,0 +1,758 @@
+; lc_scanf.mac - scanf family
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+
+	EXTRN	_fgetc
+	EXTRN	_ungetc
+
+	CSEG
+
+; ============================================================
+; scanf family - formatted input
+; int scanf(const char *fmt, ...)
+; int sscanf(const char *str, const char *fmt, ...)
+; int fscanf(FILE *stream, const char *fmt, ...)
+; ============================================================
+
+	PUBLIC	_scanf
+_scanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; fmt at IX+4, args start at IX+6
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = format string
+	LD	C,6		; C = offset to next argument
+	XOR	A
+	LD	(_scanf_count),A ; matched count
+	LD	(_scanf_mode),A  ; mode=0: stdin
+
+_scanf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_scanf_done
+
+	CP	'%'
+	JP	Z,_scanf_format
+
+	CP	' '
+	JP	Z,_scanf_white
+	CP	9		; tab
+	JP	Z,_scanf_white
+	CP	10		; newline
+	JP	Z,_scanf_white
+	CP	13		; CR
+	JP	Z,_scanf_white
+
+	; Literal match required
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_getc
+	POP	BC
+	POP	HL
+	CP	(HL)
+	JP	NZ,_scanf_done	; Mismatch
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_white:
+	; Skip whitespace in format and input
+	INC	HL
+	PUSH	HL
+	PUSH	BC
+_scanf_skip_ws:
+	CALL	_scanf_getc
+	CP	' '
+	JR	Z,_scanf_skip_ws
+	CP	9
+	JR	Z,_scanf_skip_ws
+	CP	10
+	JR	Z,_scanf_skip_ws
+	CP	13
+	JR	Z,_scanf_skip_ws
+	; Unget non-whitespace char
+	CALL	_scanf_ungetc
+	POP	BC
+	POP	HL
+	JP	_scanf_loop
+
+_scanf_format:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_scanf_done
+
+	CP	'%'
+	JP	Z,_scanf_pct
+
+	CP	'd'
+	JP	Z,_scanf_int
+	CP	'i'
+	JP	Z,_scanf_int
+
+	CP	's'
+	JP	Z,_scanf_str
+
+	CP	'c'
+	JP	Z,_scanf_chr
+
+	CP	'u'
+	JP	Z,_scanf_uint
+
+	CP	'x'
+	JP	Z,_scanf_hex
+
+	CP	'l'
+	JP	Z,_scanf_long
+
+	CP	'*'
+	JP	Z,_scanf_star
+
+	; Unknown - skip
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_pct:
+	; Match literal %
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_getc
+	POP	BC
+	POP	HL
+	CP	'%'
+	JP	NZ,_scanf_done
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_star:
+	; Suppressed assignment - read but don't store
+	INC	HL
+	LD	A,(HL)
+	CP	'd'
+	JP	Z,_scanf_star_int
+	CP	's'
+	JP	Z,_scanf_star_str
+	; Default: skip one int
+_scanf_star_int:
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_int
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+_scanf_star_str:
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+_scanf_star_str_loop:
+	CALL	_scanf_getc
+	CP	' '
+	JR	Z,_scanf_star_str_done
+	CP	9
+	JR	Z,_scanf_star_str_done
+	CP	10
+	JR	Z,_scanf_star_str_done
+	CP	13
+	JR	Z,_scanf_star_str_done
+	OR	A
+	JR	NZ,_scanf_star_str_loop
+_scanf_star_str_done:
+	CALL	_scanf_ungetc
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_int:
+	; Read signed integer
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_int	; Result in HL
+	PUSH	HL
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = destination pointer
+	POP	HL		; HL = value
+	EX	DE,HL		; HL = dest, DE = value
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	; Increment count
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_uint:
+	; Read unsigned integer (same as int for now)
+	JP	_scanf_int
+
+_scanf_hex:
+	; Read hex integer
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_hex	; Result in HL
+	PUSH	HL
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	POP	HL
+	EX	DE,HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_str:
+	; Read string (non-whitespace)
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = destination pointer
+	EX	DE,HL		; HL = dest
+_scanf_str_loop:
+	PUSH	HL
+	CALL	_scanf_getc
+	POP	HL
+	CP	' '
+	JR	Z,_scanf_str_end
+	CP	9
+	JR	Z,_scanf_str_end
+	CP	10
+	JR	Z,_scanf_str_end
+	CP	13
+	JR	Z,_scanf_str_end
+	CP	0FFH
+	JR	Z,_scanf_str_end
+	OR	A
+	JR	Z,_scanf_str_end
+	LD	(HL),A
+	INC	HL
+	JR	_scanf_str_loop
+_scanf_str_end:
+	LD	(HL),0		; Null terminate
+	CALL	_scanf_ungetc
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_chr:
+	; Read single character
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_getc
+	PUSH	AF
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	POP	AF
+	LD	(HL),A
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_long:
+	; Handle 'l' modifier
+	INC	HL
+	LD	A,(HL)
+	CP	'd'
+	JP	Z,_scanf_ld
+	CP	'x'
+	JP	Z,_scanf_lx
+	; Unknown - skip
+	JP	_scanf_loop
+
+_scanf_ld:
+	; Read long signed integer
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_long	; Result in DEHL
+	PUSH	DE
+	PUSH	HL
+	; Get destination pointer
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = dest
+	POP	DE		; DE = low word
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	POP	DE		; DE = high word
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_lx:
+	; Read long hex
+	PUSH	HL
+	PUSH	BC
+	CALL	_scanf_skip_ws
+	CALL	_scanf_read_long_hex
+	PUSH	DE
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	POP	DE
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	POP	DE
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	A,(_scanf_count)
+	INC	A
+	LD	(_scanf_count),A
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_scanf_loop
+
+_scanf_done:
+	LD	A,(_scanf_count)
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+; Internal: get a character based on mode
+_scanf_getc:
+	LD	A,(_scanf_mode)
+	OR	A
+	JR	NZ,_scanf_getc_str
+	; Mode 0: stdin
+	LD	C,1		; CONIN
+	CALL	5
+	RET
+_scanf_getc_str:
+	CP	1
+	JR	NZ,_scanf_getc_file
+	; Mode 1: string
+	LD	HL,(_scanf_src)
+	LD	A,(HL)
+	OR	A
+	JR	Z,_scanf_getc_eof
+	INC	HL
+	LD	(_scanf_src),HL
+	RET
+_scanf_getc_file:
+	; Mode 2: file
+	LD	HL,(_scanf_fp)
+	PUSH	HL
+	CALL	_fgetc
+	POP	BC
+	RET
+_scanf_getc_eof:
+	LD	A,0FFH
+	RET
+
+; Internal: unget character
+_scanf_ungetc:
+	LD	(_scanf_ungot),A
+	RET
+
+; Internal: read signed integer into HL
+_scanf_read_int:
+	LD	HL,0
+	LD	D,0		; D = sign (0=positive, 1=negative)
+	; Check for sign
+	CALL	_scanf_getc
+	CP	'-'
+	JR	NZ,_scanf_ri_notneg
+	LD	D,1
+	JR	_scanf_ri_loop
+_scanf_ri_notneg:
+	CP	'+'
+	JR	Z,_scanf_ri_loop
+	; Not a sign - first digit
+	JR	_scanf_ri_digit
+
+_scanf_ri_loop:
+	CALL	_scanf_getc
+_scanf_ri_digit:
+	CP	'0'
+	JR	C,_scanf_ri_done
+	CP	'9'+1
+	JR	NC,_scanf_ri_done
+	; Digit - accumulate
+	SUB	'0'
+	PUSH	DE
+	LD	E,A
+	; HL = HL * 10 + digit
+	ADD	HL,HL		; *2
+	LD	B,H
+	LD	C,L
+	ADD	HL,HL		; *4
+	ADD	HL,HL		; *8
+	ADD	HL,BC		; *10
+	LD	D,0
+	ADD	HL,DE
+	POP	DE
+	JR	_scanf_ri_loop
+
+_scanf_ri_done:
+	; Unget the non-digit
+	CALL	_scanf_ungetc
+	; Apply sign
+	LD	A,D
+	OR	A
+	RET	Z
+	; Negate HL
+	XOR	A
+	LD	D,A
+	LD	E,A
+	EX	DE,HL
+	SBC	HL,DE
+	RET
+
+; Internal: read hex integer into HL
+_scanf_read_hex:
+	LD	HL,0
+	; Skip optional 0x prefix
+	CALL	_scanf_getc
+	CP	'0'
+	JR	NZ,_scanf_rh_digit
+	CALL	_scanf_getc
+	CP	'x'
+	JR	Z,_scanf_rh_loop
+	CP	'X'
+	JR	Z,_scanf_rh_loop
+	; Not 0x - process as digit
+	CALL	_scanf_ungetc
+	LD	A,'0'
+	JR	_scanf_rh_digit
+
+_scanf_rh_loop:
+	CALL	_scanf_getc
+_scanf_rh_digit:
+	CP	'0'
+	JR	C,_scanf_rh_done
+	CP	'9'+1
+	JR	C,_scanf_rh_09
+	CP	'A'
+	JR	C,_scanf_rh_done
+	CP	'F'+1
+	JR	C,_scanf_rh_AF
+	CP	'a'
+	JR	C,_scanf_rh_done
+	CP	'f'+1
+	JR	NC,_scanf_rh_done
+	; a-f
+	SUB	'a'-10
+	JR	_scanf_rh_acc
+_scanf_rh_AF:
+	SUB	'A'-10
+	JR	_scanf_rh_acc
+_scanf_rh_09:
+	SUB	'0'
+_scanf_rh_acc:
+	; HL = HL * 16 + digit
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	OR	L
+	LD	L,A
+	JR	_scanf_rh_loop
+_scanf_rh_done:
+	CALL	_scanf_ungetc
+	RET
+
+; Internal: read long integer into DEHL
+_scanf_read_long:
+	LD	HL,0
+	LD	DE,0
+	LD	B,0		; sign
+	CALL	_scanf_getc
+	CP	'-'
+	JR	NZ,_scanf_rl_notneg
+	LD	B,1
+	JR	_scanf_rl_loop
+_scanf_rl_notneg:
+	CP	'+'
+	JR	Z,_scanf_rl_loop
+	JR	_scanf_rl_digit
+
+_scanf_rl_loop:
+	CALL	_scanf_getc
+_scanf_rl_digit:
+	CP	'0'
+	JP	C,_scanf_rl_done
+	CP	'9'+1
+	JP	NC,_scanf_rl_done
+	SUB	'0'
+	PUSH	BC
+	LD	C,A
+	; DEHL = DEHL * 10 + digit
+	; First *10 = *8 + *2
+	PUSH	DE
+	PUSH	HL		; Save original
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; *2
+	PUSH	DE
+	PUSH	HL		; Save *2
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; *4
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; *8
+	; Add *2
+	POP	BC		; BC = *2 low
+	ADD	HL,BC
+	EX	(SP),HL		; Stack *8+*2 low, get *2 high
+	EX	DE,HL
+	POP	BC		; BC = *8+*2 low
+	ADC	HL,DE		; HL = *10 high
+	EX	DE,HL		; DE = *10 high
+	LD	H,B
+	LD	L,C		; HL = *10 low
+	POP	BC		; Discard saved original high
+	POP	BC		; Discard saved original low
+	; Add digit
+	LD	B,0
+	ADD	HL,BC
+	JR	NC,_scanf_rl_noc
+	INC	DE
+_scanf_rl_noc:
+	POP	BC		; Restore sign
+	JP	_scanf_rl_loop
+
+_scanf_rl_done:
+	CALL	_scanf_ungetc
+	LD	A,B
+	OR	A
+	RET	Z
+	; Negate DEHL
+	PUSH	BC
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	A,E
+	CPL
+	LD	E,A
+	LD	A,D
+	CPL
+	LD	D,A
+	LD	BC,1
+	ADD	HL,BC
+	JR	NC,_scanf_rl_neg_done
+	INC	DE
+_scanf_rl_neg_done:
+	POP	BC
+	RET
+
+; Internal: read long hex into DEHL
+_scanf_read_long_hex:
+	LD	HL,0
+	LD	DE,0
+	; Skip optional 0x
+	CALL	_scanf_getc
+	CP	'0'
+	JR	NZ,_scanf_rlh_digit
+	CALL	_scanf_getc
+	CP	'x'
+	JR	Z,_scanf_rlh_loop
+	CP	'X'
+	JR	Z,_scanf_rlh_loop
+	CALL	_scanf_ungetc
+	LD	A,'0'
+	JR	_scanf_rlh_digit
+
+_scanf_rlh_loop:
+	CALL	_scanf_getc
+_scanf_rlh_digit:
+	CP	'0'
+	JR	C,_scanf_rlh_done
+	CP	'9'+1
+	JR	C,_scanf_rlh_09
+	CP	'A'
+	JR	C,_scanf_rlh_done
+	CP	'F'+1
+	JR	C,_scanf_rlh_AF
+	CP	'a'
+	JR	C,_scanf_rlh_done
+	CP	'f'+1
+	JR	NC,_scanf_rlh_done
+	SUB	'a'-10
+	JR	_scanf_rlh_acc
+_scanf_rlh_AF:
+	SUB	'A'-10
+	JR	_scanf_rlh_acc
+_scanf_rlh_09:
+	SUB	'0'
+_scanf_rlh_acc:
+	; DEHL = DEHL * 16 + digit
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+	OR	L
+	LD	L,A
+	JR	_scanf_rlh_loop
+_scanf_rlh_done:
+	CALL	_scanf_ungetc
+	RET
+
+; ============================================================
+; sscanf - read from string
+; ============================================================
+	PUBLIC	_sscanf
+_sscanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; str at IX+4, fmt at IX+6, args at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_scanf_src),HL
+	LD	A,1
+	LD	(_scanf_mode),A
+	; Setup format and args offset
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format
+	LD	C,8		; args start at IX+8
+	XOR	A
+	LD	(_scanf_count),A
+	JP	_scanf_loop
+
+; ============================================================
+; fscanf - read from file
+; ============================================================
+	PUBLIC	_fscanf
+_fscanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; stream at IX+4, fmt at IX+6, args at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_scanf_fp),HL
+	LD	A,2
+	LD	(_scanf_mode),A
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	C,8
+	XOR	A
+	LD	(_scanf_count),A
+	JP	_scanf_loop
+
+	DSEG
+
+; scanf work areas
+_scanf_count:	DS	1	; Number of matched items
+_scanf_mode:	DS	1	; 0=stdin, 1=string, 2=file
+_scanf_src:	DS	2	; String source pointer
+_scanf_fp:	DS	2	; File pointer
+_scanf_ungot:	DS	1	; Ungetc'd character
+_scanf_buf:	DS	32	; Working buffer
+
+	END

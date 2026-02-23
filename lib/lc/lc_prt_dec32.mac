@@ -1,0 +1,108 @@
+; lc_prt_dec32.mac - print DEHL as 32-bit decimal
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	CSEG
+
+	PUBLIC	_prt_dec32
+_prt_dec32:
+	PUSH	BC
+	PUSH	IX
+
+	; Store value in work area
+	LD	(_prt32_val),HL
+	LD	(_prt32_val+2),DE
+
+	LD	B,0		; Digit counter
+
+_prt32_loop:
+	CALL	_div32_10
+	PUSH	AF		; Save digit (remainder)
+	INC	B
+
+	; Check if quotient is zero
+	LD	HL,(_prt32_val)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt32_loop
+	LD	HL,(_prt32_val+2)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt32_loop
+
+	; Pop and print digits
+_prt32_out:
+	POP	AF
+	ADD	A,'0'
+	LD	E,A
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt32_out
+
+	POP	IX
+	POP	BC
+	RET
+
+; Internal: divide _prt32_val by 10
+; Returns remainder in A, quotient stored back in _prt32_val
+	PUBLIC	_div32_10
+_div32_10:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+
+	LD	DE,0		; DE = running remainder
+	LD	B,32
+
+_div32_10_loop:
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+
+	LD	HL,(_prt32_val)
+	ADD	HL,HL
+	LD	(_prt32_val),HL
+	LD	HL,(_prt32_val+2)
+	ADC	HL,HL
+	LD	(_prt32_val+2),HL
+	JR	NC,_div32_10_nc1
+	INC	DE
+_div32_10_nc1:
+
+	LD	A,D
+	OR	A
+	JR	NZ,_div32_10_sub
+	LD	A,E
+	CP	10
+	JR	C,_div32_10_nosub
+
+_div32_10_sub:
+	LD	A,E
+	SUB	10
+	LD	E,A
+	LD	A,D
+	SBC	A,0
+	LD	D,A
+
+	LD	HL,(_prt32_val)
+	INC	HL
+	LD	(_prt32_val),HL
+
+_div32_10_nosub:
+	DJNZ	_div32_10_loop
+
+	LD	A,E
+
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+	DSEG
+_prt32_val:	DS	4
+
+	END

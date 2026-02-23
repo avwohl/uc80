@@ -1,0 +1,32 @@
+; lc_misc.mac - getenv, system
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *getenv(const char *name)
+; Get environment variable (stub - returns NULL on CP/M)
+; ============================================================
+	PUBLIC	_getenv
+_getenv:
+	LD	HL,0		; Always return NULL
+	RET
+
+; ============================================================
+; int system(const char *command)
+; Execute shell command (stub - returns -1 on CP/M)
+; ============================================================
+	PUBLIC	_system
+_system:
+	LD	HL,-1		; Return -1 (failure)
+	RET
+
+; ============================================================
+
+	END

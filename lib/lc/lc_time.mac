@@ -1,0 +1,56 @@
+; lc_time.mac - time functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; time_t time(time_t *tloc)
+; Return current time (stub - returns 0 on CP/M)
+; ============================================================
+	PUBLIC	_time
+_time:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; Return 0 in DEHL (32-bit)
+	LD	HL,0
+	LD	DE,0
+	; If tloc != NULL, store result
+	LD	A,(IX+4)
+	OR	(IX+5)
+	JR	Z,_time_ret
+	; Store 0 at *tloc
+	PUSH	HL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),0
+	INC	HL
+	LD	(HL),0
+	INC	HL
+	LD	(HL),0
+	INC	HL
+	LD	(HL),0
+	POP	HL
+_time_ret:
+	POP	IX
+	RET
+
+; ============================================================
+; clock_t clock(void)
+; Return CPU time used (stub - returns 0)
+; ============================================================
+	PUBLIC	_clock
+_clock:
+	LD	HL,0
+	LD	DE,0
+	RET
+
+; ============================================================
+
+	END

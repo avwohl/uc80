@@ -1,0 +1,86 @@
+; lc_printf_l.mac - printf 'l' length prefix handler
+; Dispatches to __printf_long_table, or 'll' to __printf_ll_table
+	.Z80
+
+	EXTRN	_printf_loop
+	EXTRN	__printf_long_table
+
+	CSEG
+
+	PUBLIC	__printf_handle_l
+__printf_handle_l:
+	; HL points past the 'l' in format string
+	; Read next char
+	LD	A,(HL)
+	INC	HL
+
+	CP	'l'
+	JR	Z,_phl_ll
+
+	; Search __printf_long_table for this char
+	PUSH	HL
+	PUSH	BC
+	LD	B,A		; B = format char
+	LD	HL,__printf_long_table
+_phl_search:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_phl_unknown
+	CP	B
+	JR	Z,_phl_found
+	INC	HL
+	INC	HL
+	INC	HL
+	JR	_phl_search
+
+_phl_found:
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = handler address
+	POP	BC
+	POP	HL
+	PUSH	DE
+	RET			; Tail-call handler
+
+_phl_unknown:
+	POP	BC
+	POP	HL
+	JP	_printf_loop
+
+_phl_ll:
+	; 'll' prefix - search __printf_ll_table
+	EXTRN	__printf_ll_table
+	LD	A,(HL)
+	INC	HL
+	PUSH	HL
+	PUSH	BC
+	LD	B,A
+	LD	HL,__printf_ll_table
+_phl_ll_search:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_phl_ll_unknown
+	CP	B
+	JR	Z,_phl_ll_found
+	INC	HL
+	INC	HL
+	INC	HL
+	JR	_phl_ll_search
+
+_phl_ll_found:
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	POP	BC
+	POP	HL
+	PUSH	DE
+	RET
+
+_phl_ll_unknown:
+	POP	BC
+	POP	HL
+	JP	_printf_loop
+
+	END

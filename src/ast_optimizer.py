@@ -1502,16 +1502,27 @@ class ASTOptimizer:
     def _literal_mask(lit: ast.IntLiteral) -> int:
         """Get bitmask for an IntLiteral based on its type width.
 
-        Matches codegen's _is_long_long_expr heuristic:
-        - is_long=False → 16-bit (int)
-        - is_long=True, value fits 32-bit signed → 32-bit (long)
-        - is_long=True, value exceeds 32-bit signed → 64-bit (long long)
+        Matches codegen's _is_long_long_expr / _is_long_expr heuristics:
+        - value fits signed 16-bit and no L suffix → 16-bit (int)
+        - value fits signed 32-bit (or is_long) → 32-bit (long)
+        - value exceeds signed 32-bit → 64-bit (long long)
         """
-        if not lit.is_long:
-            return 0xFFFF
-        if lit.value > 2147483647 or lit.value < -2147483648:
+        val = lit.value
+        # Check for long long first (value exceeds 32-bit signed range)
+        if hasattr(lit, 'is_long_long') and lit.is_long_long:
             return 0xFFFFFFFFFFFFFFFF
-        return 0xFFFFFFFF
+        if val > 2147483647 or val < -2147483648:
+            return 0xFFFFFFFFFFFFFFFF
+        # Check for long (explicit L suffix or value exceeds 16-bit signed range)
+        if lit.is_long:
+            return 0xFFFFFFFF
+        # For hex literals, values up to 65535 stay 16-bit
+        if lit.is_hex and 0 <= val <= 65535:
+            return 0xFFFF
+        # Values that exceed signed 16-bit range promote to 32-bit
+        if val > 32767 or val < -32768:
+            return 0xFFFFFFFF
+        return 0xFFFF
 
     def _fold_constants(self, op: str, a: int, b: int, unsigned: bool,
                         mask: int = 0xFFFF) -> int | None:

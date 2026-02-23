@@ -1,0 +1,875 @@
+; lc_thread.mac - threading support
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+; MP/M XDOS function numbers
+MPM_DISPATCH	EQU	142	; Dispatch (yield)
+MPM_DELAY	EQU	141	; Delay
+
+	EXTRN	_exit
+
+	CSEG
+
+; int __mpm_available(void)
+; Check if MP/M is available (BDOS function 12 returns 0x31 or higher for MP/M)
+	PUBLIC	___mpm_available
+___mpm_available:
+	PUSH	BC
+	LD	C,12		; Get CP/M version
+	CALL	5
+	; H = 0 for CP/M, non-zero for MP/M
+	LD	A,H
+	OR	A
+	JR	Z,_mpm_no
+	; Check if H has MP/M flag
+	LD	A,L
+	CP	31H		; MP/M 1.x
+	JR	NC,_mpm_yes
+_mpm_no:
+	LD	HL,0
+	POP	BC
+	RET
+_mpm_yes:
+	LD	HL,1
+	POP	BC
+	RET
+
+; void __threads_use_mpm(int enable)
+; Set thread mode
+	PUBLIC	___threads_use_mpm
+___threads_use_mpm:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	LD	(_thread_mode),A
+	POP	IX
+	RET
+
+; int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
+; Create a new thread - only works under MP/M
+; Under CP/M, returns thrd_error
+	PUBLIC	_thrd_create
+_thrd_create:
+	; Under plain CP/M, we can't create threads
+	; Return thrd_error (4)
+	LD	HL,4		; thrd_error
+	RET
+
+; int thrd_equal(thrd_t lhs, thrd_t rhs)
+; Compare two thread IDs
+	PUBLIC	_thrd_equal
+_thrd_equal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)	; lhs
+	CP	(IX+6)		; rhs
+	JR	Z,_thrd_eq_yes
+	LD	HL,0
+	POP	IX
+	RET
+_thrd_eq_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+; thrd_t thrd_current(void)
+; Get current thread ID
+	PUBLIC	_thrd_current
+_thrd_current:
+	LD	A,(_thread_current)
+	LD	L,A
+	LD	H,0
+	RET
+
+; int thrd_sleep(const struct timespec *duration, struct timespec *remaining)
+; Sleep for specified duration
+; Uses MPM_DELAY under MP/M, busy-wait under CP/M
+	PUBLIC	_thrd_sleep
+_thrd_sleep:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Get duration pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Load tv_sec (first 4 bytes)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	INC	HL
+	INC	HL		; Skip to tv_nsec (ignored for simplicity)
+
+	; Check thread mode
+	LD	A,(_thread_mode)
+	OR	A
+	JR	Z,_thrd_sleep_busy
+
+	; MP/M mode: use DELAY function
+	; Convert seconds to 1/60th second ticks
+	; DE = seconds, ticks = seconds * 60
+	PUSH	DE
+	POP	HL
+	ADD	HL,HL		; *2
+	LD	D,H
+	LD	E,L
+	ADD	HL,HL		; *4
+	ADD	HL,HL		; *8
+	ADD	HL,HL		; *16
+	ADD	HL,HL		; *32
+	ADD	HL,DE		; *32 + *2 = *34 (close to 60/2)
+	ADD	HL,HL		; *68... this is approximate
+	; Simpler: multiply by 64 (shift left 6 times)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D		; DE = seconds * 64 (approx 60)
+
+	LD	C,MPM_DELAY	; XDOS Delay
+	CALL	5
+
+	LD	HL,0		; Return 0 (success)
+	JR	_thrd_sleep_ret
+
+_thrd_sleep_busy:
+	; CP/M mode: busy wait (very crude)
+	; Just loop for a while
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	; DE = seconds, loop DE * 10000 times
+_thrd_sleep_outer:
+	LD	A,D
+	OR	E
+	JR	Z,_thrd_sleep_done
+	LD	BC,10000
+_thrd_sleep_inner:
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,_thrd_sleep_inner
+	DEC	DE
+	JR	_thrd_sleep_outer
+
+_thrd_sleep_done:
+	LD	HL,0
+
+_thrd_sleep_ret:
+	; Set remaining to 0 if pointer provided
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	A,H
+	OR	L
+	JR	Z,_thrd_sleep_noremain
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+_thrd_sleep_noremain:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; void thrd_yield(void)
+; Yield execution to other threads
+	PUBLIC	_thrd_yield
+_thrd_yield:
+	LD	A,(_thread_mode)
+	OR	A
+	RET	Z		; No-op under CP/M
+
+	; MP/M: dispatch (yield CPU)
+	PUSH	BC
+	LD	C,MPM_DISPATCH
+	CALL	5
+	POP	BC
+	RET
+
+; void thrd_exit(int res)
+; Exit current thread (exits program under CP/M)
+	PUBLIC	_thrd_exit
+_thrd_exit:
+	; Under CP/M, just exit the program
+	JP	_exit
+
+; int thrd_detach(thrd_t thr)
+; Detach a thread - returns thrd_error under CP/M
+	PUBLIC	_thrd_detach
+_thrd_detach:
+	LD	HL,4		; thrd_error
+	RET
+
+; int thrd_join(thrd_t thr, int *res)
+; Wait for thread to finish - returns thrd_error under CP/M
+	PUBLIC	_thrd_join
+_thrd_join:
+	LD	HL,4		; thrd_error
+	RET
+
+; ============================================================
+; Mutex functions - use DI/EI for synchronization
+; ============================================================
+
+; int mtx_init(mtx_t *mtx, int type)
+; Initialize a mutex
+	PUBLIC	_mtx_init
+_mtx_init:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+	; Clear the mutex structure
+	XOR	A
+	LD	(HL),A		; locked = 0
+	INC	HL
+	LD	A,(IX+6)	; type
+	LD	(HL),A
+	INC	HL
+	XOR	A
+	LD	(HL),A		; owner = 0
+	INC	HL
+	LD	(HL),A		; count = 0
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+; int mtx_lock(mtx_t *mtx)
+; Lock a mutex
+	PUBLIC	_mtx_lock
+_mtx_lock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+_mtx_lock_retry:
+	DI			; Disable interrupts
+	LD	A,(HL)		; locked flag
+	OR	A
+	JR	Z,_mtx_lock_acq
+
+	; Already locked - check if recursive
+	INC	HL
+	LD	A,(HL)		; type
+	DEC	HL
+	AND	1		; mtx_recursive
+	JR	Z,_mtx_lock_wait
+
+	; Check if we own it
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	CP	(HL)		; owner
+	POP	HL
+	JR	NZ,_mtx_lock_wait
+
+	; We own it, increment count
+	PUSH	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	(HL)		; count++
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+	JR	_mtx_lock_ret
+
+_mtx_lock_wait:
+	EI			; Re-enable interrupts
+	; Yield and retry
+	PUSH	HL
+	CALL	_thrd_yield
+	POP	HL
+	JR	_mtx_lock_retry
+
+_mtx_lock_acq:
+	; Acquire the lock
+	LD	(HL),1		; locked = 1
+	; Set owner
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	LD	(HL),A		; owner
+	INC	HL
+	LD	(HL),1		; count = 1
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+
+_mtx_lock_ret:
+	POP	BC
+	POP	IX
+	RET
+
+; int mtx_trylock(mtx_t *mtx)
+; Try to lock mutex without blocking
+	PUBLIC	_mtx_trylock
+_mtx_trylock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_mtx_try_busy
+
+	; Lock it
+	LD	(HL),1
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	LD	(HL),A
+	INC	HL
+	LD	(HL),1
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_mtx_try_busy:
+	; Check if recursive and we own it
+	INC	HL
+	LD	A,(HL)		; type
+	AND	1
+	JR	Z,_mtx_try_fail
+	INC	HL
+	LD	A,(_thread_current)
+	CP	(HL)
+	JR	NZ,_mtx_try_fail
+	; We own it
+	INC	HL
+	INC	(HL)
+	EI
+	LD	HL,0
+	POP	IX
+	RET
+
+_mtx_try_fail:
+	EI
+	LD	HL,3		; thrd_busy
+	POP	IX
+	RET
+
+; int mtx_timedlock(mtx_t *mtx, const struct timespec *ts)
+; Lock with timeout - simplified, just tries a few times then fails
+	PUBLIC	_mtx_timedlock
+_mtx_timedlock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	B,100		; Try 100 times
+_mtx_timed_loop:
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	CALL	_mtx_trylock
+	POP	BC
+	LD	A,H
+	OR	L
+	JR	Z,_mtx_timed_ok	; Got it
+	DJNZ	_mtx_timed_loop
+
+	; Timeout
+	LD	HL,2		; thrd_timedout
+	JR	_mtx_timed_ret
+
+_mtx_timed_ok:
+	LD	HL,0		; thrd_success
+
+_mtx_timed_ret:
+	POP	BC
+	POP	IX
+	RET
+
+; int mtx_unlock(mtx_t *mtx)
+; Unlock a mutex
+	PUBLIC	_mtx_unlock
+_mtx_unlock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+	DI
+	; Check if recursive
+	INC	HL
+	LD	A,(HL)		; type
+	AND	1
+	JR	Z,_mtx_unlock_do
+
+	; Recursive - decrement count
+	INC	HL
+	INC	HL
+	DEC	(HL)		; count--
+	JR	NZ,_mtx_unlock_recur
+	; Count reached 0, release
+	DEC	HL
+	DEC	HL
+	DEC	HL		; Back to start
+
+_mtx_unlock_do:
+	DEC	HL		; Back to locked flag
+	XOR	A
+	LD	(HL),A		; locked = 0
+
+_mtx_unlock_recur:
+	EI
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+; void mtx_destroy(mtx_t *mtx)
+; Destroy a mutex (no-op, just clear it)
+	PUBLIC	_mtx_destroy
+_mtx_destroy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	B,12		; Size of mtx_t
+_mtx_destroy_loop:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_mtx_destroy_loop
+
+	POP	IX
+	RET
+
+; ============================================================
+; Condition variable functions
+; ============================================================
+
+; int cnd_init(cnd_t *cond)
+	PUBLIC	_cnd_init
+_cnd_init:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	(HL),A		; waiters = 0
+	INC	HL
+	LD	(HL),A		; signaled = 0
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+; int cnd_signal(cnd_t *cond)
+	PUBLIC	_cnd_signal
+_cnd_signal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	INC	HL
+	LD	(HL),1		; signaled = 1
+
+	LD	HL,0
+	POP	IX
+	RET
+
+; int cnd_broadcast(cnd_t *cond)
+	PUBLIC	_cnd_broadcast
+_cnd_broadcast:
+	; Same as signal for our simple implementation
+	JP	_cnd_signal
+
+; int cnd_wait(cnd_t *cond, mtx_t *mtx)
+	PUBLIC	_cnd_wait
+_cnd_wait:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Unlock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; mtx
+	PUSH	HL
+	CALL	_mtx_unlock
+	POP	BC
+
+	; Wait for signal
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; cond
+	INC	HL		; Point to signaled
+
+_cnd_wait_loop:
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_cnd_wait_done
+	EI
+	CALL	_thrd_yield
+	JR	_cnd_wait_loop
+
+_cnd_wait_done:
+	XOR	A
+	LD	(HL),A		; Clear signal
+	EI
+
+	; Re-lock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+
+	LD	HL,0		; thrd_success
+	POP	BC
+	POP	IX
+	RET
+
+; int cnd_timedwait(cnd_t *cond, mtx_t *mtx, const struct timespec *ts)
+	PUBLIC	_cnd_timedwait
+_cnd_timedwait:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Unlock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_unlock
+	POP	BC
+
+	; Try a few times
+	LD	B,100
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	INC	HL
+
+_cnd_timed_loop:
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_cnd_timed_done
+	EI
+	PUSH	HL
+	PUSH	BC
+	CALL	_thrd_yield
+	POP	BC
+	POP	HL
+	DJNZ	_cnd_timed_loop
+
+	; Timeout
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+	LD	HL,2		; thrd_timedout
+	JR	_cnd_timed_ret
+
+_cnd_timed_done:
+	XOR	A
+	LD	(HL),A
+	EI
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+	LD	HL,0
+
+_cnd_timed_ret:
+	POP	BC
+	POP	IX
+	RET
+
+; void cnd_destroy(cnd_t *cond)
+	PUBLIC	_cnd_destroy
+_cnd_destroy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+	POP	IX
+	RET
+
+; ============================================================
+; Thread-specific storage functions
+; ============================================================
+
+; int tss_create(tss_t *key, tss_dtor_t dtor)
+	PUBLIC	_tss_create
+_tss_create:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Find free slot (value 0xFFFF means unused)
+	LD	HL,_tss_slots
+	LD	B,0		; Slot index
+_tss_create_loop:
+	LD	A,B
+	CP	8		; 8 slots max
+	JR	NC,_tss_create_fail
+
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,D
+	AND	E
+	INC	A
+	JR	Z,_tss_create_found
+	INC	B
+	JR	_tss_create_loop
+
+_tss_create_found:
+	; Store NULL initially
+	DEC	HL
+	DEC	HL
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+	; Store destructor
+	LD	HL,_tss_dtors
+	LD	A,B
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	LD	A,(IX+6)	; dtor low
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)	; dtor high
+	LD	(HL),A
+
+	; Store key
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),B		; key = slot index
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_tss_create_fail:
+	LD	HL,1		; thrd_nomem
+	POP	IX
+	RET
+
+; void *tss_get(tss_t key)
+	PUBLIC	_tss_get
+_tss_get:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; key
+	CP	8
+	JR	NC,_tss_get_null
+
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	POP	IX
+	RET
+
+_tss_get_null:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int tss_set(tss_t key, void *val)
+	PUBLIC	_tss_set
+_tss_set:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; key
+	CP	8
+	JR	NC,_tss_set_err
+
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	A,(IX+6)	; val low
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)	; val high
+	LD	(HL),A
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_tss_set_err:
+	LD	HL,4		; thrd_error
+	POP	IX
+	RET
+
+; void tss_delete(tss_t key)
+	PUBLIC	_tss_delete
+_tss_delete:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)
+	CP	8
+	JR	NC,_tss_del_done
+
+	ADD	A,A
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	A,0FFH
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A		; Mark as unused
+
+	; Clear destructor
+	LD	HL,_tss_dtors
+	ADD	HL,DE
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+_tss_del_done:
+	POP	IX
+	RET
+
+; ============================================================
+; call_once function
+; ============================================================
+
+; void call_once(once_flag *flag, void (*func)(void))
+	PUBLIC	_call_once
+_call_once:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; flag
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_call_once_done
+
+	; Mark as called
+	LD	(HL),1
+	EI
+
+	; Call function
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	CALL	_call_once_call
+	JR	_call_once_ret
+
+_call_once_done:
+	EI
+_call_once_ret:
+	POP	BC
+	POP	IX
+	RET
+
+_call_once_call:
+	JP	(HL)
+
+; ============================================================
+; Atomic operations (stdatomic.h)
+; All use DI/EI for atomicity on Z80
+; ============================================================
+
+
+
+	DSEG
+_thread_mode:	DB	0
+_thread_current:	DB	0
+_tss_slots:	DS	16
+_tss_dtors:	DS	16
+
+	END

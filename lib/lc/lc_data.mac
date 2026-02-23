@@ -1,0 +1,28 @@
+; lc_data.mac - global data
+	.Z80
+
+	DSEG
+
+; Standard I/O streams
+	PUBLIC	_stdin_data
+_stdin_data:	DB	0,0,0FFH,0
+	PUBLIC	_stdout_data
+_stdout_data:	DB	1,0,0FFH,0
+	PUBLIC	_stderr_data
+_stderr_data:	DB	2,0,0FFH,0
+
+	PUBLIC	_stdin
+_stdin:	DW	_stdin_data
+	PUBLIC	_stdout
+_stdout:	DW	_stdout_data
+	PUBLIC	_stderr
+_stderr:	DW	_stderr_data
+
+	PUBLIC	_errno
+_errno:	DW	0
+
+; Static return buffer for struct-by-value returns
+	PUBLIC	__sret_buf
+__sret_buf:	DS	64
+
+	END

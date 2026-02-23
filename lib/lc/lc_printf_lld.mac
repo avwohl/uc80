@@ -1,0 +1,36 @@
+; lc_printf_lld.mac - printf %lld handler (signed long long decimal)
+	.Z80
+
+	EXTRN	_printf_loop
+	EXTRN	_prt_dec32
+
+	CSEG
+
+	PUBLIC	__printf_handle_lld
+__printf_handle_lld:
+	; Read lower 32 bits, print as signed decimal, consume 8 bytes
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A
+	EX	DE,HL		; DEHL = lower 32 bits
+	CALL	_prt_dec32
+	POP	BC
+	LD	A,C
+	ADD	A,8
+	LD	C,A
+	POP	HL
+	JP	_printf_loop
+
+	END

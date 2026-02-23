@@ -1,0 +1,318 @@
+; lc_stdlib.mac - standard library functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+
+	EXTRN	__mul16
+	EXTRN	__sdiv16
+	EXTRN	__smod16
+	EXTRN	__sdiv32
+	EXTRN	__smod32
+	EXTRN	__tmp32
+
+	CSEG
+
+; ============================================================
+; void exit(int status)
+; Calls atexit handlers then terminates
+; ============================================================
+	PUBLIC	_exit
+_exit:
+	; Call atexit handlers in reverse order
+	LD	A,(_atexit_cnt)
+	OR	A
+	JR	Z,_exit_done
+
+_exit_loop:
+	DEC	A
+	LD	(_atexit_cnt),A
+	; Get handler address: _atexit_tab + A*2
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL		; HL = A*2
+	LD	DE,_atexit_tab
+	ADD	HL,DE		; HL = address of handler pointer
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = handler address
+	; Call handler
+	PUSH	AF
+	LD	HL,_exit_loop_ret
+	PUSH	HL		; Push return address
+	PUSH	DE		; Push handler address
+	RET			; "Call" the handler
+_exit_loop_ret:
+	POP	AF
+	OR	A
+	JR	NZ,_exit_loop
+
+_exit_done:
+	; Return to CP/M (warm boot)
+	JP	0
+
+; ============================================================
+; void abort(void)
+; Abnormal program termination
+; ============================================================
+	PUBLIC	_abort
+_abort:
+	; Print abort message
+	LD	DE,_abort_msg
+	LD	C,PRTSTR
+	CALL	BDOS
+	; Exit
+	JP	0
+
+; ============================================================
+; int atexit(void (*func)(void))
+; Register function to be called at exit
+; Returns 0 on success, non-zero on failure
+; ============================================================
+	PUBLIC	_atexit
+_atexit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Check if we have room
+	LD	A,(_atexit_cnt)
+	CP	4		; Max 4 handlers
+	JR	NC,_atexit_fail
+
+	; Get handler address: _atexit_tab + cnt*2
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	LD	DE,_atexit_tab
+	ADD	HL,DE		; HL = slot address
+
+	; Store function pointer
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+
+	; Increment count
+	LD	A,(_atexit_cnt)
+	INC	A
+	LD	(_atexit_cnt),A
+
+	; Return success
+	LD	HL,0
+	POP	IX
+	RET
+
+_atexit_fail:
+	LD	HL,1
+	POP	IX
+	RET
+
+; ============================================================
+; int rand(void)
+; Returns pseudo-random number 0 to RAND_MAX (32767)
+; Uses 16-bit linear congruential generator
+; seed = (seed * 25173 + 13849) & 0x7FFF
+; ============================================================
+	PUBLIC	_rand
+	EXTRN	__mul16
+_rand:
+	LD	HL,(_rand_seed)
+	LD	DE,25173
+	CALL	__mul16		; HL = seed * 25173
+	LD	DE,13849
+	ADD	HL,DE		; HL = seed * 25173 + 13849
+	LD	A,H
+	AND	7FH		; Mask to 0-32767
+	LD	H,A
+	LD	(_rand_seed),HL
+	RET
+
+; ============================================================
+; void srand(unsigned int seed)
+; Initialize random seed
+; ============================================================
+	PUBLIC	_srand
+_srand:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_rand_seed),HL
+	POP	IX
+	RET
+
+; ============================================================
+; int abs(int n)
+; Return absolute value
+; ============================================================
+	PUBLIC	_abs
+_abs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	BIT	7,H
+	JR	Z,_abs_done
+	; Negate
+	LD	DE,0
+	EX	DE,HL
+	OR	A
+	SBC	HL,DE
+_abs_done:
+	POP	IX
+	RET
+
+; ============================================================
+; long labs(long n)
+; Return absolute value of long
+; Returns in DEHL
+; ============================================================
+	PUBLIC	_labs
+_labs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DEHL = n
+	BIT	7,D
+	JR	Z,_labs_done
+	; Negate DEHL
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+_labs_done:
+	POP	IX
+	RET
+
+; ============================================================
+; div_t div(int numer, int denom)
+; Compute quotient and remainder
+; Returns: pointer to static div_t in HL
+; (div_t.quot at _div_result, div_t.rem at _div_result+2)
+; ============================================================
+	PUBLIC	_div
+	EXTRN	__sdiv16
+	EXTRN	__smod16
+_div:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = numer
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = denom
+	LD	D,(IX+7)
+
+	; Compute quotient
+	PUSH	HL
+	PUSH	DE
+	CALL	__sdiv16
+	LD	(_div_result),HL
+	POP	DE
+	POP	HL
+
+	; Compute remainder
+	CALL	__smod16
+	LD	(_div_result+2),HL
+
+	LD	HL,_div_result
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; ldiv_t ldiv(long numer, long denom)
+; Compute quotient and remainder for long
+; Returns: pointer to static ldiv_t in HL
+; (ldiv_t.quot at _ldiv_result, ldiv_t.rem at _ldiv_result+4)
+; Runtime uses: DEHL / __tmp32 for 32-bit ops
+; ============================================================
+	PUBLIC	_ldiv
+	EXTRN	__sdiv32
+	EXTRN	__smod32
+	EXTRN	__tmp32
+_ldiv:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Store denom in __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	; Load numer into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Save numer for mod computation
+	PUSH	DE
+	PUSH	HL
+
+	; Compute quotient: DEHL / __tmp32
+	CALL	__sdiv32
+	LD	(_ldiv_result),HL
+	LD	(_ldiv_result+2),DE
+
+	; Restore numer
+	POP	HL
+	POP	DE
+
+	; Compute remainder: DEHL % __tmp32 (denom still in __tmp32)
+	CALL	__smod32
+	LD	(_ldiv_result+4),HL
+	LD	(_ldiv_result+6),DE
+
+	LD	HL,_ldiv_result
+	POP	BC
+	POP	IX
+	RET
+
+	DSEG
+
+; atexit handler table (max 4 handlers)
+_atexit_cnt:	DB	0	; Number of registered handlers
+_atexit_tab:	DS	8	; 4 function pointers (2 bytes each)
+
+; abort message
+_abort_msg:	DB	'Aborted',0DH,0AH,'$'
+
+; div/ldiv result storage
+_div_result:	DS	4	; div_t: quot (2), rem (2)
+_ldiv_result:	DS	8	; ldiv_t: quot (4), rem (4)
+
+; rand seed
+_rand_seed:	DW	1	; Default seed = 1
+
+	END

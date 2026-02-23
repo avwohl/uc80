@@ -1,0 +1,780 @@
+; lc_printf_core.mac - printf core dispatcher
+; Table-driven printf: searches __printf_format_table for format handlers
+;
+; Handler calling convention:
+;   Entry: HL = format string ptr (past the specifier char)
+;          C  = arg offset byte (relative to IX frame)
+;          IX = caller's frame pointer
+;   State: _printf_width, _printf_zero, _printf_prec, _printf_hasprec,
+;          _printf_upper available via EXTRN
+;   Exit:  JP _printf_loop with HL = next format position, C = updated arg offset
+;
+; The format table is an array of (DB char, DW handler_addr) entries
+; terminated by DB 0. It is defined by the codegen (in the user's .mac file)
+; when compiling main(), or defaults to a full table.
+
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	__printf_format_table
+
+	CSEG
+
+	PUBLIC	_printf
+	PUBLIC	_printf_loop
+	PUBLIC	_printf_done
+	PUBLIC	_printf_format
+	PUBLIC	_printf_prt_hex
+	PUBLIC	_printf_nib2a
+	PUBLIC	_printf_width
+	PUBLIC	_printf_zero
+	PUBLIC	_printf_upper
+	PUBLIC	_printf_prec
+	PUBLIC	_printf_hasprec
+	PUBLIC	_printf_neg
+	PUBLIC	_printf_hexbuf
+	PUBLIC	_printf_decbuf
+	PUBLIC	_printf_dptr
+	PUBLIC	_printf_dstart
+	PUBLIC	_printf_dcnt
+	PUBLIC	_printf_ll_w0
+	PUBLIC	_printf_ll_w1
+	PUBLIC	_printf_ll_w2
+	PUBLIC	_printf_ll_w3
+	PUBLIC	_prt_float_prec
+	PUBLIC	_prt_float
+	PUBLIC	__ftmp
+
+_printf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; fmt is at IX+4, first vararg at IX+6
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = format string pointer
+	LD	C,6		; C = offset to next argument
+
+_printf_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_printf_done
+
+	CP	'%'
+	JR	Z,_printf_format
+
+	; Regular character - output it
+	LD	E,A
+	PUSH	HL
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	HL
+	INC	HL
+	JR	_printf_loop
+
+_printf_format:
+	INC	HL
+	; Initialize format state
+	XOR	A
+	LD	(_printf_width),A
+	LD	(_printf_zero),A
+	LD	(_printf_upper),A
+	LD	(_printf_prec),A
+	LD	(_printf_hasprec),A
+	LD	A,(HL)
+	OR	A
+	JP	Z,_printf_done
+
+	CP	'%'
+	JR	Z,_printf_pct
+
+_printf_fmt2:
+	; Check for '0' flag (only when not in precision and width is 0)
+	CP	'0'
+	JR	NZ,_printf_not0
+	PUSH	AF
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	NZ,_printf_0dig
+	LD	A,(_printf_width)
+	OR	A
+	JR	NZ,_printf_0dig
+	; Set zero-padding flag
+	LD	A,1
+	LD	(_printf_zero),A
+	POP	AF
+	JR	_printf_skip
+_printf_0dig:
+	POP	AF
+	JR	_printf_isdig
+
+_printf_not0:
+	; Check for precision start
+	CP	'.'
+	JR	NZ,_printf_notdot
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_hasprec),A
+	POP	AF
+	JR	_printf_skip
+
+_printf_notdot:
+	; Skip other flags: -, +, space, #
+	CP	'-'
+	JR	Z,_printf_skip
+	CP	'+'
+	JR	Z,_printf_skip
+	CP	' '
+	JR	Z,_printf_skip
+	CP	'#'
+	JR	Z,_printf_skip
+	; Check for digits (1-9)
+	CP	'1'
+	JR	C,_printf_nodig
+	CP	'9'+1
+	JR	C,_printf_isdig
+_printf_nodig:
+	; Skip length modifiers: h, z, L
+	CP	'h'
+	JR	Z,_printf_skip
+	CP	'z'
+	JR	Z,_printf_skip
+	CP	'L'
+	JR	Z,_printf_skip
+
+	; === DISPATCH: search __printf_format_table ===
+	PUSH	HL		; Save format string position
+	PUSH	BC		; Save arg offset
+	LD	B,A		; B = format char to find
+	LD	HL,__printf_format_table
+_printf_search:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_printf_unknown	; End of table, char not found
+	CP	B
+	JR	Z,_printf_found
+	INC	HL		; Skip handler address
+	INC	HL
+	INC	HL		; Next entry
+	JR	_printf_search
+
+_printf_found:
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = handler address
+	POP	BC		; Restore arg offset
+	POP	HL		; Restore format string ptr
+	INC	HL		; Past the specifier char
+	PUSH	DE
+	RET			; Tail-call handler (JP DE)
+
+_printf_unknown:
+	; Unknown format char - skip it
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_printf_loop
+
+_printf_isdig:
+	; Parse digit into width or precision
+	SUB	'0'
+	PUSH	BC
+	LD	B,A		; B = new digit
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	NZ,_printf_precdig
+	; Width digit
+	LD	A,(_printf_width)
+	LD	C,A
+	ADD	A,A		; *2
+	ADD	A,A		; *4
+	ADD	A,C		; *5
+	ADD	A,A		; *10
+	ADD	A,B		; + digit
+	LD	(_printf_width),A
+	POP	BC
+	JR	_printf_skip
+_printf_precdig:
+	; Precision digit
+	LD	A,(_printf_prec)
+	LD	C,A
+	ADD	A,A
+	ADD	A,A
+	ADD	A,C
+	ADD	A,A
+	ADD	A,B
+	LD	(_printf_prec),A
+	POP	BC
+	; Fall through to _printf_skip
+
+_printf_skip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_printf_done
+	JR	_printf_fmt2
+
+_printf_pct:
+	; Output literal %
+	LD	E,'%'
+	PUSH	HL
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	HL
+	INC	HL
+	JR	_printf_loop
+
+_printf_done:
+	LD	HL,0		; Return 0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; Printf hex with width/zero-padding/uppercase support
+; Input: HL = value to print
+; ============================================================
+_printf_prt_hex:
+	PUSH	BC
+	; Convert 4 hex nibbles to ASCII in buffer
+	LD	DE,_printf_hexbuf
+	LD	A,H
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,H
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,L
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,L
+	AND	0FH
+	CALL	_printf_nib2a
+	; Buffer has 4 ASCII hex chars
+	; Find first significant digit (skip leading '0' but keep last)
+	LD	HL,_printf_hexbuf
+	LD	B,4
+_printf_hx_lz:
+	LD	A,B
+	CP	1
+	JR	Z,_printf_hx_pad
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_printf_hx_pad
+	INC	HL
+	DEC	B
+	JR	_printf_hx_lz
+_printf_hx_pad:
+	; B = significant digits, HL = pointer to first
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_printf_hx_out
+	SUB	B
+	JR	Z,_printf_hx_out
+	JR	C,_printf_hx_out
+	PUSH	HL
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_zero)
+	OR	A
+	LD	A,' '
+	JR	Z,_printf_hx_plp
+	LD	A,'0'
+_printf_hx_plp:
+	LD	E,A
+	PUSH	AF
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	AF
+	DJNZ	_printf_hx_plp
+	POP	BC
+	POP	HL
+_printf_hx_out:
+	LD	A,(HL)
+	LD	E,A
+	PUSH	BC
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	BC
+	INC	HL
+	DJNZ	_printf_hx_out
+	POP	BC
+	RET
+
+; Convert nibble (0-15) in A to ASCII hex char, store at (DE), advance DE
+_printf_nib2a:
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_printf_nib_ok
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_upper)
+	OR	A
+	LD	A,B
+	POP	BC
+	JR	Z,_printf_nib_lo
+	ADD	A,7
+	JR	_printf_nib_ok
+_printf_nib_lo:
+	ADD	A,39
+_printf_nib_ok:
+	LD	(DE),A
+	INC	DE
+	RET
+
+; ============================================================
+; Internal: print float from __ftmp (IEEE 754 single precision)
+; This is included in core since it's complex and shares state
+; ============================================================
+	EXTRN	__fmul
+	EXTRN	__fsub
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	__fadd
+	EXTRN	__tmp32
+
+_prt_float:
+	PUSH	BC
+	PUSH	DE
+	PUSH	IX
+
+	; Load float from __ftmp into HLDE
+	LD	DE,(__ftmp)
+	LD	HL,(__ftmp+2)
+
+	; Check for zero
+	LD	A,H
+	AND	7FH
+	OR	L
+	OR	D
+	OR	E
+	JP	Z,_prt_float_zero
+
+	; Check sign bit
+	BIT	7,H
+	JR	Z,_prt_float_pos
+
+	; Print minus sign
+	PUSH	HL
+	PUSH	DE
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	POP	HL
+	RES	7,H
+
+_prt_float_pos:
+	EX	DE,HL
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
+	; Pre-round
+	PUSH	DE
+	PUSH	HL
+	LD	DE,3F00H
+	LD	HL,0
+	LD	A,(_prt_float_prec)
+	OR	A
+	JR	Z,_prt_round_add
+	LD	B,A
+_prt_round_lp:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	DE,3DCCH
+	LD	HL,0CCCDH
+	CALL	__fmul
+	DJNZ	_prt_round_lp
+_prt_round_add:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fadd
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	POP	HL
+	POP	DE
+
+	; Reload rounded value
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	EX	DE,HL
+
+	; Extract exponent
+	LD	A,H
+	ADD	A,A
+	LD	B,A
+	LD	A,L
+	RLCA
+	LD	A,B
+	ADC	A,0
+	LD	B,A
+
+	CP	255
+	JP	Z,_prt_float_inf
+
+	OR	A
+	JP	Z,_prt_float_zero
+
+	; Extract mantissa
+	LD	A,L
+	AND	7FH
+	OR	80H
+	LD	L,A
+
+	LD	A,B
+	SUB	127
+
+	LD	(__fman),DE
+	LD	A,L
+	LD	(__fman+2),A
+
+	LD	A,B
+	SUB	127
+	LD	B,A
+
+	BIT	7,B
+	JP	NZ,_prt_float_small
+
+	LD	A,B
+	CP	24
+	JP	NC,_prt_float_large
+
+	LD	A,23
+	SUB	B
+	LD	B,A
+
+	LD	A,(__fman+2)
+	LD	H,A
+	LD	A,(__fman+1)
+	LD	L,A
+	LD	A,(__fman)
+	LD	E,A
+
+	PUSH	HL
+	PUSH	DE
+
+	LD	A,B
+	OR	A
+	JR	Z,_prt_float_noshr
+_prt_float_shrloop:
+	SRL	H
+	RR	L
+	RR	E
+	DEC	A
+	JR	NZ,_prt_float_shrloop
+_prt_float_noshr:
+	LD	A,H
+	OR	A
+	JR	NZ,_prt_float_use_hl
+	LD	H,L
+	LD	L,E
+_prt_float_use_hl:
+	PUSH	HL
+	CALL	_prt_dec
+	LD	E,'.'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+
+	POP	DE
+	POP	DE
+
+	LD	DE,0
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fsub
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JP	Z,_prt_float_done
+_prt_float_frac:
+	PUSH	BC
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	DE,4120H
+	LD	HL,0
+	CALL	__fmul
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	CALL	__ftoi
+	LD	A,L
+	PUSH	AF
+	ADD	A,'0'
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	AF
+	LD	L,A
+	LD	H,0
+	LD	DE,0
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fsub
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	POP	BC
+	DJNZ	_prt_float_frac
+	JP	_prt_float_done
+
+_prt_float_small:
+	PUSH	BC
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,'.'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	LD	A,B
+	ADD	A,127
+	LD	B,A
+	LD	A,B
+	SRL	A
+	LD	D,A
+	LD	A,B
+	AND	1
+	RLCA
+	RLCA
+	RLCA
+	RLCA
+	RLCA
+	RLCA
+	RLCA
+	LD	C,A
+	LD	A,(__fman+2)
+	AND	7FH
+	OR	C
+	LD	E,A
+	LD	A,(__fman+1)
+	LD	H,A
+	LD	A,(__fman)
+	LD	L,A
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JP	Z,_prt_float_done
+_prt_float_sm_lp:
+	PUSH	BC
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	DE,4120H
+	LD	HL,0
+	CALL	__fmul
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	CALL	__ftoi
+	LD	A,L
+	PUSH	AF
+	ADD	A,'0'
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	AF
+	LD	L,A
+	LD	H,0
+	LD	DE,0
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fsub
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	POP	BC
+	DJNZ	_prt_float_sm_lp
+	JP	_prt_float_done
+
+_prt_float_large:
+	LD	A,(__fman+2)
+	LD	H,A
+	LD	A,(__fman+1)
+	LD	L,A
+	LD	A,B
+	SUB	23
+	LD	B,A
+	OR	A
+	JR	Z,_prt_float_lg2
+_prt_float_shlloop:
+	SLA	L
+	RL	H
+	DJNZ	_prt_float_shlloop
+_prt_float_lg2:
+	CALL	_prt_dec
+	LD	E,'.'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JR	Z,_prt_float_done
+_prt_float_lg3:
+	PUSH	BC
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt_float_lg3
+	JR	_prt_float_done
+
+_prt_float_zero:
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,'.'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JR	Z,_prt_float_done
+_prt_float_z2:
+	PUSH	BC
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt_float_z2
+	JR	_prt_float_done
+
+_prt_float_inf:
+	LD	E,'i'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,'n'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,'f'
+	LD	C,CONOUT
+	CALL	BDOS
+
+_prt_float_done:
+	POP	IX
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; Internal: print HL as decimal (no padding, simple)
+; ============================================================
+_prt_dec:
+	PUSH	BC
+	PUSH	DE
+	LD	DE,10
+	LD	B,0
+_prt_dec_loop:
+	CALL	_prt_div16
+	PUSH	DE
+	INC	B
+	LD	A,H
+	OR	L
+	JR	NZ,_prt_dec_loop
+_prt_dec_out:
+	POP	DE
+	LD	A,E
+	ADD	A,'0'
+	LD	E,A
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt_dec_out
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; Internal: HL = HL / 10, DE = HL % 10
+; ============================================================
+	PUBLIC	_prt_div16
+_prt_div16:
+	PUSH	BC
+	LD	BC,0
+	LD	DE,0
+_prt_div16_lp:
+	LD	A,H
+	OR	A
+	JR	NZ,_prt_div16_sub
+	LD	A,L
+	CP	10
+	JR	C,_prt_div16_dn
+_prt_div16_sub:
+	LD	A,L
+	SUB	10
+	LD	L,A
+	LD	A,H
+	SBC	A,0
+	LD	H,A
+	INC	BC
+	JR	_prt_div16_lp
+_prt_div16_dn:
+	LD	E,L
+	LD	D,0
+	LD	H,B
+	LD	L,C
+	POP	BC
+	RET
+
+	DSEG
+
+_printf_hexbuf:	DS	4
+_printf_decbuf:	DS	6
+_printf_neg:	DB	0
+_printf_dptr:	DS	2
+_printf_dstart:	DS	2
+_printf_dcnt:	DB	0
+_printf_width:	DB	0
+_printf_zero:	DB	0
+_printf_upper:	DB	0
+_printf_prec:	DB	0
+_printf_hasprec:	DB	0
+_printf_ll_w0:	DS	2
+_printf_ll_w1:	DS	2
+_printf_ll_w2:	DS	2
+_printf_ll_w3:	DS	2
+_prt_float_prec:	DB	6
+__ftmp:		DS	4
+__fman:		DS	4
+__fwork:	DS	4
+
+	END

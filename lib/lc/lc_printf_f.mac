@@ -1,0 +1,52 @@
+; lc_printf_f.mac - printf %f handler (float)
+	.Z80
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_hasprec
+	EXTRN	_printf_prec
+	EXTRN	_prt_float_prec
+	EXTRN	_prt_float
+	EXTRN	__ftmp
+
+	CSEG
+
+	PUBLIC	__printf_handle_f
+__printf_handle_f:
+	; Float is 32 bits (4 bytes) on stack
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	; Load 32-bit float from (HL) into __ftmp
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__ftmp),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__ftmp+2),DE
+	; Set precision
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_phf_defprec
+	LD	A,(_printf_prec)
+	LD	(_prt_float_prec),A
+	JR	_phf_go
+_phf_defprec:
+	LD	A,6
+	LD	(_prt_float_prec),A
+_phf_go:
+	CALL	_prt_float
+	POP	BC
+	LD	A,C
+	ADD	A,4
+	LD	C,A
+	POP	HL
+	JP	_printf_loop
+
+	END

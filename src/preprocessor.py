@@ -57,6 +57,8 @@ class Preprocessor:
         self.included_files: set[str] = set()  # For include guard tracking
         self.expanding: set[str] = set()  # Prevent recursive macro expansion
         self.macro_stack: dict[str, list[Optional[Macro]]] = {}  # For push_macro/pop_macro
+        self.printf_features: set[str] | None = None  # None = no pragma (default all)
+        self.scanf_features: set[str] | None = None   # None = no pragma (default all)
 
         # Initialize predefined macros
         self._init_predefined_macros()
@@ -964,6 +966,28 @@ class Preprocessor:
                 else:
                     # Restore previous definition
                     self.macros[macro_name] = old_def
+            return None
+
+        # Handle #pragma printf <groups...>
+        match = re.match(r'printf\s+(.*)', args)
+        if match:
+            groups = match.group(1).strip().split()
+            if groups:
+                if self.printf_features is None:
+                    self.printf_features = set()
+                for g in groups:
+                    self.printf_features.add(g.lower())
+            return None
+
+        # Handle #pragma scanf <groups...>
+        match = re.match(r'scanf\s+(.*)', args)
+        if match:
+            groups = match.group(1).strip().split()
+            if groups:
+                if self.scanf_features is None:
+                    self.scanf_features = set()
+                for g in groups:
+                    self.scanf_features.add(g.lower())
             return None
 
         # Other pragmas are ignored

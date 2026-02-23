@@ -1,0 +1,1957 @@
+; lc_file.mac - file I/O functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+
+	EXTRN	__div16
+	EXTRN	__mul16
+	EXTRN	_putchar
+
+	CSEG
+
+; ============================================================
+; CP/M File I/O Implementation
+; Real file operations using BDOS FCB calls
+; ============================================================
+
+; CP/M BDOS function numbers
+BDOS_OPEN	EQU	15	; Open file
+BDOS_CLOSE	EQU	16	; Close file
+BDOS_DELETE	EQU	19	; Delete file
+BDOS_RENAME	EQU	23	; Rename file
+BDOS_READ	EQU	20	; Read sequential
+BDOS_WRITE	EQU	21	; Write sequential
+BDOS_MAKE	EQU	22	; Make (create) file
+BDOS_SETDMA	EQU	26	; Set DMA address
+BDOS_RREAD	EQU	33	; Read random
+BDOS_RWRITE	EQU	34	; Write random
+BDOS_FSIZE	EQU	35	; Compute file size
+BDOS_SETREC	EQU	36	; Set random record
+
+; FILE structure offsets (170 bytes total)
+FILE_FD		EQU	0	; Slot number (0=stdin,1=stdout,2=stderr,3+=files)
+FILE_FLAGS	EQU	1	; bit0=open,bit1=EOF,bit2=error,bit3=write,bit4=read
+FILE_UNGET	EQU	2	; Ungetc char (0xFF=none)
+FILE_BUFPOS	EQU	3	; Current position in buffer
+FILE_BUFCNT	EQU	4	; Valid bytes in buffer (for read)
+FILE_RESERVED	EQU	5	; Reserved
+FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
+FILE_SIZE	EQU	170	; Total FILE structure size
+
+; Flag bits
+FLAG_OPEN	EQU	01H
+FLAG_EOF	EQU	02H
+FLAG_ERROR	EQU	04H
+FLAG_WRITE	EQU	08H
+FLAG_READ	EQU	10H
+
+; Standard stream file descriptors
+FD_STDIN	EQU	0
+FD_STDOUT	EQU	1
+FD_STDERR	EQU	2
+
+; Number of file slots (besides stdin/stdout/stderr)
+MAX_FILES	EQU	4
+
+; ============================================================
+; FILE *fopen(const char *pathname, const char *mode)
+; Open a file for reading or writing
+; ============================================================
+	PUBLIC	_fopen
+_fopen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Find free file slot
+	LD	HL,_file_slots
+	LD	B,MAX_FILES
+_fopen_find:
+	PUSH	HL
+	INC	HL		; Point to flags
+	LD	A,(HL)
+	AND	FLAG_OPEN
+	POP	HL
+	JR	Z,_fopen_found
+	LD	DE,FILE_SIZE
+	ADD	HL,DE
+	DJNZ	_fopen_find
+	; No free slot
+	LD	HL,0
+	JP	_fopen_ret
+
+_fopen_found:
+	; HL = FILE structure, save it
+	PUSH	HL
+
+	; Parse mode string
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = mode
+	LD	A,(HL)
+	LD	B,0		; B = mode flags
+	CP	'r'
+	JR	Z,_fopen_read
+	CP	'w'
+	JR	Z,_fopen_write
+	CP	'a'
+	JR	Z,_fopen_append
+	; Invalid mode
+	POP	HL
+	LD	HL,0
+	JP	_fopen_ret
+
+_fopen_read:
+	LD	B,FLAG_READ
+	JR	_fopen_setup
+
+_fopen_write:
+	LD	B,FLAG_WRITE
+	JR	_fopen_setup
+
+_fopen_append:
+	LD	B,FLAG_WRITE	; Append = write mode
+	; (simplified: append not fully supported)
+
+_fopen_setup:
+	; B = mode flags, stack has FILE*
+	POP	HL		; HL = FILE*
+	PUSH	HL
+	PUSH	BC		; Save mode
+
+	; Initialize FILE structure
+	LD	A,3		; fd = 3+ for files
+	LD	(HL),A
+	INC	HL
+	XOR	A
+	LD	(HL),A		; flags = 0 (will set later)
+	INC	HL
+	LD	A,0FFH
+	LD	(HL),A		; unget = none
+	INC	HL
+	XOR	A
+	LD	(HL),A		; bufpos = 0
+	INC	HL
+	LD	(HL),A		; bufcnt = 0
+	INC	HL
+	LD	(HL),A		; reserved = 0
+	INC	HL		; HL now at FCB
+
+	; Clear FCB (36 bytes)
+	PUSH	HL
+	LD	B,36
+_fopen_clr:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_fopen_clr
+	POP	HL		; HL = FCB start
+
+	; Parse pathname into FCB
+	; HL = FCB, pathname at IX+4
+	PUSH	HL
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = pathname
+	CALL	_parse_fcb
+	POP	HL		; HL = FCB
+
+	; Get FILE* back
+	POP	BC		; B = mode flags
+	POP	DE		; DE = FILE*
+	PUSH	DE
+	PUSH	BC
+
+	; Set DMA to FILE's buffer
+	PUSH	HL
+	LD	HL,FILE_BUFFER-FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL		; DE = buffer address
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+	POP	DE		; DE = FCB
+
+	; Open or create based on mode
+	POP	BC		; B = mode flags
+	POP	HL		; HL = FILE*
+	PUSH	HL
+	PUSH	BC
+
+	LD	A,B
+	AND	FLAG_WRITE
+	JR	Z,_fopen_doopen
+
+	; Write mode - delete existing, create new
+	PUSH	DE
+	LD	C,BDOS_DELETE
+	CALL	BDOS
+	POP	DE
+	LD	C,BDOS_MAKE
+	CALL	BDOS
+	JR	_fopen_check
+
+_fopen_doopen:
+	; Read mode - open existing
+	LD	C,BDOS_OPEN
+	CALL	BDOS
+
+_fopen_check:
+	; A = 0xFF on error
+	CP	0FFH
+	JR	NZ,_fopen_ok
+
+	; Open failed
+	POP	BC
+	POP	HL
+	LD	HL,0
+	JP	_fopen_ret
+
+_fopen_ok:
+	; Set flags and return FILE*
+	POP	BC		; B = mode flags
+	POP	HL		; HL = FILE*
+	PUSH	HL
+	INC	HL		; Point to flags
+	LD	A,B
+	OR	FLAG_OPEN
+	LD	(HL),A
+	POP	HL		; Return FILE*
+	JR	_fopen_ret
+
+_fopen_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; Internal: Parse pathname into FCB
+; DE = pathname, HL = FCB
+; ============================================================
+_parse_fcb:
+	PUSH	BC
+	PUSH	HL
+
+	; Check for drive letter
+	LD	A,(DE)
+	INC	DE
+	LD	B,A
+	LD	A,(DE)
+	CP	':'
+	JR	NZ,_parse_nodrive
+	; Has drive letter
+	LD	A,B
+	AND	0DFH		; Uppercase
+	SUB	'A'-1		; A=1, B=2, etc.
+	LD	(HL),A
+	INC	DE		; Skip colon
+	JR	_parse_name
+
+_parse_nodrive:
+	DEC	DE		; Back up
+	XOR	A		; Default drive
+	LD	(HL),A
+
+_parse_name:
+	INC	HL		; Point to filename
+	LD	B,8		; 8 chars max
+_parse_name_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_parse_pad_name
+	CP	'.'
+	JR	Z,_parse_ext
+	; Store uppercase
+	AND	0DFH
+	LD	(HL),A
+	INC	HL
+	INC	DE
+	DJNZ	_parse_name_loop
+	; Skip to dot or end
+_parse_skip:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_parse_pad_name
+	CP	'.'
+	JR	Z,_parse_ext
+	INC	DE
+	JR	_parse_skip
+
+_parse_pad_name:
+	; Pad remaining name with spaces
+	LD	A,' '
+_parse_pad_n:
+	LD	A,B
+	OR	A
+	JR	Z,_parse_ext_start
+	LD	A,' '
+	LD	(HL),A
+	INC	HL
+	DEC	B
+	JR	_parse_pad_n
+
+_parse_ext:
+	INC	DE		; Skip dot
+	; Pad any remaining name chars
+	JR	_parse_pad_name
+
+_parse_ext_start:
+	; Now at extension position (FCB+9)
+	LD	B,3		; 3 chars max
+_parse_ext_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_parse_pad_ext
+	AND	0DFH		; Uppercase
+	LD	(HL),A
+	INC	HL
+	INC	DE
+	DJNZ	_parse_ext_loop
+	JR	_parse_done
+
+_parse_pad_ext:
+	LD	A,B
+	OR	A
+	JR	Z,_parse_done
+	LD	A,' '
+	LD	(HL),A
+	INC	HL
+	DEC	B
+	JR	_parse_pad_ext
+
+_parse_done:
+	POP	HL
+	POP	BC
+	RET
+
+; ============================================================
+; int fclose(FILE *stream)
+; Close a file
+; ============================================================
+	PUBLIC	_fclose
+_fclose:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = stream
+
+	; Check for NULL or console streams
+	LD	A,H
+	OR	L
+	JR	Z,_fclose_ok
+	LD	A,(HL)
+	CP	3
+	JR	C,_fclose_ok	; stdin/stdout/stderr
+
+	; Check if open
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_OPEN
+	JR	Z,_fclose_ok
+
+	; If write mode, flush buffer
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	JR	Z,_fclose_doclose
+
+	; Flush write buffer
+	DEC	HL
+	PUSH	HL
+	CALL	_fflush_internal
+	POP	HL
+	INC	HL
+
+_fclose_doclose:
+	DEC	HL		; Back to FILE start
+	PUSH	HL
+
+	; Set DMA and close
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL		; DE = FCB
+
+	LD	C,BDOS_CLOSE
+	CALL	BDOS
+
+	; Clear flags
+	POP	HL
+	INC	HL		; flags
+	LD	(HL),0
+
+_fclose_ok:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int fgetc(FILE *stream)
+; Get character from stream
+; ============================================================
+	PUBLIC	_fgetc
+_fgetc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = stream
+
+	; Check for NULL
+	LD	A,H
+	OR	L
+	JP	Z,_fgetc_eof
+
+	; Check if stdin
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_fgetc_file
+
+	; stdin - read from console
+	LD	C,CONIN
+	CALL	BDOS
+	LD	L,A
+	LD	H,0
+	JP	_fgetc_ret
+
+_fgetc_file:
+	; Check for ungetc char first
+	PUSH	HL
+	INC	HL
+	INC	HL		; unget
+	LD	A,(HL)
+	CP	0FFH
+	JR	Z,_fgetc_nobuf
+	; Return unget char
+	LD	B,A
+	LD	A,0FFH
+	LD	(HL),A		; Clear unget
+	POP	HL
+	LD	L,B
+	LD	H,0
+	JP	_fgetc_ret
+
+_fgetc_nobuf:
+	POP	HL
+
+	; Check EOF flag
+	PUSH	HL
+	INC	HL		; flags
+	LD	A,(HL)
+	AND	FLAG_EOF
+	JR	NZ,_fgetc_iseof
+
+	; Check if buffer has data
+	INC	HL		; unget
+	INC	HL		; bufpos
+	LD	B,(HL)
+	INC	HL		; bufcnt
+	LD	A,(HL)
+	CP	B		; bufcnt > bufpos?
+	JR	Z,_fgetc_refill
+	JR	C,_fgetc_refill
+
+	; Get byte from buffer
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE		; HL = buffer start
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[bufpos]
+	LD	A,(HL)
+	; Check for Ctrl-Z (CP/M EOF marker)
+	CP	1AH
+	JR	Z,_fgetc_seteof
+	LD	E,A		; Save char
+
+	; Increment bufpos
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	INC	(HL)
+
+	; Skip CR characters for Unix text compatibility
+	LD	A,E
+	CP	0DH
+	JP	Z,_fgetc_nobuf	; Skip CR, get next char
+
+	POP	HL
+	LD	L,E
+	LD	H,0
+	JP	_fgetc_ret
+
+_fgetc_refill:
+	; Need to read more data
+	POP	HL
+	PUSH	HL
+
+	; Set DMA to buffer
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+
+	; Read record
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_READ
+	CALL	BDOS
+
+	; A = 0 success, non-zero = EOF/error
+	OR	A
+	JR	NZ,_fgetc_seteof
+
+	; Reset buffer position, set count
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	(HL),0		; bufpos = 0
+	INC	HL
+	LD	(HL),128	; bufcnt = 128
+
+	; Get first byte
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	A,(HL)
+	; Check for Ctrl-Z (CP/M EOF marker)
+	CP	1AH
+	JR	Z,_fgetc_seteof
+	LD	E,A
+
+	; Increment bufpos
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	INC	(HL)
+
+	; Skip CR characters for Unix text compatibility
+	LD	A,E
+	CP	0DH
+	JP	Z,_fgetc_nobuf	; Skip CR, get next char
+
+	POP	HL
+	LD	L,E
+	LD	H,0
+	JP	_fgetc_ret
+
+_fgetc_seteof:
+	POP	HL
+	PUSH	HL
+	INC	HL		; flags
+	LD	A,(HL)
+	OR	FLAG_EOF
+	LD	(HL),A
+_fgetc_iseof:
+	POP	HL
+_fgetc_eof:
+	LD	HL,-1
+_fgetc_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int fputc(int c, FILE *stream)
+; Put character to stream
+; ============================================================
+	PUBLIC	_fputc
+_fputc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = stream
+
+	; Check for NULL
+	LD	A,H
+	OR	L
+	JP	Z,_fputc_err
+
+	; Check if stdout/stderr
+	LD	A,(HL)
+	CP	3
+	JR	NC,_fputc_file
+
+	; Console output
+	LD	E,(IX+4)
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	L,(IX+4)
+	LD	H,0
+	JP	_fputc_ret
+
+_fputc_file:
+	; Check if buffer full
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	A,(HL)
+	CP	128
+	JR	C,_fputc_store
+
+	; Buffer full - flush it
+	POP	HL
+	PUSH	HL
+	CALL	_fflush_internal
+	; Check for error
+	LD	A,H
+	OR	L
+	JR	NZ,_fputc_flerr
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+
+_fputc_store:
+	; Store byte in buffer
+	LD	A,(HL)		; A = bufpos
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[bufpos]
+	LD	A,(IX+4)
+	LD	(HL),A		; Store the byte
+
+	; Increment bufpos
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFPOS
+	ADD	HL,DE
+	INC	(HL)		; bufpos++
+
+	POP	HL
+	LD	L,(IX+4)
+	LD	H,0
+	JP	_fputc_ret
+
+_fputc_flerr:
+	POP	HL
+_fputc_err:
+	LD	HL,-1
+_fputc_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; Internal: Flush write buffer
+; HL = FILE*
+; Returns HL=0 success, HL=-1 error
+; ============================================================
+_fflush_internal:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+
+	; Check bufpos
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	A,(HL)
+	OR	A
+	JR	Z,_fflush_ok	; Nothing to flush
+
+	; Pad rest of buffer with Ctrl-Z (CP/M EOF)
+	LD	B,A		; B = bytes written
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[bufpos]
+	LD	A,128
+	SUB	B
+	LD	B,A		; B = bytes to pad
+	JR	Z,_fflush_write
+	LD	A,1AH		; Ctrl-Z
+_fflush_pad:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_fflush_pad
+
+_fflush_write:
+	; Set DMA
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+
+	; Write record
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_WRITE
+	CALL	BDOS
+
+	OR	A
+	JR	NZ,_fflush_err
+
+	; Reset bufpos
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	(HL),0
+
+_fflush_ok:
+	POP	HL
+	LD	HL,0
+	POP	DE
+	POP	BC
+	RET
+
+_fflush_err:
+	POP	HL
+	PUSH	HL
+	INC	HL		; flags
+	LD	A,(HL)
+	OR	FLAG_ERROR
+	LD	(HL),A
+	POP	HL
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; char *fgets(char *s, int size, FILE *stream)
+; Read line from stream
+; ============================================================
+	PUBLIC	_fgets
+_fgets:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+8)
+	LD	H,(IX+9)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_fgets_null
+
+	LD	E,(IX+4)	; buffer
+	LD	D,(IX+5)
+	LD	C,(IX+6)	; size
+	LD	B,(IX+7)
+	PUSH	DE		; Save for return
+
+	DEC	BC		; Leave room for null
+	LD	A,B
+	OR	C
+	JR	Z,_fgets_term
+
+_fgets_loop:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL		; Save stream
+	PUSH	HL		; Pass stream as arg
+	CALL	_fgetc
+	POP	BC		; Discard arg
+	; HL = fgetc return value, save it
+	LD	A,H		; Check high byte first
+	LD	B,L		; B = character (save before POP)
+	POP	HL		; Restore stream to HL
+	OR	A
+	JR	NZ,_fgets_eof	; EOF if H != 0 (return was 0xFFxx)
+	LD	A,B		; A = character
+	POP	DE		; Restore dest pointer
+	POP	BC		; Restore count
+
+	LD	(DE),A
+	INC	DE
+	DEC	BC
+
+	CP	0AH		; LF?
+	JR	Z,_fgets_term
+	CP	0DH		; CR?
+	JR	Z,_fgets_term
+
+	LD	A,B
+	OR	C
+	JR	NZ,_fgets_loop
+
+_fgets_term:
+	XOR	A
+	LD	(DE),A
+	POP	HL		; Return buffer
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fgets_eof:
+	; Stack has: [BC_count][DE_dest]
+	; HL = stream (just restored)
+	POP	DE		; Restore dest pointer
+	POP	BC		; Restore count
+	; Check if we read anything
+	LD	A,(IX+4)
+	CP	E
+	JR	NZ,_fgets_term	; Got some data
+	LD	A,(IX+5)
+	CP	D
+	JR	NZ,_fgets_term
+	; No data read - return NULL
+	; Pop saved buffer before going to _fgets_null
+	POP	DE
+_fgets_null:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int fputs(const char *s, FILE *stream)
+; Write string to stream
+; ============================================================
+	PUBLIC	_fputs
+_fputs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_fputs_err
+
+	LD	E,(IX+4)	; string
+	LD	D,(IX+5)
+
+_fputs_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_fputs_ok
+
+	PUSH	DE
+	PUSH	HL
+	; Push args for fputc(char, stream)
+	PUSH	HL		; stream
+	LD	L,A
+	LD	H,0
+	PUSH	HL		; char
+	CALL	_fputc
+	POP	BC
+	POP	BC
+	POP	HL
+	POP	DE
+
+	; Check for error
+	LD	A,H
+	INC	A
+	JR	Z,_fputs_err	; HL was -1
+
+	INC	DE
+	JR	_fputs_loop
+
+_fputs_ok:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fputs_err:
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream)
+; Read data from stream
+; ============================================================
+	PUBLIC	_fread
+_fread:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Calculate total bytes = size * nmemb
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; size
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; nmemb
+	CALL	__mul16		; HL = total bytes
+	LD	B,H
+	LD	C,L		; BC = bytes to read
+
+	; If zero, return 0
+	LD	A,B
+	OR	C
+	JR	Z,_fread_done
+
+	; Save dest pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = dest ptr
+	LD	(_fread_ptr),HL
+
+	; Initialize read count
+	LD	HL,0
+	LD	(_fread_cnt),HL
+
+_fread_loop:
+	; Call fgetc(stream)
+	LD	L,(IX+10)
+	LD	H,(IX+11)	; stream
+	PUSH	BC		; Save remaining count
+	PUSH	HL
+	CALL	_fgetc
+	POP	DE		; Clean up arg
+
+	; Check for EOF (returns -1 = 0xFFFF)
+	LD	A,H
+	AND	L
+	INC	A		; If HL=0xFFFF, A becomes 0
+	JR	Z,_fread_eof
+
+	; Store byte
+	LD	A,L
+	LD	HL,(_fread_ptr)
+	LD	(HL),A
+	INC	HL
+	LD	(_fread_ptr),HL
+
+	; Increment count
+	LD	HL,(_fread_cnt)
+	INC	HL
+	LD	(_fread_cnt),HL
+
+	; Decrement BC and continue
+	POP	BC		; Restore remaining count
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,_fread_loop
+	JR	_fread_done
+
+_fread_eof:
+	POP	BC		; Clean up saved count
+
+_fread_done:
+	; Return items read (cnt / size)
+	; __div16 does HL = DE / HL, so DE = cnt, HL = size
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = size (temporarily)
+	LD	A,D
+	OR	E
+	JR	Z,_fread_ret
+	LD	HL,(_fread_cnt)	; HL = cnt
+	EX	DE,HL		; Now DE = cnt, HL = size
+	CALL	__div16		; HL = cnt / size
+
+_fread_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
+; Write data to stream
+; ============================================================
+	PUBLIC	_fwrite
+	EXTRN	__div16
+_fwrite:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Simple implementation - write byte by byte
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; size
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; nmemb
+	CALL	__mul16		; HL = total bytes
+	LD	B,H
+	LD	C,L		; BC = bytes to write
+
+	LD	A,B
+	OR	C
+	JR	Z,_fwrite_done
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = ptr (source)
+	LD	(_fwrite_ptr),HL
+	LD	HL,0
+	LD	(_fwrite_cnt),HL
+
+_fwrite_loop:
+	LD	A,B
+	OR	C
+	JR	Z,_fwrite_done
+
+	; Get byte from source
+	LD	HL,(_fwrite_ptr)
+	LD	A,(HL)
+	INC	HL
+	LD	(_fwrite_ptr),HL
+
+	; Write to stream
+	PUSH	BC
+	LD	L,(IX+10)
+	LD	H,(IX+11)	; stream
+	PUSH	HL
+	LD	L,A
+	LD	H,0
+	PUSH	HL
+	CALL	_fputc
+	POP	HL
+	POP	HL
+	POP	BC
+
+	; Check error
+	LD	A,H
+	INC	A
+	JR	Z,_fwrite_done	; Error
+
+	LD	HL,(_fwrite_cnt)
+	INC	HL
+	LD	(_fwrite_cnt),HL
+	DEC	BC
+	JR	_fwrite_loop
+
+_fwrite_done:
+	; Return items written (cnt / size)
+	; __div16 does HL = DE / HL, so DE = cnt, HL = size
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = size (temporarily)
+	LD	A,D
+	OR	E
+	JR	Z,_fwrite_ret
+	LD	HL,(_fwrite_cnt)	; HL = cnt
+	EX	DE,HL		; Now DE = cnt, HL = size
+	CALL	__div16		; HL = cnt / size
+_fwrite_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int feof(FILE *stream)
+; Check EOF flag
+; ============================================================
+	PUBLIC	_feof
+_feof:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_feof_yes
+	INC	HL		; flags
+	LD	A,(HL)
+	AND	FLAG_EOF
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+_feof_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+; ============================================================
+; int ferror(FILE *stream)
+; Check error flag
+; ============================================================
+	PUBLIC	_ferror
+_ferror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_ferror_yes
+	INC	HL		; flags
+	LD	A,(HL)
+	AND	FLAG_ERROR
+	JR	Z,_ferror_no
+	LD	HL,1
+	POP	IX
+	RET
+_ferror_no:
+	LD	HL,0
+	POP	IX
+	RET
+_ferror_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+; ============================================================
+; void clearerr(FILE *stream)
+; Clear error and EOF flags
+; ============================================================
+	PUBLIC	_clearerr
+_clearerr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_clearerr_ret
+	INC	HL		; flags
+	LD	A,(HL)
+	AND	0FFH - FLAG_EOF - FLAG_ERROR
+	LD	(HL),A
+_clearerr_ret:
+	POP	IX
+	RET
+
+; ============================================================
+; int ungetc(int c, FILE *stream)
+; Push character back to stream
+; ============================================================
+	PUBLIC	_ungetc
+_ungetc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_ungetc_err
+	INC	HL
+	INC	HL		; unget
+	LD	A,(IX+4)
+	LD	(HL),A
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+_ungetc_err:
+	LD	HL,-1
+	POP	IX
+	RET
+
+; ============================================================
+; int fflush(FILE *stream)
+; Flush stream buffers
+; ============================================================
+	PUBLIC	_fflush
+_fflush:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_fflush_done_pub
+
+	; Check if file (not console)
+	LD	A,(HL)
+	CP	3
+	JR	C,_fflush_done_pub
+
+	; Check write mode
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	DEC	HL
+	JR	Z,_fflush_done_pub
+
+	CALL	_fflush_internal
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fflush_done_pub:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int fseek(FILE *stream, long offset, int whence)
+; Seek to position in file (simplified - sector-based)
+; ============================================================
+	PUBLIC	_fseek
+_fseek:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_fseek_err
+
+	; Check if file
+	LD	A,(HL)
+	CP	3
+	JR	C,_fseek_err
+
+	; Flush buffer first if write mode
+	PUSH	HL
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	JR	Z,_fseek_noflush
+	DEC	HL
+	CALL	_fflush_internal
+	JR	_fseek_doset
+_fseek_noflush:
+	DEC	HL
+_fseek_doset:
+	POP	HL
+	PUSH	HL
+
+	; Get offset (lower 16 bits only for simplicity)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; offset low word
+
+	; Check whence
+	LD	A,(IX+10)
+	OR	A
+	JR	NZ,_fseek_err_pop	; Only SEEK_SET supported
+
+	; Convert byte offset to record number (divide by 128)
+	; Shift DE right 7 times
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E		; DE = record number
+
+	; Set random record in FCB
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_FCB+33	; r0, r1 in FCB
+	ADD	HL,BC
+	LD	(HL),E		; r0
+	INC	HL
+	LD	(HL),D		; r1
+	INC	HL
+	LD	(HL),0		; r2
+
+	; Clear buffer
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	(HL),0		; bufpos
+	INC	HL
+	LD	(HL),0		; bufcnt
+
+	; Clear EOF flag
+	POP	HL
+	PUSH	HL
+	INC	HL
+	LD	A,(HL)
+	AND	0FFH - FLAG_EOF
+	LD	(HL),A
+
+	POP	HL
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fseek_err_pop:
+	POP	HL
+_fseek_err:
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; long ftell(FILE *stream)
+; Return current position (simplified)
+; ============================================================
+	PUBLIC	_ftell
+_ftell:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_ftell_err
+
+	LD	A,(HL)
+	CP	3
+	JR	C,_ftell_err
+
+	; Get record number from FCB
+	LD	DE,FILE_FCB+33
+	ADD	HL,DE
+	LD	E,(HL)		; r0
+	INC	HL
+	LD	D,(HL)		; r1
+
+	; Convert to byte offset (multiply by 128)
+	; Shift DE left 7 times, result in DEHL
+	LD	H,D
+	LD	L,E
+	LD	DE,0
+
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x2
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x4
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x8
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x16
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x32
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x64
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x128
+
+	; Add buffer position
+	; (simplified - not adding bufpos)
+	POP	IX
+	RET
+
+_ftell_err:
+	LD	HL,-1
+	LD	DE,-1
+	POP	IX
+	RET
+
+; ============================================================
+; void rewind(FILE *stream)
+; Rewind to beginning of file
+; ============================================================
+	PUBLIC	_rewind
+_rewind:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Call fseek(stream, 0L, SEEK_SET)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	LD	HL,0
+	PUSH	HL		; whence = SEEK_SET
+	PUSH	HL		; offset high = 0
+	PUSH	HL		; offset low = 0
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	CALL	_fseek
+	POP	HL
+	POP	HL
+	POP	HL
+	POP	HL
+	POP	HL
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int remove(const char *pathname)
+; Delete a file
+; Returns 0 on success, -1 on error
+; ============================================================
+	PUBLIC	_remove
+_remove:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Parse pathname into temporary FCB
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = pathname
+	LD	HL,_tmp_fcb
+	CALL	_parse_fcb
+
+	; Delete the file
+	LD	DE,_tmp_fcb
+	LD	C,BDOS_DELETE
+	CALL	BDOS
+
+	; A = 0xFF on error
+	CP	0FFH
+	JR	Z,_remove_err
+	LD	HL,0
+	JR	_remove_ret
+_remove_err:
+	LD	HL,-1
+_remove_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int rename(const char *oldpath, const char *newpath)
+; Rename a file
+; Returns 0 on success, -1 on error
+; ============================================================
+	PUBLIC	_rename
+_rename:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Parse old pathname into FCB (first 16 bytes)
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = oldpath
+	LD	HL,_tmp_fcb
+	CALL	_parse_fcb
+
+	; Parse new pathname into FCB+16 (destination)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = newpath
+	LD	HL,_tmp_fcb+16
+	CALL	_parse_fcb
+
+	; CP/M rename uses DE pointing to FCB with old name in first 16 bytes
+	; and new name in second 16 bytes
+	LD	DE,_tmp_fcb
+	LD	C,BDOS_RENAME
+	CALL	BDOS
+
+	; A = 0xFF on error
+	CP	0FFH
+	JR	Z,_rename_err
+	LD	HL,0
+	JR	_rename_ret
+_rename_err:
+	LD	HL,-1
+_rename_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; FILE *tmpfile(void)
+; Create and open a temporary file for writing
+; File is automatically deleted when closed (by using $$$ extension)
+; ============================================================
+	PUBLIC	_tmpfile
+_tmpfile:
+	PUSH	IX
+	PUSH	BC
+	PUSH	DE
+
+	; Generate unique temp name
+	LD	HL,_tmpfile_name
+	CALL	_gen_tmpnam
+
+	; Open with "w+" mode (create new)
+	LD	HL,_tmpfile_name
+	PUSH	HL
+	LD	HL,_tmpfile_mode
+	PUSH	HL
+	CALL	_fopen
+	POP	BC
+	POP	BC
+
+	; Mark this file for delete on close (use $$$ extension)
+	; Actually, CP/M doesn't have auto-delete, so we rely on unique names
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_tmpfile_mode:
+	DB	'w',0
+
+; ============================================================
+; char *tmpnam(char *s)
+; Generate a unique temporary file name
+; If s is NULL, returns pointer to internal static buffer
+; ============================================================
+	PUBLIC	_tmpnam
+_tmpnam:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Get buffer pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	NZ,_tmpnam_usebuf
+	; Use internal buffer
+	LD	HL,_tmpnam_buf
+_tmpnam_usebuf:
+	PUSH	HL		; Save destination
+	CALL	_gen_tmpnam
+	POP	HL		; Return destination
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; Internal: Generate temp name into HL
+_gen_tmpnam:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+
+	; Format: TMP00000.$$$
+	LD	(HL),'T'
+	INC	HL
+	LD	(HL),'M'
+	INC	HL
+	LD	(HL),'P'
+	INC	HL
+
+	; Get counter and convert to 5 digits
+	LD	DE,(_tmpnam_cnt)
+	INC	DE
+	LD	(_tmpnam_cnt),DE
+
+	; Convert DE to 5 decimal digits
+	LD	BC,10000
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	; Remainder in DE
+	LD	BC,1000
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	LD	BC,100
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	LD	BC,10
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	LD	A,E
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+
+	; Add .$$$ extension
+	LD	(HL),'.'
+	INC	HL
+	LD	(HL),'$'
+	INC	HL
+	LD	(HL),'$'
+	INC	HL
+	LD	(HL),'$'
+	INC	HL
+	LD	(HL),0
+
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; Internal: Divide DE by BC, quotient in A, remainder in DE
+_div16:
+	XOR	A
+_div16_loop:
+	LD	H,D
+	LD	L,E
+	OR	A
+	SBC	HL,BC
+	JR	C,_div16_done
+	EX	DE,HL
+	INC	A
+	JR	_div16_loop
+_div16_done:
+	RET
+
+_tmpnam_cnt:
+	DW	0
+_tmpnam_buf:
+	DS	13		; TMP00000.$$$ + null
+_tmpfile_name:
+	DS	13
+
+; ============================================================
+; FILE *freopen(const char *pathname, const char *mode, FILE *stream)
+; Reopen stream with new file
+; ============================================================
+	PUBLIC	_freopen
+_freopen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Close current stream
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	PUSH	HL
+	CALL	_fclose
+	POP	BC
+
+	; Now reopen with new file
+	; Can't use the same FILE slot reliably, so just call fopen
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; pathname
+	PUSH	HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; mode
+	PUSH	HL
+	CALL	_fopen
+	POP	BC
+	POP	BC
+
+	; HL = new FILE* or NULL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int getc(FILE *stream)
+; Get character from stream (equivalent to fgetc)
+; ============================================================
+	PUBLIC	_getc
+_getc:
+	JP	_fgetc		; Just tail-call fgetc
+
+; ============================================================
+; int putc(int c, FILE *stream)
+; Put character to stream (equivalent to fputc)
+; ============================================================
+	PUBLIC	_putc
+_putc:
+	JP	_fputc		; Just tail-call fputc
+
+; ============================================================
+; int fgetpos(FILE *stream, fpos_t *pos)
+; Get current file position
+; Returns 0 on success, non-zero on error
+; ============================================================
+	PUBLIC	_fgetpos
+_fgetpos:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Call ftell to get position
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; stream
+	PUSH	HL
+	CALL	_ftell
+	POP	BC
+	; DEHL = position (long)
+
+	; Check for error (returns -1 as 0xFFFFFFFF)
+	LD	A,D
+	AND	E
+	AND	H
+	AND	L
+	INC	A
+	JR	Z,_fgetpos_err
+
+	; Store position at *pos
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = pos pointer
+	LD	A,L
+	LD	(BC),A
+	INC	BC
+	LD	A,H
+	LD	(BC),A
+	INC	BC
+	LD	A,E
+	LD	(BC),A
+	INC	BC
+	LD	A,D
+	LD	(BC),A
+
+	LD	HL,0		; Return success
+	JR	_fgetpos_ret
+
+_fgetpos_err:
+	LD	HL,-1
+_fgetpos_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int fsetpos(FILE *stream, const fpos_t *pos)
+; Set file position
+; Returns 0 on success, non-zero on error
+; ============================================================
+	PUBLIC	_fsetpos
+_fsetpos:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Load position from *pos
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = pos pointer
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = position
+	PUSH	BC		; High word
+	PUSH	DE		; Low word
+
+	; Call fseek(stream, pos, SEEK_SET)
+	LD	HL,0
+	PUSH	HL		; whence = SEEK_SET
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	; Stack: stream, whence(0), pos_low, pos_high
+	; fseek expects: stream, offset_low, offset_high, whence
+	; Need to rearrange...
+
+	; Actually let's redo this properly
+	POP	HL		; stream
+	POP	BC		; whence
+	POP	DE		; pos low
+	POP	BC		; pos high
+	; Now push in correct order for fseek(stream, offset, whence)
+	LD	A,0
+	PUSH	AF		; whence = SEEK_SET (use AF as 16-bit 0)
+	INC	SP		; Adjust for 1-byte push
+	DEC	SP
+	LD	HL,0
+	PUSH	HL		; whence = 0
+	PUSH	BC		; offset high
+	PUSH	DE		; offset low
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	CALL	_fseek
+	; Clean up stack (5 words = 10 bytes)
+	LD	HL,10
+	ADD	HL,SP
+	LD	SP,HL
+
+	; fseek returns 0 on success, -1 on error
+	; HL already has return value
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; void setbuf(FILE *stream, char *buf)
+; Set stream buffer (no-op on CP/M - fixed buffers)
+; ============================================================
+	PUBLIC	_setbuf
+_setbuf:
+	; No-op - CP/M uses fixed 128-byte buffers
+	RET
+
+; ============================================================
+; int setvbuf(FILE *stream, char *buf, int mode, size_t size)
+; Set stream buffering (limited support on CP/M)
+; ============================================================
+	PUBLIC	_setvbuf
+_setvbuf:
+	; No-op - CP/M uses fixed 128-byte buffers
+	; Always return 0 (success) for compatibility
+	LD	HL,0
+	RET
+
+; ============================================================
+; void perror(const char *s)
+; Print error message to stderr
+; ============================================================
+	PUBLIC	_perror
+_perror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Print user string if provided
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_perror_errmsg
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_errmsg
+
+	; Print user string
+_perror_uloop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_colon
+	LD	E,A
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	INC	HL
+	JR	_perror_uloop
+
+_perror_colon:
+	; Print ": "
+	LD	E,':'
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,' '
+	LD	C,CONOUT
+	CALL	BDOS
+
+_perror_errmsg:
+	; Print generic error message (CP/M doesn't have errno)
+	LD	HL,_perror_msg
+_perror_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_nl
+	LD	E,A
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	INC	HL
+	JR	_perror_loop
+
+_perror_nl:
+	; Print newline
+	LD	E,13
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,10
+	LD	C,CONOUT
+	CALL	BDOS
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_perror_msg:
+	DB	'Error',0
+
+; Temporary FCB for remove/rename operations
+_tmp_fcb:
+	DS	36
+
+
+	DSEG
+
+; File slot storage
+_file_slots:	DS	680	; 4 FILE structures * 170 bytes each
+_fread_ptr:	DS	2	; fread dest pointer temp
+_fread_cnt:	DS	2	; fread byte counter temp
+_fwrite_ptr:	DS	2	; fwrite source pointer temp
+_fwrite_cnt:	DS	2	; fwrite byte counter temp
+
+	END

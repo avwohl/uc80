@@ -1,0 +1,65 @@
+; lc_printf_s.mac - printf %s handler
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_hasprec
+	EXTRN	_printf_prec
+
+	CSEG
+
+	PUBLIC	__printf_handle_s
+__printf_handle_s:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = string pointer
+
+	; Load precision limit into B (0 = unlimited)
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_phs_nop
+	LD	A,(_printf_prec)
+	LD	B,A
+	JR	_phs_loop
+_phs_nop:
+	LD	B,0
+
+_phs_loop:
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_phs_nolim
+	LD	A,B
+	OR	A
+	JR	Z,_phs_done
+	DEC	B
+_phs_nolim:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_phs_done
+	PUSH	DE
+	PUSH	BC
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	DE
+	INC	DE
+	JR	_phs_loop
+
+_phs_done:
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	JP	_printf_loop
+
+	END

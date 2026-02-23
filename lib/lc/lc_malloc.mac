@@ -1,0 +1,233 @@
+; lc_malloc.mac - dynamic memory allocation
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+	PUBLIC	_malloc
+_malloc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Get size
+	LD	C,(IX+4)
+	LD	B,(IX+5)
+
+	; Get current heap pointer
+	LD	HL,(_heap_ptr)
+
+	; If heap_ptr is 0, initialize it
+	LD	A,H
+	OR	L
+	JR	NZ,_malloc_have_heap
+	; Initialize heap to start after our data
+	LD	HL,_heap_start
+	LD	(_heap_ptr),HL
+
+_malloc_have_heap:
+	; HL = current heap pointer (return value)
+	PUSH	HL		; Save return address
+
+	; Advance heap pointer by size
+	ADD	HL,BC
+	; Check if we would exceed stack (rough check)
+	; SP is approximate limit
+	PUSH	HL
+	EX	DE,HL
+	LD	HL,0
+	ADD	HL,SP
+	; DE = new heap ptr, HL = SP
+	; If new_ptr >= SP - 256, fail (leave some stack margin)
+	LD	BC,256
+	OR	A
+	SBC	HL,BC		; HL = SP - 256
+	EX	DE,HL		; DE = SP - 256, HL = new heap ptr
+	OR	A
+	SBC	HL,DE		; If new_heap > limit, carry clear and result positive
+	POP	HL		; HL = new heap ptr
+	JR	NC,_malloc_oom
+
+	; Store new heap pointer
+	LD	(_heap_ptr),HL
+
+	; Return saved pointer
+	POP	HL
+	POP	IX
+	RET
+
+_malloc_oom:
+	; Out of memory - return NULL
+	POP	HL		; Discard saved pointer
+	LD	HL,0
+	POP	IX
+	RET
+
+; ============================================================
+; void *calloc(size_t nmemb, size_t size)
+; Allocate zeroed memory
+; Arguments: nmemb at IX+4, size at IX+6
+; Returns: pointer to zeroed memory, or NULL
+; ============================================================
+	PUBLIC	_calloc
+_calloc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Calculate total size = nmemb * size
+	LD	L,(IX+4)	; HL = nmemb
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = size
+	LD	D,(IX+7)
+
+	; 16-bit multiply: HL = HL * DE
+	PUSH	BC
+	LD	B,H
+	LD	C,L		; BC = nmemb
+	LD	HL,0
+_calloc_mult:
+	LD	A,B
+	OR	C
+	JR	Z,_calloc_mult_done
+	ADD	HL,DE
+	DEC	BC
+	JR	_calloc_mult
+_calloc_mult_done:
+	; HL = total size
+	POP	BC
+
+	; Call malloc with size in HL
+	PUSH	HL		; Push size as argument
+	CALL	_malloc
+	POP	DE		; Pop size into DE (we need it for clearing)
+
+	; Check if malloc returned NULL
+	LD	A,H
+	OR	L
+	JR	Z,_calloc_ret	; Return NULL
+
+	; Zero the memory: HL = ptr, DE = size
+	PUSH	HL		; Save return value
+	EX	DE,HL		; HL = size, DE = ptr
+
+	; Zero BC bytes at (DE)
+	LD	B,H
+	LD	C,L		; BC = size
+	EX	DE,HL		; HL = ptr
+
+_calloc_zero:
+	LD	A,B
+	OR	C
+	JR	Z,_calloc_zero_done
+	LD	(HL),0
+	INC	HL
+	DEC	BC
+	JR	_calloc_zero
+
+_calloc_zero_done:
+	POP	HL		; Restore return value
+
+_calloc_ret:
+	POP	IX
+	RET
+
+; ============================================================
+; void free(void *ptr)
+; Free memory - no-op in bump allocator
+; ============================================================
+	PUBLIC	_free
+_free:
+	RET			; No-op: bump allocator never frees
+
+; ============================================================
+; void *realloc(void *ptr, size_t size)
+; Resize allocated memory
+; Simple implementation: always allocates new block and copies
+; ============================================================
+	PUBLIC	_realloc
+_realloc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)	; HL = ptr
+	LD	H,(IX+5)
+	LD	C,(IX+6)	; BC = size
+	LD	B,(IX+7)
+
+	; If ptr is NULL, just malloc
+	LD	A,H
+	OR	L
+	JR	NZ,_realloc_check_size
+	; malloc(size)
+	PUSH	BC
+	CALL	_malloc
+	POP	DE
+	JR	_realloc_done
+
+_realloc_check_size:
+	; If size is 0, free and return NULL
+	LD	A,B
+	OR	C
+	JR	NZ,_realloc_do
+	; size is 0, return NULL
+	LD	HL,0
+	JR	_realloc_done
+
+_realloc_do:
+	; Save old pointer
+	PUSH	HL
+
+	; Allocate new block
+	PUSH	BC
+	CALL	_malloc
+	POP	DE		; DE = size (for copy)
+	LD	B,D
+	LD	C,E		; BC = size
+
+	; Check if malloc failed
+	LD	A,H
+	OR	L
+	JR	Z,_realloc_fail
+
+	; Copy old data to new block
+	; HL = new ptr, need old ptr
+	EX	DE,HL		; DE = new ptr
+	POP	HL		; HL = old ptr
+
+	; Copy BC bytes from HL to DE
+	; But BC might be larger than old allocation!
+	; Since we don't track sizes, copy the minimum
+	; For safety, just copy size bytes (user's responsibility)
+	PUSH	DE		; Save new ptr to return
+	LDIR			; Copy BC bytes from HL to DE
+	POP	HL		; HL = new ptr
+	JR	_realloc_done
+
+_realloc_fail:
+	POP	DE		; Discard old ptr
+	; HL is already 0
+
+_realloc_done:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+
+
+	DSEG
+_heap_ptr:	DW	0
+_heap_start:	DW	0
+
+	END

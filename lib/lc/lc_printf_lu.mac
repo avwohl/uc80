@@ -1,0 +1,35 @@
+; lc_printf_lu.mac - printf %lu handler (unsigned long decimal)
+	.Z80
+
+	EXTRN	_printf_loop
+	EXTRN	_prt_dec32
+
+	CSEG
+
+	PUBLIC	__printf_handle_lu
+__printf_handle_lu:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A
+	EX	DE,HL		; DEHL = value
+	CALL	_prt_dec32
+	POP	BC
+	LD	A,C
+	ADD	A,4
+	LD	C,A
+	POP	HL
+	JP	_printf_loop
+
+	END

@@ -1,0 +1,581 @@
+; lc_atoi.mac - string to integer conversion
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int atoi(const char *nptr)
+; Convert string to integer
+; Handles optional leading whitespace and sign
+; ============================================================
+	PUBLIC	_atoi
+_atoi:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)	; HL = string pointer
+	LD	H,(IX+5)
+
+	; Skip leading whitespace
+_atoi_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_atoi_skipnext
+	CP	09H		; tab
+	JR	Z,_atoi_skipnext
+	CP	0AH		; newline
+	JR	Z,_atoi_skipnext
+	CP	0DH		; carriage return
+	JR	Z,_atoi_skipnext
+	JR	_atoi_sign
+_atoi_skipnext:
+	INC	HL
+	JR	_atoi_skip
+
+_atoi_sign:
+	LD	C,0		; C = sign flag (0=positive)
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_atoi_chkplus
+	LD	C,1		; Negative
+	INC	HL
+	JR	_atoi_digits
+_atoi_chkplus:
+	CP	'+'
+	JR	NZ,_atoi_digits
+	INC	HL
+
+_atoi_digits:
+	; DE = accumulator (result)
+	LD	DE,0
+
+_atoi_loop:
+	LD	A,(HL)
+	SUB	'0'
+	JR	C,_atoi_done	; < '0'
+	CP	10
+	JR	NC,_atoi_done	; > '9'
+
+	; DE = DE * 10 + digit
+	PUSH	HL
+	PUSH	BC
+	PUSH	AF		; Save digit
+
+	; DE * 10 = DE * 8 + DE * 2
+	LD	H,D
+	LD	L,E		; HL = DE
+	ADD	HL,HL		; HL = DE * 2
+	LD	B,H
+	LD	C,L		; BC = DE * 2
+	ADD	HL,HL		; HL = DE * 4
+	ADD	HL,HL		; HL = DE * 8
+	ADD	HL,BC		; HL = DE * 10
+	EX	DE,HL		; DE = DE * 10
+
+	POP	AF		; Get digit back
+	LD	L,A
+	LD	H,0
+	ADD	HL,DE		; HL = DE * 10 + digit
+	EX	DE,HL		; DE = result
+
+	POP	BC
+	POP	HL
+	INC	HL
+	JR	_atoi_loop
+
+_atoi_done:
+	; Apply sign
+	LD	H,D
+	LD	L,E		; HL = result
+	LD	A,C
+	OR	A
+	JR	Z,_atoi_ret
+	; Negate: 0 - HL
+	EX	DE,HL
+	LD	HL,0
+	OR	A
+	SBC	HL,DE
+
+_atoi_ret:
+	POP	IX
+	RET
+
+; ============================================================
+; long atol(const char *nptr)
+; Convert string to long (32-bit)
+; Returns result in DEHL
+; ============================================================
+	PUBLIC	_atol
+_atol:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = string pointer
+	LD	H,(IX+5)
+
+	; Skip leading whitespace
+_atol_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_atol_skipnext
+	CP	09H
+	JR	Z,_atol_skipnext
+	CP	0AH
+	JR	Z,_atol_skipnext
+	CP	0DH
+	JR	Z,_atol_skipnext
+	JR	_atol_sign
+_atol_skipnext:
+	INC	HL
+	JR	_atol_skip
+
+_atol_sign:
+	LD	C,0		; C = sign flag
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_atol_chkplus
+	LD	C,1
+	INC	HL
+	JR	_atol_digits
+_atol_chkplus:
+	CP	'+'
+	JR	NZ,_atol_digits
+	INC	HL
+
+_atol_digits:
+	; Result in __atol_acc (32-bit)
+	XOR	A
+	LD	(_atol_acc),A
+	LD	(_atol_acc+1),A
+	LD	(_atol_acc+2),A
+	LD	(_atol_acc+3),A
+
+_atol_loop:
+	LD	A,(HL)
+	SUB	'0'
+	JR	C,_atol_done
+	CP	10
+	JR	NC,_atol_done
+
+	; acc = acc * 10 + digit
+	PUSH	HL
+	PUSH	BC
+	PUSH	AF		; Save digit
+
+	; Multiply acc by 10 using shifts: x*10 = x*8 + x*2
+	; First, copy acc to tmp
+	LD	HL,(_atol_acc)
+	LD	(_atol_tmp),HL
+	LD	HL,(_atol_acc+2)
+	LD	(_atol_tmp+2),HL
+
+	; acc = acc * 2
+	LD	HL,(_atol_acc)
+	ADD	HL,HL
+	LD	(_atol_acc),HL
+	LD	HL,(_atol_acc+2)
+	ADC	HL,HL
+	LD	(_atol_acc+2),HL
+
+	; tmp = tmp * 8 (shift left 3 more times = total 4)
+	; Actually: acc*2 already done, so tmp*8 means shift tmp left 3 times
+	LD	B,3
+_atol_shift8:
+	LD	HL,(_atol_tmp)
+	ADD	HL,HL
+	LD	(_atol_tmp),HL
+	LD	HL,(_atol_tmp+2)
+	ADC	HL,HL
+	LD	(_atol_tmp+2),HL
+	DJNZ	_atol_shift8
+
+	; acc = acc + tmp (acc*2 + acc*8 = acc*10)
+	LD	HL,(_atol_acc)
+	LD	DE,(_atol_tmp)
+	ADD	HL,DE
+	LD	(_atol_acc),HL
+	LD	HL,(_atol_acc+2)
+	LD	DE,(_atol_tmp+2)
+	ADC	HL,DE
+	LD	(_atol_acc+2),HL
+
+	; Add digit
+	POP	AF
+	LD	E,A
+	LD	D,0
+	LD	HL,(_atol_acc)
+	ADD	HL,DE
+	LD	(_atol_acc),HL
+	JR	NC,_atol_noc
+	LD	HL,(_atol_acc+2)
+	INC	HL
+	LD	(_atol_acc+2),HL
+_atol_noc:
+	POP	BC
+	POP	HL
+	INC	HL
+	JR	_atol_loop
+
+_atol_done:
+	; Load result into DEHL
+	LD	HL,(_atol_acc)
+	LD	DE,(_atol_acc+2)
+
+	; Apply sign
+	LD	A,C
+	OR	A
+	JR	Z,_atol_ret
+
+	; Negate DEHL
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+
+_atol_ret:
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; long strtol(const char *nptr, char **endptr, int base)
+; Convert string to long (32-bit signed)
+; Supports base 0 (auto-detect), 8, 10, 16
+; Returns result in DEHL
+; ============================================================
+	PUBLIC	_strtol
+_strtol:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = nptr
+	LD	H,(IX+5)
+	LD	A,(IX+8)	; A = base (low byte only matters)
+	LD	(_strtol_base),A
+	XOR	A
+	LD	(_strtol_neg),A	; Clear negative flag
+
+	; Skip leading whitespace
+_strtol_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_strtol_skipnext
+	CP	09H
+	JR	Z,_strtol_skipnext
+	CP	0AH
+	JR	Z,_strtol_skipnext
+	CP	0DH
+	JR	Z,_strtol_skipnext
+	JR	_strtol_sign
+_strtol_skipnext:
+	INC	HL
+	JR	_strtol_skip
+
+_strtol_sign:
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_strtol_chkplus
+	LD	A,1
+	LD	(_strtol_neg),A
+	INC	HL
+	JR	_strtol_prefix
+_strtol_chkplus:
+	CP	'+'
+	JR	NZ,_strtol_prefix
+	INC	HL
+
+_strtol_prefix:
+	; Check for 0x or 0 prefix if base==0 or base==16/8
+	LD	A,(_strtol_base)
+	OR	A
+	JR	Z,_strtol_auto	; Auto-detect base
+	CP	16
+	JR	Z,_strtol_chk0x
+	JR	_strtol_init
+
+_strtol_auto:
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_strtol_base10
+	INC	HL
+	LD	A,(HL)
+	CP	'x'
+	JR	Z,_strtol_hexauto
+	CP	'X'
+	JR	Z,_strtol_hexauto
+	; Octal
+	DEC	HL
+	LD	A,8
+	LD	(_strtol_base),A
+	JR	_strtol_init
+
+_strtol_hexauto:
+	INC	HL		; Skip 'x'
+	LD	A,16
+	LD	(_strtol_base),A
+	JR	_strtol_init
+
+_strtol_base10:
+	LD	A,10
+	LD	(_strtol_base),A
+	JR	_strtol_init
+
+_strtol_chk0x:
+	; For explicit base 16, skip optional 0x prefix
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_strtol_init
+	INC	HL
+	LD	A,(HL)
+	CP	'x'
+	JR	Z,_strtol_skip0x
+	CP	'X'
+	JR	Z,_strtol_skip0x
+	DEC	HL
+	JR	_strtol_init
+_strtol_skip0x:
+	INC	HL
+
+_strtol_init:
+	; Initialize result to 0
+	XOR	A
+	LD	(_strtol_acc),A
+	LD	(_strtol_acc+1),A
+	LD	(_strtol_acc+2),A
+	LD	(_strtol_acc+3),A
+
+_strtol_loop:
+	LD	A,(HL)
+	; Convert digit
+	CP	'0'
+	JR	C,_strtol_done
+	CP	'9'+1
+	JR	C,_strtol_digit
+	; Check for hex digits
+	CP	'A'
+	JR	C,_strtol_done
+	CP	'Z'+1
+	JR	C,_strtol_upper
+	CP	'a'
+	JR	C,_strtol_done
+	CP	'z'+1
+	JR	NC,_strtol_done
+	SUB	'a'-10
+	JR	_strtol_gotdig
+
+_strtol_upper:
+	SUB	'A'-10
+	JR	_strtol_gotdig
+
+_strtol_digit:
+	SUB	'0'
+
+_strtol_gotdig:
+	; A = digit value, check against base
+	LD	B,A
+	LD	A,(_strtol_base)
+	CP	B
+	JR	C,_strtol_done	; digit >= base
+	JR	Z,_strtol_done	; digit >= base
+	LD	A,B
+
+	; acc = acc * base + digit
+	PUSH	HL
+	PUSH	AF		; Save digit
+
+	; Multiply acc by base
+	LD	A,(_strtol_base)
+	CALL	_strtol_mult
+
+	; Add digit
+	POP	AF
+	LD	E,A
+	LD	D,0
+	LD	HL,(_strtol_acc)
+	ADD	HL,DE
+	LD	(_strtol_acc),HL
+	JR	NC,_strtol_noc
+	LD	HL,(_strtol_acc+2)
+	INC	HL
+	LD	(_strtol_acc+2),HL
+_strtol_noc:
+	POP	HL
+	INC	HL
+	JR	_strtol_loop
+
+_strtol_done:
+	; Save end pointer if endptr != NULL
+	LD	E,(IX+6)	; DE = endptr
+	LD	D,(IX+7)
+	LD	A,D
+	OR	E
+	JR	Z,_strtol_noend
+	; *endptr = HL
+	EX	DE,HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+_strtol_noend:
+
+	; Load result into DEHL
+	LD	HL,(_strtol_acc)
+	LD	DE,(_strtol_acc+2)
+
+	; Apply sign
+	LD	A,(_strtol_neg)
+	OR	A
+	JR	Z,_strtol_ret
+
+	; Negate DEHL
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+
+_strtol_ret:
+	POP	BC
+	POP	IX
+	RET
+
+; Internal: multiply _strtol_acc by A
+_strtol_mult:
+	PUSH	BC
+	LD	B,A		; B = multiplier
+
+	; Copy acc to tmp
+	LD	HL,(_strtol_acc)
+	LD	(_strtol_tmp),HL
+	LD	HL,(_strtol_acc+2)
+	LD	(_strtol_tmp+2),HL
+
+	; Clear acc
+	XOR	A
+	LD	(_strtol_acc),A
+	LD	(_strtol_acc+1),A
+	LD	(_strtol_acc+2),A
+	LD	(_strtol_acc+3),A
+
+	; Multiply by shifts and adds
+_strtol_mult_loop:
+	LD	A,B
+	OR	A
+	JR	Z,_strtol_mult_done
+	RRA			; Carry = LSB
+	LD	B,A
+	JR	NC,_strtol_mult_shift
+
+	; Add tmp to acc
+	LD	HL,(_strtol_acc)
+	LD	DE,(_strtol_tmp)
+	ADD	HL,DE
+	LD	(_strtol_acc),HL
+	LD	HL,(_strtol_acc+2)
+	LD	DE,(_strtol_tmp+2)
+	ADC	HL,DE
+	LD	(_strtol_acc+2),HL
+
+_strtol_mult_shift:
+	; tmp = tmp * 2
+	LD	HL,(_strtol_tmp)
+	ADD	HL,HL
+	LD	(_strtol_tmp),HL
+	LD	HL,(_strtol_tmp+2)
+	ADC	HL,HL
+	LD	(_strtol_tmp+2),HL
+	JR	_strtol_mult_loop
+
+_strtol_mult_done:
+	POP	BC
+	RET
+
+; ============================================================
+; unsigned long strtoul(const char *nptr, char **endptr, int base)
+; Convert string to unsigned long (32-bit)
+; Same as strtol but ignores minus sign
+; ============================================================
+	PUBLIC	_strtoul
+_strtoul:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = nptr
+	LD	H,(IX+5)
+	LD	A,(IX+8)	; A = base
+	LD	(_strtol_base),A
+	XOR	A
+	LD	(_strtol_neg),A	; Always unsigned
+
+	; Skip leading whitespace
+_strtoul_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_strtoul_skipnext
+	CP	09H
+	JR	Z,_strtoul_skipnext
+	CP	0AH
+	JR	Z,_strtoul_skipnext
+	CP	0DH
+	JR	Z,_strtoul_skipnext
+	JR	_strtoul_sign
+_strtoul_skipnext:
+	INC	HL
+	JR	_strtoul_skip
+
+_strtoul_sign:
+	; Skip optional + sign, ignore - sign
+	LD	A,(HL)
+	CP	'+'
+	JR	NZ,_strtoul_pref
+	INC	HL
+
+_strtoul_pref:
+	JP	_strtol_prefix	; Share the rest of strtol code
+
+	DSEG
+
+; atol working storage
+_atol_acc:	DS	4
+_atol_tmp:	DS	4
+
+; strtol working storage
+_strtol_acc:	DS	4
+_strtol_tmp:	DS	4
+_strtol_base:	DS	1
+_strtol_neg:	DS	1
+
+	END

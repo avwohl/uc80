@@ -1,0 +1,47 @@
+; lc_printf_x.mac - printf %x, %X, %p handlers
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_upper
+	EXTRN	_printf_prt_hex
+
+	CSEG
+
+	PUBLIC	__printf_handle_x
+	PUBLIC	__printf_handle_xu
+	PUBLIC	__printf_handle_p
+
+__printf_handle_xu:
+	; %X handler - set uppercase flag and fall through
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_upper),A
+	POP	AF
+	JR	__printf_handle_x
+
+__printf_handle_p:
+	; Pointer - same as %x
+
+__printf_handle_x:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	CALL	_printf_prt_hex
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	JP	_printf_loop
+
+	END

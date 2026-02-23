@@ -1,0 +1,129 @@
+; lc_assert.mac - assert support
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+
+	EXTRN	_puts
+	EXTRN	_abort
+
+	CSEG
+
+; ============================================================
+; void _assert_fail(const char *file, int line)
+; Called when an assertion fails
+; Prints message and exits
+; ============================================================
+	PUBLIC	__assert_fail
+__assert_fail:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Print "Assert: "
+	LD	HL,_assert_msg
+	CALL	_assert_puts
+
+	; Print filename
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	CALL	_assert_puts
+
+	; Print ":"
+	LD	E,':'
+	LD	C,2
+	CALL	5
+
+	; Print line number
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	CALL	_assert_prt_dec
+
+	; Print newline
+	LD	E,0DH
+	LD	C,2
+	CALL	5
+	LD	E,0AH
+	LD	C,2
+	CALL	5
+
+	; Exit
+	JP	0
+
+; Internal: print string at HL
+_assert_puts:
+	LD	A,(HL)
+	OR	A
+	RET	Z
+	LD	E,A
+	PUSH	HL
+	LD	C,2
+	CALL	5
+	POP	HL
+	INC	HL
+	JR	_assert_puts
+
+; Internal: print HL as decimal
+_assert_prt_dec:
+	PUSH	BC
+	PUSH	DE
+	LD	DE,10
+	LD	B,0
+_assert_dec_loop:
+	CALL	_assert_div
+	PUSH	DE
+	INC	B
+	LD	A,H
+	OR	L
+	JR	NZ,_assert_dec_loop
+_assert_dec_out:
+	POP	DE
+	LD	A,E
+	ADD	A,'0'
+	LD	E,A
+	PUSH	BC
+	LD	C,2
+	CALL	5
+	POP	BC
+	DJNZ	_assert_dec_out
+	POP	DE
+	POP	BC
+	RET
+
+; Simple division: HL = HL / 10, DE = HL % 10
+_assert_div:
+	PUSH	BC
+	LD	BC,0
+_assert_div_lp:
+	LD	A,H
+	OR	A
+	JR	NZ,_assert_div_sub
+	LD	A,L
+	CP	10
+	JR	C,_assert_div_dn
+_assert_div_sub:
+	LD	A,L
+	SUB	10
+	LD	L,A
+	LD	A,H
+	SBC	A,0
+	LD	H,A
+	INC	BC
+	JR	_assert_div_lp
+_assert_div_dn:
+	LD	E,L
+	LD	D,0
+	LD	H,B
+	LD	L,C
+	POP	BC
+	RET
+
+	DSEG
+
+_assert_msg:	DB	'Assert: ',0
+
+	END

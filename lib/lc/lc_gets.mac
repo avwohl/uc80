@@ -1,0 +1,48 @@
+; lc_gets.mac - gets
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *gets(char *s)
+; Read line from stdin into buffer (DANGEROUS - no size limit)
+; Returns s, or NULL on EOF/error
+; ============================================================
+	PUBLIC	_gets
+_gets:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	E,(IX+4)	; DE = buffer pointer
+	LD	D,(IX+5)
+	PUSH	DE		; Save for return
+
+_gets_loop:
+	LD	C,CONIN
+	CALL	BDOS		; A = char
+	CP	0DH		; CR?
+	JR	Z,_gets_done
+	CP	0AH		; LF?
+	JR	Z,_gets_done
+	LD	(DE),A
+	INC	DE
+	JR	_gets_loop
+
+_gets_done:
+	XOR	A
+	LD	(DE),A		; Null terminate
+	POP	HL		; Return original pointer
+	POP	DE
+	POP	BC
+	POP	IX
+
+	END

@@ -1,0 +1,1092 @@
+; lc_atomic.mac - atomic operations
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+	PUBLIC	_atomic_flag_test_and_set
+	PUBLIC	_atomic_flag_test_and_set_explicit
+_atomic_flag_test_and_set_explicit:
+_atomic_flag_test_and_set:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = obj
+
+	DI
+	LD	A,(HL)		; Get current value
+	LD	E,A		; Save for return
+	LD	(HL),1		; Set flag
+	EI
+
+	LD	L,E
+	LD	H,0		; Return old value
+	POP	IX
+	RET
+
+; void atomic_flag_clear(volatile atomic_flag *obj)
+	PUBLIC	_atomic_flag_clear
+	PUBLIC	_atomic_flag_clear_explicit
+_atomic_flag_clear_explicit:
+_atomic_flag_clear:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	(HL),0		; Clear flag
+	EI
+
+	POP	IX
+	RET
+
+; ============================================================
+; 1-byte atomic operations
+; ============================================================
+
+; void __atomic_store_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_store_1
+___atomic_store_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = obj
+	LD	A,(IX+6)	; val
+
+	DI
+	LD	(HL),A
+	EI
+
+	POP	IX
+	RET
+
+; unsigned char __atomic_load_1(volatile void *obj)
+	PUBLIC	___atomic_load_1
+___atomic_load_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	A,(HL)
+	EI
+
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_exchange_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_exchange_1
+___atomic_exchange_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+
+	DI
+	LD	E,(HL)		; Get old value
+	LD	(HL),A		; Store new value
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; _Bool __atomic_compare_exchange_1(volatile void *obj, void *expected, unsigned char desired)
+	PUBLIC	___atomic_compare_exchange_1
+___atomic_compare_exchange_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; expected
+	LD	A,(IX+8)	; desired
+
+	DI
+	LD	C,(HL)		; Current value
+	PUSH	DE
+	EX	DE,HL
+	LD	B,(HL)		; Expected value
+	EX	DE,HL
+	POP	DE
+	LD	A,C
+	CP	B		; Compare
+	JR	NZ,_cmpxchg1_fail
+
+	; Equal - store desired
+	LD	A,(IX+8)
+	LD	(HL),A
+	EI
+	LD	HL,1
+	POP	IX
+	RET
+
+_cmpxchg1_fail:
+	; Not equal - store current in *expected
+	LD	A,C
+	LD	(DE),A
+	EI
+	LD	HL,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_add_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_add_1
+___atomic_fetch_add_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A		; C = val
+
+	DI
+	LD	A,(HL)		; Get old value
+	LD	E,A		; Save for return
+	ADD	A,C		; Add
+	LD	(HL),A		; Store result
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_sub_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_sub_1
+___atomic_fetch_sub_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	SUB	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_or_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_or_1
+___atomic_fetch_or_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	OR	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_xor_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_xor_1
+___atomic_fetch_xor_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	XOR	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; unsigned char __atomic_fetch_and_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_and_1
+___atomic_fetch_and_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	AND	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; ============================================================
+; 2-byte atomic operations
+; ============================================================
+
+; void __atomic_store_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_store_2
+___atomic_store_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; val
+
+	DI
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	IX
+	RET
+
+; unsigned int __atomic_load_2(volatile void *obj)
+	PUBLIC	___atomic_load_2
+___atomic_load_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EI
+
+	EX	DE,HL
+	POP	IX
+	RET
+
+; unsigned int __atomic_exchange_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_exchange_2
+___atomic_exchange_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; val
+
+	DI
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = old value
+	LD	(HL),D
+	DEC	HL
+	LD	(HL),E		; Store new
+	EI
+
+	LD	H,B
+	LD	L,C
+	POP	BC
+	POP	IX
+	RET
+
+; _Bool __atomic_compare_exchange_2(volatile void *obj, void *expected, unsigned int desired)
+	PUBLIC	___atomic_compare_exchange_2
+___atomic_compare_exchange_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = current value
+	DEC	HL
+
+	; Get expected
+	PUSH	HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; expected ptr
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = expected
+	POP	HL
+
+	; Compare BC with DE
+	LD	A,C
+	CP	E
+	JR	NZ,_cmpxchg2_fail
+	LD	A,B
+	CP	D
+	JR	NZ,_cmpxchg2_fail
+
+	; Equal - store desired
+	LD	E,(IX+8)
+	LD	D,(IX+9)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+	LD	HL,1
+	POP	BC
+	POP	IX
+	RET
+
+_cmpxchg2_fail:
+	; Store current in *expected
+	PUSH	HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	POP	HL
+	EI
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_add_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_add_2
+___atomic_fetch_add_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = old value
+	DEC	HL
+	PUSH	DE		; Save old
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = val
+	EX	DE,HL
+	ADD	HL,BC		; HL = old + val
+	EX	DE,HL		; DE = result
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL		; Return old value
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_sub_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_sub_2
+___atomic_fetch_sub_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = old
+	DEC	HL
+	PUSH	DE
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	EX	DE,HL
+	OR	A
+	SBC	HL,BC		; HL = old - val
+	EX	DE,HL
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_or_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_or_2
+___atomic_fetch_or_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL
+	PUSH	DE		; Save old
+
+	LD	A,E
+	OR	(IX+6)
+	LD	E,A
+	LD	A,D
+	OR	(IX+7)
+	LD	D,A
+
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_xor_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_xor_2
+___atomic_fetch_xor_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL
+	PUSH	DE
+
+	LD	A,E
+	XOR	(IX+6)
+	LD	E,A
+	LD	A,D
+	XOR	(IX+7)
+	LD	D,A
+
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned int __atomic_fetch_and_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_and_2
+___atomic_fetch_and_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL
+	PUSH	DE
+
+	LD	A,E
+	AND	(IX+6)
+	LD	E,A
+	LD	A,D
+	AND	(IX+7)
+	LD	D,A
+
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; 4-byte atomic operations (for long)
+; ============================================================
+
+; void __atomic_store_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_store_4
+___atomic_store_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	LD	A,(IX+6)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+8)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+9)
+	LD	(HL),A
+	EI
+
+	POP	IX
+	RET
+
+; unsigned long __atomic_load_4(volatile void *obj)
+	PUBLIC	___atomic_load_4
+___atomic_load_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	EI
+
+	; Return DEHL for long
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,B
+	POP	IX
+	RET
+
+; unsigned long __atomic_exchange_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_exchange_4
+___atomic_exchange_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	; Read old value
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = old
+	; Store new value
+	LD	A,(IX+9)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+8)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+7)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+6)
+	LD	(HL),A
+	EI
+
+	; Return old in DEHL
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,B
+	POP	BC
+	POP	IX
+	RET
+
+; _Bool __atomic_compare_exchange_4(volatile void *obj, void *expected, unsigned long desired)
+	PUBLIC	___atomic_compare_exchange_4
+___atomic_compare_exchange_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	; Load current value into stack temp area
+	PUSH	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = current
+	POP	HL
+
+	; Load expected
+	PUSH	HL
+	PUSH	BC
+	PUSH	DE
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; expected ptr
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = expected
+
+	; Compare (stack has current)
+	POP	HL		; current low
+	LD	A,L
+	CP	E
+	JR	NZ,_cmpxchg4_fail
+	LD	A,H
+	CP	D
+	JR	NZ,_cmpxchg4_fail
+	POP	HL		; current high
+	LD	A,L
+	CP	C
+	JR	NZ,_cmpxchg4_f2
+	LD	A,H
+	CP	B
+	JR	NZ,_cmpxchg4_f2
+
+	; Equal - store desired
+	POP	HL		; obj
+	LD	A,(IX+10)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+11)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+12)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+13)
+	LD	(HL),A
+	EI
+	LD	HL,1
+	POP	BC
+	POP	IX
+	RET
+
+_cmpxchg4_f2:
+	PUSH	HL		; Push back to balance stack
+_cmpxchg4_fail:
+	; Store current in *expected
+	POP	DE		; current high (or junk)
+	POP	HL		; current low (or high if came from f2)
+	; This is getting complex, let me simplify...
+	; Just re-read and store
+	POP	HL		; obj
+	PUSH	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = current
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	POP	HL		; Discard obj
+	EI
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_add_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_add_4
+___atomic_fetch_add_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	; Load current into temp
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE		; Save low word of old
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE		; Save high word of old
+
+	; Add val
+	POP	DE		; high
+	POP	HL		; low
+	PUSH	DE
+	PUSH	HL		; Save old for return
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	ADD	HL,BC		; Add low
+	EX	DE,HL
+	LD	C,(IX+8)
+	LD	B,(IX+9)
+	ADC	HL,BC		; Add high with carry
+	EX	DE,HL		; DEHL = result
+
+	; Store result
+	PUSH	HL
+	PUSH	DE
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	POP	DE
+	POP	BC		; DEBC = result
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	; Return old value
+	POP	HL		; low
+	POP	DE		; high
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_sub_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_sub_4
+___atomic_fetch_sub_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	POP	DE
+	POP	HL
+	PUSH	DE
+	PUSH	HL
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	OR	A
+	SBC	HL,BC
+	EX	DE,HL
+	LD	C,(IX+8)
+	LD	B,(IX+9)
+	SBC	HL,BC
+	EX	DE,HL
+
+	PUSH	HL
+	PUSH	DE
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	POP	DE
+	POP	BC
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_or_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_or_4
+___atomic_fetch_or_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	; Compute OR
+	POP	BC		; high
+	POP	DE		; low
+	PUSH	DE
+	PUSH	BC		; Save old
+
+	LD	A,E
+	OR	(IX+6)
+	LD	E,A
+	LD	A,D
+	OR	(IX+7)
+	LD	D,A
+	LD	A,C
+	OR	(IX+8)
+	LD	C,A
+	LD	A,B
+	OR	(IX+9)
+	LD	B,A		; BCDE = result
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	EI
+
+	POP	DE		; high of old
+	POP	HL		; low of old
+	; Swap for return convention
+	EX	DE,HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_xor_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_xor_4
+___atomic_fetch_xor_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	POP	BC
+	POP	DE
+	PUSH	DE
+	PUSH	BC
+
+	LD	A,E
+	XOR	(IX+6)
+	LD	E,A
+	LD	A,D
+	XOR	(IX+7)
+	LD	D,A
+	LD	A,C
+	XOR	(IX+8)
+	LD	C,A
+	LD	A,B
+	XOR	(IX+9)
+	LD	B,A
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	EI
+
+	POP	DE
+	POP	HL
+	EX	DE,HL
+	POP	BC
+	POP	IX
+	RET
+
+; unsigned long __atomic_fetch_and_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_and_4
+___atomic_fetch_and_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	POP	BC
+	POP	DE
+	PUSH	DE
+	PUSH	BC
+
+	LD	A,E
+	AND	(IX+6)
+	LD	E,A
+	LD	A,D
+	AND	(IX+7)
+	LD	D,A
+	LD	A,C
+	AND	(IX+8)
+	LD	C,A
+	LD	A,B
+	AND	(IX+9)
+	LD	B,A
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	EI
+
+	POP	DE
+	POP	HL
+	EX	DE,HL
+	POP	BC
+	POP	IX
+	RET
+
+	END
+
+	END

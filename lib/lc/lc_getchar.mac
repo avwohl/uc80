@@ -1,0 +1,26 @@
+; lc_getchar.mac - getchar
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int getchar(void)
+; Read a character from console
+; Returns: character read, or EOF (-1) on error
+; ============================================================
+	PUBLIC	_getchar
+_getchar:
+	LD	C,CONIN
+	CALL	BDOS
+	LD	L,A
+	LD	H,0
+	RET
+
+
+	END

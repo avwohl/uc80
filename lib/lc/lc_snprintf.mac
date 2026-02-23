@@ -1,0 +1,364 @@
+; lc_snprintf.mac - snprintf
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+
+	EXTRN	_printf
+	EXTRN	_sprintf_div16
+
+	CSEG
+
+; ============================================================
+; int snprintf(char *str, size_t size, const char *fmt, ...)
+; Format string into buffer with size limit
+; Supports %d, %s, %c, %x, %u, %p, %%
+; Returns: number of chars that would have been written (excl. null)
+; Stack: str(IX+4), size(IX+6), fmt(IX+8), args start at IX+10
+; ============================================================
+	PUBLIC	_snprintf
+_snprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; str is at IX+4, size at IX+6, fmt at IX+8, first vararg at IX+10
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = output buffer pointer
+	LD	(_snprintf_out),DE
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = size
+	LD	(_snprintf_max),DE
+	LD	L,(IX+8)
+	LD	H,(IX+9)	; HL = format string pointer
+	LD	C,10		; C = offset to next argument
+
+	; Character counter and remaining counter
+	LD	DE,0
+	LD	(_snprintf_cnt),DE
+
+_snprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_snprintf_done
+
+	CP	'%'
+	JR	Z,_snprintf_format
+
+	; Regular character - output it
+	CALL	_snprintf_putc
+	INC	HL
+	JR	_snprintf_loop
+
+_snprintf_format:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_snprintf_done
+
+	CP	'%'
+	JR	Z,_snprintf_pct
+
+_snprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_snprintf_fskip
+	CP	'+'
+	JR	Z,_snprintf_fskip
+	CP	' '
+	JR	Z,_snprintf_fskip
+	CP	'#'
+	JR	Z,_snprintf_fskip
+	CP	'0'
+	JR	Z,_snprintf_fskip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_snprintf_nodig
+	CP	'9'+1
+	JR	C,_snprintf_fskip
+_snprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_snprintf_fskip
+	; Skip length modifiers: h, l, z
+	CP	'h'
+	JR	Z,_snprintf_fskip
+	CP	'l'
+	JR	Z,_snprintf_fskip
+	CP	'z'
+	JR	Z,_snprintf_fskip
+	; Now check format specifiers
+	CP	's'
+	JR	Z,_snprintf_str
+
+	CP	'd'
+	JR	Z,_snprintf_dec
+
+	CP	'i'
+	JR	Z,_snprintf_dec
+
+	CP	'c'
+	JR	Z,_snprintf_chr
+
+	CP	'x'
+	JR	Z,_snprintf_hex
+
+	CP	'X'
+	JR	Z,_snprintf_hex
+
+	CP	'u'
+	JR	Z,_snprintf_uns
+
+	CP	'p'
+	JR	Z,_snprintf_hex	; %p same as %x
+
+	; Unknown format - skip
+	INC	HL
+	JP	_snprintf_loop
+
+_snprintf_fskip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_snprintf_done
+	JR	_snprintf_fmt2
+
+_snprintf_pct:
+	LD	A,'%'
+	CALL	_snprintf_putc
+	INC	HL
+	JP	_snprintf_loop
+
+_snprintf_chr:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	A,(HL)
+	CALL	_snprintf_putc
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_snprintf_loop
+
+_snprintf_str:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = string pointer
+
+_snprintf_str_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_snprintf_str_done
+	CALL	_snprintf_putc
+	INC	DE
+	JR	_snprintf_str_loop
+
+_snprintf_str_done:
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_snprintf_loop
+
+_snprintf_dec:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value
+
+	BIT	7,H
+	JR	Z,_snprintf_dec_pos
+
+	LD	A,'-'
+	CALL	_snprintf_putc
+	PUSH	DE
+	EX	DE,HL
+	LD	HL,0
+	OR	A
+	SBC	HL,DE
+	POP	DE
+
+_snprintf_dec_pos:
+	CALL	_snprintf_prt_dec
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_snprintf_loop
+
+_snprintf_uns:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	CALL	_snprintf_prt_dec
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_snprintf_loop
+
+_snprintf_hex:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	CALL	_snprintf_prt_hex
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_snprintf_loop
+
+_snprintf_done:
+	; Null terminate (if room)
+	LD	HL,(_snprintf_max)
+	LD	A,H
+	OR	L
+	JR	Z,_snprintf_ret	; size was 0, don't write null
+	LD	HL,(_snprintf_out)
+	LD	(HL),0
+
+_snprintf_ret:
+	; Return count (what would have been written)
+	LD	HL,(_snprintf_cnt)
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; Internal: put character to buffer if room
+_snprintf_putc:
+	PUSH	HL
+	PUSH	DE
+
+	; Always increment count
+	LD	HL,(_snprintf_cnt)
+	INC	HL
+	LD	(_snprintf_cnt),HL
+
+	; Check if we have room (need 1 for char + 1 for null)
+	LD	HL,(_snprintf_max)
+	LD	DE,2
+	OR	A
+	SBC	HL,DE
+	JR	C,_snprintf_putc_skip	; No room
+
+	; Write character
+	LD	HL,(_snprintf_out)
+	LD	(HL),A
+	INC	HL
+	LD	(_snprintf_out),HL
+
+	; Decrement remaining size
+	LD	HL,(_snprintf_max)
+	DEC	HL
+	LD	(_snprintf_max),HL
+
+_snprintf_putc_skip:
+	POP	DE
+	POP	HL
+	RET
+
+; Internal: print HL as decimal to buffer
+_snprintf_prt_dec:
+	PUSH	BC
+	PUSH	DE
+	LD	DE,10
+	LD	B,0
+_snprintf_dec_loop:
+	CALL	_sprintf_div16	; Reuse sprintf's div16
+	PUSH	DE
+	INC	B
+	LD	A,H
+	OR	L
+	JR	NZ,_snprintf_dec_loop
+_snprintf_dec_out:
+	POP	DE
+	LD	A,E
+	ADD	A,'0'
+	CALL	_snprintf_putc
+	DJNZ	_snprintf_dec_out
+	POP	DE
+	POP	BC
+	RET
+
+; Internal: print HL as 4-digit hex to buffer
+_snprintf_prt_hex:
+	PUSH	BC
+	LD	A,H
+	CALL	_snprintf_hex2
+	LD	A,L
+	CALL	_snprintf_hex2
+	POP	BC
+	RET
+
+_snprintf_hex2:
+	PUSH	AF
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	CALL	_snprintf_hex1
+	POP	AF
+_snprintf_hex1:
+	AND	0FH
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_snprintf_hex_out
+	ADD	A,7
+_snprintf_hex_out:
+	JP	_snprintf_putc
+
+	DSEG
+
+; snprintf working storage
+_snprintf_out:	DS	2	; Current output pointer
+_snprintf_max:	DS	2	; Remaining space in buffer
+_snprintf_cnt:	DS	2	; Total character count
+
+	END

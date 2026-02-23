@@ -1,0 +1,201 @@
+; lc_signal.mac - signal handling
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; Signal handling for CP/M
+; Software signal system - no hardware signals but full API support
+; ============================================================
+
+; Signal handler table - 7 entries (signals 0-6), each a 2-byte function pointer
+; Initialized to SIG_DFL (0) = default handling
+_sig_handlers:
+	DW	0		; Signal 0 (unused)
+	DW	0		; SIGABRT (1)
+	DW	0		; SIGFPE (2)
+	DW	0		; SIGILL (3)
+	DW	0		; SIGINT (4)
+	DW	0		; SIGSEGV (5)
+	DW	0		; SIGTERM (6)
+
+; sig_handler_t signal(int sig, sig_handler_t handler)
+; Sets signal handler, returns previous handler
+; Returns SIG_ERR (-1) for invalid signal numbers
+	PUBLIC	_signal
+_signal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; Get signal number
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Validate signal (must be 1-6)
+	LD	A,L
+	OR	H		; H must be 0
+	JR	NZ,_sig_err
+	LD	A,L
+	OR	A
+	JR	Z,_sig_err	; 0 is invalid
+	CP	7
+	JR	NC,_sig_err	; >= 7 is invalid
+	; Calculate table offset: sig * 2
+	ADD	A,A		; A = sig * 2
+	LD	E,A
+	LD	D,0
+	LD	HL,_sig_handlers
+	ADD	HL,DE		; HL = &_sig_handlers[sig]
+	; Save old handler to return
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL		; HL back to start
+	; Store new handler
+	LD	A,(IX+6)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)
+	LD	(HL),A
+	; Return old handler in HL
+	EX	DE,HL
+	POP	IX
+	RET
+_sig_err:
+	; Return SIG_ERR (-1)
+	LD	HL,-1
+	POP	IX
+	RET
+
+; int raise(int sig)
+; Raises a signal - calls the registered handler
+; Returns 0 on success, -1 on error
+	PUBLIC	_raise
+_raise:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; Get signal number
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Validate signal (must be 1-6)
+	LD	A,L
+	OR	H
+	JR	NZ,_raise_err
+	LD	A,L
+	OR	A
+	JR	Z,_raise_err
+	CP	7
+	JR	NC,_raise_err
+	; Save signal number
+	PUSH	AF
+	; Get handler: _sig_handlers[sig]
+	ADD	A,A		; A = sig * 2
+	LD	E,A
+	LD	D,0
+	LD	HL,_sig_handlers
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = handler
+	; Check handler type
+	LD	A,D
+	OR	E
+	JR	Z,_raise_dfl	; SIG_DFL (0) - default handling
+	LD	A,D
+	AND	E
+	INC	A
+	JR	Z,_raise_ign	; SIG_IGN (-1 = 0xFFFF) - ignore (but that's SIG_ERR)
+	; Check if SIG_IGN (1)
+	LD	A,D
+	OR	A
+	JR	NZ,_raise_call
+	LD	A,E
+	CP	1
+	JR	Z,_raise_ign	; SIG_IGN (1) - ignore
+	; Fall through to call handler
+_raise_call:
+	; Reset to SIG_DFL before calling (ANSI behavior)
+	POP	AF		; Get signal number back
+	PUSH	AF
+	ADD	A,A
+	LD	C,A
+	LD	B,0
+	LD	HL,_sig_handlers
+	ADD	HL,BC
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A		; Reset to SIG_DFL
+	; Call handler with signal number as argument
+	POP	AF		; Signal number
+	PUSH	AF
+	LD	L,A
+	LD	H,0
+	PUSH	HL		; Push signal argument
+	; Call handler (DE has address)
+	PUSH	DE
+	POP	HL		; HL = handler address
+	CALL	_raise_callhl
+	POP	BC		; Clean up argument
+	POP	AF		; Clean up saved signal
+	; Return success
+	LD	HL,0
+	POP	IX
+	RET
+_raise_callhl:
+	JP	(HL)		; Call handler
+
+_raise_dfl:
+	; Default handling - depends on signal type
+	POP	AF		; Get signal number
+	CP	1		; SIGABRT?
+	JR	Z,_raise_abort
+	CP	2		; SIGFPE?
+	JR	Z,_raise_abort
+	CP	3		; SIGILL?
+	JR	Z,_raise_abort
+	CP	5		; SIGSEGV?
+	JR	Z,_raise_abort
+	CP	6		; SIGTERM?
+	JR	Z,_raise_abort
+	; SIGINT (4) - default is ignore in CP/M context
+	LD	HL,0
+	POP	IX
+	RET
+_raise_abort:
+	; Abort - warm boot CP/M
+	LD	C,0		; BDOS function 0 - warm boot
+	CALL	5
+	; Should not return, but just in case
+	LD	HL,0
+	POP	IX
+	RET
+
+_raise_ign:
+	; Signal ignored - just return success
+	POP	AF		; Clean up saved signal
+	LD	HL,0
+	POP	IX
+	RET
+
+_raise_err:
+	; Invalid signal number
+	LD	HL,-1
+	POP	IX
+	RET
+
+; ============================================================
+; Math functions - IEEE 754 single precision implementations
+; Using Taylor series, Newton-Raphson, and polynomial approximations
+
+
+	DSEG
+_signal_table:	DS	14
+
+	END

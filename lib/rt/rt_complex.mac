@@ -1,0 +1,284 @@
+; rt_complex.mac - Complex number arithmetic
+; Split from runtime.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__fdiv
+
+	CSEG
+
+	CSEG
+
+; ============================================================
+; Complex Addition: __cplx_result = __cplx_l + __cplx_r
+; (a+bi) + (c+di) = (a+c) + (b+d)i
+; ============================================================
+	PUBLIC	__cadd
+__cadd:
+	; Add real parts: result.real = l.real + r.real
+	LD	HL,(__cplx_l)		; l.real low
+	LD	DE,(__cplx_l+2)		; l.real high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_r)		; r.real low
+	LD	DE,(__cplx_r+2)		; r.real high
+	CALL	__fadd
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Add imag parts: result.imag = l.imag + r.imag
+	LD	HL,(__cplx_l+4)		; l.imag low
+	LD	DE,(__cplx_l+6)		; l.imag high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_r+4)		; r.imag low
+	LD	DE,(__cplx_r+6)		; r.imag high
+	CALL	__fadd
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+; ============================================================
+; Complex Subtraction: __cplx_result = __cplx_l - __cplx_r
+; (a+bi) - (c+di) = (a-c) + (b-d)i
+; ============================================================
+	PUBLIC	__csub
+__csub:
+	; Sub real parts: result.real = l.real - r.real
+	LD	HL,(__cplx_r)		; r.real low
+	LD	DE,(__cplx_r+2)		; r.real high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; l.real low
+	LD	DE,(__cplx_l+2)		; l.real high
+	CALL	__fsub
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Sub imag parts: result.imag = l.imag - r.imag
+	LD	HL,(__cplx_r+4)		; r.imag low
+	LD	DE,(__cplx_r+6)		; r.imag high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; l.imag low
+	LD	DE,(__cplx_l+6)		; l.imag high
+	CALL	__fsub
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+; ============================================================
+; Complex Multiplication: __cplx_result = __cplx_l * __cplx_r
+; (a+bi) * (c+di) = (ac-bd) + (ad+bc)i
+; Let: a=l.real, b=l.imag, c=r.real, d=r.imag
+; ============================================================
+	PUBLIC	__cmul
+__cmul:
+	; Calculate ac (a*c)
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*c
+	LD	(__cplx_work),HL	; store ac
+	LD	(__cplx_work+2),DE
+
+	; Calculate bd (b*d)
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*d
+	; Store bd in __tmp32 for subtraction
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; result.real = ac - bd
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	CALL	__fsub
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Calculate ad (a*d)
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*d
+	LD	(__cplx_work),HL	; store ad
+	LD	(__cplx_work+2),DE
+
+	; Calculate bc (b*c)
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*c
+	; Store bc in __tmp32 for addition
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; result.imag = ad + bc
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	CALL	__fadd
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+; ============================================================
+; Complex Division: __cplx_result = __cplx_l / __cplx_r
+; (a+bi) / (c+di) = (ac+bd)/(c²+d²) + (bc-ad)/(c²+d²)i
+; Let: a=l.real, b=l.imag, c=r.real, d=r.imag
+; ============================================================
+	PUBLIC	__cdiv
+__cdiv:
+	; First calculate denominator: c² + d²
+
+	; Calculate c²
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; c is already in DEHL, multiply by itself
+	CALL	__fmul			; DEHL = c²
+	PUSH	DE
+	PUSH	HL			; Save c² on stack
+
+	; Calculate d²
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; d is already in DEHL, multiply by itself
+	CALL	__fmul			; DEHL = d²
+	; Add c² + d²
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE			; Restore c²
+	CALL	__fadd			; DEHL = c² + d²
+	LD	(__cplx_work),HL	; Store denominator
+	LD	(__cplx_work+2),DE
+
+	; Calculate numerator real: ac + bd
+
+	; Calculate ac
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*c
+	PUSH	DE
+	PUSH	HL			; Save ac on stack
+
+	; Calculate bd
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*d
+	; Add ac + bd
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE			; Restore ac
+	CALL	__fadd			; DEHL = ac + bd
+
+	; Divide by denominator for real part
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	LD	(__cplx_work+4),HL	; Save denom
+	LD	(__cplx_work+6),DE
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	LD	BC,(__cplx_work)
+	LD	(__tmp32),BC
+	LD	BC,(__cplx_work+2)
+	LD	(__tmp32+2),BC
+	CALL	__fdiv			; DEHL = (ac+bd)/(c²+d²)
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Restore denominator
+	LD	HL,(__cplx_work+4)
+	LD	(__cplx_work),HL
+	LD	HL,(__cplx_work+6)
+	LD	(__cplx_work+2),HL
+
+	; Calculate numerator imag: bc - ad
+
+	; Calculate bc
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*c
+	PUSH	DE
+	PUSH	HL			; Save bc on stack
+
+	; Calculate ad
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*d
+	; Subtract bc - ad
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE			; Restore bc
+	CALL	__fsub			; DEHL = bc - ad
+
+	; Divide by denominator for imag part
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	LD	BC,(__tmp32)
+	LD	(__cplx_work+4),BC
+	LD	BC,(__tmp32+2)
+	LD	(__cplx_work+6),BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_work+4)
+	LD	DE,(__cplx_work+6)
+	CALL	__fdiv			; DEHL = (bc-ad)/(c²+d²)
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+	DSEG
+	PUBLIC	__cplx_l,__cplx_r,__cplx_result,__cplx_tmp
+__cplx_l:
+	DW	0,0,0,0
+__cplx_r:
+	DW	0,0,0,0
+__cplx_result:
+	DW	0,0,0,0
+__cplx_tmp:
+	DW	0,0,0,0
+__cplx_work:
+	DW	0,0,0,0
+	END

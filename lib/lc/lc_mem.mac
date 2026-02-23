@@ -1,0 +1,268 @@
+; lc_mem.mac - memory functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; void *memcpy(void *dest, const void *src, size_t n)
+; Copy n bytes from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_memcpy
+_memcpy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_memcpy_done
+
+	LDIR			; Block copy
+
+_memcpy_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; void *memset(void *s, int c, size_t n)
+; Fill n bytes of s with c
+; Returns: s
+; ============================================================
+	PUBLIC	_memset
+_memset:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = dest
+	LD	H,(IX+5)
+	LD	A,(IX+6)	; A = fill byte
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+	PUSH	HL		; Save dest for return
+
+	PUSH	AF		; Save fill byte
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_memset_done_pop
+
+	POP	AF		; Restore fill byte
+	LD	(HL),A		; Store first byte
+	LD	D,H		; DE = HL + 1
+	LD	E,L
+	INC	DE
+	DEC	BC		; n - 1
+	LD	A,B
+	OR	C
+	JR	Z,_memset_done
+	LDIR			; Copy first byte to rest
+	JR	_memset_done
+
+_memset_done_pop:
+	POP	AF		; Discard saved fill byte
+
+_memset_done:
+	POP	HL		; Return dest
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int memcmp(const void *s1, const void *s2, size_t n)
+; Compare n bytes of s1 and s2
+; Returns: <0 if s1<s2, 0 if s1==s2, >0 if s1>s2
+; ============================================================
+	PUBLIC	_memcmp
+_memcmp:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = s1
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = s2
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_memcmp_loop:
+	LD	A,B
+	OR	C
+	JR	Z,_memcmp_equal	; n == 0, equal
+
+	LD	A,(DE)
+	PUSH	HL
+	LD	H,(HL)
+	SUB	H
+	POP	HL
+	JR	NZ,_memcmp_diff
+
+	DEC	BC
+	INC	DE
+	INC	HL
+	JR	_memcmp_loop
+
+_memcmp_equal:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+_memcmp_diff:
+	LD	L,A
+	RLA
+	SBC	A,A
+	LD	H,A
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; void *malloc(size_t size)
+; Allocate memory from heap
+; Simple bump allocator - memory is never freed
+; Argument: size on stack at IX+4
+; Returns: pointer to allocated memory, or NULL (0) if failed
+
+; ============================================================
+; void *memmove(void *dest, const void *src, size_t n)
+; Copy n bytes, handles overlapping regions
+; Returns: dest
+; ============================================================
+	PUBLIC	_memmove
+_memmove:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+	; Check if n == 0
+	LD	A,B
+	OR	C
+	JR	Z,_memmove_done
+
+	; Check if we need to copy backwards
+	; If dest > src and dest < src + n, copy backwards
+	PUSH	HL
+	OR	A
+	SBC	HL,DE		; HL = src - dest
+	POP	HL
+	JR	NC,_memmove_fwd	; src >= dest, copy forward
+
+	; dest > src, check if overlapping
+	PUSH	HL
+	ADD	HL,BC		; HL = src + n
+	OR	A
+	SBC	HL,DE		; If src + n > dest, overlapping
+	POP	HL
+	JR	C,_memmove_fwd	; No overlap, forward is fine
+	JR	Z,_memmove_fwd
+
+	; Copy backwards
+	; Move pointers to end
+	ADD	HL,BC
+	DEC	HL		; HL = src + n - 1
+	EX	DE,HL
+	ADD	HL,BC
+	DEC	HL		; HL = dest + n - 1
+	EX	DE,HL		; HL = src end, DE = dest end
+
+_memmove_bwd:
+	LD	A,B
+	OR	C
+	JR	Z,_memmove_done
+	LD	A,(HL)
+	LD	(DE),A
+	DEC	HL
+	DEC	DE
+	DEC	BC
+	JR	_memmove_bwd
+
+_memmove_fwd:
+	; Copy forward using LDIR
+	LDIR
+
+_memmove_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; void *memchr(const void *s, int c, size_t n)
+; Find first occurrence of c in first n bytes of s
+; Returns: pointer to byte, or NULL if not found
+; ============================================================
+	PUBLIC	_memchr
+_memchr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; E = char to find
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_memchr_loop:
+	LD	A,B
+	OR	C
+	JR	Z,_memchr_notfound
+
+	LD	A,(HL)
+	CP	E
+	JR	Z,_memchr_found
+
+	INC	HL
+	DEC	BC
+	JR	_memchr_loop
+
+_memchr_found:
+	POP	BC
+	POP	IX
+	RET			; HL already points to match
+
+_memchr_notfound:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int sprintf(char *str, const char *fmt, ...)
+; Format string into buffer
+; Supports %d, %s, %c, %x, %%
+; Returns: number of characters written (excluding null)
+
+	END

@@ -1,0 +1,29 @@
+; lc_printf_c.mac - printf %c handler
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	_printf_loop
+
+	CSEG
+
+	PUBLIC	__printf_handle_c
+__printf_handle_c:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	JP	_printf_loop
+
+	END

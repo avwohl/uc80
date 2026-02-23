@@ -1,0 +1,291 @@
+; lc_qsort.mac - qsort, bsearch
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+
+	EXTRN	__callhl
+	EXTRN	__mul16
+
+	CSEG
+
+; ============================================================
+; void qsort(void *base, size_t nmemb, size_t size,
+;            int (*compar)(const void *, const void *))
+; Sort array using selection sort (simpler for Z80)
+; Stack: base(IX+4), nmemb(IX+6), size(IX+8), compar(IX+10)
+; ============================================================
+	PUBLIC	_qsort
+_qsort:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Check if nmemb <= 1, nothing to sort
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	A,H
+	OR	A
+	JR	NZ,_qsort_start
+	LD	A,L
+	CP	2
+	JP	C,_qsort_done	; nmemb < 2
+
+_qsort_start:
+	; Outer loop: i = 0 to nmemb-2
+	LD	HL,0
+	LD	(_qsort_i),HL
+
+_qsort_outer:
+	; Check if i >= nmemb - 1
+	LD	HL,(_qsort_i)
+	INC	HL		; i + 1
+	LD	E,(IX+6)	; nmemb (low word only, assume < 65536)
+	LD	D,(IX+7)
+	OR	A
+	SBC	HL,DE
+	JP	NC,_qsort_done	; i + 1 >= nmemb, done
+
+	; min_idx = i
+	LD	HL,(_qsort_i)
+	LD	(_qsort_min),HL
+
+	; Inner loop: j = i + 1 to nmemb - 1
+	LD	HL,(_qsort_i)
+	INC	HL
+	LD	(_qsort_j),HL
+
+_qsort_inner:
+	; Check if j >= nmemb
+	LD	HL,(_qsort_j)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	OR	A
+	SBC	HL,DE
+	JP	NC,_qsort_swap	; j >= nmemb, do swap
+
+	; Compare base[j] with base[min_idx]
+	; Calculate address of base[j]
+	LD	HL,(_qsort_j)
+	CALL	_qsort_addr	; HL = base + j*size
+	PUSH	HL		; First arg to compare
+
+	; Calculate address of base[min_idx]
+	LD	HL,(_qsort_min)
+	CALL	_qsort_addr	; HL = base + min_idx*size
+	PUSH	HL		; Second arg
+
+	; Call compare function
+	LD	L,(IX+10)
+	LD	H,(IX+11)
+	CALL	__callhl
+	POP	DE		; Clean up args
+	POP	DE
+
+	; If result < 0, update min_idx
+	BIT	7,H
+	JR	Z,_qsort_inner_next
+	; arr[j] < arr[min_idx], update min_idx
+	LD	HL,(_qsort_j)
+	LD	(_qsort_min),HL
+
+_qsort_inner_next:
+	LD	HL,(_qsort_j)
+	INC	HL
+	LD	(_qsort_j),HL
+	JR	_qsort_inner
+
+_qsort_swap:
+	; Swap base[i] with base[min_idx] if min_idx != i
+	LD	HL,(_qsort_i)
+	LD	DE,(_qsort_min)
+	OR	A
+	SBC	HL,DE
+	JR	Z,_qsort_outer_next	; Same, no swap needed
+
+	; Get addresses
+	LD	HL,(_qsort_i)
+	CALL	_qsort_addr
+	LD	(_qsort_ptr1),HL
+
+	LD	HL,(_qsort_min)
+	CALL	_qsort_addr
+	LD	(_qsort_ptr2),HL
+
+	; Swap size bytes
+	LD	L,(IX+8)
+	LD	H,(IX+9)	; HL = size
+	LD	B,H
+	LD	C,L		; BC = size counter
+
+_qsort_swap_loop:
+	LD	A,B
+	OR	C
+	JR	Z,_qsort_outer_next
+
+	LD	HL,(_qsort_ptr1)
+	LD	D,(HL)		; D = byte from ptr1
+	LD	HL,(_qsort_ptr2)
+	LD	E,(HL)		; E = byte from ptr2
+	LD	(HL),D		; Store D at ptr2
+	LD	HL,(_qsort_ptr1)
+	LD	(HL),E		; Store E at ptr1
+
+	; Advance pointers
+	LD	HL,(_qsort_ptr1)
+	INC	HL
+	LD	(_qsort_ptr1),HL
+	LD	HL,(_qsort_ptr2)
+	INC	HL
+	LD	(_qsort_ptr2),HL
+
+	DEC	BC
+	JR	_qsort_swap_loop
+
+_qsort_outer_next:
+	LD	HL,(_qsort_i)
+	INC	HL
+	LD	(_qsort_i),HL
+	JP	_qsort_outer
+
+_qsort_done:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; Internal: calculate base + index*size
+; Input: HL = index
+; Output: HL = address
+; Uses: size from IX+8
+_qsort_addr:
+	PUSH	DE
+	PUSH	BC
+	; Multiply HL by size
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; DE = size
+	CALL	__mul16		; HL = index * size
+	; Add base
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	ADD	HL,DE
+	POP	BC
+	POP	DE
+	RET
+
+; ============================================================
+; void *bsearch(const void *key, const void *base, size_t nmemb,
+;               size_t size, int (*compar)(const void *, const void *))
+; Binary search in sorted array
+; Stack: key(IX+4), base(IX+6), nmemb(IX+8), size(IX+10), compar(IX+12)
+; Returns: pointer to found element, or NULL
+; ============================================================
+	PUBLIC	_bsearch
+_bsearch:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; low = 0
+	LD	HL,0
+	LD	(_bsearch_low),HL
+
+	; high = nmemb
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	(_bsearch_high),HL
+
+_bsearch_loop:
+	; Check if low >= high
+	LD	HL,(_bsearch_low)
+	LD	DE,(_bsearch_high)
+	OR	A
+	SBC	HL,DE
+	JP	NC,_bsearch_notfound	; low >= high
+
+	; mid = (low + high) / 2
+	LD	HL,(_bsearch_low)
+	LD	DE,(_bsearch_high)
+	ADD	HL,DE
+	SRL	H
+	RR	L		; HL = (low + high) / 2
+	LD	(_bsearch_mid),HL
+
+	; Calculate address of base[mid]
+	LD	E,(IX+10)
+	LD	D,(IX+11)	; DE = size
+	CALL	__mul16		; HL = mid * size
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	ADD	HL,DE		; HL = base + mid*size
+	PUSH	HL		; Save mid address
+
+	; Call compare(key, &base[mid])
+	PUSH	HL		; Second arg: &base[mid]
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; First arg: key
+	LD	L,(IX+12)
+	LD	H,(IX+13)
+	CALL	__callhl
+	POP	DE		; Clean up first arg
+	POP	DE		; Clean up second arg
+
+	POP	DE		; Restore mid address into DE
+
+	; Check result
+	LD	A,H
+	OR	L
+	JR	Z,_bsearch_found	; cmp == 0, found!
+
+	BIT	7,H
+	JR	NZ,_bsearch_left	; cmp < 0, search left
+
+	; cmp > 0, search right: low = mid + 1
+	LD	HL,(_bsearch_mid)
+	INC	HL
+	LD	(_bsearch_low),HL
+	JR	_bsearch_loop
+
+_bsearch_left:
+	; cmp < 0, search left: high = mid
+	LD	HL,(_bsearch_mid)
+	LD	(_bsearch_high),HL
+	JR	_bsearch_loop
+
+_bsearch_found:
+	; Return mid address (saved in DE)
+	EX	DE,HL
+	JR	_bsearch_ret
+
+_bsearch_notfound:
+	LD	HL,0		; Return NULL
+
+_bsearch_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+; qsort working storage
+_qsort_i:	DS	2
+_qsort_j:	DS	2
+_qsort_min:	DS	2
+_qsort_ptr1:	DS	2
+_qsort_ptr2:	DS	2
+; bsearch working storage
+_bsearch_low:	DS	2
+_bsearch_high:	DS	2
+_bsearch_mid:	DS	2
+
+	END

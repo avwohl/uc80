@@ -1,0 +1,90 @@
+; lc_printf_llx.mac - printf %llx handler (long long hex)
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_ll_w0
+	EXTRN	_printf_ll_w1
+	EXTRN	_printf_ll_w2
+	EXTRN	_printf_ll_w3
+	EXTRN	_prt_hex
+	EXTRN	_prt_hex4
+
+	CSEG
+
+	PUBLIC	__printf_handle_llx
+__printf_handle_llx:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	; Read 8 bytes (64 bits)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_printf_ll_w0),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_printf_ll_w1),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_printf_ll_w2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_printf_ll_w3),DE
+	; Print from highest word to lowest, skip leading zeros
+	LD	HL,(_printf_ll_w3)
+	LD	A,H
+	OR	L
+	JR	Z,_phllx_w2
+	CALL	_prt_hex
+	LD	HL,(_printf_ll_w2)
+	CALL	_prt_hex4
+	LD	HL,(_printf_ll_w1)
+	CALL	_prt_hex4
+	LD	HL,(_printf_ll_w0)
+	CALL	_prt_hex4
+	JR	_phllx_done
+_phllx_w2:
+	LD	HL,(_printf_ll_w2)
+	LD	A,H
+	OR	L
+	JR	Z,_phllx_w1
+	CALL	_prt_hex
+	LD	HL,(_printf_ll_w1)
+	CALL	_prt_hex4
+	LD	HL,(_printf_ll_w0)
+	CALL	_prt_hex4
+	JR	_phllx_done
+_phllx_w1:
+	LD	HL,(_printf_ll_w1)
+	LD	A,H
+	OR	L
+	JR	Z,_phllx_w0
+	CALL	_prt_hex
+	LD	HL,(_printf_ll_w0)
+	CALL	_prt_hex4
+	JR	_phllx_done
+_phllx_w0:
+	LD	HL,(_printf_ll_w0)
+	CALL	_prt_hex
+_phllx_done:
+	POP	BC
+	LD	A,C
+	ADD	A,8
+	LD	C,A
+	POP	HL
+	JP	_printf_loop
+
+	END

@@ -1,0 +1,70 @@
+; lc_printf_ld.mac - printf %ld handler (signed long decimal)
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	_printf_loop
+	EXTRN	_prt_dec32
+
+	CSEG
+
+	PUBLIC	__printf_handle_ld
+__printf_handle_ld:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE		; HL = IX + offset
+	; Get 32-bit value
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = low word
+	INC	HL
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A		; HL = high word
+	EX	DE,HL		; DEHL = 32-bit value
+
+	; Check for negative
+	BIT	7,D
+	JR	Z,_phld_pos
+
+	; Negative - output minus and negate
+	PUSH	HL
+	PUSH	DE
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	POP	HL
+	; Negate DEHL
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+
+_phld_pos:
+	CALL	_prt_dec32
+	POP	BC
+	LD	A,C
+	ADD	A,4		; Long is 4 bytes
+	LD	C,A
+	POP	HL
+	JP	_printf_loop
+
+	END

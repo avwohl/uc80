@@ -1,0 +1,86 @@
+; lc_printf_all.mac - default printf format table (all handlers)
+; This module provides the full __printf_format_table when no
+; #pragma printf is specified. It references all format handlers
+; so the linker pulls them all in.
+	.Z80
+
+	EXTRN	__printf_handle_d
+	EXTRN	__printf_handle_u
+	EXTRN	__printf_handle_x
+	EXTRN	__printf_handle_xu
+	EXTRN	__printf_handle_s
+	EXTRN	__printf_handle_c
+	EXTRN	__printf_handle_p
+	EXTRN	__printf_handle_l
+	EXTRN	__printf_handle_f
+
+	EXTRN	__printf_handle_ld
+	EXTRN	__printf_handle_lu
+	EXTRN	__printf_handle_lx
+
+	EXTRN	__printf_handle_lld
+	EXTRN	__printf_handle_llu
+	EXTRN	__printf_handle_llx
+
+	CSEG
+
+	PUBLIC	__printf_format_table
+__printf_format_table:
+	DB	'd'
+	DW	__printf_handle_d
+	DB	'i'
+	DW	__printf_handle_d	; %i same as %d
+	DB	'u'
+	DW	__printf_handle_u
+	DB	'x'
+	DW	__printf_handle_x
+	DB	'X'
+	DW	__printf_handle_xu
+	DB	's'
+	DW	__printf_handle_s
+	DB	'c'
+	DW	__printf_handle_c
+	DB	'p'
+	DW	__printf_handle_p
+	DB	'l'
+	DW	__printf_handle_l
+	DB	'f'
+	DW	__printf_handle_f
+	DB	0		; sentinel
+
+	PUBLIC	__printf_long_table
+__printf_long_table:
+	DB	'd'
+	DW	__printf_handle_ld
+	DB	'i'
+	DW	__printf_handle_ld	; %li same as %ld
+	DB	'u'
+	DW	__printf_handle_lu
+	DB	'x'
+	DW	__printf_handle_lx
+	DB	'f'
+	DW	__printf_handle_f	; %lf same as %f
+	DB	'l'
+	DW	__printf_ll_entry
+	DB	0		; sentinel
+
+	PUBLIC	__printf_ll_table
+__printf_ll_table:
+	DB	'd'
+	DW	__printf_handle_lld
+	DB	'i'
+	DW	__printf_handle_lld
+	DB	'u'
+	DW	__printf_handle_llu
+	DB	'x'
+	DW	__printf_handle_llx
+	DB	0		; sentinel
+
+; The 'll' dispatch entry point - search __printf_ll_table
+; This is needed because 'l' handler in lc_printf_l.mac
+; references __printf_ll_table directly
+__printf_ll_entry:
+	; Not used directly - the 'l' handler handles 'll' internally
+	RET
+
+	END

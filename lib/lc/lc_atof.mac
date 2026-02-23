@@ -1,0 +1,512 @@
+; lc_atof.mac - string to float conversion
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+
+	EXTRN	__ltof
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+
+	CSEG
+
+; ============================================================
+; double atof(const char *nptr)
+; Convert string to double (IEEE 754 single precision)
+; ============================================================
+	PUBLIC	_atof
+_atof:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Call strtod with NULL endptr
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = nptr
+	PUSH	HL
+	LD	HL,0
+	PUSH	HL		; endptr = NULL
+	CALL	_strtod
+	POP	BC
+	POP	BC
+
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; double strtod(const char *nptr, char **endptr)
+; Convert string to double (IEEE 754 single precision)
+; Format: [ws][sign][digits][.digits][e[sign]digits]
+; Returns result in DEHL
+; ============================================================
+	PUBLIC	_strtod
+	PUBLIC	_strtof		; Same as strtod for our implementation
+	PUBLIC	_strtold	; Same as strtod for our implementation
+_strtof:
+_strtold:
+_strtod:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = nptr
+	XOR	A
+	LD	(_strtod_neg),A	; Clear negative flag
+	LD	(_strtod_expneg),A	; Clear exponent negative
+	LD	A,1
+	LD	(_strtod_expadj),A	; Exponent adjustment (1.0 default)
+	LD	(_strtod_expadj+1),A
+
+	; Initialize result to 0.0
+	XOR	A
+	LD	(_strtod_result),A
+	LD	(_strtod_result+1),A
+	LD	(_strtod_result+2),A
+	LD	(_strtod_result+3),A
+
+	; Skip leading whitespace
+_strtod_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_strtod_skipnext
+	CP	09H
+	JR	Z,_strtod_skipnext
+	CP	0AH
+	JR	Z,_strtod_skipnext
+	CP	0DH
+	JR	Z,_strtod_skipnext
+	JR	_strtod_sign
+_strtod_skipnext:
+	INC	HL
+	JR	_strtod_skip
+
+_strtod_sign:
+	PUSH	HL		; Save start position for endptr
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_strtod_chkplus
+	LD	A,1
+	LD	(_strtod_neg),A
+	INC	HL
+	JR	_strtod_intpart
+_strtod_chkplus:
+	CP	'+'
+	JR	NZ,_strtod_intpart
+	INC	HL
+
+_strtod_intpart:
+	; Parse integer part: accumulate digits
+	; Use 32-bit integer accumulator first
+	XOR	A
+	LD	(_strtod_intacc),A
+	LD	(_strtod_intacc+1),A
+	LD	(_strtod_intacc+2),A
+	LD	(_strtod_intacc+3),A
+	LD	(_strtod_gotdigit),A	; No digits yet
+
+_strtod_intloop:
+	LD	A,(HL)
+	CP	'0'
+	JR	C,_strtod_intdone
+	CP	'9'+1
+	JR	NC,_strtod_intdone
+	; Got a digit
+	LD	B,1
+	LD	(_strtod_gotdigit),A
+	SUB	'0'
+	LD	C,A		; C = digit value
+
+	; Multiply accumulator by 10 and add digit
+	PUSH	HL
+	PUSH	BC
+
+	; Load accumulator
+	LD	HL,(_strtod_intacc)
+	LD	DE,(_strtod_intacc+2)
+	; Multiply by 10: DEHL * 10
+	; Save original
+	PUSH	DE
+	PUSH	HL
+	; *2
+	ADD	HL,HL
+	RL	E
+	RL	D
+	; *4
+	ADD	HL,HL
+	RL	E
+	RL	D
+	; *8 + *2 = *10
+	POP	BC		; Original low
+	EX	(SP),HL		; Swap with original high, get *8 low
+	ADD	HL,BC		; *8 low + *2 low
+	EX	DE,HL		; DE = new low
+	POP	BC		; Original high
+	LD	A,H
+	ADC	A,C
+	LD	H,A
+	LD	A,L
+	ADC	A,B
+	LD	L,A		; HL = high, DE = low (wrong order)
+	EX	DE,HL		; DEHL = result*10
+	; Now add digit in C
+	POP	BC		; Get digit back
+	LD	A,L
+	ADD	A,C
+	LD	L,A
+	JR	NC,_strtod_noc1
+	INC	H
+	JR	NZ,_strtod_noc1
+	INC	DE
+_strtod_noc1:
+	; Store back
+	LD	(_strtod_intacc),HL
+	LD	(_strtod_intacc+2),DE
+	POP	HL
+	INC	HL
+	JR	_strtod_intloop
+
+_strtod_intdone:
+	; Check for decimal point
+	LD	A,(HL)
+	CP	'.'
+	JR	NZ,_strtod_chkexp
+
+	INC	HL		; Skip decimal point
+	; Parse fractional part
+	LD	DE,1		; Divisor starts at 1
+	LD	(_strtod_divisor),DE
+	LD	DE,0
+	LD	(_strtod_divisor+2),DE
+	XOR	A
+	LD	(_strtod_fracacc),A
+	LD	(_strtod_fracacc+1),A
+	LD	(_strtod_fracacc+2),A
+	LD	(_strtod_fracacc+3),A
+
+_strtod_fracloop:
+	LD	A,(HL)
+	CP	'0'
+	JR	C,_strtod_fracdone
+	CP	'9'+1
+	JR	NC,_strtod_fracdone
+	; Got a fractional digit
+	LD	B,1
+	LD	(_strtod_gotdigit),A
+	SUB	'0'
+	LD	C,A
+
+	; Multiply divisor by 10
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_strtod_divisor)
+	LD	DE,(_strtod_divisor+2)
+	; *10 (same as above)
+	PUSH	DE
+	PUSH	HL
+	ADD	HL,HL
+	RL	E
+	RL	D
+	ADD	HL,HL
+	RL	E
+	RL	D
+	POP	BC
+	EX	(SP),HL
+	ADD	HL,BC
+	EX	DE,HL
+	POP	BC
+	LD	A,H
+	ADC	A,C
+	LD	H,A
+	LD	A,L
+	ADC	A,B
+	LD	L,A
+	EX	DE,HL
+	LD	(_strtod_divisor),HL
+	LD	(_strtod_divisor+2),DE
+
+	; Multiply fracacc by 10 and add digit
+	LD	HL,(_strtod_fracacc)
+	LD	DE,(_strtod_fracacc+2)
+	PUSH	DE
+	PUSH	HL
+	ADD	HL,HL
+	RL	E
+	RL	D
+	ADD	HL,HL
+	RL	E
+	RL	D
+	POP	BC
+	EX	(SP),HL
+	ADD	HL,BC
+	EX	DE,HL
+	POP	BC
+	LD	A,H
+	ADC	A,C
+	LD	H,A
+	LD	A,L
+	ADC	A,B
+	LD	L,A
+	EX	DE,HL
+	; Add digit
+	POP	BC
+	LD	A,L
+	ADD	A,C
+	LD	L,A
+	JR	NC,_strtod_noc2
+	INC	H
+	JR	NZ,_strtod_noc2
+	INC	DE
+_strtod_noc2:
+	LD	(_strtod_fracacc),HL
+	LD	(_strtod_fracacc+2),DE
+	POP	HL
+	INC	HL
+	JR	_strtod_fracloop
+
+_strtod_fracdone:
+
+_strtod_chkexp:
+	; Check for exponent
+	LD	A,(HL)
+	CP	'e'
+	JR	Z,_strtod_parseexp
+	CP	'E'
+	JR	Z,_strtod_parseexp
+	JR	_strtod_convert
+
+_strtod_parseexp:
+	INC	HL		; Skip 'e'
+	XOR	A
+	LD	(_strtod_expneg),A
+	LD	(_strtod_exp),A
+	LD	(_strtod_exp+1),A
+
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_strtod_expplus
+	LD	A,1
+	LD	(_strtod_expneg),A
+	INC	HL
+	JR	_strtod_expdigits
+_strtod_expplus:
+	CP	'+'
+	JR	NZ,_strtod_expdigits
+	INC	HL
+
+_strtod_expdigits:
+	LD	A,(HL)
+	CP	'0'
+	JR	C,_strtod_convert
+	CP	'9'+1
+	JR	NC,_strtod_convert
+	SUB	'0'
+	LD	C,A
+	; exp = exp * 10 + digit
+	PUSH	HL
+	LD	HL,(_strtod_exp)
+	LD	D,H
+	LD	E,L
+	ADD	HL,HL		; *2
+	ADD	HL,HL		; *4
+	ADD	HL,DE		; *5
+	ADD	HL,HL		; *10
+	LD	D,0
+	LD	E,C
+	ADD	HL,DE
+	LD	(_strtod_exp),HL
+	POP	HL
+	INC	HL
+	JR	_strtod_expdigits
+
+_strtod_convert:
+	; Save end position
+	EX	(SP),HL		; HL = start, (SP) = end
+
+	; Check if we got any digits
+	LD	A,(_strtod_gotdigit)
+	OR	A
+	JR	NZ,_strtod_hasdigits
+	; No digits - return 0.0 with endptr = nptr
+	POP	HL		; Discard end
+	; HL = start (nptr)
+	JR	_strtod_storendptr
+
+_strtod_hasdigits:
+	POP	HL		; HL = end position
+	PUSH	HL		; Save it back
+
+	; Convert integer part to float
+	PUSH	HL
+	LD	HL,(_strtod_intacc)
+	LD	DE,(_strtod_intacc+2)
+	CALL	__ltof		; Convert long to float
+	LD	(_strtod_result),HL
+	LD	(_strtod_result+2),DE
+	POP	HL
+
+	; Add fractional part if any
+	LD	A,(_strtod_divisor)
+	DEC	A
+	OR	A
+	JR	NZ,_strtod_addfrac
+	LD	A,(_strtod_divisor+1)
+	OR	A
+	JR	NZ,_strtod_addfrac
+	LD	A,(_strtod_divisor+2)
+	OR	A
+	JR	NZ,_strtod_addfrac
+	LD	A,(_strtod_divisor+3)
+	OR	A
+	JR	Z,_strtod_applyexp
+
+_strtod_addfrac:
+	; Convert fracacc to float
+	PUSH	HL
+	LD	HL,(_strtod_fracacc)
+	LD	DE,(_strtod_fracacc+2)
+	CALL	__ltof
+	; Divide by divisor
+	LD	(_strtod_tmp),HL
+	LD	(_strtod_tmp+2),DE
+	LD	HL,(_strtod_divisor)
+	LD	DE,(_strtod_divisor+2)
+	CALL	__ltof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_strtod_tmp)
+	LD	DE,(_strtod_tmp+2)
+	CALL	__fdiv
+	; Add to result
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_strtod_result)
+	LD	DE,(_strtod_result+2)
+	CALL	__fadd
+	LD	(_strtod_result),HL
+	LD	(_strtod_result+2),DE
+	POP	HL
+
+_strtod_applyexp:
+	; Apply exponent if any
+	LD	DE,(_strtod_exp)
+	LD	A,D
+	OR	E
+	JR	Z,_strtod_applysign
+
+	; Build 10^exp
+	PUSH	HL
+	LD	HL,(_strtod_result)
+	LD	DE,(_strtod_result+2)
+	LD	BC,(_strtod_exp)
+
+_strtod_exploop:
+	LD	A,B
+	OR	C
+	JR	Z,_strtod_expdone
+	; Multiply or divide by 10
+	LD	A,(_strtod_expneg)
+	OR	A
+	JR	NZ,_strtod_expdiv
+
+	; Multiply by 10
+	PUSH	BC
+	LD	BC,00004120H	; 10.0 in IEEE 754
+	LD	(__tmp32),BC
+	LD	BC,00000000H
+	LD	(__tmp32+2),BC
+	CALL	__fmul
+	POP	BC
+	DEC	BC
+	JR	_strtod_exploop
+
+_strtod_expdiv:
+	; Divide by 10
+	PUSH	BC
+	LD	BC,00004120H	; 10.0 in IEEE 754
+	LD	(__tmp32),BC
+	LD	BC,00000000H
+	LD	(__tmp32+2),BC
+	CALL	__fdiv
+	POP	BC
+	DEC	BC
+	JR	_strtod_exploop
+
+_strtod_expdone:
+	LD	(_strtod_result),HL
+	LD	(_strtod_result+2),DE
+	POP	HL
+
+_strtod_applysign:
+	; Apply negative sign if needed
+	LD	A,(_strtod_neg)
+	OR	A
+	JR	Z,_strtod_storendptr
+
+	; Negate: flip sign bit
+	LD	HL,(_strtod_result+2)
+	LD	A,H
+	XOR	80H
+	LD	H,A
+	LD	(_strtod_result+2),HL
+
+_strtod_storendptr:
+	; Store endptr if not NULL
+	POP	HL		; HL = end position
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = endptr
+	LD	A,B
+	OR	C
+	JR	Z,_strtod_retval
+	; Store HL at *endptr
+	LD	A,L
+	LD	(BC),A
+	INC	BC
+	LD	A,H
+	LD	(BC),A
+
+_strtod_retval:
+	LD	HL,(_strtod_result)
+	LD	DE,(_strtod_result+2)
+	POP	BC
+	POP	IX
+	RET
+
+	EXTRN	__ltof
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+
+; strtod work variables
+_strtod_neg:	DB	0
+_strtod_expneg:	DB	0
+_strtod_gotdigit: DB	0
+_strtod_exp:	DW	0
+_strtod_expadj:	DW	1
+_strtod_intacc:	DS	4
+_strtod_fracacc: DS	4
+_strtod_divisor: DS	4
+_strtod_result:	DS	4
+_strtod_tmp:	DS	4
+
+; ============================================================
+; Multibyte/Wide Character Conversion Functions
+; Minimal implementation for C locale (1:1 char mapping)
+; ============================================================
+
+; int mblen(const char *s, size_t n)
+; Determine bytes in multibyte character
+
+	END

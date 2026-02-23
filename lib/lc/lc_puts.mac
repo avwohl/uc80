@@ -1,0 +1,91 @@
+; lc_puts.mac - puts, cputs
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int puts(const char *s)
+; Output a string followed by newline
+; Argument: pointer to string on stack at IX+4
+; Returns: non-negative on success, EOF (-1) on error
+; ============================================================
+	PUBLIC	_puts
+_puts:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Get string pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+_puts_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_puts_newline	; End of string
+
+	LD	E,A		; Character in E
+	LD	C,CONOUT
+	PUSH	HL
+	CALL	BDOS
+	POP	HL
+	INC	HL
+	JR	_puts_loop
+
+_puts_newline:
+	; Output newline (CR LF)
+	LD	E,0DH		; CR
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,0AH		; LF
+	LD	C,CONOUT
+	CALL	BDOS
+
+	; Return 0 (success)
+	LD	HL,0
+
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; void cputs(const char *s)
+; Output a string (no newline, for internal use)
+; ============================================================
+	PUBLIC	_cputs
+_cputs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Get string pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+_cputs_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_cputs_done
+
+	LD	E,A
+	LD	C,CONOUT
+	PUSH	HL
+	CALL	BDOS
+	POP	HL
+	INC	HL
+	JR	_cputs_loop
+
+_cputs_done:
+	POP	BC
+	POP	IX
+	RET
+
+	END

@@ -1,0 +1,123 @@
+; rt_setjmp.mac - setjmp/longjmp
+; Split from runtime.mac
+
+	.Z80
+
+	CSEG
+
+; ============================================================
+; setjmp - Save calling environment
+; int setjmp(jmp_buf env)
+; env pointer on stack at SP+2 (after return address)
+; Saves: return address, SP (after return), IX
+; Returns 0
+; ============================================================
+	PUBLIC	_setjmp
+_setjmp:
+	; Set up frame so we can access parameters
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; Stack: [saved IX, ret addr, env ptr, ...]
+	; IX+0 = saved IX, IX+2 = ret addr, IX+4 = env ptr
+
+	; Get env pointer into HL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	; Save return address at env[0..1]
+	LD	E,(IX+2)
+	LD	D,(IX+3)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+
+	; Save SP value (what it will be after we return)
+	; After POP IX and RET, SP will be IX+4 (pointing to env arg)
+	PUSH	HL		; Save env+2
+	PUSH	IX
+	POP	HL		; HL = IX (frame pointer)
+	LD	DE,4
+	ADD	HL,DE		; HL = IX+4 = return SP
+	EX	DE,HL		; DE = return SP
+	POP	HL		; HL = env+2
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+
+	; Save caller's IX at env[4..5]
+	; The IX we saved at (IX+0) is caller's IX
+	LD	E,(IX+0)
+	LD	D,(IX+1)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+
+	; Return 0
+	LD	HL,0
+	POP	IX
+	RET
+
+; ============================================================
+; longjmp - Non-local goto
+; void longjmp(jmp_buf env, int val)
+; env at SP+4, val at SP+2 (after return address)
+; If val==0, returns 1, else returns val
+; ============================================================
+	PUBLIC	_longjmp
+_longjmp:
+	; Get parameters - we'll discard our return address
+	; Stack at entry: [ret_addr, env, val, ...]
+	; (C calling convention: args pushed right-to-left)
+	POP	DE		; Discard longjmp's return address
+	POP	HL		; HL = env pointer
+	POP	BC		; BC = val
+
+	; If val == 0, set val = 1
+	LD	A,B
+	OR	C
+	JR	NZ,_longjmp_valok
+	LD	BC,1
+_longjmp_valok:
+	; BC = return value, HL = env
+
+	; Get return address from env[0..1] into DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	; DE = return address, HL = env+2
+
+	; Get saved SP from env[2..3]
+	LD	A,(HL)
+	INC	HL
+	PUSH	HL		; Save env+3
+	LD	H,(HL)
+	LD	L,A		; HL = saved SP
+	EX	(SP),HL		; Stack: [saved SP], HL = env+3
+	INC	HL		; HL = env+4
+
+	; Get saved IX from env[4..5]
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A		; HL = saved IX
+	PUSH	HL
+	POP	IX		; IX restored
+
+	; Now: DE = return addr, BC = return val, (SP) = saved SP
+	POP	HL		; HL = saved SP
+	LD	SP,HL		; Switch stack!
+
+	; Stack now points to original env location in caller's frame
+	; Push return address so RET will go there
+	PUSH	DE
+
+	; Return value in HL
+	LD	H,B
+	LD	L,C
+	RET
+
+	END

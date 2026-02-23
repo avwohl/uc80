@@ -1,0 +1,159 @@
+; lc_printf_d.mac - printf %d/%i handler
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_width
+	EXTRN	_printf_zero
+	EXTRN	_printf_neg
+	EXTRN	_printf_decbuf
+	EXTRN	_printf_dptr
+	EXTRN	_printf_dstart
+	EXTRN	_printf_dcnt
+	EXTRN	_prt_div16
+
+	CSEG
+
+	PUBLIC	__printf_handle_d
+__printf_handle_d:
+	; Entry: HL = format ptr (past 'd'), C = arg offset, IX = frame
+	; Output signed decimal with width/zero-padding
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE		; HL = IX + offset
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = value
+	EX	DE,HL		; HL = value
+
+	; Check for negative
+	XOR	A
+	LD	(_printf_neg),A
+	BIT	7,H
+	JR	Z,_phd_pos
+
+	; Negative - set flag and negate
+	LD	A,1
+	LD	(_printf_neg),A
+	PUSH	DE
+	EX	DE,HL
+	LD	HL,0
+	OR	A
+	SBC	HL,DE
+	POP	DE
+
+_phd_pos:
+	; Convert HL to decimal digits in _printf_decbuf
+	PUSH	IX
+	PUSH	BC
+	LD	DE,10
+	LD	B,0
+	LD	(_printf_dptr),IX
+	LD	IX,_printf_decbuf+5
+_phd_cvt:
+	CALL	_prt_div16
+	LD	A,E
+	ADD	A,'0'
+	DEC	IX
+	LD	(IX+0),A
+	INC	B
+	LD	DE,10
+	LD	A,H
+	OR	L
+	JR	NZ,_phd_cvt
+	LD	(_printf_dstart),IX
+	LD	A,B
+	LD	(_printf_dcnt),A
+	LD	IX,(_printf_dptr)
+	POP	BC
+
+	; Handle width padding
+	LD	A,(_printf_neg)
+	LD	D,A
+	LD	A,(_printf_dcnt)
+	ADD	A,D
+	LD	E,A
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_phd_nopad
+	SUB	E
+	JR	Z,_phd_nopad
+	JR	C,_phd_nopad
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_zero)
+	OR	A
+	JR	NZ,_phd_zpad
+	; Space padding
+_phd_spad:
+	PUSH	BC
+	PUSH	DE
+	LD	E,' '
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	POP	BC
+	DJNZ	_phd_spad
+	POP	BC
+	JR	_phd_nopad
+_phd_zpad:
+	LD	A,D
+	OR	A
+	JR	Z,_phd_zpd2
+	PUSH	BC
+	PUSH	DE
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	POP	BC
+	XOR	A
+	LD	D,A
+_phd_zpd2:
+	PUSH	BC
+	PUSH	DE
+	LD	E,'0'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	DE
+	POP	BC
+	DJNZ	_phd_zpd2
+	POP	BC
+_phd_nopad:
+	; Output minus sign if not already output
+	LD	A,D
+	OR	A
+	JR	Z,_phd_digs
+	PUSH	BC
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+_phd_digs:
+	LD	HL,(_printf_dstart)
+	LD	A,(_printf_dcnt)
+	LD	B,A
+_phd_dlp:
+	LD	E,(HL)
+	PUSH	BC
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	BC
+	INC	HL
+	DJNZ	_phd_dlp
+	POP	IX
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	JP	_printf_loop
+
+	END

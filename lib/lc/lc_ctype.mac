@@ -1,0 +1,268 @@
+; lc_ctype.mac - character classification functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; Character classification functions
+; These are also available as macros in ctype.h but provided
+; as functions for use with function pointers
+; ============================================================
+
+; int isdigit(int c)
+	PUBLIC	_isdigit
+_isdigit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'0'
+	JR	C,_isdigit_no
+	CP	'9'+1
+	JR	NC,_isdigit_no
+	LD	HL,1
+	POP	IX
+	RET
+_isdigit_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int isalpha(int c)
+	PUBLIC	_isalpha
+_isalpha:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	; Check uppercase
+	CP	'A'
+	JR	C,_isalpha_lower
+	CP	'Z'+1
+	JR	C,_isalpha_yes
+_isalpha_lower:
+	; Check lowercase
+	CP	'a'
+	JR	C,_isalpha_no
+	CP	'z'+1
+	JR	NC,_isalpha_no
+_isalpha_yes:
+	LD	HL,1
+	POP	IX
+	RET
+_isalpha_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int isalnum(int c)
+	PUBLIC	_isalnum
+_isalnum:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	; Check digit
+	CP	'0'
+	JR	C,_isalnum_alpha
+	CP	'9'+1
+	JR	C,_isalnum_yes
+_isalnum_alpha:
+	; Check uppercase
+	CP	'A'
+	JR	C,_isalnum_lower
+	CP	'Z'+1
+	JR	C,_isalnum_yes
+_isalnum_lower:
+	CP	'a'
+	JR	C,_isalnum_no
+	CP	'z'+1
+	JR	NC,_isalnum_no
+_isalnum_yes:
+	LD	HL,1
+	POP	IX
+	RET
+_isalnum_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int isspace(int c)
+	PUBLIC	_isspace
+_isspace:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	' '
+	JR	Z,_isspace_yes
+	CP	09H		; TAB
+	JR	Z,_isspace_yes
+	CP	0AH		; LF
+	JR	Z,_isspace_yes
+	CP	0BH		; VT
+	JR	Z,_isspace_yes
+	CP	0CH		; FF
+	JR	Z,_isspace_yes
+	CP	0DH		; CR
+	JR	Z,_isspace_yes
+	LD	HL,0
+	POP	IX
+	RET
+_isspace_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+; int isupper(int c)
+	PUBLIC	_isupper
+_isupper:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'A'
+	JR	C,_isupper_no
+	CP	'Z'+1
+	JR	NC,_isupper_no
+	LD	HL,1
+	POP	IX
+	RET
+_isupper_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int islower(int c)
+	PUBLIC	_islower
+_islower:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'a'
+	JR	C,_islower_no
+	CP	'z'+1
+	JR	NC,_islower_no
+	LD	HL,1
+	POP	IX
+	RET
+_islower_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int toupper(int c)
+	PUBLIC	_toupper
+_toupper:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'a'
+	JR	C,_toupper_ret
+	CP	'z'+1
+	JR	NC,_toupper_ret
+	SUB	'a'-'A'		; Convert to uppercase
+_toupper_ret:
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+; int tolower(int c)
+	PUBLIC	_tolower
+_tolower:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'A'
+	JR	C,_tolower_ret
+	CP	'Z'+1
+	JR	NC,_tolower_ret
+	ADD	A,'a'-'A'	; Convert to lowercase
+_tolower_ret:
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+; int isprint(int c)
+	PUBLIC	_isprint
+_isprint:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	' '
+	JR	C,_isprint_no
+	CP	7FH		; DEL
+	JR	NC,_isprint_no
+	LD	HL,1
+	POP	IX
+	RET
+_isprint_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int isxdigit(int c)
+	PUBLIC	_isxdigit
+_isxdigit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	; Check digit
+	CP	'0'
+	JR	C,_isxdigit_hex
+	CP	'9'+1
+	JR	C,_isxdigit_yes
+_isxdigit_hex:
+	; Check A-F
+	CP	'A'
+	JR	C,_isxdigit_lower
+	CP	'F'+1
+	JR	C,_isxdigit_yes
+_isxdigit_lower:
+	; Check a-f
+	CP	'a'
+	JR	C,_isxdigit_no
+	CP	'f'+1
+	JR	NC,_isxdigit_no
+_isxdigit_yes:
+	LD	HL,1
+	POP	IX
+	RET
+_isxdigit_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+; ============================================================
+; Signal handling for CP/M
+; Software signal system - no hardware signals but full API support
+; ============================================================
+
+; Signal handler table - 7 entries (signals 0-6), each a 2-byte function pointer
+; Initialized to SIG_DFL (0) = default handling
+_sig_handlers:
+	DW	0		; Signal 0 (unused)
+	DW	0		; SIGABRT (1)
+	DW	0		; SIGFPE (2)
+	DW	0		; SIGILL (3)
+	DW	0		; SIGINT (4)
+	DW	0		; SIGSEGV (5)
+	DW	0		; SIGTERM (6)
+
+; sig_handler_t signal(int sig, sig_handler_t handler)
+; Sets signal handler, returns previous handler
+
+	END

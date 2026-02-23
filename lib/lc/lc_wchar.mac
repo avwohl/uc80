@@ -1,0 +1,337 @@
+; lc_wchar.mac - multibyte/wide character functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; Multibyte/Wide Character Conversion Functions
+; Minimal implementation for C locale (1:1 char mapping)
+; ============================================================
+
+; int mblen(const char *s, size_t n)
+; Determine bytes in multibyte character
+; C locale: always returns 1 for non-null char, 0 for null, -1 if s==NULL
+	PUBLIC	_mblen
+_mblen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_mblen_null	; s == NULL
+
+	; Check if n >= 1
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = n
+	LD	A,B
+	OR	C
+	JR	Z,_mblen_zero	; n == 0
+
+	; Check character
+	LD	A,(HL)
+	OR	A
+	JR	Z,_mblen_zero	; null character
+
+	; Valid single-byte character
+	LD	HL,1
+	POP	IX
+	RET
+
+_mblen_null:
+	; s == NULL: return 0 (stateless encoding)
+	LD	HL,0
+	POP	IX
+	RET
+
+_mblen_zero:
+	LD	HL,0
+	POP	IX
+	RET
+
+; int mbtowc(wchar_t *pwc, const char *s, size_t n)
+; Convert multibyte to wide character
+; C locale: just copy byte to wchar_t
+	PUBLIC	_mbtowc
+_mbtowc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_null	; s == NULL
+
+	; Check n
+	LD	C,(IX+8)
+	LD	B,(IX+9)	; BC = n
+	LD	A,B
+	OR	C
+	JR	Z,_mbtowc_err	; n == 0
+
+	; Get character
+	LD	A,(HL)
+	OR	A
+	JR	Z,_mbtowc_nul	; null character
+
+	; Store in pwc if not NULL
+	LD	C,A		; Save char
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = pwc
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_ret1
+	; Store as wide char (16-bit)
+	LD	(HL),C
+	INC	HL
+	XOR	A
+	LD	(HL),A
+
+_mbtowc_ret1:
+	LD	HL,1
+	POP	IX
+	RET
+
+_mbtowc_nul:
+	; Store 0 in pwc if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_ret0
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+_mbtowc_ret0:
+	LD	HL,0
+	POP	IX
+	RET
+
+_mbtowc_null:
+	; s == NULL: return 0 (stateless)
+	LD	HL,0
+	POP	IX
+	RET
+
+_mbtowc_err:
+	LD	HL,-1
+	POP	IX
+	RET
+
+; int wctomb(char *s, wchar_t wc)
+; Convert wide character to multibyte
+; C locale: just copy low byte if <= 255
+	PUBLIC	_wctomb
+_wctomb:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_wctomb_null	; s == NULL
+
+	; Get wchar_t
+	LD	C,(IX+6)	; Low byte of wc
+	LD	A,(IX+7)	; High byte
+	OR	A
+	JR	NZ,_wctomb_err	; > 255: invalid for C locale
+
+	; Store character
+	LD	(HL),C
+	LD	HL,1
+	POP	IX
+	RET
+
+_wctomb_null:
+	; s == NULL: return 0 (stateless)
+	LD	HL,0
+	POP	IX
+	RET
+
+_wctomb_err:
+	LD	HL,-1
+	POP	IX
+	RET
+
+; size_t mbstowcs(wchar_t *dest, const char *src, size_t n)
+; Convert multibyte string to wide string
+; C locale: copy bytes to wchar_t array
+	PUBLIC	_mbstowcs
+_mbstowcs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = dest
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = src
+	LD	C,(IX+8)
+	LD	B,(IX+9)	; BC = n
+	PUSH	BC		; Save n
+
+	LD	BC,0		; Count = 0
+
+_mbstowcs_loop:
+	; Check if count < n
+	POP	HL		; n
+	PUSH	HL
+	OR	A
+	SBC	HL,BC
+	JR	Z,_mbstowcs_done
+	JR	C,_mbstowcs_done
+
+	; Get source pointer back
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	ADD	HL,BC		; HL = src + count
+	LD	A,(HL)		; Get char
+
+	; Check for null terminator
+	OR	A
+	JR	Z,_mbstowcs_term
+
+	; Store in dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = dest
+	LD	E,A
+	LD	A,H
+	OR	L
+	JR	Z,_mbstowcs_nodest
+	; dest[count] = char
+	PUSH	BC
+	SLA	C
+	RL	B		; BC * 2 for wchar_t offset
+	ADD	HL,BC
+	LD	(HL),E		; Low byte
+	INC	HL
+	XOR	A
+	LD	(HL),A		; High byte = 0
+	POP	BC
+
+_mbstowcs_nodest:
+	INC	BC		; count++
+	JR	_mbstowcs_loop
+
+_mbstowcs_term:
+	; Null terminate dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_mbstowcs_done
+	PUSH	BC
+	SLA	C
+	RL	B
+	ADD	HL,BC
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	POP	BC
+
+_mbstowcs_done:
+	POP	HL		; Discard saved n
+	LD	H,B
+	LD	L,C		; Return count
+	POP	BC
+	POP	IX
+	RET
+
+; size_t wcstombs(char *dest, const wchar_t *src, size_t n)
+; Convert wide string to multibyte string
+; C locale: copy low bytes if <= 255
+	PUBLIC	_wcstombs
+_wcstombs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	BC,0		; Count = 0
+
+_wcstombs_loop:
+	; Check if count < n
+	LD	L,(IX+8)
+	LD	H,(IX+9)	; HL = n
+	OR	A
+	SBC	HL,BC
+	JR	Z,_wcstombs_done
+	JR	C,_wcstombs_done
+
+	; Get wchar at src[count]
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = src
+	PUSH	BC
+	SLA	C
+	RL	B		; BC * 2 for wchar_t
+	ADD	HL,BC
+	POP	BC
+	LD	E,(HL)		; Low byte
+	INC	HL
+	LD	A,(HL)		; High byte
+	OR	A
+	JR	NZ,_wcstombs_err	; > 255
+
+	; Check for null terminator
+	LD	A,E
+	OR	A
+	JR	Z,_wcstombs_term
+
+	; Store in dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_wcstombs_nodest
+	ADD	HL,BC
+	LD	(HL),E
+
+_wcstombs_nodest:
+	INC	BC
+	JR	_wcstombs_loop
+
+_wcstombs_term:
+	; Null terminate
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_wcstombs_done
+	ADD	HL,BC
+	XOR	A
+	LD	(HL),A
+
+_wcstombs_done:
+	LD	H,B
+	LD	L,C
+	POP	BC
+	POP	IX
+	RET
+
+_wcstombs_err:
+	LD	HL,-1
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; char *strrchr(const char *s, int c)
+; Find last occurrence of c in s
+
+	END

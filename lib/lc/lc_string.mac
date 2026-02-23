@@ -1,0 +1,865 @@
+; lc_string.mac - string functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; size_t strlen(const char *s)
+; ============================================================
+	PUBLIC	_strlen
+_strlen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = string pointer
+	LD	BC,0		; Counter
+
+_strlen_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strlen_done
+	INC	HL
+	INC	BC
+	JR	_strlen_loop
+
+_strlen_done:
+	LD	H,B
+	LD	L,C
+	POP	IX
+	RET
+
+	EXTRN	_malloc
+
+; ============================================================
+; char *strcpy(char *dest, const char *src)
+; Copy string from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strcpy
+_strcpy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+
+_strcpy_loop:
+	LD	A,(HL)		; Get source char
+	LD	(DE),A		; Store to dest
+	OR	A
+	JR	Z,_strcpy_done	; Done if null
+	INC	HL
+	INC	DE
+	JR	_strcpy_loop
+
+_strcpy_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	IX
+	RET
+
+; ============================================================
+; char *strncpy(char *dest, const char *src, size_t n)
+; Copy at most n chars from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strncpy
+_strncpy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncpy_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncpy_done
+
+	LD	A,(HL)		; Get source char
+	LD	(DE),A		; Store to dest
+	DEC	BC
+	OR	A
+	JR	Z,_strncpy_pad	; Null found, pad with zeros
+	INC	HL
+	INC	DE
+	JR	_strncpy_loop
+
+_strncpy_pad:
+	; Pad remaining with zeros
+	LD	A,B
+	OR	C
+	JR	Z,_strncpy_done
+	INC	DE
+	XOR	A
+	LD	(DE),A
+	DEC	BC
+	JR	_strncpy_pad
+
+_strncpy_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; int strcmp(const char *s1, const char *s2)
+; Compare two strings
+; Returns: <0 if s1<s2, 0 if s1==s2, >0 if s1>s2
+; ============================================================
+	PUBLIC	_strcmp
+_strcmp:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	E,(IX+4)	; DE = s1
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = s2
+	LD	H,(IX+7)
+
+_strcmp_loop:
+	LD	A,(DE)		; Get s1 char
+	LD	B,(HL)		; Get s2 char
+	SUB	B		; Compare
+	JR	NZ,_strcmp_diff	; Different
+
+	LD	A,(DE)		; Check if null
+	OR	A
+	JR	Z,_strcmp_equal	; Both null, equal
+
+	INC	DE
+	INC	HL
+	JR	_strcmp_loop
+
+_strcmp_equal:
+	LD	HL,0
+	POP	IX
+	RET
+
+_strcmp_diff:
+	; A contains s1[i] - s2[i]
+	; Sign-extend to HL
+	LD	L,A
+	RLA			; Sign to carry
+	SBC	A,A		; A = 0xFF if neg, 0 if pos
+	LD	H,A
+	POP	IX
+	RET
+
+; ============================================================
+; int strncmp(const char *s1, const char *s2, size_t n)
+; Compare at most n chars of two strings
+; ============================================================
+	PUBLIC	_strncmp
+_strncmp:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = s1
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = s2
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncmp_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncmp_equal
+
+	LD	A,(DE)		; Get s1 char
+	PUSH	HL
+	LD	H,(HL)		; H = s2 char
+	SUB	H		; Compare
+	POP	HL
+	JR	NZ,_strncmp_diff
+
+	LD	A,(DE)		; Check if null
+	OR	A
+	JR	Z,_strncmp_equal
+
+	DEC	BC
+	INC	DE
+	INC	HL
+	JR	_strncmp_loop
+
+_strncmp_equal:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+_strncmp_diff:
+	LD	L,A
+	RLA
+	SBC	A,A
+	LD	H,A
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; char *strcat(char *dest, const char *src)
+; Append src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strcat
+_strcat:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+
+	; Find end of dest
+_strcat_find:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strcat_copy
+	INC	DE
+	JR	_strcat_find
+
+_strcat_copy:
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+
+_strcat_loop:
+	LD	A,(HL)
+	LD	(DE),A
+	OR	A
+	JR	Z,_strcat_done
+	INC	HL
+	INC	DE
+	JR	_strcat_loop
+
+_strcat_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	IX
+	RET
+
+; ============================================================
+; char *strchr(const char *s, int c)
+; Find first occurrence of c in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strchr
+_strchr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+	LD	C,(IX+6)	; C = char to find
+
+_strchr_loop:
+	LD	A,(HL)
+	CP	C
+	JR	Z,_strchr_found	; Found it
+	OR	A
+	JR	Z,_strchr_notfound	; End of string
+	INC	HL
+	JR	_strchr_loop
+
+_strchr_found:
+	POP	IX
+	RET			; HL already points to char
+
+_strchr_notfound:
+	LD	HL,0		; Return NULL
+	POP	IX
+	RET
+
+; ============================================================
+; void *memcpy(void *dest, const void *src, size_t n)
+; Copy n bytes from src to dest
+
+; Additional string functions
+; ============================================================
+; char *strrchr(const char *s, int c)
+; Find last occurrence of c in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strrchr
+_strrchr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+	LD	C,(IX+6)	; C = char to find
+	LD	DE,0		; DE = last match (NULL initially)
+
+_strrchr_loop:
+	LD	A,(HL)
+	CP	C
+	JR	NZ,_strrchr_nomatch
+	LD	D,H		; Save this match
+	LD	E,L
+_strrchr_nomatch:
+	OR	A		; Check for end of string
+	JR	Z,_strrchr_done
+	INC	HL
+	JR	_strrchr_loop
+
+_strrchr_done:
+	EX	DE,HL		; HL = last match (or NULL)
+	POP	IX
+	RET
+
+; ============================================================
+; char *strstr(const char *haystack, const char *needle)
+; Find first occurrence of needle in haystack
+; Returns: pointer to start of match, or NULL if not found
+; ============================================================
+	PUBLIC	_strstr
+_strstr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = haystack
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = needle
+	LD	D,(IX+7)
+
+	; Check if needle is empty
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strstr_found	; Empty needle matches at start
+
+_strstr_outer:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strstr_notfound	; End of haystack
+
+	; Try to match needle at current position
+	PUSH	HL		; Save haystack position
+	PUSH	DE		; Save needle start
+
+_strstr_inner:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strstr_match	; End of needle = match!
+
+	LD	B,(HL)		; B = haystack char
+	CP	B
+	JR	NZ,_strstr_nomatch
+
+	INC	HL
+	INC	DE
+	JR	_strstr_inner
+
+_strstr_nomatch:
+	POP	DE		; Restore needle start
+	POP	HL		; Restore haystack position
+	INC	HL		; Try next position
+	JR	_strstr_outer
+
+_strstr_match:
+	POP	DE		; Discard needle start
+	POP	HL		; HL = start of match
+_strstr_found:
+	POP	BC
+	POP	IX
+	RET
+
+_strstr_notfound:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; char *strdup(const char *s)
+; Duplicate a string (allocate memory and copy)
+; Returns: pointer to new string, or NULL if allocation fails
+; ============================================================
+	PUBLIC	_strdup
+_strdup:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Get string pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+
+	; Find length (including null terminator)
+	PUSH	HL
+	CALL	_strlen		; HL = length (not including null)
+	INC	HL		; Add 1 for null terminator
+
+	; Allocate memory
+	PUSH	HL		; Push size argument
+	CALL	_malloc		; HL = allocated pointer or NULL
+	POP	DE		; Clean up argument
+
+	; Check if malloc failed
+	LD	A,H
+	OR	L
+	JR	Z,_strdup_done	; Return NULL
+
+	; Copy string to new memory
+	; HL = dest (from malloc)
+	; Stack has source string address
+	EX	DE,HL		; DE = dest
+	POP	HL		; HL = source (was pushed earlier)
+	PUSH	DE		; Save dest to return
+
+	; Copy loop
+_strdup_copy:
+	LD	A,(HL)
+	LD	(DE),A
+	OR	A
+	JR	Z,_strdup_copydone
+	INC	HL
+	INC	DE
+	JR	_strdup_copy
+
+_strdup_copydone:
+	POP	HL		; HL = dest (return value)
+	JR	_strdup_ret
+
+_strdup_done:
+	; NULL result - need to pop saved source
+	POP	DE		; Discard saved source
+	; HL is already 0
+
+_strdup_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; size_t strcspn(const char *s, const char *reject)
+; Return length of initial segment of s not containing any chars from reject
+; ============================================================
+	PUBLIC	_strcspn
+_strcspn:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = reject
+	LD	D,(IX+7)
+	LD	BC,0		; BC = count
+
+_strcspn_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strcspn_done	; End of s
+
+	; Check if A is in reject string
+	PUSH	HL
+	PUSH	DE
+	POP	HL		; HL = reject
+_strcspn_check:
+	LD	D,(HL)
+	LD	A,D
+	OR	A
+	JR	Z,_strcspn_ok	; End of reject, char not found
+	POP	DE
+	PUSH	DE
+	LD	A,(DE)		; A = current char from s
+	CP	D
+	JR	Z,_strcspn_found	; Found in reject
+	INC	HL
+	JR	_strcspn_check
+
+_strcspn_ok:
+	; Char not in reject, continue
+	POP	HL
+	INC	HL
+	INC	BC
+	JR	_strcspn_loop
+
+_strcspn_found:
+	POP	HL		; Discard saved s pointer
+_strcspn_done:
+	LD	H,B
+	LD	L,C		; HL = count
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; size_t strspn(const char *s, const char *accept)
+; Return length of initial segment of s containing only chars from accept
+; ============================================================
+	PUBLIC	_strspn
+_strspn:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = accept
+	LD	D,(IX+7)
+	LD	BC,0		; BC = count
+
+_strspn_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strspn_done	; End of s
+
+	; Check if A is in accept string
+	PUSH	HL
+	PUSH	DE
+	POP	HL		; HL = accept
+_strspn_check:
+	LD	D,(HL)
+	LD	A,D
+	OR	A
+	JR	Z,_strspn_notfound	; End of accept, char not found
+	POP	DE
+	PUSH	DE
+	LD	A,(DE)		; A = current char from s
+	CP	D
+	JR	Z,_strspn_ok	; Found in accept
+	INC	HL
+	JR	_strspn_check
+
+_strspn_ok:
+	; Char in accept, continue
+	POP	HL
+	INC	HL
+	INC	BC
+	JR	_strspn_loop
+
+_strspn_notfound:
+	POP	HL		; Discard saved s pointer
+_strspn_done:
+	LD	H,B
+	LD	L,C		; HL = count
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; char *strtok(char *str, const char *delim)
+; Tokenize a string. First call with str, subsequent with NULL.
+; Uses _strtok_next for state, _strtok_tok for token start
+; ============================================================
+	PUBLIC	_strtok
+_strtok:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Get str parameter or use saved position
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	NZ,_strtok_have_str
+	LD	HL,(_strtok_next)
+	LD	A,H
+	OR	L
+	JP	Z,_strtok_null		; No more tokens
+
+_strtok_have_str:
+	; HL = current position, skip leading delimiters
+_strtok_skip:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_strtok_null		; End of string
+
+	; Check if current char is a delimiter
+	LD	B,A			; B = char to check
+	LD	E,(IX+6)
+	LD	D,(IX+7)		; DE = delim
+_strtok_skip_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strtok_token_start	; Not a delimiter
+	CP	B
+	JR	Z,_strtok_skip_found
+	INC	DE
+	JR	_strtok_skip_loop
+_strtok_skip_found:
+	INC	HL
+	JR	_strtok_skip
+
+_strtok_token_start:
+	; HL points to start of token, save it
+	LD	(_strtok_tok),HL
+
+	; Find end of token
+_strtok_scan:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strtok_end_of_str
+
+	; Check if current char is a delimiter
+	LD	B,A
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+_strtok_scan_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strtok_scan_next	; Not a delimiter
+	CP	B
+	JR	Z,_strtok_found_delim
+	INC	DE
+	JR	_strtok_scan_loop
+
+_strtok_scan_next:
+	INC	HL
+	JR	_strtok_scan
+
+_strtok_found_delim:
+	; Null-terminate token
+	LD	(HL),0
+	INC	HL
+	LD	(_strtok_next),HL
+	JR	_strtok_return
+
+_strtok_end_of_str:
+	; No more tokens after this one
+	LD	HL,0
+	LD	(_strtok_next),HL
+
+_strtok_return:
+	LD	HL,(_strtok_tok)
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_strtok_null:
+	LD	HL,0
+	LD	(_strtok_next),HL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; char *strpbrk(const char *s, const char *accept)
+; Find first occurrence of any char from accept in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strpbrk
+_strpbrk:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+
+_strpbrk_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strpbrk_notfound	; End of s
+
+	; Check if char is in accept
+	LD	B,A		; B = char to find
+	LD	E,(IX+6)	; DE = accept
+	LD	D,(IX+7)
+
+_strpbrk_check:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strpbrk_next	; End of accept, not found
+	CP	B
+	JR	Z,_strpbrk_found
+	INC	DE
+	JR	_strpbrk_check
+
+_strpbrk_next:
+	INC	HL
+	JR	_strpbrk_loop
+
+_strpbrk_found:
+	; HL points to matching char
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_strpbrk_notfound:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; char *strerror(int errnum)
+; Return string describing error number
+; ============================================================
+	PUBLIC	_strerror
+_strerror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; A = errnum (low byte)
+
+	; Check common error codes
+	OR	A
+	JR	Z,_strerror_ok	; 0 = success
+	CP	2		; ENOENT
+	JR	Z,_strerror_noent
+	CP	5		; EIO
+	JR	Z,_strerror_io
+	CP	12		; ENOMEM
+	JR	Z,_strerror_nomem
+	CP	13		; EACCES
+	JR	Z,_strerror_acces
+	CP	22		; EINVAL
+	JR	Z,_strerror_inval
+	CP	28		; ENOSPC
+	JR	Z,_strerror_nospc
+	CP	38		; ENOSYS
+	JR	Z,_strerror_nosys
+	; Default - unknown error
+	LD	HL,_strerr_unknown
+	JR	_strerror_ret
+
+_strerror_ok:
+	LD	HL,_strerr_ok
+	JR	_strerror_ret
+_strerror_noent:
+	LD	HL,_strerr_noent
+	JR	_strerror_ret
+_strerror_io:
+	LD	HL,_strerr_io
+	JR	_strerror_ret
+_strerror_nomem:
+	LD	HL,_strerr_nomem
+	JR	_strerror_ret
+_strerror_acces:
+	LD	HL,_strerr_acces
+	JR	_strerror_ret
+_strerror_inval:
+	LD	HL,_strerr_inval
+	JR	_strerror_ret
+_strerror_nospc:
+	LD	HL,_strerr_nospc
+	JR	_strerror_ret
+_strerror_nosys:
+	LD	HL,_strerr_nosys
+
+_strerror_ret:
+	POP	IX
+	RET
+
+; ============================================================
+
+; ============================================================
+; char *strncat(char *dest, const char *src, size_t n)
+; Append at most n chars from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strncat
+_strncat:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+
+	; Find end of dest
+_strncat_find:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strncat_copy
+	INC	DE
+	JR	_strncat_find
+
+_strncat_copy:
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncat_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncat_done
+
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strncat_done	; End of src
+
+	LD	(DE),A
+	INC	HL
+	INC	DE
+	DEC	BC
+	JR	_strncat_loop
+
+_strncat_done:
+	; Null terminate
+	XOR	A
+	LD	(DE),A
+
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	BC
+	POP	IX
+	RET
+
+	DSEG
+
+; strtok state
+_strtok_next:	DS	2	; Next position in string
+_strtok_tok:	DS	2	; Start of current token
+
+; strerror messages
+_strerr_ok:	DB	'Success',0
+_strerr_noent:	DB	'No such file',0
+_strerr_io:	DB	'I/O error',0
+_strerr_nomem:	DB	'Out of memory',0
+_strerr_acces:	DB	'Permission denied',0
+_strerr_inval:	DB	'Invalid argument',0
+_strerr_nospc:	DB	'No space left',0
+_strerr_nosys:	DB	'Not implemented',0
+_strerr_unknown: DB	'Unknown error',0
+
+	END

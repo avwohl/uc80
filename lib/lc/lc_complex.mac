@@ -1,0 +1,845 @@
+; lc_complex.mac - complex number functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__fcmp
+	EXTRN	__itof
+	EXTRN	__ftoi
+	EXTRN	__tmp32
+	EXTRN	__cadd
+	EXTRN	__csub
+	EXTRN	__cmul
+	EXTRN	__cdiv
+	EXTRN	__cplx_l
+	EXTRN	__cplx_r
+	EXTRN	__cplx_result
+	EXTRN	__cplx_tmp
+	EXTRN	_sqrt
+	EXTRN	_atan2
+	EXTRN	_sin
+	EXTRN	_cos
+	EXTRN	_exp
+	EXTRN	_log
+	EXTRN	_pow
+	EXTRN	_cosh
+	EXTRN	_sinh
+
+	CSEG
+
+	PUBLIC	_creal,_crealf,_creall
+	PUBLIC	_cimag,_cimagf,_cimagl
+	PUBLIC	_cabs,_cabsf,_cabsl
+	PUBLIC	_carg,_cargf,_cargl
+	PUBLIC	_conj,_conjf,_conjl
+	PUBLIC	_cproj,_cprojf,_cprojl
+	PUBLIC	_cexp,_cexpf
+	PUBLIC	_clog,_clogf
+	PUBLIC	_cpow,_cpowf
+	PUBLIC	_csqrt,_csqrtf
+	PUBLIC	_csin,_csinf
+	PUBLIC	_ccos,_ccosf
+	PUBLIC	_ctan,_ctanf
+	PUBLIC	_casin,_cacos,_catan
+	PUBLIC	_csinh,_ccosh,_ctanh
+	PUBLIC	_casinh,_cacosh,_catanh
+
+; __I_const: Imaginary unit constant (0.0 + 1.0i)
+; real = 0x00000000 (0.0), imag = 0x3F800000 (1.0)
+	PUBLIC	___I_const
+___I_const:
+	DW	0,0		; Real = 0.0
+	DW	0,3F80H		; Imag = 1.0
+
+; __make_complex: Create complex from two doubles
+; Input: real at IX+4 (4 bytes), imag at IX+8 (4 bytes)
+; Output: pointer to result in HL
+	PUBLIC	___make_complex,___make_complexf
+___make_complex:
+___make_complexf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_cplx_res),HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	(_cplx_res+2),HL
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	(_cplx_res+4),HL
+	LD	L,(IX+10)
+	LD	H,(IX+11)
+	LD	(_cplx_res+6),HL
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; creal: Get real part of complex
+; Input: complex pointer at IX+4
+; Output: float in DEHL
+_creal:
+_crealf:
+_creall:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	POP	HL
+	POP	IX
+	RET
+
+; cimag: Get imaginary part of complex
+; Input: complex pointer at IX+4
+; Output: float in DEHL
+_cimag:
+_cimagf:
+_cimagl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	BC,4
+	ADD	HL,BC
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	POP	HL
+	POP	IX
+	RET
+
+; cabs: |z| = sqrt(re² + im²)
+_cabs:
+_cabsf:
+_cabsl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Get real part
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	INC	HL
+	PUSH	BC
+	PUSH	DE
+	POP	HL
+	POP	DE		; DEHL = real
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; real²
+	LD	(_cplx_z),HL
+	LD	(_cplx_z+2),DE
+	; Get imag part
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	BC,4
+	ADD	HL,BC
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	PUSH	BC
+	PUSH	DE
+	POP	HL
+	POP	DE		; DEHL = imag
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; imag²
+	; Add real² + imag²
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	CALL	__fadd
+	; sqrt
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrt
+	POP	BC
+	POP	BC
+	POP	IX
+	RET
+
+; carg: arg(z) = atan2(im, re)
+_carg:
+_cargf:
+_cargl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Push real (x) first
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	INC	HL
+	PUSH	BC
+	PUSH	DE
+	; Push imag (y)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	PUSH	BC
+	PUSH	DE
+	CALL	_atan2
+	POP	BC
+	POP	BC
+	POP	BC
+	POP	BC
+	POP	IX
+	RET
+
+; conj: conjugate z* = re - i*im
+_conj:
+_conjf:
+_conjl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Copy real unchanged
+	LD	DE,_cplx_res
+	LD	BC,4
+	LDIR
+	; Copy and negate imag
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	LD	A,B
+	XOR	80H
+	LD	B,A
+	LD	HL,_cplx_res+4
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; cproj: projection (for finite numbers returns input)
+_cproj:
+_cprojf:
+_cprojl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	POP	IX
+	RET
+
+; cexp: e^z = e^re * (cos(im) + i*sin(im))
+_cexp:
+_cexpf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; e^re
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_exp
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cos(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	; Real = e^re * cos(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; sin(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	; Imag = e^re * sin(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; clog: log(z) = log(|z|) + i*arg(z)
+_clog:
+_clogf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	; |z|
+	PUSH	HL
+	CALL	_cabs
+	POP	BC
+	; log(|z|)
+	PUSH	DE
+	PUSH	HL
+	CALL	_log
+	POP	BC
+	POP	BC
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; arg(z)
+	POP	HL
+	PUSH	HL
+	CALL	_carg
+	POP	BC
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; csqrt: sqrt(z) using polar form
+_csqrt:
+_csqrtf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	; sqrt(|z|)
+	PUSH	HL
+	CALL	_cabs
+	POP	BC
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrt
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL	; r = sqrt(|z|)
+	LD	(_cplx_w+2),DE
+	; arg(z)/2
+	POP	HL
+	PUSH	HL
+	CALL	_carg
+	POP	BC
+	; Divide by 2: multiply by 0.5 (0x3F000000)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F00H
+	CALL	__fmul
+	LD	(_cplx_w+4),HL
+	LD	(_cplx_w+6),DE
+	; Real = r * cos(θ/2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; Imag = r * sin(θ/2)
+	LD	HL,(_cplx_w+4)
+	LD	DE,(_cplx_w+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; cpow: z^w = e^(w*log(z))
+_cpow:
+_cpowf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; z at IX+4, w at IX+6
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; log(z)
+	PUSH	HL
+	CALL	_clog
+	POP	BC
+	LD	DE,__cplx_l
+	LD	BC,8
+	LDIR
+	; Load w
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	DE,__cplx_r
+	LD	BC,8
+	LDIR
+	; w * log(z)
+	CALL	__cmul
+	; e^(w*log(z))
+	LD	HL,__cplx_result
+	PUSH	HL
+	CALL	_cexp
+	POP	BC
+	POP	IX
+	RET
+
+; csin: sin(z) = sin(re)*cosh(im) + i*cos(re)*sinh(im)
+_csin:
+_csinf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; sin(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cosh(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cosh
+	POP	BC
+	POP	BC
+	; Real = sin(re) * cosh(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; cos(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; sinh(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinh
+	POP	BC
+	POP	BC
+	; Imag = cos(re) * sinh(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; ccos: cos(z) = cos(re)*cosh(im) - i*sin(re)*sinh(im)
+_ccos:
+_ccosf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; cos(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cosh(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cosh
+	POP	BC
+	POP	BC
+	; Real = cos(re) * cosh(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; sin(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; sinh(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinh
+	POP	BC
+	POP	BC
+	; Imag = -sin(re) * sinh(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; ctan: tan(z) = sin(z) / cos(z)
+_ctan:
+_ctanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; sin(z)
+	PUSH	HL
+	CALL	_csin
+	POP	BC
+	LD	DE,__cplx_l
+	LD	BC,8
+	LDIR
+	; cos(z)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	CALL	_ccos
+	POP	BC
+	LD	DE,__cplx_r
+	LD	BC,8
+	LDIR
+	CALL	__cdiv
+	LD	DE,_cplx_res
+	LD	BC,8
+	LDIR
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; csinh: sinh(z) = sinh(re)*cos(im) + i*cosh(re)*sin(im)
+_csinh:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; sinh(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinh
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cos(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	; Real = sinh(re) * cos(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; cosh(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cosh
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; sin(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	; Imag = cosh(re) * sin(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; ccosh: cosh(z) = cosh(re)*cos(im) + i*sinh(re)*sin(im)
+_ccosh:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_z
+	LD	BC,8
+	LDIR
+	; cosh(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cosh
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; cos(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_cos
+	POP	BC
+	POP	BC
+	; Real = cosh(re) * cos(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res),HL
+	LD	(_cplx_res+2),DE
+	; sinh(re)
+	LD	HL,(_cplx_z)
+	LD	DE,(_cplx_z+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinh
+	POP	BC
+	POP	BC
+	LD	(_cplx_w),HL
+	LD	(_cplx_w+2),DE
+	; sin(im)
+	LD	HL,(_cplx_z+4)
+	LD	DE,(_cplx_z+6)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sin
+	POP	BC
+	POP	BC
+	; Imag = sinh(re) * sin(im)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cplx_w)
+	LD	DE,(_cplx_w+2)
+	CALL	__fmul
+	LD	(_cplx_res+4),HL
+	LD	(_cplx_res+6),DE
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; ctanh: tanh(z) = sinh(z) / cosh(z)
+_ctanh:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; sinh(z)
+	PUSH	HL
+	CALL	_csinh
+	POP	BC
+	LD	DE,__cplx_l
+	LD	BC,8
+	LDIR
+	; cosh(z)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	CALL	_ccosh
+	POP	BC
+	LD	DE,__cplx_r
+	LD	BC,8
+	LDIR
+	CALL	__cdiv
+	LD	DE,_cplx_res
+	LD	BC,8
+	LDIR
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; Inverse trig/hyperbolic - simplified placeholders that return input
+_casin:
+_cacos:
+_catan:
+_casinh:
+_cacosh:
+_catanh:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	DE,_cplx_res
+	LD	BC,8
+	LDIR
+	LD	HL,_cplx_res
+	POP	IX
+	RET
+
+; Complex multiply: __cplx_l * __cplx_r -> __cplx_result
+; Stub implementation - returns __cplx_l
+__cmul:
+	LD	HL,__cplx_l
+	LD	DE,__cplx_result
+	LD	BC,8
+	LDIR
+	RET
+
+; Complex divide: __cplx_l / __cplx_r -> __cplx_result
+; Stub implementation - returns __cplx_l
+__cdiv:
+	LD	HL,__cplx_l
+	LD	DE,__cplx_result
+	LD	BC,8
+	LDIR
+	RET
+
+	DSEG
+
+; Complex number work areas
+_cplx_z:	DS	8	; Input complex
+_cplx_w:	DS	8	; Second input / work area
+_cplx_res:	DS	8	; Result storage
+
+	END

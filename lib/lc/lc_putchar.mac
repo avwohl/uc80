@@ -1,0 +1,35 @@
+; lc_putchar.mac - putchar
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int putchar(int c)
+; Output a character to console
+; Argument: character on stack at IX+4
+; Returns: the character written, or EOF (-1) on error
+; ============================================================
+	PUBLIC	_putchar
+_putchar:
+	; Minimal implementation - doesn't touch IX
+	; Stack at entry: [ret_addr][arg]
+	POP	HL		; Get return address
+	POP	DE		; Get argument (char in E)
+	PUSH	DE		; Restore arg for caller cleanup
+	PUSH	HL		; Restore return address
+
+	LD	C,CONOUT
+	CALL	BDOS
+
+	; Return value - get arg again
+	LD	HL,2
+	ADD	HL,SP		; Points to arg (after ret addr)
+	LD	L,(HL)
+
+	END

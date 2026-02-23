@@ -1,0 +1,99 @@
+; lc_printf_u.mac - printf %u handler
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_width
+	EXTRN	_printf_zero
+	EXTRN	_printf_decbuf
+	EXTRN	_printf_dstart
+	EXTRN	_printf_dcnt
+	EXTRN	_prt_div16
+
+	CSEG
+
+	PUBLIC	__printf_handle_u
+__printf_handle_u:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value
+	PUSH	IX
+	PUSH	BC
+	LD	DE,10
+	LD	B,0
+	LD	IX,_printf_decbuf+5
+_phu_cvt:
+	CALL	_prt_div16
+	LD	A,E
+	ADD	A,'0'
+	DEC	IX
+	LD	(IX+0),A
+	INC	B
+	LD	DE,10
+	LD	A,H
+	OR	L
+	JR	NZ,_phu_cvt
+	LD	(_printf_dstart),IX
+	LD	A,B
+	LD	(_printf_dcnt),A
+	POP	BC
+	; Width padding
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_phu_nopad
+	LD	B,A
+	LD	A,(_printf_dcnt)
+	LD	C,A
+	LD	A,B
+	SUB	C
+	JR	Z,_phu_nopad
+	JR	C,_phu_nopad
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_zero)
+	OR	A
+	LD	A,' '
+	JR	Z,_phu_plp
+	LD	A,'0'
+_phu_plp:
+	LD	E,A
+	PUSH	AF
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	AF
+	DJNZ	_phu_plp
+	POP	BC
+_phu_nopad:
+	LD	HL,(_printf_dstart)
+	LD	A,(_printf_dcnt)
+	LD	B,A
+_phu_digs:
+	LD	E,(HL)
+	PUSH	BC
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	BC
+	INC	HL
+	DJNZ	_phu_digs
+	POP	IX
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	JP	_printf_loop
+
+	END

@@ -1,0 +1,110 @@
+; lc_prt_hex.mac - hex printing helpers
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	CSEG
+
+; Print HL as hex (no leading zeros)
+	PUBLIC	_prt_hex
+_prt_hex:
+	PUSH	BC
+	LD	B,0		; B=1 means we've printed a non-zero digit
+	LD	A,H
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_prt_hexd
+	LD	A,H
+	AND	0FH
+	CALL	_prt_hexd
+	LD	A,L
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_prt_hexd
+	LD	A,L
+	AND	0FH
+	OR	A
+	JR	NZ,_prt_hexf
+	PUSH	AF
+	LD	A,B
+	OR	A
+	POP	AF
+	JR	NZ,_prt_hexf
+	LD	A,'0'
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	RET
+_prt_hexf:
+	LD	B,1
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_prt_hex_o2
+	ADD	A,39
+_prt_hex_o2:
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	RET
+
+_prt_hexd:
+	OR	A
+	JR	NZ,_prt_hexd1
+	LD	A,B
+	OR	A
+	RET	Z
+	XOR	A
+_prt_hexd1:
+	LD	B,1
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_prt_hexd2
+	ADD	A,39
+_prt_hexd2:
+	LD	E,A
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	RET
+
+; Print HL as 4-digit hex (always all 4 digits, with leading zeros)
+	PUBLIC	_prt_hex4
+_prt_hex4:
+	PUSH	BC
+	LD	A,H
+	CALL	_prt_hex4_byte
+	LD	A,L
+	CALL	_prt_hex4_byte
+	POP	BC
+	RET
+_prt_hex4_byte:
+	PUSH	AF
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	CALL	_prt_hex4_nib
+	POP	AF
+_prt_hex4_nib:
+	AND	0FH
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_prt_hex4_out
+	ADD	A,39
+_prt_hex4_out:
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
+	RET
+
+	END

@@ -1,0 +1,102 @@
+; lc_locale.mac - locale functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; Locale support (minimal "C" locale only)
+; ============================================================
+
+; char *setlocale(int category, const char *locale)
+; Only supports "C" and "" (null string = default = "C")
+; Returns "C" on success, NULL on failure
+	PUBLIC	_setlocale
+_setlocale:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; category at IX+4, locale at IX+6
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = locale string
+	; NULL means query current locale (return "C")
+	LD	A,H
+	OR	L
+	JR	Z,_setlocale_ok
+	; "" means use default (return "C")
+	LD	A,(HL)
+	OR	A
+	JR	Z,_setlocale_ok
+	; Check for "C"
+	CP	'C'
+	JR	NZ,_setlocale_check_posix
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JR	Z,_setlocale_ok
+	JR	_setlocale_fail
+_setlocale_check_posix:
+	; Check for "POSIX"
+	LD	DE,_locale_posix
+	LD	B,5
+_setlocale_cmp:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,_setlocale_fail
+	INC	HL
+	INC	DE
+	DJNZ	_setlocale_cmp
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_setlocale_fail
+_setlocale_ok:
+	LD	HL,_locale_c_str
+	POP	IX
+	RET
+_setlocale_fail:
+	LD	HL,0		; Return NULL
+	POP	IX
+	RET
+
+; struct lconv *localeconv(void)
+; Returns pointer to static lconv structure
+	PUBLIC	_localeconv
+_localeconv:
+	LD	HL,_lconv_data
+	RET
+
+	DSEG
+
+; Locale data
+_locale_c_str:	DB	'C',0
+_locale_posix:	DB	'POSIX',0
+_locale_dot:	DB	'.',0
+_locale_empty:	DB	0
+
+; struct lconv data for "C" locale
+_lconv_data:
+	DW	_locale_dot	; decimal_point
+	DW	_locale_empty	; thousands_sep
+	DW	_locale_empty	; grouping
+	DW	_locale_empty	; int_curr_symbol
+	DW	_locale_empty	; currency_symbol
+	DW	_locale_empty	; mon_decimal_point
+	DW	_locale_empty	; mon_thousands_sep
+	DW	_locale_empty	; mon_grouping
+	DW	_locale_empty	; positive_sign
+	DW	_locale_empty	; negative_sign
+	DB	127		; int_frac_digits (CHAR_MAX)
+	DB	127		; frac_digits
+	DB	127		; p_cs_precedes
+	DB	127		; p_sep_by_space
+	DB	127		; n_cs_precedes
+	DB	127		; n_sep_by_space
+	DB	127		; p_sign_posn
+	DB	127		; n_sign_posn
+
+	END
