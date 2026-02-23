@@ -1787,7 +1787,9 @@ class CodeGenerator:
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
                  enable_dead_elimination: bool = True, enable_inlining: bool = True,
                  enable_const_propagation: bool = True, whole_program: bool = True,
-                 embed_runtime: bool = False):
+                 embed_runtime: bool = False,
+                 printf_features: set[str] | None = None,
+                 scanf_features: set[str] | None = None):
         self.module_name = module_name
         self.ctx = CodeGenContext()
         self.enable_shared_storage = enable_shared_storage
@@ -1796,6 +1798,8 @@ class CodeGenerator:
         self.enable_const_propagation = enable_const_propagation
         self.whole_program = whole_program
         self.embed_runtime = embed_runtime
+        self.printf_features = printf_features  # None = no pragma (emit default all table)
+        self.scanf_features = scanf_features    # None = no pragma
         self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
         self.dead_functions_removed: int = 0
         self.inlined_calls: int = 0
@@ -1982,6 +1986,10 @@ class CodeGenerator:
         # Generate code for each declaration
         for decl in unit.declarations:
             self.gen_declaration(decl)
+
+        # Emit printf/scanf dispatch tables if #pragma printf/scanf was specified
+        if self.printf_features is not None:
+            self._emit_printf_format_tables()
 
         # Emit EXTRN for runtime functions used (unless embedding runtime)
         if self.ctx.runtime_used and not self.embed_runtime:
@@ -2246,6 +2254,92 @@ class CodeGenerator:
                 if anon_list:
                     self.ctx.anon_members[struct_name] = anon_list
         # For enum types, nothing special needed - enum values are already constants
+
+    def _emit_printf_format_tables(self) -> None:
+        """Emit printf format dispatch tables based on #pragma printf features.
+
+        Tables are (DB specifier_char, DW handler_addr) entries terminated by DB 0.
+        The linker pulls in only the handler modules that are referenced.
+        """
+        features = self.printf_features
+        assert features is not None
+
+        self.ctx.emit()
+        self.ctx.emit("; Printf format dispatch tables (#pragma printf)")
+
+        # Base format table
+        self.ctx.emit_instr("PUBLIC", "__printf_format_table")
+        self.ctx.emit("__printf_format_table:")
+
+        if "int" in features or "all" in features:
+            for spec, handler in [('d', '__printf_handle_d'),
+                                  ('i', '__printf_handle_d'),
+                                  ('u', '__printf_handle_u'),
+                                  ('x', '__printf_handle_x'),
+                                  ('X', '__printf_handle_xu'),
+                                  ('s', '__printf_handle_s'),
+                                  ('c', '__printf_handle_c'),
+                                  ('p', '__printf_handle_p')]:
+                self.ctx.emit(f"\tDB\t'{spec}'")
+                self.ctx.emit(f"\tDW\t{handler}")
+                self.ctx.runtime_used.add(handler)
+
+        if "long" in features or "llong" in features or "all" in features:
+            self.ctx.emit(f"\tDB\t'l'")
+            self.ctx.emit(f"\tDW\t__printf_handle_l")
+            self.ctx.runtime_used.add("__printf_handle_l")
+
+        if "float" in features or "all" in features:
+            self.ctx.emit(f"\tDB\t'f'")
+            self.ctx.emit(f"\tDW\t__printf_handle_f")
+            self.ctx.runtime_used.add("__printf_handle_f")
+
+        self.ctx.emit("\tDB\t0\t\t; sentinel")
+
+        # Long format table - always emitted to satisfy lc_printf_l EXTRN
+        self.ctx.emit()
+        self.ctx.emit_instr("PUBLIC", "__printf_long_table")
+        self.ctx.emit("__printf_long_table:")
+
+        if "long" in features or "all" in features:
+            for spec, handler in [('d', '__printf_handle_ld'),
+                                  ('i', '__printf_handle_ld'),
+                                  ('u', '__printf_handle_lu'),
+                                  ('x', '__printf_handle_lx')]:
+                self.ctx.emit(f"\tDB\t'{spec}'")
+                self.ctx.emit(f"\tDW\t{handler}")
+                self.ctx.runtime_used.add(handler)
+
+            # %lf same as %f
+            if "float" in features or "all" in features:
+                self.ctx.emit(f"\tDB\t'f'")
+                self.ctx.emit(f"\tDW\t__printf_handle_f")
+
+        if "llong" in features or "all" in features:
+            self.ctx.emit(f"\tDB\t'l'")
+            self.ctx.emit(f"\tDW\t__printf_ll_entry")
+
+        self.ctx.emit("\tDB\t0\t\t; sentinel")
+
+        # Long long format table - always emitted to satisfy lc_printf_l EXTRN
+        self.ctx.emit()
+        self.ctx.emit_instr("PUBLIC", "__printf_ll_table")
+        self.ctx.emit("__printf_ll_table:")
+
+        if "llong" in features or "all" in features:
+            for spec, handler in [('d', '__printf_handle_lld'),
+                                  ('i', '__printf_handle_lld'),
+                                  ('u', '__printf_handle_llu'),
+                                  ('x', '__printf_handle_llx')]:
+                self.ctx.emit(f"\tDB\t'{spec}'")
+                self.ctx.emit(f"\tDW\t{handler}")
+                self.ctx.runtime_used.add(handler)
+
+        self.ctx.emit("\tDB\t0\t\t; sentinel")
+
+        # The 'll' dispatch entry point (always needed)
+        self.ctx.emit("__printf_ll_entry:")
+        self.ctx.emit("\tRET")
 
     def gen_function(self, func: ast.FunctionDecl) -> None:
         """Generate code for a function."""
@@ -4411,11 +4505,17 @@ class CodeGenerator:
         elif op == "*":
             self._call_runtime("__mul64")
         elif op == "/":
-            # 64-bit division not implemented - would need complex routine
-            self.ctx.emit("; WARNING: 64-bit division not implemented")
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            if is_unsigned:
+                self._call_runtime("__div64")
+            else:
+                self._call_runtime("__sdiv64")
         elif op == "%":
-            # 64-bit modulo not implemented
-            self.ctx.emit("; WARNING: 64-bit modulo not implemented")
+            is_unsigned = self._is_unsigned_expr(expr.left) or self._is_unsigned_expr(expr.right)
+            if is_unsigned:
+                self._call_runtime("__mod64")
+            else:
+                self._call_runtime("__smod64")
         elif op == "&":
             self._call_runtime("__and64")
         elif op == "|":
@@ -4864,13 +4964,15 @@ class CodeGenerator:
         # If target is 32-bit integer but source is not, extend
         # (Don't extend for float targets - floats are already 32-bit in DEHL)
         # (Don't extend for 64-bit sources - already extracted from __acc64)
-        elif target_is_32bit and not target_is_float and not self._is_long_expr(expr.right) and not source_is_64bit_assign and not source_is_float:
+        # (Don't extend for long long sources - DEHL already has low 32 bits)
+        elif target_is_32bit and not target_is_float and not self._is_long_expr(expr.right) and not source_is_64bit_assign and not source_is_float and not self._is_long_long_expr(expr.right):
             is_signed = not self._is_unsigned_expr(expr.right)
             self._extend_hl_to_dehl(is_signed)
         # If target is float but source is integer, convert to float
         elif target_is_float and not source_is_float:
             # First extend integer to 32-bit if needed
-            if not self._is_long_expr(expr.right) and not source_is_64bit_assign:
+            # (Don't extend long long sources - DEHL already has low 32 bits)
+            if not self._is_long_expr(expr.right) and not source_is_64bit_assign and not self._is_long_long_expr(expr.right):
                 is_signed = not self._is_unsigned_expr(expr.right)
                 self._extend_hl_to_dehl(is_signed)
             # Then convert to float
@@ -5454,18 +5556,69 @@ class CodeGenerator:
                 # Check if parameter type or argument expression is 64-bit
                 arg_is_ll = self._is_long_long_expr(arg)
                 param_is_ll = param_type and self._is_long_long_type(param_type)
-                if arg_is_ll or param_is_ll:
-                    # 64-bit argument: push 4 words (8 bytes)
+                if param_is_ll:
+                    # Parameter is 64-bit: push 4 words (8 bytes)
                     param_unsigned = (param_type and isinstance(param_type, ast.BasicType)
                                      and param_type.is_signed == False)
                     self._push_long_long_arg(arg, force_unsigned=param_unsigned)
                     stack_size += 8
                     continue
+                elif arg_is_ll and not param_type:
+                    # No param type info (variadic/unprototyped): push as 64-bit
+                    self._push_long_long_arg(arg, force_unsigned=False)
+                    stack_size += 8
+                    continue
 
                 # Check if parameter type or argument expression is 32-bit
+                # When arg is long long but param is smaller, treat as long for gen_expr
+                # (gen_identifier loads low 32 bits into DEHL for long long)
                 arg_is_long = self._is_long_expr(arg)
                 param_is_long = param_type and self._is_long_type(param_type)
                 param_is_float = param_type and self._is_float_type(param_type)
+                param_is_small = param_type and not param_is_long and not param_is_float and not self._is_long_long_type(param_type)
+                # When arg is long long but param is smaller, truncate
+                if arg_is_ll and param_is_small:
+                    # Truncate 64-bit to 16-bit
+                    ll_val = self._try_get_ll_literal_value(arg)
+                    if ll_val is not None:
+                        # Compile-time truncation
+                        self.ctx.emit_instr("LD", f"HL,{ll_val & 0xFFFF}")
+                    else:
+                        # Runtime: generate 64-bit, load low 16 from __acc64
+                        self._gen_64bit_operand(arg, to_tmp=False)
+                        self.ctx.emit_instr("LD", "HL,(__acc64)")
+                        self.ctx.runtime_used.add("__acc64")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    stack_size += 2
+                    continue
+                if arg_is_ll and (param_is_long or param_is_float):
+                    # Truncate 64-bit to 32-bit
+                    ll_val = self._try_get_ll_literal_value(arg)
+                    if ll_val is not None:
+                        # Compile-time truncation to 32-bit
+                        val32 = ll_val & 0xFFFFFFFF
+                        low = val32 & 0xFFFF
+                        high = (val32 >> 16) & 0xFFFF
+                        self.ctx.emit_instr("LD", f"HL,{low}")
+                        self.ctx.emit_instr("LD", f"DE,{high}")
+                    else:
+                        # Runtime: generate 64-bit, load low 32 from __acc64
+                        self._gen_64bit_operand(arg, to_tmp=False)
+                        self.ctx.emit_instr("LD", "HL,(__acc64)")
+                        self.ctx.emit_instr("LD", "DE,(__acc64+2)")
+                        self.ctx.runtime_used.add("__acc64")
+                    if param_is_float:
+                        is_unsigned = self._is_unsigned_expr(arg)
+                        if is_unsigned:
+                            self._call_runtime("__uitof")
+                        else:
+                            self._call_runtime("__itof")
+                    self.ctx.emit_instr("PUSH", "DE")
+                    self.ctx.emit_instr("PUSH", "HL")
+                    stack_size += 4
+                    continue
+                if arg_is_ll and not arg_is_long:
+                    arg_is_long = True  # treat as 32-bit for push below (fallback)
                 # Floats are also 32-bit, need to push 4 bytes
                 if arg_is_long or param_is_long or arg_is_float or param_is_float:
                     self.gen_expr(arg, force_long=True)
@@ -5718,10 +5871,13 @@ class CodeGenerator:
         target_size = self._type_size(target_type)
         target_signed = self._is_signed_type(target_type)
 
+        source_is_64 = self._is_long_long_expr(expr.expr)
+
         # Handle float conversions first
         if target_is_float and not source_is_float:
             # Int to float conversion
-            if not source_is_long:
+            # Don't extend long long sources - DEHL already has low 32 bits
+            if not source_is_long and not source_is_64:
                 # 16-bit int needs sign extension first
                 is_signed = self._is_signed_type(source_type) if source_type else True
                 self._extend_hl_to_dehl(is_signed)
@@ -5784,8 +5940,9 @@ class CodeGenerator:
             # Need to extend to 32-bit DEHL after narrowing
             # Use the target type's signedness for extension
             self._extend_hl_to_dehl(target_signed)
-        elif target_is_long and not source_is_long and not source_is_float:
+        elif target_is_long and not source_is_long and not source_is_float and not source_is_64:
             # Direct extension to 32-bit (skip if source is float - already 32-bit)
+            # (Don't extend long long sources - DEHL already has low 32 bits)
             is_signed = self._is_signed_type(source_type) if source_type else True
             self._extend_hl_to_dehl(is_signed)
         elif target_size == 2 and source_size == 1:
@@ -6107,12 +6264,27 @@ class CodeGenerator:
                     return left_type
                 return ast.BasicType(name="int")  # Default to int for literal 1
 
-            # For other ops, apply usual arithmetic conversions: if either is long, result is long
+            # Apply usual arithmetic conversions (C99 6.3.1.8):
+            # 1. float/double wins over integer types
+            # 2. long long wins over long/int
+            # 3. long wins over int
+            left_is_float = self._is_float_type(left_type)
+            right_is_float = self._is_float_type(right_type)
+            if left_is_float or right_is_float:
+                return ast.BasicType(name="double")
+
+            left_is_ll = self._is_long_long_type(left_type)
+            right_is_ll = self._is_long_long_type(right_type)
+            if left_is_ll or right_is_ll:
+                left_unsigned = isinstance(left_type, ast.BasicType) and left_type.is_signed == False
+                right_unsigned = isinstance(right_type, ast.BasicType) and right_type.is_signed == False
+                return ast.BasicType(name="long long", is_signed=not (left_unsigned or right_unsigned))
+
             left_is_long = isinstance(left_type, ast.BasicType) and left_type.name == 'long'
             right_is_long = isinstance(right_type, ast.BasicType) and right_type.name == 'long'
-
             if left_is_long or right_is_long:
                 return ast.BasicType(name="long")
+
             if left_type:
                 return left_type
             if right_type:
@@ -6473,11 +6645,33 @@ class CodeGenerator:
             if expr.op in ("<<", ">>"):
                 return self._is_long_long_expr(expr.left)
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
+                # C99 6.3.1.8: float/double wins over long long in usual arithmetic conversions
+                if self._is_float_expr(expr.left) or self._is_float_expr(expr.right):
+                    return False
                 return self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right)
         if isinstance(expr, ast.Cast):
             return self._is_long_long_type(expr.target_type)
         expr_type = self._get_expr_type(expr)
         return self._is_long_long_type(expr_type)
+
+    def _try_get_ll_literal_value(self, expr: ast.Expression) -> int | None:
+        """Try to extract a compile-time integer value from a long-long expression.
+        Returns the 64-bit value or None if not a compile-time constant."""
+        if isinstance(expr, ast.IntLiteral):
+            return expr.value
+        if isinstance(expr, ast.UnaryOp) and expr.op == "-":
+            inner = self._try_get_ll_literal_value(expr.operand)
+            if inner is not None:
+                return -inner
+        if isinstance(expr, ast.UnaryOp) and expr.op == "+":
+            return self._try_get_ll_literal_value(expr.operand)
+        if isinstance(expr, ast.UnaryOp) and expr.op == "~":
+            inner = self._try_get_ll_literal_value(expr.operand)
+            if inner is not None:
+                return ~inner
+        if isinstance(expr, ast.Cast):
+            return self._try_get_ll_literal_value(expr.expr)
+        return None
 
     def _is_long_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has 32-bit type (long but not long long)."""
@@ -6681,8 +6875,13 @@ class CodeGenerator:
             self.ctx.emit_instr("LD", f"L,({ix_off(sym.offset)})")
             self.ctx.emit_instr("LD", f"H,({ix_off(sym.offset + 1)})")
 
-    def _store_local(self, sym: Symbol, size: int = 2) -> None:
+    def _store_local(self, sym: Symbol, size: int = 0) -> None:
         """Store HL into a local variable."""
+        if size == 0:
+            # Auto-detect size from symbol type
+            size = self._type_size(sym.sym_type) if sym.sym_type else 2
+            if size > 2:
+                size = 2  # _store_local only handles 1 or 2 byte stores
         if size == 1:
             if sym.uses_shared_storage:
                 self.ctx.emit_instr("LD", "A,L")

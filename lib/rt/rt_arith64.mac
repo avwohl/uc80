@@ -1,0 +1,1058 @@
+; rt_arith64.mac - 64-bit arithmetic routines
+; Split from runtime.mac
+
+	.Z80
+
+	EXTRN	__sext32
+
+	CSEG
+
+; ============================================================
+; 64-bit Integer Support
+; Convention: 64-bit values stored in __acc64 (accumulator) and __tmp64
+; ============================================================
+
+; 64-bit accumulator and temporary storage
+	DSEG
+	PUBLIC	__acc64
+	PUBLIC	__tmp64
+__acc64:	DS	8	; 64-bit accumulator
+__tmp64:	DS	8	; 64-bit temporary
+	CSEG
+
+; ============================================================
+; __sext64: Sign-extend 32-bit DEHL to 64-bit in __acc64
+; Input: DEHL = 32-bit value
+; Output: __acc64 = sign-extended 64-bit value
+; ============================================================
+	PUBLIC	__sext64
+__sext64:
+	LD	(__acc64),HL		; Store low word
+	LD	(__acc64+2),DE		; Store second word
+	; Sign extend from bit 31
+	BIT	7,D
+	JR	Z,__sext64_pos
+	LD	HL,0FFFFH		; Negative: extend with 1s
+	JR	__sext64_store
+__sext64_pos:
+	LD	HL,0			; Positive: extend with 0s
+__sext64_store:
+	LD	(__acc64+4),HL
+	LD	(__acc64+6),HL
+	RET
+
+; ============================================================
+; __zext64: Zero-extend 32-bit DEHL to 64-bit in __acc64
+; Input: DEHL = 32-bit value
+; Output: __acc64 = zero-extended 64-bit value
+; ============================================================
+	PUBLIC	__zext64
+__zext64:
+	LD	(__acc64),HL		; Store low word
+	LD	(__acc64+2),DE		; Store second word
+	LD	HL,0
+	LD	(__acc64+4),HL		; Upper 32 bits = 0
+	LD	(__acc64+6),HL
+	RET
+
+; ============================================================
+; __load64: Load 64-bit value from address to __acc64
+; Input: HL = address of 64-bit value
+; Output: __acc64 = value
+; ============================================================
+	PUBLIC	__load64
+__load64:
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__acc64),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__acc64+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__acc64+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__acc64+6),DE
+	POP	DE
+	RET
+
+; ============================================================
+; __store64: Store __acc64 to address
+; Input: HL = destination address
+; Output: __acc64 stored at address
+; ============================================================
+	PUBLIC	__store64
+__store64:
+	PUSH	DE
+	LD	DE,(__acc64)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	DE,(__acc64+2)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	DE,(__acc64+4)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	DE,(__acc64+6)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	POP	DE
+	RET
+
+; ============================================================
+; __add64: 64-bit addition __acc64 = __acc64 + __tmp64
+; ============================================================
+	PUBLIC	__add64
+__add64:
+	PUSH	BC
+	PUSH	DE
+	; Add word 0
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	ADD	HL,BC
+	LD	(__acc64),HL
+	; Add word 1 with carry
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	ADC	HL,BC
+	LD	(__acc64+2),HL
+	; Add word 2 with carry
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	ADC	HL,BC
+	LD	(__acc64+4),HL
+	; Add word 3 with carry
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	ADC	HL,BC
+	LD	(__acc64+6),HL
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; __sub64: 64-bit subtraction __acc64 = __acc64 - __tmp64
+; ============================================================
+	PUBLIC	__sub64
+__sub64:
+	PUSH	BC
+	PUSH	DE
+	; Subtract word 0
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	OR	A			; Clear carry
+	SBC	HL,BC
+	LD	(__acc64),HL
+	; Subtract word 1 with borrow
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__acc64+2),HL
+	; Subtract word 2 with borrow
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__acc64+4),HL
+	; Subtract word 3 with borrow
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__acc64+6),HL
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; __neg64: 64-bit negation __acc64 = -__acc64
+; ============================================================
+	PUBLIC	__neg64
+__neg64:
+	PUSH	BC
+	; Negate = 0 - value
+	LD	HL,0
+	LD	BC,(__acc64)
+	OR	A
+	SBC	HL,BC
+	LD	(__acc64),HL
+	LD	HL,0
+	LD	BC,(__acc64+2)
+	SBC	HL,BC
+	LD	(__acc64+2),HL
+	LD	HL,0
+	LD	BC,(__acc64+4)
+	SBC	HL,BC
+	LD	(__acc64+4),HL
+	LD	HL,0
+	LD	BC,(__acc64+6)
+	SBC	HL,BC
+	LD	(__acc64+6),HL
+	POP	BC
+	RET
+
+; ============================================================
+; __cmp64: Compare __acc64 with __tmp64 (signed)
+; Output: Flags set for signed comparison
+;         Z if equal, C if __acc64 < __tmp64 (signed)
+; Returns: HL = -1 if <, 0 if ==, 1 if >
+; ============================================================
+	PUBLIC	__cmp64
+__cmp64:
+	PUSH	BC
+	; First compare sign bits
+	LD	A,(__acc64+7)
+	XOR	A
+	LD	A,(__acc64+7)
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	JP	M,__cmp64_diffsign	; Different signs
+	; Same sign - compare magnitude from MSB to LSB
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	; Equal
+	LD	HL,0
+	POP	BC
+	RET
+__cmp64_neq:
+	; Not equal - check carry for less than
+	JR	C,__cmp64_lt
+	LD	HL,1			; Greater than
+	POP	BC
+	RET
+__cmp64_lt:
+	LD	HL,-1			; Less than
+	POP	BC
+	RET
+__cmp64_diffsign:
+	; Different signs - negative is less
+	LD	A,(__acc64+7)
+	AND	80H
+	JR	NZ,__cmp64_lt		; acc64 is negative, so less
+	LD	HL,1			; acc64 is positive, so greater
+	POP	BC
+	RET
+
+; ============================================================
+; __ucmp64: Compare __acc64 with __tmp64 (unsigned)
+; Returns: HL = -1 if <, 0 if ==, 1 if >
+; ============================================================
+	PUBLIC	__ucmp64
+__ucmp64:
+	PUSH	BC
+	; Compare from MSB to LSB
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	; Equal
+	LD	HL,0
+	POP	BC
+	RET
+__ucmp64_neq:
+	JR	C,__ucmp64_lt
+	LD	HL,1
+	POP	BC
+	RET
+__ucmp64_lt:
+	LD	HL,-1
+	POP	BC
+	RET
+
+; ============================================================
+; __shl64: 64-bit left shift __acc64 = __acc64 << A
+; Input: A = shift count (0-63)
+; ============================================================
+	PUBLIC	__shl64
+__shl64:
+	AND	63			; Limit to 0-63
+	RET	Z			; No shift needed
+	PUSH	BC
+	LD	B,A			; B = shift count
+__shl64_loop:
+	; Shift left by 1: shift each word and propagate carry
+	LD	HL,(__acc64)
+	ADD	HL,HL			; Shift word 0, carry out
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	ADC	HL,HL			; Shift word 1 with carry in
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	ADC	HL,HL			; Shift word 2 with carry in
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	ADC	HL,HL			; Shift word 3 with carry in
+	LD	(__acc64+6),HL
+	DJNZ	__shl64_loop
+	POP	BC
+	RET
+
+; ============================================================
+; __shr64: 64-bit logical right shift __acc64 = __acc64 >> A
+; Input: A = shift count (0-63)
+; ============================================================
+	PUBLIC	__shr64
+__shr64:
+	AND	63
+	RET	Z
+	PUSH	BC
+	LD	B,A
+__shr64_loop:
+	; Shift right by 1 from MSB
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	DJNZ	__shr64_loop
+	POP	BC
+	RET
+
+; ============================================================
+; __sar64: 64-bit arithmetic right shift __acc64 = __acc64 >> A (signed)
+; Input: A = shift count (0-63)
+; ============================================================
+	PUBLIC	__sar64
+__sar64:
+	AND	63
+	RET	Z
+	PUSH	BC
+	LD	B,A
+__sar64_loop:
+	; Arithmetic shift right by 1 (preserve sign)
+	LD	HL,(__acc64+6)
+	SRA	H			; Arithmetic shift preserves sign
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	DJNZ	__sar64_loop
+	POP	BC
+	RET
+
+; ============================================================
+; __and64: 64-bit bitwise AND __acc64 = __acc64 & __tmp64
+; ============================================================
+	PUBLIC	__and64
+__and64:
+	PUSH	BC
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	LD	A,L
+	AND	C
+	LD	L,A
+	LD	A,H
+	AND	B
+	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	LD	A,L
+	AND	C
+	LD	L,A
+	LD	A,H
+	AND	B
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	LD	A,L
+	AND	C
+	LD	L,A
+	LD	A,H
+	AND	B
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	LD	A,L
+	AND	C
+	LD	L,A
+	LD	A,H
+	AND	B
+	LD	H,A
+	LD	(__acc64+6),HL
+	POP	BC
+	RET
+
+; ============================================================
+; __or64: 64-bit bitwise OR __acc64 = __acc64 | __tmp64
+; ============================================================
+	PUBLIC	__or64
+__or64:
+	PUSH	BC
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64+6),HL
+	POP	BC
+	RET
+
+; ============================================================
+; __xor64: 64-bit bitwise XOR __acc64 = __acc64 ^ __tmp64
+; ============================================================
+	PUBLIC	__xor64
+__xor64:
+	PUSH	BC
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	LD	A,L
+	XOR	C
+	LD	L,A
+	LD	A,H
+	XOR	B
+	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	LD	A,L
+	XOR	C
+	LD	L,A
+	LD	A,H
+	XOR	B
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	LD	A,L
+	XOR	C
+	LD	L,A
+	LD	A,H
+	XOR	B
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	LD	A,L
+	XOR	C
+	LD	L,A
+	LD	A,H
+	XOR	B
+	LD	H,A
+	LD	(__acc64+6),HL
+	POP	BC
+	RET
+
+; ============================================================
+; __not64: 64-bit bitwise NOT __acc64 = ~__acc64
+; ============================================================
+	PUBLIC	__not64
+__not64:
+	LD	HL,(__acc64)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64+6),HL
+	RET
+
+; ============================================================
+; __mul64: 64-bit multiplication __acc64 = __acc64 * __tmp64
+; Uses shift-and-add algorithm (slow but correct)
+; ============================================================
+	DSEG
+__mul64_mcd:	DS	8	; Multiplicand
+__mul64_mpr:	DS	8	; Multiplier
+	CSEG
+
+	PUBLIC	__mul64
+__mul64:
+	PUSH	BC
+	PUSH	DE
+	; Save multiplicand (__acc64) to __mul64_mcd
+	LD	HL,(__acc64)
+	LD	(__mul64_mcd),HL
+	LD	HL,(__acc64+2)
+	LD	(__mul64_mcd+2),HL
+	LD	HL,(__acc64+4)
+	LD	(__mul64_mcd+4),HL
+	LD	HL,(__acc64+6)
+	LD	(__mul64_mcd+6),HL
+	; Copy multiplier (__tmp64) to __mul64_mpr
+	LD	HL,(__tmp64)
+	LD	(__mul64_mpr),HL
+	LD	HL,(__tmp64+2)
+	LD	(__mul64_mpr+2),HL
+	LD	HL,(__tmp64+4)
+	LD	(__mul64_mpr+4),HL
+	LD	HL,(__tmp64+6)
+	LD	(__mul64_mpr+6),HL
+	; Initialize result (__acc64) to 0
+	LD	HL,0
+	LD	(__acc64),HL
+	LD	(__acc64+2),HL
+	LD	(__acc64+4),HL
+	LD	(__acc64+6),HL
+	; Loop through 64 bits
+	LD	B,64
+__mul64_loop:
+	; Shift multiplier right, get LSB
+	LD	HL,(__mul64_mpr+6)
+	SRL	H
+	RR	L
+	LD	(__mul64_mpr+6),HL
+	LD	HL,(__mul64_mpr+4)
+	RR	H
+	RR	L
+	LD	(__mul64_mpr+4),HL
+	LD	HL,(__mul64_mpr+2)
+	RR	H
+	RR	L
+	LD	(__mul64_mpr+2),HL
+	LD	HL,(__mul64_mpr)
+	RR	H
+	RR	L
+	LD	(__mul64_mpr),HL
+	JR	NC,__mul64_noadd
+	; Add multiplicand to result
+	LD	HL,(__acc64)
+	LD	BC,(__mul64_mcd)
+	ADD	HL,BC
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	BC,(__mul64_mcd+2)
+	ADC	HL,BC
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	BC,(__mul64_mcd+4)
+	ADC	HL,BC
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	BC,(__mul64_mcd+6)
+	ADC	HL,BC
+	LD	(__acc64+6),HL
+__mul64_noadd:
+	; Shift multiplicand left
+	LD	HL,(__mul64_mcd)
+	ADD	HL,HL
+	LD	(__mul64_mcd),HL
+	LD	HL,(__mul64_mcd+2)
+	ADC	HL,HL
+	LD	(__mul64_mcd+2),HL
+	LD	HL,(__mul64_mcd+4)
+	ADC	HL,HL
+	LD	(__mul64_mcd+4),HL
+	LD	HL,(__mul64_mcd+6)
+	ADC	HL,HL
+	LD	(__mul64_mcd+6),HL
+	DJNZ	__mul64_loop
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; __mov64: Copy __acc64 to __tmp64
+; ============================================================
+	PUBLIC	__mov64
+__mov64:
+	LD	HL,(__acc64)
+	LD	(__tmp64),HL
+	LD	HL,(__acc64+2)
+	LD	(__tmp64+2),HL
+	LD	HL,(__acc64+4)
+	LD	(__tmp64+4),HL
+	LD	HL,(__acc64+6)
+	LD	(__tmp64+6),HL
+	RET
+
+; ============================================================
+; __sext64_hl: Sign-extend 16-bit HL to 64-bit in __acc64
+; ============================================================
+	PUBLIC	__sext64_hl
+__sext64_hl:
+	CALL	__sext32		; HL -> DEHL
+	JP	__sext64		; DEHL -> __acc64 (tail call)
+
+; ============================================================
+; __zext64_hl: Zero-extend 16-bit HL to 64-bit in __acc64
+; ============================================================
+	PUBLIC	__zext64_hl
+__zext64_hl:
+	LD	DE,0
+	JP	__zext64		; tail call
+
+; ============================================================
+; __push64_acc: Push __acc64 (8 bytes) onto caller's stack
+; Push order: w3 (highest) deepest, w0 (lowest) on top
+; ============================================================
+	PUBLIC	__push64_acc
+__push64_acc:
+	POP	BC			; save return address
+	LD	HL,(__acc64+6)
+	PUSH	HL			; w3 (highest, deepest on stack)
+	LD	HL,(__acc64+4)
+	PUSH	HL			; w2
+	LD	HL,(__acc64+2)
+	PUSH	HL			; w1
+	LD	HL,(__acc64)
+	PUSH	HL			; w0 (lowest, top of stack)
+	PUSH	BC			; return address
+	RET
+
+; ============================================================
+; __save_tmp64: Save __tmp64 to stack (for complex binary ops)
+; ============================================================
+	PUBLIC	__save_tmp64
+__save_tmp64:
+	POP	BC
+	LD	HL,(__tmp64)
+	PUSH	HL
+	LD	HL,(__tmp64+2)
+	PUSH	HL
+	LD	HL,(__tmp64+4)
+	PUSH	HL
+	LD	HL,(__tmp64+6)
+	PUSH	HL
+	PUSH	BC
+	RET
+
+; ============================================================
+; __restore_tmp64: Restore __tmp64 from stack
+; ============================================================
+	PUBLIC	__restore_tmp64
+__restore_tmp64:
+	POP	BC
+	POP	HL
+	LD	(__tmp64+6),HL
+	POP	HL
+	LD	(__tmp64+4),HL
+	POP	HL
+	LD	(__tmp64+2),HL
+	POP	HL
+	LD	(__tmp64),HL
+	PUSH	BC
+	RET
+
+; ============================================================
+; __load64t: Load 64-bit value from address to __tmp64
+; Input: HL = address of 64-bit value
+; Output: __tmp64 = value
+; ============================================================
+	PUBLIC	__load64t
+__load64t:
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__tmp64+6),DE
+	POP	DE
+	RET
+
+; ============================================================
+; __div64: 64-bit unsigned division __acc64 = __acc64 / __tmp64
+; Remainder stored in __rem64
+; Uses shift-and-subtract algorithm (same as __div32 but 64-bit)
+; ============================================================
+	DSEG
+	PUBLIC	__rem64
+__div64_dvd:	DS	8	; dividend
+__rem64:	DS	8	; remainder
+	CSEG
+
+	PUBLIC	__div64
+__div64:
+	PUSH	BC
+	PUSH	DE
+
+	; Save dividend (__acc64) to __div64_dvd
+	LD	HL,(__acc64)
+	LD	(__div64_dvd),HL
+	LD	HL,(__acc64+2)
+	LD	(__div64_dvd+2),HL
+	LD	HL,(__acc64+4)
+	LD	(__div64_dvd+4),HL
+	LD	HL,(__acc64+6)
+	LD	(__div64_dvd+6),HL
+
+	; Quotient in __acc64 (start at 0)
+	LD	HL,0
+	LD	(__acc64),HL
+	LD	(__acc64+2),HL
+	LD	(__acc64+4),HL
+	LD	(__acc64+6),HL
+
+	; Remainder starts at 0
+	LD	(__rem64),HL
+	LD	(__rem64+2),HL
+	LD	(__rem64+4),HL
+	LD	(__rem64+6),HL
+
+	LD	B,64		; 64 bits
+
+__div64_loop:
+	; Shift dividend left, MSB into carry
+	LD	HL,(__div64_dvd)
+	ADD	HL,HL
+	LD	(__div64_dvd),HL
+	LD	HL,(__div64_dvd+2)
+	ADC	HL,HL
+	LD	(__div64_dvd+2),HL
+	LD	HL,(__div64_dvd+4)
+	ADC	HL,HL
+	LD	(__div64_dvd+4),HL
+	LD	HL,(__div64_dvd+6)
+	ADC	HL,HL
+	LD	(__div64_dvd+6),HL
+
+	; Rotate carry into remainder (shift remainder left, carry in LSB)
+	LD	HL,(__rem64)
+	ADC	HL,HL
+	LD	(__rem64),HL
+	LD	HL,(__rem64+2)
+	ADC	HL,HL
+	LD	(__rem64+2),HL
+	LD	HL,(__rem64+4)
+	ADC	HL,HL
+	LD	(__rem64+4),HL
+	LD	HL,(__rem64+6)
+	ADC	HL,HL
+	LD	(__rem64+6),HL
+
+	; Shift quotient (__acc64) left
+	LD	HL,(__acc64)
+	ADD	HL,HL
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	ADC	HL,HL
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	ADC	HL,HL
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	ADC	HL,HL
+	LD	(__acc64+6),HL
+
+	; Check if remainder >= divisor (__tmp64)
+	; Compare from MSW to LSW
+	LD	HL,(__rem64+6)
+	LD	DE,(__tmp64+6)
+	OR	A
+	SBC	HL,DE
+	JR	NZ,__div64_chk	; Not equal at word 3
+	LD	HL,(__rem64+4)
+	LD	DE,(__tmp64+4)
+	SBC	HL,DE
+	JR	NZ,__div64_chk
+	LD	HL,(__rem64+2)
+	LD	DE,(__tmp64+2)
+	SBC	HL,DE
+	JR	NZ,__div64_chk
+	LD	HL,(__rem64)
+	LD	DE,(__tmp64)
+	SBC	HL,DE
+__div64_chk:
+	JR	C,__div64_nosub	; remainder < divisor, skip
+
+	; remainder >= divisor: subtract divisor from remainder
+	LD	HL,(__rem64)
+	LD	DE,(__tmp64)
+	OR	A
+	SBC	HL,DE
+	LD	(__rem64),HL
+	LD	HL,(__rem64+2)
+	LD	DE,(__tmp64+2)
+	SBC	HL,DE
+	LD	(__rem64+2),HL
+	LD	HL,(__rem64+4)
+	LD	DE,(__tmp64+4)
+	SBC	HL,DE
+	LD	(__rem64+4),HL
+	LD	HL,(__rem64+6)
+	LD	DE,(__tmp64+6)
+	SBC	HL,DE
+	LD	(__rem64+6),HL
+
+	; Set LSB of quotient
+	LD	HL,(__acc64)
+	SET	0,L
+	LD	(__acc64),HL
+
+__div64_nosub:
+	DJNZ	__div64_loop
+	; B wrapped from 0 to 255 for first 255, then need to handle remaining
+	; Actually DJNZ with B=64 will loop 64 times correctly
+	; (B goes 64->63->...->1->0, DJNZ stops when B reaches 0)
+
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; __mod64: 64-bit unsigned modulo __acc64 = __acc64 % __tmp64
+; ============================================================
+	PUBLIC	__mod64
+__mod64:
+	CALL	__div64
+	LD	HL,(__rem64)
+	LD	(__acc64),HL
+	LD	HL,(__rem64+2)
+	LD	(__acc64+2),HL
+	LD	HL,(__rem64+4)
+	LD	(__acc64+4),HL
+	LD	HL,(__rem64+6)
+	LD	(__acc64+6),HL
+	RET
+
+; ============================================================
+; __sdiv64: 64-bit signed division __acc64 = __acc64 / __tmp64
+; ============================================================
+	PUBLIC	__sdiv64
+__sdiv64:
+	; Check signs: XOR high bytes to determine result sign
+	LD	A,(__acc64+7)
+	PUSH	AF		; Save acc sign
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	PUSH	AF		; Save result sign (bit 7)
+
+	; Make dividend positive if negative
+	POP	AF
+	PUSH	AF
+	LD	A,(__acc64+7)
+	BIT	7,A
+	JR	Z,__sdiv64_dvdpos
+	; Negate __acc64
+	CALL	__neg64
+__sdiv64_dvdpos:
+	; Make divisor positive if negative
+	LD	A,(__tmp64+7)
+	BIT	7,A
+	JR	Z,__sdiv64_dvspos
+	; Negate __tmp64
+	PUSH	HL
+	LD	HL,0
+	LD	BC,(__tmp64)
+	OR	A
+	SBC	HL,BC
+	LD	(__tmp64),HL
+	LD	HL,0
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__tmp64+2),HL
+	LD	HL,0
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__tmp64+4),HL
+	LD	HL,0
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__tmp64+6),HL
+	POP	HL
+__sdiv64_dvspos:
+	; Do unsigned division
+	CALL	__div64
+
+	; Negate result if signs were different
+	POP	AF		; result sign
+	BIT	7,A
+	JR	Z,__sdiv64_done
+	CALL	__neg64
+__sdiv64_done:
+	POP	AF		; discard saved acc sign
+	RET
+
+; ============================================================
+; __smod64: 64-bit signed modulo __acc64 = __acc64 % __tmp64
+; Remainder has same sign as dividend
+; ============================================================
+	PUBLIC	__smod64
+__smod64:
+	; Save dividend sign
+	LD	A,(__acc64+7)
+	PUSH	AF
+
+	; Check signs
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	PUSH	AF
+
+	; Make dividend positive
+	LD	A,(__acc64+7)
+	BIT	7,A
+	JR	Z,__smod64_dvdpos
+	CALL	__neg64
+__smod64_dvdpos:
+	; Make divisor positive
+	LD	A,(__tmp64+7)
+	BIT	7,A
+	JR	Z,__smod64_dvspos
+	PUSH	HL
+	LD	HL,0
+	LD	BC,(__tmp64)
+	OR	A
+	SBC	HL,BC
+	LD	(__tmp64),HL
+	LD	HL,0
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__tmp64+2),HL
+	LD	HL,0
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__tmp64+4),HL
+	LD	HL,0
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__tmp64+6),HL
+	POP	HL
+__smod64_dvspos:
+	; Do unsigned division (remainder in __rem64)
+	CALL	__div64
+
+	; Load remainder into __acc64
+	LD	HL,(__rem64)
+	LD	(__acc64),HL
+	LD	HL,(__rem64+2)
+	LD	(__acc64+2),HL
+	LD	HL,(__rem64+4)
+	LD	(__acc64+4),HL
+	LD	HL,(__rem64+6)
+	LD	(__acc64+6),HL
+
+	; Negate remainder if dividend was negative
+	POP	AF		; discard result sign
+	POP	AF		; dividend sign
+	BIT	7,A
+	RET	Z
+	JP	__neg64		; tail call
+
+	END
