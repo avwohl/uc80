@@ -859,18 +859,52 @@ __itof_nz:
 	BIT	7,D
 	JR	Z,__itof_pos
 	CALL	__neg32
+	; Check for LONG_MIN overflow: __neg32(0x80000000) = 0x80000000
+	BIT	7,D
+	JR	Z,__itof_pos
+	; Special case: value is 2^31, mantissa = 1<<23, exp = 127+31
+	LD	HL,0
+	LD	(__fman1),HL
+	LD	DE,0080H	; E=0x80 = bit 23 set
+	LD	(__fman1+2),DE
+	LD	HL,127+31
+	LD	(__fexp1),HL
+	JR	__itof_pack
 
 __itof_pos:
-	; Store mantissa
+	; Initial exponent = 127 + 23 (normalizing to bit 23)
+	PUSH	HL
+	LD	HL,127+23
+	LD	(__fexp1),HL
+	POP	HL
+
+	; If high byte D has bits set, shift right to bring mantissa
+	; into 24-bit range (bits 0-23) before __fnorm
+__itof_rshift:
+	LD	A,D
+	OR	A
+	JR	Z,__itof_store
+	; Shift DEHL right by 1
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	; Increment exponent
+	PUSH	HL
+	LD	HL,(__fexp1)
+	INC	HL
+	LD	(__fexp1),HL
+	POP	HL
+	JR	__itof_rshift
+
+__itof_store:
+	; Store mantissa (now D=0, bits in EHL)
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
 
-	; Initial exponent = 127 + 23 (normalizing to bit 23)
-	LD	HL,127+23
-	LD	(__fexp1),HL
-
 	; Normalize (shift mantissa left until bit 23 is set)
 	CALL	__fnorm
+__itof_pack:
 
 	; Pack result
 	LD	HL,(__fman1)
@@ -905,13 +939,35 @@ __uitof_nz:
 	XOR	A
 	LD	(__fsgn1),A
 
+	; Initial exponent = 127 + 23 (normalizing to bit 23)
+	PUSH	HL
+	LD	HL,127+23
+	LD	(__fexp1),HL
+	POP	HL
+
+	; If high byte D has bits set, shift right to bring mantissa
+	; into 24-bit range (bits 0-23) before __fnorm
+__uitof_rshift:
+	LD	A,D
+	OR	A
+	JR	Z,__uitof_store
+	; Shift DEHL right by 1
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	; Increment exponent
+	PUSH	HL
+	LD	HL,(__fexp1)
+	INC	HL
+	LD	(__fexp1),HL
+	POP	HL
+	JR	__uitof_rshift
+
+__uitof_store:
 	; Store mantissa
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
-
-	; Initial exponent = 127 + 23 (normalizing to bit 23)
-	LD	HL,127+23
-	LD	(__fexp1),HL
 
 	; Normalize
 	CALL	__fnorm

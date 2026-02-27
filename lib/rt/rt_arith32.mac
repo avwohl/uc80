@@ -289,18 +289,14 @@ __mod32:
 ; ============================================================
 	PUBLIC	__sdiv32
 __sdiv32:
-	; Check signs: XOR high bytes
+	; Determine result sign: XOR high bytes of dividend and divisor
 	LD	A,D
-	PUSH	AF		; Save sign of DEHL
 	LD	BC,(__tmp32+2)
 	XOR	B		; A bit 7 = 1 if signs differ
-	PUSH	AF		; Save result sign
+	PUSH	AF		; Save result sign (before any negation)
 
 	; Make DEHL positive if negative
-	POP	AF
-	POP	AF		; Get DEHL sign
-	PUSH	AF
-	BIT	7,A
+	BIT	7,D
 	CALL	NZ,__neg32
 
 	; Make __tmp32 positive if negative
@@ -334,12 +330,6 @@ __sdiv32:
 	POP	HL
 
 __sdiv32_pos:
-	; Save the sign determination for result
-	POP	AF		; DEHL sign
-	LD	BC,(__tmp32+2)
-	XOR	B		; Recalculate result sign
-	PUSH	AF
-
 	; Do unsigned division
 	CALL	__div32
 

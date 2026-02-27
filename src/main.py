@@ -56,14 +56,6 @@ def main() -> int:
         help="Define preprocessor macro"
     )
     parser.add_argument(
-        "-include",
-        action="append",
-        default=[],
-        dest="force_include",
-        metavar="FILE",
-        help="Process FILE as if #include \"FILE\" appeared first in the source"
-    )
-    parser.add_argument(
         "-E", "--preprocess-only",
         action="store_true",
         help="Preprocess only, output to stdout"
@@ -175,8 +167,6 @@ def main() -> int:
         mac_files = []  # Assembly files to append
         total_tokens = 0
         total_preprocessed_lines = 0
-        printf_features: set[str] | None = None  # Accumulated from #pragma printf
-        scanf_features: set[str] | None = None   # Accumulated from #pragma scanf
 
         for input_path in input_paths:
             # Handle .mac assembly files - pass through
@@ -216,28 +206,8 @@ def main() -> int:
                     else:
                         pp.macros[define] = type(pp.macros["__UC80__"])(define, body="1")
 
-                # Process -include files first (pragmas and macros accumulate)
-                force_include_source = ""
-                for inc_file in args.force_include:
-                    inc_path = Path(inc_file)
-                    if not inc_path.exists():
-                        print(f"uc80: error: -include {inc_file}: No such file", file=sys.stderr)
-                        return 1
-                    inc_content = inc_path.read_text()
-                    force_include_source += pp.preprocess(inc_content, str(inc_path)) + "\n"
-
                 source = pp.preprocess(source, str(input_path))
                 total_preprocessed_lines += len(source.splitlines())
-
-                # Accumulate pragma features across files
-                if pp.printf_features is not None:
-                    if printf_features is None:
-                        printf_features = set()
-                    printf_features.update(pp.printf_features)
-                if pp.scanf_features is not None:
-                    if scanf_features is None:
-                        scanf_features = set()
-                    scanf_features.update(pp.scanf_features)
 
                 if args.verbose:
                     print(f"  Preprocessed to {len(source.splitlines())} lines")
@@ -303,9 +273,7 @@ def main() -> int:
 
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                            enable_inlining, enable_const_propagation, whole_program,
-                           embed_runtime=embed_runtime,
-                           printf_features=printf_features,
-                           scanf_features=scanf_features)
+                           embed_runtime=embed_runtime)
         code = gen.generate(merged_ast)
 
         if args.verbose:

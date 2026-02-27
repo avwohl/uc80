@@ -1,0 +1,123 @@
+; lc_prt_dec64.mac - print 64-bit value as unsigned decimal
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	CSEG
+
+	PUBLIC	_prt_dec64
+; Input: 8-byte value already stored in _prt64_val
+_prt_dec64:
+	PUSH	BC
+	PUSH	IX
+
+	LD	B,0		; Digit counter
+
+_prt64_loop:
+	CALL	_div64_10
+	PUSH	AF		; Save digit (remainder)
+	INC	B
+
+	; Check if quotient is zero (all 8 bytes)
+	LD	HL,(_prt64_val)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt64_loop
+	LD	HL,(_prt64_val+2)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt64_loop
+	LD	HL,(_prt64_val+4)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt64_loop
+	LD	HL,(_prt64_val+6)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt64_loop
+
+	; Pop and print digits
+_prt64_out:
+	POP	AF
+	ADD	A,'0'
+	LD	E,A
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt64_out
+
+	POP	IX
+	POP	BC
+	RET
+
+; Internal: divide _prt64_val (8 bytes) by 10
+; Returns remainder in A, quotient stored back in _prt64_val
+_div64_10:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+
+	LD	DE,0		; DE = running remainder
+	LD	B,64
+
+_div64_10_loop:
+	; Shift remainder left by 1
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+
+	; Shift _prt64_val left by 1 (64 bits, MSB first carries into DE)
+	LD	HL,(_prt64_val)
+	ADD	HL,HL
+	LD	(_prt64_val),HL
+	LD	HL,(_prt64_val+2)
+	ADC	HL,HL
+	LD	(_prt64_val+2),HL
+	LD	HL,(_prt64_val+4)
+	ADC	HL,HL
+	LD	(_prt64_val+4),HL
+	LD	HL,(_prt64_val+6)
+	ADC	HL,HL
+	LD	(_prt64_val+6),HL
+	JR	NC,_div64_10_nc
+	INC	DE
+_div64_10_nc:
+
+	; Check if DE >= 10
+	LD	A,D
+	OR	A
+	JR	NZ,_div64_10_sub
+	LD	A,E
+	CP	10
+	JR	C,_div64_10_nosub
+
+_div64_10_sub:
+	LD	A,E
+	SUB	10
+	LD	E,A
+	LD	A,D
+	SBC	A,0
+	LD	D,A
+
+	; Set bit 0 of quotient (lowest byte of _prt64_val)
+	LD	HL,(_prt64_val)
+	INC	HL
+	LD	(_prt64_val),HL
+
+_div64_10_nosub:
+	DJNZ	_div64_10_loop
+
+	LD	A,E		; Remainder
+
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+	PUBLIC	_prt64_val
+	DSEG
+_prt64_val:	DS	8
+
+	END

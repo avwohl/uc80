@@ -20,7 +20,7 @@ typedef char *va_list;
  * We need to point to the stack location after 'last'
  */
 #define va_start(ap, last) \
-    ((ap) = (va_list)&(last) + sizeof(last))
+    ((ap) = (va_list)&(last) + ((sizeof(last) + 1) & ~1))
 
 /*
  * va_arg: Get next argument of type 'type' and advance pointer

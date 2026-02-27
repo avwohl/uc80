@@ -526,39 +526,33 @@ _strspn:
 	LD	IX,0
 	ADD	IX,SP
 	PUSH	BC
-	PUSH	DE
 
 	LD	L,(IX+4)	; HL = s
 	LD	H,(IX+5)
-	LD	E,(IX+6)	; DE = accept
-	LD	D,(IX+7)
 	LD	BC,0		; BC = count
 
 _strspn_loop:
 	LD	A,(HL)
 	OR	A
 	JR	Z,_strspn_done	; End of s
+	LD	E,A		; E = current char from s
 
-	; Check if A is in accept string
-	PUSH	HL
-	PUSH	DE
-	POP	HL		; HL = accept
+	; Check if E is in accept string
+	PUSH	HL		; Save s pointer
+	LD	L,(IX+4+2)	; HL = accept (reload from stack frame)
+	LD	H,(IX+5+2)
 _strspn_check:
-	LD	D,(HL)
-	LD	A,D
+	LD	A,(HL)
 	OR	A
 	JR	Z,_strspn_notfound	; End of accept, char not found
-	POP	DE
-	PUSH	DE
-	LD	A,(DE)		; A = current char from s
-	CP	D
+	CP	E		; Compare accept char with s char
 	JR	Z,_strspn_ok	; Found in accept
 	INC	HL
 	JR	_strspn_check
 
 _strspn_ok:
 	; Char in accept, continue
-	POP	HL
+	POP	HL		; Restore s pointer
 	INC	HL
 	INC	BC
 	JR	_strspn_loop
@@ -568,7 +562,6 @@ _strspn_notfound:
 _strspn_done:
 	LD	H,B
 	LD	L,C		; HL = count
-	POP	DE
 	POP	BC
 	POP	IX
 	RET

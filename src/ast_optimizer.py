@@ -289,6 +289,21 @@ class ASTOptimizer:
         elif isinstance(expr, ast.Cast):
             expr.expr = self._optimize_expr(expr.expr)
             return expr
+        elif isinstance(expr, ast.SizeofType):
+            # Constant fold sizeof(type) at compile time
+            size = self._sizeof_type(expr.target_type)
+            if size is not None:
+                self._stat("sizeof_fold")
+                self._changed = True
+                return ast.IntLiteral(value=size, location=expr.location)
+            return expr
+        elif isinstance(expr, ast.SizeofExpr):
+            # sizeof(string_literal) → array length including null terminator
+            if isinstance(expr.expr, ast.StringLiteral):
+                self._stat("sizeof_fold")
+                self._changed = True
+                return ast.IntLiteral(value=len(expr.expr.value) + 1, location=expr.location)
+            return expr
         elif isinstance(expr, ast.InitializerList):
             expr.values = [self._optimize_expr(v) if isinstance(v, ast.Expression) else v
                            for v in expr.values]
@@ -314,8 +329,11 @@ class ASTOptimizer:
         if isinstance(left, ast.IntLiteral) and isinstance(right, ast.IntLiteral):
             # Use wider mask of the two operands
             mask = max(self._literal_mask(left), self._literal_mask(right))
-            unsigned = left.is_unsigned or right.is_unsigned
-            is_long = left.is_long or right.is_long
+            # C standard 6.4.4.1: hex/octal literals that exceed signed range
+            # are effectively unsigned (e.g., 0xab00 is unsigned int on 16-bit)
+            unsigned = (self._is_effectively_unsigned(left) or
+                        self._is_effectively_unsigned(right))
+            is_long = left.is_long or right.is_long or mask >= 0xFFFFFFFF
             result = self._fold_constants(op, left.value, right.value, unsigned, mask)
             if result is not None:
                 # Convert masked result back to signed representation so that
@@ -450,6 +468,14 @@ class ASTOptimizer:
             if result is not None:
                 self._stat("const_fold_unary")
                 self._changed = True
+                # Per C99 6.5.3.3: ! operator always returns int (not unsigned, not long)
+                if op == "!":
+                    return ast.IntLiteral(
+                        value=result,
+                        is_long=False,
+                        is_unsigned=False,
+                        location=expr.location,
+                    )
                 return ast.IntLiteral(
                     value=result,
                     is_long=operand.is_long,
@@ -877,7 +903,15 @@ class ASTOptimizer:
             ek = ASTOptimizer._expr_key(expr.expr)
             if ek is None:
                 return None
-            return f"CAST:{ek}"
+            # Include target type to distinguish e.g. (signed char)x vs (unsigned char)x
+            tt = expr.target_type
+            if isinstance(tt, ast.BasicType):
+                tk = f"{tt.name}:{tt.is_signed}"
+            elif isinstance(tt, ast.PointerType):
+                tk = "ptr"
+            else:
+                tk = type(tt).__name__
+            return f"CAST:{tk}:{ek}"
         # Calls, Index, Member, etc. are not pure for CSE purposes
         return None
 
@@ -1499,28 +1533,63 @@ class ASTOptimizer:
         return any(isinstance(e, ast.IntLiteral) and e.is_unsigned for e in exprs)
 
     @staticmethod
+    def _is_effectively_unsigned(lit: ast.IntLiteral) -> bool:
+        """Check if a literal is effectively unsigned per C standard 6.4.4.1.
+
+        For hex/octal constants without U suffix, the type is the first that fits:
+        int → unsigned int → long int → unsigned long int → ...
+        So a hex constant like 0xab00 (43776) that exceeds signed int range (32767)
+        but fits unsigned int (65535) is effectively unsigned int.
+        """
+        if lit.is_unsigned:
+            return True
+        if not lit.is_hex:
+            return False
+        # Hex without L suffix
+        if not lit.is_long:
+            # unsigned int if > INT_MAX but <= UINT_MAX
+            if lit.value > 0x7FFF and lit.value <= 0xFFFF:
+                return True
+            # Value exceeds 16-bit: promoted to long per 6.4.4.1
+            # unsigned long if > LONG_MAX but <= ULONG_MAX
+            if lit.value > 0x7FFFFFFF and lit.value <= 0xFFFFFFFF:
+                return True
+            return False
+        # Hex with L suffix: unsigned long if > LONG_MAX but <= ULONG_MAX
+        if lit.value > 0x7FFFFFFF and lit.value <= 0xFFFFFFFF:
+            return True
+        return False
+
+    @staticmethod
     def _literal_mask(lit: ast.IntLiteral) -> int:
         """Get bitmask for an IntLiteral based on its type width.
 
-        Matches codegen's _is_long_long_expr / _is_long_expr heuristics:
-        - value fits signed 16-bit and no L suffix → 16-bit (int)
-        - value fits signed 32-bit (or is_long) → 32-bit (long)
-        - value exceeds signed 32-bit → 64-bit (long long)
+        Per C standard 6.4.4.1, constant type is determined by value and suffix:
+        - Decimal without suffix: int → long → long long
+        - Hex/octal without suffix: int → unsigned int → long → unsigned long → ...
+        - U suffix: unsigned int → unsigned long → unsigned long long
+        If value exceeds the range of the current type, promote to next.
         """
         val = lit.value
-        # Check for long long first (value exceeds 32-bit signed range)
-        if hasattr(lit, 'is_long_long') and lit.is_long_long:
-            return 0xFFFFFFFFFFFFFFFF
-        if val > 2147483647 or val < -2147483648:
-            return 0xFFFFFFFFFFFFFFFF
-        # Check for long (explicit L suffix or value exceeds 16-bit signed range)
+        # Explicit L suffix
         if lit.is_long:
+            if val > 2147483647 or val < -2147483648:
+                return 0xFFFFFFFFFFFFFFFF
             return 0xFFFFFFFF
-        # For hex literals, values up to 65535 stay 16-bit
-        if lit.is_hex and 0 <= val <= 65535:
+        # No suffix — determine type from value
+        # Hex or U suffix: values up to 0xFFFF fit in unsigned int (16-bit)
+        if lit.is_hex or lit.is_unsigned:
+            if val > 0xFFFF or val < -32768:
+                # Exceeds 16-bit range → promote to long (32-bit)
+                if val > 0xFFFFFFFF:
+                    return 0xFFFFFFFFFFFFFFFF
+                return 0xFFFFFFFF
             return 0xFFFF
-        # Values that exceed signed 16-bit range promote to 32-bit
+        # Decimal: values in [-32768, 32767] fit in int (16-bit)
         if val > 32767 or val < -32768:
+            # Exceeds 16-bit signed → promote to long (32-bit)
+            if val > 2147483647 or val < -2147483648:
+                return 0xFFFFFFFFFFFFFFFF
             return 0xFFFFFFFF
         return 0xFFFF
 
@@ -1598,10 +1667,28 @@ class ASTOptimizer:
     @staticmethod
     def _to_signed(val: int, mask: int) -> int:
         """Convert unsigned int to signed using mask width."""
+        val = val & mask  # Ensure value is in unsigned range first
         sign_bit = (mask >> 1) + 1
         if val & sign_bit:
             return val - (mask + 1)
         return val
+
+    @staticmethod
+    def _sizeof_type(t: ast.TypeNode) -> int | None:
+        """Compute sizeof(type) at compile time. Returns None if unknown."""
+        if isinstance(t, ast.BasicType):
+            name = t.name
+            if name in ('char', 'signed char', 'unsigned char', 'bool'):
+                return 1
+            if name in ('short', 'unsigned short', 'int', 'unsigned int'):
+                return 2
+            if name in ('long', 'unsigned long', 'float', 'double'):
+                return 4
+            if name in ('long long', 'unsigned long long'):
+                return 8
+        if isinstance(t, ast.PointerType):
+            return 2
+        return None  # Structs, arrays — too complex for optimizer
 
     def _stat(self, name: str) -> None:
         self.stats[name] = self.stats.get(name, 0) + 1

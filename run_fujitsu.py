@@ -17,8 +17,8 @@ LIB_DIR = UC80_DIR / "lib"
 FUJITSU_DIR = Path("../external/compiler-test-suite/C")
 
 CRT0 = LIB_DIR / "crt0.rel"
-LIBC = LIB_DIR / "libc.lib"
-RUNTIME = LIB_DIR / "runtime.lib"
+LIBC = LIB_DIR / "libc.rel"
+RUNTIME = LIB_DIR / "runtime.rel"
 CPMEMU = Path("../cpmemu/src/cpmemu")
 
 MAX_COM_SIZE = 128000

@@ -2,7 +2,8 @@
 	.Z80
 
 	EXTRN	_printf_loop
-	EXTRN	_prt_dec32
+	EXTRN	_prt_dec64
+	EXTRN	_prt64_val
 
 	CSEG
 
@@ -14,20 +15,32 @@ __printf_handle_llu:
 	PUSH	BC
 	PUSH	IX
 	POP	DE
-	ADD	HL,DE
+	ADD	HL,DE		; HL = IX + offset
+	; Read 8 bytes (64 bits) into _prt64_val
 	LD	E,(HL)
 	INC	HL
 	LD	D,(HL)
 	INC	HL
-	LD	A,(HL)
+	LD	(_prt64_val),DE
+	LD	E,(HL)
 	INC	HL
-	LD	H,(HL)
-	LD	L,A
-	EX	DE,HL
-	CALL	_prt_dec32
+	LD	D,(HL)
+	INC	HL
+	LD	(_prt64_val+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_prt64_val+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt64_val+6),DE
+
+	CALL	_prt_dec64
 	POP	BC
 	LD	A,C
-	ADD	A,8
+	ADD	A,8		; Long long is 8 bytes
 	LD	C,A
 	POP	HL
 	JP	_printf_loop

@@ -37,13 +37,13 @@ test_output*.txt
 test_latest*.txt
 
 # Assembler/linker outputs
+*.lib
 *.rel
 *.sym
 *.prn
 *.com
 *.hex
 *.bin
-*.lib
 
 # Keep .mac source files but track them explicitly if needed
 # Generated .mac files in test directories

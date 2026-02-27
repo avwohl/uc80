@@ -2237,6 +2237,11 @@ _printf_nodig:
 	CP	'f'
 	JP	Z,_printf_float
 
+	CP	'g'
+	JP	Z,_printf_g
+	CP	'G'
+	JP	Z,_printf_g
+
 	; Unknown format - skip
 	INC	HL
 	JP	_printf_loop
@@ -2393,6 +2398,10 @@ _printf_long:
 	JR	Z,_printf_ll	; long long
 	CP	'f'
 	JP	Z,_printf_float	; %lf = same as %f (double == float on Z80)
+	CP	'g'
+	JP	Z,_printf_g	; %lg = same as %g
+	CP	'G'
+	JP	Z,_printf_g	; %lG = same as %g
 	; Unknown - skip
 	JP	_printf_loop
 
@@ -2604,8 +2613,7 @@ _printf_llx_done:
 	JP	_printf_loop
 
 _printf_lld:
-	; Output signed 64-bit decimal (%lld) - just consume 8 bytes, print lower 32 bits
-	; (Full 64-bit decimal would require huge routine - use 32-bit approximation)
+	; Output signed 64-bit decimal (%lld)
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -2613,17 +2621,56 @@ _printf_lld:
 	PUSH	IX
 	POP	DE
 	ADD	HL,DE
-	; Just read lower 32 bits
+	; Read 8 bytes (64 bits) into _prt64_val
 	LD	E,(HL)
 	INC	HL
 	LD	D,(HL)
 	INC	HL
-	LD	A,(HL)
+	LD	(_prt64_val),DE
+	LD	E,(HL)
 	INC	HL
-	LD	H,(HL)
-	LD	L,A
-	EX	DE,HL		; DEHL = lower 32 bits
-	CALL	_prt_dec32
+	LD	D,(HL)
+	INC	HL
+	LD	(_prt64_val+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_prt64_val+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt64_val+6),DE
+	; Check sign (bit 7 of highest byte)
+	LD	A,D
+	AND	80H
+	JR	Z,_printf_lld_pos
+	; Negative - print minus sign
+	PUSH	BC
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	; Negate 64-bit value
+	XOR	A
+	LD	HL,0
+	LD	DE,(_prt64_val)
+	SBC	HL,DE
+	LD	(_prt64_val),HL
+	LD	HL,0
+	LD	DE,(_prt64_val+2)
+	SBC	HL,DE
+	LD	(_prt64_val+2),HL
+	LD	HL,0
+	LD	DE,(_prt64_val+4)
+	SBC	HL,DE
+	LD	(_prt64_val+4),HL
+	LD	HL,0
+	LD	DE,(_prt64_val+6)
+	SBC	HL,DE
+	LD	(_prt64_val+6),HL
+_printf_lld_pos:
+	CALL	_prt_dec64
 	POP	BC
 	LD	A,C
 	ADD	A,8
@@ -2633,7 +2680,7 @@ _printf_lld:
 	JP	_printf_loop
 
 _printf_llu:
-	; Output unsigned 64-bit decimal (%llu) - same approach as lld
+	; Output unsigned 64-bit decimal (%llu)
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -2641,16 +2688,27 @@ _printf_llu:
 	PUSH	IX
 	POP	DE
 	ADD	HL,DE
+	; Read 8 bytes (64 bits) into _prt64_val
 	LD	E,(HL)
 	INC	HL
 	LD	D,(HL)
 	INC	HL
-	LD	A,(HL)
+	LD	(_prt64_val),DE
+	LD	E,(HL)
 	INC	HL
-	LD	H,(HL)
-	LD	L,A
-	EX	DE,HL
-	CALL	_prt_dec32
+	LD	D,(HL)
+	INC	HL
+	LD	(_prt64_val+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_prt64_val+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt64_val+6),DE
+	CALL	_prt_dec64
 	POP	BC
 	LD	A,C
 	ADD	A,8
@@ -2691,6 +2749,101 @@ _printf_float_defprec:
 	LD	(_prt_float_prec),A
 _printf_float_go:
 	CALL	_prt_float
+	POP	BC
+	LD	A,C
+	ADD	A,4		; Float is 4 bytes
+	LD	C,A
+	POP	HL
+	INC	HL
+	JP	_printf_loop
+
+_printf_g:
+	; Output float using %g format (strip trailing zeros)
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE		; HL = IX + offset (points to float)
+	; Load 32-bit float from (HL) into __ftmp
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__ftmp),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__ftmp+2),DE
+	; Use precision 6 for %g (default significant digits)
+	LD	A,6
+	LD	(_prt_float_prec),A
+	; Switch to buffer mode
+	LD	A,1
+	LD	(_prt_out_mode),A
+	XOR	A
+	LD	(_prt_bufpos),A
+	; Call _prt_float (output goes to buffer)
+	CALL	_prt_float
+	; Switch back to console mode
+	XOR	A
+	LD	(_prt_out_mode),A
+	; Null-terminate buffer
+	LD	A,(_prt_bufpos)
+	LD	L,A
+	LD	H,0
+	LD	DE,_prt_gbuf
+	ADD	HL,DE
+	LD	(HL),0
+	; Strip trailing zeros after decimal point
+	; First check if there's a decimal point
+	LD	HL,_prt_gbuf
+	LD	B,0		; Track if decimal point found
+_printf_g_scan:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_printf_g_strip
+	CP	'.'
+	JR	NZ,_printf_g_s2
+	LD	B,1		; Found decimal point
+_printf_g_s2:
+	INC	HL
+	JR	_printf_g_scan
+_printf_g_strip:
+	; HL points to null terminator
+	; B = 1 if decimal point found
+	LD	A,B
+	OR	A
+	JR	Z,_printf_g_out	; No decimal point, nothing to strip
+	; Scan backward removing trailing zeros
+_printf_g_st2:
+	DEC	HL
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_printf_g_st3
+	LD	(HL),0		; Remove trailing zero
+	JR	_printf_g_st2
+_printf_g_st3:
+	; Check if decimal point is now last char
+	CP	'.'
+	JR	NZ,_printf_g_out
+	LD	(HL),0		; Remove trailing decimal point
+_printf_g_out:
+	; Output the buffer
+	LD	HL,_prt_gbuf
+_printf_g_olp:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_printf_g_done
+	LD	E,A
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	INC	HL
+	JR	_printf_g_olp
+_printf_g_done:
 	POP	BC
 	LD	A,C
 	ADD	A,4		; Float is 4 bytes
@@ -4081,6 +4234,45 @@ _vsprintf_done:
 	RET
 
 ; ============================================================
+; Internal: output character with mode-aware routing
+; Input: A = character to output
+; Preserves: BC, DE, HL
+; ============================================================
+_prt_outch:
+	PUSH	HL
+	PUSH	DE
+	PUSH	BC
+	PUSH	AF
+	LD	HL,_prt_out_mode
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_prt_outch_buf
+	; Console mode
+	POP	AF
+	LD	E,A
+	LD	C,CONOUT
+	CALL	BDOS
+	JR	_prt_outch_ret
+_prt_outch_buf:
+	; Buffer mode
+	POP	AF
+	LD	HL,_prt_bufpos
+	LD	L,(HL)
+	LD	H,0
+	PUSH	DE
+	LD	DE,_prt_gbuf
+	ADD	HL,DE
+	POP	DE
+	LD	(HL),A
+	LD	HL,_prt_bufpos
+	INC	(HL)
+_prt_outch_ret:
+	POP	BC
+	POP	DE
+	POP	HL
+	RET
+
+; ============================================================
 ; Internal: print HL as decimal
 ; ============================================================
 _prt_dec:
@@ -4104,11 +4296,7 @@ _prt_dec_out:
 	POP	DE
 	LD	A,E
 	ADD	A,'0'
-	LD	E,A
-	PUSH	BC
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	BC
+	CALL	_prt_outch
 	DJNZ	_prt_dec_out
 
 	POP	DE
@@ -4181,13 +4369,8 @@ _prt_float:
 	JR	Z,_prt_float_pos
 
 	; Print minus sign
-	PUSH	HL
-	PUSH	DE
-	LD	E,'-'
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	DE
-	POP	HL
+	LD	A,'-'
+	CALL	_prt_outch
 	RES	7,H		; Clear sign bit
 
 _prt_float_pos:
@@ -4332,9 +4515,8 @@ _prt_float_use_hl:
 	CALL	_prt_dec
 
 	; Print decimal point
-	LD	E,'.'
-	LD	C,CONOUT
-	CALL	BDOS
+	LD	A,'.'
+	CALL	_prt_outch
 	POP	HL		; Restore integer part
 
 	; Now calculate fractional part
@@ -4398,9 +4580,7 @@ _prt_float_frac:
 
 	; Print digit
 	ADD	A,'0'
-	LD	E,A
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_prt_outch
 
 	; Subtract digit from multiplied value to keep fractional part
 	POP	AF		; A = digit
@@ -4427,14 +4607,10 @@ _prt_float_frac:
 _prt_float_small:
 	; Exponent < 0, value < 1.0
 	; Print "0." then calculate fractional digits
-	PUSH	BC		; Save exponent
-	LD	E,'0'
-	LD	C,CONOUT
-	CALL	BDOS
-	LD	E,'.'
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	BC		; Restore exponent
+	LD	A,'0'
+	CALL	_prt_outch
+	LD	A,'.'
+	CALL	_prt_outch
 
 	; Reconstruct float from __fman (mantissa) and B (unbiased exponent)
 	; Runtime uses DEHL format: D=sign|exp[7:1], E=exp[0]|mant[22:16], H=mant[15:8], L=mant[7:0]
@@ -4511,9 +4687,7 @@ _prt_float_sm_lp:
 
 	; Print digit
 	ADD	A,'0'
-	LD	E,A
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_prt_outch
 
 	; Subtract integer part from float to get fractional part
 	; Need to convert integer back to float and subtract
@@ -4563,54 +4737,42 @@ _prt_float_lg2:
 	CALL	_prt_dec
 
 	; Print .000... (precision digits)
-	LD	E,'.'
-	LD	C,CONOUT
-	CALL	BDOS
+	LD	A,'.'
+	CALL	_prt_outch
 	LD	A,(_prt_float_prec)
 	LD	B,A
 	OR	A
 	JR	Z,_prt_float_done
 _prt_float_lg3:
-	PUSH	BC
-	LD	E,'0'
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	BC
+	LD	A,'0'
+	CALL	_prt_outch
 	DJNZ	_prt_float_lg3
 	JR	_prt_float_done
 
 _prt_float_zero:
 	; Print "0.000..."
-	LD	E,'0'
-	LD	C,CONOUT
-	CALL	BDOS
-	LD	E,'.'
-	LD	C,CONOUT
-	CALL	BDOS
+	LD	A,'0'
+	CALL	_prt_outch
+	LD	A,'.'
+	CALL	_prt_outch
 	LD	A,(_prt_float_prec)
 	LD	B,A
 	OR	A
 	JR	Z,_prt_float_done
 _prt_float_z2:
-	PUSH	BC
-	LD	E,'0'
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	BC
+	LD	A,'0'
+	CALL	_prt_outch
 	DJNZ	_prt_float_z2
 	JR	_prt_float_done
 
 _prt_float_inf:
 	; Print "inf"
-	LD	E,'i'
-	LD	C,CONOUT
-	CALL	BDOS
-	LD	E,'n'
-	LD	C,CONOUT
-	CALL	BDOS
-	LD	E,'f'
-	LD	C,CONOUT
-	CALL	BDOS
+	LD	A,'i'
+	CALL	_prt_outch
+	LD	A,'n'
+	CALL	_prt_outch
+	LD	A,'f'
+	CALL	_prt_outch
 
 _prt_float_done:
 	POP	IX
@@ -4801,6 +4963,118 @@ _div32_10_nosub:
 
 	; Remainder in E (D should be 0)
 	LD	A,E
+
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; Internal: print 64-bit value as unsigned decimal
+; Value must be pre-loaded into _prt64_val (8 bytes)
+; ============================================================
+_prt_dec64:
+	PUSH	BC
+	PUSH	IX
+
+	LD	B,0		; Digit counter
+
+_prt64_loop:
+	CALL	_div64_10
+	PUSH	AF		; Save digit (remainder)
+	INC	B
+
+	; Check if quotient is zero (all 8 bytes)
+	LD	HL,(_prt64_val)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt64_loop
+	LD	HL,(_prt64_val+2)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt64_loop
+	LD	HL,(_prt64_val+4)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt64_loop
+	LD	HL,(_prt64_val+6)
+	LD	A,H
+	OR	L
+	JR	NZ,_prt64_loop
+
+	; Pop and print digits
+_prt64_out:
+	POP	AF
+	ADD	A,'0'
+	LD	E,A
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_prt64_out
+
+	POP	IX
+	POP	BC
+	RET
+
+; Internal: divide _prt64_val (8 bytes) by 10
+; Returns remainder in A, quotient stored back in _prt64_val
+_div64_10:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+
+	LD	DE,0		; DE = running remainder
+	LD	B,64
+
+_div64_10_loop:
+	; Shift remainder left by 1
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+
+	; Shift _prt64_val left by 1 (64 bits, MSB first carries into DE)
+	LD	HL,(_prt64_val)
+	ADD	HL,HL
+	LD	(_prt64_val),HL
+	LD	HL,(_prt64_val+2)
+	ADC	HL,HL
+	LD	(_prt64_val+2),HL
+	LD	HL,(_prt64_val+4)
+	ADC	HL,HL
+	LD	(_prt64_val+4),HL
+	LD	HL,(_prt64_val+6)
+	ADC	HL,HL
+	LD	(_prt64_val+6),HL
+	JR	NC,_div64_10_nc
+	INC	DE
+_div64_10_nc:
+
+	; Check if DE >= 10
+	LD	A,D
+	OR	A
+	JR	NZ,_div64_10_sub
+	LD	A,E
+	CP	10
+	JR	C,_div64_10_nosub
+
+_div64_10_sub:
+	LD	A,E
+	SUB	10
+	LD	E,A
+	LD	A,D
+	SBC	A,0
+	LD	D,A
+
+	; Set bit 0 of quotient (lowest byte of _prt64_val)
+	LD	HL,(_prt64_val)
+	INC	HL
+	LD	(_prt64_val),HL
+
+_div64_10_nosub:
+	DJNZ	_div64_10_loop
+
+	LD	A,E		; Remainder
 
 	POP	HL
 	POP	DE
@@ -7310,39 +7584,33 @@ _strspn:
 	LD	IX,0
 	ADD	IX,SP
 	PUSH	BC
-	PUSH	DE
 
 	LD	L,(IX+4)	; HL = s
 	LD	H,(IX+5)
-	LD	E,(IX+6)	; DE = accept
-	LD	D,(IX+7)
 	LD	BC,0		; BC = count
 
 _strspn_loop:
 	LD	A,(HL)
 	OR	A
 	JR	Z,_strspn_done	; End of s
+	LD	E,A		; E = current char from s
 
-	; Check if A is in accept string
-	PUSH	HL
-	PUSH	DE
-	POP	HL		; HL = accept
+	; Check if E is in accept string
+	PUSH	HL		; Save s pointer
+	LD	L,(IX+6)	; HL = accept (reload from stack frame)
+	LD	H,(IX+7)
 _strspn_check:
-	LD	D,(HL)
-	LD	A,D
+	LD	A,(HL)
 	OR	A
 	JR	Z,_strspn_notfound	; End of accept, char not found
-	POP	DE
-	PUSH	DE
-	LD	A,(DE)		; A = current char from s
-	CP	D
+	CP	E		; Compare accept char with s char
 	JR	Z,_strspn_ok	; Found in accept
 	INC	HL
 	JR	_strspn_check
 
 _strspn_ok:
 	; Char in accept, continue
-	POP	HL
+	POP	HL		; Restore s pointer
 	INC	HL
 	INC	BC
 	JR	_strspn_loop
@@ -7352,7 +7620,6 @@ _strspn_notfound:
 _strspn_done:
 	LD	H,B
 	LD	L,C		; HL = count
-	POP	DE
 	POP	BC
 	POP	IX
 	RET
@@ -12835,6 +13102,10 @@ _stderr:	DW	_stderr_data
 
 ; printf 32-bit working storage
 _prt32_val:	DS	4
+_prt64_val:	DS	8
+_prt_out_mode:	DS	1	; 0=console, 1=buffer
+_prt_bufpos:	DS	1	; Current position in buffer
+_prt_gbuf:	DS	24	; Buffer for %g output
 
 ; rand seed
 _rand_seed:	DW	1		; Default seed = 1

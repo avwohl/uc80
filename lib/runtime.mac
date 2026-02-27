@@ -580,18 +580,14 @@ __mod32:
 ; ============================================================
 	PUBLIC	__sdiv32
 __sdiv32:
-	; Check signs: XOR high bytes
+	; Determine result sign: XOR high bytes of dividend and divisor
 	LD	A,D
-	PUSH	AF		; Save sign of DEHL
 	LD	BC,(__tmp32+2)
 	XOR	B		; A bit 7 = 1 if signs differ
-	PUSH	AF		; Save result sign
+	PUSH	AF		; Save result sign (before any negation)
 
 	; Make DEHL positive if negative
-	POP	AF
-	POP	AF		; Get DEHL sign
-	PUSH	AF
-	BIT	7,A
+	BIT	7,D
 	CALL	NZ,__neg32
 
 	; Make __tmp32 positive if negative
@@ -625,11 +621,6 @@ __sdiv32:
 	POP	HL
 
 __sdiv32_pos:
-	; Save the sign determination for result
-	POP	AF		; DEHL sign
-	LD	BC,(__tmp32+2)
-	XOR	B		; Recalculate result sign
-	PUSH	AF
 
 	; Do unsigned division
 	CALL	__div32
@@ -1897,18 +1888,52 @@ __itof_nz:
 	BIT	7,D
 	JR	Z,__itof_pos
 	CALL	__neg32
+	; Check for LONG_MIN overflow: __neg32(0x80000000) = 0x80000000
+	BIT	7,D
+	JR	Z,__itof_pos
+	; Special case: value is 2^31, mantissa = 1<<23, exp = 127+31
+	LD	HL,0
+	LD	(__fman1),HL
+	LD	DE,0080H	; E=0x80 = bit 23 set
+	LD	(__fman1+2),DE
+	LD	HL,127+31
+	LD	(__fexp1),HL
+	JR	__itof_pack
 
 __itof_pos:
-	; Store mantissa
+	; Initial exponent = 127 + 23 (normalizing to bit 23)
+	PUSH	HL
+	LD	HL,127+23
+	LD	(__fexp1),HL
+	POP	HL
+
+	; If high byte D has bits set, shift right to bring mantissa
+	; into 24-bit range (bits 0-23) before __fnorm
+__itof_rshift:
+	LD	A,D
+	OR	A
+	JR	Z,__itof_store
+	; Shift DEHL right by 1
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	; Increment exponent
+	PUSH	HL
+	LD	HL,(__fexp1)
+	INC	HL
+	LD	(__fexp1),HL
+	POP	HL
+	JR	__itof_rshift
+
+__itof_store:
+	; Store mantissa (now D=0, bits in EHL)
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
 
-	; Initial exponent = 127 + 23 (normalizing to bit 23)
-	LD	HL,127+23
-	LD	(__fexp1),HL
-
 	; Normalize (shift mantissa left until bit 23 is set)
 	CALL	__fnorm
+__itof_pack:
 
 	; Pack result
 	LD	HL,(__fman1)
@@ -1943,13 +1968,35 @@ __uitof_nz:
 	XOR	A
 	LD	(__fsgn1),A
 
+	; Initial exponent = 127 + 23 (normalizing to bit 23)
+	PUSH	HL
+	LD	HL,127+23
+	LD	(__fexp1),HL
+	POP	HL
+
+	; If high byte D has bits set, shift right to bring mantissa
+	; into 24-bit range (bits 0-23) before __fnorm
+__uitof_rshift:
+	LD	A,D
+	OR	A
+	JR	Z,__uitof_store
+	; Shift DEHL right by 1
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	; Increment exponent
+	PUSH	HL
+	LD	HL,(__fexp1)
+	INC	HL
+	LD	(__fexp1),HL
+	POP	HL
+	JR	__uitof_rshift
+
+__uitof_store:
 	; Store mantissa
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
-
-	; Initial exponent = 127 + 23 (normalizing to bit 23)
-	LD	HL,127+23
-	LD	(__fexp1),HL
 
 	; Normalize
 	CALL	__fnorm
@@ -3306,6 +3353,283 @@ __load64t:
 	LD	(__tmp64+6),DE
 	POP	DE
 	RET
+
+; ============================================================
+; __div64: 64-bit unsigned division __acc64 = __acc64 / __tmp64
+; Remainder stored in __rem64
+; Uses shift-and-subtract algorithm (same as __div32 but 64-bit)
+; ============================================================
+	DSEG
+	PUBLIC	__rem64
+__div64_dvd:	DS	8	; dividend
+__rem64:	DS	8	; remainder
+	CSEG
+
+	PUBLIC	__div64
+__div64:
+	PUSH	BC
+	PUSH	DE
+
+	; Save dividend (__acc64) to __div64_dvd
+	LD	HL,(__acc64)
+	LD	(__div64_dvd),HL
+	LD	HL,(__acc64+2)
+	LD	(__div64_dvd+2),HL
+	LD	HL,(__acc64+4)
+	LD	(__div64_dvd+4),HL
+	LD	HL,(__acc64+6)
+	LD	(__div64_dvd+6),HL
+
+	; Quotient in __acc64 (start at 0)
+	LD	HL,0
+	LD	(__acc64),HL
+	LD	(__acc64+2),HL
+	LD	(__acc64+4),HL
+	LD	(__acc64+6),HL
+
+	; Remainder starts at 0
+	LD	(__rem64),HL
+	LD	(__rem64+2),HL
+	LD	(__rem64+4),HL
+	LD	(__rem64+6),HL
+
+	LD	B,64		; 64 bits
+
+__div64_loop:
+	; Shift dividend left, MSB into carry
+	LD	HL,(__div64_dvd)
+	ADD	HL,HL
+	LD	(__div64_dvd),HL
+	LD	HL,(__div64_dvd+2)
+	ADC	HL,HL
+	LD	(__div64_dvd+2),HL
+	LD	HL,(__div64_dvd+4)
+	ADC	HL,HL
+	LD	(__div64_dvd+4),HL
+	LD	HL,(__div64_dvd+6)
+	ADC	HL,HL
+	LD	(__div64_dvd+6),HL
+
+	; Rotate carry into remainder (shift remainder left, carry in LSB)
+	LD	HL,(__rem64)
+	ADC	HL,HL
+	LD	(__rem64),HL
+	LD	HL,(__rem64+2)
+	ADC	HL,HL
+	LD	(__rem64+2),HL
+	LD	HL,(__rem64+4)
+	ADC	HL,HL
+	LD	(__rem64+4),HL
+	LD	HL,(__rem64+6)
+	ADC	HL,HL
+	LD	(__rem64+6),HL
+
+	; Shift quotient (__acc64) left
+	LD	HL,(__acc64)
+	ADD	HL,HL
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	ADC	HL,HL
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	ADC	HL,HL
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	ADC	HL,HL
+	LD	(__acc64+6),HL
+
+	; Check if remainder >= divisor (__tmp64)
+	; Compare from MSW to LSW
+	LD	HL,(__rem64+6)
+	LD	DE,(__tmp64+6)
+	OR	A
+	SBC	HL,DE
+	JR	NZ,__div64_chk	; Not equal at word 3
+	LD	HL,(__rem64+4)
+	LD	DE,(__tmp64+4)
+	SBC	HL,DE
+	JR	NZ,__div64_chk
+	LD	HL,(__rem64+2)
+	LD	DE,(__tmp64+2)
+	SBC	HL,DE
+	JR	NZ,__div64_chk
+	LD	HL,(__rem64)
+	LD	DE,(__tmp64)
+	SBC	HL,DE
+__div64_chk:
+	JR	C,__div64_nosub	; remainder < divisor, skip
+
+	; remainder >= divisor: subtract divisor from remainder
+	LD	HL,(__rem64)
+	LD	DE,(__tmp64)
+	OR	A
+	SBC	HL,DE
+	LD	(__rem64),HL
+	LD	HL,(__rem64+2)
+	LD	DE,(__tmp64+2)
+	SBC	HL,DE
+	LD	(__rem64+2),HL
+	LD	HL,(__rem64+4)
+	LD	DE,(__tmp64+4)
+	SBC	HL,DE
+	LD	(__rem64+4),HL
+	LD	HL,(__rem64+6)
+	LD	DE,(__tmp64+6)
+	SBC	HL,DE
+	LD	(__rem64+6),HL
+
+	; Set LSB of quotient
+	LD	HL,(__acc64)
+	SET	0,L
+	LD	(__acc64),HL
+
+__div64_nosub:
+	DJNZ	__div64_loop
+
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; __mod64: 64-bit unsigned modulo __acc64 = __acc64 % __tmp64
+; ============================================================
+	PUBLIC	__mod64
+__mod64:
+	CALL	__div64
+	LD	HL,(__rem64)
+	LD	(__acc64),HL
+	LD	HL,(__rem64+2)
+	LD	(__acc64+2),HL
+	LD	HL,(__rem64+4)
+	LD	(__acc64+4),HL
+	LD	HL,(__rem64+6)
+	LD	(__acc64+6),HL
+	RET
+
+; ============================================================
+; __sdiv64: 64-bit signed division __acc64 = __acc64 / __tmp64
+; ============================================================
+	PUBLIC	__sdiv64
+__sdiv64:
+	; Check signs: XOR high bytes to determine result sign
+	LD	A,(__acc64+7)
+	PUSH	AF		; Save acc sign
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	PUSH	AF		; Save result sign (bit 7)
+
+	; Make dividend positive if negative
+	POP	AF
+	PUSH	AF
+	LD	A,(__acc64+7)
+	BIT	7,A
+	JR	Z,__sdiv64_dvdpos
+	; Negate __acc64
+	CALL	__neg64
+__sdiv64_dvdpos:
+	; Make divisor positive if negative
+	LD	A,(__tmp64+7)
+	BIT	7,A
+	JR	Z,__sdiv64_dvspos
+	; Negate __tmp64
+	PUSH	HL
+	LD	HL,0
+	LD	BC,(__tmp64)
+	OR	A
+	SBC	HL,BC
+	LD	(__tmp64),HL
+	LD	HL,0
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__tmp64+2),HL
+	LD	HL,0
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__tmp64+4),HL
+	LD	HL,0
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__tmp64+6),HL
+	POP	HL
+__sdiv64_dvspos:
+	; Do unsigned division
+	CALL	__div64
+
+	; Negate result if signs were different
+	POP	AF		; result sign
+	BIT	7,A
+	JR	Z,__sdiv64_done
+	CALL	__neg64
+__sdiv64_done:
+	POP	AF		; discard saved acc sign
+	RET
+
+; ============================================================
+; __smod64: 64-bit signed modulo __acc64 = __acc64 % __tmp64
+; Remainder has same sign as dividend
+; ============================================================
+	PUBLIC	__smod64
+__smod64:
+	; Save dividend sign
+	LD	A,(__acc64+7)
+	PUSH	AF
+
+	; Check signs
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	PUSH	AF
+
+	; Make dividend positive
+	LD	A,(__acc64+7)
+	BIT	7,A
+	JR	Z,__smod64_dvdpos
+	CALL	__neg64
+__smod64_dvdpos:
+	; Make divisor positive
+	LD	A,(__tmp64+7)
+	BIT	7,A
+	JR	Z,__smod64_dvspos
+	PUSH	HL
+	LD	HL,0
+	LD	BC,(__tmp64)
+	OR	A
+	SBC	HL,BC
+	LD	(__tmp64),HL
+	LD	HL,0
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__tmp64+2),HL
+	LD	HL,0
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__tmp64+4),HL
+	LD	HL,0
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__tmp64+6),HL
+	POP	HL
+__smod64_dvspos:
+	; Do unsigned division (remainder in __rem64)
+	CALL	__div64
+
+	; Load remainder into __acc64
+	LD	HL,(__rem64)
+	LD	(__acc64),HL
+	LD	HL,(__rem64+2)
+	LD	(__acc64+2),HL
+	LD	HL,(__rem64+4)
+	LD	(__acc64+4),HL
+	LD	HL,(__rem64+6)
+	LD	(__acc64+6),HL
+
+	; Negate remainder if dividend was negative
+	POP	AF		; discard result sign
+	POP	AF		; dividend sign
+	BIT	7,A
+	RET	Z
+	JP	__neg64		; tail call
 
 
 	END

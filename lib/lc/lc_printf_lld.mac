@@ -1,34 +1,81 @@
 ; lc_printf_lld.mac - printf %lld handler (signed long long decimal)
 	.Z80
 
+BDOS	EQU	5
+CONOUT	EQU	2
+
 	EXTRN	_printf_loop
-	EXTRN	_prt_dec32
+	EXTRN	_prt_dec64
+	EXTRN	_prt64_val
 
 	CSEG
 
 	PUBLIC	__printf_handle_lld
 __printf_handle_lld:
-	; Read lower 32 bits, print as signed decimal, consume 8 bytes
 	PUSH	HL
 	LD	H,0
 	LD	L,C
 	PUSH	BC
 	PUSH	IX
 	POP	DE
-	ADD	HL,DE
+	ADD	HL,DE		; HL = IX + offset
+	; Read 8 bytes (64 bits) into _prt64_val
 	LD	E,(HL)
 	INC	HL
 	LD	D,(HL)
 	INC	HL
-	LD	A,(HL)
+	LD	(_prt64_val),DE
+	LD	E,(HL)
 	INC	HL
-	LD	H,(HL)
-	LD	L,A
-	EX	DE,HL		; DEHL = lower 32 bits
-	CALL	_prt_dec32
+	LD	D,(HL)
+	INC	HL
+	LD	(_prt64_val+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_prt64_val+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt64_val+6),DE
+
+	; Check sign (bit 7 of highest byte)
+	LD	A,D
+	AND	80H
+	JR	Z,_phlld_pos
+
+	; Negative - print minus sign
+	PUSH	BC
+	LD	E,'-'
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+
+	; Negate 64-bit value (0 - _prt64_val)
+	XOR	A		; Clear carry
+	LD	HL,0
+	LD	DE,(_prt64_val)
+	SBC	HL,DE
+	LD	(_prt64_val),HL
+	LD	HL,0
+	LD	DE,(_prt64_val+2)
+	SBC	HL,DE
+	LD	(_prt64_val+2),HL
+	LD	HL,0
+	LD	DE,(_prt64_val+4)
+	SBC	HL,DE
+	LD	(_prt64_val+4),HL
+	LD	HL,0
+	LD	DE,(_prt64_val+6)
+	SBC	HL,DE
+	LD	(_prt64_val+6),HL
+
+_phlld_pos:
+	CALL	_prt_dec64
 	POP	BC
 	LD	A,C
-	ADD	A,8
+	ADD	A,8		; Long long is 8 bytes
 	LD	C,A
 	POP	HL
 	JP	_printf_loop
