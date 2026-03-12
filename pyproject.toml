@@ -41,11 +41,11 @@ uc80 = "src.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["src*", "lib*"]
 
 [tool.setuptools.package-data]
 src = ["py.typed"]
-"" = ["lib/**/*.mac", "lib/**/*.lib", "lib/**/*.rel", "lib/include/**/*.h"]
+lib = ["**/*.mac", "**/*.h"]
 
 [project.optional-dependencies]
 dev = [
