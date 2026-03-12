@@ -2177,6 +2177,20 @@ __fpack:
 	RET
 
 __fpack_nz:
+	; Check for exponent underflow (BC <= 0) → return ±zero
+	; BC is 16-bit signed exponent
+	BIT	7,B
+	JR	NZ,__fpack_zero		; Negative exponent → underflow
+	LD	A,B
+	OR	A
+	JR	NZ,__fpack_ovf		; B > 0 and positive → overflow (exp > 255)
+	; B == 0: check C for valid range
+	LD	A,C
+	OR	A
+	JR	Z,__fpack_zero		; Exponent 0 → return zero
+	CP	255
+	JR	Z,__fpack_ovf		; Exponent 255 → overflow (infinity)
+
 	; Combine exponent and mantissa
 	; Exponent in C, mantissa in E.H.L (bit 23 is implied 1)
 	LD	A,E
@@ -2200,6 +2214,23 @@ __fpack_exp0_clear:
 	POP	AF
 	OR	D
 	LD	D,A
+	RET
+
+__fpack_zero:
+	; Return ±zero (preserve sign)
+	POP	AF
+	LD	D,A		; D = sign only (0 or 80H)
+	LD	E,0
+	LD	HL,0
+	RET
+
+__fpack_ovf:
+	; Return ±infinity
+	POP	AF
+	OR	7FH		; Set all exponent high bits
+	LD	D,A
+	LD	E,80H		; exp[0]=1, mantissa=0 → infinity
+	LD	HL,0
 	RET
 
 ; ============================================================
@@ -2271,6 +2302,9 @@ __fneg:
 	PUBLIC	__tmp32
 __tmp32:
 	DW	0,0
+	PUBLIC	__sret_buf
+__sret_buf:
+	DS	256		; Buffer for struct return values
 __mul32_mcd:
 	DW	0,0
 __mul32_mpr:

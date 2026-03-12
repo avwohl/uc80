@@ -141,6 +141,11 @@ class Preprocessor:
                     line_offset = self.current_line - actual_line
             elif self._is_active():
                 # Regular line - expand macros
+                # Join subsequent lines if a function-like macro invocation
+                # has unclosed parentheses spanning multiple lines
+                while i + 1 < len(lines) and self._has_unclosed_macro_call(line):
+                    i += 1
+                    line = line + '\n' + lines[i]
                 expanded = self._expand_macros(line)
                 output_lines.append(expanded)
             # else: skip line (inactive conditional block)
@@ -153,6 +158,45 @@ class Preprocessor:
                                    self.current_file, self.current_line)
 
         return '\n'.join(output_lines)
+
+    def _has_unclosed_macro_call(self, text: str) -> bool:
+        """Check if text contains a function-like macro name followed by unclosed parens."""
+        import re
+        for m in re.finditer(r'[a-zA-Z_]\w*', text):
+            name = m.group()
+            if name in self.macros and self.macros[name].params is not None:
+                # Found a function-like macro - check if parens are unclosed
+                pos = m.end()
+                # Skip whitespace
+                while pos < len(text) and text[pos] in ' \t':
+                    pos += 1
+                if pos < len(text) and text[pos] == '(':
+                    # Count parens from here
+                    depth = 0
+                    in_string = False
+                    quote_char = None
+                    j = pos
+                    while j < len(text):
+                        ch = text[j]
+                        if in_string:
+                            if ch == '\\' and j + 1 < len(text):
+                                j += 2
+                                continue
+                            if ch == quote_char:
+                                in_string = False
+                        elif ch in '"\'':
+                            in_string = True
+                            quote_char = ch
+                        elif ch == '(':
+                            depth += 1
+                        elif ch == ')':
+                            depth -= 1
+                            if depth == 0:
+                                break
+                        j += 1
+                    if depth > 0:
+                        return True
+        return False
 
     def _preprocess_included(self, source: str, filename: str, parent_stack_depth: int) -> str:
         """Preprocess an included file, checking only for conditionals opened in this file."""
@@ -794,9 +838,9 @@ class Preprocessor:
 
     def _parse_macro_args(self, text: str, start: int) -> Optional[tuple[list[str], int]]:
         """Parse macro arguments starting at position. Returns (args, end_pos) or None."""
-        # Skip whitespace
+        # Skip whitespace (including newlines for multi-line macro args)
         i = start
-        while i < len(text) and text[i] in ' \t':
+        while i < len(text) and text[i] in ' \t\n\r':
             i += 1
 
         if i >= len(text) or text[i] != '(':
@@ -834,6 +878,9 @@ class Preprocessor:
                     if text[i] == quote:
                         break
                     i += 1
+            elif ch in '\n\r':
+                # Multi-line macro args: treat newlines as spaces
+                current_arg.append(' ')
             else:
                 current_arg.append(ch)
 

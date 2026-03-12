@@ -147,7 +147,7 @@ KEYWORDS = {
     'else': TokenType.ELSE,
     'enum': TokenType.ENUM,
     'extern': TokenType.EXTERN,
-    'false': TokenType.FALSE,
+    # 'false' is NOT a C keyword - it's a macro in <stdbool.h>
     'float': TokenType.FLOAT,
     'for': TokenType.FOR,
     'goto': TokenType.GOTO,
@@ -167,7 +167,7 @@ KEYWORDS = {
     'struct': TokenType.STRUCT,
     'switch': TokenType.SWITCH,
     'thread_local': TokenType.THREAD_LOCAL,
-    'true': TokenType.TRUE,
+    # 'true' is NOT a C keyword - it's a macro in <stdbool.h>
     'typedef': TokenType.TYPEDEF,
     'typeof': TokenType.TYPEOF,
     'typeof_unqual': TokenType.TYPEOF_UNQUAL,

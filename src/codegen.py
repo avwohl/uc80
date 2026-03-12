@@ -1873,12 +1873,17 @@ class CodeGenerator:
 
         # Count elements in initializer
         if isinstance(base_type, ast.StructType):
-            # Struct array with flat init - count struct elements
-            flat_count = self._count_struct_init_values(base_type)
-            if flat_count > 0:
-                array_size = (len(init.values) + flat_count - 1) // flat_count
-            else:
+            # Check if initializer uses braced sub-initializers
+            # e.g. {{1,2}, {3,4}} - each brace group is one element
+            if init.values and isinstance(init.values[0], ast.InitializerList):
                 array_size = len(init.values)
+            else:
+                # Flat init - count struct elements to determine array size
+                flat_count = self._count_struct_init_values(base_type)
+                if flat_count > 0:
+                    array_size = (len(init.values) + flat_count - 1) // flat_count
+                else:
+                    array_size = len(init.values)
         else:
             array_size = len(init.values)
 
@@ -3724,12 +3729,12 @@ class CodeGenerator:
         else_label = self.ctx.new_label("ELSE")
         end_label = self.ctx.new_label("ENDIF")
 
-        # Evaluate condition
-        self.gen_expr(stmt.condition)
+        # Evaluate condition - use force_long for float/long conditions
+        cond_is_32 = self._is_float_expr(stmt.condition) or self._is_long_expr(stmt.condition)
+        self.gen_expr(stmt.condition, force_long=cond_is_32)
 
-        # Test if HL is zero
-        self.ctx.emit_instr("LD", "A,H")
-        self.ctx.emit_instr("OR", "L")
+        # Test if result is zero
+        self._emit_condition_test(stmt.condition)
 
         if stmt.else_branch:
             self.ctx.emit_instr("JP", f"Z,{else_label}")
@@ -3752,9 +3757,9 @@ class CodeGenerator:
         self.ctx.continue_labels.append(start_label)
 
         self.ctx.emit_label(start_label)
-        self.gen_expr(stmt.condition)
-        self.ctx.emit_instr("LD", "A,H")
-        self.ctx.emit_instr("OR", "L")
+        cond_is_32 = self._is_float_expr(stmt.condition) or self._is_long_expr(stmt.condition)
+        self.gen_expr(stmt.condition, force_long=cond_is_32)
+        self._emit_condition_test(stmt.condition)
         self.ctx.emit_instr("JP", f"Z,{end_label}")
 
         self.gen_statement(stmt.body)
@@ -3777,9 +3782,9 @@ class CodeGenerator:
         self.gen_statement(stmt.body)
 
         self.ctx.emit_label(cond_label)
-        self.gen_expr(stmt.condition)
-        self.ctx.emit_instr("LD", "A,H")
-        self.ctx.emit_instr("OR", "L")
+        cond_is_32 = self._is_float_expr(stmt.condition) or self._is_long_expr(stmt.condition)
+        self.gen_expr(stmt.condition, force_long=cond_is_32)
+        self._emit_condition_test(stmt.condition)
         self.ctx.emit_instr("JP", f"NZ,{start_label}")
         self.ctx.emit_label(end_label)
 
@@ -3806,9 +3811,9 @@ class CodeGenerator:
 
         # Condition
         if stmt.condition:
-            self.gen_expr(stmt.condition)
-            self.ctx.emit_instr("LD", "A,H")
-            self.ctx.emit_instr("OR", "L")
+            cond_is_32 = self._is_float_expr(stmt.condition) or self._is_long_expr(stmt.condition)
+            self.gen_expr(stmt.condition, force_long=cond_is_32)
+            self._emit_condition_test(stmt.condition)
             self.ctx.emit_instr("JP", f"Z,{end_label}")
 
         # Body
@@ -5433,14 +5438,14 @@ class CodeGenerator:
         false_label = self.ctx.new_label("AND_F")
         end_label = self.ctx.new_label("AND_E")
 
-        self.gen_expr(expr.left)
-        self.ctx.emit_instr("LD", "A,H")
-        self.ctx.emit_instr("OR", "L")
+        left_is_32 = self._is_float_expr(expr.left) or self._is_long_expr(expr.left)
+        self.gen_expr(expr.left, force_long=left_is_32)
+        self._emit_condition_test(expr.left)
         self.ctx.emit_instr("JP", f"Z,{false_label}")
 
-        self.gen_expr(expr.right)
-        self.ctx.emit_instr("LD", "A,H")
-        self.ctx.emit_instr("OR", "L")
+        right_is_32 = self._is_float_expr(expr.right) or self._is_long_expr(expr.right)
+        self.gen_expr(expr.right, force_long=right_is_32)
+        self._emit_condition_test(expr.right)
         self.ctx.emit_instr("JP", f"Z,{false_label}")
 
         self.ctx.emit_instr("LD", "HL,1")
@@ -5456,14 +5461,14 @@ class CodeGenerator:
         true_label = self.ctx.new_label("OR_T")
         end_label = self.ctx.new_label("OR_E")
 
-        self.gen_expr(expr.left)
-        self.ctx.emit_instr("LD", "A,H")
-        self.ctx.emit_instr("OR", "L")
+        left_is_32 = self._is_float_expr(expr.left) or self._is_long_expr(expr.left)
+        self.gen_expr(expr.left, force_long=left_is_32)
+        self._emit_condition_test(expr.left)
         self.ctx.emit_instr("JP", f"NZ,{true_label}")
 
-        self.gen_expr(expr.right)
-        self.ctx.emit_instr("LD", "A,H")
-        self.ctx.emit_instr("OR", "L")
+        right_is_32 = self._is_float_expr(expr.right) or self._is_long_expr(expr.right)
+        self.gen_expr(expr.right, force_long=right_is_32)
+        self._emit_condition_test(expr.right)
         self.ctx.emit_instr("JP", f"NZ,{true_label}")
 
         self.ctx.emit_instr("LD", "HL,0")
@@ -5507,10 +5512,17 @@ class CodeGenerator:
             self.gen_expr(expr.operand)  # No-op
 
         elif op == "!":
-            self.gen_expr(expr.operand)
-            # Logical NOT: if HL==0 then 1 else 0
-            self.ctx.emit_instr("LD", "A,H")
-            self.ctx.emit_instr("OR", "L")
+            op_is_32 = self._is_float_expr(expr.operand) or self._is_long_expr(expr.operand)
+            self.gen_expr(expr.operand, force_long=op_is_32)
+            # Logical NOT: if zero then 1 else 0
+            if op_is_32:
+                self.ctx.emit_instr("LD", "A,H")
+                self.ctx.emit_instr("OR", "L")
+                self.ctx.emit_instr("OR", "E")
+                self.ctx.emit_instr("OR", "D")
+            else:
+                self.ctx.emit_instr("LD", "A,H")
+                self.ctx.emit_instr("OR", "L")
             self.ctx.emit_instr("LD", "HL,0")
             self.ctx.emit_instr("JR", "NZ,$+3")
             self.ctx.emit_instr("INC", "L")
@@ -6141,9 +6153,9 @@ class CodeGenerator:
         false_is_long = self._is_long_expr(expr.false_expr) or self._is_float_expr(expr.false_expr)
         need_long = true_is_long or false_is_long
 
-        self.gen_expr(expr.condition)
-        self.ctx.emit_instr("LD", "A,H")
-        self.ctx.emit_instr("OR", "L")
+        cond_is_32 = self._is_float_expr(expr.condition) or self._is_long_expr(expr.condition)
+        self.gen_expr(expr.condition, force_long=cond_is_32)
+        self._emit_condition_test(expr.condition)
         self.ctx.emit_instr("JP", f"Z,{else_label}")
 
         self.gen_expr(expr.true_expr, force_long=need_long)
@@ -7336,6 +7348,28 @@ class CodeGenerator:
         self.ctx.emit_instr("LD", "(__tmp32),HL")
         self.ctx.emit_instr("LD", "(__tmp32+2),DE")
 
+    def _emit_condition_test(self, condition: ast.Expression) -> None:
+        """Emit zero-test for a condition expression. Sets Z flag if zero.
+        For 16-bit values: LD A,H; OR L
+        For 32-bit (long/float): LD A,H; OR L; OR E; OR D
+        For 64-bit: test all 8 bytes
+        """
+        if self._is_float_expr(condition) or self._is_long_expr(condition):
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("OR", "L")
+            self.ctx.emit_instr("OR", "E")
+            self.ctx.emit_instr("OR", "D")
+        elif self._is_long_long_expr(condition):
+            # 64-bit: all 8 bytes  (result in BC':DE':HL + more)
+            # Typically reduced to DEHL already; just check 4 bytes
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("OR", "L")
+            self.ctx.emit_instr("OR", "E")
+            self.ctx.emit_instr("OR", "D")
+        else:
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("OR", "L")
+
     def _emit_bool_normalize(self) -> None:
         """Normalize HL to 0 (false) or 1 (true) for _Bool type (C99 6.3.1.2)."""
         self.ctx.emit_instr("LD", "A,H")
@@ -7899,7 +7933,7 @@ class CodeGenerator:
             # Try to evaluate as pure constant first
             const_val = self._eval_const_expr(init)
             if const_val is not None:
-                if self._is_float_type(elem_type):
+                if self._is_float_type(elem_type) or isinstance(const_val, float):
                     self._emit_float_value(float(const_val))
                 else:
                     self._emit_int_value(const_val, elem_size)
@@ -7914,7 +7948,7 @@ class CodeGenerator:
             # Try to evaluate as a constant expression before giving up
             const_val = self._eval_const_expr(init)
             if const_val is not None:
-                if self._is_float_type(elem_type):
+                if self._is_float_type(elem_type) or isinstance(const_val, float):
                     self._emit_float_value(float(const_val))
                 else:
                     self._emit_int_value(const_val, elem_size)
@@ -8330,9 +8364,11 @@ class CodeGenerator:
         self.ctx.emit_instr("DW", str(low))
         self.ctx.emit_instr("DW", str(high))
 
-    def _eval_const_expr(self, expr: ast.Expression) -> int | None:
+    def _eval_const_expr(self, expr: ast.Expression) -> int | float | None:
         """Try to evaluate a constant expression at compile time. Returns None if not constant."""
         if isinstance(expr, ast.IntLiteral):
+            return expr.value
+        elif isinstance(expr, ast.FloatLiteral):
             return expr.value
         elif isinstance(expr, ast.Identifier):
             # Check for enum constant
@@ -8354,7 +8390,7 @@ class CodeGenerator:
                 return -operand_val
             elif expr.op == "+":
                 return operand_val
-            elif expr.op == "~":
+            elif expr.op == "~" and not isinstance(operand_val, float):
                 return ~operand_val
             elif expr.op == "!":
                 return 0 if operand_val else 1
@@ -8367,7 +8403,11 @@ class CodeGenerator:
             target_type = expr.target_type
             if isinstance(target_type, ast.BasicType):
                 name = target_type.name
+                if self._is_float_type(target_type):
+                    return float(inner_val)
                 is_signed = self._is_signed_type(target_type)
+                if isinstance(inner_val, float):
+                    inner_val = int(inner_val)
                 if name == "char":
                     # 8-bit: mask and sign extend if signed
                     val = inner_val & 0xFF
@@ -8392,6 +8432,7 @@ class CodeGenerator:
             right_val = self._eval_const_expr(expr.right)
             if left_val is None or right_val is None:
                 return None
+            is_float = isinstance(left_val, float) or isinstance(right_val, float)
             if expr.op == "+":
                 return left_val + right_val
             elif expr.op == "-":
@@ -8399,14 +8440,16 @@ class CodeGenerator:
             elif expr.op == "*":
                 return left_val * right_val
             elif expr.op == "/" and right_val != 0:
+                if is_float:
+                    return left_val / right_val
                 return left_val // right_val
             elif expr.op == "%" and right_val != 0:
                 return left_val % right_val
-            elif expr.op == "&":
+            elif expr.op == "&" and not is_float:
                 return left_val & right_val
-            elif expr.op == "|":
+            elif expr.op == "|" and not is_float:
                 return left_val | right_val
-            elif expr.op == "^":
+            elif expr.op == "^" and not is_float:
                 return left_val ^ right_val
             elif expr.op == "<<":
                 return left_val << right_val

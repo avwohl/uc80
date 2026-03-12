@@ -381,7 +381,13 @@ def main() -> int:
             funcs = runtime_lib.get_required_functions(needed) if needed else []
             runtime_funcs_embedded = len(funcs)
 
-            if funcs:
+            # Even if no runtime functions are embedded, we may need data EXTRN
+            # declarations for symbols like __tmp32, __sret_buf referenced by
+            # generated code
+            data_section = runtime_lib.get_data_section(
+                funcs, gen.ctx.runtime_used) if (funcs or gen.ctx.runtime_used) else ''
+
+            if funcs or data_section:
                 # Insert runtime functions before END directive
                 lines = code.splitlines()
                 end_idx = None
@@ -390,34 +396,43 @@ def main() -> int:
                         end_idx = i
                         break
 
-                # Add CP/M BDOS constants if any I/O functions are used
-                io_funcs = {'_printf', '_putchar', '_getchar', '_puts', '_gets'}
-                needs_bdos = any(f.name in io_funcs for f in funcs)
+                runtime_code = []
 
-                runtime_code = ["\n\tCSEG\n; Embedded runtime library functions"]
-                if needs_bdos:
-                    runtime_code.append("; CP/M BDOS constants")
-                    runtime_code.append("BDOS\tEQU\t5")
-                    runtime_code.append("CONOUT\tEQU\t2")
-                    runtime_code.append("CONIN\tEQU\t1")
+                if funcs:
+                    # Add CP/M BDOS constants if any I/O functions are used
+                    io_funcs = {'_printf', '_putchar', '_getchar', '_puts', '_gets'}
+                    needs_bdos = any(f.name in io_funcs for f in funcs)
 
-                # Add EXTRN declarations for external symbols needed by runtime
-                required_externs = runtime_lib.get_required_externs(funcs)
-                if required_externs:
-                    runtime_code.append("; External symbols needed by runtime")
-                    for ext in sorted(required_externs):
-                        runtime_code.append(f"\tEXTRN\t{ext}")
+                    runtime_code.append("\n\tCSEG\n; Embedded runtime library functions")
+                    if needs_bdos:
+                        runtime_code.append("; CP/M BDOS constants")
+                        runtime_code.append("BDOS\tEQU\t5")
+                        runtime_code.append("CONOUT\tEQU\t2")
+                        runtime_code.append("CONIN\tEQU\t1")
 
-                for func in funcs:
-                    # Add PUBLIC declaration for the function
-                    if func.publics:
-                        runtime_code.append(f"\tPUBLIC\t{','.join(func.publics)}")
-                    runtime_code.append(func.source)
+                    # Add EXTRN declarations for external symbols needed by runtime
+                    required_externs = runtime_lib.get_required_externs(funcs)
+                    if required_externs:
+                        runtime_code.append("; External symbols needed by runtime")
+                        for ext in sorted(required_externs):
+                            runtime_code.append(f"\tEXTRN\t{ext}")
+
+                    for func in funcs:
+                        # Add PUBLIC declaration for the function
+                        if func.publics:
+                            runtime_code.append(f"\tPUBLIC\t{','.join(func.publics)}")
+                        runtime_code.append(func.source)
 
                 # Add data section if needed (pass runtime_used for generated code refs)
-                data_section = runtime_lib.get_data_section(funcs, gen.ctx.runtime_used)
+                # Note: get_data_section returns EXTRN lines (for CSEG) followed
+                # by optional DSEG content - don't wrap in additional DSEG.
+                # We must ensure EXTRN lines are in CSEG context since the
+                # compiler output may end in DSEG (for shared auto storage).
                 if data_section:
-                    runtime_code.append("\n\tDSEG")
+                    if not funcs:
+                        # No runtime functions were emitted, so we haven't
+                        # switched to CSEG yet - do it now for the EXTRNs
+                        runtime_code.append("\n\tCSEG")
                     runtime_code.append(data_section)
 
                 if end_idx is not None:

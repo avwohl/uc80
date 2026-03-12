@@ -1268,6 +1268,28 @@ class Parser:
         self._skip_gcc_attribute()
         self._skip_alignas()
 
+        # C allows declaration specifiers in any order, so storage class and
+        # qualifiers can appear after the type specifier (e.g. struct{...} static const x;)
+        while True:
+            if not storage_class and self._match(TokenType.STATIC):
+                storage_class = "static"
+            elif not storage_class and self._match(TokenType.EXTERN):
+                storage_class = "extern"
+            elif not storage_class and self._match(TokenType.AUTO):
+                storage_class = "auto"
+            elif not storage_class and self._match(TokenType.REGISTER):
+                storage_class = "register"
+            elif not is_typedef and self._match(TokenType.TYPEDEF):
+                is_typedef = True
+            elif self._match(TokenType.CONST):
+                base_type.is_const = True
+            elif self._match(TokenType.VOLATILE):
+                base_type.is_volatile = True
+            elif self._match(TokenType.INLINE):
+                is_inline = True
+            else:
+                break
+
         # Check for struct/union/enum definition
         # Note: _parse_struct_type and _parse_enum_type may have already parsed inline definitions
         if isinstance(base_type, ast.StructType) and self._check(TokenType.LBRACE):

@@ -294,44 +294,45 @@ class AssemblyDCE:
 
     def _analyze_control_flow(self, line: str, block: AsmBlock) -> None:
         """Analyze a line for control flow targets."""
-        upper = line.upper()
+        # Strip trailing comments before matching control flow
+        code = line.split(';')[0].rstrip() if ';' in line else line
 
         # CALL instruction
-        match = re.match(r'\s*CALL\s+(\@?\?*\w+)', line, re.IGNORECASE)
+        match = re.match(r'\s*CALL\s+(\@?\?*\w+)', code, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
         # Unconditional JP
-        match = re.match(r'\s*JP\s+(\@?\?*\w+)\s*$', line, re.IGNORECASE)
+        match = re.match(r'\s*JP\s+(\@?\?*\w+)\s*$', code, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
         # Conditional JP
-        match = re.match(r'\s*JP\s+\w+,\s*(\@?\?*\w+)', line, re.IGNORECASE)
+        match = re.match(r'\s*JP\s+\w+,\s*(\@?\?*\w+)', code, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
         # JR instructions
-        match = re.match(r'\s*JR\s+(\@?\?*\w+)\s*$', line, re.IGNORECASE)
+        match = re.match(r'\s*JR\s+(\@?\?*\w+)\s*$', code, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
-        match = re.match(r'\s*JR\s+\w+,\s*(\@?\?*\w+)', line, re.IGNORECASE)
+        match = re.match(r'\s*JR\s+\w+,\s*(\@?\?*\w+)', code, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
             return
 
         # DJNZ
-        match = re.match(r'\s*DJNZ\s+(\@?\?*\w+)', line, re.IGNORECASE)
+        match = re.match(r'\s*DJNZ\s+(\@?\?*\w+)', code, re.IGNORECASE)
         if match:
             target = match.group(1)
             block.successors.add(target)
@@ -369,8 +370,12 @@ class AssemblyDCE:
     def _block_ends_with_terminator(self, block: AsmBlock) -> bool:
         """Check if block ends with unconditional control transfer."""
         for line in reversed(block.lines):
-            stripped = line.strip().upper()
-            if not stripped or stripped.startswith(';'):
+            stripped = line.strip()
+            # Strip trailing comments
+            if ';' in stripped:
+                stripped = stripped[:stripped.index(';')].rstrip()
+            stripped = stripped.upper()
+            if not stripped:
                 continue
             # Unconditional terminators
             # RET alone is unconditional, RET Z/NZ/C/NC/PE/PO/P/M are conditional

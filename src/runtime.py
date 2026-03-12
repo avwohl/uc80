@@ -270,11 +270,12 @@ class RuntimeLibrary:
         """
         if not self.data_sections:
             return ''
-        if not functions:
+        if not functions and not additional_refs:
             return ''
 
         # Collect all data labels referenced by the embedded functions
-        referenced: set[str] = set()
+        # and by the compiler's generated code (additional_refs from runtime_used)
+        referenced: set[str] = set(additional_refs) if additional_refs else set()
         for func in functions:
             for line in func.source.splitlines():
                 stripped = line.strip()
@@ -330,80 +331,30 @@ class RuntimeLibrary:
         if current_label and current_label not in public_data:
             local_data[current_label] = current_block
 
-        result_lines: list[str] = []
+        extrn_lines: list[str] = []
+        dseg_lines: list[str] = []
 
         # Emit EXTRN for PUBLIC data symbols that are referenced
         data_refs = referenced - code_labels
         public_refs = data_refs & public_data
         if public_refs:
-            result_lines.append('; Shared data from runtime.rel')
+            extrn_lines.append('; Shared data from runtime.rel')
             for sym in sorted(public_refs):
-                result_lines.append(f'\tEXTRN\t{sym}')
+                extrn_lines.append(f'\tEXTRN\t{sym}')
 
         # Include local data definitions that are referenced
         local_refs = data_refs - public_data
         local_needed = [sym for sym in local_refs if sym in local_data]
         if local_needed:
-            result_lines.append('; Local data for embedded functions')
-            result_lines.append('\tDSEG')
+            dseg_lines.append('; Local data for embedded functions')
             for sym in sorted(local_needed):
-                result_lines.extend(local_data[sym])
+                dseg_lines.extend(local_data[sym])
 
-        return '\n'.join(result_lines)
-
-        # Collect all labels referenced by the embedded functions
-        referenced: set[str] = set(additional_refs) if additional_refs else set()
-        for func in functions:
-            for line in func.source.splitlines():
-                # Skip comment lines
-                stripped = line.strip()
-                if stripped.startswith(';'):
-                    continue
-                # Remove inline comments
-                if ';' in line:
-                    line = line[:line.index(';')]
-                # Look for references to labels (in LD, CALL, etc.)
-                # Match patterns like (__label), label, etc.
-                matches = re.findall(r'\b(__\w+)\b', line)
-                referenced.update(matches)
-
-        # Parse DSEG into blocks and only include referenced ones
-        result_lines: list[str] = []
-        current_label: str | None = None
-        current_block: list[str] = []
-        in_block = False
-
-        for line in self.data_sections:
-            stripped = line.strip()
-
-            # Check for label definition
-            match = re.match(r'^(\w+):', stripped)
-            if match:
-                # Save previous block if referenced
-                if current_label and current_label in referenced:
-                    result_lines.extend(current_block)
-
-                current_label = match.group(1)
-                current_block = [line]
-                in_block = True
-                continue
-
-            # Check for PUBLIC declaration - skip data PUBLIC declarations to avoid
-            # conflicts with runtime.rel when linking. The embedded data will be
-            # local, and any external references will be resolved from runtime.rel.
-            match = re.match(r'\s*PUBLIC\s+(.+)', stripped, re.IGNORECASE)
-            if match:
-                # Don't emit PUBLIC for data symbols - they should be local
-                # to avoid multiple definition conflicts with runtime.rel
-                continue
-
-            # Regular line in current block
-            if in_block:
-                current_block.append(line)
-
-        # Save last block if referenced
-        if current_label and current_label in referenced:
-            result_lines.extend(current_block)
+        # Return extrn lines first (for CSEG), then DSEG content
+        result_lines = extrn_lines
+        if dseg_lines:
+            result_lines.append('\n\tDSEG')
+            result_lines.extend(dseg_lines)
 
         return '\n'.join(result_lines)
 
