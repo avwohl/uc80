@@ -1,0 +1,179 @@
+; lc_log.mac - log, logf, logl
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__itof
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+
+	CSEG
+
+; ============================================================
+; log(x) - Natural logarithm
+; Using log(x) = 2 * atanh((x-1)/(x+1)) for x > 0
+; ============================================================
+	PUBLIC	_log
+	PUBLIC	_logf
+	PUBLIC	_logl
+_log:
+_logf:
+_logl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Check for x <= 0
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_log_err
+	BIT	7,D
+	JR	NZ,_log_err
+
+	LD	(_log_x),HL
+	LD	(_log_x+2),DE
+
+	; Compute (x-1)
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_log_x)
+	LD	DE,(_log_x+2)
+	CALL	__fsub		; x-1
+	LD	(_log_num),HL
+	LD	(_log_num+2),DE
+
+	; Compute (x+1)
+	LD	HL,0
+	LD	DE,3F80H
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_log_x)
+	LD	DE,(_log_x+2)
+	CALL	__fadd		; x+1
+	LD	(_log_den),HL
+	LD	(_log_den+2),DE
+
+	; y = (x-1)/(x+1)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_log_num)
+	LD	DE,(_log_num+2)
+	CALL	__fdiv
+	LD	(_log_y),HL
+	LD	(_log_y+2),DE
+
+	; y^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+	LD	(_log_y2),HL
+	LD	(_log_y2+2),DE
+
+	; atanh series: y + y^3/3 + y^5/5 + ...
+	; sum = y, term = y
+	LD	HL,(_log_y)
+	LD	DE,(_log_y+2)
+	LD	(_log_sum),HL
+	LD	(_log_sum+2),DE
+	LD	(_log_term),HL
+	LD	(_log_term+2),DE
+
+	LD	B,5
+	LD	C,3
+
+_log_loop:
+	PUSH	BC
+
+	; term *= y^2
+	LD	HL,(_log_term)
+	LD	DE,(_log_term+2)
+	LD	A,(_log_y2)
+	LD	(__tmp32),A
+	LD	A,(_log_y2+1)
+	LD	(__tmp32+1),A
+	LD	A,(_log_y2+2)
+	LD	(__tmp32+2),A
+	LD	A,(_log_y2+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+	LD	(_log_term),HL
+	LD	(_log_term+2),DE
+
+	; Divide by n (odd number)
+	POP	BC
+	PUSH	BC
+	LD	H,0
+	LD	L,C
+	INC	C
+	INC	C		; Next odd
+	LD	D,H
+	LD	E,L
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_log_term)
+	LD	DE,(_log_term+2)
+	CALL	__fdiv
+
+	; Add to sum
+	LD	A,(_log_sum)
+	LD	(__tmp32),A
+	LD	A,(_log_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_log_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_log_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	LD	(_log_sum),HL
+	LD	(_log_sum+2),DE
+
+	POP	BC
+	DJNZ	_log_loop
+
+	; Result = 2 * sum
+	LD	HL,(_log_sum)
+	LD	DE,(_log_sum+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fadd		; 2*sum
+
+	JR	_log_done
+
+_log_err:
+	; Return negative infinity or NaN
+	LD	HL,0
+	LD	DE,0FF80H	; -inf
+
+_log_done:
+	POP	BC
+	POP	IX
+	RET
+
+	DSEG
+
+_log_x:		DS	4
+_log_num:	DS	4
+_log_den:	DS	4
+_log_y:		DS	4
+_log_y2:	DS	4
+_log_sum:	DS	4
+_log_term:	DS	4
+
+	END

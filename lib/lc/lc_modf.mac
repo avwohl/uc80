@@ -1,0 +1,71 @@
+; lc_modf.mac - modf, modff
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fsub
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+
+	CSEG
+
+; ============================================================
+; modf(x, double *iptr) - split into integer and fractional parts
+; ============================================================
+	PUBLIC	_modf
+	PUBLIC	_modff
+_modf:
+_modff:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	LD	(_modf_x),HL
+	LD	(_modf_x+2),DE
+
+	; Get integer part
+	CALL	__ftoi
+	CALL	__itof
+	LD	(_modf_i),HL
+	LD	(_modf_i+2),DE
+
+	; Store to *iptr
+	LD	A,(IX+8)
+	LD	C,A
+	LD	A,(IX+9)
+	LD	B,A
+	LD	A,L
+	LD	(BC),A
+	INC	BC
+	LD	A,H
+	LD	(BC),A
+	INC	BC
+	LD	A,E
+	LD	(BC),A
+	INC	BC
+	LD	A,D
+	LD	(BC),A
+
+	; Return fractional part: x - int
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_modf_x)
+	LD	DE,(_modf_x+2)
+	CALL	__fsub
+
+	POP	IX
+	RET
+
+	DSEG
+
+_modf_x:	DS	4
+_modf_i:	DS	4
+
+	END

@@ -1,0 +1,52 @@
+; lc_log10.mac - log10, log10f, log10l (depends on log)
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+	EXTRN	_logf
+
+	CSEG
+
+; ============================================================
+; log10(x) = log(x) / log(10)
+; log(10) = 2.302585...
+; ============================================================
+	PUBLIC	_log10
+	PUBLIC	_log10f
+	PUBLIC	_log10l
+_log10:
+_log10f:
+_log10l:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	; Divide by log(10) = 2.302585 (40135D8E)
+	LD	A,8EH
+	LD	(__tmp32),A
+	LD	A,5DH
+	LD	(__tmp32+1),A
+	LD	A,13H
+	LD	(__tmp32+2),A
+	LD	A,40H
+	LD	(__tmp32+3),A
+	CALL	__fdiv
+
+	POP	IX
+	RET
+
+	END

@@ -6,6 +6,7 @@
 
 	EXTRN	__printf_handle_d
 	EXTRN	__printf_handle_u
+	EXTRN	__printf_handle_o
 	EXTRN	__printf_handle_x
 	EXTRN	__printf_handle_xu
 	EXTRN	__printf_handle_s
@@ -16,6 +17,7 @@
 
 	EXTRN	__printf_handle_ld
 	EXTRN	__printf_handle_lu
+	EXTRN	__printf_handle_lo
 	EXTRN	__printf_handle_lx
 
 	EXTRN	__printf_handle_lld
@@ -32,6 +34,8 @@ __printf_format_table:
 	DW	__printf_handle_d	; %i same as %d
 	DB	'u'
 	DW	__printf_handle_u
+	DB	'o'
+	DW	__printf_handle_o
 	DB	'x'
 	DW	__printf_handle_x
 	DB	'X'
@@ -56,6 +60,8 @@ __printf_long_table:
 	DW	__printf_handle_ld	; %li same as %ld
 	DB	'u'
 	DW	__printf_handle_lu
+	DB	'o'
+	DW	__printf_handle_lo
 	DB	'x'
 	DW	__printf_handle_lx
 	DB	'f'

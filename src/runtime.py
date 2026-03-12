@@ -299,9 +299,9 @@ class RuntimeLibrary:
                 if match:
                     code_labels.add(match.group(1))
 
-        # Parse DSEG to find PUBLIC vs local data symbols
+        # Parse DSEG to find all data symbols and their definitions
         public_data: set[str] = set()  # Symbols that are PUBLIC in DSEG
-        local_data: dict[str, list[str]] = {}  # Local symbol -> definition lines
+        all_data: dict[str, list[str]] = {}  # symbol -> definition lines
         current_label: str | None = None
         current_block: list[str] = []
 
@@ -318,8 +318,8 @@ class RuntimeLibrary:
             # Track label definitions
             match = re.match(r'^(\w+):', stripped)
             if match:
-                if current_label and current_label not in public_data:
-                    local_data[current_label] = current_block
+                if current_label:
+                    all_data[current_label] = current_block
                 current_label = match.group(1)
                 current_block = [line]
                 continue
@@ -328,33 +328,48 @@ class RuntimeLibrary:
                 current_block.append(line)
 
         # Save last block
-        if current_label and current_label not in public_data:
-            local_data[current_label] = current_block
+        if current_label:
+            all_data[current_label] = current_block
 
-        extrn_lines: list[str] = []
+        bss_lines: list[str] = []
         dseg_lines: list[str] = []
 
-        # Emit EXTRN for PUBLIC data symbols that are referenced
+        # Embed ALL referenced data symbols directly (both PUBLIC and local).
+        # PUBLIC symbols get PUBLIC declarations so library code can reference them.
+        # Uninitialized data (DS) goes in COMMON (BSS) to save binary space.
         data_refs = referenced - code_labels
-        public_refs = data_refs & public_data
-        if public_refs:
-            extrn_lines.append('; Shared data from runtime.rel')
-            for sym in sorted(public_refs):
-                extrn_lines.append(f'\tEXTRN\t{sym}')
+        needed = [sym for sym in data_refs if sym in all_data]
+        if needed:
+            for sym in sorted(needed):
+                lines = all_data[sym]
+                # Check if all data is uninitialized (DS only)
+                is_bss = all(
+                    re.match(r'\s*(DS|DEFS)\s', l.strip(), re.IGNORECASE) or
+                    re.match(r'^(\w+):', l.strip()) or
+                    not l.strip()
+                    for l in lines
+                )
+                if sym in public_data:
+                    if is_bss:
+                        bss_lines.append(f'\tPUBLIC\t{sym}')
+                    else:
+                        dseg_lines.append(f'\tPUBLIC\t{sym}')
 
-        # Include local data definitions that are referenced
-        local_refs = data_refs - public_data
-        local_needed = [sym for sym in local_refs if sym in local_data]
-        if local_needed:
-            dseg_lines.append('; Local data for embedded functions')
-            for sym in sorted(local_needed):
-                dseg_lines.extend(local_data[sym])
+                if is_bss:
+                    bss_lines.extend(lines)
+                else:
+                    dseg_lines.extend(lines)
 
-        # Return extrn lines first (for CSEG), then DSEG content
-        result_lines = extrn_lines
+        # Return DSEG content (initialized) then COMMON/BSS (uninitialized)
+        result_lines: list[str] = []
         if dseg_lines:
             result_lines.append('\n\tDSEG')
+            result_lines.append('; Embedded runtime data')
             result_lines.extend(dseg_lines)
+        if bss_lines:
+            result_lines.append('\n\tCOMMON\t//')
+            result_lines.append('; Embedded runtime BSS')
+            result_lines.extend(bss_lines)
 
         return '\n'.join(result_lines)
 

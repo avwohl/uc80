@@ -1,0 +1,57 @@
+; lc_fabs.mac - fabs, fabsf, fabsl, copysign, copysignf
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; fabs(x) - return absolute value
+; For 32-bit float, clear sign bit (bit 31)
+; ============================================================
+	PUBLIC	_fabs
+	PUBLIC	_fabsf
+	PUBLIC	_fabsl
+_fabs:
+_fabsf:
+_fabsl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	A,(IX+7)
+	AND	7FH		; Clear sign bit
+	LD	D,A
+	POP	IX
+	RET
+
+; ============================================================
+; copysign(x, y) - return x with sign of y
+; ============================================================
+	PUBLIC	_copysign
+	PUBLIC	_copysignf
+_copysign:
+_copysignf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	A,(IX+7)
+	AND	7FH		; Clear x sign
+	LD	B,A
+	LD	A,(IX+11)	; y high byte
+	AND	80H		; Get y sign
+	OR	B		; Combine
+	LD	D,A
+	POP	IX
+	RET
+
+	END

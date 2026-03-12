@@ -1,0 +1,85 @@
+; lc_cosh.mac - cosh, coshf (depends on exp)
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+	EXTRN	_expf
+
+	CSEG
+
+; ============================================================
+; cosh(x) = (e^x + e^-x) / 2
+; ============================================================
+	PUBLIC	_cosh
+	PUBLIC	_coshf
+_cosh:
+_coshf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	LD	(_cosh_x),HL
+	LD	(_cosh_x+2),DE
+
+	; e^x
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+	LD	(_cosh_ep),HL
+	LD	(_cosh_ep+2),DE
+
+	; e^-x
+	LD	HL,(_cosh_x)
+	LD	DE,(_cosh_x+2)
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+
+	; e^x + e^-x
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cosh_ep)
+	LD	DE,(_cosh_ep+2)
+	CALL	__fadd
+
+	; Divide by 2
+	LD	A,D
+	ADD	A,A
+	LD	C,A
+	LD	A,E
+	RLA
+	DEC	A
+	RRA
+	LD	E,A
+	LD	A,C
+	RRA
+	LD	C,A
+	LD	A,D
+	AND	80H
+	OR	C
+	LD	D,A
+
+	POP	IX
+	RET
+
+	DSEG
+
+_cosh_x:	DS	4
+_cosh_ep:	DS	4
+
+	END

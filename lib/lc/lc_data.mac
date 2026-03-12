@@ -21,8 +21,4 @@ _stderr:	DW	_stderr_data
 	PUBLIC	_errno
 _errno:	DW	0
 
-; Static return buffer for struct-by-value returns
-	PUBLIC	__sret_buf
-__sret_buf:	DS	64
-
 	END

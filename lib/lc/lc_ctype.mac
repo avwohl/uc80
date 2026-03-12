@@ -246,23 +246,4 @@ _isxdigit_no:
 	POP	IX
 	RET
 
-; ============================================================
-; Signal handling for CP/M
-; Software signal system - no hardware signals but full API support
-; ============================================================
-
-; Signal handler table - 7 entries (signals 0-6), each a 2-byte function pointer
-; Initialized to SIG_DFL (0) = default handling
-_sig_handlers:
-	DW	0		; Signal 0 (unused)
-	DW	0		; SIGABRT (1)
-	DW	0		; SIGFPE (2)
-	DW	0		; SIGILL (3)
-	DW	0		; SIGINT (4)
-	DW	0		; SIGSEGV (5)
-	DW	0		; SIGTERM (6)
-
-; sig_handler_t signal(int sig, sig_handler_t handler)
-; Sets signal handler, returns previous handler
-
 	END

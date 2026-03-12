@@ -3,7 +3,7 @@
 ;
 ; This is the startup code that:
 ; 1. Sets up the stack from BDOS
-; 2. Initializes any globals (future)
+; 2. Zeros BSS (COMMON segment - uninitialized static storage)
 ; 3. Calls main()
 ; 4. Returns exit code to CP/M
 
@@ -14,12 +14,37 @@
 	PUBLIC	__start
 
 	EXTRN	_main
+	EXTRN	__bss_start
+	EXTRN	__bss_end
 
 ; CP/M program entry point (at 0100H after linking)
 __start:
 	; Get stack pointer from BDOS (address 6 contains top of TPA)
 	LD	HL,(6)
 	LD	SP,HL
+
+	; Zero BSS region (COMMON segment)
+	; C standard requires static storage to be zero-initialized
+	LD	HL,__bss_end
+	LD	DE,__bss_start
+	OR	A
+	SBC	HL,DE		; HL = bss size
+	LD	B,H
+	LD	C,L
+	LD	A,B
+	OR	C
+	JR	Z,__nobss	; skip if no BSS
+	LD	HL,__bss_start
+	LD	(HL),0
+	DEC	BC		; size - 1 (first byte already set)
+	LD	A,B
+	OR	C
+	JR	Z,__nobss	; skip LDIR if only 1 byte
+	LD	D,H
+	LD	E,L
+	INC	DE		; DE = bss_start + 1
+	LDIR			; fill with zeros
+__nobss:
 
 	; Call main - result in HL (16-bit) or just L (8-bit for char)
 	CALL	_main

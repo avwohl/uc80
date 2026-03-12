@@ -1,0 +1,178 @@
+; lc_sin.mac - sin, sinf, sinl
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__itof
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+
+	CSEG
+
+; ============================================================
+; sin(x) - Sine using Taylor series
+; sin(x) = x - x^3/3! + x^5/5! - x^7/7! + ...
+; ============================================================
+	PUBLIC	_sin
+	PUBLIC	_sinf
+	PUBLIC	_sinl
+_sin:
+_sinf:
+_sinl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg	; x in DEHL
+
+	; Save sign and work with |x|
+	LD	A,D
+	AND	80H
+	LD	(_sin_sign),A
+	LD	A,D
+	AND	7FH
+	LD	D,A
+
+	; Reduce x to [-pi, pi] range (simplified: assume small x)
+	LD	(_sin_x),HL
+	LD	(_sin_x+2),DE
+
+	; Start with sum = x
+	LD	(_sin_sum),HL
+	LD	(_sin_sum+2),DE
+
+	; term = x
+	LD	(_sin_term),HL
+	LD	(_sin_term+2),DE
+
+	; Compute x^2 for subsequent terms
+	LD	A,L
+	LD	(__tmp32),A
+	LD	A,H
+	LD	(__tmp32+1),A
+	LD	A,E
+	LD	(__tmp32+2),A
+	LD	A,D
+	LD	(__tmp32+3),A
+	CALL	__fmul		; DEHL = x^2
+	LD	(_sin_x2),HL
+	LD	(_sin_x2+2),DE
+
+	; Taylor series: 4 terms should be enough for single precision
+	; term *= -x^2 / (n*(n+1))
+	LD	A,2
+	LD	(_sin_iter),A	; n starts at 2
+	LD	B,4		; loop count
+
+_sin_loop:
+	PUSH	BC		; Save loop counter only
+
+	; term *= x^2
+	LD	HL,(_sin_term)
+	LD	DE,(_sin_term+2)
+	LD	A,(_sin_x2)
+	LD	(__tmp32),A
+	LD	A,(_sin_x2+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sin_x2+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sin_x2+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+	LD	(_sin_term),HL
+	LD	(_sin_term+2),DE
+
+	; Divide by n*(n+1)
+	LD	A,(_sin_iter)	; Get n
+	LD	L,A
+	LD	H,0
+	LD	D,0
+	LD	E,0		; DEHL = n as 32-bit integer
+	CALL	__itof		; Convert n to float
+	LD	(_sin_n),HL
+	LD	(_sin_n+2),DE
+	LD	A,(_sin_iter)
+	INC	A		; n+1
+	LD	L,A
+	LD	H,0
+	LD	D,0
+	LD	E,0		; DEHL = n+1 as 32-bit
+	CALL	__itof		; Convert n+1 to float
+	; Multiply n * (n+1)
+	LD	A,(_sin_n)
+	LD	(__tmp32),A
+	LD	A,(_sin_n+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sin_n+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sin_n+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul		; n*(n+1) in DEHL
+
+	; Advance n by 2 for next iteration
+	LD	A,(_sin_iter)
+	ADD	A,2
+	LD	(_sin_iter),A
+
+	; Divide term by n*(n+1)
+	; __fdiv expects: DEHL = dividend, __tmp32 = divisor
+	; We have n*(n+1) in DEHL, need term / n*(n+1)
+	LD	(__tmp32),HL	; Store n*(n+1) as divisor
+	LD	(__tmp32+2),DE
+	LD	HL,(_sin_term)	; Load term as dividend
+	LD	DE,(_sin_term+2)
+	CALL	__fdiv		; DEHL = term / n*(n+1)
+
+	; Negate term (alternate signs)
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	LD	(_sin_term),HL
+	LD	(_sin_term+2),DE
+
+	; Add to sum
+	LD	A,(_sin_sum)
+	LD	(__tmp32),A
+	LD	A,(_sin_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sin_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sin_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	LD	(_sin_sum),HL
+	LD	(_sin_sum+2),DE
+
+	POP	BC		; Restore loop counter
+	DJNZ	_sin_loop
+
+	; Apply original sign
+	LD	HL,(_sin_sum)
+	LD	DE,(_sin_sum+2)
+	LD	A,(_sin_sign)
+	OR	D
+	LD	D,A
+
+	POP	BC
+	POP	IX
+	RET
+
+	DSEG
+
+_sin_sign:	DS	1
+_sin_x:		DS	4
+_sin_x2:	DS	4
+_sin_sum:	DS	4
+_sin_term:	DS	4
+_sin_n:		DS	4
+_sin_iter:	DS	1
+
+	END

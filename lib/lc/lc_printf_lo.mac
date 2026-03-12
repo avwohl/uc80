@@ -1,0 +1,110 @@
+; lc_printf_lo.mac - printf %lo handler (unsigned long octal)
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	_printf_loop
+
+	CSEG
+
+	PUBLIC	__printf_handle_lo
+__printf_handle_lo:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A
+	EX	DE,HL		; DEHL = value
+	; Store DEHL to work area
+	LD	(_plo_val),HL
+	LD	(_plo_val+2),DE
+	PUSH	IX
+	LD	B,0		; digit counter
+_plo_cvt:
+	LD	A,(_plo_val)
+	AND	07h		; remainder = value & 7
+	ADD	A,'0'
+	PUSH	AF
+	INC	B
+	; Shift 32-bit _plo_val right by 3 (divide by 8)
+	; Byte order: _plo_val+0 (low) .. _plo_val+3 (high)
+	; Do 3 single-bit right shifts
+	LD	A,(_plo_val+3)
+	SRL	A
+	LD	(_plo_val+3),A
+	LD	A,(_plo_val+2)
+	RRA
+	LD	(_plo_val+2),A
+	LD	A,(_plo_val+1)
+	RRA
+	LD	(_plo_val+1),A
+	LD	A,(_plo_val)
+	RRA
+	LD	(_plo_val),A
+	; Second shift
+	LD	A,(_plo_val+3)
+	SRL	A
+	LD	(_plo_val+3),A
+	LD	A,(_plo_val+2)
+	RRA
+	LD	(_plo_val+2),A
+	LD	A,(_plo_val+1)
+	RRA
+	LD	(_plo_val+1),A
+	LD	A,(_plo_val)
+	RRA
+	LD	(_plo_val),A
+	; Third shift
+	LD	A,(_plo_val+3)
+	SRL	A
+	LD	(_plo_val+3),A
+	LD	A,(_plo_val+2)
+	RRA
+	LD	(_plo_val+2),A
+	LD	A,(_plo_val+1)
+	RRA
+	LD	(_plo_val+1),A
+	LD	A,(_plo_val)
+	RRA
+	LD	(_plo_val),A
+	; Check if quotient is zero
+	LD	HL,(_plo_val)
+	LD	A,H
+	OR	L
+	JR	NZ,_plo_cvt
+	LD	HL,(_plo_val+2)
+	LD	A,H
+	OR	L
+	JR	NZ,_plo_cvt
+	; Pop and print digits
+_plo_out:
+	POP	AF
+	LD	E,A
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	DJNZ	_plo_out
+	POP	IX
+	POP	BC
+	LD	A,C
+	ADD	A,4
+	LD	C,A
+	POP	HL
+	JP	_printf_loop
+
+	DSEG
+_plo_val:	DS	4
+
+	END

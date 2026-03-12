@@ -1,0 +1,75 @@
+uc80 vs z88dk Binary Size Comparison Report
+============================================
+Date: 2026-03-12 (updated)
+
+Test methodology
+----------------
+Source:   Fujitsu compiler-test-suite (suites 0000-0070)
+uc80:     python3 -m src.main -> um80 -> ul80 with .lib selective linking
+z88dk:    z88dk.zcc +cpm -compiler=sdcc -SO3 --max-allocs-per-node10000
+          (SDCC backend, high optimization)
+Metric:   .com file size (bytes)
+Sample:   47 programs that built successfully with BOTH compilers
+
+
+Overall results
+---------------
+uc80 smaller:	47/47	(100%)
+z88dk smaller:	0/47	(0%)
+
+Total bytes uc80:	170,496
+Total bytes z88dk:	369,644
+Aggregate ratio:	46.1% (uc80/z88dk)
+
+uc80 produces binaries that are typically half the size of z88dk.
+
+
+Minimum binary size (empty/trivial programs)
+--------------------------------------------
+uc80:	128 bytes
+z88dk:	5,172 bytes
+
+uc80's crt0 + selective linking produces a 128-byte minimal binary.
+z88dk's CRT always pulls in ~5KB of runtime.
+
+
+Key size optimizations
+----------------------
+1. BSS IN COMMON SEGMENT: Uninitialized static data uses DS in COMMON
+   instead of zero-filled bytes in DSEG. crt0 zeros the BSS region at
+   startup (C semantics). Saves binary space for every global/static.
+
+2. MODULAR LIBRARY: runtime.lib (6 modules) and libc.lib (44+ modules)
+   use selective linking. Only referenced modules are included.
+
+3. PRINTF AUTO-DETECTION: The compiler scans printf format strings at
+   compile time and links only the format handlers actually used:
+   - No specifiers: printf("...\n") rewritten to puts("...")
+   - %d only: links int handlers (~4.5KB binary)
+   - %ld: adds long handlers
+   - %f: adds float math library
+   - Default without auto-detect: all handlers including float (~5.8KB)
+   Controlled by auto-detection, #pragma printf, or --printf flag.
+
+4. EMBEDDED RUNTIME WITH DCE: Runtime library functions are embedded
+   as source, then assembly-level dead code elimination removes unused
+   functions. Only the runtime functions actually called appear in output.
+
+5. SHARED STORAGE (??AUTO): Non-recursive leaf functions use static
+   allocation instead of stack frames, avoiding PUSH IX / ADD IX,SP
+   overhead.
+
+6. SWITCH JUMP TABLES: Dense switch statements (>= 4 cases, >= 50%
+   density) use indexed jump tables: 2 bytes/case vs 10 bytes/case
+   for sequential compare-and-branch.
+
+7. MATH LIBRARY SPLIT: Math functions split into 24 individual modules.
+   Programs using one function (e.g. sqrt) don't pull in the rest.
+
+8. UNSIGNED CONSTANT TYPE FIX: Decimal constants with u suffix
+   (e.g. 4294967294u) correctly typed as unsigned long (32-bit)
+   instead of being promoted to long long (64-bit).
+
+9. 64-BIT RUNTIME DATA EMBEDDING: Data symbols like __acc64/__tmp64
+   embedded directly in COMMON instead of EXTRN, preventing the linker
+   from pulling entire monolithic runtime modules.

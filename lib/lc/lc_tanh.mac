@@ -1,0 +1,66 @@
+; lc_tanh.mac - tanh, tanhf (depends on sinh, cosh)
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+	EXTRN	_sinhf
+	EXTRN	_coshf
+
+	CSEG
+
+; ============================================================
+; tanh(x) = sinh(x) / cosh(x)
+; ============================================================
+	PUBLIC	_tanh
+	PUBLIC	_tanhf
+_tanh:
+_tanhf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+
+	; sinh
+	CALL	_sinhf
+	POP	BC
+	POP	BC
+	LD	(_tanh_s),HL
+	LD	(_tanh_s+2),DE
+
+	; cosh
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+	CALL	_coshf
+	POP	BC
+	POP	BC
+	POP	IX
+
+	; sinh/cosh
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_tanh_s)
+	LD	DE,(_tanh_s+2)
+	CALL	__fdiv
+
+	POP	IX
+	RET
+
+	DSEG
+
+_tanh_s:	DS	4
+
+	END

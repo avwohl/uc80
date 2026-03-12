@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "uc80"
+version = "0.1.0"
+description = "ANSI C compiler targeting Z80/CP/M"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.11"
+authors = [
+    {name = "uc80 developers"}
+]
+keywords = [
+    "compiler", "c", "z80", "cp/m", "retro-computing",
+    "cross-compiler", "8-bit", "ansi-c"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: System :: Emulators",
+]
+
+[project.urls]
+Homepage = "https://github.com/avwohl/uc80"
+Repository = "https://github.com/avwohl/uc80"
+Issues = "https://github.com/avwohl/uc80/issues"
+
+[project.scripts]
+uc80 = "src.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.setuptools.package-data]
+src = ["py.typed"]
+"" = ["lib/**/*.mac", "lib/**/*.lib", "lib/**/*.rel", "lib/include/**/*.h"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+]

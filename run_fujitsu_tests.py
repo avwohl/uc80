@@ -4,6 +4,7 @@
 import subprocess
 import sys
 import os
+import tempfile
 from pathlib import Path
 
 UC80_DIR = Path(__file__).parent
@@ -25,7 +26,7 @@ def run_test(c_file: Path) -> tuple[str, str]:
     # Compile
     result = subprocess.run(
         [sys.executable, "-m", "src.main", str(c_file), "-o", str(mac_file)],
-        capture_output=True, text=True, cwd=UC80_DIR
+        capture_output=True, text=True, cwd=UC80_DIR, timeout=30
     )
     if result.returncode != 0:
         return "COMPILE_FAIL", result.stderr.strip()
@@ -33,7 +34,7 @@ def run_test(c_file: Path) -> tuple[str, str]:
     # Assemble
     result = subprocess.run(
         ["um80", str(mac_file)],
-        capture_output=True, text=True
+        capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0:
         return "ASM_FAIL", result.stderr.strip()
@@ -41,16 +42,17 @@ def run_test(c_file: Path) -> tuple[str, str]:
     # Link
     result = subprocess.run(
         ["ul80", str(CRT0), str(rel_file), str(LIBC), str(RUNTIME), "-o", str(com_file)],
-        capture_output=True, text=True
+        capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0:
         return "LINK_FAIL", result.stderr.strip()
 
-    # Run
-    result = subprocess.run(
-        [str(CPMEMU), str(com_file)],
-        capture_output=True, text=True, timeout=10
-    )
+    # Run in temp dir to avoid junk files leaking into project root
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = subprocess.run(
+            [str(CPMEMU.resolve()), str(com_file.resolve())],
+            capture_output=True, text=True, timeout=10, cwd=tmpdir
+        )
 
     # Check output
     output_lines = result.stdout.strip().split('\n')
@@ -59,7 +61,7 @@ def run_test(c_file: Path) -> tuple[str, str]:
     for line in output_lines:
         if line.startswith("CPU mode:") or line.startswith("Loaded ") or line.startswith("Program exit"):
             continue
-        actual_output.append(line)
+        actual_output.append(line.rstrip('\r'))
     actual = '\n'.join(actual_output).strip()
 
     if ref_file.exists():

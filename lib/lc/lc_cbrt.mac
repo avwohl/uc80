@@ -1,0 +1,137 @@
+; lc_cbrt.mac - cbrt, cbrtf
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+
+	CSEG
+
+; ============================================================
+; cbrt(x) - Cube root
+; Uses Newton-Raphson: x_{n+1} = (2*x_n + S/x_n^2) / 3
+; ============================================================
+	PUBLIC	_cbrt
+	PUBLIC	_cbrtf
+_cbrt:
+_cbrtf:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Save sign and work with |x|
+	LD	A,D
+	AND	80H
+	LD	(_cbrt_sign),A
+	LD	A,D
+	AND	7FH
+	LD	D,A
+
+	; Check for zero
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_cbrt_zero
+
+	LD	(_cbrt_x),HL
+	LD	(_cbrt_x+2),DE
+
+	; Initial guess: x/3 (rough)
+	; Better: use exponent/3
+	LD	(_cbrt_g),HL
+	LD	(_cbrt_g+2),DE
+
+	LD	B,8
+
+_cbrt_loop:
+	PUSH	BC
+
+	; g^2
+	LD	HL,(_cbrt_g)
+	LD	DE,(_cbrt_g+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+	LD	(_cbrt_g2),HL
+	LD	(_cbrt_g2+2),DE
+
+	; x / g^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_cbrt_x)
+	LD	DE,(_cbrt_x+2)
+	CALL	__fdiv
+	LD	(_cbrt_t),HL
+	LD	(_cbrt_t+2),DE
+
+	; 2*g
+	LD	HL,(_cbrt_g)
+	LD	DE,(_cbrt_g+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fadd
+
+	; 2*g + x/g^2
+	LD	A,(_cbrt_t)
+	LD	(__tmp32),A
+	LD	A,(_cbrt_t+1)
+	LD	(__tmp32+1),A
+	LD	A,(_cbrt_t+2)
+	LD	(__tmp32+2),A
+	LD	A,(_cbrt_t+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; Divide by 3
+	LD	A,0
+	LD	(__tmp32),A
+	LD	A,0
+	LD	(__tmp32+1),A
+	LD	A,40H
+	LD	(__tmp32+2),A
+	LD	A,40H		; 3.0 = 40400000
+	LD	(__tmp32+3),A
+	CALL	__fdiv
+
+	LD	(_cbrt_g),HL
+	LD	(_cbrt_g+2),DE
+
+	POP	BC
+	DJNZ	_cbrt_loop
+
+	LD	HL,(_cbrt_g)
+	LD	DE,(_cbrt_g+2)
+	LD	A,(_cbrt_sign)
+	OR	D
+	LD	D,A
+	JR	_cbrt_done
+
+_cbrt_zero:
+	LD	HL,0
+	LD	DE,0
+
+_cbrt_done:
+	POP	BC
+	POP	IX
+	RET
+
+	DSEG
+
+_cbrt_sign:	DS	1
+_cbrt_x:	DS	4
+_cbrt_g:	DS	4
+_cbrt_g2:	DS	4
+_cbrt_t:	DS	4
+
+	END

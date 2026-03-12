@@ -1,0 +1,115 @@
+; lc_frexp.mac - frexp, frexpf, ldexp, ldexpf
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+
+	CSEG
+
+; ============================================================
+; frexp(x, int *exp) - extract mantissa and exponent
+; ============================================================
+	PUBLIC	_frexp
+	PUBLIC	_frexpf
+_frexp:
+_frexpf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Extract exponent
+	LD	A,D
+	ADD	A,A		; Shift sign out
+	LD	B,A
+	LD	A,E
+	RLA
+	LD	C,A
+	LD	A,B
+	RRA			; A = biased exponent
+
+	; Unbias: exp = biased - 127
+	SUB	126		; Actually we want mantissa in [0.5,1), so -126
+	LD	B,A
+
+	; Store exponent
+	LD	A,(IX+8)
+	LD	C,A
+	LD	A,(IX+9)
+	PUSH	HL
+	LD	H,A
+	LD	L,C
+	LD	(HL),B
+	INC	HL
+	LD	A,B
+	RLA			; Sign extend
+	SBC	A,A
+	LD	(HL),A
+	POP	HL
+
+	; Set exponent to 126 (gives [0.5, 1))
+	LD	A,D
+	AND	80H		; Keep sign
+	OR	3EH		; Exponent 126 >> 1
+	LD	D,A
+	LD	A,E
+	OR	80H		; Set exp bit 0
+	LD	E,A
+
+	POP	IX
+	RET
+
+; ============================================================
+; ldexp(x, n) - multiply x by 2^n
+; ============================================================
+	PUBLIC	_ldexp
+	PUBLIC	_ldexpf
+_ldexp:
+_ldexpf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Get int exponent
+	LD	A,(IX+8)
+	LD	B,A
+
+	; Add to float exponent
+	LD	A,D
+	ADD	A,A
+	LD	C,A
+	LD	A,E
+	RLA
+	LD	(__tmp32),A	; Save mantissa bit
+	LD	A,C
+	RRA
+	ADD	A,B		; Add exponent
+	LD	C,A
+	RLCA
+	AND	1
+	LD	B,A
+	LD	A,D
+	AND	80H
+	OR	C
+	LD	D,A
+	LD	A,(__tmp32)
+	AND	7FH
+	OR	B
+	RLA
+	LD	A,E
+	RRA
+	LD	E,A
+
+	POP	IX
+	RET
+
+	END

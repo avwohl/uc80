@@ -1,0 +1,50 @@
+; lc_log2.mac - log2, log2f (depends on log)
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+	EXTRN	_logf
+
+	CSEG
+
+; ============================================================
+; log2(x) = log(x) / log(2)
+; log(2) = 0.693147...
+; ============================================================
+	PUBLIC	_log2
+	PUBLIC	_log2f
+_log2:
+_log2f:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	; Divide by log(2) = 0.693147 (3F317218)
+	LD	A,18H
+	LD	(__tmp32),A
+	LD	A,72H
+	LD	(__tmp32+1),A
+	LD	A,31H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fdiv
+
+	POP	IX
+	RET
+
+	END

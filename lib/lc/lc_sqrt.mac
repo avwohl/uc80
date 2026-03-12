@@ -1,0 +1,147 @@
+; lc_sqrt.mac - sqrt, sqrtf, sqrtl
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+
+	CSEG
+
+; ============================================================
+; sqrt(x) - Square root using Newton-Raphson
+; x_{n+1} = (x_n + S/x_n) / 2
+; ============================================================
+	PUBLIC	_sqrt
+	PUBLIC	_sqrtf
+	PUBLIC	_sqrtl
+_sqrt:
+_sqrtf:
+_sqrtl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg	; x in DEHL
+
+	; Check for zero or negative
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_sqrt_zero
+	BIT	7,D
+	JR	NZ,_sqrt_neg	; Negative -> return NaN (0)
+
+	; Save x
+	LD	(_sqrt_x),HL
+	LD	(_sqrt_x+2),DE
+
+	; Initial guess: x/2 (shift exponent down by 1)
+	; More accurate: use exponent/2
+	LD	A,D
+	AND	7FH		; Get exponent high bits
+	SRL	A		; Divide by 2
+	OR	A		; Set flags
+	JR	Z,_sqrt_small
+	LD	D,A
+	LD	(_sqrt_guess),HL
+	LD	(_sqrt_guess+2),DE
+	JR	_sqrt_iterate
+
+_sqrt_small:
+	; Very small number, use x as initial guess
+	LD	HL,(_sqrt_x)
+	LD	DE,(_sqrt_x+2)
+	LD	(_sqrt_guess),HL
+	LD	(_sqrt_guess+2),DE
+
+_sqrt_iterate:
+	; Newton-Raphson: 8 iterations for convergence
+	LD	B,8
+
+_sqrt_loop:
+	PUSH	BC
+
+	; Compute x / guess
+	LD	HL,(_sqrt_x)
+	LD	DE,(_sqrt_x+2)
+	LD	A,(_sqrt_guess)
+	LD	(__tmp32),A
+	LD	A,(_sqrt_guess+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sqrt_guess+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sqrt_guess+3)
+	LD	(__tmp32+3),A
+	CALL	__fdiv		; DEHL = x / guess
+
+	; Add guess
+	LD	A,(_sqrt_guess)
+	LD	(__tmp32),A
+	LD	A,(_sqrt_guess+1)
+	LD	(__tmp32+1),A
+	LD	A,(_sqrt_guess+2)
+	LD	(__tmp32+2),A
+	LD	A,(_sqrt_guess+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd		; DEHL = (x/guess + guess)
+
+	; Divide by 2 (subtract 1 from exponent)
+	LD	A,D
+	AND	7FH		; Get exponent+mantissa high
+	LD	B,A
+	LD	A,E
+	; Extract and decrement exponent
+	LD	A,D
+	ADD	A,A		; Shift sign out, exponent<<1
+	LD	C,A
+	LD	A,E
+	RLA			; Get exp low bit
+	DEC	A		; Decrement exponent
+	RRA			; Put back
+	LD	E,A
+	LD	A,C
+	RRA			; Put back high bits
+	LD	C,A
+	LD	A,D
+	AND	80H		; Keep sign
+	OR	C
+	LD	D,A
+
+	; Update guess
+	LD	(_sqrt_guess),HL
+	LD	(_sqrt_guess+2),DE
+
+	POP	BC
+	DJNZ	_sqrt_loop
+
+	; Result in DEHL
+	LD	HL,(_sqrt_guess)
+	LD	DE,(_sqrt_guess+2)
+	JR	_sqrt_done
+
+_sqrt_zero:
+_sqrt_neg:
+	LD	HL,0
+	LD	DE,0
+
+_sqrt_done:
+	POP	BC
+	POP	IX
+	RET
+
+	DSEG
+
+_sqrt_x:	DS	4
+_sqrt_guess:	DS	4
+
+	END

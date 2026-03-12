@@ -266,8 +266,13 @@ _parse_name_loop:
 	JR	Z,_parse_pad_name
 	CP	'.'
 	JR	Z,_parse_ext
-	; Store uppercase
+	; Store uppercase (only for a-z, leave digits etc. alone)
+	CP	'a'
+	JR	C,_parse_name_store
+	CP	'z'+1
+	JR	NC,_parse_name_store
 	AND	0DFH
+_parse_name_store:
 	LD	(HL),A
 	INC	HL
 	INC	DE
@@ -307,7 +312,13 @@ _parse_ext_loop:
 	LD	A,(DE)
 	OR	A
 	JR	Z,_parse_pad_ext
-	AND	0DFH		; Uppercase
+	; Uppercase only a-z
+	CP	'a'
+	JR	C,_parse_ext_store
+	CP	'z'+1
+	JR	NC,_parse_ext_store
+	AND	0DFH
+_parse_ext_store:
 	LD	(HL),A
 	INC	HL
 	INC	DE

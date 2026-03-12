@@ -1,0 +1,70 @@
+; lc_tan.mac - tan, tanf, tanl (depends on sin, cos)
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+	EXTRN	_sinf
+	EXTRN	_cosf
+
+	CSEG
+
+; ============================================================
+; tan(x) = sin(x) / cos(x)
+; ============================================================
+	PUBLIC	_tan
+	PUBLIC	_tanf
+	PUBLIC	_tanl
+_tan:
+_tanf:
+_tanl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Save x
+	LD	(_tan_x),HL
+	LD	(_tan_x+2),DE
+
+	; Compute sin(x)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinf
+	POP	BC
+	POP	BC
+	LD	(_tan_sin),HL
+	LD	(_tan_sin+2),DE
+
+	; Compute cos(x)
+	LD	HL,(_tan_x)
+	PUSH	HL
+	LD	HL,(_tan_x+2)
+	PUSH	HL
+	CALL	_cosf
+	POP	BC
+	POP	BC
+
+	; Divide sin/cos
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_tan_sin)
+	LD	DE,(_tan_sin+2)
+	CALL	__fdiv
+
+	POP	IX
+	RET
+
+	DSEG
+
+_tan_x:		DS	4
+_tan_sin:	DS	4
+
+	END

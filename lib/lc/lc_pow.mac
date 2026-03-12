@@ -1,0 +1,79 @@
+; lc_pow.mac - pow, powf, powl (depends on log, exp)
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fmul
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+	EXTRN	_math_getarg2
+	EXTRN	_logf
+	EXTRN	_expf
+
+	CSEG
+
+; ============================================================
+; pow(x, y) = exp(y * log(x))
+; ============================================================
+	PUBLIC	_pow
+	PUBLIC	_powf
+	PUBLIC	_powl
+_pow:
+_powf:
+_powl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Get x
+	CALL	_math_getarg
+	LD	(_pow_x),HL
+	LD	(_pow_x+2),DE
+
+	; Get y
+	CALL	_math_getarg2
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	LD	(_pow_y),HL
+	LD	(_pow_y+2),DE
+
+	; Compute log(x)
+	LD	HL,(_pow_x)
+	LD	DE,(_pow_x+2)
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	; Multiply by y
+	LD	A,(_pow_y)
+	LD	(__tmp32),A
+	LD	A,(_pow_y+1)
+	LD	(__tmp32+1),A
+	LD	A,(_pow_y+2)
+	LD	(__tmp32+2),A
+	LD	A,(_pow_y+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+
+	; Compute exp(y*log(x))
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+	DSEG
+
+_pow_x:		DS	4
+_pow_y:		DS	4
+
+	END

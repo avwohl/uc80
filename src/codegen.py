@@ -1871,6 +1871,21 @@ class CodeGenerator:
                 size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
             )
 
+        # Check for designated initializers with array index - size = max_index + 1
+        max_desig_index = -1
+        for v in init.values:
+            if isinstance(v, ast.DesignatedInit) and v.designators:
+                d = v.designators[0]
+                if isinstance(d, int):
+                    max_desig_index = max(max_desig_index, d)
+                elif isinstance(d, ast.IntLiteral):
+                    max_desig_index = max(max_desig_index, d.value)
+                elif isinstance(d, tuple) and len(d) == 2:
+                    # Range designator [start...end]
+                    _, end = d
+                    end_val = end.value if isinstance(end, ast.IntLiteral) else end
+                    max_desig_index = max(max_desig_index, end_val)
+
         # Count elements in initializer
         if isinstance(base_type, ast.StructType):
             # Check if initializer uses braced sub-initializers
@@ -1886,6 +1901,10 @@ class CodeGenerator:
                     array_size = len(init.values)
         else:
             array_size = len(init.values)
+
+        # Ensure size accounts for designated indices
+        if max_desig_index >= 0:
+            array_size = max(array_size, max_desig_index + 1)
 
         # Create new ArrayType with inferred size
         return ast.ArrayType(
@@ -2040,15 +2059,29 @@ class CodeGenerator:
                             is_global=True
                         )
 
+        # Auto-detect printf features if not explicitly specified (whole-program only)
+        if self.printf_features is None and self.whole_program:
+            detected = self._auto_detect_printf_features(unit)
+            if detected is not None:
+                self.printf_features = detected
+                # If no format specifiers used, convert printf("...\n") to puts("...")
+                if not detected:
+                    if self._rewrite_printf_to_puts(unit):
+                        self._needs_puts_extern = True
+
         # Code segment
         self.ctx.emit("\tCSEG")
         self.ctx.emit()
+
+        # Emit EXTRN for puts if printf→puts rewrite needs it
+        if getattr(self, '_needs_puts_extern', False):
+            self.ctx.emit_instr("EXTRN", "_puts")
 
         # Generate code for each declaration
         for decl in unit.declarations:
             self.gen_declaration(decl)
 
-        # Emit printf/scanf dispatch tables if #pragma printf/scanf was specified
+        # Emit printf/scanf dispatch tables if features are known
         if self.printf_features is not None:
             self._emit_printf_format_tables()
 
@@ -2093,56 +2126,64 @@ class CodeGenerator:
         for name in sorted(extern_only):
             self.ctx.emit_instr("EXTRN", f"_{name}")
 
+        # Separate globals into initialized (DSEG) and uninitialized (COMMON/BSS)
+        init_globals = []
+        uninit_globals = []
         if global_vars:
             self.ctx.emit()
             self.ctx.emit("; Global variables")
-            # Emit PUBLIC for non-static global variables so linker can resolve
-            # cross-module references (same as we do for functions)
             for name, decl in global_vars.items():
                 if decl.storage_class != "static":
                     self.ctx.emit_instr("PUBLIC", f"_{decl.name}")
-            self.ctx.emit("\tDSEG")
             for name, decl in global_vars.items():
-                # Use the inferred type from the Symbol (which has array size from initializer)
+                if decl.init:
+                    init_globals.append((name, decl))
+                else:
+                    uninit_globals.append((name, decl))
+
+        # Separate statics into initialized (DSEG) and uninitialized (COMMON/BSS)
+        init_statics = []
+        uninit_statics = []
+        for label, entry in self.ctx.static_locals.items():
+            var_type, init = entry[0], entry[1]
+            resolved_addr = entry[2] if len(entry) > 2 else None
+            if resolved_addr and isinstance(var_type, ast.PointerType):
+                init_statics.append((label, entry, True))  # has resolved addr
+            elif init:
+                init_statics.append((label, entry, False))
+            else:
+                uninit_statics.append((label, entry))
+
+        # === DSEG: initialized data only (goes into binary) ===
+        in_dseg = False
+
+        if init_globals:
+            self.ctx.emit("\tDSEG")
+            in_dseg = True
+            for name, decl in init_globals:
                 sym = self.ctx.globals.get(name)
                 var_type = sym.sym_type if sym else decl.var_type
-                size = self._type_size(var_type)
                 self.ctx.emit_label(f"_{decl.name}")
-                if decl.init:
-                    # Initialized global variable - use helper to emit data
-                    self._emit_initializer(decl.init, var_type)
-                else:
-                    # Uninitialized global - just reserve space
-                    self.ctx.emit_instr("DS", str(size))
+                self._emit_initializer(decl.init, var_type)
 
-        # Track whether DSEG has been emitted (global_vars emit it above)
-        in_dseg = bool(global_vars)
-
-        # Static local variables (in DSEG)
-        if self.ctx.static_locals:
+        if init_statics:
             if not in_dseg:
-                self.ctx.emit()
                 self.ctx.emit("\tDSEG")
                 in_dseg = True
             self.ctx.emit("; Static local variables")
-            for label, entry in self.ctx.static_locals.items():
+            for label, entry, has_resolved in init_statics:
                 var_type, init = entry[0], entry[1]
                 resolved_addr = entry[2] if len(entry) > 2 else None
                 self.ctx.emit_label(label)
-                size = self._type_size(var_type)
-                if resolved_addr and isinstance(var_type, ast.PointerType):
-                    # Use pre-resolved address (from when local scope was active)
+                if has_resolved:
                     self._emit_address_const(*resolved_addr)
-                elif init:
-                    self._emit_initializer(init, var_type)
                 else:
-                    self.ctx.emit_instr("DS", str(size))
+                    self._emit_initializer(init, var_type)
 
         # Data segment with string literals (emitted after globals so that
         # strings created during global initializer emission are included)
         if self.ctx.strings:
             if not in_dseg:
-                self.ctx.emit()
                 self.ctx.emit("\tDSEG")
                 in_dseg = True
             self.ctx.emit()
@@ -2159,13 +2200,47 @@ class CodeGenerator:
                     escaped = self._escape_string(value)
                     self.ctx.emit_instr("DB", f"'{escaped}',0")
 
+        # Compound literals materialized during code generation
+        if hasattr(self.ctx, 'compound_literals') and self.ctx.compound_literals:
+            if not in_dseg:
+                self.ctx.emit("\tDSEG")
+                in_dseg = True
+            self.ctx.emit()
+            self.ctx.emit("; Compound literals")
+            for label, init, target_type, size in self.ctx.compound_literals:
+                self.ctx.emit_label(label)
+                if isinstance(init, ast.InitializerList):
+                    self._emit_initializer(init, target_type)
+                else:
+                    self.ctx.emit_instr("DS", str(size))
+
+        # === COMMON: uninitialized data (BSS - zeroed by crt0, not in binary) ===
+        has_bss = uninit_globals or uninit_statics or (
+            self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0)
+
+        if has_bss:
+            self.ctx.emit()
+            self.ctx.emit("; BSS - uninitialized static storage (zeroed by crt0)")
+            self.ctx.emit("\tCOMMON\t//")
+
+        if uninit_globals:
+            for name, decl in uninit_globals:
+                sym = self.ctx.globals.get(name)
+                var_type = sym.sym_type if sym else decl.var_type
+                size = self._type_size(var_type)
+                self.ctx.emit_label(f"_{decl.name}")
+                self.ctx.emit_instr("DS", str(size))
+
+        if uninit_statics:
+            for label, entry in uninit_statics:
+                var_type = entry[0]
+                size = self._type_size(var_type)
+                self.ctx.emit_label(label)
+                self.ctx.emit_instr("DS", str(size))
+
         # Shared automatic storage for non-recursive functions
         if self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0:
-            if not in_dseg:
-                self.ctx.emit()
-                self.ctx.emit("\tDSEG")
-            self.ctx.emit()
-            self.ctx.emit("; Shared automatic storage for non-recursive functions")
+            self.ctx.emit("; Shared automatic storage")
             self.ctx.emit_label("??AUTO")
             self.ctx.emit_instr("DS", str(self.call_graph_analyzer.total_shared_storage))
 
@@ -2368,6 +2443,29 @@ class CodeGenerator:
         self.ctx.emit()
         self.ctx.emit("; Printf format dispatch tables (#pragma printf)")
 
+        # Collect all handlers we'll reference, then emit EXTRNs
+        handlers: set[str] = set()
+
+        if "int" in features or "all" in features:
+            handlers.update(['__printf_handle_d', '__printf_handle_u',
+                           '__printf_handle_o', '__printf_handle_x',
+                           '__printf_handle_xu', '__printf_handle_s',
+                           '__printf_handle_c', '__printf_handle_p'])
+        if "long" in features or "llong" in features or "all" in features:
+            handlers.add('__printf_handle_l')
+        if "long" in features or "all" in features:
+            handlers.update(['__printf_handle_ld', '__printf_handle_lu',
+                           '__printf_handle_lo', '__printf_handle_lx'])
+        if "float" in features or "all" in features:
+            handlers.add('__printf_handle_f')
+        if "llong" in features or "all" in features:
+            handlers.update(['__printf_handle_lld', '__printf_handle_llu',
+                           '__printf_handle_llx'])
+
+        for h in sorted(handlers):
+            self.ctx.emit_instr("EXTRN", h)
+        self.ctx.emit()
+
         # Base format table
         self.ctx.emit_instr("PUBLIC", "__printf_format_table")
         self.ctx.emit("__printf_format_table:")
@@ -2376,6 +2474,7 @@ class CodeGenerator:
             for spec, handler in [('d', '__printf_handle_d'),
                                   ('i', '__printf_handle_d'),
                                   ('u', '__printf_handle_u'),
+                                  ('o', '__printf_handle_o'),
                                   ('x', '__printf_handle_x'),
                                   ('X', '__printf_handle_xu'),
                                   ('s', '__printf_handle_s'),
@@ -2406,6 +2505,7 @@ class CodeGenerator:
             for spec, handler in [('d', '__printf_handle_ld'),
                                   ('i', '__printf_handle_ld'),
                                   ('u', '__printf_handle_lu'),
+                                  ('o', '__printf_handle_lo'),
                                   ('x', '__printf_handle_lx')]:
                 self.ctx.emit(f"\tDB\t'{spec}'")
                 self.ctx.emit(f"\tDW\t{handler}")
@@ -2441,6 +2541,243 @@ class CodeGenerator:
         # The 'll' dispatch entry point (always needed)
         self.ctx.emit("__printf_ll_entry:")
         self.ctx.emit("\tRET")
+
+    def _auto_detect_printf_features(self, unit: ast.TranslationUnit) -> set[str] | None:
+        """Scan AST for printf-family calls and detect which format specifiers are used.
+
+        Returns a feature set (possibly empty) if all format strings are literals,
+        or None if a non-literal format string is found (must use 'all').
+        """
+        # Printf-family functions and the index of their format string argument
+        printf_funcs = {
+            'printf': 0, 'fprintf': 1, 'sprintf': 1, 'snprintf': 2,
+            'vprintf': 0, 'vfprintf': 1, 'vsprintf': 1,
+        }
+        features: set[str] = set()
+        uses_printf = False
+
+        def scan_expr(expr: ast.Expression) -> bool:
+            """Scan expression for printf calls. Returns False if non-literal format found."""
+            nonlocal uses_printf
+            if isinstance(expr, ast.Call):
+                # Check if this is a printf-family call
+                func_name = None
+                if isinstance(expr.func, ast.Identifier):
+                    func_name = expr.func.name
+                if func_name in printf_funcs:
+                    uses_printf = True
+                    fmt_idx = printf_funcs[func_name]
+                    if fmt_idx < len(expr.args):
+                        fmt_arg = expr.args[fmt_idx]
+                        if isinstance(fmt_arg, ast.StringLiteral):
+                            self._extract_printf_specifiers(fmt_arg.value, features)
+                        else:
+                            return False  # Non-literal format string
+                # Scan arguments too (could have nested printf calls)
+                for arg in expr.args:
+                    if not scan_expr(arg):
+                        return False
+            elif isinstance(expr, ast.BinaryOp):
+                if not scan_expr(expr.left) or not scan_expr(expr.right):
+                    return False
+            elif isinstance(expr, ast.UnaryOp):
+                if not scan_expr(expr.operand):
+                    return False
+            elif isinstance(expr, ast.TernaryOp):
+                if not scan_expr(expr.condition) or not scan_expr(expr.true_expr) or not scan_expr(expr.false_expr):
+                    return False
+            elif isinstance(expr, ast.Cast):
+                if not scan_expr(expr.expr):
+                    return False
+            elif isinstance(expr, ast.Compound):
+                if expr.init and not scan_expr(expr.init):
+                    return False
+            return True
+
+        def scan_stmt(stmt) -> bool:
+            """Scan statement for printf calls. Returns False if non-literal format found."""
+            if isinstance(stmt, ast.ExpressionStmt):
+                return scan_expr(stmt.expr)
+            elif isinstance(stmt, ast.CompoundStmt):
+                for s in stmt.items:
+                    if not scan_stmt(s):
+                        return False
+            elif isinstance(stmt, ast.IfStmt):
+                if not scan_expr(stmt.condition):
+                    return False
+                if not scan_stmt(stmt.then_branch):
+                    return False
+                if stmt.else_branch and not scan_stmt(stmt.else_branch):
+                    return False
+            elif isinstance(stmt, ast.WhileStmt):
+                if not scan_expr(stmt.condition):
+                    return False
+                if not scan_stmt(stmt.body):
+                    return False
+            elif isinstance(stmt, ast.DoWhileStmt):
+                if not scan_stmt(stmt.body):
+                    return False
+                if not scan_expr(stmt.condition):
+                    return False
+            elif isinstance(stmt, ast.ForStmt):
+                if stmt.init:
+                    if isinstance(stmt.init, ast.Expression):
+                        if not scan_expr(stmt.init):
+                            return False
+                    else:
+                        if not scan_stmt(stmt.init):
+                            return False
+                if stmt.condition and not scan_expr(stmt.condition):
+                    return False
+                if stmt.update and not scan_expr(stmt.update):
+                    return False
+                if not scan_stmt(stmt.body):
+                    return False
+            elif isinstance(stmt, ast.ReturnStmt):
+                if stmt.value and not scan_expr(stmt.value):
+                    return False
+            elif isinstance(stmt, ast.SwitchStmt):
+                if not scan_expr(stmt.expr):
+                    return False
+                if not scan_stmt(stmt.body):
+                    return False
+            elif isinstance(stmt, ast.CaseStmt):
+                if not scan_stmt(stmt.stmt):
+                    return False
+            elif isinstance(stmt, ast.LabelStmt):
+                if not scan_stmt(stmt.stmt):
+                    return False
+            elif isinstance(stmt, ast.VarDecl):
+                if stmt.init and not scan_expr(stmt.init):
+                    return False
+            elif isinstance(stmt, ast.DeclarationList):
+                for d in stmt.declarations:
+                    if not scan_stmt(d):
+                        return False
+            return True
+
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl) and decl.body:
+                if not scan_stmt(decl.body):
+                    return None  # Non-literal format → fall back to all
+
+        if not uses_printf:
+            return set()  # No printf calls → empty features (minimal tables)
+
+        return features
+
+    @staticmethod
+    def _extract_printf_specifiers(fmt: str, features: set[str]) -> None:
+        """Parse a printf format string and add required feature flags."""
+        i = 0
+        while i < len(fmt):
+            if fmt[i] != '%':
+                i += 1
+                continue
+            i += 1
+            if i >= len(fmt):
+                break
+            # Skip %%
+            if fmt[i] == '%':
+                i += 1
+                continue
+            # Skip flags: -, +, space, #, 0
+            while i < len(fmt) and fmt[i] in '-+ #0':
+                i += 1
+            # Skip width (digits or *)
+            if i < len(fmt) and fmt[i] == '*':
+                i += 1
+            else:
+                while i < len(fmt) and fmt[i].isdigit():
+                    i += 1
+            # Skip precision
+            if i < len(fmt) and fmt[i] == '.':
+                i += 1
+                if i < len(fmt) and fmt[i] == '*':
+                    i += 1
+                else:
+                    while i < len(fmt) and fmt[i].isdigit():
+                        i += 1
+            # Length modifier
+            length = ''
+            if i < len(fmt) and fmt[i] in 'hlLzjt':
+                length = fmt[i]
+                i += 1
+                if i < len(fmt) and fmt[i] == length and length in 'hl':
+                    length += fmt[i]
+                    i += 1
+            # Conversion specifier
+            if i < len(fmt):
+                spec = fmt[i]
+                i += 1
+                if spec in 'dDiuUoOxXcCsSpn':
+                    if length == 'll':
+                        features.add('llong')
+                        features.add('long')
+                        features.add('int')
+                    elif length == 'l' or spec in 'DUO':
+                        features.add('long')
+                        features.add('int')
+                    else:
+                        features.add('int')
+                elif spec in 'fFeEgGaA':
+                    features.add('float')
+                    features.add('int')
+
+    def _rewrite_printf_to_puts(self, unit: ast.TranslationUnit) -> bool:
+        """Rewrite printf("...\n") to puts("...") when no format specifiers are used.
+
+        Only called in whole-program mode when auto-detection found no specifiers.
+        This eliminates the printf dependency entirely.
+        Returns True if any rewrites were made.
+        """
+        rewrote = False
+
+        def rewrite_expr(expr: ast.Expression) -> ast.Expression:
+            nonlocal rewrote
+            if isinstance(expr, ast.Call):
+                if (isinstance(expr.func, ast.Identifier) and
+                    expr.func.name == 'printf' and
+                    len(expr.args) == 1 and
+                    isinstance(expr.args[0], ast.StringLiteral)):
+                    s = expr.args[0].value
+                    if s.endswith('\n'):
+                        # printf("...\n") → puts("...")
+                        new_str = ast.StringLiteral(value=s[:-1], location=expr.args[0].location)
+                        new_id = ast.Identifier(name='puts', location=expr.func.location)
+                        rewrote = True
+                        return ast.Call(func=new_id, args=[new_str], location=expr.location)
+                    # printf("...") without \n — leave as printf
+            return expr
+
+        def rewrite_stmt(stmt):
+            if isinstance(stmt, ast.ExpressionStmt):
+                stmt.expr = rewrite_expr(stmt.expr)
+            elif isinstance(stmt, ast.CompoundStmt):
+                for s in stmt.items:
+                    rewrite_stmt(s)
+            elif isinstance(stmt, ast.IfStmt):
+                rewrite_stmt(stmt.then_branch)
+                if stmt.else_branch:
+                    rewrite_stmt(stmt.else_branch)
+            elif isinstance(stmt, ast.WhileStmt):
+                rewrite_stmt(stmt.body)
+            elif isinstance(stmt, ast.DoWhileStmt):
+                rewrite_stmt(stmt.body)
+            elif isinstance(stmt, ast.ForStmt):
+                rewrite_stmt(stmt.body)
+            elif isinstance(stmt, ast.SwitchStmt):
+                rewrite_stmt(stmt.body)
+            elif isinstance(stmt, ast.CaseStmt):
+                rewrite_stmt(stmt.stmt)
+            elif isinstance(stmt, ast.LabelStmt):
+                rewrite_stmt(stmt.stmt)
+
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl) and decl.body:
+                rewrite_stmt(decl.body)
+
+        return rewrote
 
     def gen_function(self, func: ast.FunctionDecl) -> None:
         """Generate code for a function."""
@@ -2947,7 +3284,11 @@ class CodeGenerator:
         """Generate struct/union assignment via LDIR copy."""
         # Evaluate source expression to get source address in HL
         right = expr.right
-        if isinstance(right, ast.Call):
+        if isinstance(right, ast.Compound):
+            # Compound literal: materialize in DSEG and use its address
+            label = self._materialize_compound_literal(right)
+            self.ctx.emit_instr("LD", f"HL,{label}")
+        elif isinstance(right, ast.Call):
             # Function call returning struct - returns address in HL
             self.gen_expr(right)
         elif isinstance(right, ast.Identifier):
@@ -3085,6 +3426,8 @@ class CodeGenerator:
         member_vals = {}  # member_name -> value or list of (nested_designators, value)
         next_member_idx = 0
         active_nested_member = None  # Track current member for continuation
+        active_nested_pos = 0  # next sequential index within the nested member
+        active_nested_size = 0  # capacity of the nested member (array size)
 
         for val in values:
             if isinstance(val, ast.DesignatedInit) and val.designators and isinstance(val.designators[0], str):
@@ -3095,6 +3438,21 @@ class CodeGenerator:
                         member_vals[desig_name] = []
                     member_vals[desig_name].append((val.designators[1:], val.value))
                     active_nested_member = desig_name
+                    # Track position for continuation
+                    active_nested_size = 0
+                    active_nested_pos = 0
+                    for mname, mtype, moff in members:
+                        if mname == desig_name and isinstance(mtype, ast.ArrayType) and mtype.size is not None:
+                            sz = mtype.size
+                            active_nested_size = sz.value if isinstance(sz, ast.IntLiteral) else (sz if isinstance(sz, int) else 0)
+                            last_desig = val.designators[-1]
+                            if isinstance(last_desig, int):
+                                active_nested_pos = last_desig + 1
+                            elif isinstance(last_desig, ast.IntLiteral):
+                                active_nested_pos = last_desig.value + 1
+                            elif hasattr(last_desig, 'value') and isinstance(last_desig.value, int):
+                                active_nested_pos = last_desig.value + 1
+                            break
                 else:
                     member_vals[desig_name] = val.value
                     active_nested_member = None
@@ -3106,10 +3464,16 @@ class CodeGenerator:
             else:
                 actual_val = val.value if isinstance(val, ast.DesignatedInit) else val
                 if active_nested_member is not None:
-                    # Continuation after nested designator - add to same member
-                    # Use None designators to indicate "next sequential element"
-                    member_vals[active_nested_member].append((None, actual_val))
-                else:
+                    # Check if we've exceeded the nested member's capacity
+                    if active_nested_size > 0 and active_nested_pos >= active_nested_size:
+                        active_nested_member = None
+                    else:
+                        # Continuation after nested designator - add to same member
+                        # Use None designators to indicate "next sequential element"
+                        member_vals[active_nested_member].append((None, actual_val))
+                        active_nested_pos += 1
+                        continue
+                if active_nested_member is None:
                     # Non-designated value
                     if next_member_idx < len(members):
                         mname = members[next_member_idx][0]
@@ -3892,23 +4256,15 @@ class CodeGenerator:
         # Evaluate switch expression
         self.gen_expr(stmt.expr)
 
-        # Generate comparison chain
-        for value, label in cases:
-            # Compare HL with value
-            self.ctx.emit_instr("LD", f"DE,{value}")
-            self.ctx.emit_instr("OR", "A")  # Clear carry
-            self.ctx.emit_instr("SBC", "HL,DE")
-            self.ctx.emit_instr("ADD", "HL,DE")  # Restore HL (SBC modified it)
-            self.ctx.emit_instr("JP", f"Z,{label}")
-
-        # Jump to default or end
-        if default_label:
-            self.ctx.emit_instr("JP", default_label)
+        # Decide: jump table vs comparison chain
+        fall_label = default_label if default_label else end_label
+        if self._should_use_jump_table(cases):
+            self._gen_switch_jump_table(cases, fall_label)
         else:
-            self.ctx.emit_instr("JP", end_label)
+            self._gen_switch_compare_chain(cases, fall_label)
 
         # Save previous switch context (for nested switches)
-        saved_cases = getattr(self, '_switch_cases', [])
+        saved_cases = list(getattr(self, '_switch_cases', []))
         saved_default = getattr(self, '_switch_default', None)
 
         # Set up case label map for gen_case
@@ -3930,6 +4286,69 @@ class CodeGenerator:
         # Restore previous switch context
         self._switch_cases = saved_cases
         self._switch_default = saved_default
+
+    def _should_use_jump_table(self, cases: list[tuple[int, str]]) -> bool:
+        """Decide whether to use a jump table for this switch."""
+        if len(cases) < 4:
+            return False
+        values = [v for v, _ in cases]
+        min_val = min(values)
+        max_val = max(values)
+        span = max_val - min_val + 1
+        # Use jump table if density >= 50% and span fits in reasonable size
+        if span > 256:
+            return False
+        density = len(cases) / span
+        return density >= 0.5
+
+    def _gen_switch_compare_chain(self, cases: list[tuple[int, str]], fall_label: str) -> None:
+        """Generate sequential compare-and-branch for sparse switch."""
+        for value, label in cases:
+            self.ctx.emit_instr("LD", f"DE,{value}")
+            self.ctx.emit_instr("OR", "A")
+            self.ctx.emit_instr("SBC", "HL,DE")
+            self.ctx.emit_instr("ADD", "HL,DE")
+            self.ctx.emit_instr("JP", f"Z,{label}")
+        self.ctx.emit_instr("JP", fall_label)
+
+    def _gen_switch_jump_table(self, cases: list[tuple[int, str]], fall_label: str) -> None:
+        """Generate a jump table dispatch for dense switch."""
+        values = [v for v, _ in cases]
+        min_val = min(values)
+        max_val = max(values)
+        span = max_val - min_val + 1
+        table_label = self.ctx.new_label("SWTAB")
+
+        # HL = switch value; subtract min to get table index
+        if min_val != 0:
+            self.ctx.emit_instr("LD", f"DE,{min_val}")
+            self.ctx.emit_instr("OR", "A")
+            self.ctx.emit_instr("SBC", "HL,DE")
+        # Range check: unsigned compare with span
+        # If HL >= span, out of range -> default/end
+        self.ctx.emit_instr("LD", f"DE,{span}")
+        self.ctx.emit_instr("OR", "A")
+        self.ctx.emit_instr("SBC", "HL,DE")
+        self.ctx.emit_instr("JP", f"NC,{fall_label}")
+        self.ctx.emit_instr("ADD", "HL,DE")  # Restore index
+
+        # Index into table: HL = HL * 2, then add table base
+        self.ctx.emit_instr("ADD", "HL,HL")
+        self.ctx.emit_instr("LD", f"DE,{table_label}")
+        self.ctx.emit_instr("ADD", "HL,DE")
+        # Load target address from table and jump
+        self.ctx.emit_instr("LD", "E,(HL)")
+        self.ctx.emit_instr("INC", "HL")
+        self.ctx.emit_instr("LD", "D,(HL)")
+        self.ctx.emit_instr("EX", "DE,HL")
+        self.ctx.emit_instr("JP", "(HL)")
+
+        # Emit table in code segment
+        case_map = {v: lbl for v, lbl in cases}
+        self.ctx.emit_label(table_label)
+        for i in range(span):
+            target = case_map.get(min_val + i, fall_label)
+            self.ctx.emit_instr("DW", target)
 
     def gen_case(self, stmt: ast.CaseStmt) -> None:
         """Generate code for case label."""
@@ -4046,15 +4465,13 @@ class CodeGenerator:
 
         elif isinstance(expr, ast.Compound):
             # Compound literal: (type){initializer}
-            # For simple structs with one value, just evaluate that value
-            if isinstance(expr.init, ast.InitializerList) and len(expr.init.values) == 1:
-                val = expr.init.values[0]
-                if isinstance(val, ast.DesignatedInit):
-                    val = val.value
-                self.gen_expr(val, force_long)
-            elif isinstance(expr.init, ast.InitializerList) and len(expr.init.values) > 1:
-                # Multi-member struct compound literal - evaluate first value
-                # (used as an expression, struct gets truncated to first member)
+            target_type = expr.target_type
+            if isinstance(target_type, (ast.StructType, ast.ArrayType)):
+                # Struct/array compound literal: materialize in memory, return address
+                label = self._materialize_compound_literal(expr)
+                self.ctx.emit_instr("LD", f"HL,{label}")
+            elif isinstance(expr.init, ast.InitializerList) and len(expr.init.values) >= 1:
+                # Scalar compound literal: evaluate the value
                 val = expr.init.values[0]
                 if isinstance(val, ast.DesignatedInit):
                     val = val.value
@@ -4126,6 +4543,13 @@ class CodeGenerator:
 
     def gen_identifier(self, expr: ast.Identifier, force_long: bool = False) -> None:
         """Generate code to load an identifier's value into HL (or DEHL for 32-bit)."""
+        # Handle __func__ (C99 predefined identifier)
+        if expr.name in ('__func__', '__FUNCTION__'):
+            func_name = getattr(self.ctx, 'current_function', 'unknown')
+            str_expr = ast.StringLiteral(value=func_name, location=expr.location)
+            self.gen_expr(str_expr, force_long)
+            return
+
         # Check for enum constant first
         if expr.name in self.ctx.enum_constants:
             val = self.ctx.enum_constants[expr.name]
@@ -4969,7 +5393,7 @@ class CodeGenerator:
             return
         else:
             # Other operators not supported for complex
-            self.ctx.emit_comment(f"Complex op '{op}' not supported")
+            self.ctx.emit(f"; Complex op '{op}' not supported")
 
         # Result is in __cplx_result, return its address in HL
         self.ctx.emit_instr("LD", "HL,__cplx_result")
@@ -6400,6 +6824,15 @@ class CodeGenerator:
 
     def gen_member(self, expr: ast.Member) -> None:
         """Generate code for struct member access."""
+        # Handle compound literal member access: ((struct){...}).member
+        if isinstance(expr.obj, ast.Compound) and not expr.is_arrow:
+            val = self._compound_literal_member_value(expr.obj, expr.member)
+            if val is not None:
+                member_type = self._get_member_type(expr)
+                force_long = member_type and self._type_size(member_type) == 4
+                self.gen_expr(val, force_long)
+                return
+
         # Generate address of the member
         self._gen_address(expr)
 
@@ -6470,6 +6903,68 @@ class CodeGenerator:
                 if result is not None:
                     return result
         return None
+
+    def _compound_literal_member_value(self, compound: ast.Compound, member_name: str) -> ast.Expression | None:
+        """Extract the value for a specific member from a compound literal.
+
+        Returns the expression to generate for ((struct){...}).member,
+        or None if we can't resolve it statically.
+        """
+        if not isinstance(compound.init, ast.InitializerList):
+            return None
+        target_type = compound.target_type
+        # Resolve struct members
+        struct_type = target_type
+        if isinstance(struct_type, ast.StructType):
+            members = None
+            if struct_type.members:
+                members = [(m.name, m.member_type) for m in struct_type.members]
+            elif struct_type.name and struct_type.name in self.ctx.structs:
+                members = [(n, t) for n, t, _ in self.ctx.structs[struct_type.name]]
+            if members is None:
+                return None
+
+            values = compound.init.values
+            # Check for designated initializers
+            has_designators = any(isinstance(v, ast.DesignatedInit) for v in values)
+
+            if has_designators:
+                # Designated init: find the value by designator name
+                for v in values:
+                    if isinstance(v, ast.DesignatedInit) and v.designators:
+                        desig = v.designators[0]
+                        if isinstance(desig, str) and desig == member_name:
+                            return v.value
+                # Not designated - member is zero-initialized
+                return ast.IntLiteral(value=0)
+            else:
+                # Positional: find member index
+                for i, (mname, mtype) in enumerate(members):
+                    if mname == member_name:
+                        if i < len(values):
+                            val = values[i]
+                            if isinstance(val, ast.DesignatedInit):
+                                val = val.value
+                            return val
+                        return ast.IntLiteral(value=0)
+        return None
+
+    def _materialize_compound_literal(self, compound: ast.Compound) -> str:
+        """Materialize a compound literal into DSEG and return its label."""
+        label = self.ctx.new_label("CL")
+        target_type = compound.target_type
+        # For arrays without explicit size, infer from initializer count
+        if isinstance(target_type, ast.ArrayType) and target_type.size is None:
+            if isinstance(compound.init, ast.InitializerList):
+                n = len(compound.init.values)
+                target_type = ast.ArrayType(base_type=target_type.base_type,
+                                             size=ast.IntLiteral(value=n))
+        size = self._type_size(target_type)
+        # Queue the data for emission in the data section
+        if not hasattr(self.ctx, 'compound_literals'):
+            self.ctx.compound_literals = []
+        self.ctx.compound_literals.append((label, compound.init, target_type, size))
+        return label
 
     def _get_member_size(self, expr: ast.Member) -> int:
         """Get the size of a struct member."""
@@ -6598,6 +7093,8 @@ class CodeGenerator:
         elif isinstance(expr, ast.BoolLiteral):
             return ast.BasicType(name="bool")
         elif isinstance(expr, ast.Identifier):
+            if expr.name in ('__func__', '__FUNCTION__'):
+                return ast.PointerType(base_type=ast.BasicType(name="char"))
             sym = self.ctx.lookup(expr.name)
             if sym:
                 return sym.sym_type
@@ -6718,6 +7215,16 @@ class CodeGenerator:
             for type_node, value_expr in expr.associations:
                 if type_node is None:
                     return self._get_expr_type(value_expr)
+        elif isinstance(expr, ast.Compound):
+            # Compound literal type is its target type
+            # For arrays without explicit size, infer from initializer
+            target = expr.target_type
+            if isinstance(target, ast.ArrayType) and target.size is None:
+                if isinstance(expr.init, ast.InitializerList):
+                    n = len(expr.init.values)
+                    return ast.ArrayType(base_type=target.base_type,
+                                         size=ast.IntLiteral(value=n))
+            return target
         return None
 
     def _types_compatible(self, expr_type: ast.TypeNode | None, sel_type: ast.TypeNode) -> bool:
@@ -6891,6 +7398,11 @@ class CodeGenerator:
                     self.ctx.emit_instr("LD", f"DE,{offset}")
                     self.ctx.emit_instr("ADD", "HL,DE")
 
+        elif isinstance(expr, ast.Compound):
+            # Compound literal: materialize in DSEG, return address
+            label = self._materialize_compound_literal(expr)
+            self.ctx.emit_instr("LD", f"HL,{label}")
+
     @staticmethod
     def _mul_shift_count(expr: ast.Expression) -> int | None:
         """If expr is an IntLiteral power-of-2 > 1, return log2. Else None."""
@@ -7030,8 +7542,8 @@ class CodeGenerator:
             # Check for explicit LL suffix or value too large for 32-bit
             if hasattr(expr, 'is_long_long') and expr.is_long_long:
                 return True
-            # For hex literals, values up to 4294967295 fit in unsigned long (32-bit)
-            if expr.is_hex and 0 <= expr.value <= 4294967295:
+            # For hex or unsigned literals, values up to 4294967295 fit in unsigned long (32-bit)
+            if (expr.is_hex or expr.is_unsigned) and 0 <= expr.value <= 4294967295:
                 return False
             # Values too large for signed 32-bit (and not hex unsigned long)
             if expr.value > 2147483647 or expr.value < -2147483648:
@@ -7097,8 +7609,8 @@ class CodeGenerator:
                 # Check if it fits in 32-bit
                 if val <= 2147483647 and val >= -2147483648:
                     return True
-                # For hex/octal, check unsigned long (32-bit)
-                if expr.is_hex and 0 <= val <= 4294967295:
+                # For hex/octal/unsigned, check unsigned long (32-bit)
+                if (expr.is_hex or expr.is_unsigned) and 0 <= val <= 4294967295:
                     return True
             return False
         if isinstance(expr, ast.UnaryOp):
@@ -7804,41 +8316,47 @@ class CodeGenerator:
                 if members:
                     if elem_type.is_union:
                         # Union: determine which member to initialize
+                        # Per C standard, last designator in union init wins
                         target_member = members[0]  # Default: first named member
                         target_sub_members = None
+                        target_value = None
 
-                        # Check if init values have designators targeting anonymous members
-                        if init.values and isinstance(init.values[0], ast.DesignatedInit):
-                            desig = init.values[0]
-                            if desig.designators and isinstance(desig.designators[0], str):
-                                desig_name = desig.designators[0]
-                                # Check if designator matches a direct member
-                                found_direct = False
-                                for m in members:
-                                    if m[0] == desig_name:
-                                        target_member = m
-                                        found_direct = True
-                                        break
-                                if not found_direct and elem_type.name:
-                                    # Check anonymous struct/union sub-members
-                                    if elem_type.name in self.ctx.anon_members:
-                                        for anon_type, anon_offset in self.ctx.anon_members[elem_type.name]:
-                                            anon_mems = self._get_struct_members(anon_type)
-                                            for aname, atype, aoff in anon_mems:
-                                                if aname == desig_name:
-                                                    # Designator targets anonymous member's sub-member
-                                                    target_member = (None, anon_type, anon_offset)
-                                                    target_sub_members = anon_mems
-                                                    break
-                                            if target_sub_members:
+                        # Find the last designated initializer (it overwrites earlier ones)
+                        last_desig = None
+                        for v in init.values:
+                            if isinstance(v, ast.DesignatedInit) and v.designators and isinstance(v.designators[0], str):
+                                last_desig = v
+
+                        if last_desig is not None:
+                            desig_name = last_desig.designators[0]
+                            # Check if designator matches a direct member
+                            found_direct = False
+                            for m in members:
+                                if m[0] == desig_name:
+                                    target_member = m
+                                    found_direct = True
+                                    break
+                            if not found_direct and elem_type.name:
+                                # Check anonymous struct/union sub-members
+                                if elem_type.name in self.ctx.anon_members:
+                                    for anon_type, anon_offset in self.ctx.anon_members[elem_type.name]:
+                                        anon_mems = self._get_struct_members(anon_type)
+                                        for aname, atype, aoff in anon_mems:
+                                            if aname == desig_name:
+                                                target_member = (None, anon_type, anon_offset)
+                                                target_sub_members = anon_mems
                                                 break
+                                        if target_sub_members:
+                                            break
+                            target_value = [last_desig]
+                        else:
+                            target_value = init.values
 
                         target_size = self._type_size(target_member[1])
                         if target_sub_members is not None:
-                            # Initialize anonymous struct/union sub-members
-                            self._emit_struct_init_flat(init.values, target_sub_members)
+                            self._emit_struct_init_flat(target_value, target_sub_members)
                         else:
-                            self._emit_struct_init_flat(init.values, [target_member])
+                            self._emit_struct_init_flat(target_value, [target_member])
                         union_size = self._type_size(elem_type)
                         if union_size > target_size:
                             self.ctx.emit_instr("DS", str(union_size - target_size))
@@ -8188,6 +8706,8 @@ class CodeGenerator:
         next_idx = 0
         # Track the current "active" member for continuation after nested designators
         active_nested_member = None  # member name if last desig was nested
+        active_nested_pos = 0  # next sequential index within the nested member
+        active_nested_size = 0  # capacity of the nested member (array size)
 
         for val in values:
             if isinstance(val, ast.DesignatedInit) and val.designators and isinstance(val.designators[0], str):
@@ -8204,6 +8724,22 @@ class CodeGenerator:
                             member_vals[name] = []
                         member_vals[name].append(sub_desig)
                     active_nested_member = name
+                    # Track position for continuation: find array size and compute next pos
+                    active_nested_size = 0
+                    active_nested_pos = 0
+                    for mname, mtype, moff in members:
+                        if mname == name and isinstance(mtype, ast.ArrayType) and mtype.size is not None:
+                            sz = mtype.size
+                            active_nested_size = sz.value if isinstance(sz, ast.IntLiteral) else (sz if isinstance(sz, int) else 0)
+                            # Compute next position from the last designator index
+                            last_desig = val.designators[-1]
+                            if isinstance(last_desig, int):
+                                active_nested_pos = last_desig + 1
+                            elif isinstance(last_desig, ast.IntLiteral):
+                                active_nested_pos = last_desig.value + 1
+                            elif hasattr(last_desig, 'value') and isinstance(last_desig.value, int):
+                                active_nested_pos = last_desig.value + 1
+                            break
                 else:
                     member_vals[name] = [val.value]
                     active_nested_member = None
@@ -8215,9 +8751,16 @@ class CodeGenerator:
             else:
                 actual_val = val.value if isinstance(val, ast.DesignatedInit) else val
                 if active_nested_member is not None:
-                    # Continuation after nested designator - add to same member
-                    member_vals[active_nested_member].append(actual_val)
-                else:
+                    # Check if we've exceeded the nested member's capacity
+                    if active_nested_size > 0 and active_nested_pos >= active_nested_size:
+                        # Array is full — fall through to next struct member
+                        active_nested_member = None
+                    else:
+                        # Continuation after nested designator - add to same member
+                        member_vals[active_nested_member].append(actual_val)
+                        active_nested_pos += 1
+                        continue
+                if active_nested_member is None:
                     # Non-designated value - goes to next sequential member
                     if next_idx < len(members):
                         mname = members[next_idx][0]

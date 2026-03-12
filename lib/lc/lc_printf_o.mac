@@ -1,0 +1,103 @@
+; lc_printf_o.mac - printf %o handler (unsigned int octal)
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_width
+	EXTRN	_printf_zero
+	EXTRN	_printf_decbuf
+	EXTRN	_printf_dstart
+	EXTRN	_printf_dcnt
+
+	CSEG
+
+	PUBLIC	__printf_handle_o
+__printf_handle_o:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value
+	PUSH	IX
+	PUSH	BC
+	LD	B,0
+	LD	IX,_printf_decbuf+5
+_pho_cvt:
+	LD	A,L
+	AND	07h		; remainder = value & 7
+	ADD	A,'0'
+	DEC	IX
+	LD	(IX+0),A
+	INC	B
+	; Shift HL right by 3 (divide by 8)
+	SRL	H
+	RR	L
+	SRL	H
+	RR	L
+	SRL	H
+	RR	L
+	LD	A,H
+	OR	L
+	JR	NZ,_pho_cvt
+	LD	(_printf_dstart),IX
+	LD	A,B
+	LD	(_printf_dcnt),A
+	POP	BC
+	; Width padding
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_pho_nopad
+	LD	B,A
+	LD	A,(_printf_dcnt)
+	LD	C,A
+	LD	A,B
+	SUB	C
+	JR	Z,_pho_nopad
+	JR	C,_pho_nopad
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_zero)
+	OR	A
+	LD	A,' '
+	JR	Z,_pho_plp
+	LD	A,'0'
+_pho_plp:
+	LD	E,A
+	PUSH	AF
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	AF
+	DJNZ	_pho_plp
+	POP	BC
+_pho_nopad:
+	LD	HL,(_printf_dstart)
+	LD	A,(_printf_dcnt)
+	LD	B,A
+_pho_digs:
+	LD	E,(HL)
+	PUSH	BC
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	BC
+	INC	HL
+	DJNZ	_pho_digs
+	POP	IX
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	JP	_printf_loop
+
+	END

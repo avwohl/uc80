@@ -634,6 +634,8 @@ __zext32:
 	PUBLIC	__tmp32
 __tmp32:
 	DW	0,0
+	PUBLIC	__sret_buf
+__sret_buf:	DS	256		; Struct return buffer
 __mul32_mcd:
 	DW	0,0
 __mul32_mpr:

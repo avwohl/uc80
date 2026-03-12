@@ -1,0 +1,45 @@
+; lc_acos.mac - acos, acosf (depends on asin)
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fsub
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+	EXTRN	_asinf
+
+	CSEG
+
+; ============================================================
+; acos(x) = pi/2 - asin(x)
+; ============================================================
+	PUBLIC	_acos
+	PUBLIC	_acosf
+_acos:
+_acosf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	PUSH	DE
+	PUSH	HL
+	CALL	_asinf
+	POP	BC
+	POP	BC
+
+	; pi/2 - result (pi/2 = 1.5707963 = 3FC90FDB)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0FDBH
+	LD	DE,3FC9H
+	CALL	__fsub
+
+	POP	IX
+	RET
+
+	END

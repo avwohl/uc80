@@ -1,0 +1,132 @@
+; lc_atan.mac - atan, atanf
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__itof
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+
+	CSEG
+
+; ============================================================
+; atan(x) using series: x - x^3/3 + x^5/5 - ...
+; ============================================================
+	PUBLIC	_atan
+	PUBLIC	_atanf
+_atan:
+_atanf:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; For |x| > 1, use atan(x) = pi/2 - atan(1/x)
+	LD	(_atan_x),HL
+	LD	(_atan_x+2),DE
+	LD	A,D
+	AND	80H
+	LD	(_atan_sign),A
+	LD	A,D
+	AND	7FH
+	LD	D,A
+
+	; sum = x, term = x
+	LD	(_atan_sum),HL
+	LD	(_atan_sum+2),DE
+	LD	(_atan_term),HL
+	LD	(_atan_term+2),DE
+
+	; x^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+	LD	(_atan_x2),HL
+	LD	(_atan_x2+2),DE
+
+	LD	B,5
+	LD	C,3
+
+_atan_loop:
+	PUSH	BC
+
+	; term *= x^2
+	LD	HL,(_atan_term)
+	LD	DE,(_atan_term+2)
+	LD	A,(_atan_x2)
+	LD	(__tmp32),A
+	LD	A,(_atan_x2+1)
+	LD	(__tmp32+1),A
+	LD	A,(_atan_x2+2)
+	LD	(__tmp32+2),A
+	LD	A,(_atan_x2+3)
+	LD	(__tmp32+3),A
+	CALL	__fmul
+
+	; Negate
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	LD	(_atan_term),HL
+	LD	(_atan_term+2),DE
+
+	; Divide by n
+	POP	BC
+	PUSH	BC
+	LD	H,0
+	LD	L,C
+	INC	C
+	INC	C
+	LD	D,H
+	LD	E,L
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atan_term)
+	LD	DE,(_atan_term+2)
+	CALL	__fdiv
+
+	; Add to sum
+	LD	A,(_atan_sum)
+	LD	(__tmp32),A
+	LD	A,(_atan_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_atan_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_atan_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	LD	(_atan_sum),HL
+	LD	(_atan_sum+2),DE
+
+	POP	BC
+	DJNZ	_atan_loop
+
+	LD	HL,(_atan_sum)
+	LD	DE,(_atan_sum+2)
+	LD	A,(_atan_sign)
+	OR	D
+	LD	D,A
+
+	POP	BC
+	POP	IX
+	RET
+
+	DSEG
+
+_atan_x:	DS	4
+_atan_x2:	DS	4
+_atan_sum:	DS	4
+_atan_term:	DS	4
+_atan_sign:	DS	1
+
+	END

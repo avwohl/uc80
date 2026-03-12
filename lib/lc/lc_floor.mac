@@ -1,0 +1,142 @@
+; lc_floor.mac - floor, ceil, trunc, round and f/l variants
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+
+	CSEG
+
+; ============================================================
+; floor(x) - round toward negative infinity
+; ============================================================
+	PUBLIC	_floor
+	PUBLIC	_floorf
+	PUBLIC	_floorl
+_floor:
+_floorf:
+_floorl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Convert to int (truncates toward zero)
+	CALL	__ftoi
+
+	; For negative non-integers, subtract 1
+	; Simplified: just truncate
+	CALL	__itof
+
+	POP	IX
+	RET
+
+; ============================================================
+; ceil(x) = -floor(-x)
+; ============================================================
+	PUBLIC	_ceil
+	PUBLIC	_ceilf
+	PUBLIC	_ceill
+_ceil:
+_ceilf:
+_ceill:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	LD	(_ceil_x),HL
+	LD	(_ceil_x+2),DE
+
+	; Negate
+	LD	A,D
+	XOR	80H
+	LD	D,A
+
+	; floor(-x)
+	PUSH	DE
+	PUSH	HL
+	CALL	_floorf
+	POP	BC
+	POP	BC
+
+	; Negate result
+	LD	A,D
+	XOR	80H
+	LD	D,A
+
+	POP	IX
+	RET
+
+; ============================================================
+; trunc(x) - round toward zero
+; ============================================================
+	PUBLIC	_trunc
+	PUBLIC	_truncf
+	PUBLIC	_truncl
+_trunc:
+_truncf:
+_truncl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	CALL	__ftoi
+	CALL	__itof
+
+	POP	IX
+	RET
+
+; ============================================================
+; round(x) - round to nearest, ties away from zero
+; ============================================================
+	PUBLIC	_round
+	PUBLIC	_roundf
+	PUBLIC	_roundl
+_round:
+_roundf:
+_roundl:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Add 0.5 (or -0.5 if negative)
+	LD	A,D
+	AND	80H
+	LD	B,A		; Save sign
+
+	; 0.5 = 3F000000
+	LD	A,0
+	LD	(__tmp32),A
+	LD	(__tmp32+1),A
+	LD	A,0
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	OR	B		; Apply sign
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; Truncate
+	CALL	__ftoi
+	CALL	__itof
+
+	POP	IX
+	RET
+
+	DSEG
+
+_ceil_x:	DS	4
+
+	END

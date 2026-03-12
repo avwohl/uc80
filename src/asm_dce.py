@@ -38,6 +38,7 @@ class AssemblyDCE:
         self.header_lines: list[str] = []
         self.footer_lines: list[str] = []
         self.dseg_lines: list[str] = []
+        self.common_lines: list[str] = []  # COMMON segment lines (BSS)
         self.current_segment = "CSEG"
         self._explicit_entry = False  # True when caller provides entry points
 
@@ -79,6 +80,7 @@ class AssemblyDCE:
         current_block: AsmBlock | None = None
         in_header = True
         in_dseg = False
+        in_common = False
 
         for line in lines:
             stripped = line.strip()
@@ -87,6 +89,7 @@ class AssemblyDCE:
             # Track segment changes
             if upper == 'DSEG':
                 in_dseg = True
+                in_common = False
                 self.current_segment = "DSEG"
                 if current_block:
                     self.blocks[current_block.label] = current_block
@@ -94,9 +97,24 @@ class AssemblyDCE:
                 continue
             elif upper == 'CSEG':
                 in_dseg = False
+                in_common = False
                 self.current_segment = "CSEG"
                 if in_header:
                     self.header_lines.append(line)
+                continue
+            elif upper.startswith('COMMON'):
+                in_common = True
+                in_dseg = False
+                self.current_segment = "COMMON"
+                if current_block:
+                    self.blocks[current_block.label] = current_block
+                    current_block = None
+                self.common_lines.append(line)
+                continue
+
+            # Collect COMMON content separately (BSS - always preserved)
+            if in_common:
+                self.common_lines.append(line)
                 continue
 
             # Collect DSEG content separately
@@ -338,6 +356,20 @@ class AssemblyDCE:
             block.successors.add(target)
             return
 
+        # DW with label reference (jump tables)
+        match = re.match(r'\s*DW\s+(\@?\?*\w+)', code, re.IGNORECASE)
+        if match:
+            target = match.group(1)
+            block.successors.add(target)
+            return
+
+        # LD reg,label (address-taken labels, e.g. LD DE,@SWTAB)
+        match = re.match(r'\s*LD\s+\w+,\s*(\@\w+)', code, re.IGNORECASE)
+        if match:
+            target = match.group(1)
+            block.successors.add(target)
+            return
+
     def _find_reachable(self, entry_points: set[str]) -> set[str]:
         """Find all blocks reachable from entry points."""
         reachable: set[str] = set()
@@ -465,6 +497,11 @@ class AssemblyDCE:
             for label, data_block in self.data_blocks.items():
                 if label in referenced_data:
                     lines.extend(data_block.lines)
+
+        # COMMON segment (BSS) - always preserved
+        if self.common_lines:
+            lines.append("")
+            lines.extend(self.common_lines)
 
         # Footer (END)
         if self.footer_lines:

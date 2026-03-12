@@ -7,6 +7,10 @@ are pdfs of the language refrence
 
 See docs/paid/ISO+IEC+9899-2024.txt for the c standard we need to implement
 
+Do NOT implement K&R-style (old-style) function definitions where parameters
+are declared after the closing parenthesis. These were removed in C23 (our
+target standard). Only prototype-style function declarations are supported.
+
 WARNING: Do not attempt to read large PDF files (like ISO C standards).
 Reading PDFs over a few pages causes the assistant to hang/loop indefinitely.
 Use web searches or summarized documentation instead. 

@@ -1,0 +1,42 @@
+; lc_math_helper.mac - shared math helper functions
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__tmp32
+
+	CSEG
+
+; ============================================================
+; Helper: Load float argument from stack into DEHL
+; Call with IX pointing to stack frame
+; ============================================================
+	PUBLIC	_math_getarg
+_math_getarg:
+	; Stack: +0,+1=BC, +2,+3=IX, +4,+5=retaddr, +6..+9=arg
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
+	RET
+
+; ============================================================
+; Helper: Load second float argument into __tmp32
+; ============================================================
+	PUBLIC	_math_getarg2
+_math_getarg2:
+	LD	A,(IX+10)
+	LD	(__tmp32),A
+	LD	A,(IX+11)
+	LD	(__tmp32+1),A
+	LD	A,(IX+12)
+	LD	(__tmp32+2),A
+	LD	A,(IX+13)
+	LD	(__tmp32+3),A
+	RET
+
+	END

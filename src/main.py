@@ -137,6 +137,20 @@ def main() -> int:
         metavar="FILE",
         help="Startup code .mac file (default: lib/crt0.mac)"
     )
+    parser.add_argument(
+        "--printf",
+        action="append",
+        default=[],
+        choices=["int", "long", "llong", "float", "all"],
+        help="Printf format support level (can specify multiple: int long float)"
+    )
+    parser.add_argument(
+        "--scanf",
+        action="append",
+        default=[],
+        choices=["int", "long", "llong", "float", "all"],
+        help="Scanf format support level (can specify multiple: int long float)"
+    )
 
     args = parser.parse_args()
 
@@ -167,6 +181,8 @@ def main() -> int:
         mac_files = []  # Assembly files to append
         total_tokens = 0
         total_preprocessed_lines = 0
+        printf_features: set[str] | None = None  # From #pragma printf
+        scanf_features: set[str] | None = None   # From #pragma scanf
 
         for input_path in input_paths:
             # Handle .mac assembly files - pass through
@@ -208,6 +224,16 @@ def main() -> int:
 
                 source = pp.preprocess(source, str(input_path))
                 total_preprocessed_lines += len(source.splitlines())
+
+                # Collect #pragma printf/scanf features
+                if pp.printf_features:
+                    if printf_features is None:
+                        printf_features = set()
+                    printf_features |= pp.printf_features
+                if pp.scanf_features:
+                    if scanf_features is None:
+                        scanf_features = set()
+                    scanf_features |= pp.scanf_features
 
                 if args.verbose:
                     print(f"  Preprocessed to {len(source.splitlines())} lines")
@@ -271,9 +297,17 @@ def main() -> int:
         # Embed startup code (crt0) by default when whole_program is enabled
         embed_startup = whole_program and not args.no_embed_startup
 
+        # Command-line --printf overrides #pragma printf
+        if args.printf:
+            printf_features = set(args.printf)
+        if args.scanf:
+            scanf_features = set(args.scanf)
+
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                            enable_inlining, enable_const_propagation, whole_program,
-                           embed_runtime=embed_runtime)
+                           embed_runtime=embed_runtime,
+                           printf_features=printf_features,
+                           scanf_features=scanf_features)
         code = gen.generate(merged_ast)
 
         if args.verbose:
@@ -607,7 +641,13 @@ def main() -> int:
             if whole_program:
                 # In whole-program mode, only the program's own PUBLIC labels
                 # are entry points. Library functions are kept only if reachable.
-                code = asm_eliminate_dead_code(code, entry_points=program_public_labels)
+                # Also include address-taken static functions (they aren't PUBLIC
+                # but their addresses are used, so DCE must not eliminate them).
+                asm_entry_points = set(program_public_labels)
+                if gen.call_graph_analyzer:
+                    for func_name in gen.call_graph_analyzer.address_taken:
+                        asm_entry_points.add(f"_{func_name}")
+                code = asm_eliminate_dead_code(code, entry_points=asm_entry_points)
             else:
                 code = asm_eliminate_dead_code(code)
             lines_after = len(code.splitlines())

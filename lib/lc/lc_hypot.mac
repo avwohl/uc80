@@ -1,0 +1,69 @@
+; lc_hypot.mac - hypot, hypotf (depends on sqrt)
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__fmul
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+	EXTRN	_math_getarg2
+	EXTRN	_sqrtf
+
+	CSEG
+
+; ============================================================
+; hypot(x, y) = sqrt(x^2 + y^2)
+; ============================================================
+	PUBLIC	_hypot
+	PUBLIC	_hypotf
+_hypot:
+_hypotf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg	; x
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; x^2
+	LD	(_hypot_x2),HL
+	LD	(_hypot_x2+2),DE
+
+	CALL	_math_getarg2	; y
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; y^2
+
+	; x^2 + y^2
+	LD	A,(_hypot_x2)
+	LD	(__tmp32),A
+	LD	A,(_hypot_x2+1)
+	LD	(__tmp32+1),A
+	LD	A,(_hypot_x2+2)
+	LD	(__tmp32+2),A
+	LD	A,(_hypot_x2+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; sqrt
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrtf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+	DSEG
+
+_hypot_x2:	DS	4
+
+	END
