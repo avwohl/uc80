@@ -23,31 +23,31 @@ PRTSTR	EQU	9
 _tanh:
 _tanhf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
 	CALL	_math_getarg
+	LD	(_tanh_x),HL
+	LD	(_tanh_x+2),DE
+
+	; sinh(x)
 	PUSH	DE
 	PUSH	HL
-
-	; sinh
 	CALL	_sinhf
 	POP	BC
 	POP	BC
 	LD	(_tanh_s),HL
 	LD	(_tanh_s+2),DE
 
-	; cosh
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	CALL	_math_getarg
-	PUSH	DE
+	; cosh(x) - push from saved memory
+	LD	HL,(_tanh_x+2)
+	PUSH	HL
+	LD	HL,(_tanh_x)
 	PUSH	HL
 	CALL	_coshf
 	POP	BC
 	POP	BC
-	POP	IX
 
 	; sinh/cosh
 	LD	(__tmp32),HL
@@ -56,11 +56,13 @@ _tanhf:
 	LD	DE,(_tanh_s+2)
 	CALL	__fdiv
 
+	POP	BC
 	POP	IX
 	RET
 
 	DSEG
 
+_tanh_x:	DS	4
 _tanh_s:	DS	4
 
 	END

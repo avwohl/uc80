@@ -1,0 +1,48 @@
+; lc_exp2.mac - exp2, exp2f
+; exp2(x) = 2^x = exp(x * ln(2))
+; ln(2) = 0.693147... = 3F317218H
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fmul
+	EXTRN	__tmp32
+	EXTRN	_expf
+
+	CSEG
+
+	PUBLIC	_exp2
+	PUBLIC	_exp2f
+_exp2:
+_exp2f:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; x * ln(2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,7218H	; ln(2) = 3F317218H
+	LD	DE,3F31H
+	CALL	__fmul
+
+	; exp(x * ln(2))
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+	END

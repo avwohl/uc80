@@ -1,4 +1,5 @@
 ; lc_exp.mac - exp, expf, expl
+; Range reduction: exp(x) = exp(r) * 2^k where k = trunc(x/ln2), r = x - k*ln2
 	.Z80
 
 ; CP/M BDOS function numbers
@@ -8,8 +9,10 @@ CONIN	EQU	1
 PRTSTR	EQU	9
 
 	EXTRN	__fadd
+	EXTRN	__fsub
 	EXTRN	__fmul
 	EXTRN	__fdiv
+	EXTRN	__ftoi
 	EXTRN	__itof
 	EXTRN	__tmp32
 	EXTRN	_math_getarg
@@ -17,8 +20,7 @@ PRTSTR	EQU	9
 	CSEG
 
 ; ============================================================
-; exp(x) - Exponential using Taylor series
-; e^x = 1 + x + x^2/2! + x^3/3! + ...
+; exp(x) - Exponential with range reduction
 ; ============================================================
 	PUBLIC	_exp
 	PUBLIC	_expf
@@ -31,11 +33,59 @@ _expl:
 	LD	IX,0
 	ADD	IX,SP
 
-	CALL	_math_getarg
+	; Read float arg directly: IX+6..IX+9
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
 
 	LD	(_exp_x),HL
 	LD	(_exp_x+2),DE
 
+	; --- Range reduction: k = trunc(x / ln2), r = x - k*ln2 ---
+	; Multiply x by 1/ln2 = 1.442695 = 3FB8AA3BH
+	LD	A,3BH
+	LD	(__tmp32),A
+	LD	A,0AAH
+	LD	(__tmp32+1),A
+	LD	A,0B8H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fmul		; DEHL = x / ln2
+
+	; k = trunc(x/ln2) -> integer
+	CALL	__ftoi		; DEHL = k as int
+	LD	A,L
+	LD	(_exp_k),A	; Save k (low byte, signed)
+
+	; Convert k back to float
+	CALL	__itof
+
+	; r = x - k * ln2
+	; First compute k * ln2
+	LD	A,18H
+	LD	(__tmp32),A
+	LD	A,72H
+	LD	(__tmp32+1),A
+	LD	A,31H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fmul		; DEHL = k * ln2
+
+	; r = x - k*ln2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_exp_x)
+	LD	DE,(_exp_x+2)
+	CALL	__fsub		; DEHL = x - k*ln2 = r
+
+	; Save r as the new x for Taylor series
+	LD	(_exp_r),HL
+	LD	(_exp_r+2),DE
+
+	; --- Taylor series: exp(r) = 1 + r + r^2/2! + ... ---
 	; Start with sum = 1.0, term = 1.0
 	LD	HL,0
 	LD	DE,3F80H
@@ -44,23 +94,23 @@ _expl:
 	LD	(_exp_term),HL
 	LD	(_exp_term+2),DE
 
-	; 10 iterations for precision
+	; 10 iterations for precision (plenty for |r| < ln2)
 	LD	B,10
 	LD	C,1
 
 _exp_loop:
 	PUSH	BC
 
-	; term *= x
+	; term *= r
 	LD	HL,(_exp_term)
 	LD	DE,(_exp_term+2)
-	LD	A,(_exp_x)
+	LD	A,(_exp_r)
 	LD	(__tmp32),A
-	LD	A,(_exp_x+1)
+	LD	A,(_exp_r+1)
 	LD	(__tmp32+1),A
-	LD	A,(_exp_x+2)
+	LD	A,(_exp_r+2)
 	LD	(__tmp32+2),A
-	LD	A,(_exp_x+3)
+	LD	A,(_exp_r+3)
 	LD	(__tmp32+3),A
 	CALL	__fmul
 	LD	(_exp_term),HL
@@ -68,12 +118,12 @@ _exp_loop:
 
 	; Divide by n
 	POP	BC
-	PUSH	BC
-	LD	H,0
 	LD	L,C
-	INC	C
-	LD	D,H
-	LD	E,L
+	INC	C		; Advance C for next iteration
+	PUSH	BC		; Save updated B and C
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = n as 32-bit int
 	CALL	__itof
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
@@ -99,8 +149,41 @@ _exp_loop:
 	POP	BC
 	DJNZ	_exp_loop
 
+	; --- Multiply by 2^k: add k to IEEE 754 exponent ---
 	LD	HL,(_exp_sum)
 	LD	DE,(_exp_sum+2)
+
+	; Extract biased exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH
+	ADD	A,A		; EEEEEEE0
+	LD	B,A
+	LD	A,E		; EMMMMMMM
+	RLCA
+	AND	1
+	OR	B		; A = full biased exponent
+
+	; Add k
+	LD	B,A
+	LD	A,(_exp_k)
+	ADD	A,B		; New biased exponent
+
+	; Reconstruct float
+	LD	C,A		; Save new exponent
+	SRL	A		; exp >> 1
+	LD	B,A
+	LD	A,D
+	AND	80H		; Keep sign
+	OR	B
+	LD	D,A
+	LD	A,C
+	AND	1		; exp[0]
+	RRCA			; Rotate to bit 7
+	LD	B,A
+	LD	A,E
+	AND	7FH		; Keep mantissa
+	OR	B
+	LD	E,A
 
 	POP	BC
 	POP	IX
@@ -109,7 +192,9 @@ _exp_loop:
 	DSEG
 
 _exp_x:		DS	4
+_exp_r:		DS	4
 _exp_sum:	DS	4
 _exp_term:	DS	4
+_exp_k:		DS	1
 
 	END

@@ -129,7 +129,10 @@ All functions use IEEE 754 single-precision (32-bit). Taylor series, Newton-Raph
 - [x] `frexp()`, `ldexp()`, `modf()`
 - [x] Float (`sinf`, `cosf`, etc.) and long double (`sinl`, `cosl`, etc.) variants
 
-Not implemented: `asinh`, `acosh`, `atanh`, `exp2`, `expm1`, `log1p`, `logb`, `ilogb`, `scalbn`, `nan`, `fma`, `fmax`, `fmin`, `fdim`, `nextafter`, classification macros.
+- [x] `exp2()`, `expm1()`, `log1p()`, `logb()`, `scalbn()`
+- [x] `fmax()`, `fdim()`
+
+Not implemented: `asinh`, `acosh`, `atanh`, `ilogb`, `nan`, `fma`, `fmin`, `nextafter`, classification macros.
 
 ### `<stdio.h>` - Implemented
 Full file I/O via CP/M BDOS FCB calls. 128-byte buffering. Max 4 regular files + 3 standard streams.
@@ -152,7 +155,7 @@ Full file I/O via CP/M BDOS FCB calls. 128-byte buffering. Max 4 regular files +
 
 Printf links only needed format handlers via `#pragma printf int|long|llong|float|all`.
 
-### `<stdlib.h>` - Mostly Implemented
+### `<stdlib.h>` - Implemented
 - [x] `atoi()`, `atol()`, `atof()`
 - [x] `strtol()`, `strtoul()`, `strtod()`, `strtof()`
 - [x] `malloc()`, `calloc()`, `realloc()` - bump allocator (no real free)
@@ -162,8 +165,8 @@ Printf links only needed format handlers via `#pragma printf int|long|llong|floa
 - [x] `exit()`, `abort()`, `atexit()` - supports 4 handlers
 - [ ] `getenv()` - stub (CP/M has no environment)
 - [ ] `system()` - stub (CP/M limited)
-- [ ] `bsearch()` - declared only
-- [ ] `qsort()` - declared, may be incomplete
+- [x] `bsearch()` - binary search
+- [x] `qsort()` - quicksort with median-of-3 pivot
 - [ ] `mblen()`, `mbtowc()`, `wctomb()`, `mbstowcs()`, `wcstombs()` - stubs
 
 ### `<setjmp.h>` - Implemented
@@ -211,7 +214,7 @@ Floating-point arithmetic (IEEE 754)	DONE
 `<ctype.h>`	DONE
 `<math.h>`	DONE (core functions)
 `<stdio.h>`	DONE (printf, scanf, file I/O)
-`<stdlib.h>`	MOSTLY DONE (no qsort/bsearch)
+`<stdlib.h>`	DONE
 `<setjmp.h>`	DONE
 `<signal.h>`	PARTIAL (software only)
 `<locale.h>`	MINIMAL (C locale only)
@@ -224,9 +227,8 @@ Floating-point arithmetic (IEEE 754)	DONE
 ## REMAINING WORK
 
 ### Priority 1 - Gaps
-1. **`qsort()`, `bsearch()`** - stdlib completeness
-2. **`_Complex` codegen** - complex number arithmetic
-3. **Math extras** - asinh/acosh/atanh, exp2, log1p, fma, classification macros
+1. **`_Complex` codegen** - complex number arithmetic
+2. **Math extras** - asinh/acosh/atanh, fma, fmin, classification macros
 
 ### Priority 2 - Nice to have
 4. **`<time.h>`** - real implementation if RTC available

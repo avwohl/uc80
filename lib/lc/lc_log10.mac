@@ -25,6 +25,7 @@ _log10:
 _log10f:
 _log10l:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -46,6 +47,7 @@ _log10l:
 	LD	(__tmp32+3),A
 	CALL	__fdiv
 
+	POP	BC
 	POP	IX
 	RET
 

@@ -1,0 +1,20 @@
+; lc_nan.mac - nan, nanf
+; Return quiet NaN (7FC00000H)
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+	PUBLIC	_nan
+	PUBLIC	_nanf
+_nan:
+_nanf:
+	LD	HL,0
+	LD	DE,7FC0H	; Quiet NaN
+	RET
+
+	END

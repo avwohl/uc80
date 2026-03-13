@@ -14,35 +14,41 @@ PRTSTR	EQU	9
 
 ; ============================================================
 ; frexp(x, int *exp) - extract mantissa and exponent
+; Returns mantissa in [0.5, 1), stores exponent
 ; ============================================================
 	PUBLIC	_frexp
 	PUBLIC	_frexpf
 _frexp:
 _frexpf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
-	CALL	_math_getarg
+	; Read float arg: IX+6..IX+9
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
 
-	; Extract exponent
-	LD	A,D
-	ADD	A,A		; Shift sign out
+	; Extract 8-bit biased exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH		; A = 0EEEEEEE
+	ADD	A,A		; A = EEEEEEE0
 	LD	B,A
-	LD	A,E
-	RLA
-	LD	C,A
-	LD	A,B
-	RRA			; A = biased exponent
+	LD	A,E		; E = EMMMMMMM
+	RLCA			; A = MMMMMMME
+	AND	1		; A = 0000000E
+	OR	B		; A = EEEEEEEE (full exponent)
 
-	; Unbias: exp = biased - 127
-	SUB	126		; Actually we want mantissa in [0.5,1), so -126
+	; Unbias: exp = biased - 126
+	SUB	126
 	LD	B,A
 
-	; Store exponent
-	LD	A,(IX+8)
+	; Store exponent to int* (at IX+10..IX+11)
+	LD	A,(IX+10)
 	LD	C,A
-	LD	A,(IX+9)
+	LD	A,(IX+11)
 	PUSH	HL
 	LD	H,A
 	LD	L,C
@@ -54,15 +60,17 @@ _frexpf:
 	LD	(HL),A
 	POP	HL
 
-	; Set exponent to 126 (gives [0.5, 1))
+	; Set exponent to 126 (biased) -> mantissa in [0.5, 1)
+	; exp 126 = 01111110: D = S|3FH, E bit 7 = 0
 	LD	A,D
 	AND	80H		; Keep sign
-	OR	3EH		; Exponent 126 >> 1
+	OR	3FH		; exp[7:1] for exponent 126
 	LD	D,A
 	LD	A,E
-	OR	80H		; Set exp bit 0
+	AND	7FH		; Clear exp bit 0 (E0=0 for 126)
 	LD	E,A
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -74,41 +82,50 @@ _frexpf:
 _ldexp:
 _ldexpf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
-	CALL	_math_getarg
+	; Read float arg: IX+6..IX+9
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
 
-	; Get int exponent
-	LD	A,(IX+8)
-	LD	B,A
+	; Get int exponent n (at IX+10)
+	LD	B,(IX+10)
 
-	; Add to float exponent
-	LD	A,D
-	ADD	A,A
+	; Extract 8-bit biased exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH		; Strip sign
+	ADD	A,A		; EEEEEEE0
 	LD	C,A
-	LD	A,E
-	RLA
-	LD	(__tmp32),A	; Save mantissa bit
-	LD	A,C
-	RRA
-	ADD	A,B		; Add exponent
-	LD	C,A
-	RLCA
+	LD	A,E		; EMMMMMMM
+	RLCA			; MMMMMMME
 	AND	1
+	OR	C		; Full 8-bit exponent
+
+	; Add n
+	ADD	A,B		; New biased exponent
+
+	; Reconstruct: D = S | exp[7:1], E = exp[0] | mantissa[6:0]
+	LD	C,A		; Save new exponent
+	SRL	A		; A = exp >> 1 = 0_exp[7:1]
 	LD	B,A
 	LD	A,D
-	AND	80H
-	OR	C
-	LD	D,A
-	LD	A,(__tmp32)
-	AND	7FH
+	AND	80H		; Keep sign
 	OR	B
-	RLA
+	LD	D,A
+	LD	A,C		; New exponent
+	AND	1		; exp[0]
+	RRCA			; Rotate to bit 7
+	LD	B,A
 	LD	A,E
-	RRA
+	AND	7FH		; Keep mantissa bits
+	OR	B		; Set exp[0]
 	LD	E,A
 
+	POP	BC
 	POP	IX
 	RET
 

@@ -1,0 +1,24 @@
+; lc_scalbn.mac - scalbn, scalbnf, scalbln, scalblnf
+; scalbn(x, n) = x * 2^n (same as ldexp)
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_ldexpf
+
+	CSEG
+
+	PUBLIC	_scalbn
+	PUBLIC	_scalbnf
+	PUBLIC	_scalbln
+	PUBLIC	_scalblnf
+_scalbn:
+_scalbnf:
+_scalbln:
+_scalblnf:
+	JP	_ldexpf
+
+	END

@@ -1,0 +1,130 @@
+; lc_nextafter.mac - nextafter, nextafterf
+; Return next representable float from x toward y
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fcmp
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_nextafter
+	PUBLIC	_nextafterf
+_nextafter:
+_nextafterf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Check x == 0
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_na_xzero
+
+	; Load y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	; Reload x (clobbered by __tmp32 stores)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Compare x with y
+	CALL	__fcmp
+	JR	Z,_na_eq
+
+	; Save C flag: 1 if x < y
+	LD	A,0
+	RLA			; A = carry
+	LD	B,A		; B = (x < y) ? 1 : 0
+
+	; Get sign of x
+	LD	A,(IX+7)
+	RLCA			; Sign into C and bit 0
+	AND	1		; A = sign (0=pos, 1=neg)
+
+	; XOR: different → increment, same → decrement
+	XOR	B
+
+	; Reload x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	JR	NZ,_na_inc
+
+	; Decrement 32-bit DEHL
+	LD	A,L
+	SUB	1
+	LD	L,A
+	LD	A,H
+	SBC	A,0
+	LD	H,A
+	LD	A,E
+	SBC	A,0
+	LD	E,A
+	LD	A,D
+	SBC	A,0
+	LD	D,A
+	JR	_na_done
+
+_na_inc:
+	; Increment 32-bit DEHL
+	LD	A,L
+	ADD	A,1
+	LD	L,A
+	LD	A,H
+	ADC	A,0
+	LD	H,A
+	LD	A,E
+	ADC	A,0
+	LD	E,A
+	LD	A,D
+	ADC	A,0
+	LD	D,A
+	JR	_na_done
+
+_na_xzero:
+	; x is zero, return smallest subnormal toward y
+	LD	L,1
+	LD	H,0
+	LD	E,0
+	LD	A,(IX+11)	; Sign of y
+	AND	80H
+	LD	D,A
+	JR	_na_done
+
+_na_eq:
+	; x == y, return y
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	E,(IX+10)
+	LD	D,(IX+11)
+
+_na_done:
+	POP	IX
+	RET
+
+	END

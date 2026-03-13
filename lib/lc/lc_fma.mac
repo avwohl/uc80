@@ -1,0 +1,59 @@
+; lc_fma.mac - fma, fmaf
+; fma(x, y, z) = x * y + z
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fmul
+	EXTRN	__fadd
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_fma
+	PUBLIC	_fmaf
+_fma:
+_fmaf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	; x * y
+	CALL	__fmul
+
+	; z into __tmp32
+	LD	A,(IX+12)
+	LD	(__tmp32),A
+	LD	A,(IX+13)
+	LD	(__tmp32+1),A
+	LD	A,(IX+14)
+	LD	(__tmp32+2),A
+	LD	A,(IX+15)
+	LD	(__tmp32+3),A
+
+	; x*y + z
+	CALL	__fadd
+
+	POP	IX
+	RET
+
+	END

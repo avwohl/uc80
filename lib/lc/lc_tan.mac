@@ -25,6 +25,7 @@ _tan:
 _tanf:
 _tanl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -43,10 +44,10 @@ _tanl:
 	LD	(_tan_sin),HL
 	LD	(_tan_sin+2),DE
 
-	; Compute cos(x)
-	LD	HL,(_tan_x)
-	PUSH	HL
+	; Compute cos(x) - push high word first, low word second
 	LD	HL,(_tan_x+2)
+	PUSH	HL
+	LD	HL,(_tan_x)
 	PUSH	HL
 	CALL	_cosf
 	POP	BC
@@ -59,6 +60,7 @@ _tanl:
 	LD	DE,(_tan_sin+2)
 	CALL	__fdiv
 
+	POP	BC
 	POP	IX
 	RET
 

@@ -31,6 +31,7 @@ PRTSTR	EQU	9		; Print string (address in DE, '$' terminated)
 _acos:
 _acosf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -48,8 +49,90 @@ _acosf:
 	LD	DE,3FC9H
 	CALL	__fsub
 
+	POP	BC
 	POP	IX
 	RET
+
+
+; ============================================================
+; lc_acosh.mac
+; ============================================================
+	CSEG
+; lc_acosh.mac - acosh, acoshf
+; acosh(x) = log(x + sqrt(x^2 - 1)), x >= 1
+
+
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_acosh
+	PUBLIC	_acoshf
+_acosh:
+_acoshf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	(_acosh_x),HL
+	LD	(_acosh_x+2),DE
+
+	; x^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+	LD	(_acosh_t),HL
+	LD	(_acosh_t+2),DE
+
+	; x^2 - 1.0: put 1.0 in __tmp32, x^2 in DEHL
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_acosh_t)
+	LD	DE,(_acosh_t+2)
+	CALL	__fsub		; x^2 - 1.0
+
+	; sqrt(x^2 - 1)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrtf
+	POP	BC
+	POP	BC
+
+	; x + sqrt(x^2 - 1)
+	LD	A,(_acosh_x)
+	LD	(__tmp32),A
+	LD	A,(_acosh_x+1)
+	LD	(__tmp32+1),A
+	LD	A,(_acosh_x+2)
+	LD	(__tmp32+2),A
+	LD	A,(_acosh_x+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; log
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+	DSEG
+
+_acosh_x:	DS	4
+_acosh_t:	DS	4
 
 
 ; ============================================================
@@ -74,6 +157,7 @@ _acosf:
 _asin:
 _asinf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -112,12 +196,88 @@ _asinf:
 	POP	BC
 	POP	BC
 
+	POP	BC
 	POP	IX
 	RET
 
 	DSEG
 
 _asin_x:	DS	4
+
+
+; ============================================================
+; lc_asinh.mac
+; ============================================================
+	CSEG
+; lc_asinh.mac - asinh, asinhf
+; asinh(x) = log(x + sqrt(x^2 + 1))
+
+
+	EXTRN	__fadd
+	EXTRN	__fmul
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_asinh
+	PUBLIC	_asinhf
+_asinh:
+_asinhf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	(_asinh_x),HL
+	LD	(_asinh_x+2),DE
+
+	; x^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+
+	; x^2 + 1.0
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fadd
+
+	; sqrt(x^2 + 1)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrtf
+	POP	BC
+	POP	BC
+
+	; x + sqrt(x^2 + 1)
+	LD	A,(_asinh_x)
+	LD	(__tmp32),A
+	LD	A,(_asinh_x+1)
+	LD	(__tmp32+1),A
+	LD	A,(_asinh_x+2)
+	LD	(__tmp32+2),A
+	LD	A,(_asinh_x+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; log(x + sqrt(x^2 + 1))
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+	DSEG
+
+_asinh_x:	DS	4
 
 
 ; ============================================================
@@ -250,9 +410,11 @@ _assert_msg:	DB	'Assert: ',0
 ; ============================================================
 	CSEG
 ; lc_atan.mac - atan, atanf
+; Range reduction: |x|>=2 -> pi/2-atan(1/x), 0.5<=|x|<2 -> pi/4+atan((x-1)/(x+1))
 
 
 	EXTRN	__fadd
+	EXTRN	__fsub
 	EXTRN	__fmul
 	EXTRN	__fdiv
 	EXTRN	__itof
@@ -261,7 +423,7 @@ _assert_msg:	DB	'Assert: ',0
 	CSEG
 
 ; ============================================================
-; atan(x) using series: x - x^3/3 + x^5/5 - ...
+; atan(x) with range reduction
 ; ============================================================
 	PUBLIC	_atan
 	PUBLIC	_atanf
@@ -274,45 +436,116 @@ _atanf:
 
 	CALL	_math_getarg
 
-	; For |x| > 1, use atan(x) = pi/2 - atan(1/x)
-	LD	(_atan_x),HL
-	LD	(_atan_x+2),DE
+	; Save and strip sign
 	LD	A,D
 	AND	80H
 	LD	(_atan_sign),A
 	LD	A,D
 	AND	7FH
 	LD	D,A
+	; DEHL = |x|
+	LD	(_atan_val),HL
+	LD	(_atan_val+2),DE
 
-	; sum = x, term = x
+	; Init flags
+	XOR	A
+	LD	(_atan_inv),A
+	LD	(_atan_off),A
+
+	; Extract biased exponent
+	LD	A,D
+	ADD	A,A
+	LD	B,A
+	LD	A,E
+	RLCA
+	AND	1
+	OR	B		; A = biased exponent
+
+	CP	128
+	JR	NC,_atan_invert	; |x| >= 2.0
+	CP	126
+	JR	NC,_atan_offset	; 0.5 <= |x| < 2.0
+	JR	_atan_series	; |x| < 0.5
+
+_atan_invert:
+	; atan(|x|) = pi/2 - atan(1/|x|)
+	LD	A,1
+	LD	(_atan_inv),A
+	LD	HL,(_atan_val)
+	LD	DE,(_atan_val+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fdiv		; 1/|x|
+	LD	(_atan_val),HL
+	LD	(_atan_val+2),DE
+	JR	_atan_series
+
+_atan_offset:
+	; atan(|x|) = pi/4 + atan((|x|-1)/(|x|+1))
+	LD	A,1
+	LD	(_atan_off),A
+	; |x| - 1
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atan_val)
+	LD	DE,(_atan_val+2)
+	CALL	__fsub		; |x| - 1
+	LD	(_atan_num),HL
+	LD	(_atan_num+2),DE
+	; |x| + 1
+	LD	HL,0
+	LD	DE,3F80H
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atan_val)
+	LD	DE,(_atan_val+2)
+	CALL	__fadd		; |x| + 1
+	; z = (|x|-1)/(|x|+1)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atan_num)
+	LD	DE,(_atan_num+2)
+	CALL	__fdiv
+	LD	(_atan_val),HL
+	LD	(_atan_val+2),DE
+
+_atan_series:
+	; Taylor: val - val^3/3 + val^5/5 - ...
+	; |val| <= 0.5, 8 terms for good accuracy
+	LD	HL,(_atan_val)
+	LD	DE,(_atan_val+2)
 	LD	(_atan_sum),HL
 	LD	(_atan_sum+2),DE
 	LD	(_atan_term),HL
 	LD	(_atan_term+2),DE
 
-	; x^2
+	; val^2
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
 	CALL	__fmul
-	LD	(_atan_x2),HL
-	LD	(_atan_x2+2),DE
+	LD	(_atan_v2),HL
+	LD	(_atan_v2+2),DE
 
-	LD	B,5
+	LD	B,8
 	LD	C,3
 
 _atan_loop:
 	PUSH	BC
 
-	; term *= x^2
+	; term *= val^2
 	LD	HL,(_atan_term)
 	LD	DE,(_atan_term+2)
-	LD	A,(_atan_x2)
+	LD	A,(_atan_v2)
 	LD	(__tmp32),A
-	LD	A,(_atan_x2+1)
+	LD	A,(_atan_v2+1)
 	LD	(__tmp32+1),A
-	LD	A,(_atan_x2+2)
+	LD	A,(_atan_v2+2)
 	LD	(__tmp32+2),A
-	LD	A,(_atan_x2+3)
+	LD	A,(_atan_v2+3)
 	LD	(__tmp32+3),A
 	CALL	__fmul
 
@@ -325,13 +558,13 @@ _atan_loop:
 
 	; Divide by n
 	POP	BC
-	PUSH	BC
-	LD	H,0
 	LD	L,C
 	INC	C
-	INC	C
-	LD	D,H
-	LD	E,L
+	INC	C		; Advance to next odd
+	PUSH	BC		; Save updated B and C
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = n as 32-bit int
 	CALL	__itof
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
@@ -357,6 +590,34 @@ _atan_loop:
 
 	LD	HL,(_atan_sum)
 	LD	DE,(_atan_sum+2)
+
+	; If off_flag: result += pi/4 (3F490FDB)
+	LD	A,(_atan_off)
+	OR	A
+	JR	Z,_atan_no_off
+	LD	A,0DBH
+	LD	(__tmp32),A
+	LD	A,0FH
+	LD	(__tmp32+1),A
+	LD	A,49H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fadd
+_atan_no_off:
+
+	; If inv_flag: result = pi/2 - result (3FC90FDB)
+	LD	A,(_atan_inv)
+	OR	A
+	JR	Z,_atan_no_inv
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0FDBH
+	LD	DE,3FC9H
+	CALL	__fsub
+_atan_no_inv:
+
+	; Apply sign
 	LD	A,(_atan_sign)
 	OR	D
 	LD	D,A
@@ -367,11 +628,14 @@ _atan_loop:
 
 	DSEG
 
-_atan_x:	DS	4
-_atan_x2:	DS	4
+_atan_val:	DS	4
+_atan_v2:	DS	4
 _atan_sum:	DS	4
 _atan_term:	DS	4
+_atan_num:	DS	4
 _atan_sign:	DS	1
+_atan_inv:	DS	1
+_atan_off:	DS	1
 
 
 ; ============================================================
@@ -394,10 +658,11 @@ _atan_sign:	DS	1
 _atan2:
 _atan2f:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
-	; y at IX+4, x at IX+8
+	; y at IX+6, x at IX+10
 	CALL	_math_getarg	; y
 	LD	(_atan2_y),HL
 	LD	(_atan2_y+2),DE
@@ -422,6 +687,7 @@ _atan2f:
 	POP	BC
 
 	; Adjust quadrant based on signs (simplified - just return atan(y/x))
+	POP	BC
 	POP	IX
 	RET
 
@@ -429,6 +695,90 @@ _atan2f:
 
 _atan2_x:	DS	4
 _atan2_y:	DS	4
+
+
+; ============================================================
+; lc_atanh.mac
+; ============================================================
+	CSEG
+; lc_atanh.mac - atanh, atanhf
+; atanh(x) = 0.5 * log((1+x) / (1-x)), |x| < 1
+
+
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fdiv
+	EXTRN	__fmul
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_atanh
+	PUBLIC	_atanhf
+_atanh:
+_atanhf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	(_atanh_x),HL
+	LD	(_atanh_x+2),DE
+
+	; 1 + x: put x in __tmp32, 1.0 in DEHL
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fadd		; 1.0 + x
+	LD	(_atanh_num),HL
+	LD	(_atanh_num+2),DE
+
+	; 1 - x: put x in __tmp32, 1.0 in DEHL
+	LD	A,(_atanh_x)
+	LD	(__tmp32),A
+	LD	A,(_atanh_x+1)
+	LD	(__tmp32+1),A
+	LD	A,(_atanh_x+2)
+	LD	(__tmp32+2),A
+	LD	A,(_atanh_x+3)
+	LD	(__tmp32+3),A
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fsub		; 1.0 - x
+
+	; (1+x) / (1-x): denom in __tmp32, num in DEHL
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atanh_num)
+	LD	DE,(_atanh_num+2)
+	CALL	__fdiv
+
+	; log((1+x)/(1-x))
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	; * 0.5
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F00H	; 0.5
+	CALL	__fmul
+
+	POP	IX
+	RET
+
+	DSEG
+
+_atanh_x:	DS	4
+_atanh_num:	DS	4
 
 
 ; ============================================================
@@ -2608,7 +2958,6 @@ ___atomic_fetch_and_4:
 	RET
 
 
-
 ; ============================================================
 ; lc_cbrt.mac
 ; ============================================================
@@ -3660,26 +4009,26 @@ _cos_loop:
 
 	; Divide by (2n-1)*(2n)
 	POP	BC
-	PUSH	BC
 	LD	A,C
 	ADD	A,A		; 2n
 	DEC	A		; 2n-1
-	LD	H,0
 	LD	L,A
-	PUSH	BC
-	LD	D,H
-	LD	E,L
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = (2n-1) as 32-bit int
+	PUSH	BC		; Save BC across __itof
 	CALL	__itof
 	LD	(_cos_n),HL
 	LD	(_cos_n+2),DE
 	POP	BC
 	LD	A,C
 	ADD	A,A		; 2n
-	INC	C		; Advance n
-	LD	H,0
+	INC	C		; Advance n for next iteration
+	PUSH	BC		; Save updated B and C
 	LD	L,A
-	LD	D,H
-	LD	E,L
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = 2n as 32-bit int
 	CALL	__itof
 	; Multiply
 	LD	A,(_cos_n)
@@ -3766,6 +4115,7 @@ _cos_n:		DS	4
 _cosh:
 _coshf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -3801,23 +4151,16 @@ _coshf:
 	LD	DE,(_cosh_ep+2)
 	CALL	__fadd
 
-	; Divide by 2
-	LD	A,D
-	ADD	A,A
-	LD	C,A
+	; Divide by 2: decrement IEEE 754 exponent by 1
+	OR	A		; Clear carry
 	LD	A,E
-	RLA
-	DEC	A
-	RRA
+	SUB	80H
 	LD	E,A
-	LD	A,C
-	RRA
-	LD	C,A
 	LD	A,D
-	AND	80H
-	OR	C
+	SBC	A,0
 	LD	D,A
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -4106,19 +4449,21 @@ _errno:	DW	0
 ; ============================================================
 	CSEG
 ; lc_exp.mac - exp, expf, expl
+; Range reduction: exp(x) = exp(r) * 2^k where k = trunc(x/ln2), r = x - k*ln2
 
 
 	EXTRN	__fadd
+	EXTRN	__fsub
 	EXTRN	__fmul
 	EXTRN	__fdiv
+	EXTRN	__ftoi
 	EXTRN	__itof
 	EXTRN	__tmp32
 
 	CSEG
 
 ; ============================================================
-; exp(x) - Exponential using Taylor series
-; e^x = 1 + x + x^2/2! + x^3/3! + ...
+; exp(x) - Exponential with range reduction
 ; ============================================================
 	PUBLIC	_exp
 	PUBLIC	_expf
@@ -4131,11 +4476,59 @@ _expl:
 	LD	IX,0
 	ADD	IX,SP
 
-	CALL	_math_getarg
+	; Read float arg directly: IX+6..IX+9
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
 
 	LD	(_exp_x),HL
 	LD	(_exp_x+2),DE
 
+	; --- Range reduction: k = trunc(x / ln2), r = x - k*ln2 ---
+	; Multiply x by 1/ln2 = 1.442695 = 3FB8AA3BH
+	LD	A,3BH
+	LD	(__tmp32),A
+	LD	A,0AAH
+	LD	(__tmp32+1),A
+	LD	A,0B8H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fmul		; DEHL = x / ln2
+
+	; k = trunc(x/ln2) -> integer
+	CALL	__ftoi		; DEHL = k as int
+	LD	A,L
+	LD	(_exp_k),A	; Save k (low byte, signed)
+
+	; Convert k back to float
+	CALL	__itof
+
+	; r = x - k * ln2
+	; First compute k * ln2
+	LD	A,18H
+	LD	(__tmp32),A
+	LD	A,72H
+	LD	(__tmp32+1),A
+	LD	A,31H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fmul		; DEHL = k * ln2
+
+	; r = x - k*ln2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_exp_x)
+	LD	DE,(_exp_x+2)
+	CALL	__fsub		; DEHL = x - k*ln2 = r
+
+	; Save r as the new x for Taylor series
+	LD	(_exp_r),HL
+	LD	(_exp_r+2),DE
+
+	; --- Taylor series: exp(r) = 1 + r + r^2/2! + ... ---
 	; Start with sum = 1.0, term = 1.0
 	LD	HL,0
 	LD	DE,3F80H
@@ -4144,23 +4537,23 @@ _expl:
 	LD	(_exp_term),HL
 	LD	(_exp_term+2),DE
 
-	; 10 iterations for precision
+	; 10 iterations for precision (plenty for |r| < ln2)
 	LD	B,10
 	LD	C,1
 
 _exp_loop:
 	PUSH	BC
 
-	; term *= x
+	; term *= r
 	LD	HL,(_exp_term)
 	LD	DE,(_exp_term+2)
-	LD	A,(_exp_x)
+	LD	A,(_exp_r)
 	LD	(__tmp32),A
-	LD	A,(_exp_x+1)
+	LD	A,(_exp_r+1)
 	LD	(__tmp32+1),A
-	LD	A,(_exp_x+2)
+	LD	A,(_exp_r+2)
 	LD	(__tmp32+2),A
-	LD	A,(_exp_x+3)
+	LD	A,(_exp_r+3)
 	LD	(__tmp32+3),A
 	CALL	__fmul
 	LD	(_exp_term),HL
@@ -4168,12 +4561,12 @@ _exp_loop:
 
 	; Divide by n
 	POP	BC
-	PUSH	BC
-	LD	H,0
 	LD	L,C
-	INC	C
-	LD	D,H
-	LD	E,L
+	INC	C		; Advance C for next iteration
+	PUSH	BC		; Save updated B and C
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = n as 32-bit int
 	CALL	__itof
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
@@ -4199,8 +4592,41 @@ _exp_loop:
 	POP	BC
 	DJNZ	_exp_loop
 
+	; --- Multiply by 2^k: add k to IEEE 754 exponent ---
 	LD	HL,(_exp_sum)
 	LD	DE,(_exp_sum+2)
+
+	; Extract biased exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH
+	ADD	A,A		; EEEEEEE0
+	LD	B,A
+	LD	A,E		; EMMMMMMM
+	RLCA
+	AND	1
+	OR	B		; A = full biased exponent
+
+	; Add k
+	LD	B,A
+	LD	A,(_exp_k)
+	ADD	A,B		; New biased exponent
+
+	; Reconstruct float
+	LD	C,A		; Save new exponent
+	SRL	A		; exp >> 1
+	LD	B,A
+	LD	A,D
+	AND	80H		; Keep sign
+	OR	B
+	LD	D,A
+	LD	A,C
+	AND	1		; exp[0]
+	RRCA			; Rotate to bit 7
+	LD	B,A
+	LD	A,E
+	AND	7FH		; Keep mantissa
+	OR	B
+	LD	E,A
 
 	POP	BC
 	POP	IX
@@ -4209,8 +4635,109 @@ _exp_loop:
 	DSEG
 
 _exp_x:		DS	4
+_exp_r:		DS	4
 _exp_sum:	DS	4
 _exp_term:	DS	4
+_exp_k:		DS	1
+
+
+; ============================================================
+; lc_exp2.mac
+; ============================================================
+	CSEG
+; lc_exp2.mac - exp2, exp2f
+; exp2(x) = 2^x = exp(x * ln(2))
+; ln(2) = 0.693147... = 3F317218H
+
+
+	EXTRN	__fmul
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_exp2
+	PUBLIC	_exp2f
+_exp2:
+_exp2f:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; x * ln(2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,7218H	; ln(2) = 3F317218H
+	LD	DE,3F31H
+	CALL	__fmul
+
+	; exp(x * ln(2))
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_expm1.mac
+; ============================================================
+	CSEG
+; lc_expm1.mac - expm1, expm1f
+; expm1(x) = exp(x) - 1
+
+
+	EXTRN	__fsub
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_expm1
+	PUBLIC	_expm1f
+_expm1:
+_expm1f:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; exp(x)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	PUSH	DE
+	PUSH	HL
+	CALL	_expf
+	POP	BC
+	POP	BC
+
+	; Save exp(x) result
+	LD	(_expm1_t),HL
+	LD	(_expm1_t+2),DE
+
+	; exp(x) - 1.0: DEHL=exp(x), __tmp32=1.0
+	LD	HL,0
+	LD	DE,3F80H
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_expm1_t)
+	LD	DE,(_expm1_t+2)
+	CALL	__fsub
+
+	POP	IX
+	RET
+
+	DSEG
+
+_expm1_t:	DS	4
 
 
 ; ============================================================
@@ -4264,6 +4791,75 @@ _copysignf:
 	AND	80H		; Get y sign
 	OR	B		; Combine
 	LD	D,A
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_fdim.mac
+; ============================================================
+	CSEG
+; lc_fdim.mac - fdim, fdimf
+; fdim(x, y) = max(x - y, 0)
+
+
+	EXTRN	__fcmp
+	EXTRN	__fsub
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_fdim
+	PUBLIC	_fdimf
+_fdim:
+_fdimf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Load y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	; Compare x with y
+	CALL	__fcmp
+	JR	Z,_fdim_zero	; x == y
+	JR	C,_fdim_zero	; x < y
+
+	; x > y: return x - y
+	; Reload x and y (fcmp may have clobbered)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+	CALL	__fsub
+	POP	IX
+	RET
+
+_fdim_zero:
+	; Return 0.0
+	LD	HL,0
+	LD	DE,0
 	POP	IX
 	RET
 
@@ -6240,6 +6836,7 @@ _fwrite_cnt:	DS	2	; fwrite byte counter temp
 
 
 	EXTRN	__fadd
+	EXTRN	__fsub
 	EXTRN	__ftoi
 	EXTRN	__itof
 	EXTRN	__tmp32
@@ -6256,18 +6853,62 @@ _floor:
 _floorf:
 _floorl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
 	CALL	_math_getarg
+	LD	(_floor_x),HL
+	LD	(_floor_x+2),DE
 
-	; Convert to int (truncates toward zero)
+	; Save sign
+	LD	A,D
+	AND	80H
+	LD	(_floor_sign),A
+
+	; trunc(x)
 	CALL	__ftoi
-
-	; For negative non-integers, subtract 1
-	; Simplified: just truncate
 	CALL	__itof
+	LD	(_floor_t),HL
+	LD	(_floor_t+2),DE
 
+	; If positive, done
+	LD	A,(_floor_sign)
+	OR	A
+	JR	Z,_floor_ret
+
+	; Negative: check if x == trunc(x)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_floor_x)
+	LD	DE,(_floor_x+2)
+	CALL	__fsub		; x - trunc(x)
+
+	; If fractional part is 0, done
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_floor_ret
+
+	; Subtract 1.0 from trunc(x)
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_floor_t)
+	LD	DE,(_floor_t+2)
+	CALL	__fsub		; trunc(x) - 1.0
+
+	JR	_floor_done
+
+_floor_ret:
+	LD	HL,(_floor_t)
+	LD	DE,(_floor_t+2)
+
+_floor_done:
+	POP	BC
 	POP	IX
 	RET
 
@@ -6281,12 +6922,11 @@ _ceil:
 _ceilf:
 _ceill:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
 	CALL	_math_getarg
-	LD	(_ceil_x),HL
-	LD	(_ceil_x+2),DE
 
 	; Negate
 	LD	A,D
@@ -6305,6 +6945,7 @@ _ceill:
 	XOR	80H
 	LD	D,A
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -6318,6 +6959,7 @@ _trunc:
 _truncf:
 _truncl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -6325,6 +6967,7 @@ _truncl:
 	CALL	__ftoi
 	CALL	__itof
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -6338,6 +6981,7 @@ _round:
 _roundf:
 _roundl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -6363,12 +7007,168 @@ _roundl:
 	CALL	__ftoi
 	CALL	__itof
 
+	POP	BC
 	POP	IX
 	RET
 
 	DSEG
 
+_floor_x:	DS	4
+_floor_t:	DS	4
+_floor_sign:	DS	1
 _ceil_x:	DS	4
+
+
+; ============================================================
+; lc_fma.mac
+; ============================================================
+	CSEG
+; lc_fma.mac - fma, fmaf
+; fma(x, y, z) = x * y + z
+
+
+	EXTRN	__fmul
+	EXTRN	__fadd
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_fma
+	PUBLIC	_fmaf
+_fma:
+_fmaf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	; x * y
+	CALL	__fmul
+
+	; z into __tmp32
+	LD	A,(IX+12)
+	LD	(__tmp32),A
+	LD	A,(IX+13)
+	LD	(__tmp32+1),A
+	LD	A,(IX+14)
+	LD	(__tmp32+2),A
+	LD	A,(IX+15)
+	LD	(__tmp32+3),A
+
+	; x*y + z
+	CALL	__fadd
+
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_fmax.mac
+; ============================================================
+	CSEG
+; lc_fmax.mac - fmax, fmaxf, fmin, fminf
+
+
+	EXTRN	__fcmp
+	EXTRN	__tmp32
+
+	CSEG
+
+; ============================================================
+; fmax(x, y) - return larger of x, y
+; ============================================================
+	PUBLIC	_fmax
+	PUBLIC	_fmaxf
+_fmax:
+_fmaxf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Load y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	CALL	__fcmp
+	JR	NC,_fmax_ret	; x >= y, keep x in DEHL
+
+	; x < y, return y
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	E,(IX+10)
+	LD	D,(IX+11)
+
+_fmax_ret:
+	POP	IX
+	RET
+
+; ============================================================
+; fmin(x, y) - return smaller of x, y
+; ============================================================
+	PUBLIC	_fmin
+	PUBLIC	_fminf
+_fmin:
+_fminf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Load y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	CALL	__fcmp
+	JR	Z,_fmin_ret	; x == y, return x
+	JR	C,_fmin_ret	; x < y, return x
+
+	; x > y, return y
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	E,(IX+10)
+	LD	D,(IX+11)
+
+_fmin_ret:
+	POP	IX
+	RET
 
 
 ; ============================================================
@@ -6399,6 +7199,7 @@ _fmod:
 _fmodf:
 _fmodl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -6441,6 +7242,7 @@ _fmodl:
 	LD	DE,(_fmod_x+2)
 	CALL	__fsub
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -6460,6 +7262,1209 @@ _fmod_y:	DS	4
 
 
 ; ============================================================
+; lc_fpclassify.mac
+; ============================================================
+	CSEG
+; lc_fpclassify.mac - fpclassify, isfinite, isinf, isnan, isnormal, signbit
+; IEEE 754 classification functions
+;
+; FP_NAN       0
+; FP_INFINITE  1
+; FP_ZERO      2
+; FP_SUBNORMAL 3
+; FP_NORMAL    4
+
+
+	CSEG
+
+; ============================================================
+; fpclassify(x) - classify floating-point value
+; ============================================================
+	PUBLIC	_fpclassify
+_fpclassify:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Extract exponent
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+
+	; exp == 0?
+	OR	A
+	JR	Z,_fpc_expz
+
+	; exp == 255?
+	CP	255
+	JR	Z,_fpc_exp255
+
+	; Normal (exp 1..254)
+	LD	HL,4		; FP_NORMAL
+	POP	IX
+	RET
+
+_fpc_expz:
+	; Check mantissa
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_fpc_sub
+	; Zero
+	LD	HL,2		; FP_ZERO
+	POP	IX
+	RET
+
+_fpc_sub:
+	LD	HL,3		; FP_SUBNORMAL
+	POP	IX
+	RET
+
+_fpc_exp255:
+	; Check mantissa for NaN vs Inf
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_fpc_nan
+	; Infinity
+	LD	HL,1		; FP_INFINITE
+	POP	IX
+	RET
+
+_fpc_nan:
+	LD	HL,0		; FP_NAN
+	POP	IX
+	RET
+
+; ============================================================
+; isfinite(x) - return nonzero if finite (not inf or nan)
+; ============================================================
+	PUBLIC	_isfinite
+_isfinite:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	Z,_ret_zero	; inf or nan
+	LD	HL,1
+	POP	IX
+	RET
+
+; ============================================================
+; isinf(x) - return nonzero if infinity
+; ============================================================
+	PUBLIC	_isinf
+_isinf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	NZ,_ret_zero	; exp != 255, not inf
+	; Check mantissa == 0
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_ret_zero	; NaN, not inf
+	LD	HL,1
+	POP	IX
+	RET
+
+; ============================================================
+; isnan(x) - return nonzero if NaN
+; ============================================================
+	PUBLIC	_isnan
+_isnan:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	NZ,_ret_zero	; exp != 255, not nan
+	; Check mantissa != 0
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	Z,_ret_zero	; mantissa 0 = inf, not nan
+	LD	HL,1
+	POP	IX
+	RET
+
+; ============================================================
+; isnormal(x) - return nonzero if normal
+; ============================================================
+	PUBLIC	_isnormal
+_isnormal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	OR	A
+	JR	Z,_ret_zero	; exp 0 = zero or subnormal
+	CP	255
+	JR	Z,_ret_zero	; exp 255 = inf or nan
+	LD	HL,1
+	POP	IX
+	RET
+
+; Shared return-zero
+_ret_zero:
+	LD	HL,0
+	POP	IX
+	RET
+
+; ============================================================
+; signbit(x) - return nonzero if sign bit is set
+; ============================================================
+	PUBLIC	_signbit
+_signbit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte, sign in bit 7
+	RLCA			; Sign into bit 0
+	AND	1
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_fprintf.mac
+; ============================================================
+	CSEG
+; lc_fprintf.mac - fprintf, vfprintf, vprintf, vsprintf
+
+
+
+	CSEG
+
+; ============================================================
+; int fprintf(FILE *stream, const char *fmt, ...)
+; Print formatted output to a file stream
+; Supports %d, %s, %c, %x, %%
+; ============================================================
+	PUBLIC	_fprintf
+_fprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; stream at IX+4, fmt at IX+6, first vararg at IX+8
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(_fprintf_stream),DE	; Save stream
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format string pointer
+	LD	C,8		; C = offset to next argument
+
+_fprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_fprintf_done
+
+	CP	'%'
+	JR	Z,_fprintf_format
+
+	; Regular character - output via fputc
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE		; stream arg
+	LD	E,A
+	LD	D,0
+	PUSH	DE		; char arg
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	HL
+	JR	_fprintf_loop
+
+_fprintf_format:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_fprintf_done
+
+	CP	'%'
+	JR	Z,_fprintf_pct
+
+_fprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_fprintf_fskip
+	CP	'+'
+	JR	Z,_fprintf_fskip
+	CP	' '
+	JR	Z,_fprintf_fskip
+	CP	'#'
+	JR	Z,_fprintf_fskip
+	CP	'0'
+	JR	Z,_fprintf_fskip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_fprintf_nodig
+	CP	'9'+1
+	JR	C,_fprintf_fskip
+_fprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_fprintf_fskip
+	; Skip length modifiers: h, l, z
+	CP	'h'
+	JR	Z,_fprintf_fskip
+	CP	'l'
+	JR	Z,_fprintf_fskip
+	CP	'z'
+	JR	Z,_fprintf_fskip
+	; Now check format specifiers
+	CP	's'
+	JR	Z,_fprintf_str
+
+	CP	'd'
+	JR	Z,_fprintf_dec
+
+	CP	'i'
+	JR	Z,_fprintf_dec
+
+	CP	'c'
+	JR	Z,_fprintf_chr
+
+	CP	'x'
+	JR	Z,_fprintf_hex
+
+	CP	'X'
+	JR	Z,_fprintf_hex
+
+	CP	'u'
+	JR	Z,_fprintf_dec	; %u same as %d for now
+
+	; Unknown format - skip
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_fskip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_fprintf_done
+	JR	_fprintf_fmt2
+
+_fprintf_pct:
+	; Output literal %
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	DE,'%'
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_chr:
+	; Output character argument
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)		; E = char
+	LD	D,0
+	LD	BC,(_fprintf_stream)
+	PUSH	BC		; stream
+	PUSH	DE		; char
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_str:
+	; Output string argument
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = string pointer
+_fprintf_str_lp:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_fprintf_str_end
+	PUSH	DE
+	LD	BC,(_fprintf_stream)
+	PUSH	BC
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	DE
+	INC	DE
+	JR	_fprintf_str_lp
+_fprintf_str_end:
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_dec:
+	; Output decimal number
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value
+	CALL	_fprintf_prt_dec
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_hex:
+	; Output hex number
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value
+	CALL	_fprintf_prt_hex
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_fprintf_loop
+
+_fprintf_done:
+	LD	HL,0		; Return 0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; fprintf helper: print HL as decimal to stream
+	PUBLIC	_fprintf_prt_dec
+_fprintf_prt_dec:
+	PUSH	BC
+	PUSH	DE
+	; Check for negative
+	BIT	7,H
+	JR	Z,_fprintf_dec_pos
+	; Negative - print minus sign
+	PUSH	HL
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	DE,'-'
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	HL
+	; Negate HL
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	INC	HL
+_fprintf_dec_pos:
+	; Convert to decimal digits on stack
+	LD	DE,10
+	LD	B,0		; Digit counter
+_fprintf_dec_lp:
+	CALL	_prt_div16	; HL = HL / 10, DE = remainder
+	PUSH	DE		; Push digit
+	INC	B
+	LD	A,H
+	OR	L
+	JR	NZ,_fprintf_dec_lp
+	; Pop and print digits
+_fprintf_dec_pr:
+	POP	DE		; Get digit
+	LD	A,E
+	ADD	A,'0'
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	DJNZ	_fprintf_dec_pr
+	POP	DE
+	POP	BC
+	RET
+
+; fprintf helper: print HL as hex to stream
+	PUBLIC	_fprintf_prt_hex
+_fprintf_prt_hex:
+	PUSH	BC
+	PUSH	DE
+	LD	B,4		; 4 hex digits
+	LD	C,H		; Save high byte
+_fprintf_hex_lp:
+	; Rotate left 4 bits
+	ADD	HL,HL
+	RL	C
+	ADD	HL,HL
+	RL	C
+	ADD	HL,HL
+	RL	C
+	ADD	HL,HL
+	RL	C
+	; Get top nibble
+	LD	A,C
+	AND	0FH
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_fprintf_hex_dig
+	ADD	A,7		; A-F
+_fprintf_hex_dig:
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	DJNZ	_fprintf_hex_lp
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; int vprintf(const char *fmt, va_list ap)
+; ============================================================
+	PUBLIC	_vprintf
+_vprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; fmt at IX+4, ap at IX+6
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = format string
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = va_list (pointer to args)
+	LD	(_vprintf_ap),DE
+	LD	BC,0		; Character count
+
+_vprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vprintf_done
+
+	CP	'%'
+	JP	Z,_vprintf_fmt
+
+	; Regular char - output
+	PUSH	HL
+	PUSH	BC
+	LD	E,A
+	LD	C,2
+	CALL	5
+	POP	BC
+	POP	HL
+	INC	BC
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_fmt:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vprintf_done
+
+	CP	'%'
+	JR	NZ,_vprintf_fmt2
+	; Literal %
+	PUSH	HL
+	PUSH	BC
+	LD	E,'%'
+	LD	C,2
+	CALL	5
+	POP	BC
+	POP	HL
+	INC	BC
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_vprintf_skip
+	CP	'+'
+	JR	Z,_vprintf_skip
+	CP	' '
+	JR	Z,_vprintf_skip
+	CP	'#'
+	JR	Z,_vprintf_skip
+	CP	'0'
+	JR	Z,_vprintf_skip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_vprintf_nodig
+	CP	'9'+1
+	JR	C,_vprintf_skip
+_vprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_vprintf_skip
+	; Skip length modifiers: h, z (l handled separately for long)
+	CP	'h'
+	JR	Z,_vprintf_skip
+	CP	'z'
+	JR	Z,_vprintf_skip
+	; Now check format specifiers
+	CP	's'
+	JP	Z,_vprintf_str
+	CP	'd'
+	JP	Z,_vprintf_dec
+	CP	'i'
+	JP	Z,_vprintf_dec
+	CP	'c'
+	JP	Z,_vprintf_chr
+	CP	'x'
+	JP	Z,_vprintf_hex
+	CP	'X'
+	JP	Z,_vprintf_hex
+	CP	'u'
+	JP	Z,_vprintf_uns
+	CP	'l'
+	JP	Z,_vprintf_long
+	; Unknown - skip
+	INC	HL
+	JP	_vprintf_loop
+_vprintf_skip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vprintf_done
+	JP	_vprintf_fmt2
+
+_vprintf_str:
+	; Print string
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL		; HL = string
+_vprintf_str_lp:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_vprintf_str_dn
+	LD	E,A
+	PUSH	HL
+	LD	C,2
+	CALL	5
+	POP	HL
+	INC	HL
+	JR	_vprintf_str_lp
+_vprintf_str_dn:
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_dec:
+	; Print signed int
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_prt_dec
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_chr:
+	; Print character
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	INC	HL
+	LD	(_vprintf_ap),HL
+	LD	C,2
+	CALL	5
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_hex:
+	; Print hex
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_prt_hex
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_uns:
+	; Same as dec for now
+	JP	_vprintf_dec
+
+_vprintf_long:
+	; Handle 'l' modifier
+	INC	HL
+	LD	A,(HL)
+	CP	'd'
+	JP	Z,_vprintf_ld
+	CP	'x'
+	JP	Z,_vprintf_lx
+	JP	_vprintf_loop
+
+_vprintf_ld:
+	; Print long decimal
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	; DEHL = low, BC = high (need to swap)
+	PUSH	BC
+	EX	DE,HL
+	POP	DE		; Now DEHL is 32-bit value
+	CALL	_prt_dec32
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_lx:
+	; Print long hex
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	; Print BC (high), then DE (low)
+	PUSH	DE
+	LD	H,B
+	LD	L,C
+	CALL	_prt_hex
+	POP	HL
+	CALL	_prt_hex
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vprintf_loop
+
+_vprintf_done:
+	LD	H,B
+	LD	L,C		; Return count
+	POP	IX
+	RET
+
+; ============================================================
+; int vfprintf(FILE *stream, const char *fmt, va_list ap)
+; ============================================================
+	PUBLIC	_vfprintf
+_vfprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; stream at IX+4, fmt at IX+6, ap at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_fprintf_stream),HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; DE = va_list
+	LD	(_vprintf_ap),DE
+	LD	BC,0		; Count
+
+_vfprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vfprintf_done
+	CP	'%'
+	JP	Z,_vfprintf_fmt
+	; Regular char
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	BC
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_fmt:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vfprintf_done
+	CP	'%'
+	JR	NZ,_vfprintf_fmt2
+	PUSH	HL
+	PUSH	BC
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	DE,'%'
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	BC
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_vfprintf_skip
+	CP	'+'
+	JR	Z,_vfprintf_skip
+	CP	' '
+	JR	Z,_vfprintf_skip
+	CP	'#'
+	JR	Z,_vfprintf_skip
+	CP	'0'
+	JR	Z,_vfprintf_skip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_vfprintf_nodig
+	CP	'9'+1
+	JR	C,_vfprintf_skip
+_vfprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_vfprintf_skip
+	; Skip length modifiers: l, h, z
+	CP	'l'
+	JR	Z,_vfprintf_skip
+	CP	'h'
+	JR	Z,_vfprintf_skip
+	CP	'z'
+	JR	Z,_vfprintf_skip
+	; Now check format specifiers
+	CP	's'
+	JP	Z,_vfprintf_str
+	CP	'd'
+	JP	Z,_vfprintf_dec
+	CP	'i'
+	JP	Z,_vfprintf_dec
+	CP	'u'
+	JP	Z,_vfprintf_dec
+	CP	'x'
+	JP	Z,_vfprintf_hex
+	CP	'X'
+	JP	Z,_vfprintf_hex
+	CP	'c'
+	JP	Z,_vfprintf_chr
+	; Unknown specifier - skip it
+	INC	HL
+	JP	_vfprintf_loop
+_vfprintf_skip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vfprintf_done
+	JP	_vfprintf_fmt2
+
+_vfprintf_str:
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+_vfprintf_str_lp:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_vfprintf_str_dn
+	PUSH	HL
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	E,A
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	HL
+	INC	HL
+	JR	_vfprintf_str_lp
+_vfprintf_str_dn:
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_dec:
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_fprintf_prt_dec
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_chr:
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	INC	HL
+	LD	(_vprintf_ap),HL
+	LD	DE,(_fprintf_stream)
+	PUSH	DE
+	LD	D,0
+	PUSH	DE
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_hex:
+	PUSH	HL
+	PUSH	BC
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_fprintf_prt_hex
+	POP	BC
+	POP	HL
+	INC	HL
+	JP	_vfprintf_loop
+
+_vfprintf_done:
+	LD	H,B
+	LD	L,C
+	POP	IX
+	RET
+
+; ============================================================
+; int vsprintf(char *str, const char *fmt, va_list ap)
+; ============================================================
+	PUBLIC	_vsprintf
+_vsprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; str at IX+4, fmt at IX+6, ap at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_sprintf_out),HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; DE = va_list
+	LD	(_vprintf_ap),DE
+	LD	BC,0		; Count
+	LD	(_sprintf_cnt),BC
+
+_vsprintf_loop:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vsprintf_done
+	CP	'%'
+	JP	Z,_vsprintf_fmt
+	; Regular char
+	CALL	_sprintf_putc
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_fmt:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vsprintf_done
+	CP	'%'
+	JR	NZ,_vsprintf_fmt2
+	LD	A,'%'
+	CALL	_sprintf_putc
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_fmt2:
+	; Skip flags: -, +, space, #, 0
+	CP	'-'
+	JR	Z,_vsprintf_skip
+	CP	'+'
+	JR	Z,_vsprintf_skip
+	CP	' '
+	JR	Z,_vsprintf_skip
+	CP	'#'
+	JR	Z,_vsprintf_skip
+	CP	'0'
+	JR	Z,_vsprintf_skip
+	; Skip field width digits
+	CP	'1'
+	JR	C,_vsprintf_nodig
+	CP	'9'+1
+	JR	C,_vsprintf_skip
+_vsprintf_nodig:
+	; Skip precision
+	CP	'.'
+	JR	Z,_vsprintf_skip
+	; Skip length modifiers: l, h, z
+	CP	'l'
+	JR	Z,_vsprintf_skip
+	CP	'h'
+	JR	Z,_vsprintf_skip
+	CP	'z'
+	JR	Z,_vsprintf_skip
+	; Now check format specifiers
+	CP	's'
+	JP	Z,_vsprintf_str
+	CP	'd'
+	JP	Z,_vsprintf_dec
+	CP	'i'
+	JP	Z,_vsprintf_dec
+	CP	'u'
+	JP	Z,_vsprintf_dec
+	CP	'x'
+	JP	Z,_vsprintf_hex
+	CP	'X'
+	JP	Z,_vsprintf_hex
+	CP	'c'
+	JP	Z,_vsprintf_chr
+	; Unknown specifier - skip it
+	INC	HL
+	JP	_vsprintf_loop
+_vsprintf_skip:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_vsprintf_done
+	JP	_vsprintf_fmt2
+
+_vsprintf_str:
+	PUSH	HL
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+_vsprintf_str_lp:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_vsprintf_str_dn
+	CALL	_sprintf_putc
+	INC	HL
+	JR	_vsprintf_str_lp
+_vsprintf_str_dn:
+	POP	HL
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_dec:
+	PUSH	HL
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_sprintf_prt_dec
+	POP	HL
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_chr:
+	PUSH	HL
+	LD	HL,(_vprintf_ap)
+	LD	A,(HL)
+	INC	HL
+	INC	HL
+	LD	(_vprintf_ap),HL
+	CALL	_sprintf_putc
+	POP	HL
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_hex:
+	PUSH	HL
+	LD	HL,(_vprintf_ap)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(_vprintf_ap),HL
+	EX	DE,HL
+	CALL	_sprintf_prt_hex
+	POP	HL
+	INC	HL
+	JP	_vsprintf_loop
+
+_vsprintf_done:
+	; Null terminate
+	XOR	A
+	CALL	_sprintf_putc
+	; Return count
+	LD	HL,(_sprintf_cnt)
+	DEC	HL		; Don't count null
+	POP	IX
+	RET
+
+	DSEG
+
+; fprintf/vfprintf working storage
+	PUBLIC	_fprintf_stream
+_fprintf_stream: DS	2
+
+; vprintf/vfprintf/vsprintf shared working storage
+	PUBLIC	_vprintf_ap
+_vprintf_ap:	DS	2
+
+
+; ============================================================
 ; lc_frexp.mac
 ; ============================================================
 	CSEG
@@ -6472,35 +8477,41 @@ _fmod_y:	DS	4
 
 ; ============================================================
 ; frexp(x, int *exp) - extract mantissa and exponent
+; Returns mantissa in [0.5, 1), stores exponent
 ; ============================================================
 	PUBLIC	_frexp
 	PUBLIC	_frexpf
 _frexp:
 _frexpf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
-	CALL	_math_getarg
+	; Read float arg: IX+6..IX+9
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
 
-	; Extract exponent
-	LD	A,D
-	ADD	A,A		; Shift sign out
+	; Extract 8-bit biased exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH		; A = 0EEEEEEE
+	ADD	A,A		; A = EEEEEEE0
 	LD	B,A
-	LD	A,E
-	RLA
-	LD	C,A
-	LD	A,B
-	RRA			; A = biased exponent
+	LD	A,E		; E = EMMMMMMM
+	RLCA			; A = MMMMMMME
+	AND	1		; A = 0000000E
+	OR	B		; A = EEEEEEEE (full exponent)
 
-	; Unbias: exp = biased - 127
-	SUB	126		; Actually we want mantissa in [0.5,1), so -126
+	; Unbias: exp = biased - 126
+	SUB	126
 	LD	B,A
 
-	; Store exponent
-	LD	A,(IX+8)
+	; Store exponent to int* (at IX+10..IX+11)
+	LD	A,(IX+10)
 	LD	C,A
-	LD	A,(IX+9)
+	LD	A,(IX+11)
 	PUSH	HL
 	LD	H,A
 	LD	L,C
@@ -6512,15 +8523,17 @@ _frexpf:
 	LD	(HL),A
 	POP	HL
 
-	; Set exponent to 126 (gives [0.5, 1))
+	; Set exponent to 126 (biased) -> mantissa in [0.5, 1)
+	; exp 126 = 01111110: D = S|3FH, E bit 7 = 0
 	LD	A,D
 	AND	80H		; Keep sign
-	OR	3EH		; Exponent 126 >> 1
+	OR	3FH		; exp[7:1] for exponent 126
 	LD	D,A
 	LD	A,E
-	OR	80H		; Set exp bit 0
+	AND	7FH		; Clear exp bit 0 (E0=0 for 126)
 	LD	E,A
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -6532,41 +8545,50 @@ _frexpf:
 _ldexp:
 _ldexpf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
-	CALL	_math_getarg
+	; Read float arg: IX+6..IX+9
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
 
-	; Get int exponent
-	LD	A,(IX+8)
-	LD	B,A
+	; Get int exponent n (at IX+10)
+	LD	B,(IX+10)
 
-	; Add to float exponent
-	LD	A,D
-	ADD	A,A
+	; Extract 8-bit biased exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH		; Strip sign
+	ADD	A,A		; EEEEEEE0
 	LD	C,A
-	LD	A,E
-	RLA
-	LD	(__tmp32),A	; Save mantissa bit
-	LD	A,C
-	RRA
-	ADD	A,B		; Add exponent
-	LD	C,A
-	RLCA
+	LD	A,E		; EMMMMMMM
+	RLCA			; MMMMMMME
 	AND	1
+	OR	C		; Full 8-bit exponent
+
+	; Add n
+	ADD	A,B		; New biased exponent
+
+	; Reconstruct: D = S | exp[7:1], E = exp[0] | mantissa[6:0]
+	LD	C,A		; Save new exponent
+	SRL	A		; A = exp >> 1 = 0_exp[7:1]
 	LD	B,A
 	LD	A,D
-	AND	80H
-	OR	C
-	LD	D,A
-	LD	A,(__tmp32)
-	AND	7FH
+	AND	80H		; Keep sign
 	OR	B
-	RLA
+	LD	D,A
+	LD	A,C		; New exponent
+	AND	1		; exp[0]
+	RRCA			; Rotate to bit 7
+	LD	B,A
 	LD	A,E
-	RRA
+	AND	7FH		; Keep mantissa bits
+	OR	B		; Set exp[0]
 	LD	E,A
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -6639,6 +8661,7 @@ _gets_done:
 	POP	DE
 	POP	BC
 	POP	IX
+	RET
 
 
 ; ============================================================
@@ -6662,6 +8685,7 @@ _gets_done:
 _hypot:
 _hypotf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -6697,6 +8721,7 @@ _hypotf:
 	POP	BC
 	POP	BC
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -6810,6 +8835,7 @@ _lconv_data:
 ; ============================================================
 	CSEG
 ; lc_log.mac - log, logf, logl
+; Range reduction: log(x) = e*ln(2) + log(m) where x = m * 2^e, m in [1,2)
 
 
 	EXTRN	__fadd
@@ -6822,8 +8848,7 @@ _lconv_data:
 	CSEG
 
 ; ============================================================
-; log(x) - Natural logarithm
-; Using log(x) = 2 * atanh((x-1)/(x+1)) for x > 0
+; log(x) - Natural logarithm with range reduction
 ; ============================================================
 	PUBLIC	_log
 	PUBLIC	_logf
@@ -6851,29 +8876,58 @@ _logl:
 	LD	(_log_x),HL
 	LD	(_log_x+2),DE
 
-	; Compute (x-1)
+	; Extract 8-bit biased exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH		; Strip sign
+	ADD	A,A		; EEEEEEE0
+	LD	B,A
+	LD	A,E		; EMMMMMMM
+	RLCA
+	AND	1
+	OR	B		; A = full biased exponent
+
+	; e = biased - 127
+	SUB	127
+	LD	(_log_e),A
+
+	; Set mantissa exponent to 127 -> m in [1, 2)
+	; exp 127 = 01111111: D = 0|0111111 = 3FH, E bit7 = 1
+	LD	A,(_log_x+3)
+	AND	80H		; Keep sign (0 for positive)
+	OR	3FH		; exp[7:1]
+	LD	D,A
+	LD	A,(_log_x+2)
+	OR	80H		; exp[0] = 1
+	LD	E,A
+	LD	HL,(_log_x)
+
+	; DEHL = m in [1, 2)
+	LD	(_log_m),HL
+	LD	(_log_m+2),DE
+
+	; Compute (m-1)
 	LD	HL,0
 	LD	DE,3F80H	; 1.0
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
-	LD	HL,(_log_x)
-	LD	DE,(_log_x+2)
-	CALL	__fsub		; x-1
+	LD	HL,(_log_m)
+	LD	DE,(_log_m+2)
+	CALL	__fsub		; m-1
 	LD	(_log_num),HL
 	LD	(_log_num+2),DE
 
-	; Compute (x+1)
+	; Compute (m+1)
 	LD	HL,0
 	LD	DE,3F80H
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
-	LD	HL,(_log_x)
-	LD	DE,(_log_x+2)
-	CALL	__fadd		; x+1
+	LD	HL,(_log_m)
+	LD	DE,(_log_m+2)
+	CALL	__fadd		; m+1
 	LD	(_log_den),HL
 	LD	(_log_den+2),DE
 
-	; y = (x-1)/(x+1)
+	; y = (m-1)/(m+1)
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
 	LD	HL,(_log_num)
@@ -6921,13 +8975,13 @@ _log_loop:
 
 	; Divide by n (odd number)
 	POP	BC
-	PUSH	BC
-	LD	H,0
 	LD	L,C
 	INC	C
 	INC	C		; Next odd
-	LD	D,H
-	LD	E,L
+	PUSH	BC		; Save updated B and C
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = n as 32-bit int
 	CALL	__itof
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
@@ -6951,17 +9005,52 @@ _log_loop:
 	POP	BC
 	DJNZ	_log_loop
 
-	; Result = 2 * sum
+	; log(m) = 2 * sum
 	LD	HL,(_log_sum)
 	LD	DE,(_log_sum+2)
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
 	CALL	__fadd		; 2*sum
+	LD	(_log_sum),HL
+	LD	(_log_sum+2),DE
+
+	; Add e * ln(2)
+	; Convert e (signed byte) to float
+	LD	A,(_log_e)
+	LD	L,A
+	RLA			; Sign extend to 16-bit
+	SBC	A,A
+	LD	H,A
+	LD	E,A
+	LD	D,A		; DEHL = e as signed 32-bit
+	CALL	__itof
+
+	; Multiply by ln(2) = 0.693147 = 3F317218H
+	LD	A,18H
+	LD	(__tmp32),A
+	LD	A,72H
+	LD	(__tmp32+1),A
+	LD	A,31H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fmul		; e * ln(2)
+
+	; Add log(m)
+	LD	A,(_log_sum)
+	LD	(__tmp32),A
+	LD	A,(_log_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_log_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_log_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd		; e*ln(2) + log(m)
 
 	JR	_log_done
 
 _log_err:
-	; Return negative infinity or NaN
+	; Return negative infinity
 	LD	HL,0
 	LD	DE,0FF80H	; -inf
 
@@ -6973,12 +9062,14 @@ _log_done:
 	DSEG
 
 _log_x:		DS	4
+_log_m:		DS	4
 _log_num:	DS	4
 _log_den:	DS	4
 _log_y:		DS	4
 _log_y2:	DS	4
 _log_sum:	DS	4
 _log_term:	DS	4
+_log_e:		DS	1
 
 
 ; ============================================================
@@ -7004,6 +9095,7 @@ _log10:
 _log10f:
 _log10l:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -7024,6 +9116,52 @@ _log10l:
 	LD	A,40H
 	LD	(__tmp32+3),A
 	CALL	__fdiv
+
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_log1p.mac
+; ============================================================
+	CSEG
+; lc_log1p.mac - log1p, log1pf
+; log1p(x) = log(1 + x)
+
+
+	EXTRN	__fadd
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_log1p
+	PUBLIC	_log1pf
+_log1p:
+_log1pf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; 1.0 + x: put x in __tmp32, 1.0 in DEHL
+	LD	A,(IX+4)
+	LD	(__tmp32),A
+	LD	A,(IX+5)
+	LD	(__tmp32+1),A
+	LD	A,(IX+6)
+	LD	(__tmp32+2),A
+	LD	A,(IX+7)
+	LD	(__tmp32+3),A
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fadd		; 1.0 + x
+
+	; log(1 + x)
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
 
 	POP	IX
 	RET
@@ -7050,6 +9188,7 @@ _log10l:
 _log2:
 _log2f:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -7071,6 +9210,153 @@ _log2f:
 	LD	(__tmp32+3),A
 	CALL	__fdiv
 
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_logb.mac
+; ============================================================
+	CSEG
+; lc_logb.mac - logb, logbf, ilogb, ilogbf
+; Extract exponent from IEEE 754 float
+
+
+	EXTRN	__itof
+
+	CSEG
+
+; ============================================================
+; ilogb(x) - return exponent as int
+; Returns: HL = unbiased exponent
+; ============================================================
+	PUBLIC	_ilogb
+	PUBLIC	_ilogbf
+_ilogb:
+_ilogbf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Extract 8-bit exponent from IEEE 754
+	; D has SEEEEEEE, E has EMMMMMM
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = full 8-bit biased exponent
+
+	; Check zero (exp=0)
+	OR	A
+	JR	Z,_ilogb_zero
+
+	; Check inf/nan (exp=255)
+	CP	255
+	JR	Z,_ilogb_inf
+
+	; Normal: exp - 127
+	SUB	127
+	LD	L,A
+	RLA			; Sign extend
+	SBC	A,A
+	LD	H,A
+	POP	IX
+	RET
+
+_ilogb_zero:
+	; Check mantissa for subnormal
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_ilogb_sub
+	; True zero: return INT_MIN
+	LD	HL,8000H
+	POP	IX
+	RET
+
+_ilogb_sub:
+	; Subnormal: return -126
+	LD	HL,0FF82H
+	POP	IX
+	RET
+
+_ilogb_inf:
+	; Return INT_MAX
+	LD	HL,7FFFH
+	POP	IX
+	RET
+
+; ============================================================
+; logb(x) - return exponent as float
+; ============================================================
+	PUBLIC	_logb
+	PUBLIC	_logbf
+_logb:
+_logbf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Extract exponent
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = biased exponent
+
+	; Check zero
+	OR	A
+	JR	Z,_logb_zero
+
+	; Check inf/nan
+	CP	255
+	JR	Z,_logb_inf
+
+	; Normal: convert (exp - 127) to float
+	SUB	127
+	LD	L,A
+	RLA
+	SBC	A,A		; Sign extend
+	LD	H,A
+	LD	D,A
+	LD	E,A		; DEHL = 32-bit signed
+	CALL	__itof
+	POP	IX
+	RET
+
+_logb_zero:
+	; Check subnormal
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_logb_sub
+	; True zero: return -inf
+	LD	HL,0
+	LD	DE,0FF80H
+	POP	IX
+	RET
+
+_logb_sub:
+	; Subnormal: return -126 as float
+	LD	HL,0FF82H	; -126 as 16-bit
+	LD	DE,0FFFFH	; Sign extend to 32-bit
+	CALL	__itof
+	POP	IX
+	RET
+
+_logb_inf:
+	; Return +inf
+	LD	HL,0
+	LD	DE,7F80H
 	POP	IX
 	RET
 
@@ -7664,6 +9950,7 @@ _system:
 _modf:
 _modff:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -7678,9 +9965,9 @@ _modff:
 	LD	(_modf_i+2),DE
 
 	; Store to *iptr
-	LD	A,(IX+8)
+	LD	A,(IX+10)
 	LD	C,A
-	LD	A,(IX+9)
+	LD	A,(IX+11)
 	LD	B,A
 	LD	A,L
 	LD	(BC),A
@@ -7701,6 +9988,7 @@ _modff:
 	LD	DE,(_modf_x+2)
 	CALL	__fsub
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -7708,6 +9996,154 @@ _modff:
 
 _modf_x:	DS	4
 _modf_i:	DS	4
+
+
+; ============================================================
+; lc_nan.mac
+; ============================================================
+	CSEG
+; lc_nan.mac - nan, nanf
+; Return quiet NaN (7FC00000H)
+
+
+	CSEG
+
+	PUBLIC	_nan
+	PUBLIC	_nanf
+_nan:
+_nanf:
+	LD	HL,0
+	LD	DE,7FC0H	; Quiet NaN
+	RET
+
+
+; ============================================================
+; lc_nextafter.mac
+; ============================================================
+	CSEG
+; lc_nextafter.mac - nextafter, nextafterf
+; Return next representable float from x toward y
+
+
+	EXTRN	__fcmp
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_nextafter
+	PUBLIC	_nextafterf
+_nextafter:
+_nextafterf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Check x == 0
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_na_xzero
+
+	; Load y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	; Reload x (clobbered by __tmp32 stores)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Compare x with y
+	CALL	__fcmp
+	JR	Z,_na_eq
+
+	; Save C flag: 1 if x < y
+	LD	A,0
+	RLA			; A = carry
+	LD	B,A		; B = (x < y) ? 1 : 0
+
+	; Get sign of x
+	LD	A,(IX+7)
+	RLCA			; Sign into C and bit 0
+	AND	1		; A = sign (0=pos, 1=neg)
+
+	; XOR: different → increment, same → decrement
+	XOR	B
+
+	; Reload x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	JR	NZ,_na_inc
+
+	; Decrement 32-bit DEHL
+	LD	A,L
+	SUB	1
+	LD	L,A
+	LD	A,H
+	SBC	A,0
+	LD	H,A
+	LD	A,E
+	SBC	A,0
+	LD	E,A
+	LD	A,D
+	SBC	A,0
+	LD	D,A
+	JR	_na_done
+
+_na_inc:
+	; Increment 32-bit DEHL
+	LD	A,L
+	ADD	A,1
+	LD	L,A
+	LD	A,H
+	ADC	A,0
+	LD	H,A
+	LD	A,E
+	ADC	A,0
+	LD	E,A
+	LD	A,D
+	ADC	A,0
+	LD	D,A
+	JR	_na_done
+
+_na_xzero:
+	; x is zero, return smallest subnormal toward y
+	LD	L,1
+	LD	H,0
+	LD	E,0
+	LD	A,(IX+11)	; Sign of y
+	AND	80H
+	LD	D,A
+	JR	_na_done
+
+_na_eq:
+	; x == y, return y
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	E,(IX+10)
+	LD	D,(IX+11)
+
+_na_done:
+	POP	IX
+	RET
 
 
 ; ============================================================
@@ -7732,6 +10168,7 @@ _pow:
 _powf:
 _powl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -7774,6 +10211,7 @@ _powl:
 	POP	BC
 	POP	BC
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -8588,6 +11026,7 @@ _prt_float_done:
 ; ============================================================
 ; Internal: print HL as decimal (no padding, simple)
 ; ============================================================
+	PUBLIC	_prt_dec
 _prt_dec:
 	PUSH	BC
 	PUSH	DE
@@ -10099,6 +12538,8 @@ _putchar:
 	LD	HL,2
 	ADD	HL,SP		; Points to arg (after ret addr)
 	LD	L,(HL)
+	LD	H,0
+	RET
 
 
 ; ============================================================
@@ -10477,6 +12918,28 @@ _qsort_ptr2:	DS	2
 _bsearch_low:	DS	2
 _bsearch_high:	DS	2
 _bsearch_mid:	DS	2
+
+
+; ============================================================
+; lc_scalbn.mac
+; ============================================================
+	CSEG
+; lc_scalbn.mac - scalbn, scalbnf, scalbln, scalblnf
+; scalbn(x, n) = x * 2^n (same as ldexp)
+
+
+
+	CSEG
+
+	PUBLIC	_scalbn
+	PUBLIC	_scalbnf
+	PUBLIC	_scalbln
+	PUBLIC	_scalblnf
+_scalbn:
+_scalbnf:
+_scalbln:
+_scalblnf:
+	JP	_ldexpf
 
 
 ; ============================================================
@@ -11628,6 +14091,7 @@ _sin_iter:	DS	1
 _sinh:
 _sinhf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -11663,27 +14127,16 @@ _sinhf:
 	LD	DE,(_sinh_ep+2)
 	CALL	__fsub
 
-	; Divide by 2
-	LD	A,D
-	AND	7FH
-	LD	B,A
+	; Divide by 2: decrement IEEE 754 exponent by 1
+	OR	A		; Clear carry
 	LD	A,E
-	LD	A,D
-	ADD	A,A
-	LD	C,A
-	LD	A,E
-	RLA
-	DEC	A
-	RRA
+	SUB	80H
 	LD	E,A
-	LD	A,C
-	RRA
-	LD	C,A
 	LD	A,D
-	AND	80H
-	OR	C
+	SBC	A,0
 	LD	D,A
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -12546,33 +14999,45 @@ _sqrtl:
 	OR	L
 	JR	Z,_sqrt_zero
 	BIT	7,D
-	JR	NZ,_sqrt_neg	; Negative -> return NaN (0)
+	JR	NZ,_sqrt_neg	; Negative -> return 0
 
 	; Save x
 	LD	(_sqrt_x),HL
 	LD	(_sqrt_x+2),DE
 
-	; Initial guess: x/2 (shift exponent down by 1)
-	; More accurate: use exponent/2
-	LD	A,D
-	AND	7FH		; Get exponent high bits
-	SRL	A		; Divide by 2
-	OR	A		; Set flags
-	JR	Z,_sqrt_small
-	LD	D,A
-	LD	(_sqrt_guess),HL
-	LD	(_sqrt_guess+2),DE
-	JR	_sqrt_iterate
+	; Initial guess: halve the biased exponent
+	; new_exp = (exp - 127) / 2 + 127
+	; Extract 8-bit exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH		; A = 0EEEEEEE (upper 7 exp bits)
+	ADD	A,A		; A = EEEEEEE0
+	LD	B,A
+	LD	A,E		; E = EMMMMMMM
+	RLCA			; bit 0 = exp low bit
+	AND	1
+	OR	B		; A = full 8-bit exponent
 
-_sqrt_small:
-	; Very small number, use x as initial guess
-	LD	HL,(_sqrt_x)
-	LD	DE,(_sqrt_x+2)
+	; Halve the unbiased exponent
+	SUB	127		; A = exp - 127 (signed)
+	SRA	A		; A = (exp-127)/2 (arithmetic shift right)
+	ADD	A,127		; A = new biased exponent
+
+	; Reconstruct float with new exponent, mantissa=1.0
+	; D = sign(0) | exp[7:1], E = exp[0] | 0000000
+	LD	B,A		; Save exponent
+	SRL	A		; A = exp >> 1 = exp[7:1]
+	LD	D,A		; D = 0 exp[7:1]
+	LD	A,B
+	AND	1		; exp[0]
+	RRCA			; Rotate to bit 7
+	LD	E,A		; E = exp[0] 0000000
+	LD	H,0
+	LD	L,0
 	LD	(_sqrt_guess),HL
 	LD	(_sqrt_guess+2),DE
 
 _sqrt_iterate:
-	; Newton-Raphson: 8 iterations for convergence
+	; Newton-Raphson: 8 iterations
 	LD	B,8
 
 _sqrt_loop:
@@ -12591,7 +15056,7 @@ _sqrt_loop:
 	LD	(__tmp32+3),A
 	CALL	__fdiv		; DEHL = x / guess
 
-	; Add guess
+	; Add guess: DEHL = x/guess + guess
 	LD	A,(_sqrt_guess)
 	LD	(__tmp32),A
 	LD	A,(_sqrt_guess+1)
@@ -12602,26 +15067,14 @@ _sqrt_loop:
 	LD	(__tmp32+3),A
 	CALL	__fadd		; DEHL = (x/guess + guess)
 
-	; Divide by 2 (subtract 1 from exponent)
-	LD	A,D
-	AND	7FH		; Get exponent+mantissa high
-	LD	B,A
+	; Divide by 2: decrement IEEE 754 exponent by 1
+	; Subtract 0x00800000 from DEHL (exponent bit 0 is E bit 7)
+	OR	A		; Clear carry
 	LD	A,E
-	; Extract and decrement exponent
-	LD	A,D
-	ADD	A,A		; Shift sign out, exponent<<1
-	LD	C,A
-	LD	A,E
-	RLA			; Get exp low bit
-	DEC	A		; Decrement exponent
-	RRA			; Put back
+	SUB	80H
 	LD	E,A
-	LD	A,C
-	RRA			; Put back high bits
-	LD	C,A
 	LD	A,D
-	AND	80H		; Keep sign
-	OR	C
+	SBC	A,0		; Borrow into upper exponent bits
 	LD	D,A
 
 	; Update guess
@@ -13845,6 +16298,7 @@ _tan:
 _tanf:
 _tanl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -13863,10 +16317,10 @@ _tanl:
 	LD	(_tan_sin),HL
 	LD	(_tan_sin+2),DE
 
-	; Compute cos(x)
-	LD	HL,(_tan_x)
-	PUSH	HL
+	; Compute cos(x) - push high word first, low word second
 	LD	HL,(_tan_x+2)
+	PUSH	HL
+	LD	HL,(_tan_x)
 	PUSH	HL
 	CALL	_cosf
 	POP	BC
@@ -13879,6 +16333,7 @@ _tanl:
 	LD	DE,(_tan_sin+2)
 	CALL	__fdiv
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -13908,31 +16363,31 @@ _tan_sin:	DS	4
 _tanh:
 _tanhf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
 	CALL	_math_getarg
+	LD	(_tanh_x),HL
+	LD	(_tanh_x+2),DE
+
+	; sinh(x)
 	PUSH	DE
 	PUSH	HL
-
-	; sinh
 	CALL	_sinhf
 	POP	BC
 	POP	BC
 	LD	(_tanh_s),HL
 	LD	(_tanh_s+2),DE
 
-	; cosh
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	CALL	_math_getarg
-	PUSH	DE
+	; cosh(x) - push from saved memory
+	LD	HL,(_tanh_x+2)
+	PUSH	HL
+	LD	HL,(_tanh_x)
 	PUSH	HL
 	CALL	_coshf
 	POP	BC
 	POP	BC
-	POP	IX
 
 	; sinh/cosh
 	LD	(__tmp32),HL
@@ -13941,11 +16396,13 @@ _tanhf:
 	LD	DE,(_tanh_s+2)
 	CALL	__fdiv
 
+	POP	BC
 	POP	IX
 	RET
 
 	DSEG
 
+_tanh_x:	DS	4
 _tanh_s:	DS	4
 
 

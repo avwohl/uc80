@@ -1,0 +1,70 @@
+; lc_fdim.mac - fdim, fdimf
+; fdim(x, y) = max(x - y, 0)
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fcmp
+	EXTRN	__fsub
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	_fdim
+	PUBLIC	_fdimf
+_fdim:
+_fdimf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Load y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	; Compare x with y
+	CALL	__fcmp
+	JR	Z,_fdim_zero	; x == y
+	JR	C,_fdim_zero	; x < y
+
+	; x > y: return x - y
+	; Reload x and y (fcmp may have clobbered)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+	CALL	__fsub
+	POP	IX
+	RET
+
+_fdim_zero:
+	; Return 0.0
+	LD	HL,0
+	LD	DE,0
+	POP	IX
+	RET
+
+	END

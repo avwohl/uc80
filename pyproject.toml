@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uc80"
-version = "0.1.0"
+version = "0.1.1"
 description = "ANSI C compiler targeting Z80/CP/M"
 readme = "README.md"
 license = "GPL-3.0-or-later"

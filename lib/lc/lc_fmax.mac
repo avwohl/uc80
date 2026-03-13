@@ -1,0 +1,95 @@
+; lc_fmax.mac - fmax, fmaxf, fmin, fminf
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fcmp
+	EXTRN	__tmp32
+
+	CSEG
+
+; ============================================================
+; fmax(x, y) - return larger of x, y
+; ============================================================
+	PUBLIC	_fmax
+	PUBLIC	_fmaxf
+_fmax:
+_fmaxf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Load y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	CALL	__fcmp
+	JR	NC,_fmax_ret	; x >= y, keep x in DEHL
+
+	; x < y, return y
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	E,(IX+10)
+	LD	D,(IX+11)
+
+_fmax_ret:
+	POP	IX
+	RET
+
+; ============================================================
+; fmin(x, y) - return smaller of x, y
+; ============================================================
+	PUBLIC	_fmin
+	PUBLIC	_fminf
+_fmin:
+_fminf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Load y into __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	CALL	__fcmp
+	JR	Z,_fmin_ret	; x == y, return x
+	JR	C,_fmin_ret	; x < y, return x
+
+	; x > y, return y
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	E,(IX+10)
+	LD	D,(IX+11)
+
+_fmin_ret:
+	POP	IX
+	RET
+
+	END

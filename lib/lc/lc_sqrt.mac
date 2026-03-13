@@ -39,33 +39,45 @@ _sqrtl:
 	OR	L
 	JR	Z,_sqrt_zero
 	BIT	7,D
-	JR	NZ,_sqrt_neg	; Negative -> return NaN (0)
+	JR	NZ,_sqrt_neg	; Negative -> return 0
 
 	; Save x
 	LD	(_sqrt_x),HL
 	LD	(_sqrt_x+2),DE
 
-	; Initial guess: x/2 (shift exponent down by 1)
-	; More accurate: use exponent/2
-	LD	A,D
-	AND	7FH		; Get exponent high bits
-	SRL	A		; Divide by 2
-	OR	A		; Set flags
-	JR	Z,_sqrt_small
-	LD	D,A
-	LD	(_sqrt_guess),HL
-	LD	(_sqrt_guess+2),DE
-	JR	_sqrt_iterate
+	; Initial guess: halve the biased exponent
+	; new_exp = (exp - 127) / 2 + 127
+	; Extract 8-bit exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH		; A = 0EEEEEEE (upper 7 exp bits)
+	ADD	A,A		; A = EEEEEEE0
+	LD	B,A
+	LD	A,E		; E = EMMMMMMM
+	RLCA			; bit 0 = exp low bit
+	AND	1
+	OR	B		; A = full 8-bit exponent
 
-_sqrt_small:
-	; Very small number, use x as initial guess
-	LD	HL,(_sqrt_x)
-	LD	DE,(_sqrt_x+2)
+	; Halve the unbiased exponent
+	SUB	127		; A = exp - 127 (signed)
+	SRA	A		; A = (exp-127)/2 (arithmetic shift right)
+	ADD	A,127		; A = new biased exponent
+
+	; Reconstruct float with new exponent, mantissa=1.0
+	; D = sign(0) | exp[7:1], E = exp[0] | 0000000
+	LD	B,A		; Save exponent
+	SRL	A		; A = exp >> 1 = exp[7:1]
+	LD	D,A		; D = 0 exp[7:1]
+	LD	A,B
+	AND	1		; exp[0]
+	RRCA			; Rotate to bit 7
+	LD	E,A		; E = exp[0] 0000000
+	LD	H,0
+	LD	L,0
 	LD	(_sqrt_guess),HL
 	LD	(_sqrt_guess+2),DE
 
 _sqrt_iterate:
-	; Newton-Raphson: 8 iterations for convergence
+	; Newton-Raphson: 8 iterations
 	LD	B,8
 
 _sqrt_loop:
@@ -84,7 +96,7 @@ _sqrt_loop:
 	LD	(__tmp32+3),A
 	CALL	__fdiv		; DEHL = x / guess
 
-	; Add guess
+	; Add guess: DEHL = x/guess + guess
 	LD	A,(_sqrt_guess)
 	LD	(__tmp32),A
 	LD	A,(_sqrt_guess+1)
@@ -95,26 +107,14 @@ _sqrt_loop:
 	LD	(__tmp32+3),A
 	CALL	__fadd		; DEHL = (x/guess + guess)
 
-	; Divide by 2 (subtract 1 from exponent)
-	LD	A,D
-	AND	7FH		; Get exponent+mantissa high
-	LD	B,A
+	; Divide by 2: decrement IEEE 754 exponent by 1
+	; Subtract 0x00800000 from DEHL (exponent bit 0 is E bit 7)
+	OR	A		; Clear carry
 	LD	A,E
-	; Extract and decrement exponent
-	LD	A,D
-	ADD	A,A		; Shift sign out, exponent<<1
-	LD	C,A
-	LD	A,E
-	RLA			; Get exp low bit
-	DEC	A		; Decrement exponent
-	RRA			; Put back
+	SUB	80H
 	LD	E,A
-	LD	A,C
-	RRA			; Put back high bits
-	LD	C,A
 	LD	A,D
-	AND	80H		; Keep sign
-	OR	C
+	SBC	A,0		; Borrow into upper exponent bits
 	LD	D,A
 
 	; Update guess

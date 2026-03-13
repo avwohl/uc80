@@ -1,4 +1,5 @@
 ; lc_log.mac - log, logf, logl
+; Range reduction: log(x) = e*ln(2) + log(m) where x = m * 2^e, m in [1,2)
 	.Z80
 
 ; CP/M BDOS function numbers
@@ -18,8 +19,7 @@ PRTSTR	EQU	9
 	CSEG
 
 ; ============================================================
-; log(x) - Natural logarithm
-; Using log(x) = 2 * atanh((x-1)/(x+1)) for x > 0
+; log(x) - Natural logarithm with range reduction
 ; ============================================================
 	PUBLIC	_log
 	PUBLIC	_logf
@@ -47,29 +47,58 @@ _logl:
 	LD	(_log_x),HL
 	LD	(_log_x+2),DE
 
-	; Compute (x-1)
+	; Extract 8-bit biased exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH		; Strip sign
+	ADD	A,A		; EEEEEEE0
+	LD	B,A
+	LD	A,E		; EMMMMMMM
+	RLCA
+	AND	1
+	OR	B		; A = full biased exponent
+
+	; e = biased - 127
+	SUB	127
+	LD	(_log_e),A
+
+	; Set mantissa exponent to 127 -> m in [1, 2)
+	; exp 127 = 01111111: D = 0|0111111 = 3FH, E bit7 = 1
+	LD	A,(_log_x+3)
+	AND	80H		; Keep sign (0 for positive)
+	OR	3FH		; exp[7:1]
+	LD	D,A
+	LD	A,(_log_x+2)
+	OR	80H		; exp[0] = 1
+	LD	E,A
+	LD	HL,(_log_x)
+
+	; DEHL = m in [1, 2)
+	LD	(_log_m),HL
+	LD	(_log_m+2),DE
+
+	; Compute (m-1)
 	LD	HL,0
 	LD	DE,3F80H	; 1.0
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
-	LD	HL,(_log_x)
-	LD	DE,(_log_x+2)
-	CALL	__fsub		; x-1
+	LD	HL,(_log_m)
+	LD	DE,(_log_m+2)
+	CALL	__fsub		; m-1
 	LD	(_log_num),HL
 	LD	(_log_num+2),DE
 
-	; Compute (x+1)
+	; Compute (m+1)
 	LD	HL,0
 	LD	DE,3F80H
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
-	LD	HL,(_log_x)
-	LD	DE,(_log_x+2)
-	CALL	__fadd		; x+1
+	LD	HL,(_log_m)
+	LD	DE,(_log_m+2)
+	CALL	__fadd		; m+1
 	LD	(_log_den),HL
 	LD	(_log_den+2),DE
 
-	; y = (x-1)/(x+1)
+	; y = (m-1)/(m+1)
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
 	LD	HL,(_log_num)
@@ -117,13 +146,13 @@ _log_loop:
 
 	; Divide by n (odd number)
 	POP	BC
-	PUSH	BC
-	LD	H,0
 	LD	L,C
 	INC	C
 	INC	C		; Next odd
-	LD	D,H
-	LD	E,L
+	PUSH	BC		; Save updated B and C
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = n as 32-bit int
 	CALL	__itof
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
@@ -147,17 +176,52 @@ _log_loop:
 	POP	BC
 	DJNZ	_log_loop
 
-	; Result = 2 * sum
+	; log(m) = 2 * sum
 	LD	HL,(_log_sum)
 	LD	DE,(_log_sum+2)
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
 	CALL	__fadd		; 2*sum
+	LD	(_log_sum),HL
+	LD	(_log_sum+2),DE
+
+	; Add e * ln(2)
+	; Convert e (signed byte) to float
+	LD	A,(_log_e)
+	LD	L,A
+	RLA			; Sign extend to 16-bit
+	SBC	A,A
+	LD	H,A
+	LD	E,A
+	LD	D,A		; DEHL = e as signed 32-bit
+	CALL	__itof
+
+	; Multiply by ln(2) = 0.693147 = 3F317218H
+	LD	A,18H
+	LD	(__tmp32),A
+	LD	A,72H
+	LD	(__tmp32+1),A
+	LD	A,31H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fmul		; e * ln(2)
+
+	; Add log(m)
+	LD	A,(_log_sum)
+	LD	(__tmp32),A
+	LD	A,(_log_sum+1)
+	LD	(__tmp32+1),A
+	LD	A,(_log_sum+2)
+	LD	(__tmp32+2),A
+	LD	A,(_log_sum+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd		; e*ln(2) + log(m)
 
 	JR	_log_done
 
 _log_err:
-	; Return negative infinity or NaN
+	; Return negative infinity
 	LD	HL,0
 	LD	DE,0FF80H	; -inf
 
@@ -169,11 +233,13 @@ _log_done:
 	DSEG
 
 _log_x:		DS	4
+_log_m:		DS	4
 _log_num:	DS	4
 _log_den:	DS	4
 _log_y:		DS	4
 _log_y2:	DS	4
 _log_sum:	DS	4
 _log_term:	DS	4
+_log_e:		DS	1
 
 	END

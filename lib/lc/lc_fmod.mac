@@ -30,6 +30,7 @@ _fmod:
 _fmodf:
 _fmodl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -72,6 +73,7 @@ _fmodl:
 	LD	DE,(_fmod_x+2)
 	CALL	__fsub
 
+	POP	BC
 	POP	IX
 	RET
 

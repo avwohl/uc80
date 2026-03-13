@@ -79,6 +79,12 @@ double copysign(double x, double y);
 double frexp(double x, int *exp);
 double ldexp(double x, int exp);
 double modf(double x, double *iptr);
+double nan(const char *tagp);
+double nextafter(double x, double y);
+double fdim(double x, double y);
+double fma(double x, double y, double z);
+double fmax(double x, double y);
+double fmin(double x, double y);
 
 /* Classification macros (C99) */
 #define FP_NAN       0
@@ -102,9 +108,7 @@ int signbit(double x);
 #define islessgreater(x, y)  (((x) < (y)) || ((x) > (y)))
 #define isunordered(x, y)    (isnan(x) || isnan(y))
 
-/* Min/max - implemented as macros */
-#define fmax(x, y) ((x) > (y) ? (x) : (y))
-#define fmin(x, y) ((x) < (y) ? (x) : (y))
+/* Min/max - see function declarations above */
 
 /* Float versions (C99) */
 float sinf(float x);

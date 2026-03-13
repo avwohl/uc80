@@ -1,4 +1,5 @@
 ; lc_atan.mac - atan, atanf
+; Range reduction: |x|>=2 -> pi/2-atan(1/x), 0.5<=|x|<2 -> pi/4+atan((x-1)/(x+1))
 	.Z80
 
 ; CP/M BDOS function numbers
@@ -8,6 +9,7 @@ CONIN	EQU	1
 PRTSTR	EQU	9
 
 	EXTRN	__fadd
+	EXTRN	__fsub
 	EXTRN	__fmul
 	EXTRN	__fdiv
 	EXTRN	__itof
@@ -17,7 +19,7 @@ PRTSTR	EQU	9
 	CSEG
 
 ; ============================================================
-; atan(x) using series: x - x^3/3 + x^5/5 - ...
+; atan(x) with range reduction
 ; ============================================================
 	PUBLIC	_atan
 	PUBLIC	_atanf
@@ -30,45 +32,116 @@ _atanf:
 
 	CALL	_math_getarg
 
-	; For |x| > 1, use atan(x) = pi/2 - atan(1/x)
-	LD	(_atan_x),HL
-	LD	(_atan_x+2),DE
+	; Save and strip sign
 	LD	A,D
 	AND	80H
 	LD	(_atan_sign),A
 	LD	A,D
 	AND	7FH
 	LD	D,A
+	; DEHL = |x|
+	LD	(_atan_val),HL
+	LD	(_atan_val+2),DE
 
-	; sum = x, term = x
+	; Init flags
+	XOR	A
+	LD	(_atan_inv),A
+	LD	(_atan_off),A
+
+	; Extract biased exponent
+	LD	A,D
+	ADD	A,A
+	LD	B,A
+	LD	A,E
+	RLCA
+	AND	1
+	OR	B		; A = biased exponent
+
+	CP	128
+	JR	NC,_atan_invert	; |x| >= 2.0
+	CP	126
+	JR	NC,_atan_offset	; 0.5 <= |x| < 2.0
+	JR	_atan_series	; |x| < 0.5
+
+_atan_invert:
+	; atan(|x|) = pi/2 - atan(1/|x|)
+	LD	A,1
+	LD	(_atan_inv),A
+	LD	HL,(_atan_val)
+	LD	DE,(_atan_val+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fdiv		; 1/|x|
+	LD	(_atan_val),HL
+	LD	(_atan_val+2),DE
+	JR	_atan_series
+
+_atan_offset:
+	; atan(|x|) = pi/4 + atan((|x|-1)/(|x|+1))
+	LD	A,1
+	LD	(_atan_off),A
+	; |x| - 1
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atan_val)
+	LD	DE,(_atan_val+2)
+	CALL	__fsub		; |x| - 1
+	LD	(_atan_num),HL
+	LD	(_atan_num+2),DE
+	; |x| + 1
+	LD	HL,0
+	LD	DE,3F80H
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atan_val)
+	LD	DE,(_atan_val+2)
+	CALL	__fadd		; |x| + 1
+	; z = (|x|-1)/(|x|+1)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atan_num)
+	LD	DE,(_atan_num+2)
+	CALL	__fdiv
+	LD	(_atan_val),HL
+	LD	(_atan_val+2),DE
+
+_atan_series:
+	; Taylor: val - val^3/3 + val^5/5 - ...
+	; |val| <= 0.5, 8 terms for good accuracy
+	LD	HL,(_atan_val)
+	LD	DE,(_atan_val+2)
 	LD	(_atan_sum),HL
 	LD	(_atan_sum+2),DE
 	LD	(_atan_term),HL
 	LD	(_atan_term+2),DE
 
-	; x^2
+	; val^2
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
 	CALL	__fmul
-	LD	(_atan_x2),HL
-	LD	(_atan_x2+2),DE
+	LD	(_atan_v2),HL
+	LD	(_atan_v2+2),DE
 
-	LD	B,5
+	LD	B,8
 	LD	C,3
 
 _atan_loop:
 	PUSH	BC
 
-	; term *= x^2
+	; term *= val^2
 	LD	HL,(_atan_term)
 	LD	DE,(_atan_term+2)
-	LD	A,(_atan_x2)
+	LD	A,(_atan_v2)
 	LD	(__tmp32),A
-	LD	A,(_atan_x2+1)
+	LD	A,(_atan_v2+1)
 	LD	(__tmp32+1),A
-	LD	A,(_atan_x2+2)
+	LD	A,(_atan_v2+2)
 	LD	(__tmp32+2),A
-	LD	A,(_atan_x2+3)
+	LD	A,(_atan_v2+3)
 	LD	(__tmp32+3),A
 	CALL	__fmul
 
@@ -81,13 +154,13 @@ _atan_loop:
 
 	; Divide by n
 	POP	BC
-	PUSH	BC
-	LD	H,0
 	LD	L,C
 	INC	C
-	INC	C
-	LD	D,H
-	LD	E,L
+	INC	C		; Advance to next odd
+	PUSH	BC		; Save updated B and C
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = n as 32-bit int
 	CALL	__itof
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
@@ -113,6 +186,34 @@ _atan_loop:
 
 	LD	HL,(_atan_sum)
 	LD	DE,(_atan_sum+2)
+
+	; If off_flag: result += pi/4 (3F490FDB)
+	LD	A,(_atan_off)
+	OR	A
+	JR	Z,_atan_no_off
+	LD	A,0DBH
+	LD	(__tmp32),A
+	LD	A,0FH
+	LD	(__tmp32+1),A
+	LD	A,49H
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	LD	(__tmp32+3),A
+	CALL	__fadd
+_atan_no_off:
+
+	; If inv_flag: result = pi/2 - result (3FC90FDB)
+	LD	A,(_atan_inv)
+	OR	A
+	JR	Z,_atan_no_inv
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0FDBH
+	LD	DE,3FC9H
+	CALL	__fsub
+_atan_no_inv:
+
+	; Apply sign
 	LD	A,(_atan_sign)
 	OR	D
 	LD	D,A
@@ -123,10 +224,13 @@ _atan_loop:
 
 	DSEG
 
-_atan_x:	DS	4
-_atan_x2:	DS	4
+_atan_val:	DS	4
+_atan_v2:	DS	4
 _atan_sum:	DS	4
 _atan_term:	DS	4
+_atan_num:	DS	4
 _atan_sign:	DS	1
+_atan_inv:	DS	1
+_atan_off:	DS	1
 
 	END

@@ -24,6 +24,7 @@ PRTSTR	EQU	9
 _hypot:
 _hypotf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -59,6 +60,7 @@ _hypotf:
 	POP	BC
 	POP	BC
 
+	POP	BC
 	POP	IX
 	RET
 

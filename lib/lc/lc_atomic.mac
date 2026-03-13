@@ -1088,5 +1088,3 @@ ___atomic_fetch_and_4:
 	RET
 
 	END
-
-	END

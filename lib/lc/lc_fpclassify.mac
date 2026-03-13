@@ -1,0 +1,213 @@
+; lc_fpclassify.mac - fpclassify, isfinite, isinf, isnan, isnormal, signbit
+; IEEE 754 classification functions
+;
+; FP_NAN       0
+; FP_INFINITE  1
+; FP_ZERO      2
+; FP_SUBNORMAL 3
+; FP_NORMAL    4
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; fpclassify(x) - classify floating-point value
+; ============================================================
+	PUBLIC	_fpclassify
+_fpclassify:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Extract exponent
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+
+	; exp == 0?
+	OR	A
+	JR	Z,_fpc_expz
+
+	; exp == 255?
+	CP	255
+	JR	Z,_fpc_exp255
+
+	; Normal (exp 1..254)
+	LD	HL,4		; FP_NORMAL
+	POP	IX
+	RET
+
+_fpc_expz:
+	; Check mantissa
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_fpc_sub
+	; Zero
+	LD	HL,2		; FP_ZERO
+	POP	IX
+	RET
+
+_fpc_sub:
+	LD	HL,3		; FP_SUBNORMAL
+	POP	IX
+	RET
+
+_fpc_exp255:
+	; Check mantissa for NaN vs Inf
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_fpc_nan
+	; Infinity
+	LD	HL,1		; FP_INFINITE
+	POP	IX
+	RET
+
+_fpc_nan:
+	LD	HL,0		; FP_NAN
+	POP	IX
+	RET
+
+; ============================================================
+; isfinite(x) - return nonzero if finite (not inf or nan)
+; ============================================================
+	PUBLIC	_isfinite
+_isfinite:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	Z,_ret_zero	; inf or nan
+	LD	HL,1
+	POP	IX
+	RET
+
+; ============================================================
+; isinf(x) - return nonzero if infinity
+; ============================================================
+	PUBLIC	_isinf
+_isinf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	NZ,_ret_zero	; exp != 255, not inf
+	; Check mantissa == 0
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_ret_zero	; NaN, not inf
+	LD	HL,1
+	POP	IX
+	RET
+
+; ============================================================
+; isnan(x) - return nonzero if NaN
+; ============================================================
+	PUBLIC	_isnan
+_isnan:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	NZ,_ret_zero	; exp != 255, not nan
+	; Check mantissa != 0
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	Z,_ret_zero	; mantissa 0 = inf, not nan
+	LD	HL,1
+	POP	IX
+	RET
+
+; ============================================================
+; isnormal(x) - return nonzero if normal
+; ============================================================
+	PUBLIC	_isnormal
+_isnormal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	OR	A
+	JR	Z,_ret_zero	; exp 0 = zero or subnormal
+	CP	255
+	JR	Z,_ret_zero	; exp 255 = inf or nan
+	LD	HL,1
+	POP	IX
+	RET
+
+; Shared return-zero
+_ret_zero:
+	LD	HL,0
+	POP	IX
+	RET
+
+; ============================================================
+; signbit(x) - return nonzero if sign bit is set
+; ============================================================
+	PUBLIC	_signbit
+_signbit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte, sign in bit 7
+	RLCA			; Sign into bit 0
+	AND	1
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+	END

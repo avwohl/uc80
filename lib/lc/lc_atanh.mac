@@ -1,0 +1,86 @@
+; lc_atanh.mac - atanh, atanhf
+; atanh(x) = 0.5 * log((1+x) / (1-x)), |x| < 1
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fdiv
+	EXTRN	__fmul
+	EXTRN	__tmp32
+	EXTRN	_logf
+
+	CSEG
+
+	PUBLIC	_atanh
+	PUBLIC	_atanhf
+_atanh:
+_atanhf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	(_atanh_x),HL
+	LD	(_atanh_x+2),DE
+
+	; 1 + x: put x in __tmp32, 1.0 in DEHL
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fadd		; 1.0 + x
+	LD	(_atanh_num),HL
+	LD	(_atanh_num+2),DE
+
+	; 1 - x: put x in __tmp32, 1.0 in DEHL
+	LD	A,(_atanh_x)
+	LD	(__tmp32),A
+	LD	A,(_atanh_x+1)
+	LD	(__tmp32+1),A
+	LD	A,(_atanh_x+2)
+	LD	(__tmp32+2),A
+	LD	A,(_atanh_x+3)
+	LD	(__tmp32+3),A
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fsub		; 1.0 - x
+
+	; (1+x) / (1-x): denom in __tmp32, num in DEHL
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_atanh_num)
+	LD	DE,(_atanh_num+2)
+	CALL	__fdiv
+
+	; log((1+x)/(1-x))
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	; * 0.5
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,3F00H	; 0.5
+	CALL	__fmul
+
+	POP	IX
+	RET
+
+	DSEG
+
+_atanh_x:	DS	4
+_atanh_num:	DS	4
+
+	END

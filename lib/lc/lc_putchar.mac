@@ -31,5 +31,7 @@ _putchar:
 	LD	HL,2
 	ADD	HL,SP		; Points to arg (after ret addr)
 	LD	L,(HL)
+	LD	H,0
+	RET
 
 	END

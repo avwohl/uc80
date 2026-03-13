@@ -23,6 +23,7 @@ PRTSTR	EQU	9
 _log2:
 _log2f:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -44,6 +45,7 @@ _log2f:
 	LD	(__tmp32+3),A
 	CALL	__fdiv
 
+	POP	BC
 	POP	IX
 	RET
 

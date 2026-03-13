@@ -23,10 +23,11 @@ PRTSTR	EQU	9
 _atan2:
 _atan2f:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
-	; y at IX+4, x at IX+8
+	; y at IX+6, x at IX+10
 	CALL	_math_getarg	; y
 	LD	(_atan2_y),HL
 	LD	(_atan2_y+2),DE
@@ -51,6 +52,7 @@ _atan2f:
 	POP	BC
 
 	; Adjust quadrant based on signs (simplified - just return atan(y/x))
+	POP	BC
 	POP	IX
 	RET
 

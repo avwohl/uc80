@@ -8,6 +8,7 @@ CONIN	EQU	1
 PRTSTR	EQU	9
 
 	EXTRN	__fadd
+	EXTRN	__fsub
 	EXTRN	__ftoi
 	EXTRN	__itof
 	EXTRN	__tmp32
@@ -25,18 +26,62 @@ _floor:
 _floorf:
 _floorl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
 	CALL	_math_getarg
+	LD	(_floor_x),HL
+	LD	(_floor_x+2),DE
 
-	; Convert to int (truncates toward zero)
+	; Save sign
+	LD	A,D
+	AND	80H
+	LD	(_floor_sign),A
+
+	; trunc(x)
 	CALL	__ftoi
-
-	; For negative non-integers, subtract 1
-	; Simplified: just truncate
 	CALL	__itof
+	LD	(_floor_t),HL
+	LD	(_floor_t+2),DE
 
+	; If positive, done
+	LD	A,(_floor_sign)
+	OR	A
+	JR	Z,_floor_ret
+
+	; Negative: check if x == trunc(x)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_floor_x)
+	LD	DE,(_floor_x+2)
+	CALL	__fsub		; x - trunc(x)
+
+	; If fractional part is 0, done
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_floor_ret
+
+	; Subtract 1.0 from trunc(x)
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_floor_t)
+	LD	DE,(_floor_t+2)
+	CALL	__fsub		; trunc(x) - 1.0
+
+	JR	_floor_done
+
+_floor_ret:
+	LD	HL,(_floor_t)
+	LD	DE,(_floor_t+2)
+
+_floor_done:
+	POP	BC
 	POP	IX
 	RET
 
@@ -50,12 +95,11 @@ _ceil:
 _ceilf:
 _ceill:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
 	CALL	_math_getarg
-	LD	(_ceil_x),HL
-	LD	(_ceil_x+2),DE
 
 	; Negate
 	LD	A,D
@@ -74,6 +118,7 @@ _ceill:
 	XOR	80H
 	LD	D,A
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -87,6 +132,7 @@ _trunc:
 _truncf:
 _truncl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -94,6 +140,7 @@ _truncl:
 	CALL	__ftoi
 	CALL	__itof
 
+	POP	BC
 	POP	IX
 	RET
 
@@ -107,6 +154,7 @@ _round:
 _roundf:
 _roundl:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -132,11 +180,15 @@ _roundl:
 	CALL	__ftoi
 	CALL	__itof
 
+	POP	BC
 	POP	IX
 	RET
 
 	DSEG
 
+_floor_x:	DS	4
+_floor_t:	DS	4
+_floor_sign:	DS	1
 _ceil_x:	DS	4
 
 	END

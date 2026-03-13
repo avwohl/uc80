@@ -23,6 +23,7 @@ PRTSTR	EQU	9
 _modf:
 _modff:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -37,9 +38,9 @@ _modff:
 	LD	(_modf_i+2),DE
 
 	; Store to *iptr
-	LD	A,(IX+8)
+	LD	A,(IX+10)
 	LD	C,A
-	LD	A,(IX+9)
+	LD	A,(IX+11)
 	LD	B,A
 	LD	A,L
 	LD	(BC),A
@@ -60,6 +61,7 @@ _modff:
 	LD	DE,(_modf_x+2)
 	CALL	__fsub
 
+	POP	BC
 	POP	IX
 	RET
 

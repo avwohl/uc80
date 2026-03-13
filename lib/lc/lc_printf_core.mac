@@ -697,6 +697,7 @@ _prt_float_done:
 ; ============================================================
 ; Internal: print HL as decimal (no padding, simple)
 ; ============================================================
+	PUBLIC	_prt_dec
 _prt_dec:
 	PUSH	BC
 	PUSH	DE

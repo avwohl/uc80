@@ -25,6 +25,7 @@ PRTSTR	EQU	9
 _asin:
 _asinf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -63,6 +64,7 @@ _asinf:
 	POP	BC
 	POP	BC
 
+	POP	BC
 	POP	IX
 	RET
 

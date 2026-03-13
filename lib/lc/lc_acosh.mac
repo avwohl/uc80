@@ -1,0 +1,84 @@
+; lc_acosh.mac - acosh, acoshf
+; acosh(x) = log(x + sqrt(x^2 - 1)), x >= 1
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__tmp32
+	EXTRN	_sqrtf
+	EXTRN	_logf
+
+	CSEG
+
+	PUBLIC	_acosh
+	PUBLIC	_acoshf
+_acosh:
+_acoshf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Load x
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	(_acosh_x),HL
+	LD	(_acosh_x+2),DE
+
+	; x^2
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul
+	LD	(_acosh_t),HL
+	LD	(_acosh_t+2),DE
+
+	; x^2 - 1.0: put 1.0 in __tmp32, x^2 in DEHL
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_acosh_t)
+	LD	DE,(_acosh_t+2)
+	CALL	__fsub		; x^2 - 1.0
+
+	; sqrt(x^2 - 1)
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrtf
+	POP	BC
+	POP	BC
+
+	; x + sqrt(x^2 - 1)
+	LD	A,(_acosh_x)
+	LD	(__tmp32),A
+	LD	A,(_acosh_x+1)
+	LD	(__tmp32+1),A
+	LD	A,(_acosh_x+2)
+	LD	(__tmp32+2),A
+	LD	A,(_acosh_x+3)
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; log
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+	DSEG
+
+_acosh_x:	DS	4
+_acosh_t:	DS	4
+
+	END

@@ -1,0 +1,147 @@
+; lc_logb.mac - logb, logbf, ilogb, ilogbf
+; Extract exponent from IEEE 754 float
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__itof
+
+	CSEG
+
+; ============================================================
+; ilogb(x) - return exponent as int
+; Returns: HL = unbiased exponent
+; ============================================================
+	PUBLIC	_ilogb
+	PUBLIC	_ilogbf
+_ilogb:
+_ilogbf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Extract 8-bit exponent from IEEE 754
+	; D has SEEEEEEE, E has EMMMMMM
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = full 8-bit biased exponent
+
+	; Check zero (exp=0)
+	OR	A
+	JR	Z,_ilogb_zero
+
+	; Check inf/nan (exp=255)
+	CP	255
+	JR	Z,_ilogb_inf
+
+	; Normal: exp - 127
+	SUB	127
+	LD	L,A
+	RLA			; Sign extend
+	SBC	A,A
+	LD	H,A
+	POP	IX
+	RET
+
+_ilogb_zero:
+	; Check mantissa for subnormal
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_ilogb_sub
+	; True zero: return INT_MIN
+	LD	HL,8000H
+	POP	IX
+	RET
+
+_ilogb_sub:
+	; Subnormal: return -126
+	LD	HL,0FF82H
+	POP	IX
+	RET
+
+_ilogb_inf:
+	; Return INT_MAX
+	LD	HL,7FFFH
+	POP	IX
+	RET
+
+; ============================================================
+; logb(x) - return exponent as float
+; ============================================================
+	PUBLIC	_logb
+	PUBLIC	_logbf
+_logb:
+_logbf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Extract exponent
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = biased exponent
+
+	; Check zero
+	OR	A
+	JR	Z,_logb_zero
+
+	; Check inf/nan
+	CP	255
+	JR	Z,_logb_inf
+
+	; Normal: convert (exp - 127) to float
+	SUB	127
+	LD	L,A
+	RLA
+	SBC	A,A		; Sign extend
+	LD	H,A
+	LD	D,A
+	LD	E,A		; DEHL = 32-bit signed
+	CALL	__itof
+	POP	IX
+	RET
+
+_logb_zero:
+	; Check subnormal
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_logb_sub
+	; True zero: return -inf
+	LD	HL,0
+	LD	DE,0FF80H
+	POP	IX
+	RET
+
+_logb_sub:
+	; Subnormal: return -126 as float
+	LD	HL,0FF82H	; -126 as 16-bit
+	LD	DE,0FFFFH	; Sign extend to 32-bit
+	CALL	__itof
+	POP	IX
+	RET
+
+_logb_inf:
+	; Return +inf
+	LD	HL,0
+	LD	DE,7F80H
+	POP	IX
+	RET
+
+	END

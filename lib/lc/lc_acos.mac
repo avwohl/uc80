@@ -22,6 +22,7 @@ PRTSTR	EQU	9
 _acos:
 _acosf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -39,6 +40,7 @@ _acosf:
 	LD	DE,3FC9H
 	CALL	__fsub
 
+	POP	BC
 	POP	IX
 	RET
 

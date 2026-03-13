@@ -22,6 +22,7 @@ PRTSTR	EQU	9
 _cosh:
 _coshf:
 	PUSH	IX
+	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
 
@@ -57,23 +58,16 @@ _coshf:
 	LD	DE,(_cosh_ep+2)
 	CALL	__fadd
 
-	; Divide by 2
-	LD	A,D
-	ADD	A,A
-	LD	C,A
+	; Divide by 2: decrement IEEE 754 exponent by 1
+	OR	A		; Clear carry
 	LD	A,E
-	RLA
-	DEC	A
-	RRA
+	SUB	80H
 	LD	E,A
-	LD	A,C
-	RRA
-	LD	C,A
 	LD	A,D
-	AND	80H
-	OR	C
+	SBC	A,0
 	LD	D,A
 
+	POP	BC
 	POP	IX
 	RET
 

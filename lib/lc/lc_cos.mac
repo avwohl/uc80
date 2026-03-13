@@ -84,26 +84,26 @@ _cos_loop:
 
 	; Divide by (2n-1)*(2n)
 	POP	BC
-	PUSH	BC
 	LD	A,C
 	ADD	A,A		; 2n
 	DEC	A		; 2n-1
-	LD	H,0
 	LD	L,A
-	PUSH	BC
-	LD	D,H
-	LD	E,L
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = (2n-1) as 32-bit int
+	PUSH	BC		; Save BC across __itof
 	CALL	__itof
 	LD	(_cos_n),HL
 	LD	(_cos_n+2),DE
 	POP	BC
 	LD	A,C
 	ADD	A,A		; 2n
-	INC	C		; Advance n
-	LD	H,0
+	INC	C		; Advance n for next iteration
+	PUSH	BC		; Save updated B and C
 	LD	L,A
-	LD	D,H
-	LD	E,L
+	LD	H,0
+	LD	E,H
+	LD	D,H		; DEHL = 2n as 32-bit int
 	CALL	__itof
 	; Multiply
 	LD	A,(_cos_n)

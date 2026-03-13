@@ -44,5 +44,6 @@ _gets_done:
 	POP	DE
 	POP	BC
 	POP	IX
+	RET
 
 	END

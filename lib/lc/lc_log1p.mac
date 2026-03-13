@@ -1,0 +1,47 @@
+; lc_log1p.mac - log1p, log1pf
+; log1p(x) = log(1 + x)
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__fadd
+	EXTRN	__tmp32
+	EXTRN	_logf
+
+	CSEG
+
+	PUBLIC	_log1p
+	PUBLIC	_log1pf
+_log1p:
+_log1pf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; 1.0 + x: put x in __tmp32, 1.0 in DEHL
+	LD	A,(IX+4)
+	LD	(__tmp32),A
+	LD	A,(IX+5)
+	LD	(__tmp32+1),A
+	LD	A,(IX+6)
+	LD	(__tmp32+2),A
+	LD	A,(IX+7)
+	LD	(__tmp32+3),A
+	LD	HL,0
+	LD	DE,3F80H	; 1.0
+	CALL	__fadd		; 1.0 + x
+
+	; log(1 + x)
+	PUSH	DE
+	PUSH	HL
+	CALL	_logf
+	POP	BC
+	POP	BC
+
+	POP	IX
+	RET
+
+	END
