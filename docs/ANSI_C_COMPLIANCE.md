@@ -1,11 +1,14 @@
 # UC80 C Standard Compliance Report
 
-This document compares uc80 compiler features against ANSI C (C89/C90) and C99.
+This document compares uc80 compiler features against ANSI C (C89/C90), C99, and C24.
 
 ## Summary
 
-UC80 targets C24 (ISO/IEC 9899:2024) but has significant gaps in implementation.
-This document lists what is actually working vs what is missing.
+UC80 targets C24 (ISO/IEC 9899:2024). Core language is complete.
+Standard library is substantially implemented. Main gaps are `_Complex`
+codegen and multibyte/wide character functions.
+
+Test suite results: 218/220 c-testsuite, 488/523 SDCC.
 
 ---
 
@@ -16,6 +19,9 @@ This document lists what is actually working vs what is missing.
 - [x] short (16-bit)
 - [x] int (16-bit)
 - [x] long (32-bit)
+- [x] long long (64-bit)
+- [x] float (32-bit IEEE 754, software)
+- [x] double (32-bit, same as float)
 - [x] void
 - [x] struct
 - [x] union
@@ -82,162 +88,177 @@ This document lists what is actually working vs what is missing.
 - [x] Function pointers
 - [x] Recursive functions
 
-### Standard Library - Fully Implemented
-- [x] `<assert.h>` - assert macro
-- [x] `<ctype.h>` - character classification (all functions)
-- [x] `<errno.h>` - error codes
-- [x] `<limits.h>` - type limits
-- [x] `<stdarg.h>` - variadic arguments
-- [x] `<stddef.h>` - NULL, size_t, ptrdiff_t, offsetof
-- [x] `<string.h>` - string operations (all major functions)
+### Arithmetic
+- [x] 16-bit integer arithmetic (int, short)
+- [x] 32-bit integer arithmetic (long)
+- [x] 64-bit integer arithmetic (long long) - add, sub, mul, div, mod, shifts, bitwise, compare
+- [x] IEEE 754 single-precision float - add, sub, mul, div, compare, conversions
+- [x] Printf %f format with fractional printing
 
 ---
 
-## NOT IMPLEMENTED - MUST BE ADDED
+## Standard Library
 
-### 1. `_Complex` type (C99) - NOT IMPLEMENTED
-The `_Complex` keyword is parsed but does NOT work.
-Code compiles but produces incorrect results.
+### Fully Implemented
+- [x] `<assert.h>` - assert macro with _assert_fail
+- [x] `<ctype.h>` - all character classification functions + toupper/tolower
+- [x] `<errno.h>` - POSIX error codes, extern errno
+- [x] `<float.h>` - IEEE 754 32-bit constants (FLT_*, DBL_*, LDBL_*)
+- [x] `<inttypes.h>` - PRId/PRIu/PRIx format macros
+- [x] `<iso646.h>` - alternative operator spellings
+- [x] `<limits.h>` - type limits for Z80 (8/16/16/32-bit)
+- [x] `<stdalign.h>` - alignas/alignof (alignof always 1 on Z80)
+- [x] `<stdarg.h>` - va_list, va_start, va_arg, va_end, va_copy
+- [x] `<stdbool.h>` - bool, true, false
+- [x] `<stddef.h>` - NULL, size_t, ptrdiff_t, offsetof
+- [x] `<stdint.h>` - exact-width types (int8_t through int64_t)
+- [x] `<stdnoreturn.h>` - noreturn macro
+- [x] `<string.h>` - all functions (strlen, strcmp, strcpy, strcat, memcpy, memmove, memset, memcmp, memchr, strchr, strrchr, strstr, strspn, strcspn, strpbrk, strtok, strdup, strerror)
+- [x] `<tgmath.h>` - type-generic macros (all map to float versions)
 
-Header `<complex.h>` has declarations only. None of these work:
-- `_Complex` type itself (no codegen support)
-- `creal()`, `cimag()`, `cabs()`, `carg()`
-- `conj()`, `cproj()`
-- `cexp()`, `clog()`, `cpow()`, `csqrt()`
-- `csin()`, `ccos()`, `ctan()` and inverse trig
-- `csinh()`, `ccosh()`, `ctanh()` and inverse hyperbolic
-- All float and long double variants
+### `<math.h>` - Implemented
+All functions use IEEE 754 single-precision (32-bit). Taylor series, Newton-Raphson, and reduction algorithms.
 
-**Needs**: Implement `_Complex` as a struct with real/imaginary parts,
-generate proper code for complex arithmetic.
+- [x] `sin()`, `cos()`, `tan()` - with range reduction
+- [x] `asin()`, `acos()`, `atan()`, `atan2()`
+- [x] `sinh()`, `cosh()`, `tanh()`
+- [x] `exp()`, `log()`, `log10()`, `log2()`
+- [x] `pow()`, `sqrt()`, `cbrt()`, `hypot()`
+- [x] `ceil()`, `floor()`, `trunc()`, `round()`
+- [x] `fabs()`, `fmod()`, `remainder()`, `copysign()`
+- [x] `frexp()`, `ldexp()`, `modf()`
+- [x] Float (`sinf`, `cosf`, etc.) and long double (`sinl`, `cosl`, etc.) variants
 
-### 2. `<math.h>` - NOT IMPLEMENTED
-The header exists with declarations but functions are NOT implemented.
-They return 0 or pass through input unchanged.
+Not implemented: `asinh`, `acosh`, `atanh`, `exp2`, `expm1`, `log1p`, `logb`, `ilogb`, `scalbn`, `nan`, `fma`, `fmax`, `fmin`, `fdim`, `nextafter`, classification macros.
 
-ANSI C requires:
-- [ ] `sin()`, `cos()`, `tan()`
-- [ ] `asin()`, `acos()`, `atan()`, `atan2()`
-- [ ] `sinh()`, `cosh()`, `tanh()`
-- [ ] `exp()`, `log()`, `log10()`
-- [ ] `pow()`, `sqrt()`
-- [ ] `ceil()`, `floor()`, `fabs()`, `fmod()`
-- [ ] `frexp()`, `ldexp()`, `modf()`
+### `<stdio.h>` - Implemented
+Full file I/O via CP/M BDOS FCB calls. 128-byte buffering. Max 4 regular files + 3 standard streams.
 
-**Needs**: Real floating-point math library. Z80 FP libraries exist
-(e.g., z88dk's math library, or port from other sources).
+- [x] `printf()`, `fprintf()`, `sprintf()`, `snprintf()` - table-driven format dispatch
+- [x] `vprintf()`, `vfprintf()`, `vsprintf()`
+- [x] Format specifiers: %d %i %u %x %X %o %s %c %p %f %% with width/precision/flags
+- [x] Long (%ld %lu %lx %lo) and long long (%lld %llu %llx) format specifiers
+- [x] `scanf()`, `fscanf()`, `sscanf()` - basic format parsing (%d %i %s %c %u %x)
+- [x] `fopen()`, `fclose()`, `freopen()`
+- [x] `fread()`, `fwrite()`
+- [x] `fgetc()`, `fputc()`, `getc()`, `putc()`
+- [x] `fgets()`, `fputs()`
+- [x] `getchar()`, `putchar()`, `puts()`, `gets()`
+- [x] `fseek()`, `ftell()`, `fgetpos()`, `fsetpos()`, `rewind()`
+- [x] `feof()`, `ferror()`, `clearerr()`, `ungetc()`, `fflush()`
+- [x] `remove()`, `rename()`, `tmpfile()`, `tmpnam()`
+- [x] `setbuf()`, `setvbuf()` - no-op (CP/M uses fixed 128-byte buffers)
+- [x] `perror()`
 
-### 3. `float` / `double` arithmetic - NOT IMPLEMENTED
-The types exist and are parsed, but:
-- [ ] Floating-point literals not properly handled
-- [ ] FP arithmetic operations not code-generated
-- [ ] FP comparison operations not implemented
-- [ ] printf %f/%e/%g format specifiers incomplete
+Printf links only needed format handlers via `#pragma printf int|long|llong|float|all`.
 
-**Needs**: Software floating-point library integration.
+### `<stdlib.h>` - Mostly Implemented
+- [x] `atoi()`, `atol()`, `atof()`
+- [x] `strtol()`, `strtoul()`, `strtod()`, `strtof()`
+- [x] `malloc()`, `calloc()`, `realloc()` - bump allocator (no real free)
+- [x] `free()` - no-op
+- [x] `abs()`, `labs()`, `div()`, `ldiv()`
+- [x] `rand()`, `srand()` - 16-bit LCG
+- [x] `exit()`, `abort()`, `atexit()` - supports 4 handlers
+- [ ] `getenv()` - stub (CP/M has no environment)
+- [ ] `system()` - stub (CP/M limited)
+- [ ] `bsearch()` - declared only
+- [ ] `qsort()` - declared, may be incomplete
+- [ ] `mblen()`, `mbtowc()`, `wctomb()`, `mbstowcs()`, `wcstombs()` - stubs
 
-### 4. `<locale.h>` - NOT IMPLEMENTED
-ANSI C requires:
-- [ ] `setlocale()`
-- [ ] `localeconv()`
-- [ ] `struct lconv`
-- [ ] LC_ALL, LC_COLLATE, LC_CTYPE, LC_MONETARY, LC_NUMERIC, LC_TIME
+### `<setjmp.h>` - Implemented
+- [x] `setjmp()` - saves IX, SP, return address (6-byte jmp_buf)
+- [x] `longjmp()` - restores saved environment
 
-### 5. `scanf()` family - NOT IMPLEMENTED
-- [ ] `scanf()`
-- [ ] `fscanf()`
-- [ ] `sscanf()`
+### `<signal.h>` - Partial
+- [x] `signal()` - software signal table (7 slots), set/get handlers
+- [x] `raise()` - invokes handler
+- CP/M has no hardware signals; this is a software-only system
 
-### 6. `vprintf()` family - NOT IMPLEMENTED
-- [ ] `vprintf()`
-- [ ] `vfprintf()`
-- [ ] `vsprintf()`
+### `<locale.h>` - Minimal
+- [x] `setlocale()` - accepts "C" and "" only
+- [x] `localeconv()` - returns struct lconv for C locale
 
-### 7. `<stdio.h>` gaps
-- [ ] `tmpfile()`, `tmpnam()`
-- [ ] `remove()`, `rename()`
-- [ ] `setbuf()`, `setvbuf()`
-- [ ] `perror()`
-- [ ] Full format specifier compliance (%n, width/precision for all types)
+### `<time.h>` - Stubs
+- [ ] `time()` - returns 0 (CP/M has no RTC)
+- [ ] `clock()` - returns 0
+- [ ] `difftime()`, `localtime()`, `gmtime()`, `mktime()`, `asctime()`, `ctime()`, `strftime()` - stubs
 
-### 8. `<stdlib.h>` gaps
-- [ ] `atof()` - requires FP parsing
-- [ ] `strtod()` - requires FP parsing
-- [ ] `mblen()`, `mbtowc()`, `wctomb()` - multibyte
-- [ ] `mbstowcs()`, `wcstombs()` - multibyte strings
+---
 
-### 9. `<signal.h>` - MINIMAL
-- [ ] `signal()` - declaration only
-- [ ] `raise()` - declaration only
+## NOT IMPLEMENTED
 
-### 10. `<setjmp.h>` - NOT VERIFIED
-- [ ] `setjmp()` - needs testing
-- [ ] `longjmp()` - needs testing
+### `_Complex` type (C99)
+Keyword parsed. Header `<complex.h>` has declarations and partial assembly implementation.
+No codegen support - code compiles but produces incorrect results.
+
+### `<wchar.h>` / `<wctype.h>` - Minimal
+Type definitions exist. Wide I/O functions declared but mostly stubs.
+
+### `<fenv.h>` - Minimal
+Constants defined. Runtime functions are stubs (no hardware FPU).
 
 ---
 
 ## COMPLIANCE STATUS
 
-| Feature | Status |
-|---------|--------|
-| Core Language Syntax | DONE |
-| Integer arithmetic (16/32-bit) | DONE |
-| Floating-point types | PARSED ONLY |
-| Floating-point arithmetic | NOT IMPLEMENTED |
-| `_Complex` type | NOT IMPLEMENTED |
-| `<string.h>` | DONE |
-| `<ctype.h>` | DONE |
-| `<stdio.h>` | PARTIAL (no scanf) |
-| `<stdlib.h>` | PARTIAL (no FP funcs) |
-| `<math.h>` | NOT IMPLEMENTED |
-| `<locale.h>` | NOT IMPLEMENTED |
-| `<complex.h>` | NOT IMPLEMENTED |
+Feature	Status
+Core language syntax	DONE
+Integer arithmetic (16/32-bit)	DONE
+64-bit integer arithmetic (long long)	DONE
+Floating-point arithmetic (IEEE 754)	DONE
+`<string.h>`	DONE
+`<ctype.h>`	DONE
+`<math.h>`	DONE (core functions)
+`<stdio.h>`	DONE (printf, scanf, file I/O)
+`<stdlib.h>`	MOSTLY DONE (no qsort/bsearch)
+`<setjmp.h>`	DONE
+`<signal.h>`	PARTIAL (software only)
+`<locale.h>`	MINIMAL (C locale only)
+`<time.h>`	STUBS (CP/M limitation)
+`_Complex` type	NOT IMPLEMENTED (parsed only)
+`<wchar.h>`	MINIMAL
 
 ---
 
-## IMPLEMENTATION PRIORITIES
+## REMAINING WORK
 
-### Priority 1 - Core gaps
-1. **Floating-point arithmetic** - Basic +, -, *, / for float/double
-2. **`<math.h>` functions** - At minimum: sin, cos, sqrt, pow, exp, log
-3. **`scanf()` family** - Essential for input parsing
+### Priority 1 - Gaps
+1. **`qsort()`, `bsearch()`** - stdlib completeness
+2. **`_Complex` codegen** - complex number arithmetic
+3. **Math extras** - asinh/acosh/atanh, exp2, log1p, fma, classification macros
 
-### Priority 2 - Completeness
-4. **`_Complex` type** - Full complex number support
-5. **`vprintf()` family** - Easy with existing printf
-6. **`atof()`, `strtod()`** - FP string conversion
-
-### Priority 3 - Full compliance
-7. **`<locale.h>`** - Can be minimal "C" locale only
-8. **`<setjmp.h>`** - Verify or implement
-9. **Remaining stdio functions**
+### Priority 2 - Nice to have
+4. **`<time.h>`** - real implementation if RTC available
+5. **Wide character support** - wchar.h / wctype.h
+6. **`<fenv.h>`** - floating-point exception tracking
 
 ---
 
 ## C99/C11/C24 FEATURES IMPLEMENTED
 
-These are implemented beyond ANSI C:
+Beyond ANSI C:
 - `//` comments
-- `_Bool` / `bool`
-- `long long` (as 32-bit)
+- `_Bool` / `bool` / `true` / `false`
+- `long long` (64-bit with full arithmetic)
 - Designated initializers
 - `inline` functions (parsed)
 - `restrict` qualifier (parsed)
 - `<stdint.h>` with exact-width types
 - `<stdbool.h>`
+- `<inttypes.h>` with format macros
+- `<iso646.h>` alternative spellings
+- `<stdalign.h>` / `<stdnoreturn.h>`
+- `<tgmath.h>` type-generic math
 - Binary literals (0b...)
 - Digit separators (1'000)
 - `nullptr`
 - `static_assert`
 - `_Generic`
 
----
-
 ## C99/C11/C24 FEATURES NOT IMPLEMENTED
 
-- [ ] `_Complex` / `_Imaginary` - declarations only, no codegen
+- [ ] `_Complex` / `_Imaginary` - parsed but no codegen
 - [ ] VLA (Variable Length Arrays) - parsed but no codegen
-- [ ] `<tgmath.h>` - type-generic math (needs _Complex and math.h)
-- [ ] `<fenv.h>` - floating-point environment
-- [ ] `<threads.h>` - threading (not applicable to Z80/CP-M)
-- [ ] `<stdatomic.h>` - atomics (not applicable to Z80)
+- [ ] `<threads.h>` - threading (not applicable to Z80/CP-M single-tasking)
+- [ ] `<stdatomic.h>` - atomics (Z80 is single-core; DI/EI stubs exist)
