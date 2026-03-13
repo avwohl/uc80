@@ -71,8 +71,8 @@ only affects contrived tests.
 
 	Fix                             Bytes saved  Status
 	64-bit constant type fix         256          DONE
-	Printf auto-detect specifiers   ~2,379       TODO
+	Printf auto-detect specifiers   ~2,379       DONE
 
-After 64-bit fix: 8,960 bytes (135% of z88dk's 6,609).
-Remaining gap is almost entirely from printf pulling float library.
-Auto-detecting format specifiers would bring uc80 to ~6,581 (99.6% of z88dk).
+Both fixes are implemented. The compiler now scans printf format strings at
+compile time and links only the needed format handlers. Programs that don't
+use %f no longer pull in the float math library.
