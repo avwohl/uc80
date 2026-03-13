@@ -93,7 +93,10 @@ class TestExpressionGeneration:
 
     def test_multiplication_calls_runtime(self):
         """Multiplication calls runtime library."""
-        code = gen("int main(void) { return 3 * 4; }")
+        # Use variables to prevent constant folding; disable optimizations
+        source = "int foo(int a, int b) { return a * b; } int main(void) { return foo(3, 4); }"
+        unit = parse(source)
+        code = generate(unit, enable_inlining=False, enable_const_propagation=False)
         assert "CALL\t__mul16" in code
 
     def test_division_calls_runtime(self):

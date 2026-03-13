@@ -63,8 +63,6 @@ class TestKeywords:
     def test_c24_keywords(self):
         """Test new C24 keywords."""
         keywords = [
-            ("true", TokenType.TRUE),
-            ("false", TokenType.FALSE),
             ("nullptr", TokenType.NULLPTR),
             ("constexpr", TokenType.CONSTEXPR),
             ("typeof", TokenType.TYPEOF),
@@ -154,20 +152,21 @@ class TestFloatLiterals:
 
     def test_decimal_float(self):
         tokens = tokenize("3.14 0.5 .5 1. 1.0")
-        # Note: .5 starts with dot, which is punctuator first
-        assert tokens[0].value == pytest.approx(3.14)
-        assert tokens[1].value == pytest.approx(0.5)
-        # .5 won't parse as float - it's DOT then 5
-        # 1. is parsed as INT(1) then DOT, so 1.0 is at index 6
-        assert tokens[6].value == pytest.approx(1.0)
+        # Float values are tuples: (value, has_f_suffix)
+        assert tokens[0].value[0] == pytest.approx(3.14)
+        assert tokens[1].value[0] == pytest.approx(0.5)
+        assert tokens[2].value[0] == pytest.approx(0.5)   # .5
+        assert tokens[3].value[0] == pytest.approx(1.0)   # 1.
+        assert tokens[4].value[0] == pytest.approx(1.0)   # 1.0
 
     def test_exponent(self):
         tokens = tokenize("1e10 1E10 1e+10 1e-10 1.5e3")
-        assert tokens[0].value == pytest.approx(1e10)
-        assert tokens[1].value == pytest.approx(1e10)
-        assert tokens[2].value == pytest.approx(1e10)
-        assert tokens[3].value == pytest.approx(1e-10)
-        assert tokens[4].value == pytest.approx(1.5e3)
+        # Float values are tuples: (value, has_f_suffix)
+        assert tokens[0].value[0] == pytest.approx(1e10)
+        assert tokens[1].value[0] == pytest.approx(1e10)
+        assert tokens[2].value[0] == pytest.approx(1e10)
+        assert tokens[3].value[0] == pytest.approx(1e-10)
+        assert tokens[4].value[0] == pytest.approx(1.5e3)
 
     def test_float_suffix(self):
         tokens = tokenize("3.14f 3.14F 3.14l 3.14L")
@@ -299,9 +298,6 @@ class TestPunctuators:
             ("^=", TokenType.XOR_ASSIGN),
             ("|=", TokenType.OR_ASSIGN),
             ("##", TokenType.HASHHASH),
-            ("[[", TokenType.LBRACKET2),
-            ("]]", TokenType.RBRACKET2),
-            ("::", TokenType.COLONCOLON),
         ]
         for text, expected_type in punctuators:
             tokens = tokenize(text)

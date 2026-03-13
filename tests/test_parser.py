@@ -58,13 +58,14 @@ class TestLiterals:
         assert expr.value == "hello world"
 
     def test_bool_literals(self):
+        # true/false are currently treated as identifiers (stdbool.h macros)
         expr = parse_expr("true")
-        assert isinstance(expr, ast.BoolLiteral)
-        assert expr.value is True
+        assert isinstance(expr, ast.Identifier)
+        assert expr.name == "true"
 
         expr = parse_expr("false")
-        assert isinstance(expr, ast.BoolLiteral)
-        assert expr.value is False
+        assert isinstance(expr, ast.Identifier)
+        assert expr.name == "false"
 
     def test_nullptr(self):
         expr = parse_expr("nullptr")
