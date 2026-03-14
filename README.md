@@ -107,16 +107,15 @@ Tested against multiple external test suites:
 
 | Suite | Pass Rate | Notes |
 |-------|-----------|-------|
-| [c-testsuite](https://github.com/nicklockwood/c-testsuite) | 218/220 | 1 timeout, 1 `_Generic` |
+| [c-testsuite](https://github.com/nicklockwood/c-testsuite) | 216/220 | 1 timeout, 1 `_Generic`, 2 int16 |
 | [Fujitsu compiler-test-suite](https://github.com/AcademySoftwareFoundation/CompilerTestSuite) 0003 | 371/374 | |
-| Fujitsu 0010 | 59/75 | 9 int16, 4 bitfield, 1 float, 2 timeout |
-| Fujitsu 0011 | 291/334 | 14 int16, 16 bitfield, 5 large struct |
-| Fujitsu 0012 | 3/9 | all bitfield |
+| Fujitsu 0010 | 58/75 | 9 int16, 1 float, 2 timeout |
+| Fujitsu 0011 | 287/335 | 14 int16, 5 large struct |
+| Fujitsu 0012 | 4/9 | bitfield edge cases |
 | [SDCC regression tests](https://sourceforge.net/projects/sdcc/) | 488/523 | 6 sdcc ext, 8 float math, 5 libc |
 
 Most non-passing tests are due to platform differences, not bugs:
 - **int16**: Z80 has 16-bit int, tests assume 32-bit
-- **bitfield**: Bitfield layout/packing not yet implemented
 - **large struct**: Struct-by-value in complex expressions
 - **sdcc ext**: SDCC-specific language extensions
 - **float math**: Edge cases in transcendental functions
@@ -127,6 +126,7 @@ Most non-passing tests are due to platform differences, not bugs:
 - Z80 code generation with peephole optimization
 - IEEE 754 single-precision float
 - 16-bit int, 32-bit long, 64-bit long long
+- Structs, unions, bitfields, enums
 - Full preprocessor (#include, #define, #if, #pragma, etc.)
 - Modular library with selective linking
 - Whole-program optimization

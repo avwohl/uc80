@@ -89,12 +89,13 @@ def run_test(c_file: Path, ref_file: Path, verbose: bool = False) -> tuple[str, 
     if com_size > MAX_COM_SIZE:
         return "skip", f"code size {com_size} bytes too large"
 
-    # Run
+    # Run in temp dir to avoid junk files leaking into project root
     try:
-        result = subprocess.run(
-            [str(CPMEMU), "--z80", str(com_file)],
-            capture_output=True, text=True, timeout=DEFAULT_TIMEOUT
-        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [str(CPMEMU.resolve()), "--z80", str(com_file.resolve())],
+                capture_output=True, text=True, timeout=DEFAULT_TIMEOUT, cwd=tmpdir
+            )
     except subprocess.TimeoutExpired:
         return "timeout", f"timed out after {DEFAULT_TIMEOUT}s"
 

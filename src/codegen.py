@@ -34,6 +34,15 @@ class RegState(Enum):
 
 
 @dataclass
+class BitfieldInfo:
+    """Describes a bitfield member's position within its storage unit."""
+    bit_offset: int      # Bit position within the storage unit (0 = LSB)
+    bit_width: int       # Width of the bitfield in bits
+    storage_size: int    # Size of the storage unit in bytes (1, 2, or 4)
+    is_signed: bool      # Whether the bitfield is signed
+
+
+@dataclass
 class RegDescriptor:
     """Descriptor tracking state of a single register."""
     state: RegState = RegState.FREE
@@ -1751,6 +1760,12 @@ class CodeGenContext:
     # Anonymous struct/union members: struct_name -> list of (anon_struct_type, offset)
     anon_members: dict[str, list[tuple[ast.StructType, int]]] = field(default_factory=dict)
 
+    # Bitfield info: (struct_name, member_name) -> BitfieldInfo
+    bitfield_info: dict[tuple[str, str], BitfieldInfo] = field(default_factory=dict)
+
+    # Cached struct sizes (for structs with bitfields where _type_size can't compute from members alone)
+    struct_sizes: dict[str, int] = field(default_factory=dict)
+
     # Function names (for distinguishing functions from variables)
     function_names: set[str] = field(default_factory=set)
 
@@ -2274,28 +2289,122 @@ class CodeGenerator:
         elif isinstance(decl, ast.TypedefDecl):
             self._register_typedef(decl)
 
+    def _compute_struct_layout(self, struct_name: str, ast_members: list[ast.StructMember],
+                                is_union: bool) -> tuple[list[tuple[str, ast.TypeNode, int]],
+                                                          list[tuple[ast.StructType, int]], int]:
+        """Compute struct layout with bitfield packing.
+
+        Returns (members, anon_list, total_size) where members is a list of
+        (name, type, byte_offset) tuples and anon_list is anonymous struct/union members.
+        Bitfield info is registered in ctx.bitfield_info as a side effect.
+        """
+        members = []
+        anon_list = []
+        offset = 0
+        # Bitfield packing state
+        bit_pos = 0              # Current bit position within storage unit
+        storage_unit_start = 0   # Byte offset where current storage unit begins
+        storage_unit_size = 0    # Size of current storage unit in bytes
+
+        for member in ast_members:
+            bf_width = None
+            if member.bit_width is not None:
+                bf_width = self._eval_const_expr(member.bit_width)
+                if bf_width is None:
+                    bf_width = self._eval_enum_expr(member.bit_width)
+
+            if bf_width is not None:
+                # Bitfield member
+                type_size = self._type_size(member.member_type)
+                max_bits = type_size * 8
+                # Enum bitfields are unsigned (matches GCC; C leaves it impl-defined)
+                bf_signed = (not isinstance(member.member_type, ast.EnumType)
+                             and self._is_signed_type(member.member_type))
+
+                if bf_width == 0:
+                    # Zero-width: force alignment to next storage unit boundary
+                    if bit_pos > 0:
+                        if not is_union:
+                            offset = storage_unit_start + storage_unit_size
+                        bit_pos = 0
+                    continue
+
+                # Clamp width to type size
+                if bf_width > max_bits:
+                    bf_width = max_bits
+
+                if is_union:
+                    # Union: all at offset 0
+                    if member.name:
+                        members.append((member.name, member.member_type, 0))
+                        self.ctx.bitfield_info[(struct_name, member.name)] = BitfieldInfo(
+                            bit_offset=0, bit_width=bf_width,
+                            storage_size=type_size,
+                            is_signed=bf_signed)
+                else:
+                    # Check if fits in current storage unit (same size type and room)
+                    if (bit_pos > 0 and storage_unit_size == type_size
+                            and bit_pos + bf_width <= max_bits):
+                        # Fits in current unit
+                        if member.name:
+                            members.append((member.name, member.member_type, storage_unit_start))
+                            self.ctx.bitfield_info[(struct_name, member.name)] = BitfieldInfo(
+                                bit_offset=bit_pos, bit_width=bf_width,
+                                storage_size=type_size,
+                                is_signed=bf_signed)
+                        bit_pos += bf_width
+                    else:
+                        # Start new storage unit
+                        if bit_pos > 0:
+                            offset = storage_unit_start + storage_unit_size
+                        storage_unit_start = offset
+                        storage_unit_size = type_size
+                        if member.name:
+                            members.append((member.name, member.member_type, offset))
+                            self.ctx.bitfield_info[(struct_name, member.name)] = BitfieldInfo(
+                                bit_offset=0, bit_width=bf_width,
+                                storage_size=type_size,
+                                is_signed=bf_signed)
+                        bit_pos = bf_width
+            else:
+                # Non-bitfield member: close any open bitfield group
+                if bit_pos > 0 and not is_union:
+                    offset = storage_unit_start + storage_unit_size
+                    bit_pos = 0
+
+                if member.name:
+                    members.append((member.name, member.member_type, offset))
+                elif isinstance(member.member_type, ast.StructType):
+                    anon_list.append((member.member_type, offset))
+
+                if not is_union:
+                    offset += self._type_size(member.member_type)
+
+        # Close final bitfield group
+        if bit_pos > 0 and not is_union:
+            offset = storage_unit_start + storage_unit_size
+
+        # Compute total size
+        if is_union:
+            total_size = 0
+            for member in ast_members:
+                if member.bit_width is not None:
+                    total_size = max(total_size, self._type_size(member.member_type))
+                else:
+                    total_size = max(total_size, self._type_size(member.member_type))
+            offset = total_size
+
+        return members, anon_list, offset
+
     def _register_struct(self, decl: ast.StructDecl) -> None:
         """Register a struct definition for later use."""
         if not decl.is_definition or not decl.name:
             return
 
-        members = []
-        anon_list = []
-        offset = 0
-        for member in decl.members:
-            if member.name:
-                members.append((member.name, member.member_type, offset))
-            else:
-                # Anonymous struct/union member - track for member lookup
-                if isinstance(member.member_type, ast.StructType):
-                    anon_list.append((member.member_type, offset))
-            if decl.is_union:
-                # Union: all members at offset 0
-                pass
-            else:
-                # Struct: sequential layout
-                offset += self._type_size(member.member_type)
+        members, anon_list, total_size = self._compute_struct_layout(
+            decl.name, decl.members, decl.is_union)
         self.ctx.structs[decl.name] = members
+        self.ctx.struct_sizes[decl.name] = total_size
         if anon_list:
             self.ctx.anon_members[decl.name] = anon_list
 
@@ -2378,17 +2487,10 @@ class CodeGenerator:
         elif isinstance(type_node, ast.StructType):
             # Register the struct with member offsets if it has a name and members
             if type_node.name and type_node.members and type_node.name not in self.ctx.structs:
-                members = []
-                anon_list = []
-                offset = 0
-                for member in type_node.members:
-                    if member.name:
-                        members.append((member.name, member.member_type, offset))
-                    elif isinstance(member.member_type, ast.StructType):
-                        anon_list.append((member.member_type, offset))
-                    if not type_node.is_union:
-                        offset += self._type_size(member.member_type)
+                members, anon_list, total_size = self._compute_struct_layout(
+                    type_node.name, type_node.members, type_node.is_union)
                 self.ctx.structs[type_node.name] = members
+                self.ctx.struct_sizes[type_node.name] = total_size
                 if anon_list:
                     self.ctx.anon_members[type_node.name] = anon_list
             # Also register any nested inline types
@@ -2414,19 +2516,10 @@ class CodeGenerator:
             if struct_type.members:
                 struct_name = decl.name
                 struct_type.name = struct_name  # Set name for later lookup
-                members = []
-                anon_list = []
-                offset = 0
-                for member in struct_type.members:
-                    if member.name:
-                        members.append((member.name, member.member_type, offset))
-                    elif isinstance(member.member_type, ast.StructType):
-                        anon_list.append((member.member_type, offset))
-                    if struct_type.is_union:
-                        pass  # Union: all at offset 0
-                    else:
-                        offset += self._type_size(member.member_type)
+                members, anon_list, total_size = self._compute_struct_layout(
+                    struct_name, struct_type.members, struct_type.is_union)
                 self.ctx.structs[struct_name] = members
+                self.ctx.struct_sizes[struct_name] = total_size
                 if anon_list:
                     self.ctx.anon_members[struct_name] = anon_list
         # For enum types, nothing special needed - enum values are already constants
@@ -3351,13 +3444,32 @@ class CodeGenerator:
 
         value_index = 0
 
+        # Check if struct has bitfields (need struct_name for bitfield_info lookup)
+        struct_name = struct_type.name
+
         for member_name, member_type, member_offset in members:
             if value_index >= len(values):
                 # No more values - zero-initialize remaining members
-                self._gen_zero_init_member(sym, member_type, base_offset + member_offset)
+                bf = self.ctx.bitfield_info.get((struct_name, member_name)) if struct_name else None
+                if bf is not None:
+                    # Bitfield: zero-init via bitfield write
+                    self._gen_bitfield_init_store(sym, base_offset + member_offset, bf,
+                                                  ast.IntLiteral(value=0))
+                else:
+                    self._gen_zero_init_member(sym, member_type, base_offset + member_offset)
                 continue
 
             val = values[value_index]
+
+            # Check if this member is a bitfield
+            bf = self.ctx.bitfield_info.get((struct_name, member_name)) if struct_name else None
+            if bf is not None and not (bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8):
+                # Bitfield member: use read-modify-write
+                value_index += 1
+                if isinstance(val, ast.DesignatedInit):
+                    val = val.value
+                self._gen_bitfield_init_store(sym, base_offset + member_offset, bf, val)
+                continue
 
             # Handle DesignatedInit (non-member, e.g. array index designator)
             if isinstance(val, ast.DesignatedInit):
@@ -3884,6 +3996,87 @@ class CodeGenerator:
             else:
                 self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),L")
                 self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),H")
+
+    def _gen_bitfield_init_store(self, sym: 'Symbol', offset: int,
+                                 bf: BitfieldInfo, val: ast.Expression) -> None:
+        """Store a bitfield value during struct initialization.
+        Uses read-modify-write at the storage unit at sym+offset."""
+        mask = (1 << bf.bit_width) - 1
+
+        if bf.storage_size == 1:
+            # Generate value
+            self.gen_expr(val)
+            # Mask and shift
+            self.ctx.emit_instr("LD", "A,L")
+            self.ctx.emit_instr("AND", str(mask))
+            for _ in range(bf.bit_offset):
+                self.ctx.emit_instr("ADD", "A,A")
+            self.ctx.emit_instr("LD", "C,A")
+            # Read current byte, clear bits, OR, store
+            clear_mask = (~(mask << bf.bit_offset)) & 0xFF
+            if sym.uses_shared_storage:
+                base = sym.shared_offset + offset
+                self.ctx.emit_instr("LD", f"A,(??AUTO+{base})")
+                self.ctx.emit_instr("AND", str(clear_mask))
+                self.ctx.emit_instr("OR", "C")
+                self.ctx.emit_instr("LD", f"(??AUTO+{base}),A")
+            else:
+                frame_off = sym.offset + offset
+                self.ctx.emit_instr("LD", f"A,({ix_off(frame_off)})")
+                self.ctx.emit_instr("AND", str(clear_mask))
+                self.ctx.emit_instr("OR", "C")
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),A")
+
+        elif bf.storage_size == 2:
+            # Generate value
+            self.gen_expr(val)
+            # Mask value
+            low_mask = mask & 0xFF
+            high_mask = (mask >> 8) & 0xFF
+            self.ctx.emit_instr("LD", "A,L")
+            self.ctx.emit_instr("AND", str(low_mask))
+            self.ctx.emit_instr("LD", "L,A")
+            if high_mask == 0:
+                self.ctx.emit_instr("LD", "H,0")
+            else:
+                self.ctx.emit_instr("LD", "A,H")
+                self.ctx.emit_instr("AND", str(high_mask))
+                self.ctx.emit_instr("LD", "H,A")
+            # Shift left
+            for _ in range(bf.bit_offset):
+                self.ctx.emit_instr("ADD", "HL,HL")
+            # Save shifted value in BC
+            self.ctx.emit_instr("LD", "B,H")
+            self.ctx.emit_instr("LD", "C,L")
+            # Read-modify-write
+            clear_mask = (~(mask << bf.bit_offset)) & 0xFFFF
+            if sym.uses_shared_storage:
+                base = sym.shared_offset + offset
+                self.ctx.emit_instr("LD", f"HL,(??AUTO+{base})")
+                self.ctx.emit_instr("LD", "A,L")
+                self.ctx.emit_instr("AND", str(clear_mask & 0xFF))
+                self.ctx.emit_instr("OR", "C")
+                self.ctx.emit_instr("LD", "L,A")
+                self.ctx.emit_instr("LD", "A,H")
+                self.ctx.emit_instr("AND", str((clear_mask >> 8) & 0xFF))
+                self.ctx.emit_instr("OR", "B")
+                self.ctx.emit_instr("LD", "H,A")
+                self.ctx.emit_instr("LD", f"(??AUTO+{base}),HL")
+            else:
+                frame_off = sym.offset + offset
+                self.ctx.emit_instr("LD", f"L,({ix_off(frame_off)})")
+                self.ctx.emit_instr("LD", f"H,({ix_off(frame_off + 1)})")
+                self.ctx.emit_instr("LD", "A,L")
+                self.ctx.emit_instr("AND", str(clear_mask & 0xFF))
+                self.ctx.emit_instr("OR", "C")
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off)}),A")
+                self.ctx.emit_instr("LD", "A,H")
+                self.ctx.emit_instr("AND", str((clear_mask >> 8) & 0xFF))
+                self.ctx.emit_instr("OR", "B")
+                self.ctx.emit_instr("LD", f"({ix_off(frame_off + 1)}),A")
+        else:
+            # 4-byte: fall back to full-width store (sub-word 32-bit bitfield init is rare)
+            self._gen_store_member_value(sym, ast.BasicType(name="long"), offset, val)
 
     def _gen_array_init_values(self, sym: 'Symbol', array_type: ast.ArrayType,
                                 values: list, base_offset: int) -> None:
@@ -5666,6 +5859,12 @@ class CodeGenerator:
                 self.ctx.emit_instr("LD", "(HL),D")
                 self.ctx.emit_instr("EX", "DE,HL")  # Return value in HL
         elif isinstance(expr.left, ast.Member):
+            # Check for bitfield assignment
+            bf = self._get_bitfield_info(expr.left)
+            if bf is not None:
+                self._gen_bitfield_write(expr, bf)
+                return
+
             # Struct member assignment
             member_size = self._get_member_size(expr.left)
             member_type = self._get_member_type(expr.left)
@@ -6016,7 +6215,13 @@ class CodeGenerator:
                 self.ctx.emit_instr("EX", "DE,HL")
 
         elif op == "&":
-            # Address-of
+            # Address-of - cannot take address of bitfield
+            if isinstance(expr.operand, ast.Member):
+                bf = self._get_bitfield_info(expr.operand)
+                if bf is not None and not (bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8):
+                    self._error("cannot take address of bitfield", expr)
+                    self.ctx.emit_instr("LD", "HL,0")
+                    return
             self._gen_address(expr.operand)
 
         elif op == "++" or op == "--":
@@ -6161,6 +6366,24 @@ class CodeGenerator:
         elif isinstance(expr.operand, ast.Member) or \
              isinstance(expr.operand, ast.Index) or \
              (isinstance(expr.operand, ast.UnaryOp) and expr.operand.op == "*"):
+            # Check for bitfield inc/dec - rewrite as compound assignment
+            if isinstance(expr.operand, ast.Member):
+                bf = self._get_bitfield_info(expr.operand)
+                if bf is not None and not (bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8):
+                    # Rewrite bf++ as bf = bf + 1, or ++bf similarly
+                    one = ast.IntLiteral(value=1)
+                    inner = ast.BinaryOp(op="+" if is_inc else "-",
+                                         left=expr.operand, right=one)
+                    assign = ast.BinaryOp(op="=", left=expr.operand, right=inner)
+                    if not expr.is_prefix:
+                        # Postfix: save old value first
+                        self.gen_member(expr.operand)
+                        self.ctx.emit_instr("PUSH", "HL")
+                    self.gen_assignment(assign)
+                    if not expr.is_prefix:
+                        self.ctx.emit_instr("POP", "HL")
+                    return
+
             # Struct member, array index, or pointer dereference: s.x++, t[x]++, (*p)++
             # Get element size and type for pointer increment
             elem_size = 1
@@ -6842,6 +7065,12 @@ class CodeGenerator:
             # Array member: address is already in HL, just return it
             return
 
+        # Check for bitfield - use bitfield read if applicable
+        bf = self._get_bitfield_info(expr)
+        if bf is not None:
+            self._gen_bitfield_read(bf)
+            return
+
         # Determine member size and load appropriately
         member_size = self._type_size(member_type) if member_type else 2
         if member_size == 1:
@@ -6871,6 +7100,437 @@ class CodeGenerator:
             self.ctx.emit_instr("INC", "HL")
             self.ctx.emit_instr("LD", "D,(HL)")
             self.ctx.emit_instr("EX", "DE,HL")
+
+    def _get_bitfield_info(self, expr: ast.Member) -> BitfieldInfo | None:
+        """Return BitfieldInfo if this member is a bitfield, else None."""
+        struct_type = self._get_expr_type(expr.obj)
+        if isinstance(struct_type, ast.PointerType):
+            struct_type = struct_type.base_type
+        elif isinstance(struct_type, ast.ArrayType):
+            struct_type = struct_type.base_type
+        if not isinstance(struct_type, ast.StructType):
+            return None
+        # Check registered bitfield info by struct name
+        if struct_type.name:
+            key = (struct_type.name, expr.member)
+            bf = self.ctx.bitfield_info.get(key)
+            if bf is not None:
+                return bf
+        # Check inline members for bitfield info
+        if struct_type.members:
+            for m in struct_type.members:
+                if m.name == expr.member and m.bit_width is not None:
+                    bf_width = self._eval_const_expr(m.bit_width)
+                    if bf_width is not None and bf_width > 0:
+                        type_size = self._type_size(m.member_type)
+                        if bf_width > type_size * 8:
+                            bf_width = type_size * 8
+                        # Look up bit_offset from registered info or compute
+                        anon_name = struct_type.name or f"__anon_{id(struct_type)}"
+                        key = (anon_name, expr.member)
+                        bf = self.ctx.bitfield_info.get(key)
+                        if bf is not None:
+                            return bf
+                        # Compute layout to get bit_offset
+                        self._compute_struct_layout(
+                            anon_name, struct_type.members, struct_type.is_union)
+                        return self.ctx.bitfield_info.get(key)
+        return None
+
+    def _gen_bitfield_read(self, bf: BitfieldInfo) -> None:
+        """Generate code to read a bitfield value. HL = address of storage unit."""
+        # Full-width bitfield: just do normal load
+        if bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8:
+            if bf.storage_size == 1:
+                self.ctx.emit_instr("LD", "L,(HL)")
+                self._emit_char_to_hl(bf.is_signed)
+            elif bf.storage_size == 4:
+                self.ctx.emit_instr("LD", "E,(HL)")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "D,(HL)")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "A,(HL)")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "H,(HL)")
+                self.ctx.emit_instr("LD", "L,A")
+                self.ctx.emit_instr("EX", "DE,HL")
+            else:
+                self.ctx.emit_instr("LD", "E,(HL)")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "D,(HL)")
+                self.ctx.emit_instr("EX", "DE,HL")
+            return
+
+        if bf.storage_size == 1:
+            self._gen_bitfield_read_8(bf)
+        elif bf.storage_size == 2:
+            self._gen_bitfield_read_16(bf)
+        elif bf.storage_size == 4:
+            self._gen_bitfield_read_32(bf)
+
+    def _gen_bitfield_read_8(self, bf: BitfieldInfo) -> None:
+        """Read bitfield from 1-byte storage unit. HL = address."""
+        self.ctx.emit_instr("LD", "A,(HL)")
+        # Shift right by bit_offset
+        for _ in range(bf.bit_offset):
+            self.ctx.emit_instr("SRL", "A")
+        # Mask to bit_width
+        mask = (1 << bf.bit_width) - 1
+        self.ctx.emit_instr("AND", str(mask))
+        self.ctx.emit_instr("LD", "L,A")
+        # Sign extend from bit_width to 16 bits
+        if bf.is_signed and bf.bit_width < 16:
+            self._emit_bitfield_sign_extend_hl(bf.bit_width)
+        else:
+            self.ctx.emit_instr("LD", "H,0")
+
+    def _gen_bitfield_read_16(self, bf: BitfieldInfo) -> None:
+        """Read bitfield from 2-byte storage unit. HL = address."""
+        self.ctx.emit_instr("LD", "E,(HL)")
+        self.ctx.emit_instr("INC", "HL")
+        self.ctx.emit_instr("LD", "D,(HL)")
+        self.ctx.emit_instr("EX", "DE,HL")
+        # Shift right by bit_offset
+        if bf.bit_offset > 0:
+            if bf.bit_offset <= 3:
+                for _ in range(bf.bit_offset):
+                    self.ctx.emit_instr("SRL", "H")
+                    self.ctx.emit_instr("RR", "L")
+            else:
+                self.ctx.emit_instr("LD", f"B,{bf.bit_offset}")
+                lbl = self.ctx.new_label("BSH")
+                self.ctx.emit_label(lbl)
+                self.ctx.emit_instr("SRL", "H")
+                self.ctx.emit_instr("RR", "L")
+                self.ctx.emit_instr("DJNZ", lbl)
+        # Mask to bit_width
+        mask = (1 << bf.bit_width) - 1
+        low_mask = mask & 0xFF
+        high_mask = (mask >> 8) & 0xFF
+        if high_mask == 0:
+            self.ctx.emit_instr("LD", "A,L")
+            self.ctx.emit_instr("AND", str(low_mask))
+            self.ctx.emit_instr("LD", "L,A")
+        else:
+            self.ctx.emit_instr("LD", "A,L")
+            self.ctx.emit_instr("AND", str(low_mask))
+            self.ctx.emit_instr("LD", "L,A")
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("AND", str(high_mask))
+            self.ctx.emit_instr("LD", "H,A")
+        # Sign extend
+        if bf.is_signed and bf.bit_width < 16:
+            self._emit_bitfield_sign_extend_hl(bf.bit_width)
+        elif high_mask == 0:
+            self.ctx.emit_instr("LD", "H,0")
+
+    def _gen_bitfield_read_32(self, bf: BitfieldInfo) -> None:
+        """Read bitfield from 4-byte storage unit. HL = address.
+        Result in DEHL. Only handles simple cases (small bit_offset)."""
+        # Load 32-bit value into DEHL
+        self.ctx.emit_instr("LD", "E,(HL)")
+        self.ctx.emit_instr("INC", "HL")
+        self.ctx.emit_instr("LD", "D,(HL)")
+        self.ctx.emit_instr("INC", "HL")
+        self.ctx.emit_instr("LD", "A,(HL)")
+        self.ctx.emit_instr("INC", "HL")
+        self.ctx.emit_instr("LD", "H,(HL)")
+        self.ctx.emit_instr("LD", "L,A")
+        self.ctx.emit_instr("EX", "DE,HL")
+        # Now DEHL = value (DE=high, HL=low)
+        # Shift right by bit_offset
+        if bf.bit_offset > 0:
+            self.ctx.emit_instr("LD", f"B,{bf.bit_offset}")
+            lbl = self.ctx.new_label("BSH")
+            self.ctx.emit_label(lbl)
+            self.ctx.emit_instr("SRL", "D")
+            self.ctx.emit_instr("RR", "E")
+            self.ctx.emit_instr("RR", "H")
+            self.ctx.emit_instr("RR", "L")
+            self.ctx.emit_instr("DJNZ", lbl)
+        # Mask to bit_width
+        mask = (1 << bf.bit_width) - 1
+        # Apply mask to DEHL
+        self.ctx.emit_instr("LD", "A,L")
+        self.ctx.emit_instr("AND", str(mask & 0xFF))
+        self.ctx.emit_instr("LD", "L,A")
+        self.ctx.emit_instr("LD", "A,H")
+        self.ctx.emit_instr("AND", str((mask >> 8) & 0xFF))
+        self.ctx.emit_instr("LD", "H,A")
+        self.ctx.emit_instr("LD", "A,E")
+        self.ctx.emit_instr("AND", str((mask >> 16) & 0xFF))
+        self.ctx.emit_instr("LD", "E,A")
+        self.ctx.emit_instr("LD", "A,D")
+        self.ctx.emit_instr("AND", str((mask >> 24) & 0xFF))
+        self.ctx.emit_instr("LD", "D,A")
+        # Sign extend for 32-bit result
+        if bf.is_signed and bf.bit_width < 32:
+            self._emit_bitfield_sign_extend_dehl(bf.bit_width)
+
+    def _emit_bitfield_sign_extend_hl(self, bit_width: int) -> None:
+        """Sign-extend value in HL from bit_width bits to 16 bits."""
+        if bit_width >= 16:
+            return
+        lbl_pos = self.ctx.new_label("BSE")
+        lbl_done = self.ctx.new_label("BSE")
+        if bit_width <= 8:
+            # Sign bit is in L at position bit_width-1
+            self.ctx.emit_instr("BIT", f"{bit_width - 1},L")
+            self.ctx.emit_instr("JR", f"Z,{lbl_pos}")
+            # Negative: fill upper bits
+            upper_l = (~((1 << bit_width) - 1)) & 0xFF
+            if upper_l:
+                self.ctx.emit_instr("LD", "A,L")
+                self.ctx.emit_instr("OR", str(upper_l))
+                self.ctx.emit_instr("LD", "L,A")
+            self.ctx.emit_instr("LD", "H,255")
+            self.ctx.emit_instr("JR", lbl_done)
+            self.ctx.emit_label(lbl_pos)
+            self.ctx.emit_instr("LD", "H,0")
+            self.ctx.emit_label(lbl_done)
+        else:
+            # bit_width 9-15: sign bit is in H
+            h_bit = bit_width - 9
+            self.ctx.emit_instr("BIT", f"{h_bit},H")
+            self.ctx.emit_instr("JR", f"Z,{lbl_pos}")
+            upper_h = (~((1 << (bit_width - 8)) - 1)) & 0xFF
+            if upper_h:
+                self.ctx.emit_instr("LD", "A,H")
+                self.ctx.emit_instr("OR", str(upper_h))
+                self.ctx.emit_instr("LD", "H,A")
+            self.ctx.emit_label(lbl_pos)
+            # Upper bits already 0 from mask
+
+    def _emit_bitfield_sign_extend_dehl(self, bit_width: int) -> None:
+        """Sign-extend value in DEHL from bit_width bits to 32 bits."""
+        if bit_width >= 32:
+            return
+        lbl_done = self.ctx.new_label("BSE")
+        # Determine which byte contains the sign bit
+        if bit_width <= 8:
+            self.ctx.emit_instr("BIT", f"{bit_width - 1},L")
+            self.ctx.emit_instr("JR", f"Z,{lbl_done}")
+            upper_l = (~((1 << bit_width) - 1)) & 0xFF
+            if upper_l:
+                self.ctx.emit_instr("LD", "A,L")
+                self.ctx.emit_instr("OR", str(upper_l))
+                self.ctx.emit_instr("LD", "L,A")
+            self.ctx.emit_instr("LD", "H,255")
+            self.ctx.emit_instr("LD", "E,255")
+            self.ctx.emit_instr("LD", "D,255")
+        elif bit_width <= 16:
+            sign_bit = bit_width - 9
+            self.ctx.emit_instr("BIT", f"{sign_bit},H")
+            self.ctx.emit_instr("JR", f"Z,{lbl_done}")
+            upper_h = (~((1 << (bit_width - 8)) - 1)) & 0xFF
+            if upper_h:
+                self.ctx.emit_instr("LD", "A,H")
+                self.ctx.emit_instr("OR", str(upper_h))
+                self.ctx.emit_instr("LD", "H,A")
+            self.ctx.emit_instr("LD", "E,255")
+            self.ctx.emit_instr("LD", "D,255")
+        elif bit_width <= 24:
+            sign_bit = bit_width - 17
+            self.ctx.emit_instr("BIT", f"{sign_bit},E")
+            self.ctx.emit_instr("JR", f"Z,{lbl_done}")
+            upper_e = (~((1 << (bit_width - 16)) - 1)) & 0xFF
+            if upper_e:
+                self.ctx.emit_instr("LD", "A,E")
+                self.ctx.emit_instr("OR", str(upper_e))
+                self.ctx.emit_instr("LD", "E,A")
+            self.ctx.emit_instr("LD", "D,255")
+        else:
+            sign_bit = bit_width - 25
+            self.ctx.emit_instr("BIT", f"{sign_bit},D")
+            self.ctx.emit_instr("JR", f"Z,{lbl_done}")
+            upper_d = (~((1 << (bit_width - 24)) - 1)) & 0xFF
+            if upper_d:
+                self.ctx.emit_instr("LD", "A,D")
+                self.ctx.emit_instr("OR", str(upper_d))
+                self.ctx.emit_instr("LD", "D,A")
+        self.ctx.emit_label(lbl_done)
+
+    def _gen_bitfield_write(self, expr: ast.BinaryOp, bf: BitfieldInfo) -> None:
+        """Generate code for bitfield member assignment. RHS value is in HL (or DEHL for 32-bit).
+        expr.left is the Member, expr.right is the value expression."""
+        # Full-width bitfield: just do normal store
+        if bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8:
+            if bf.storage_size == 4:
+                # 32-bit: save DEHL, store, restore
+                self.ctx.emit_instr("PUSH", "DE")
+                self.ctx.emit_instr("PUSH", "HL")
+                self.ctx.emit_instr("PUSH", "DE")
+                self.ctx.emit_instr("PUSH", "HL")
+                self._gen_address(expr.left)
+                self.ctx.emit_instr("EX", "DE,HL")
+                self.ctx.emit_instr("POP", "HL")
+                self.ctx.emit_instr("EX", "DE,HL")
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("POP", "DE")
+                self.ctx.emit_instr("LD", "(HL),E")
+                self.ctx.emit_instr("INC", "HL")
+                self.ctx.emit_instr("LD", "(HL),D")
+                self.ctx.emit_instr("POP", "HL")
+                self.ctx.emit_instr("POP", "DE")
+            else:
+                self.ctx.emit_instr("PUSH", "HL")
+                self._gen_address(expr.left)
+                self.ctx.emit_instr("POP", "DE")
+                if bf.storage_size == 1:
+                    self.ctx.emit_instr("LD", "(HL),E")
+                else:
+                    self.ctx.emit_instr("LD", "(HL),E")
+                    self.ctx.emit_instr("INC", "HL")
+                    self.ctx.emit_instr("LD", "(HL),D")
+                self.ctx.emit_instr("EX", "DE,HL")
+            return
+
+        if bf.storage_size == 1:
+            self._gen_bitfield_write_8(expr, bf)
+        elif bf.storage_size == 2:
+            self._gen_bitfield_write_16(expr, bf)
+        elif bf.storage_size == 4:
+            self._gen_bitfield_write_32(expr, bf)
+
+    def _gen_bitfield_write_8(self, expr: ast.BinaryOp, bf: BitfieldInfo) -> None:
+        """Write bitfield in 1-byte storage unit. Value in HL."""
+        mask = (1 << bf.bit_width) - 1
+        clear_mask = (~(mask << bf.bit_offset)) & 0xFF
+
+        # Save original value for return
+        self.ctx.emit_instr("PUSH", "HL")
+        # Mask and shift the value
+        self.ctx.emit_instr("LD", "A,L")
+        self.ctx.emit_instr("AND", str(mask))
+        for _ in range(bf.bit_offset):
+            self.ctx.emit_instr("ADD", "A,A")
+        self.ctx.emit_instr("LD", "C,A")  # C = shifted masked value
+        self.ctx.emit_instr("PUSH", "BC")
+        # Get address
+        self._gen_address(expr.left)
+        # Read current byte, clear bitfield bits, OR in new value
+        self.ctx.emit_instr("LD", "A,(HL)")
+        self.ctx.emit_instr("AND", str(clear_mask))
+        self.ctx.emit_instr("POP", "BC")
+        self.ctx.emit_instr("OR", "C")
+        self.ctx.emit_instr("LD", "(HL),A")
+        # Return original value
+        self.ctx.emit_instr("POP", "HL")
+
+    def _gen_bitfield_write_16(self, expr: ast.BinaryOp, bf: BitfieldInfo) -> None:
+        """Write bitfield in 2-byte storage unit. Value in HL."""
+        mask = (1 << bf.bit_width) - 1
+        clear_mask = (~(mask << bf.bit_offset)) & 0xFFFF
+
+        # Save original value for return
+        self.ctx.emit_instr("PUSH", "HL")
+        # Mask value to bit_width
+        low_mask = mask & 0xFF
+        high_mask = (mask >> 8) & 0xFF
+        self.ctx.emit_instr("LD", "A,L")
+        self.ctx.emit_instr("AND", str(low_mask))
+        self.ctx.emit_instr("LD", "L,A")
+        if high_mask == 0:
+            self.ctx.emit_instr("LD", "H,0")
+        else:
+            self.ctx.emit_instr("LD", "A,H")
+            self.ctx.emit_instr("AND", str(high_mask))
+            self.ctx.emit_instr("LD", "H,A")
+        # Shift left by bit_offset
+        if bf.bit_offset > 0:
+            if bf.bit_offset <= 3:
+                for _ in range(bf.bit_offset):
+                    self.ctx.emit_instr("ADD", "HL,HL")
+            else:
+                self.ctx.emit_instr("LD", f"B,{bf.bit_offset}")
+                lbl = self.ctx.new_label("BSH")
+                self.ctx.emit_label(lbl)
+                self.ctx.emit_instr("ADD", "HL,HL")
+                self.ctx.emit_instr("DJNZ", lbl)
+        # Save shifted value
+        self.ctx.emit_instr("PUSH", "HL")
+        # Get address of storage unit
+        self._gen_address(expr.left)
+        # Load current 16-bit value into DE
+        self.ctx.emit_instr("LD", "E,(HL)")
+        self.ctx.emit_instr("INC", "HL")
+        self.ctx.emit_instr("LD", "D,(HL)")
+        # Clear bitfield bits in DE
+        self.ctx.emit_instr("LD", "A,E")
+        self.ctx.emit_instr("AND", str(clear_mask & 0xFF))
+        self.ctx.emit_instr("LD", "E,A")
+        self.ctx.emit_instr("LD", "A,D")
+        self.ctx.emit_instr("AND", str((clear_mask >> 8) & 0xFF))
+        self.ctx.emit_instr("LD", "D,A")
+        # OR with shifted new value
+        self.ctx.emit_instr("POP", "BC")  # BC = shifted value
+        self.ctx.emit_instr("LD", "A,E")
+        self.ctx.emit_instr("OR", "C")
+        self.ctx.emit_instr("LD", "E,A")
+        self.ctx.emit_instr("LD", "A,D")
+        self.ctx.emit_instr("OR", "B")
+        self.ctx.emit_instr("LD", "D,A")
+        # Store back: HL points to high byte (addr+1)
+        self.ctx.emit_instr("LD", "(HL),D")
+        self.ctx.emit_instr("DEC", "HL")
+        self.ctx.emit_instr("LD", "(HL),E")
+        # Return original value
+        self.ctx.emit_instr("POP", "HL")
+
+    def _gen_bitfield_write_32(self, expr: ast.BinaryOp, bf: BitfieldInfo) -> None:
+        """Write bitfield in 4-byte storage unit. Value in DEHL.
+        Uses byte-by-byte read-modify-write via __tmp32."""
+        mask = (1 << bf.bit_width) - 1
+        clear_mask = (~(mask << bf.bit_offset)) & 0xFFFFFFFF
+
+        # Save original DEHL for return
+        self.ctx.emit_instr("PUSH", "DE")
+        self.ctx.emit_instr("PUSH", "HL")
+        # Mask value to bit_width (DEHL)
+        self.ctx.emit_instr("LD", "A,L")
+        self.ctx.emit_instr("AND", str(mask & 0xFF))
+        self.ctx.emit_instr("LD", "L,A")
+        self.ctx.emit_instr("LD", "A,H")
+        self.ctx.emit_instr("AND", str((mask >> 8) & 0xFF))
+        self.ctx.emit_instr("LD", "H,A")
+        self.ctx.emit_instr("LD", "A,E")
+        self.ctx.emit_instr("AND", str((mask >> 16) & 0xFF))
+        self.ctx.emit_instr("LD", "E,A")
+        self.ctx.emit_instr("LD", "A,D")
+        self.ctx.emit_instr("AND", str((mask >> 24) & 0xFF))
+        self.ctx.emit_instr("LD", "D,A")
+        # Shift left by bit_offset
+        if bf.bit_offset > 0:
+            self.ctx.emit_instr("LD", f"B,{bf.bit_offset}")
+            lbl = self.ctx.new_label("BSH")
+            self.ctx.emit_label(lbl)
+            self.ctx.emit_instr("ADD", "HL,HL")
+            self.ctx.emit_instr("RL", "E")
+            self.ctx.emit_instr("RL", "D")
+            self.ctx.emit_instr("DJNZ", lbl)
+        # Save shifted value to __tmp32
+        self.ctx.runtime_used.add("__tmp32")
+        self.ctx.emit_instr("LD", "(__tmp32),HL")
+        self.ctx.emit_instr("LD", "(__tmp32+2),DE")
+        # Get address of storage unit
+        self._gen_address(expr.left)
+        # HL = base address. Process each byte in-place.
+        for i in range(4):
+            cm_byte = (clear_mask >> (i * 8)) & 0xFF
+            self.ctx.emit_instr("LD", "A,(HL)")
+            self.ctx.emit_instr("AND", str(cm_byte))
+            self.ctx.emit_instr("LD", "C,A")
+            self.ctx.emit_instr("LD", f"A,(__tmp32+{i})")
+            self.ctx.emit_instr("OR", "C")
+            self.ctx.emit_instr("LD", "(HL),A")
+            if i < 3:
+                self.ctx.emit_instr("INC", "HL")
+        # Restore original DEHL
+        self.ctx.emit_instr("POP", "HL")
+        self.ctx.emit_instr("POP", "DE")
 
     def _get_member_type(self, expr: ast.Member) -> ast.TypeNode | None:
         """Get the type of a struct member."""
@@ -6992,21 +7652,64 @@ class CodeGenerator:
         """Get offset of a member, searching inline members first then registry.
 
         Works for anonymous structs (no tag name) by computing offsets from
-        the StructType's inline member list.
+        the StructType's inline member list.  Handles bitfield packing.
         """
         # Try inline members first
         if struct_type.members:
-            offset = 0
-            for m in struct_type.members:
-                if m.name == member_name:
-                    return offset
-                if m.name is None and isinstance(m.member_type, ast.StructType):
-                    # Anonymous sub-member - search recursively
-                    sub_result = self._resolve_member_offset(m.member_type, member_name)
-                    if sub_result >= 0:
-                        return offset + sub_result
-                if not struct_type.is_union:
-                    offset += self._type_size(m.member_type)
+            has_bitfields = any(m.bit_width is not None for m in struct_type.members)
+            if has_bitfields:
+                # Use layout computation for correct bitfield offsets
+                anon_name = struct_type.name or f"__anon_{id(struct_type)}"
+                members, _, _ = self._compute_struct_layout(
+                    anon_name, struct_type.members, struct_type.is_union)
+                for name, mtype, moffset in members:
+                    if name == member_name:
+                        return moffset
+                # Search anonymous sub-members
+                offset = 0
+                bit_pos = 0
+                storage_unit_start = 0
+                storage_unit_size = 0
+                for m in struct_type.members:
+                    if m.bit_width is not None:
+                        type_size = self._type_size(m.member_type)
+                        bf_width = self._eval_const_expr(m.bit_width) or 0
+                        if bf_width == 0:
+                            if bit_pos > 0 and not struct_type.is_union:
+                                offset = storage_unit_start + storage_unit_size
+                                bit_pos = 0
+                            continue
+                        if bit_pos > 0 and storage_unit_size == type_size and bit_pos + bf_width <= type_size * 8:
+                            bit_pos += bf_width
+                        else:
+                            if bit_pos > 0 and not struct_type.is_union:
+                                offset = storage_unit_start + storage_unit_size
+                            storage_unit_start = offset
+                            storage_unit_size = type_size
+                            bit_pos = bf_width
+                    else:
+                        if bit_pos > 0 and not struct_type.is_union:
+                            offset = storage_unit_start + storage_unit_size
+                            bit_pos = 0
+                        if m.name is None and isinstance(m.member_type, ast.StructType):
+                            sub_result = self._resolve_member_offset(m.member_type, member_name)
+                            if sub_result >= 0:
+                                return offset + sub_result
+                        if not struct_type.is_union:
+                            offset += self._type_size(m.member_type)
+                return -1
+            else:
+                offset = 0
+                for m in struct_type.members:
+                    if m.name == member_name:
+                        return offset
+                    if m.name is None and isinstance(m.member_type, ast.StructType):
+                        # Anonymous sub-member - search recursively
+                        sub_result = self._resolve_member_offset(m.member_type, member_name)
+                        if sub_result >= 0:
+                            return offset + sub_result
+                    if not struct_type.is_union:
+                        offset += self._type_size(m.member_type)
         # Fall back to registered structs
         if struct_type.name:
             return self._get_member_offset(struct_type.name, member_name)
@@ -8054,8 +8757,19 @@ class CodeGenerator:
                     return base_size * size_val
             return 0  # Unsized/flexible array member - zero size for sizeof
         elif isinstance(t, ast.StructType):
+            # Use cached size if available (handles bitfield packing correctly)
+            if t.name and t.name in self.ctx.struct_sizes:
+                return self.ctx.struct_sizes[t.name]
             # Handle inline struct definitions with members
             if t.members:
+                # Check if any members have bitfields
+                has_bitfields = any(m.bit_width is not None for m in t.members)
+                if has_bitfields:
+                    # Compute layout to get correct packed size
+                    anon_name = t.name or f"__anon_{id(t)}"
+                    _, _, total_size = self._compute_struct_layout(
+                        anon_name, t.members, t.is_union)
+                    return total_size
                 if t.is_union:
                     return max((self._type_size(m.member_type) for m in t.members), default=0)
                 else:
@@ -8079,9 +8793,15 @@ class CodeGenerator:
         """Get struct members as list of (name, type, offset) tuples.
 
         Handles both inline struct definitions (with members) and named structs
-        (looked up in ctx.structs).
+        (looked up in ctx.structs).  Handles bitfield packing.
         """
         if struct_type.members:
+            has_bitfields = any(m.bit_width is not None for m in struct_type.members)
+            if has_bitfields:
+                anon_name = struct_type.name or f"__anon_{id(struct_type)}"
+                members, _, _ = self._compute_struct_layout(
+                    anon_name, struct_type.members, struct_type.is_union)
+                return members
             # Inline struct definition - compute offsets from members
             members = []
             offset = 0
@@ -8631,9 +9351,73 @@ class CodeGenerator:
         if has_member_desig:
             return self._emit_struct_init_designated(values, members)
 
+        # Detect bitfield groups: consecutive members sharing the same byte offset
+        # Group them so we can pack their values at compile time
+        member_groups = []  # list of (offset, [(name, type, bf_info_or_None)])
+        i = 0
+        while i < len(members):
+            name, mtype, offset = members[i]
+            # Collect consecutive members at the same offset = bitfield group
+            j = i + 1
+            while j < len(members) and members[j][2] == offset:
+                j += 1
+            if j > i + 1:
+                # Multiple members at same offset = bitfield group
+                group = []
+                for k in range(i, j):
+                    n, t, o = members[k]
+                    bf = None
+                    for key, info in self.ctx.bitfield_info.items():
+                        if key[1] == n:
+                            bf = info
+                            break
+                    group.append((n, t, bf))
+                member_groups.append((offset, group))
+                i = j
+            else:
+                # Single member at unique offset - treat as normal
+                # (single bitfields at bit_offset=0 use full storage unit, no masking needed)
+                member_groups.append((offset, [(name, mtype, None)]))
+                i += 1
+
         value_index = 0
 
-        for member_name, member_type, member_offset in members:
+        for group_offset, group in member_groups:
+            if len(group) > 1 or (len(group) == 1 and group[0][2] is not None):
+                # Bitfield group: pack values at compile time
+                bf_info_first = group[0][2]
+                storage_size = bf_info_first.storage_size if bf_info_first else self._type_size(group[0][1])
+                packed_value = 0
+                for gname, gtype, gbf in group:
+                    if value_index >= len(values):
+                        break
+                    val = values[value_index]
+                    value_index += 1
+                    if isinstance(val, ast.DesignatedInit):
+                        val = val.value
+                    # Try to evaluate as constant
+                    const_val = self._eval_const_expr(val)
+                    if const_val is None:
+                        const_val = 0
+                    if isinstance(const_val, float):
+                        const_val = int(const_val)
+                    if gbf:
+                        mask = (1 << gbf.bit_width) - 1
+                        packed_value |= (const_val & mask) << gbf.bit_offset
+                    else:
+                        packed_value = const_val
+                # Emit packed value
+                if storage_size == 1:
+                    self.ctx.emit_instr("DB", str(packed_value & 0xFF))
+                elif storage_size == 2:
+                    self.ctx.emit_instr("DW", str(packed_value & 0xFFFF))
+                elif storage_size == 4:
+                    self.ctx.emit_instr("DW", str(packed_value & 0xFFFF))
+                    self.ctx.emit_instr("DW", str((packed_value >> 16) & 0xFFFF))
+                continue
+
+            # Single non-bitfield member
+            member_name, member_type, _ = group[0]
             if value_index >= len(values):
                 # No more values - zero-initialize
                 size = self._type_size(member_type)
