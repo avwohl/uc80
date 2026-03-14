@@ -111,7 +111,7 @@ Tested against multiple external test suites:
 | [Fujitsu compiler-test-suite](https://github.com/AcademySoftwareFoundation/CompilerTestSuite) 0003 | 371/374 | |
 | Fujitsu 0010 | 58/75 | 9 int16, 1 float, 2 timeout |
 | Fujitsu 0011 | 287/335 | 14 int16, 5 large struct |
-| Fujitsu 0012 | 4/9 | bitfield edge cases |
+| Fujitsu 0012 | 4/9 | 4 int16/long long, 1 static DCE |
 | [SDCC regression tests](https://sourceforge.net/projects/sdcc/) | 488/523 | 6 sdcc ext, 8 float math, 5 libc |
 
 Most non-passing tests are due to platform differences, not bugs:
