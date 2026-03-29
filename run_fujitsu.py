@@ -58,7 +58,7 @@ def run_test(c_file: Path, ref_file: Path, verbose: bool = False) -> tuple[str, 
             capture_output=True, text=True, cwd=UC80_DIR, timeout=15
         )
     except subprocess.TimeoutExpired:
-        return "compile", "compilation timed out after 30s"
+        return "compile", "compilation timed out after 15s"
     if result.returncode != 0:
         return "compile", result.stderr.strip()[:200]
 

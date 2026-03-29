@@ -123,11 +123,6 @@ def main() -> int:
         help="Disable AST-level expression optimization"
     )
     parser.add_argument(
-        "-O3", "--aggressive-optimize",
-        action="store_true",
-        help="Enable aggressive AST optimizations (CSE, copy propagation, dead stores, loop opts)"
-    )
-    parser.add_argument(
         "--no-embed-startup",
         action="store_true",
         help="Don't embed startup code (crt0) in whole-program mode"
@@ -179,8 +174,6 @@ def main() -> int:
     try:
         asts = []
         mac_files = []  # Assembly files to append
-        total_tokens = 0
-        total_preprocessed_lines = 0
         printf_features: set[str] | None = None  # From #pragma printf
         scanf_features: set[str] | None = None   # From #pragma scanf
 
@@ -223,7 +216,6 @@ def main() -> int:
                         pp.macros[define] = type(pp.macros["__UC80__"])(define, body="1")
 
                 source = pp.preprocess(source, str(input_path))
-                total_preprocessed_lines += len(source.splitlines())
 
                 # Collect #pragma printf/scanf features
                 if pp.printf_features:
@@ -246,7 +238,6 @@ def main() -> int:
             # Lexical analysis
             lexer = Lexer(source, str(input_path))
             tokens = list(lexer.tokenize())
-            total_tokens += len(tokens)
 
             if args.verbose:
                 print(f"  Lexed {len(tokens)} tokens")
@@ -437,24 +428,24 @@ def main() -> int:
                     io_funcs = {'_printf', '_putchar', '_getchar', '_puts', '_gets'}
                     needs_bdos = any(f.name in io_funcs for f in funcs)
 
-                    runtime_code.append("\n\tCSEG\n; Embedded runtime library functions")
+                    runtime_code.append("\n\tcseg\n; Embedded runtime library functions")
                     if needs_bdos:
                         runtime_code.append("; CP/M BDOS constants")
-                        runtime_code.append("BDOS\tEQU\t5")
-                        runtime_code.append("CONOUT\tEQU\t2")
-                        runtime_code.append("CONIN\tEQU\t1")
+                        runtime_code.append("BDOS\tequ\t5")
+                        runtime_code.append("CONOUT\tequ\t2")
+                        runtime_code.append("CONIN\tequ\t1")
 
                     # Add EXTRN declarations for external symbols needed by runtime
                     required_externs = runtime_lib.get_required_externs(funcs)
                     if required_externs:
                         runtime_code.append("; External symbols needed by runtime")
                         for ext in sorted(required_externs):
-                            runtime_code.append(f"\tEXTRN\t{ext}")
+                            runtime_code.append(f"\textrn\t{ext}")
 
                     for func in funcs:
                         # Add PUBLIC declaration for the function
                         if func.publics:
-                            runtime_code.append(f"\tPUBLIC\t{','.join(func.publics)}")
+                            runtime_code.append(f"\tpublic\t{','.join(func.publics)}")
                         runtime_code.append(func.source)
 
                 # Add data section if needed (pass runtime_used for generated code refs)
@@ -466,14 +457,14 @@ def main() -> int:
                     if not funcs:
                         # No runtime functions were emitted, so we haven't
                         # switched to CSEG yet - do it now for the EXTRNs
-                        runtime_code.append("\n\tCSEG")
+                        runtime_code.append("\n\tcseg")
                     runtime_code.append(data_section)
 
                 if end_idx is not None:
-                    lines = lines[:end_idx] + runtime_code + ["\n\tEND"]
+                    lines = lines[:end_idx] + runtime_code + ["\n\tend"]
                 else:
                     lines.extend(runtime_code)
-                    lines.append("\n\tEND")
+                    lines.append("\n\tend")
 
                 code = '\n'.join(lines)
 
@@ -491,7 +482,7 @@ def main() -> int:
                             # Keep only labels that weren't embedded
                             remaining = [l for l in labels if l not in embedded_names]
                             if remaining:
-                                filtered_lines.append(f"\tEXTRN\t{','.join(remaining)}")
+                                filtered_lines.append(f"\textrn\t{','.join(remaining)}")
                             # else skip the line entirely
                         else:
                             filtered_lines.append(line)
@@ -547,9 +538,9 @@ def main() -> int:
                         bdos_defined = any('BDOS' in line and 'EQU' in line.upper() for line in lines)
                         if needs_bdos and not bdos_defined:
                             lib_code.append("; CP/M BDOS constants")
-                            lib_code.append("BDOS\tEQU\t5")
-                            lib_code.append("CONOUT\tEQU\t2")
-                            lib_code.append("CONIN\tEQU\t1")
+                            lib_code.append("BDOS\tequ\t5")
+                            lib_code.append("CONOUT\tequ\t2")
+                            lib_code.append("CONIN\tequ\t1")
 
                         for func in funcs:
                             lib_code.append(func.source)
@@ -557,14 +548,14 @@ def main() -> int:
                         # Add data section if needed
                         data_section = lib.get_data_section(funcs)
                         if data_section:
-                            lib_code.append("\n\tDSEG")
+                            lib_code.append("\n\tdseg")
                             lib_code.append(data_section)
 
                         if end_idx is not None:
-                            lines = lines[:end_idx] + lib_code + ["\n\tEND"]
+                            lines = lines[:end_idx] + lib_code + ["\n\tend"]
                         else:
                             lines.extend(lib_code)
-                            lines.append("\n\tEND")
+                            lines.append("\n\tend")
 
                         code = '\n'.join(lines)
 
@@ -584,7 +575,7 @@ def main() -> int:
                                     # Keep only labels that weren't embedded
                                     remaining = [l for l in labels if l not in embedded_names]
                                     if remaining:
-                                        filtered_lines.append(f"\tEXTRN\t{','.join(remaining)}")
+                                        filtered_lines.append(f"\textrn\t{','.join(remaining)}")
                                     # else skip the line entirely
                                 else:
                                     filtered_lines.append(line)

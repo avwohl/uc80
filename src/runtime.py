@@ -351,9 +351,9 @@ class RuntimeLibrary:
                 )
                 if sym in public_data:
                     if is_bss:
-                        bss_lines.append(f'\tPUBLIC\t{sym}')
+                        bss_lines.append(f'\tpublic\t{sym}')
                     else:
-                        dseg_lines.append(f'\tPUBLIC\t{sym}')
+                        dseg_lines.append(f'\tpublic\t{sym}')
 
                 if is_bss:
                     bss_lines.extend(lines)
@@ -363,11 +363,11 @@ class RuntimeLibrary:
         # Return DSEG content (initialized) then COMMON/BSS (uninitialized)
         result_lines: list[str] = []
         if dseg_lines:
-            result_lines.append('\n\tDSEG')
+            result_lines.append('\n\tdseg')
             result_lines.append('; Embedded runtime data')
             result_lines.extend(dseg_lines)
         if bss_lines:
-            result_lines.append('\n\tCOMMON\t//')
+            result_lines.append('\n\tcommon\t//')
             result_lines.append('; Embedded runtime BSS')
             result_lines.extend(bss_lines)
 

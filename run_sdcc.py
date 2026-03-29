@@ -17,7 +17,6 @@ Do not exclude/skip any tests without a human checking first.
 import subprocess
 import sys
 import re
-import os
 import itertools
 from pathlib import Path
 import argparse
@@ -151,31 +150,6 @@ def generate_instances(c_file: Path, out_dir: Path):
             instances.append((out_file, instance_name))
 
     return instances
-
-
-def create_shim(out_dir: Path) -> Path:
-    """Create the uc80 shim for SDCC test framework functions.
-
-    Provides _putchar, _initEmu, _exitEmu that the framework needs.
-    """
-    shim_file = out_dir / "uc80_shim.c"
-    shim_file.write_text("""\
-/* Shim for SDCC test framework on uc80 */
-#include <stdio.h>
-
-void _putchar(char c) {
-    putchar(c);
-}
-
-void _initEmu(void) {
-    /* no-op */
-}
-
-void _exitEmu(void) {
-    /* no-op - main() returns 0, exit via crt0 */
-}
-""")
-    return shim_file
 
 
 def create_combined_test(test_c: Path, test_name: str, work_dir: Path) -> Path:
@@ -314,168 +288,6 @@ int main(void) {{
     return combined
 
 
-def create_testfwk_adapted(out_dir: Path) -> Path:
-    """Create an adapted testfwk.h for uc80 (non-SDCC compiler).
-
-    Note: We avoid double-underscore identifiers (reserved in C) because
-    uc80 compiler may not emit PUBLIC/EXTRN for them. All framework symbols
-    use single underscore prefix (e.g., _numTests instead of __numTests).
-    """
-    header_file = out_dir / "testfwk.h"
-    header_file.write_text("""\
-#ifndef TESTFWK_H
-#define TESTFWK_H 1
-
-extern int t_numTests;
-extern const int t_numCases;
-
-/* uc80 has varargs support */
-void t_printf(const char *szFormat, ...);
-#define LOG(_a) t_printf _a
-
-/* Memory space qualifiers - all empty for uc80 */
-#define __data
-#define __idata
-#define __pdata
-#define __xdata
-#define __code
-#define __near
-#define __far
-#define __at(x)
-#define __reentrant
-#define _AUTOMEM
-#define _STATMEM
-#define REENTRANT
-#define code
-#define data
-#define xdata
-#define idata
-#define pdata
-#define near
-#define far
-
-void t_fail(const char *szMsg, const char *szCond, const char *szFile, int line);
-void t_prints(const char *s);
-void t_printn(int n);
-const char *t_getSuiteName(void);
-void t_runSuite(void);
-
-#define ASSERT(_a)  (++t_numTests, (_a) ? (void)0 : t_fail("Assertion failed", #_a, __FILE__, __LINE__))
-#define ASSERT_FAILED(_a)  (++t_numTests, (_a) ? 0 : (t_fail("Assertion failed", #_a, __FILE__, __LINE__), 1))
-#define FAIL()      FAILM("Failure")
-#define FAILM(_a)   t_fail(_a, #_a, __FILE__, __LINE__)
-
-#define UNUSED(_a)  if (_a) { }
-
-#endif
-""")
-    return header_file
-
-
-def create_testfwk_c(out_dir: Path) -> Path:
-    """Create adapted testfwk.c for uc80."""
-    fwk_file = out_dir / "testfwk.c"
-    fwk_file.write_text("""\
-/* SDCC test framework adapted for uc80 */
-#include "testfwk.h"
-#include <stdarg.h>
-
-extern void _putchar(char c);
-extern void _initEmu(void);
-extern void _exitEmu(void);
-
-int t_numTests = 0;
-static int t_numFailures = 0;
-
-void t_prints(const char *s) {
-    char c;
-    while ('\\0' != (c = *s)) {
-        _putchar(c);
-        ++s;
-    }
-}
-
-void t_printn(int n) {
-    if (0 == n) {
-        _putchar('0');
-    } else {
-        char buf[6];
-        char *p = &buf[sizeof(buf) - 1];
-        char neg = 0;
-        buf[sizeof(buf) - 1] = '\\0';
-        if (0 > n) {
-            n = -n;
-            neg = 1;
-        }
-        while (0 != n) {
-            *--p = '0' + (n % 10);
-            n = n / 10;
-        }
-        if (neg)
-            _putchar('-');
-        t_prints(p);
-    }
-}
-
-void t_printf(const char *szFormat, ...) {
-    va_list ap;
-    va_start(ap, szFormat);
-    while (*szFormat) {
-        if (*szFormat == '%') {
-            switch (*++szFormat) {
-            case 's': {
-                char *sz = va_arg(ap, char *);
-                t_prints(sz);
-                break;
-            }
-            case 'u': {
-                int i = va_arg(ap, int);
-                t_printn(i);
-                break;
-            }
-            case '%':
-                _putchar('%');
-                break;
-            default:
-                break;
-            }
-        } else {
-            _putchar(*szFormat);
-        }
-        szFormat++;
-    }
-    va_end(ap);
-}
-
-void t_fail(const char *szMsg, const char *szCond, const char *szFile, int line) {
-    t_printf("--- FAIL: \\"%s\\" on %s at %s:%u\\n", szMsg, szCond, szFile, line);
-    t_numFailures++;
-}
-
-int main(void) {
-    _initEmu();
-    t_printf("--- Running: %s\\n", t_getSuiteName());
-    t_runSuite();
-    t_printf("--- Summary: %u/%u/%u: %u failed of %u tests in %u cases.\\n",
-        t_numFailures, t_numTests, t_numCases,
-        t_numFailures, t_numTests, t_numCases);
-    _exitEmu();
-    return 0;
-}
-""")
-    return fwk_file
-
-
-def compile_file(c_file: Path, mac_file: Path, include_dirs: list) -> tuple:
-    """Compile a C file to .mac. Returns (success, error_msg)."""
-    cmd = [sys.executable, "-m", "src.main", str(c_file), "-o", str(mac_file), "--no-whole-program"]
-    for inc in include_dirs:
-        cmd.extend(["-I", str(inc)])
-    result = subprocess.run(cmd, capture_output=True, text=True, cwd=UC80_DIR)
-    if result.returncode != 0:
-        return False, result.stderr.strip()[:200]
-    return True, ""
-
 
 def run_test(test_c: Path, test_name: str, work_dir: Path,
              verbose: bool = False, timeout: int = DEFAULT_TIMEOUT) -> tuple:
@@ -503,9 +315,11 @@ def run_test(test_c: Path, test_name: str, work_dir: Path,
     com_file = work_dir / f"{combined_name}.com"
 
     # Compile
-    ok, err = compile_file(combined_c, mac_file, [work_dir])
-    if not ok:
-        return "compile", err
+    cmd = [sys.executable, "-m", "src.main", str(combined_c), "-o", str(mac_file), "--no-whole-program",
+           "-I", str(work_dir)]
+    result = subprocess.run(cmd, capture_output=True, text=True, cwd=UC80_DIR)
+    if result.returncode != 0:
+        return "compile", result.stderr.strip()[:200]
 
     # Assemble
     result = subprocess.run(
@@ -602,11 +416,6 @@ def main():
 
     # Set up working directory
     WORK_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Create framework files once
-    create_shim(WORK_DIR)
-    create_testfwk_adapted(WORK_DIR)
-    create_testfwk_c(WORK_DIR)
 
     # Find test files
     if args.tests:

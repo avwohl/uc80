@@ -15,7 +15,7 @@ Platform-specific test notes (Z80 16-bit):
 - 00206: Pragma push_macro/pop_macro not implemented.
 - 00212: Platform defines (__ILP32__, etc.) - we're ILP16.
 - 00216: Range designators [1...5], anonymous unions, complex init.
-- 00218: Bit-fields in enums.
+- 00218: Bit-fields in enums (now passes).
 - 00220: Wide characters (wchar_t, L"...").
 - 00040: Timeout - 8-queens algorithm complexity.
 """
@@ -23,7 +23,6 @@ Platform-specific test notes (Z80 16-bit):
 import subprocess
 import sys
 import shutil
-import tempfile
 from pathlib import Path
 import argparse
 

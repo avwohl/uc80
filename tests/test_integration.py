@@ -42,9 +42,9 @@ class TestMultiFileCompilation:
         assert result.returncode == 0, f"Compiler failed: {result.stderr}"
         assert output.exists()
 
-        code = output.read_text()
-        assert "PUBLIC\t_main" in code
-        assert "PUBLIC\t_compute" in code
+        code = output.read_text().lower()
+        assert "public\t_main" in code
+        assert "public\t_compute" in code
 
     def test_dead_function_elimination(self, tmp_path):
         """Dead functions are eliminated in multi-file compilation."""
@@ -65,9 +65,9 @@ class TestMultiFileCompilation:
         result = run_compiler(str(main_c), str(util_c), "-o", str(output))
         assert result.returncode == 0
 
-        code = output.read_text()
-        assert "PUBLIC\t_used" in code
-        assert "PUBLIC\t_unused" not in code
+        code = output.read_text().lower()
+        assert "public\t_used" in code
+        assert "public\t_unused" not in code
 
     def test_cross_file_inlining(self, tmp_path):
         """Functions from one file can be inlined into another."""
@@ -88,8 +88,8 @@ class TestMultiFileCompilation:
         assert result.returncode == 0
 
         # inc should be inlined and eliminated
-        code = output.read_text()
-        assert "PUBLIC\t_inc" not in code
+        code = output.read_text().lower()
+        assert "public\t_inc" not in code
         assert "Inlined" in result.stdout
 
     def test_shared_storage_across_files(self, tmp_path):
@@ -127,9 +127,9 @@ class TestMultiFileCompilation:
         result = run_compiler(str(main_c), "-o", str(output), "--no-whole-program")
         assert result.returncode == 0
 
-        code = output.read_text()
+        code = output.read_text().lower()
         # api_func should be preserved even though not called
-        assert "PUBLIC\t_api_func" in code
+        assert "public\t_api_func" in code
 
     def test_verbose_output(self, tmp_path):
         """Verbose output shows optimization statistics."""
@@ -184,10 +184,10 @@ class TestOptimizationFlags:
         result = run_compiler(str(main_c), "-o", str(output), "--no-inlining")
         assert result.returncode == 0
 
-        code = output.read_text()
+        code = output.read_text().lower()
         # inc should NOT be inlined
-        assert "PUBLIC\t_inc" in code
-        assert "CALL\t_inc" in code
+        assert "public\t_inc" in code
+        assert "call\t_inc" in code
 
     def test_no_dead_elimination(self, tmp_path):
         """--no-dead-elimination keeps unused functions."""
@@ -202,5 +202,5 @@ class TestOptimizationFlags:
         result = run_compiler(str(main_c), "-o", str(output), "--no-dead-elimination")
         assert result.returncode == 0
 
-        code = output.read_text()
-        assert "PUBLIC\t_unused" in code
+        code = output.read_text().lower()
+        assert "public\t_unused" in code

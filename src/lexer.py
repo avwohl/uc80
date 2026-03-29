@@ -24,7 +24,6 @@ class Lexer:
         self.pos = 0
         self.line = 1
         self.column = 1
-        self.line_start = 0
 
     def _location(self) -> SourceLocation:
         """Get current source location."""
@@ -46,7 +45,6 @@ class Lexer:
         if ch == '\n':
             self.line += 1
             self.column = 1
-            self.line_start = self.pos
         else:
             self.column += 1
         return ch

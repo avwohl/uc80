@@ -3,7 +3,7 @@
 Implements parsing per ISO/IEC 9899:2024 Section 6.
 """
 
-from typing import Optional, Callable
+from typing import Optional
 from .tokens import Token, TokenType, SourceLocation
 from .lexer import Lexer, LexerError
 from . import ast
@@ -1290,13 +1290,6 @@ class Parser:
             else:
                 break
 
-        # Check for struct/union/enum definition
-        # Note: _parse_struct_type and _parse_enum_type may have already parsed inline definitions
-        if isinstance(base_type, ast.StructType) and self._check(TokenType.LBRACE):
-            return self._parse_struct_definition(base_type, storage_class, is_typedef)
-        if isinstance(base_type, ast.EnumType) and self._check(TokenType.LBRACE):
-            return self._parse_enum_definition(base_type, storage_class, is_typedef)
-
         # Handle struct/enum definitions where members were already parsed inline
         if isinstance(base_type, ast.StructType) and base_type.members:
             if self._check(TokenType.SEMICOLON):
@@ -1368,81 +1361,6 @@ class Parser:
             return declarations[0]
         # Multiple declarations - wrap in DeclarationList
         return ast.DeclarationList(declarations=declarations, location=loc)
-
-    def _parse_struct_definition(
-        self,
-        struct_type: ast.StructType,
-        storage_class: Optional[str],
-        is_typedef: bool
-    ) -> ast.Declaration:
-        """Parse struct/union definition."""
-        loc = struct_type.location
-        self._expect(TokenType.LBRACE)
-
-        members = []
-        while not self._check(TokenType.RBRACE):
-            member_type = self._parse_type_specifier()
-            while True:
-                name, full_type = self._parse_declarator(member_type)
-                bit_width = None
-                if self._match(TokenType.COLON):
-                    bit_width = self._parse_expression()
-                members.append(ast.StructMember(name=name if name else None,
-                                                member_type=full_type, bit_width=bit_width))
-                if not self._match(TokenType.COMMA):
-                    break
-            self._expect(TokenType.SEMICOLON)
-
-        self._expect(TokenType.RBRACE)
-
-        decl = ast.StructDecl(name=struct_type.name, members=members,
-                              is_union=struct_type.is_union, is_definition=True, location=loc)
-
-        # Check for typedef or variable name after struct definition
-        if self._check(TokenType.IDENTIFIER) or is_typedef:
-            if is_typedef:
-                name, _ = self._parse_declarator(struct_type)
-                if name:
-                    # Copy members to StructType for codegen
-                    struct_type.members = members
-                    self.typedefs[name] = struct_type
-                    self._expect(TokenType.SEMICOLON)
-                    return ast.TypedefDecl(name=name, target_type=struct_type, location=loc)
-        self._expect(TokenType.SEMICOLON)
-        return decl
-
-    def _parse_enum_definition(
-        self,
-        enum_type: ast.EnumType,
-        storage_class: Optional[str],
-        is_typedef: bool
-    ) -> ast.Declaration:
-        """Parse enum definition."""
-        loc = enum_type.location
-        self._expect(TokenType.LBRACE)
-
-        values = []
-        while not self._check(TokenType.RBRACE):
-            name = self._expect(TokenType.IDENTIFIER).value
-            value = None
-            if self._match(TokenType.ASSIGN):
-                value = self._parse_assignment_expression()  # Not full expression (no comma)
-            values.append(ast.EnumValue(name=name, value=value, location=self._current().location))
-            if not self._match(TokenType.COMMA):
-                break
-
-        self._expect(TokenType.RBRACE)
-
-        decl = ast.EnumDecl(name=enum_type.name, values=values, is_definition=True, location=loc)
-
-        if is_typedef and self._check(TokenType.IDENTIFIER):
-            name = self._advance().value
-            self.typedefs[name] = enum_type
-            self._expect(TokenType.SEMICOLON)
-            return ast.TypedefDecl(name=name, target_type=enum_type, location=loc)
-
-        self._expect(TokenType.SEMICOLON)
-        return decl
 
     # === Top Level ===
 

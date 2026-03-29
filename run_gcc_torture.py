@@ -12,7 +12,6 @@ Do not exclude/skip any tests without a human checking first.
 
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 import argparse
 

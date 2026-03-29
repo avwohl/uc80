@@ -28,25 +28,25 @@ class TestFunctionGeneration:
         """Empty function generates prologue/epilogue."""
         # Call foo from main so it's not eliminated as dead
         code = gen("void foo(void) {} int main(void) { foo(); return 0; }")
-        assert "PUBLIC\t_foo" in code
+        assert "public\t_foo" in code
         assert "_foo:" in code
-        assert "PUSH\tIX" in code
-        assert "LD\tIX,0" in code
-        assert "ADD\tIX,SP" in code
-        assert "LD\tSP,IX" in code
-        assert "POP\tIX" in code
-        assert "RET" in code
+        assert "push\tIX" in code
+        assert "ld\tIX,0" in code
+        assert "add\tIX,SP" in code
+        assert "ld\tSP,IX" in code
+        assert "pop\tIX" in code
+        assert "ret" in code
 
     def test_function_with_return(self):
         """Function with return value."""
         code = gen("int main(void) { return 42; }")
-        assert "LD\tHL,42" in code
-        assert "JP\t@main_ret" in code
+        assert "ld\tHL,42" in code
+        assert "jp\t@main_ret" in code
 
     def test_main_function(self):
         """Main function is properly generated."""
         code = gen("int main(void) { return 0; }")
-        assert "PUBLIC\t_main" in code
+        assert "public\t_main" in code
         assert "_main:" in code
 
 
@@ -56,40 +56,40 @@ class TestExpressionGeneration:
     def test_integer_literal(self):
         """Integer literal loads into HL."""
         code = gen("int main(void) { return 123; }")
-        assert "LD\tHL,123" in code
+        assert "ld\tHL,123" in code
 
     def test_addition(self):
         """Addition uses ADD HL,DE."""
         code = gen("int main(void) { return 1 + 2; }")
-        assert "ADD\tHL,DE" in code
+        assert "add\tHL,DE" in code
 
     def test_subtraction(self):
         """Subtraction uses SBC HL,DE."""
         code = gen("int main(void) { return 5 - 3; }")
-        assert "SBC\tHL,DE" in code
+        assert "sbc\tHL,DE" in code
 
     def test_bitwise_and(self):
         """Bitwise AND."""
         code = gen("int main(void) { return 0xFF & 0x0F; }")
-        assert "AND\tD" in code
-        assert "AND\tE" in code
+        assert "and\tD" in code
+        assert "and\tE" in code
 
     def test_bitwise_or(self):
         """Bitwise OR."""
         code = gen("int main(void) { return 0xF0 | 0x0F; }")
-        assert "OR\tD" in code
-        assert "OR\tE" in code
+        assert "or\tD" in code
+        assert "or\tE" in code
 
     def test_comparison_equal(self):
         """Equality comparison."""
         code = gen("int main(void) { return 1 == 1; }")
-        assert "SBC\tHL,DE" in code
-        assert "JP\tZ" in code
+        assert "sbc\tHL,DE" in code
+        assert "jp\tZ" in code
 
     def test_comparison_not_equal(self):
         """Inequality comparison."""
         code = gen("int main(void) { return 1 != 2; }")
-        assert "JP\tNZ" in code
+        assert "jp\tNZ" in code
 
     def test_multiplication_calls_runtime(self):
         """Multiplication calls runtime library."""
@@ -97,12 +97,12 @@ class TestExpressionGeneration:
         source = "int foo(int a, int b) { return a * b; } int main(void) { return foo(3, 4); }"
         unit = parse(source)
         code = generate(unit, enable_inlining=False, enable_const_propagation=False)
-        assert "CALL\t__mul16" in code
+        assert "call\t__mul16" in code
 
     def test_division_calls_runtime(self):
         """Division calls runtime library (signed for int)."""
         code = gen("int main(void) { return 10 / 2; }")
-        assert "CALL\t__sdiv16" in code  # Signed division for int
+        assert "call\t__sdiv16" in code  # Signed division for int
 
 
 class TestUnaryOperators:
@@ -111,17 +111,17 @@ class TestUnaryOperators:
     def test_negation(self):
         """Unary negation."""
         code = gen("int main(void) { return -5; }")
-        assert "SBC\tHL,DE" in code  # 0 - 5
+        assert "sbc\tHL,DE" in code  # 0 - 5
 
     def test_logical_not(self):
         """Logical NOT."""
         code = gen("int main(void) { return !0; }")
-        assert "OR\tL" in code  # Test if HL is zero
+        assert "or\tL" in code  # Test if HL is zero
 
     def test_bitwise_not(self):
         """Bitwise NOT."""
         code = gen("int main(void) { return ~0xFF; }")
-        assert "CPL" in code
+        assert "cpl" in code
 
 
 class TestControlFlow:
@@ -130,7 +130,7 @@ class TestControlFlow:
     def test_if_statement(self):
         """If statement generates conditional jump."""
         code = gen("int main(void) { if (1) return 1; return 0; }")
-        assert "JP\tZ,@ENDIF" in code or "JP\tZ,@ELSE" in code
+        assert "jp\tZ,@ENDIF" in code or "jp\tZ,@ELSE" in code
 
     def test_if_else_statement(self):
         """If-else generates both branches."""
@@ -143,7 +143,7 @@ class TestControlFlow:
         code = gen("int main(void) { while (1) { } return 0; }")
         assert "@WHILE" in code
         assert "@ENDWHILE" in code
-        assert "JP\t@WHILE" in code
+        assert "jp\t@WHILE" in code
 
     def test_for_loop(self):
         """For loop generates loop structure."""
@@ -154,12 +154,12 @@ class TestControlFlow:
     def test_break_statement(self):
         """Break jumps to end of loop."""
         code = gen("int main(void) { while (1) { break; } return 0; }")
-        assert "JP\t@ENDWHILE" in code
+        assert "jp\t@ENDWHILE" in code
 
     def test_continue_statement(self):
         """Continue jumps to start of loop."""
         code = gen("int main(void) { while (1) { continue; } return 0; }")
-        assert "JP\t@WHILE" in code
+        assert "jp\t@WHILE" in code
 
 
 class TestLocalVariables:
@@ -174,7 +174,7 @@ class TestLocalVariables:
     def test_local_variable_with_init(self):
         """Local variable initialization."""
         code = gen("int main(void) { int x = 42; return x; }")
-        assert "LD\tHL,42" in code
+        assert "ld\tHL,42" in code
 
 
 class TestFunctionCalls:
@@ -186,7 +186,7 @@ class TestFunctionCalls:
             void foo(void);
             int main(void) { foo(); return 0; }
         """)
-        assert "CALL\t_foo" in code
+        assert "call\t_foo" in code
 
     def test_function_call_with_arg(self):
         """Function call with argument pushes arg."""
@@ -194,9 +194,9 @@ class TestFunctionCalls:
             void foo(int x);
             int main(void) { foo(42); return 0; }
         """)
-        assert "LD\tHL,42" in code
-        assert "PUSH\tHL" in code
-        assert "CALL\t_foo" in code
+        assert "ld\tHL,42" in code
+        assert "push\tHL" in code
+        assert "call\t_foo" in code
 
 
 class TestStringLiterals:
@@ -205,7 +205,7 @@ class TestStringLiterals:
     def test_string_literal(self):
         """String literal creates data segment entry."""
         code = gen('int main(void) { char *s = "hello"; return 0; }')
-        assert "DSEG" in code
+        assert "dseg" in code
         assert "@STR" in code
         assert "'hello',0" in code
 
@@ -242,18 +242,18 @@ class TestSegments:
     def test_cseg_dseg(self):
         """Code and data segments are properly declared."""
         code = gen('int main(void) { char *s = "test"; return 0; }')
-        assert "CSEG" in code
-        assert "DSEG" in code
+        assert "cseg" in code
+        assert "dseg" in code
 
     def test_z80_directive(self):
         """Z80 directive is present."""
         code = gen("int main(void) { return 0; }")
-        assert ".Z80" in code
+        assert ".z80" in code
 
     def test_end_directive(self):
         """END directive is present."""
         code = gen("int main(void) { return 0; }")
-        assert "\tEND" in code
+        assert "\tend" in code
 
 
 class TestExternDeclarations:
@@ -262,7 +262,7 @@ class TestExternDeclarations:
     def test_function_declaration_extrn(self):
         """Function declaration without body generates EXTRN."""
         code = gen("void foo(void);")
-        assert "EXTRN\t_foo" in code
+        assert "extrn\t_foo" in code
 
 
 class TestCallGraphAnalyzer:
@@ -490,9 +490,9 @@ class TestMultiFileCompilation:
 
         # Disable inlining to test merging without optimization
         code = generate(merged, enable_shared_storage=True, enable_inlining=False)
-        assert "PUBLIC\t_helper" in code
-        assert "PUBLIC\t_main" in code
-        assert "CALL\t_helper" in code
+        assert "public\t_helper" in code
+        assert "public\t_main" in code
+        assert "call\t_helper" in code
 
 
 class TestDeadFunctionElimination:
@@ -506,10 +506,10 @@ class TestDeadFunctionElimination:
         """
         code = generate(parse(source), enable_dead_elimination=True)
         # unused function should not appear in output
-        assert "PUBLIC\t_unused" not in code
+        assert "public\t_unused" not in code
         assert "_unused:" not in code
         # main should still be there
-        assert "PUBLIC\t_main" in code
+        assert "public\t_main" in code
 
     def test_keep_called_functions(self):
         """Called functions are preserved."""
@@ -518,8 +518,8 @@ class TestDeadFunctionElimination:
             int main(void) { helper(); return 0; }
         """
         code = generate(parse(source), enable_dead_elimination=True)
-        assert "PUBLIC\t_helper" in code
-        assert "PUBLIC\t_main" in code
+        assert "public\t_helper" in code
+        assert "public\t_main" in code
 
     def test_keep_transitively_called(self):
         """Transitively called functions are preserved."""
@@ -530,10 +530,10 @@ class TestDeadFunctionElimination:
             int main(void) { middle(); return 0; }
         """
         code = generate(parse(source), enable_dead_elimination=True)
-        assert "PUBLIC\t_deep" in code
-        assert "PUBLIC\t_middle" in code
-        assert "PUBLIC\t_main" in code
-        assert "PUBLIC\t_unused" not in code
+        assert "public\t_deep" in code
+        assert "public\t_middle" in code
+        assert "public\t_main" in code
+        assert "public\t_unused" not in code
 
     def test_keep_address_taken(self):
         """Functions whose addresses are taken are preserved."""
@@ -546,9 +546,9 @@ class TestDeadFunctionElimination:
             }
         """
         code = generate(parse(source), enable_dead_elimination=True)
-        assert "PUBLIC\t_callback" in code
-        assert "PUBLIC\t_main" in code
-        assert "PUBLIC\t_unused" not in code
+        assert "public\t_callback" in code
+        assert "public\t_main" in code
+        assert "public\t_unused" not in code
 
     def test_disable_dead_elimination(self):
         """Dead elimination can be disabled."""
@@ -558,8 +558,8 @@ class TestDeadFunctionElimination:
         """
         code = generate(parse(source), enable_dead_elimination=False)
         # With elimination disabled, unused should be in output
-        assert "PUBLIC\t_unused" in code
-        assert "PUBLIC\t_main" in code
+        assert "public\t_unused" in code
+        assert "public\t_main" in code
 
     def test_find_live_functions(self):
         """Test find_live_functions directly."""
@@ -590,9 +590,9 @@ class TestDeadFunctionElimination:
         """
         code = generate(parse(source), enable_dead_elimination=True)
         # External declaration should be preserved
-        assert "EXTRN\t_external" in code
+        assert "extrn\t_external" in code
         # Unused function should be eliminated
-        assert "PUBLIC\t_unused" not in code
+        assert "public\t_unused" not in code
 
 
 class TestInlineExpansion:
@@ -607,9 +607,9 @@ class TestInlineExpansion:
         # With inlining, 'add' should be inlined and then eliminated as dead
         code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True)
         # add should be eliminated after inlining
-        assert "PUBLIC\t_add" not in code
+        assert "public\t_add" not in code
         # The addition should happen inline
-        assert "ADD\tHL,DE" in code
+        assert "add\tHL,DE" in code
 
     def test_inline_preserves_behavior(self):
         """Inlining produces correct results."""
@@ -619,7 +619,7 @@ class TestInlineExpansion:
         """
         code = generate(parse(source), enable_inlining=True)
         # Should inline x + x with x = 5
-        assert "LD\tHL,5" in code
+        assert "ld\tHL,5" in code
 
     def test_no_inline_recursive(self):
         """Recursive functions are not inlined."""
@@ -630,7 +630,7 @@ class TestInlineExpansion:
         # This trivial version should be inlined
         code = generate(parse(source), enable_inlining=True)
         # factorial is trivial and should be inlined
-        assert "PUBLIC\t_factorial" not in code
+        assert "public\t_factorial" not in code
 
     def test_no_inline_address_taken(self):
         """Functions whose addresses are taken are not inlined."""
@@ -643,8 +643,8 @@ class TestInlineExpansion:
         """
         code = generate(parse(source), enable_inlining=True, enable_dead_elimination=False)
         # helper's address is taken, so it should not be inlined
-        assert "PUBLIC\t_helper" in code
-        assert "CALL\t_helper" in code
+        assert "public\t_helper" in code
+        assert "call\t_helper" in code
 
     def test_disable_inlining(self):
         """Inlining can be disabled."""
@@ -654,7 +654,7 @@ class TestInlineExpansion:
         """
         code = generate(parse(source), enable_inlining=False, enable_dead_elimination=False)
         # With inlining disabled, add should be called
-        assert "CALL\t_add" in code
+        assert "call\t_add" in code
 
     def test_should_inline_criteria(self):
         """Test should_inline function criteria."""
@@ -696,8 +696,8 @@ class TestInlineExpansion:
         """
         code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True)
         # Both inc and add2 should be inlined
-        assert "PUBLIC\t_inc" not in code
-        assert "PUBLIC\t_add2" not in code
+        assert "public\t_inc" not in code
+        assert "public\t_add2" not in code
 
 
 class TestConstantPropagation:
@@ -794,8 +794,8 @@ class TestWholeProgramMode:
             int main(void) { return 0; }
         """
         code = generate(parse(source), enable_dead_elimination=True, whole_program=True)
-        assert "PUBLIC\t_main" in code
-        assert "PUBLIC\t_unused" not in code
+        assert "public\t_main" in code
+        assert "public\t_unused" not in code
 
     def test_no_whole_program_keeps_public(self):
         """Without whole_program, PUBLIC functions are kept (external code might call them)."""
@@ -804,8 +804,8 @@ class TestWholeProgramMode:
             int main(void) { return 0; }
         """
         code = generate(parse(source), enable_dead_elimination=True, whole_program=False)
-        assert "PUBLIC\t_main" in code
-        assert "PUBLIC\t_unused" in code  # Kept because external code might call it
+        assert "public\t_main" in code
+        assert "public\t_unused" in code  # Kept because external code might call it
 
     def test_no_whole_program_eliminates_static(self):
         """Without whole_program, unused static functions are still eliminated."""
@@ -814,7 +814,7 @@ class TestWholeProgramMode:
             int main(void) { return 0; }
         """
         code = generate(parse(source), enable_dead_elimination=True, whole_program=False)
-        assert "PUBLIC\t_main" in code
+        assert "public\t_main" in code
         # Static functions without PUBLIC directive - check for label
         assert "_unused:" not in code
 
@@ -827,7 +827,7 @@ class TestWholeProgramMode:
         code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True,
                        whole_program=True)
         # inc should be inlined and eliminated
-        assert "PUBLIC\t_inc" not in code
+        assert "public\t_inc" not in code
 
     def test_no_whole_program_keeps_public_for_inline(self):
         """Without whole_program, PUBLIC functions are not inlined (external might call)."""
@@ -838,7 +838,7 @@ class TestWholeProgramMode:
         code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True,
                        whole_program=False)
         # inc should NOT be inlined - kept for external callers
-        assert "PUBLIC\t_inc" in code
+        assert "public\t_inc" in code
 
     def test_no_whole_program_inlines_static(self):
         """Without whole_program, static functions can still be inlined."""

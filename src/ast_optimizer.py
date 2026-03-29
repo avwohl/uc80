@@ -97,10 +97,6 @@ class ASTOptimizer:
                         new_items.append(unrolled)
                         continue
 
-                # Level 3: pre-populate CSE cache with loop invariants
-                if self.opt_level >= 3 and isinstance(item, (ast.WhileStmt, ast.DoWhileStmt, ast.ForStmt)):
-                    self._prepopulate_loop_invariants(item)
-
                 if isinstance(item, ast.Statement):
                     self._optimize_stmt(item)
                 elif isinstance(item, ast.Declaration):
@@ -497,7 +493,7 @@ class ASTOptimizer:
     # === Strength reduction helpers ===
 
     def _strength_reduce_mul(self, expr: ast.BinaryOp) -> ast.Expression | None:
-        """Reduce multiply by power-of-2 to shift."""
+        """Reduce multiply by power-of-2 to shift or addition."""
         left = expr.left
         right = expr.right
 
@@ -1343,47 +1339,6 @@ class ASTOptimizer:
         if not isinstance(expr, ast.BinaryOp) or expr.op != "=":
             return None
         return expr.right
-
-    # === Level 3: Loop-invariant code motion ===
-
-    def _prepopulate_loop_invariants(self, loop_stmt) -> None:
-        """Pre-populate CSE cache with subexpressions that are invariant in the loop."""
-        # Collect modified variables in the loop
-        modified_vars: set[str] = set()
-        has_calls = False
-
-        if isinstance(loop_stmt, ast.WhileStmt):
-            modified_vars.update(self._get_modified_vars_in_stmt(loop_stmt.body))
-            modified_vars.update(self._get_modified_vars_in_expr(loop_stmt.condition))
-            has_calls = self._stmt_has_calls(loop_stmt.body) or self._expr_has_calls(loop_stmt.condition)
-        elif isinstance(loop_stmt, ast.DoWhileStmt):
-            modified_vars.update(self._get_modified_vars_in_stmt(loop_stmt.body))
-            modified_vars.update(self._get_modified_vars_in_expr(loop_stmt.condition))
-            has_calls = self._stmt_has_calls(loop_stmt.body) or self._expr_has_calls(loop_stmt.condition)
-        elif isinstance(loop_stmt, ast.ForStmt):
-            if loop_stmt.init is not None:
-                if isinstance(loop_stmt.init, ast.Expression):
-                    modified_vars.update(self._get_modified_vars_in_expr(loop_stmt.init))
-            if loop_stmt.condition is not None:
-                modified_vars.update(self._get_modified_vars_in_expr(loop_stmt.condition))
-            if loop_stmt.update is not None:
-                modified_vars.update(self._get_modified_vars_in_expr(loop_stmt.update))
-            modified_vars.update(self._get_modified_vars_in_stmt(loop_stmt.body))
-            has_calls = self._stmt_has_calls(loop_stmt.body)
-            if loop_stmt.condition and self._expr_has_calls(loop_stmt.condition):
-                has_calls = True
-            if loop_stmt.update and self._expr_has_calls(loop_stmt.update):
-                has_calls = True
-
-        if has_calls:
-            # If loop has calls, address-taken vars are also "modified"
-            modified_vars.update(self._address_taken_vars)
-
-        # Scan existing CSE cache: entries not depending on modified vars are invariant
-        # (they're already cached, so they'll deduplicate automatically)
-        # We don't need to actively do anything here - CSE will naturally handle it
-        # since invariant expressions computed before the loop are already in the cache.
-        # The key is that we DON'T clear the cache when entering the loop.
 
     # === Level 3: Loop unrolling ===
 

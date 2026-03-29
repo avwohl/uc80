@@ -2,7 +2,7 @@
 """Split libc.mac into separate modules in lib/lc/
 
 For Phase 1, printf stays monolithic (all format handlers in one module).
-Phase 2 will rewrite printf as dispatcher + separate handler modules.
+Printf uses table-driven dispatch with separate handler modules.
 """
 import os
 

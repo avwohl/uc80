@@ -127,8 +127,6 @@ class TokenType(Enum):
     HASHHASH = auto()      # ##
 
     # Attribute syntax (C24)
-    LBRACKET2 = auto()     # [[
-    RBRACKET2 = auto()     # ]]
     COLONCOLON = auto()    # ::
 
 

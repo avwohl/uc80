@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Split runtime.mac into separate modules in lib/rt/"""
 import os
-import re
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(SCRIPT_DIR, "runtime.mac")
