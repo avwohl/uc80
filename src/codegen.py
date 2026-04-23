@@ -216,6 +216,7 @@ class CallGraphAnalyzer:
     is_static: dict[str, bool] = field(default_factory=dict)  # func -> is static (internal linkage)
     whole_program: bool = True  # True = no other C files at link time
     struct_sizes: dict[str, int] = field(default_factory=dict)  # struct name -> size in bytes
+    type_config: TypeConfig = field(default_factory=lambda: Z80_CPM)
 
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
@@ -429,20 +430,14 @@ class CallGraphAnalyzer:
     def _var_size(self, t: ast.TypeNode) -> int:
         """Return the size of a type in bytes."""
         if isinstance(t, ast.BasicType):
-            name = t.name
-            if name in ("char", "_Bool", "bool"):
-                return 1
-            elif name in ("short", "int"):
-                return 2
-            elif name in ("long", "float", "double", "long double"):
-                return 4
-            elif name == "long long":
-                return 8  # 64-bit
-            elif name == "void":
+            if t.name == "void":
                 return 0
-            return 2
+            size = self.type_config.sizeof_basic(t.name)
+            if size is not None:
+                return size
+            return self.type_config.int_size
         elif isinstance(t, ast.PointerType):
-            return 2
+            return self.type_config.ptr_size
         elif isinstance(t, ast.ArrayType):
             base_size = self._var_size(t.base_type)
             if t.size:
@@ -920,11 +915,11 @@ class CallGraphAnalyzer:
 
         return True
 
-    @staticmethod
-    def _is_long_long_type_node(t: ast.TypeNode) -> bool:
-        """Check if a type node is a 64-bit type."""
-        if isinstance(t, ast.BasicType) and t.name == "long long":
-            return True
+    def _is_long_long_type_node(self, t: ast.TypeNode) -> bool:
+        """Check if a type node is a 64-bit integer type (byte-width dispatch)."""
+        if isinstance(t, ast.BasicType):
+            size = self.type_config.sizeof_basic(t.name)
+            return size == 8 and t.name not in ("float", "double", "long double")
         return False
 
     def _substitute_params(self, expr: ast.Expression,
@@ -1955,7 +1950,7 @@ class CodeGenerator:
         needs_call_graph = (self.enable_shared_storage or self.enable_dead_elimination or
                            self.enable_inlining or self.enable_const_propagation)
         if needs_call_graph:
-            self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program)
+            self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
             self.call_graph_analyzer.build_call_graph(unit)
 
         # Inline expansion (before dead elimination so inlined functions can be removed)
@@ -1963,7 +1958,7 @@ class CodeGenerator:
             unit, self.inlined_calls = self.call_graph_analyzer.inline_functions(unit)
             # Rebuild call graph after inlining
             if self.inlined_calls > 0:
-                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program)
+                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
                 self.call_graph_analyzer.build_call_graph(unit)
 
         # Interprocedural constant propagation (after inlining, before dead elimination)
@@ -1971,7 +1966,7 @@ class CodeGenerator:
             unit, self.constants_propagated = self.call_graph_analyzer.propagate_constants(unit)
             # Rebuild call graph after constant propagation if any changes
             if self.constants_propagated > 0:
-                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program)
+                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
                 self.call_graph_analyzer.build_call_graph(unit)
 
         # Dead function elimination
@@ -1985,7 +1980,7 @@ class CodeGenerator:
 
             # Rebuild call graph after elimination for accurate shared storage
             if self.enable_shared_storage and self.dead_functions_removed > 0:
-                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program)
+                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
                 self.call_graph_analyzer.build_call_graph(unit)
 
         # Shared storage allocation
@@ -7824,8 +7819,8 @@ class CodeGenerator:
                 right_unsigned = isinstance(right_type, ast.BasicType) and right_type.is_signed == False
                 return ast.BasicType(name="long long", is_signed=not (left_unsigned or right_unsigned))
 
-            left_is_long = isinstance(left_type, ast.BasicType) and left_type.name == 'long'
-            right_is_long = isinstance(right_type, ast.BasicType) and right_type.name == 'long'
+            left_is_long = self._is_long_type(left_type)
+            right_is_long = self._is_long_type(right_type)
             if left_is_long or right_is_long:
                 return ast.BasicType(name="long")
 
@@ -9708,23 +9703,14 @@ class CodeGenerator:
                 is_signed = self._is_signed_type(target_type)
                 if isinstance(inner_val, float):
                     inner_val = int(inner_val)
-                if name == "char":
-                    # 8-bit: mask and sign extend if signed
-                    val = inner_val & 0xFF
-                    if is_signed and val >= 0x80:
-                        val = val - 0x100  # Sign extend
-                    return val
-                elif name in ("short", "int"):
-                    # 16-bit
-                    val = inner_val & 0xFFFF
-                    if is_signed and val >= 0x8000:
-                        val = val - 0x10000  # Sign extend
-                    return val
-                elif name == "long":
-                    # 32-bit
-                    val = inner_val & 0xFFFFFFFF
-                    if is_signed and val >= 0x80000000:
-                        val = val - 0x100000000  # Sign extend
+                target_size = self.type_config.sizeof_basic(name)
+                if target_size is not None and target_size > 0:
+                    bits = target_size * 8
+                    mask = (1 << bits) - 1
+                    sign_bit = 1 << (bits - 1)
+                    val = inner_val & mask
+                    if is_signed and val >= sign_bit:
+                        val = val - (1 << bits)  # Sign extend
                     return val
             return inner_val  # Fallback: no conversion
         elif isinstance(expr, ast.BinaryOp):
