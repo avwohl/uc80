@@ -339,7 +339,8 @@ def main() -> int:
                            enable_inlining, enable_const_propagation, whole_program,
                            embed_runtime=embed_runtime,
                            printf_features=printf_features,
-                           scanf_features=scanf_features)
+                           scanf_features=scanf_features,
+                           type_config=type_config)
         code = gen.generate(merged_ast)
 
         if args.verbose:

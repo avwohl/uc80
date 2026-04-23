@@ -10,6 +10,7 @@ from enum import Enum, auto
 import struct
 from typing import Callable, Iterator, Optional
 from uc_core import ast
+from uc_core.type_config import TypeConfig, Z80_CPM
 
 
 def float_to_ieee754(f: float) -> int:
@@ -1795,7 +1796,8 @@ class CodeGenerator:
                  enable_const_propagation: bool = True, whole_program: bool = True,
                  embed_runtime: bool = False,
                  printf_features: set[str] | None = None,
-                 scanf_features: set[str] | None = None):
+                 scanf_features: set[str] | None = None,
+                 type_config: TypeConfig | None = None):
         self.module_name = module_name
         self.ctx = CodeGenContext()
         self.enable_shared_storage = enable_shared_storage
@@ -1806,6 +1808,7 @@ class CodeGenerator:
         self.embed_runtime = embed_runtime
         self.printf_features = printf_features  # None = no pragma (emit default all table)
         self.scanf_features = scanf_features    # None = no pragma
+        self.type_config = type_config if type_config is not None else Z80_CPM
         self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
         self.dead_functions_removed: int = 0
         self.inlined_calls: int = 0
@@ -8144,15 +8147,26 @@ class CodeGenerator:
         return False
 
     def _is_long_type(self, t: ast.TypeNode | None) -> bool:
-        """Check if a type is 32-bit (long but not long long)."""
+        """Check if a type is 32-bit integer (needs DEHL register pair).
+
+        Byte-width dispatch: returns True for any BasicType whose TypeConfig
+        size is exactly 4 bytes. With default Z80_CPM, that's only 'long';
+        with --int=32, 'int' also hits this path.
+        """
         if isinstance(t, ast.BasicType):
-            return t.name == "long"
+            size = self.type_config.sizeof_basic(t.name)
+            return size == 4 and t.name not in ("float", "double", "long double")
         return False
 
     def _is_long_long_type(self, t: ast.TypeNode | None) -> bool:
-        """Check if a type is 64-bit (long long)."""
+        """Check if a type is 64-bit integer (needs __tmp64 slot).
+
+        Byte-width dispatch: returns True for any BasicType whose TypeConfig
+        size is exactly 8 bytes. With default Z80_CPM, that's only 'long long'.
+        """
         if isinstance(t, ast.BasicType):
-            return t.name == "long long"
+            size = self.type_config.sizeof_basic(t.name)
+            return size == 8 and t.name not in ("float", "double", "long double")
         return False
 
     def _is_float_type(self, t: ast.TypeNode | None) -> bool:
@@ -8203,15 +8217,16 @@ class CodeGenerator:
 
     def _is_long_long_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has 64-bit type (long long)."""
+        tc = self.type_config
         if isinstance(expr, ast.IntLiteral):
             # Check for explicit LL suffix or value too large for 32-bit
             if hasattr(expr, 'is_long_long') and expr.is_long_long:
                 return True
-            # For hex or unsigned literals, values up to 4294967295 fit in unsigned long (32-bit)
-            if (expr.is_hex or expr.is_unsigned) and 0 <= expr.value <= 4294967295:
+            # For hex or unsigned literals, values up to ULONG_MAX fit in unsigned long
+            if (expr.is_hex or expr.is_unsigned) and 0 <= expr.value <= tc.ulong_max:
                 return False
-            # Values too large for signed 32-bit (and not hex unsigned long)
-            if expr.value > 2147483647 or expr.value < -2147483648:
+            # Values too large for signed long (and not hex unsigned long)
+            if expr.value > tc.long_max or expr.value < -(tc.long_max + 1):
                 return True
             return False
         if isinstance(expr, ast.UnaryOp):
@@ -8259,23 +8274,30 @@ class CodeGenerator:
         # First check if it's long long - if so, it's not just "long"
         if self._is_long_long_expr(expr):
             return False
+        tc = self.type_config
         if isinstance(expr, ast.IntLiteral):
-            # Check for explicit L suffix or value too large for signed 16-bit
+            # Explicit L suffix: always a long
             if expr.is_long:
                 return True
+            # When int and long are the same size (e.g. --int=32 long=32),
+            # a literal that fits in int is "long-sized" too.
+            if tc.int_size == tc.long_size and tc.int_size == 4:
+                # Any literal <= ULONG_MAX is 32-bit
+                if -(tc.long_max + 1) <= expr.value <= tc.ulong_max:
+                    return True
             # C standard type promotion for literals:
             # Decimal: int -> long -> long long
-            # Hex/octal: int -> unsigned int -> long -> unsigned long -> long long -> unsigned long long
+            # Hex/octal/U: int -> unsigned int -> long -> unsigned long -> ...
             val = expr.value
-            if val > 32767 or val < -32768:
-                # For hex/octal/unsigned literals, check if it fits in unsigned int (16-bit)
-                if (expr.is_hex or expr.is_unsigned) and 0 <= val <= 65535:
-                    return False  # Fits in unsigned int, stays 16-bit
-                # Check if it fits in 32-bit
-                if val <= 2147483647 and val >= -2147483648:
+            if val > tc.int_max or val < -(tc.int_max + 1):
+                # For hex/octal/unsigned literals, check if it fits in unsigned int
+                if (expr.is_hex or expr.is_unsigned) and 0 <= val <= tc.uint_max:
+                    return False  # Fits in unsigned int, stays int-sized
+                # Check if it fits in signed long
+                if -(tc.long_max + 1) <= val <= tc.long_max:
                     return True
-                # For hex/octal/unsigned, check unsigned long (32-bit)
-                if (expr.is_hex or expr.is_unsigned) and 0 <= val <= 4294967295:
+                # For hex/octal/unsigned, check unsigned long
+                if (expr.is_hex or expr.is_unsigned) and 0 <= val <= tc.ulong_max:
                     return True
             return False
         if isinstance(expr, ast.UnaryOp):
@@ -8689,20 +8711,14 @@ class CodeGenerator:
     def _type_size(self, t: ast.TypeNode) -> int:
         """Return the size of a type in bytes."""
         if isinstance(t, ast.BasicType):
-            name = t.name
-            if name in ("char", "_Bool", "bool"):
-                return 1
-            elif name in ("short", "int"):
-                return 2
-            elif name in ("long", "float", "double", "long double"):
-                return 4
-            elif name == "long long":
-                return 8  # 64-bit
-            elif name == "void":
+            if t.name == "void":
                 return 0
-            return 2  # Default
+            size = self.type_config.sizeof_basic(t.name)
+            if size is not None:
+                return size
+            return self.type_config.int_size  # Default
         elif isinstance(t, ast.PointerType):
-            return 2  # 16-bit pointers
+            return self.type_config.ptr_size
         elif isinstance(t, ast.ArrayType):
             # Array size * element size
             base_size = self._type_size(t.base_type)
@@ -8743,8 +8759,8 @@ class CodeGenerator:
             return 0  # Unknown struct
         elif isinstance(t, ast.ComplexType):
             # Complex types are two floats (real + imaginary)
-            return 8  # 2 * 4 bytes
-        return 2  # Default
+            return 2 * self.type_config.float_size
+        return self.type_config.int_size  # Default
 
     def _get_struct_members(self, struct_type: ast.StructType) -> list:
         """Get struct members as list of (name, type, offset) tuples.
