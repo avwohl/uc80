@@ -147,6 +147,8 @@ Most non-passing tests are due to platform differences, not bugs:
 - [romwbw_emu](https://github.com/avwohl/romwbw_emu) - Hardware-level Z80 emulator for RomWBW with 512KB ROM + 512KB RAM banking and HBIOS support
 - [scelbal](https://github.com/avwohl/scelbal) - SCELBAL BASIC interpreter - 8008 to 8080 translation
 - [uada80](https://github.com/avwohl/uada80) - Ada compiler targeting Z80 processor and CP/M 2.2 operating system
+- [uc386](https://github.com/avwohl/uc386) - C23 compiler targeting Intel 386 (x86-32) and MS-DOS; sibling backend sharing the uc_core frontend
+- [uc_core](https://github.com/avwohl/uc_core) - Shared C23 frontend and AST optimizer used by uc80 and uc386
 - [ucow](https://github.com/avwohl/ucow) - Unix/Linux Cowgol to Z80 compiler
 - [um80_and_friends](https://github.com/avwohl/um80_and_friends) - Microsoft MACRO-80 compatible toolchain for Linux: assembler, linker, librarian, disassembler
 - [upeepz80](https://github.com/avwohl/upeepz80) - Z80 peephole optimizer
