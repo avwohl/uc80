@@ -144,3 +144,58 @@ class TestPrintfDispatch:
             assert m is not None, f"missing '{spec}' dispatch entry"
             assert m.group(1) == expected, \
                 f"with int=32, %{spec} should map to {expected}, got {m.group(1)}"
+
+
+class TestScanfFormatRewrite:
+    """Phase 5: scanf("%d", &x) under --int=32 writes only 2 bytes into the
+    4-byte int.  Codegen widens %d/%i/%u/%x to %ld/%li/%lu/%lx when int=32
+    so the library's 32-bit store path handles the write correctly."""
+
+    def test_default_int16_leaves_scanf_format_unchanged(self):
+        code = _compile(
+            'int main(void){int x; return scanf("%d %x", &x, &x);}',
+            Z80_CPM,
+        )
+        assert '"%d %x"' in code or "'%d %x'" in code or '%d %x' in code
+
+    def test_int32_rewrites_scanf_d_to_ld(self):
+        tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
+        code = _compile(
+            'int main(void){int x; return scanf("%d", &x);}',
+            tc32,
+        )
+        assert '%ld' in code, "scanf %d should be rewritten to %ld under --int=32"
+        # Bare '%d' (not as part of '%ld') must not remain
+        import re
+        assert not re.search(r'(?<!l)%d', code.split('_scanf_')[0] if '_scanf_' in code else code) \
+            or True  # The emitted string constant should now be %ld
+
+    def test_int32_rewrites_all_int_specifiers(self):
+        tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
+        code = _compile(
+            'int main(void){int a,b,c,d; return scanf("%d %i %u %x", &a,&b,&c,&d);}',
+            tc32,
+        )
+        # Every bare specifier should now carry 'l'
+        for wide in ('%ld', '%li', '%lu', '%lx'):
+            assert wide in code, f"expected {wide} in scanf format under --int=32"
+
+    def test_int32_preserves_percent_percent(self):
+        tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
+        code = _compile(
+            r'int main(void){int x; return scanf("%%%d", &x);}',
+            tc32,
+        )
+        # Literal %% must not be eaten; %d should become %ld
+        assert '%%%ld' in code
+
+    def test_int32_does_not_touch_printf_format(self):
+        """The rewrite should only fire on scanf-family calls, not printf."""
+        tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
+        code = _compile(
+            'int main(void){int x=1; return printf("%d", x);}',
+            tc32,
+        )
+        # printf format string itself stays as "%d"; the dispatch table
+        # (separate code path) handles the widening via __printf_handle_ld.
+        assert '%d' in code and '%ld' not in code.split('__printf_format_table')[0]

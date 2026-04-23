@@ -319,6 +319,10 @@ _scanf_long:
 	LD	A,(HL)
 	CP	'd'
 	JP	Z,_scanf_ld
+	CP	'i'
+	JP	Z,_scanf_ld	; %li → signed long (no base-prefix detection)
+	CP	'u'
+	JP	Z,_scanf_ld	; %lu → same reader as %ld (no sign distinction)
 	CP	'x'
 	JP	Z,_scanf_lx
 	; Unknown - skip

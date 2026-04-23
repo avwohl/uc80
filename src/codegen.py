@@ -2041,6 +2041,14 @@ class CodeGenerator:
                     if self._rewrite_printf_to_puts(unit):
                         self._needs_puts_extern = True
 
+        # Under --int=32, scanf's %d/%u/%x/%i store only 2 bytes into the
+        # (4-byte) int pointed at, leaving the upper half garbage.  The
+        # scanf library does have %ld/%lu/%li/%lx which store 4 bytes, so
+        # rewrite literal format strings here: %d → %ld, etc.  Non-literal
+        # format strings are left alone (rare; documented limitation).
+        if self.type_config.int_size == 4:
+            self._rewrite_scanf_formats_for_int32(unit)
+
         # Code segment
         self.ctx.emit("\tcseg")
         self.ctx.emit()
@@ -2843,6 +2851,124 @@ class CodeGenerator:
                 rewrite_stmt(decl.body)
 
         return rewrote
+
+    def _rewrite_scanf_formats_for_int32(self, unit: ast.TranslationUnit) -> None:
+        """When int_size == 4, rewrite literal scanf format strings so that
+        %d/%i/%u/%x become their %l-prefixed variants.
+
+        The scanf library's 16-bit handlers store only 2 bytes, which truncates
+        writes into a 4-byte int.  The %ld/%li/%lu/%lx handlers store 4 bytes.
+        %o is left alone (no library support either 16- or 32-bit).
+        """
+        import re
+        # Matches a single format conversion: optional flags, width, precision,
+        # optional length modifier already present (h/hh/l/ll/L/z/j/t), then
+        # the conversion char.  We only rewrite if no length modifier is set.
+        pat = re.compile(r'%([-+ #0]*\d*(?:\.\d+)?)([diux])')
+
+        def rewrite_format(s: str) -> str:
+            out = []
+            i = 0
+            while i < len(s):
+                if s[i] != '%':
+                    out.append(s[i])
+                    i += 1
+                    continue
+                # '%%' — literal percent
+                if i + 1 < len(s) and s[i + 1] == '%':
+                    out.append('%%')
+                    i += 2
+                    continue
+                m = pat.match(s, i)
+                if m:
+                    flags_width, conv = m.group(1), m.group(2)
+                    out.append(f'%{flags_width}l{conv}')
+                    i = m.end()
+                else:
+                    # Unrecognized / already has length modifier — leave intact
+                    out.append(s[i])
+                    i += 1
+            return ''.join(out)
+
+        scanf_funcs = {'scanf': 0, 'fscanf': 1, 'sscanf': 1}
+
+        def visit_expr(expr):
+            if expr is None:
+                return
+            if isinstance(expr, ast.Call):
+                fname = expr.func.name if isinstance(expr.func, ast.Identifier) else None
+                if fname in scanf_funcs:
+                    idx = scanf_funcs[fname]
+                    if idx < len(expr.args) and isinstance(expr.args[idx], ast.StringLiteral):
+                        lit = expr.args[idx]
+                        new_value = rewrite_format(lit.value)
+                        if new_value != lit.value:
+                            lit.value = new_value
+                visit_expr(expr.func)
+                for a in expr.args:
+                    visit_expr(a)
+            elif isinstance(expr, ast.BinaryOp):
+                visit_expr(expr.left)
+                visit_expr(expr.right)
+            elif isinstance(expr, ast.UnaryOp):
+                visit_expr(expr.operand)
+            elif isinstance(expr, ast.TernaryOp):
+                visit_expr(expr.cond)
+                visit_expr(expr.then_expr)
+                visit_expr(expr.else_expr)
+            elif isinstance(expr, ast.Cast):
+                visit_expr(expr.expr)
+            elif isinstance(expr, ast.Member):
+                visit_expr(expr.obj)
+            elif isinstance(expr, ast.Index):
+                visit_expr(expr.array)
+                visit_expr(expr.index)
+            elif isinstance(expr, ast.Compound):
+                for it in expr.items:
+                    visit_expr(it) if isinstance(it, ast.Expression) else visit_stmt(it)
+
+        def visit_stmt(stmt):
+            if isinstance(stmt, ast.ExpressionStmt):
+                visit_expr(stmt.expr)
+            elif isinstance(stmt, ast.CompoundStmt):
+                for s in stmt.items:
+                    visit_stmt(s)
+            elif isinstance(stmt, ast.IfStmt):
+                visit_expr(stmt.condition)
+                visit_stmt(stmt.then_branch)
+                if stmt.else_branch:
+                    visit_stmt(stmt.else_branch)
+            elif isinstance(stmt, ast.WhileStmt):
+                visit_expr(stmt.condition)
+                visit_stmt(stmt.body)
+            elif isinstance(stmt, ast.DoWhileStmt):
+                visit_stmt(stmt.body)
+                visit_expr(stmt.condition)
+            elif isinstance(stmt, ast.ForStmt):
+                if stmt.init:
+                    visit_stmt(stmt.init) if not isinstance(stmt.init, ast.Expression) else visit_expr(stmt.init)
+                if stmt.condition:
+                    visit_expr(stmt.condition)
+                if stmt.update:
+                    visit_expr(stmt.update)
+                visit_stmt(stmt.body)
+            elif isinstance(stmt, ast.SwitchStmt):
+                visit_expr(stmt.expr)
+                visit_stmt(stmt.body)
+            elif isinstance(stmt, ast.CaseStmt):
+                visit_stmt(stmt.stmt)
+            elif isinstance(stmt, ast.LabelStmt):
+                visit_stmt(stmt.stmt)
+            elif isinstance(stmt, ast.ReturnStmt):
+                if stmt.value:
+                    visit_expr(stmt.value)
+            elif isinstance(stmt, ast.VarDecl):
+                if stmt.init:
+                    visit_expr(stmt.init)
+
+        for decl in unit.declarations:
+            if isinstance(decl, ast.FunctionDecl) and decl.body:
+                visit_stmt(decl.body)
 
     def gen_function(self, func: ast.FunctionDecl) -> None:
         """Generate code for a function."""
