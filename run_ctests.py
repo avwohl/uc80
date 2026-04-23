@@ -85,7 +85,8 @@ def apply_patch(c_file: Path, test_num: str) -> Path:
         return c_file
 
 
-def run_test(c_file: Path, verbose: bool = False, test_num: str = "") -> tuple[str, str]:
+def run_test(c_file: Path, verbose: bool = False, test_num: str = "",
+             extra_cflags: list[str] | None = None) -> tuple[str, str]:
     """Run a single test. Returns (status, message)."""
     # Apply platform-specific patch if available
     source_file = apply_patch(c_file, test_num) if test_num else c_file
@@ -102,9 +103,12 @@ def run_test(c_file: Path, verbose: bool = False, test_num: str = "") -> tuple[s
         expected_file = c_file.with_suffix(".c.expected")
 
     # Compile - use --no-whole-program to avoid ul80 linker bug with DSEG relocations
+    cc_cmd = [sys.executable, "-m", "src.main", str(source_file),
+              "-o", str(mac_file), "--no-whole-program"]
+    if extra_cflags:
+        cc_cmd.extend(extra_cflags)
     result = subprocess.run(
-        [sys.executable, "-m", "src.main", str(source_file), "-o", str(mac_file), "--no-whole-program"],
-        capture_output=True, text=True, cwd=UC80_DIR
+        cc_cmd, capture_output=True, text=True, cwd=UC80_DIR
     )
     if result.returncode != 0:
         return "compile", result.stderr.strip()
@@ -175,7 +179,17 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("--start", type=int, default=1, help="Start test number")
     parser.add_argument("--end", type=int, default=220, help="End test number")
+    parser.add_argument("--int", dest="int_bits", type=int, choices=[16, 32],
+                        help="Compile with --int=<bits> (default: compiler default = 16)")
+    parser.add_argument("--long", dest="long_bits", type=int, choices=[32, 64],
+                        help="Compile with --long=<bits> (default: compiler default = 32)")
     args = parser.parse_args()
+
+    extra_cflags = []
+    if args.int_bits:
+        extra_cflags.append(f"--int={args.int_bits}")
+    if args.long_bits:
+        extra_cflags.append(f"--long={args.long_bits}")
 
     if args.tests:
         test_nums = args.tests
@@ -193,7 +207,7 @@ def main():
         if num in SKIP_TESTS:
             status, msg = "skip", SKIP_TESTS[num]
         else:
-            status, msg = run_test(c_file, args.verbose, num)
+            status, msg = run_test(c_file, args.verbose, num, extra_cflags)
         results[status].append(num)
 
         if args.verbose or status != "pass":

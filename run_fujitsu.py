@@ -45,17 +45,21 @@ def find_tests(dirs=None, limit=None):
     return tests
 
 
-def run_test(c_file: Path, ref_file: Path, verbose: bool = False) -> tuple[str, str]:
+def run_test(c_file: Path, ref_file: Path, verbose: bool = False,
+             extra_cflags: list[str] | None = None) -> tuple[str, str]:
     """Run a single test. Returns (status, message)."""
     mac_file = Path("/tmp") / c_file.with_suffix(".mac").name
     rel_file = mac_file.with_suffix(".rel")
     com_file = mac_file.with_suffix(".com")
 
     # Compile
+    cc_cmd = [sys.executable, "-m", "src.main", str(c_file),
+              "-o", str(mac_file), "--no-whole-program"]
+    if extra_cflags:
+        cc_cmd.extend(extra_cflags)
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "src.main", str(c_file), "-o", str(mac_file), "--no-whole-program"],
-            capture_output=True, text=True, cwd=UC80_DIR, timeout=15
+            cc_cmd, capture_output=True, text=True, cwd=UC80_DIR, timeout=15
         )
     except subprocess.TimeoutExpired:
         return "compile", "compilation timed out after 15s"
@@ -130,7 +134,17 @@ def main():
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("-n", "--limit", type=int, help="Max number of tests to run")
     parser.add_argument("--summary-only", action="store_true", help="Only show summary")
+    parser.add_argument("--int", dest="int_bits", type=int, choices=[16, 32],
+                        help="Compile with --int=<bits> (default: compiler default = 16)")
+    parser.add_argument("--long", dest="long_bits", type=int, choices=[32, 64],
+                        help="Compile with --long=<bits> (default: compiler default = 32)")
     args = parser.parse_args()
+
+    extra_cflags = []
+    if args.int_bits:
+        extra_cflags.append(f"--int={args.int_bits}")
+    if args.long_bits:
+        extra_cflags.append(f"--long={args.long_bits}")
 
     tests = find_tests(args.dirs or None, args.limit)
     print(f"Found {len(tests)} tests")
@@ -139,7 +153,7 @@ def main():
 
     for i, (c_file, ref_file) in enumerate(tests):
         test_id = f"{c_file.parent.name}/{c_file.stem}"
-        status, msg = run_test(c_file, ref_file, args.verbose)
+        status, msg = run_test(c_file, ref_file, args.verbose, extra_cflags)
         results[status] += 1
 
         if not args.summary_only:
