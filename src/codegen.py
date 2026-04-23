@@ -2490,13 +2490,31 @@ class CodeGenerator:
         self.ctx.emit()
         self.ctx.emit("; Printf format dispatch tables (#pragma printf)")
 
+        # With --int=32, `%d` etc. should consume 4 bytes off the stack.
+        # The library already ships 32-bit handlers (__printf_handle_ld etc.)
+        # for the 'l' length modifier, so we route `%d`→ld, `%u`→lu, etc.
+        # when int_size == 4.  `%X` maps to lx (lowercase) since there is
+        # no uppercase long-hex handler — matches existing %lX behavior.
+        int_is_32 = self.type_config.int_size == 4
+        if int_is_32:
+            int_d = '__printf_handle_ld'
+            int_u = '__printf_handle_lu'
+            int_o = '__printf_handle_lo'
+            int_x = '__printf_handle_lx'
+            int_X = '__printf_handle_lx'
+        else:
+            int_d = '__printf_handle_d'
+            int_u = '__printf_handle_u'
+            int_o = '__printf_handle_o'
+            int_x = '__printf_handle_x'
+            int_X = '__printf_handle_xu'
+
         # Collect all handlers we'll reference, then emit EXTRNs
         handlers: set[str] = set()
 
         if "int" in features or "all" in features:
-            handlers.update(['__printf_handle_d', '__printf_handle_u',
-                           '__printf_handle_o', '__printf_handle_x',
-                           '__printf_handle_xu', '__printf_handle_s',
+            handlers.update([int_d, int_u, int_o, int_x, int_X,
+                           '__printf_handle_s',
                            '__printf_handle_c', '__printf_handle_p'])
         if "long" in features or "llong" in features or "all" in features:
             handlers.add('__printf_handle_l')
@@ -2518,12 +2536,12 @@ class CodeGenerator:
         self.ctx.emit("__printf_format_table:")
 
         if "int" in features or "all" in features:
-            for spec, handler in [('d', '__printf_handle_d'),
-                                  ('i', '__printf_handle_d'),
-                                  ('u', '__printf_handle_u'),
-                                  ('o', '__printf_handle_o'),
-                                  ('x', '__printf_handle_x'),
-                                  ('X', '__printf_handle_xu'),
+            for spec, handler in [('d', int_d),
+                                  ('i', int_d),
+                                  ('u', int_u),
+                                  ('o', int_o),
+                                  ('x', int_x),
+                                  ('X', int_X),
                                   ('s', '__printf_handle_s'),
                                   ('c', '__printf_handle_c'),
                                   ('p', '__printf_handle_p')]:

@@ -1,15 +1,25 @@
-/* stddef.h - Standard definitions for uc80 */
+/* stddef.h - Standard definitions
+ *
+ * size_t and ptrdiff_t follow the target's pointer width (__SIZEOF_POINTER__),
+ * not the C int width, so --int=32 with --ptr=16 still gives a 16-bit size_t.
+ */
 #ifndef _STDDEF_H
 #define _STDDEF_H
 
-/* Size type (unsigned, can hold sizeof result) */
+/* size_t / ptrdiff_t track the pointer width */
 #ifndef _SIZE_T_DEFINED
 #define _SIZE_T_DEFINED
+#if __SIZEOF_POINTER__ == __SIZEOF_INT__
 typedef unsigned int size_t;
-#endif
-
-/* Pointer difference type (signed) */
 typedef int ptrdiff_t;
+#elif __SIZEOF_POINTER__ == __SIZEOF_LONG__
+typedef unsigned long size_t;
+typedef long ptrdiff_t;
+#elif __SIZEOF_POINTER__ == __SIZEOF_SHORT__
+typedef unsigned short size_t;
+typedef short ptrdiff_t;
+#endif
+#endif
 
 /* NULL pointer constant */
 #ifndef NULL

@@ -97,3 +97,50 @@ class TestTypeConfigPlumbing:
         gen = CodeGenerator(type_config=tc32)
         assert gen._type_size(ast_module.BasicType(name="int")) == 4
         assert gen._type_size(ast_module.PointerType(base_type=ast_module.BasicType(name="char"))) == 2
+
+
+class TestPrintfDispatch:
+    """Phase 5: %d/%u/%x etc. must dispatch to the 32-bit handlers when
+    int is 32-bit, so a `printf("%d", x)` call with a 4-byte int arg reads
+    the right number of bytes off the stack."""
+
+    def test_default_int16_uses_16bit_handlers(self):
+        code = _compile(
+            'int main(void) { int x = 1; return printf("%d", x); }',
+            Z80_CPM,
+        )
+        # The format dispatch table should route 'd' → __printf_handle_d (16-bit)
+        assert "__printf_handle_d" in code
+        # And explicitly not the long variant (for %d specifically)
+        # Extract the portion of the table that maps 'd'
+        import re
+        m = re.search(r"db\s+'d'\s*\n\s*dw\s+(\S+)", code)
+        assert m is not None, "expected a 'd' entry in printf dispatch table"
+        assert m.group(1) == "__printf_handle_d"
+
+    def test_int32_routes_d_to_ld_handler(self):
+        tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
+        code = _compile(
+            'int main(void) { int x = 1; return printf("%d", x); }',
+            tc32,
+        )
+        import re
+        m = re.search(r"db\s+'d'\s*\n\s*dw\s+(\S+)", code)
+        assert m is not None
+        assert m.group(1) == "__printf_handle_ld", \
+            "with int=32, %d must dispatch to the 32-bit ld handler"
+
+    def test_int32_routes_u_x_o_to_long_handlers(self):
+        tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
+        code = _compile(
+            'int main(void) { unsigned u=1; return printf("%u %x %o", u, u, u); }',
+            tc32,
+        )
+        import re
+        for spec, expected in [('u', '__printf_handle_lu'),
+                                ('x', '__printf_handle_lx'),
+                                ('o', '__printf_handle_lo')]:
+            m = re.search(rf"db\s+'{spec}'\s*\n\s*dw\s+(\S+)", code)
+            assert m is not None, f"missing '{spec}' dispatch entry"
+            assert m.group(1) == expected, \
+                f"with int=32, %{spec} should map to {expected}, got {m.group(1)}"

@@ -46,12 +46,13 @@ __start:
 	LDIR			; fill with zeros
 __nobss:
 
-	; Call main - result in HL (16-bit) or just L (8-bit for char)
+	; Call main - return value left in HL (16-bit), DEHL (32-bit), or
+	; __tmp64 (64-bit) depending on the main() return type width.
 	CALL	_main
 
-	; Return to CP/M
-	; The return value in L can be checked by CCP if desired
-	; CP/M warm boot at address 0
+	; Return to CP/M via warm boot.  CP/M has no standard register
+	; convention for passing a program exit status, so the return
+	; value from main() is discarded here regardless of its width.
 	JP	0
 
 	END	__start
