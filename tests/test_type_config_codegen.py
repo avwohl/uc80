@@ -199,3 +199,37 @@ class TestScanfFormatRewrite:
         # printf format string itself stays as "%d"; the dispatch table
         # (separate code path) handles the widening via __printf_handle_ld.
         assert '%d' in code and '%ld' not in code.split('__printf_format_table')[0]
+
+
+class TestPrintfUppercaseHex:
+    """%X (and %lX) should dispatch to the uppercase-aware long-hex handler
+    (__printf_handle_lxu) when emitting 32-bit hex output, so the prt_hex
+    helpers print 'A'–'F' instead of 'a'–'f'."""
+
+    def test_int32_routes_X_to_lxu_handler(self):
+        tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
+        code = _compile(
+            'int main(void){int x=1; return printf("%X", x);}',
+            tc32,
+        )
+        import re
+        m = re.search(r"db\s+'X'\s*\n\s*dw\s+(\S+)", code)
+        assert m is not None
+        assert m.group(1) == '__printf_handle_lxu', \
+            "with int=32, %X should map to uppercase-aware __printf_handle_lxu"
+
+    def test_long_table_X_routes_to_lxu(self):
+        """The long-format table (reached via %l prefix) should also route 'X'
+        to the uppercase-aware handler so %lX produces uppercase output."""
+        code = _compile(
+            'int main(void){long x=1; return printf("%lX", x);}',
+            Z80_CPM,  # default — the long-table route isn't int-width specific
+        )
+        import re
+        # Find the long table specifically
+        assert '__printf_long_table' in code
+        long_start = code.find('__printf_long_table')
+        long_section = code[long_start:long_start + 500]
+        m = re.search(r"db\s+'X'\s*\n\s*dw\s+(\S+)", long_section)
+        assert m is not None, "expected 'X' entry in __printf_long_table"
+        assert m.group(1) == '__printf_handle_lxu'

@@ -11826,13 +11826,23 @@ __printf_handle_lu:
 ; lc_printf_lx.mac
 ; ============================================================
 	CSEG
-; lc_printf_lx.mac - printf %lx handler (long hex)
+; lc_printf_lx.mac - printf %lx and %lX handlers (long hex)
 
 
 
 	CSEG
 
 	PUBLIC	__printf_handle_lx
+	PUBLIC	__printf_handle_lxu
+
+; %lX / %X-under-int32: set uppercase flag, fall through to %lx path
+__printf_handle_lxu:
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_upper),A
+	POP	AF
+	; fall through
+
 __printf_handle_lx:
 	PUSH	HL
 	LD	H,0
@@ -12401,9 +12411,33 @@ _prt64_val:	DS	8
 ; ============================================================
 	CSEG
 ; lc_prt_hex.mac - hex printing helpers
+;
+; _prt_hex and _prt_hex4 honor the _printf_upper flag: when nonzero,
+; hex digits A-F are uppercase; otherwise lowercase.  The flag is
+; defined in lc_printf_core.mac and set by %X / %lX / %llX handlers.
+
 
 
 	CSEG
+
+; Convert nibble 0-15 in A to ASCII hex, honoring _printf_upper.
+; Preserves BC; clobbers flags.
+_prt_hex_nib:
+	ADD	A,'0'
+	CP	'9'+1
+	RET	C		; 0-9: done
+	PUSH	HL
+	LD	H,A		; stash A
+	LD	A,(_printf_upper)
+	OR	A
+	LD	A,H
+	POP	HL
+	JR	Z,_prt_hex_nib_lo
+	ADD	A,7		; 'A'..'F'
+	RET
+_prt_hex_nib_lo:
+	ADD	A,39		; 'a'..'f'
+	RET
 
 ; Print HL as hex (no leading zeros)
 	PUBLIC	_prt_hex
@@ -12444,11 +12478,7 @@ _prt_hex:
 	RET
 _prt_hexf:
 	LD	B,1
-	ADD	A,'0'
-	CP	'9'+1
-	JR	C,_prt_hex_o2
-	ADD	A,39
-_prt_hex_o2:
+	CALL	_prt_hex_nib
 	LD	E,A
 	LD	C,CONOUT
 	CALL	BDOS
@@ -12464,11 +12494,7 @@ _prt_hexd:
 	XOR	A
 _prt_hexd1:
 	LD	B,1
-	ADD	A,'0'
-	CP	'9'+1
-	JR	C,_prt_hexd2
-	ADD	A,39
-_prt_hexd2:
+	CALL	_prt_hex_nib
 	LD	E,A
 	PUSH	BC
 	LD	C,CONOUT
@@ -12496,11 +12522,7 @@ _prt_hex4_byte:
 	POP	AF
 _prt_hex4_nib:
 	AND	0FH
-	ADD	A,'0'
-	CP	'9'+1
-	JR	C,_prt_hex4_out
-	ADD	A,39
-_prt_hex4_out:
+	CALL	_prt_hex_nib
 	LD	E,A
 	LD	C,CONOUT
 	CALL	BDOS
@@ -13259,6 +13281,10 @@ _scanf_long:
 	LD	A,(HL)
 	CP	'd'
 	JP	Z,_scanf_ld
+	CP	'i'
+	JP	Z,_scanf_ld	; %li → signed long (no base-prefix detection)
+	CP	'u'
+	JP	Z,_scanf_ld	; %lu → same reader as %ld (no sign distinction)
 	CP	'x'
 	JP	Z,_scanf_lx
 	; Unknown - skip

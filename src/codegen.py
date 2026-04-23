@@ -2509,7 +2509,7 @@ class CodeGenerator:
             int_u = '__printf_handle_lu'
             int_o = '__printf_handle_lo'
             int_x = '__printf_handle_lx'
-            int_X = '__printf_handle_lx'
+            int_X = '__printf_handle_lxu'
         else:
             int_d = '__printf_handle_d'
             int_u = '__printf_handle_u'
@@ -2528,7 +2528,8 @@ class CodeGenerator:
             handlers.add('__printf_handle_l')
         if "long" in features or "all" in features:
             handlers.update(['__printf_handle_ld', '__printf_handle_lu',
-                           '__printf_handle_lo', '__printf_handle_lx'])
+                           '__printf_handle_lo', '__printf_handle_lx',
+                           '__printf_handle_lxu'])
         if "float" in features or "all" in features:
             handlers.add('__printf_handle_f')
         if "llong" in features or "all" in features:
@@ -2579,7 +2580,8 @@ class CodeGenerator:
                                   ('i', '__printf_handle_ld'),
                                   ('u', '__printf_handle_lu'),
                                   ('o', '__printf_handle_lo'),
-                                  ('x', '__printf_handle_lx')]:
+                                  ('x', '__printf_handle_lx'),
+                                  ('X', '__printf_handle_lxu')]:
                 self.ctx.emit(f"\tdb\t'{spec}'")
                 self.ctx.emit(f"\tdw\t{handler}")
                 self.ctx.runtime_used.add(handler)

@@ -1,16 +1,27 @@
-; lc_printf_lx.mac - printf %lx handler (long hex)
+; lc_printf_lx.mac - printf %lx and %lX handlers (long hex)
 	.Z80
 
 BDOS	EQU	5
 CONOUT	EQU	2
 
 	EXTRN	_printf_loop
+	EXTRN	_printf_upper
 	EXTRN	_prt_hex
 	EXTRN	_prt_hex4
 
 	CSEG
 
 	PUBLIC	__printf_handle_lx
+	PUBLIC	__printf_handle_lxu
+
+; %lX / %X-under-int32: set uppercase flag, fall through to %lx path
+__printf_handle_lxu:
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_upper),A
+	POP	AF
+	; fall through
+
 __printf_handle_lx:
 	PUSH	HL
 	LD	H,0
