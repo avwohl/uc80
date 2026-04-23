@@ -69,6 +69,22 @@ uc80 program.c --printf float         # add %f
 #pragma printf long
 ```
 
+### Configurable Integer Sizes
+
+By default `int` is 16 bits (natural Z80 word width).  Code that assumes
+32-bit `int` can be compiled with a CLI override — no source changes:
+
+```bash
+uc80 program.c --int=32 -o program.mac     # 32-bit int
+uc80 program.c --long=64 -o program.mac    # 64-bit long
+```
+
+The bundled headers (`<limits.h>`, `<stdint.h>`, `<stddef.h>`, `<inttypes.h>`)
+derive their typedefs and limit macros from compiler-supplied `__SIZEOF_*__`
+and `__*_MAX__` macros, so the same header files work under every config.
+Codegen routes arithmetic, `printf`/`scanf` format dispatch, and `sizeof`
+through the selected widths automatically.
+
 ### Separate Compilation
 
 When compiling files separately for separate linking, use `--no-whole-program`:
@@ -125,7 +141,7 @@ Most non-passing tests are due to platform differences, not bugs:
 - ANSI C (C11/C23) with most standard features
 - Z80 code generation with peephole optimization
 - IEEE 754 single-precision float
-- 16-bit int, 32-bit long, 64-bit long long
+- Configurable integer sizes (`--int=16|32`, `--long=32|64`); default is 16-bit int, 32-bit long, 64-bit long long
 - Structs, unions, bitfields, enums
 - Full preprocessor (#include, #define, #if, #pragma, etc.)
 - Modular library with selective linking
