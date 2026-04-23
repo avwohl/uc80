@@ -13,6 +13,7 @@ from uc_core.parser import Parser, ParseError
 from uc_core import ast as ast_module
 from uc_core.preprocessor import Preprocessor, PreprocessorError, Macro
 from uc_core.ast_optimizer import ASTOptimizer
+from uc_core.type_config import TypeConfig, Z80_CPM
 
 from .codegen import generate, CodeGenerator
 from .runtime import RuntimeLibrary, load_runtime_library
@@ -156,8 +157,37 @@ def main() -> int:
         choices=["int", "long", "llong", "float", "all"],
         help="Scanf format support level (can specify multiple: int long float)"
     )
+    parser.add_argument(
+        "--int", dest="int_bits", type=int, choices=[16, 32],
+        help="int width in bits (default: 16)"
+    )
+    parser.add_argument(
+        "--long", dest="long_bits", type=int, choices=[32, 64],
+        help="long width in bits (default: 32)"
+    )
+    parser.add_argument(
+        "--long-long", dest="long_long_bits", type=int, choices=[64],
+        help="long long width in bits (default: 64)"
+    )
+    parser.add_argument(
+        "--ptr", dest="ptr_bits", type=int, choices=[16],
+        help="pointer width in bits (default: 16 — Z80 only supports 16-bit pointers)"
+    )
 
     args = parser.parse_args()
+
+    # Build TypeConfig from CLI overrides (defaults = Z80_CPM: int16/long32/ptr16)
+    type_config = TypeConfig(
+        char_size=Z80_CPM.char_size,
+        short_size=Z80_CPM.short_size,
+        int_size=(args.int_bits // 8) if args.int_bits else Z80_CPM.int_size,
+        long_size=(args.long_bits // 8) if args.long_bits else Z80_CPM.long_size,
+        long_long_size=(args.long_long_bits // 8) if args.long_long_bits else Z80_CPM.long_long_size,
+        ptr_size=(args.ptr_bits // 8) if args.ptr_bits else Z80_CPM.ptr_size,
+        float_size=Z80_CPM.float_size,
+        double_size=Z80_CPM.double_size,
+        long_double_size=Z80_CPM.long_double_size,
+    )
 
     # Validate all input files exist
     input_paths = [Path(f) for f in args.input]
@@ -215,7 +245,8 @@ def main() -> int:
                 if args.verbose:
                     print(f"  Preprocessing...")
 
-                pp = Preprocessor(include_paths, target_predefines=Z80_CPM_PREDEFINES)
+                pp_predefines = {**Z80_CPM_PREDEFINES, **type_config.predefined_macros()}
+                pp = Preprocessor(include_paths, target_predefines=pp_predefines)
 
                 # Add command-line defines
                 for define in args.define:
@@ -277,7 +308,7 @@ def main() -> int:
         # AST-level expression optimization
         if not args.no_ast_optimize:
             opt_level = 3
-            ast_opt = ASTOptimizer(opt_level)
+            ast_opt = ASTOptimizer(opt_level, type_config=type_config)
             merged_ast = ast_opt.optimize(merged_ast)
             if args.verbose and ast_opt.stats:
                 print(f"  AST optimizations:")
