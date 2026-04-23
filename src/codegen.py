@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 import struct
 from typing import Callable, Iterator, Optional
-from . import ast
+from uc_core import ast
 
 
 def float_to_ieee754(f: float) -> int:

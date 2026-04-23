@@ -1,8 +1,8 @@
 """Tests for C24 lexer."""
 
 import pytest
-from src.lexer import Lexer, LexerError, tokenize
-from src.tokens import TokenType
+from uc_core.lexer import Lexer, LexerError, tokenize
+from uc_core.tokens import TokenType
 
 
 class TestBasicTokens:

@@ -1,10 +1,10 @@
 """Tests for Z80 code generator."""
 
 import pytest
-from src.lexer import Lexer
-from src.parser import Parser
+from uc_core.lexer import Lexer
+from uc_core.parser import Parser
 from src.codegen import CodeGenerator, CallGraphAnalyzer, generate
-from src import ast as ast_module
+from uc_core import ast as ast_module
 
 
 def parse(source: str):

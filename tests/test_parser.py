@@ -1,9 +1,9 @@
 """Tests for C24 parser."""
 
 import pytest
-from src.parser import Parser, ParseError, parse
-from src.lexer import tokenize
-from src import ast
+from uc_core.parser import Parser, ParseError, parse
+from uc_core.lexer import tokenize
+from uc_core import ast
 
 
 def parse_expr(source: str) -> ast.Expression:

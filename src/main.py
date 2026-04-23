@@ -8,17 +8,27 @@ import argparse
 import sys
 from pathlib import Path
 
-from .lexer import Lexer, LexerError
-from .parser import Parser, ParseError
+from uc_core.lexer import Lexer, LexerError
+from uc_core.parser import Parser, ParseError
+from uc_core import ast as ast_module
+from uc_core.preprocessor import Preprocessor, PreprocessorError, Macro
+from uc_core.ast_optimizer import ASTOptimizer
+
 from .codegen import generate, CodeGenerator
-from . import ast as ast_module
-from .preprocessor import Preprocessor, PreprocessorError
 from .runtime import RuntimeLibrary, load_runtime_library
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
-from .ast_optimizer import ASTOptimizer
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
+
+# Target-specific predefined macros supplied to the shared uc_core preprocessor.
+# __UC80_VERSION__ tracks uc80 (the driver), not uc_core.
+Z80_CPM_PREDEFINES = {
+    "__UC80__": "1",
+    "__UC80_VERSION__": "100",
+    "__Z80__": "1",
+    "__CPM__": "1",
+}
 
 
 def main() -> int:
@@ -205,15 +215,15 @@ def main() -> int:
                 if args.verbose:
                     print(f"  Preprocessing...")
 
-                pp = Preprocessor(include_paths)
+                pp = Preprocessor(include_paths, target_predefines=Z80_CPM_PREDEFINES)
 
                 # Add command-line defines
                 for define in args.define:
                     if '=' in define:
                         name, value = define.split('=', 1)
-                        pp.macros[name] = pp.macros.get(name) or type(pp.macros["__UC80__"])(name, body=value)
+                        pp.macros[name] = pp.macros.get(name) or Macro(name, body=value)
                     else:
-                        pp.macros[define] = type(pp.macros["__UC80__"])(define, body="1")
+                        pp.macros[define] = Macro(define, body="1")
 
                 source = pp.preprocess(source, str(input_path))
 
