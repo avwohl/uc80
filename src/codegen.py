@@ -8003,9 +8003,14 @@ class CodeGenerator:
             if left_is_float or right_is_float:
                 return ast.BasicType(name="double")
 
-            left_is_ll = self._is_long_long_type(left_type)
-            right_is_ll = self._is_long_long_type(right_type)
-            if left_is_ll or right_is_ll:
+            # "long long wins" — only when an operand is actually named
+            # "long long".  Don't promote just because long happens to be
+            # 8 bytes under --long=64; that would name the result
+            # "long long" and pull it into the 64-bit codegen path even
+            # when both operands were `long`.
+            def _is_named_ll(t):
+                return isinstance(t, ast.BasicType) and t.name == "long long"
+            if _is_named_ll(left_type) or _is_named_ll(right_type):
                 left_unsigned = isinstance(left_type, ast.BasicType) and left_type.is_signed == False
                 right_unsigned = isinstance(right_type, ast.BasicType) and right_type.is_signed == False
                 return ast.BasicType(name="long long", is_signed=not (left_unsigned or right_unsigned))
@@ -8054,7 +8059,12 @@ class CodeGenerator:
             # Apply usual arithmetic conversions
             if self._is_float_type(true_type) or self._is_float_type(false_type):
                 return ast.BasicType(name="double")
-            if self._is_long_long_type(true_type) or self._is_long_long_type(false_type):
+            # "long long wins" — only when an operand is actually named
+            # "long long".  Don't promote `long` (8 bytes under --long=64)
+            # into "long long" name and pull it through 64-bit codegen.
+            def _is_named_ll(t):
+                return isinstance(t, ast.BasicType) and t.name == "long long"
+            if _is_named_ll(true_type) or _is_named_ll(false_type):
                 return ast.BasicType(name="long long")
             # "long wins over int" — only when an operand is actually named
             # "long".  Don't promote int → long just because both are 4 bytes
