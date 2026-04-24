@@ -16,6 +16,7 @@ PRTSTR	EQU	9
 	EXTRN	_math_getarg
 	EXTRN	_reduce_trig
 	EXTRN	_trig_negate
+	EXTRN	_sinf
 
 	CSEG
 
@@ -76,6 +77,48 @@ _cos_do_fold:
 	LD	(_trig_negate),A
 _cos_no_fold:
 
+	; x is now in [0, pi/2].  If x > pi/4, compute sin(pi/2 - x)
+	; instead — cos's Taylor series suffers cancellation near pi/2
+	; (where the partial sums go 1, -0.2, 0.05, ... → 0.03), losing
+	; ~3 digits of precision.  sin sees a small argument and is
+	; well-conditioned there.
+	; pi/4 ≈ 0.7853982 = 0x3F490FDB.
+	LD	A,D
+	CP	3FH
+	JR	C,_cos_taylor
+	JR	NZ,_cos_use_sin
+	LD	A,E
+	CP	49H
+	JR	C,_cos_taylor
+	JR	NZ,_cos_use_sin
+	LD	A,H
+	CP	0FH
+	JR	C,_cos_taylor
+	JR	NZ,_cos_use_sin
+	LD	A,L
+	CP	0DBH
+	JR	C,_cos_taylor
+_cos_use_sin:
+	; x = pi/2 - x.  pi/2 = 0x3FC90FDB.
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0FDBH
+	LD	DE,3FC9H
+	CALL	__fsub
+	; Save our negate flag — sinf calls _reduce_trig which clobbers
+	; it.  pi/2 - x is in [0, pi/4], so _reduce_trig fast-paths and
+	; sets _trig_negate=0; we restore ours and apply at exit.
+	LD	A,(_trig_negate)
+	LD	(_cos_save_neg),A
+	PUSH	DE
+	PUSH	HL
+	CALL	_sinf
+	POP	BC
+	POP	BC
+	LD	A,(_cos_save_neg)
+	LD	(_trig_negate),A
+	JP	_cos_apply_negate
+_cos_taylor:
 	LD	(_cos_x),HL
 	LD	(_cos_x+2),DE
 
@@ -187,6 +230,7 @@ _cos_loop:
 	LD	HL,(_cos_sum)
 	LD	DE,(_cos_sum+2)
 
+_cos_apply_negate:
 	; Apply negate flag from _reduce_trig (cos(x+pi) = -cos(x)).
 	LD	A,(_trig_negate)
 	OR	A
@@ -207,5 +251,6 @@ _cos_x2:	DS	4
 _cos_sum:	DS	4
 _cos_term:	DS	4
 _cos_n:		DS	4
+_cos_save_neg:	DS	1
 
 	END
