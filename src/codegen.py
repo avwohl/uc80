@@ -4445,14 +4445,30 @@ class CodeGenerator:
                     # (uint8_t) cast sees the un-truncated upper bits.
                     ret_size = self._type_size(ret_type) if ret_type else 2
                     if ret_size == 1:
-                        if self._is_signed_type(ret_type):
-                            # Sign-extend low byte into high byte
-                            self.ctx.emit_instr("ld", "A,L")
-                            self.ctx.emit_instr("rla")
-                            self.ctx.emit_instr("sbc", "A,A")
-                            self.ctx.emit_instr("ld", "H,A")
-                        else:
-                            self.ctx.emit_instr("ld", "H,0")
+                        # Skip when the value is a compile-time IntLiteral
+                        # that already fits in the target type — gen_expr
+                        # emitted the right HL.  Skipping also dodges a
+                        # peephole rule that would otherwise eat
+                        # `LD HL,N; LD A,L` and leave H undefined.
+                        is_signed = self._is_signed_type(ret_type)
+                        skip = False
+                        if isinstance(stmt.value, ast.IntLiteral):
+                            v = stmt.value.value
+                            if is_signed:
+                                if -128 <= v <= 127:
+                                    skip = True
+                            else:
+                                if 0 <= v <= 255:
+                                    skip = True
+                        if not skip:
+                            if is_signed:
+                                # Sign-extend low byte into high byte
+                                self.ctx.emit_instr("ld", "A,L")
+                                self.ctx.emit_instr("rla")
+                                self.ctx.emit_instr("sbc", "A,A")
+                                self.ctx.emit_instr("ld", "H,A")
+                            else:
+                                self.ctx.emit_instr("ld", "H,0")
         # Jump to function epilogue
         self.ctx.emit_instr("jp", f"@{self.ctx.current_function}_ret")
 
