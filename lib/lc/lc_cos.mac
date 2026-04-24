@@ -9,10 +9,13 @@ PRTSTR	EQU	9
 
 	EXTRN	__fadd
 	EXTRN	__fmul
+	EXTRN	__fsub
 	EXTRN	__fdiv
 	EXTRN	__itof
 	EXTRN	__tmp32
 	EXTRN	_math_getarg
+	EXTRN	_reduce_trig
+	EXTRN	_trig_negate
 
 	CSEG
 
@@ -37,6 +40,41 @@ _cosl:
 	LD	A,D
 	AND	7FH
 	LD	D,A
+
+	; Reduce |x| to [0, pi].  cos is even, so we don't track an
+	; original sign — but _reduce_trig may set _trig_negate when |x|
+	; lands in [pi, 2pi], in which case the result must be flipped
+	; (cos(x + pi) = -cos(x)).
+	CALL	_reduce_trig
+
+	; Further fold from [0, pi] down to [0, pi/2] using
+	; cos(pi - x) = -cos(x).  So if x > pi/2: x = pi - x and toggle
+	; the negate flag.
+	LD	A,D
+	CP	3FH
+	JR	C,_cos_no_fold
+	JR	NZ,_cos_do_fold
+	LD	A,E
+	CP	0C9H
+	JR	C,_cos_no_fold
+	JR	NZ,_cos_do_fold
+	LD	A,H
+	CP	0FH
+	JR	C,_cos_no_fold
+	JR	NZ,_cos_do_fold
+	LD	A,L
+	CP	0DBH
+	JR	C,_cos_no_fold
+_cos_do_fold:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0FDBH
+	LD	DE,4049H
+	CALL	__fsub
+	LD	A,(_trig_negate)
+	XOR	1
+	LD	(_trig_negate),A
+_cos_no_fold:
 
 	LD	(_cos_x),HL
 	LD	(_cos_x+2),DE
@@ -116,19 +154,11 @@ _cos_loop:
 	LD	(__tmp32+3),A
 	CALL	__fmul
 
-	; Divide term
+	; Divide term by (2n-1)*(2n)
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
 	LD	HL,(_cos_term)
 	LD	DE,(_cos_term+2)
-	EX	DE,HL
-	LD	A,D
-	LD	D,E
-	LD	E,A
-	LD	A,H
-	LD	H,L
-	LD	L,A
-	EX	DE,HL
 	CALL	__fdiv
 
 	; Negate
@@ -156,6 +186,15 @@ _cos_loop:
 
 	LD	HL,(_cos_sum)
 	LD	DE,(_cos_sum+2)
+
+	; Apply negate flag from _reduce_trig (cos(x+pi) = -cos(x)).
+	LD	A,(_trig_negate)
+	OR	A
+	JR	Z,_cos_no_neg
+	LD	A,D
+	XOR	80H
+	LD	D,A
+_cos_no_neg:
 
 	POP	BC
 	POP	IX

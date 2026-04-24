@@ -1,0 +1,121 @@
+; lc_reduce_trig.mac - reduce |x| to [0, pi] for sin/cos Taylor series
+	.Z80
+
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__fsub
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	__tmp32
+
+	CSEG
+
+; ============================================================
+; _reduce_trig - Reduce |x| in DEHL to [0, pi] range.
+; Input:  DEHL = |x| (non-negative IEEE 754 single-precision float)
+; Output: DEHL = reduced angle in [0, pi]
+;         _trig_negate (memory) = 1 if final result should be negated
+;                                  (i.e. x landed in [pi, 2pi] of the cycle)
+; Clobbers: AF, BC, HL, DE, __tmp32
+; ============================================================
+	PUBLIC	_reduce_trig
+	PUBLIC	_trig_negate
+_reduce_trig:
+	; Stash x and clear the negate flag.
+	LD	(_trig_x),HL
+	LD	(_trig_x+2),DE
+	XOR	A
+	LD	(_trig_negate),A
+
+	; Fast path: if |x| <= pi, no reduction needed.  Compare the 32-bit
+	; positive float as an unsigned big-endian integer (this works for
+	; positive normalized IEEE 754 values).  pi ≈ 3.14159265 stores as
+	; 0x40490FDB.
+	LD	A,D
+	CP	40H
+	JR	C,_reduce_done		; D < 0x40 → x < ~2 → < pi
+	JR	NZ,_reduce_needed	; D > 0x40 → x > ~4 → > pi
+	LD	A,E
+	CP	49H
+	JR	C,_reduce_done
+	JR	NZ,_reduce_needed
+	LD	A,H
+	CP	0FH
+	JR	C,_reduce_done
+	JR	NZ,_reduce_needed
+	LD	A,L
+	CP	0DCH			; round-up nudge so exact π doesn't reduce
+	JR	C,_reduce_done
+_reduce_needed:
+	; x = fmod(x, 2*pi).  2*pi ≈ 6.28318531, IEEE 754 = 0x40C90FDB.
+	LD	A,0DBH
+	LD	(__tmp32),A
+	LD	A,0FH
+	LD	(__tmp32+1),A
+	LD	A,0C9H
+	LD	(__tmp32+2),A
+	LD	A,40H
+	LD	(__tmp32+3),A
+	LD	HL,(_trig_x)
+	LD	DE,(_trig_x+2)
+	CALL	__fdiv			; x / (2*pi)
+	CALL	__ftoi			; trunc -> int32 in DEHL
+	CALL	__itof			; back to float
+
+	; multiply by 2*pi
+	LD	A,0DBH
+	LD	(__tmp32),A
+	LD	A,0FH
+	LD	(__tmp32+1),A
+	LD	A,0C9H
+	LD	(__tmp32+2),A
+	LD	A,40H
+	LD	(__tmp32+3),A
+	CALL	__fmul			; trunc(x/2pi) * 2pi
+
+	; x -= trunc(x/2pi) * 2pi.  Result in [0, 2*pi).
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_trig_x)
+	LD	DE,(_trig_x+2)
+	CALL	__fsub
+	LD	(_trig_x),HL
+	LD	(_trig_x+2),DE
+
+	; If reduced > pi, subtract pi and set the negate flag.  This
+	; folds [pi, 2pi] back to [0, pi] with a sign flip — sin and cos
+	; both satisfy f(x + pi) = -f(x).
+	LD	A,D
+	CP	40H
+	JR	C,_reduce_done
+	JR	NZ,_reduce_sub_pi
+	LD	A,E
+	CP	49H
+	JR	C,_reduce_done
+_reduce_sub_pi:
+	LD	A,0DBH
+	LD	(__tmp32),A
+	LD	A,0FH
+	LD	(__tmp32+1),A
+	LD	A,49H
+	LD	(__tmp32+2),A
+	LD	A,40H
+	LD	(__tmp32+3),A
+	LD	HL,(_trig_x)
+	LD	DE,(_trig_x+2)
+	CALL	__fsub
+	LD	(_trig_x),HL
+	LD	(_trig_x+2),DE
+	LD	A,1
+	LD	(_trig_negate),A
+
+_reduce_done:
+	LD	HL,(_trig_x)
+	LD	DE,(_trig_x+2)
+	RET
+
+	DSEG
+_trig_x:	DS	4
+_trig_negate:	DS	1
+
+	END

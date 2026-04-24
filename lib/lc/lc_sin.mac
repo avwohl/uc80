@@ -9,10 +9,13 @@ PRTSTR	EQU	9
 
 	EXTRN	__fadd
 	EXTRN	__fmul
+	EXTRN	__fsub
 	EXTRN	__fdiv
 	EXTRN	__itof
 	EXTRN	__tmp32
 	EXTRN	_math_getarg
+	EXTRN	_reduce_trig
+	EXTRN	_trig_negate
 
 	CSEG
 
@@ -41,7 +44,45 @@ _sinl:
 	AND	7FH
 	LD	D,A
 
-	; Reduce x to [-pi, pi] range (simplified: assume small x)
+	; Reduce |x| to [0, pi] via fmod(x, 2pi).  _trig_negate gets set
+	; if x landed in [pi, 2pi] of the cycle.  Without this, Taylor
+	; series with 4 terms diverges badly for |x| > pi.  sin(x+pi) =
+	; -sin(x), so flip the sin sign bit when the reduction wrapped.
+	CALL	_reduce_trig
+	LD	A,(_trig_negate)
+	OR	A
+	JR	Z,_sin_no_neg
+	LD	A,(_sin_sign)
+	XOR	80H
+	LD	(_sin_sign),A
+_sin_no_neg:
+	; Further fold from [0, pi] down to [0, pi/2] using the identity
+	; sin(pi - x) = sin(x).  4 Taylor terms aren't enough for x near
+	; pi, but they're plenty for |x| ≤ pi/2.
+	; pi/2 ≈ 1.5707963 = 0x3FC90FDB
+	LD	A,D
+	CP	3FH
+	JR	C,_sin_no_fold
+	JR	NZ,_sin_do_fold
+	LD	A,E
+	CP	0C9H
+	JR	C,_sin_no_fold
+	JR	NZ,_sin_do_fold
+	LD	A,H
+	CP	0FH
+	JR	C,_sin_no_fold
+	JR	NZ,_sin_do_fold
+	LD	A,L
+	CP	0DBH
+	JR	C,_sin_no_fold
+_sin_do_fold:
+	; x = pi - x.  pi = 0x40490FDB.
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0FDBH
+	LD	DE,4049H
+	CALL	__fsub
+_sin_no_fold:
 	LD	(_sin_x),HL
 	LD	(_sin_x+2),DE
 
