@@ -20,8 +20,9 @@ LIB_DIR = UC80_DIR / "lib"
 TORTURE_DIR = Path("../external/llvm-test-suite/SingleSource/Regression/C/gcc-c-torture/execute")
 
 CRT0 = LIB_DIR / "crt0.rel"
-LIBC = LIB_DIR / "libc.rel"
-RUNTIME = LIB_DIR / "runtime.rel"
+# Use .lib archives (not monolithic .rel): see run_ctests.py for rationale.
+LIBC = LIB_DIR / "libc.lib"
+RUNTIME = LIB_DIR / "runtime.lib"
 CPMEMU = Path("../cpmemu/src/cpmemu")
 
 MAX_COM_SIZE = 128000
