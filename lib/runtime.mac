@@ -2616,6 +2616,11 @@ __fmul:
 	LD	DE,127
 	OR	A
 	SBC	HL,DE
+	; Underflow check: if subtraction borrowed (HL is "negative", i.e. >= 0x8000),
+	; the true exponent is below the smallest normal — flush to zero.  Without
+	; this, the wrapped 16-bit value becomes a huge bogus exponent and __fpack
+	; emits a giant garbage float instead of 0.
+	JR	C,__fmul_zero
 	LD	(__fexp1),HL
 
 	; Multiply mantissas (24-bit x 24-bit -> 48-bit, take high 24)
@@ -2895,6 +2900,10 @@ __fdiv_do_div:
 	SBC	HL,DE
 	LD	DE,127
 	ADD	HL,DE
+	; Underflow: exp went negative — flush to zero rather than wrapping
+	; into a bogus near-one float via the truncated low byte.
+	BIT	7,H
+	JR	NZ,__fdiv_underflow
 	LD	(__fexp1),HL
 
 	; Divide mantissas using long division
@@ -2911,6 +2920,11 @@ __fdiv_do_div:
 	POP	IX
 	POP	BC
 	RET
+
+__fdiv_underflow:
+	LD	DE,0
+	LD	HL,0
+	JR	@fdiv_exit
 
 ; Mantissa division helper
 ; Divides __fman1 by __fman2 (24-bit / 24-bit)
