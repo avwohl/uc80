@@ -9408,7 +9408,16 @@ class CodeGenerator:
                         if union_size > target_size:
                             self.ctx.emit_instr("ds", str(union_size - target_size))
                     else:
-                        self._emit_struct_init_flat(init.values, members)
+                        # Compute the struct's bitfield_info key so packing
+                        # picks the right bit_offset / bit_width per field —
+                        # without this, an anon struct's "a" can match
+                        # bitfield_info entries for some other "a" added by
+                        # a different struct earlier in the file.
+                        sname = elem_type.name
+                        if not sname:
+                            sname = f"__anon_{id(elem_type)}"
+                        self._emit_struct_init_flat(init.values, members,
+                                                    struct_name=sname)
                 else:
                     # Unknown struct, just reserve space
                     self.ctx.emit_instr("ds", str(elem_size))
@@ -9667,8 +9676,13 @@ class CodeGenerator:
         else:
             self.ctx.emit_instr("dw", label)
 
-    def _emit_struct_init_flat(self, values: list, members: list) -> int:
-        """Emit struct initialization with flat value list. Returns values consumed."""
+    def _emit_struct_init_flat(self, values: list, members: list,
+                                struct_name: str | None = None) -> int:
+        """Emit struct initialization with flat value list. Returns values consumed.
+
+        struct_name disambiguates bitfield_info lookups when several distinct
+        structs share a member name (very common: "a", "b" everywhere).
+        """
         # Check for member designators requiring non-sequential emit
         has_member_desig = any(
             isinstance(v, ast.DesignatedInit) and v.designators and isinstance(v.designators[0], str)
@@ -9682,6 +9696,8 @@ class CodeGenerator:
         # Group them so we can pack their values at compile time
         # Helper: does a member name correspond to a real bitfield?
         def _bf_for(member_name):
+            if struct_name is not None:
+                return self.ctx.bitfield_info.get((struct_name, member_name))
             for key, info in self.ctx.bitfield_info.items():
                 if key[1] == member_name:
                     return info
