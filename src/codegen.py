@@ -2519,12 +2519,16 @@ class CodeGenerator:
             int_o = '__printf_handle_lo'
             int_x = '__printf_handle_lx'
             int_X = '__printf_handle_lxu'
+            # char is variadic-widened to int under --int=32, so %c reads
+            # its 1 byte from a 4-byte slot and must advance accordingly.
+            int_c = '__printf_handle_c32'
         else:
             int_d = '__printf_handle_d'
             int_u = '__printf_handle_u'
             int_o = '__printf_handle_o'
             int_x = '__printf_handle_x'
             int_X = '__printf_handle_xu'
+            int_c = '__printf_handle_c'
 
         # Collect all handlers we'll reference, then emit EXTRNs
         handlers: set[str] = set()
@@ -2532,7 +2536,7 @@ class CodeGenerator:
         if "int" in features or "all" in features:
             handlers.update([int_d, int_u, int_o, int_x, int_X,
                            '__printf_handle_s',
-                           '__printf_handle_c', '__printf_handle_p'])
+                           int_c, '__printf_handle_p'])
         if "long" in features or "llong" in features or "all" in features:
             handlers.add('__printf_handle_l')
         if "long" in features or "all" in features:
@@ -2561,7 +2565,7 @@ class CodeGenerator:
                                   ('x', int_x),
                                   ('X', int_X),
                                   ('s', '__printf_handle_s'),
-                                  ('c', '__printf_handle_c'),
+                                  ('c', int_c),
                                   ('p', '__printf_handle_p')]:
                 self.ctx.emit(f"\tdb\t'{spec}'")
                 self.ctx.emit(f"\tdw\t{handler}")
@@ -6810,12 +6814,16 @@ class CodeGenerator:
                     else:
                         # Variadic under --int=32: C's default-argument-
                         # promotion widens char/short/int to int, which is
-                        # 4 bytes here.  Without this push-as-32-bit, the
-                        # callee (printf et al.) reads across arg
-                        # boundaries when it expects a 4-byte int.
-                        if (param_type is None
+                        # 4 bytes here.  Pointers still occupy pointer_size
+                        # bytes (2 on Z80), so only widen basic integer
+                        # types.
+                        is_ptr_like = isinstance(arg_type,
+                                                 (ast.PointerType, ast.ArrayType))
+                        widen_to_int32 = (param_type is None
                                 and self.type_config.int_size == 4
-                                and not isinstance(arg_type, ast.StructType)):
+                                and not isinstance(arg_type, ast.StructType)
+                                and not is_ptr_like)
+                        if widen_to_int32:
                             self.gen_expr(arg, force_long=True)
                             # If the expression produced only a 16-bit
                             # value (HL), sign- or zero-extend into DE.

@@ -9,6 +9,7 @@ CONOUT	EQU	2
 	CSEG
 
 	PUBLIC	__printf_handle_c
+	PUBLIC	__printf_handle_c32
 __printf_handle_c:
 	PUSH	HL
 	LD	H,0
@@ -21,6 +22,27 @@ __printf_handle_c:
 	LD	C,CONOUT
 	CALL	BDOS
 	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	JP	_printf_loop
+
+; Same as __printf_handle_c but advances C by 4 — for callers compiled
+; with --int=32 where char args occupy a full 32-bit stack slot.
+__printf_handle_c32:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	INC	C
+	INC	C
 	INC	C
 	INC	C
 	POP	HL
