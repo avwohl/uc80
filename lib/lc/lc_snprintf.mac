@@ -107,16 +107,16 @@ _snprintf_nodig:
 	JR	Z,_snprintf_chr
 
 	CP	'x'
-	JR	Z,_snprintf_hex
+	JR	Z,_snprintf_hex_lc
 
 	CP	'X'
-	JR	Z,_snprintf_hex
+	JR	Z,_snprintf_hex_uc
 
 	CP	'u'
 	JR	Z,_snprintf_uns
 
 	CP	'p'
-	JR	Z,_snprintf_hex	; %p same as %x
+	JR	Z,_snprintf_hex_lc	; %p same as %x
 
 	; Unknown format - skip
 	INC	HL
@@ -234,6 +234,13 @@ _snprintf_uns:
 	INC	HL
 	JP	_snprintf_loop
 
+_snprintf_hex_lc:
+	XOR	A
+	LD	(_snprintf_upper),A
+	JR	_snprintf_hex
+_snprintf_hex_uc:
+	LD	A,1
+	LD	(_snprintf_upper),A
 _snprintf_hex:
 	PUSH	HL
 	LD	H,0
@@ -350,7 +357,19 @@ _snprintf_hex1:
 	ADD	A,'0'
 	CP	'9'+1
 	JR	C,_snprintf_hex_out
-	ADD	A,7
+	; Letter A-F: pick case from _snprintf_upper flag.
+	; Note: um80 does case-insensitive char literals, so 'a' == 'A'.
+	; Use explicit numeric constants to get the right offsets.
+	PUSH	AF
+	LD	A,(_snprintf_upper)
+	OR	A
+	JR	NZ,_snprintf_hex_uc1
+	POP	AF
+	ADD	A,39		; 'a'-'9'-1 = 97-57-1 = 39 (lowercase a-f)
+	JR	_snprintf_hex_out
+_snprintf_hex_uc1:
+	POP	AF
+	ADD	A,7		; 'A'-'9'-1 = 65-57-1 = 7 (uppercase A-F)
 _snprintf_hex_out:
 	JP	_snprintf_putc
 
@@ -360,5 +379,6 @@ _snprintf_hex_out:
 _snprintf_out:	DS	2	; Current output pointer
 _snprintf_max:	DS	2	; Remaining space in buffer
 _snprintf_cnt:	DS	2	; Total character count
+_snprintf_upper: DS	1	; Hex case: 0 = lowercase, 1 = uppercase
 
 	END
