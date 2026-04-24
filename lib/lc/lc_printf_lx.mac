@@ -39,12 +39,22 @@ __printf_handle_lx:
 	LD	H,(HL)
 	LD	L,A
 	EX	DE,HL		; DEHL = value (DE=high, HL=low)
-	; Print DE then HL as hex (skip leading zeros in DE)
+	; Natural-width hex: if high word is non-zero, print it via
+	; _prt_hex (strips leading zeros) then the low word via
+	; _prt_hex4 (always 4 digits).  If high word is zero, print
+	; just the low word via _prt_hex which emits "0" for all-zero.
+	LD	A,D
+	OR	E
+	JR	Z,_lx_low_only
 	PUSH	HL
 	EX	DE,HL
 	CALL	_prt_hex
 	POP	HL
 	CALL	_prt_hex4
+	JR	_lx_done
+_lx_low_only:
+	CALL	_prt_hex
+_lx_done:
 	POP	BC
 	LD	A,C
 	ADD	A,4

@@ -6808,12 +6808,32 @@ class CodeGenerator:
                                     self.ctx.emit_instr("dec", "HL")
                         stack_size += push_size
                     else:
-                        self.gen_expr(arg)
-                        # _Bool parameter normalization (C99 6.3.1.2)
-                        if param_type and self._is_bool_type(param_type):
-                            self._emit_bool_normalize()
-                        self.ctx.emit_instr("push", "HL")
-                        stack_size += 2
+                        # Variadic under --int=32: C's default-argument-
+                        # promotion widens char/short/int to int, which is
+                        # 4 bytes here.  Without this push-as-32-bit, the
+                        # callee (printf et al.) reads across arg
+                        # boundaries when it expects a 4-byte int.
+                        if (param_type is None
+                                and self.type_config.int_size == 4
+                                and not isinstance(arg_type, ast.StructType)):
+                            self.gen_expr(arg, force_long=True)
+                            # If the expression produced only a 16-bit
+                            # value (HL), sign- or zero-extend into DE.
+                            if not arg_is_long and not arg_is_float and not arg_is_ll:
+                                is_signed = not self._is_unsigned_expr(arg)
+                                self._extend_hl_to_dehl(is_signed)
+                            if param_type and self._is_bool_type(param_type):
+                                self._emit_bool_normalize()
+                            self.ctx.emit_instr("push", "DE")
+                            self.ctx.emit_instr("push", "HL")
+                            stack_size += 4
+                        else:
+                            self.gen_expr(arg)
+                            # _Bool parameter normalization (C99 6.3.1.2)
+                            if param_type and self._is_bool_type(param_type):
+                                self._emit_bool_normalize()
+                            self.ctx.emit_instr("push", "HL")
+                            stack_size += 2
 
         # Call the function
         if isinstance(expr.func, ast.Identifier):
