@@ -7983,9 +7983,14 @@ class CodeGenerator:
                 right_unsigned = isinstance(right_type, ast.BasicType) and right_type.is_signed == False
                 return ast.BasicType(name="long long", is_signed=not (left_unsigned or right_unsigned))
 
-            left_is_long = self._is_long_type(left_type)
-            right_is_long = self._is_long_type(right_type)
-            if left_is_long or right_is_long:
+            # "long wins over int" — but only when an operand is actually
+            # named "long" (or short/long long via earlier branches).  Don't
+            # promote to "long" just because int happens to be 4 bytes under
+            # --int=32; that would inflate to 8 bytes under --long=64 and
+            # mis-route variadic args to the 64-bit push path.
+            def _is_named_long(t):
+                return isinstance(t, ast.BasicType) and t.name == "long"
+            if _is_named_long(left_type) or _is_named_long(right_type):
                 return ast.BasicType(name="long")
 
             # Integer promotion: char operands promote to int (C99 6.3.1.1)
@@ -8022,7 +8027,14 @@ class CodeGenerator:
             # Apply usual arithmetic conversions
             if self._is_float_type(true_type) or self._is_float_type(false_type):
                 return ast.BasicType(name="double")
-            if self._is_long_type(true_type) or self._is_long_type(false_type):
+            if self._is_long_long_type(true_type) or self._is_long_long_type(false_type):
+                return ast.BasicType(name="long long")
+            # "long wins over int" — only when an operand is actually named
+            # "long".  Don't promote int → long just because both are 4 bytes
+            # under --int=32 (would inflate to 8 under --long=64).
+            def _is_named_long(t):
+                return isinstance(t, ast.BasicType) and t.name == "long"
+            if _is_named_long(true_type) or _is_named_long(false_type):
                 return ast.BasicType(name="long")
             # Pointer types
             if isinstance(true_type, ast.PointerType):
