@@ -14732,6 +14732,12 @@ _snprintf_zero:	DS	1	; '0' flag: zero-pad %d to width
 
 
 
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	__fmul
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__tmp32
 
 	CSEG
 
@@ -14897,6 +14903,9 @@ _sprintf_nodig:
 
 	CP	'p'
 	JR	Z,_sprintf_hex_lc	; %p is same as %x
+
+	CP	'f'
+	JP	Z,_sprintf_flt
 
 	; Unknown format - skip
 	INC	HL
@@ -15745,6 +15754,190 @@ _sprintf_hexbuf_store:
 	POP	AF
 	RET
 
+; %f handler — simple float-to-string.
+; Reads 4-byte float from stack into __ftmp.  Default precision 6.
+; Doesn't implement width / zero-pad for %f yet — just emits
+; [-]int.frac with `prec` fractional digits.  Enough for the test
+; cases we care about (SDCC snprintf_FLOAT: {1.0,"%f","1.000000"}
+; and {1.96,"%3.1f","2.0"}).
+_sprintf_flt:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	; Read 4-byte float into __ftmp.
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__ftmp),DE
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__ftmp+2),DE
+
+	; Determine precision: _sprintf_hasprec ? _sprintf_prec : 6.
+	LD	A,(_sprintf_hasprec)
+	OR	A
+	JR	NZ,_sprintf_flt_hp
+	LD	A,6
+	JR	_sprintf_flt_prec_ok
+_sprintf_flt_hp:
+	LD	A,(_sprintf_prec)
+_sprintf_flt_prec_ok:
+	LD	(_sprintf_flt_prec),A
+
+	; Check sign (bit 7 of byte __ftmp+3).
+	LD	A,(__ftmp+3)
+	BIT	7,A
+	JR	Z,_sprintf_flt_pos
+	; Emit '-' and clear sign bit.
+	LD	A,'-'
+	CALL	_sprintf_putc
+	LD	A,(__ftmp+3)
+	AND	7FH
+	LD	(__ftmp+3),A
+_sprintf_flt_pos:
+	; Pre-round: add 0.5 * 10^(-prec) to value.
+	; Start rounding constant at 0.5 (IEEE 754: 3F000000), then
+	; multiply by 0.1 (3DCCCCCD) prec times.
+	LD	HL,0
+	LD	DE,3F00H		; DE:HL = 0.5
+	LD	A,(_sprintf_flt_prec)
+	OR	A
+	JR	Z,_sprintf_flt_round_add
+	LD	B,A
+_sprintf_flt_round_lp:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0CCCDH
+	LD	DE,3DCCH		; 0.1
+	CALL	__fmul
+	DJNZ	_sprintf_flt_round_lp
+_sprintf_flt_round_add:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__ftmp)
+	LD	DE,(__ftmp+2)
+	CALL	__fadd
+	LD	(__ftmp),HL
+	LD	(__ftmp+2),DE
+
+	; Integer part: int_part = (long)value.  __ftoi takes DEHL
+	; float, returns int32 in DEHL.
+	LD	HL,(__ftmp)
+	LD	DE,(__ftmp+2)
+	CALL	__ftoi
+	; Save int32 part in __tmp32 for both the dec print and the
+	; subtraction.
+	LD	(_sprintf_flt_int),HL
+	LD	(_sprintf_flt_int+2),DE
+
+	; Print integer part via _sprintf_prt_dec32.  It reads from
+	; _prt32_val, so copy int into _prt32_val.
+	LD	(_prt32_val),HL
+	LD	(_prt32_val+2),DE
+	CALL	_sprintf_prt_dec32_nowidth
+
+	; Emit '.'
+	LD	A,'.'
+	CALL	_sprintf_putc
+
+	; Compute frac = value - int_as_float.
+	; Re-convert int back to float to get the "integer value as float".
+	LD	HL,(_sprintf_flt_int)
+	LD	DE,(_sprintf_flt_int+2)
+	CALL	__itof		; DEHL = float
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__ftmp)
+	LD	DE,(__ftmp+2)
+	CALL	__fsub		; DEHL = value - int_as_float
+	LD	(__ftmp),HL
+	LD	(__ftmp+2),DE
+
+	; For each of prec digits: frac *= 10; digit = (int)frac; emit;
+	; frac -= digit.
+	LD	A,(_sprintf_flt_prec)
+	OR	A
+	JR	Z,_sprintf_flt_end
+	LD	B,A
+_sprintf_flt_frac_lp:
+	PUSH	BC
+	; frac *= 10.
+	LD	HL,(__ftmp)
+	LD	DE,(__ftmp+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,0
+	LD	DE,4120H		; 10.0
+	CALL	__fmul
+	LD	(__ftmp),HL
+	LD	(__ftmp+2),DE
+	; digit = (int)frac
+	CALL	__ftoi
+	LD	A,L
+	PUSH	AF		; save digit
+	; Emit digit
+	ADD	A,'0'
+	CALL	_sprintf_putc
+	POP	AF		; restore digit
+	; frac -= digit (as float)
+	LD	L,A
+	LD	H,0
+	LD	DE,0
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__ftmp)
+	LD	DE,(__ftmp+2)
+	CALL	__fsub
+	LD	(__ftmp),HL
+	LD	(__ftmp+2),DE
+	POP	BC
+	DJNZ	_sprintf_flt_frac_lp
+
+_sprintf_flt_end:
+	POP	BC
+	; float arg consumes 4 bytes on stack
+	INC	C
+	INC	C
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
+; Print _prt32_val as decimal to buffer, no width padding.
+; Destroys DEHL, preserves BC.
+_sprintf_prt_dec32_nowidth:
+	PUSH	BC
+	LD	B,0
+_sprintf_dec32_nw_cvt:
+	CALL	_div32_10
+	PUSH	AF
+	INC	B
+	LD	HL,(_prt32_val)
+	LD	A,H
+	OR	L
+	JR	NZ,_sprintf_dec32_nw_cvt
+	LD	HL,(_prt32_val+2)
+	LD	A,H
+	OR	L
+	JR	NZ,_sprintf_dec32_nw_cvt
+_sprintf_dec32_nw_out:
+	POP	AF
+	ADD	A,'0'
+	PUSH	BC
+	CALL	_sprintf_putc
+	POP	BC
+	DJNZ	_sprintf_dec32_nw_out
+	POP	BC
+	RET
+
 _sprintf_done:
 	; Null terminate
 	LD	HL,(_sprintf_out)
@@ -15940,6 +16133,8 @@ _sprintf_trail:	DS	1	; trailing-pad count (left-justify)
 _sprintf_long:	DS	1	; 1 if 'l' length modifier was seen
 _sprintf_signch: DS	1	; saved sign char during 32-bit dec emit
 _sprintf_hexbuf: DS	8	; 8-digit hex scratch for %lx/%lX
+_sprintf_flt_prec: DS	1	; precision for %f (default 6)
+_sprintf_flt_int: DS	4	; int32 part for %f
 
 
 ; ============================================================
