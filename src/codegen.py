@@ -9050,7 +9050,10 @@ class CodeGenerator:
         """Get struct members as list of (name, type, offset) tuples.
 
         Handles both inline struct definitions (with members) and named structs
-        (looked up in ctx.structs).  Handles bitfield packing.
+        (looked up in ctx.structs).  Handles bitfield packing.  Recurses into
+        anonymous struct/union members so their fields appear in the returned
+        list at their actual offsets — this is what makes
+        `union { struct { u8 a, b; }; u8 x[2]; }` look up `.a` correctly.
         """
         if struct_type.members:
             has_bitfields = any(m.bit_width is not None for m in struct_type.members)
@@ -9065,6 +9068,18 @@ class CodeGenerator:
             for m in struct_type.members:
                 if m.name:
                     members.append((m.name, m.member_type, offset))
+                    if not struct_type.is_union:
+                        offset += self._type_size(m.member_type)
+                elif isinstance(m.member_type, ast.StructType):
+                    # Anonymous struct/union member: flatten its fields so
+                    # dotted designators (`.a`) and regular lookups work.
+                    for sub_name, sub_type, sub_off in self._get_struct_members(m.member_type):
+                        members.append((sub_name, sub_type, offset + sub_off))
+                    if not struct_type.is_union:
+                        offset += self._type_size(m.member_type)
+                else:
+                    # Unnamed non-aggregate (e.g. zero-width bitfield): advance
+                    # offset but don't expose.
                     if not struct_type.is_union:
                         offset += self._type_size(m.member_type)
             return members
@@ -9298,11 +9313,38 @@ class CodeGenerator:
                         target_sub_members = None
                         target_value = None
 
-                        # Find the last designated initializer (it overwrites earlier ones)
-                        last_desig = None
-                        for v in init.values:
-                            if isinstance(v, ast.DesignatedInit) and v.designators and isinstance(v.designators[0], str):
-                                last_desig = v
+                        # Find all designated initializers
+                        all_desigs = [v for v in init.values
+                                      if isinstance(v, ast.DesignatedInit)
+                                      and v.designators
+                                      and isinstance(v.designators[0], str)]
+
+                        # If multiple designators all target fields of the
+                        # same anonymous struct/union member, apply them all
+                        # together (they're at different offsets within the
+                        # anon sub-struct, so "last wins" is wrong).
+                        anon_match = None
+                        if all_desigs and elem_type.name and elem_type.name in self.ctx.anon_members:
+                            for anon_type, anon_offset in self.ctx.anon_members[elem_type.name]:
+                                anon_mems = self._get_struct_members(anon_type)
+                                anon_names = {a[0] for a in anon_mems}
+                                if all(d.designators[0] in anon_names for d in all_desigs):
+                                    anon_match = (anon_type, anon_offset, anon_mems)
+                                    break
+                        if anon_match is not None:
+                            anon_type, anon_offset, anon_mems = anon_match
+                            # Emit the anon sub-struct with all the
+                            # designators; it's at offset 0 in the union,
+                            # and the union has no other initialized members
+                            # when we took this branch.
+                            self._emit_struct_init_designated(init.values, anon_mems)
+                            emitted_size = self._type_size(anon_type)
+                            union_size = self._type_size(elem_type)
+                            if union_size > emitted_size:
+                                self.ctx.emit_instr("ds", str(union_size - emitted_size))
+                            return
+
+                        last_desig = all_desigs[-1] if all_desigs else None
 
                         if last_desig is not None:
                             desig_name = last_desig.designators[0]
