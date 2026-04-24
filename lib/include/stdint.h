@@ -86,7 +86,10 @@ typedef uint64_t uintmax_t;
 #if __SIZEOF_SHORT__ == 2
 #define INT16_MIN  (-__SHRT_MAX__ - 1)
 #define INT16_MAX  __SHRT_MAX__
-#define UINT16_MAX (__SHRT_MAX__ * 2 + 1)
+/* Use unsigned arithmetic so 32767 * 2 doesn't overflow signed int.
+ * The U suffix on the literals also keeps the multiplication in
+ * unsigned int (16-bit on Z80), so the result is exactly 65535. */
+#define UINT16_MAX (__SHRT_MAX__ * 2U + 1U)
 #else
 #define INT16_MIN  (-__INT_MAX__ - 1)
 #define INT16_MAX  __INT_MAX__
