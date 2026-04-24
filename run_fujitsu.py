@@ -17,8 +17,13 @@ LIB_DIR = UC80_DIR / "lib"
 FUJITSU_DIR = Path("../external/compiler-test-suite/C")
 
 CRT0 = LIB_DIR / "crt0.rel"
-LIBC = LIB_DIR / "libc.rel"
-RUNTIME = LIB_DIR / "runtime.rel"
+# Use .lib archives (not monolithic .rel): the .rel concat bakes in a
+# hardcoded __printf_format_table, which can't be overridden by the
+# compiler-emitted table under --int=32 / --long=64.  With .lib the linker
+# only pulls modules that satisfy unresolved symbols, so the user's table
+# wins.  This matches the workflow documented in README.
+LIBC = LIB_DIR / "libc.lib"
+RUNTIME = LIB_DIR / "runtime.lib"
 CPMEMU = Path("../cpmemu/src/cpmemu")
 
 MAX_COM_SIZE = 128000

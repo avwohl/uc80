@@ -2031,15 +2031,24 @@ class CodeGenerator:
                             is_global=True
                         )
 
-        # Auto-detect printf features if not explicitly specified (whole-program only)
-        if self.printf_features is None and self.whole_program:
+        # Auto-detect printf features if not explicitly specified.
+        # Run in both whole-program and separate-compilation modes so that the
+        # compiled unit always emits its own __printf_format_table when it
+        # calls printf.  Without the codegen-emitted table, libc.rel's
+        # concat-baked default table wins, and that default only knows the
+        # 16-bit-int handlers — breaking --int=32 and --long=64.
+        if self.printf_features is None:
             detected = self._auto_detect_printf_features(unit)
             if detected is not None:
                 self.printf_features = detected
                 # If no format specifiers used, convert printf("...\n") to puts("...")
-                if not detected:
+                # (only safe in whole-program mode where we see all callers).
+                if not detected and self.whole_program:
                     if self._rewrite_printf_to_puts(unit):
                         self._needs_puts_extern = True
+            else:
+                # Non-literal format string somewhere — must include every handler.
+                self.printf_features = {"all"}
 
         # Under --int=32, scanf's %d/%u/%x/%i store only 2 bytes into the
         # (4-byte) int pointed at, leaving the upper half garbage.  The
@@ -2915,9 +2924,9 @@ class CodeGenerator:
             elif isinstance(expr, ast.UnaryOp):
                 visit_expr(expr.operand)
             elif isinstance(expr, ast.TernaryOp):
-                visit_expr(expr.cond)
-                visit_expr(expr.then_expr)
-                visit_expr(expr.else_expr)
+                visit_expr(expr.condition)
+                visit_expr(expr.true_expr)
+                visit_expr(expr.false_expr)
             elif isinstance(expr, ast.Cast):
                 visit_expr(expr.expr)
             elif isinstance(expr, ast.Member):
