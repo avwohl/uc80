@@ -6777,6 +6777,33 @@ class CodeGenerator:
         elif self._is_long_type(return_type) or self._is_float_type(return_type):
             return_is_32bit = True
 
+        # ABI bridge: under --int=32 the caller expects a 32-bit int back in
+        # DEHL, but libc was assembled assuming int=16 and only fills HL.
+        # For calls to functions not defined in this translation unit and
+        # whose declared return type is int (now 4 bytes), extend HL into DE
+        # before the stack-preserving cleanup runs.  This is a no-op for
+        # callees that already follow the 32-bit convention, since their DE
+        # is the sign- or zero-extension of HL by definition.  Floats and
+        # explicit longs still come back as a real 32-bit DEHL from the
+        # callee (libc float/long handlers are 32-bit aware).
+        needs_int_widen = False
+        if (return_is_32bit and self.type_config.int_size == 4
+                and isinstance(return_type, ast.BasicType)
+                and return_type.name == "int"
+                and isinstance(expr.func, ast.Identifier)
+                and expr.func.name not in self.ctx.function_names):
+            needs_int_widen = True
+        if needs_int_widen:
+            return_signed = (return_type.is_signed is None or return_type.is_signed)
+            if return_signed:
+                self.ctx.emit_instr("ld", "A,H")
+                self.ctx.emit_instr("rla")
+                self.ctx.emit_instr("sbc", "A,A")
+                self.ctx.emit_instr("ld", "D,A")
+                self.ctx.emit_instr("ld", "E,A")
+            else:
+                self.ctx.emit_instr("ld", "DE,0")
+
         if stack_size > 0:
             if return_is_64bit:
                 # Return value in __acc64 - registers are free, just clean stack

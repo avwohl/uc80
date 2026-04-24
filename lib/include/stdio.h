@@ -2,10 +2,18 @@
 #ifndef _STDIO_H
 #define _STDIO_H
 
-/* Size type */
+/* Size type — track pointer width (matches stddef.h).  Under --int=32
+ * --ptr=16 this stays a 16-bit unsigned short so libc's fread/fwrite
+ * receive their length args at the offsets they were assembled for.  */
 #ifndef _SIZE_T_DEFINED
 #define _SIZE_T_DEFINED
+#if __SIZEOF_POINTER__ == __SIZEOF_INT__
 typedef unsigned int size_t;
+#elif __SIZEOF_POINTER__ == __SIZEOF_LONG__
+typedef unsigned long size_t;
+#elif __SIZEOF_POINTER__ == __SIZEOF_SHORT__
+typedef unsigned short size_t;
+#endif
 #endif
 
 /* GCC internal types used by some test suites */
@@ -59,7 +67,10 @@ size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 int fgetc(FILE *stream);
 int fputc(int c, FILE *stream);
-char *fgets(char *s, int size, FILE *stream);
+/* libc fgets reads `size` as 16 bits.  Declare it as unsigned short so
+ * --int=32 callers don't widen the arg to 4 bytes and shove the stream
+ * pointer past the offset libc expects. */
+char *fgets(char *s, unsigned short size, FILE *stream);
 int fputs(const char *s, FILE *stream);
 int feof(FILE *stream);
 int ferror(FILE *stream);
