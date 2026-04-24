@@ -3350,7 +3350,24 @@ class CodeGenerator:
                 self._gen_store_member_value(sym, decl.var_type, 0, init_list)
                 return
 
-        for i, val in enumerate(init_list.values):
+        # Determine declared array size (in elements).  C99 6.7.8/21:
+        # "If there are fewer initializers in a brace-enclosed list than there
+        # are elements ... in an aggregate, the remainder of the aggregate
+        # shall be initialized implicitly the same as objects that have static
+        # storage duration." — i.e., zero-filled even for an auto array.
+        # Without this, a re-entry into a function whose ??AUTO slot was
+        # touched by another function leaves stale bytes in the unspecified
+        # tail of the array.
+        declared_n = None
+        if isinstance(decl.var_type.size, ast.IntLiteral):
+            declared_n = decl.var_type.size.value
+        # Also clamp the actual emitted count to the declared size if too many
+        # initializers were given (excess-initializer warning territory).
+        emit_n = len(init_list.values)
+        if declared_n is not None and emit_n > declared_n:
+            emit_n = declared_n
+
+        for i, val in enumerate(init_list.values[:emit_n]):
             # Handle DesignatedInit if present
             if isinstance(val, ast.DesignatedInit):
                 val = val.value
@@ -3394,6 +3411,12 @@ class CodeGenerator:
                 else:
                     self.ctx.emit_instr("ld", f"({ix_off(frame_off)}),L")
                     self.ctx.emit_instr("ld", f"({ix_off(frame_off + 1)}),H")
+
+        # Zero-fill the unspecified tail of the array.
+        if declared_n is not None and declared_n > emit_n:
+            tail_start_off = emit_n * elem_size
+            tail_bytes = (declared_n - emit_n) * elem_size
+            self._gen_zero_init_region(sym, tail_start_off, tail_bytes)
 
     def _gen_local_struct_init(self, decl: ast.VarDecl) -> None:
         """Generate code to initialize a local struct from an initializer list."""
