@@ -14856,6 +14856,9 @@ _sprintf_nodig:
 	CP	'u'
 	JR	Z,_sprintf_uns
 
+	CP	'o'
+	JR	Z,_sprintf_oct
+
 	CP	'p'
 	JR	Z,_sprintf_hex_lc	; %p is same as %x
 
@@ -15198,6 +15201,28 @@ _sprintf_uns:
 	INC	HL
 	JP	_sprintf_loop
 
+_sprintf_oct:
+	; Output unsigned octal (no width / flag handling yet — values just
+	; printed in their natural digit count).
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL		; HL = value
+	CALL	_sprintf_prt_oct
+	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
 _sprintf_hex_lc:
 	; Output hex (lowercase, %x)
 	XOR	A
@@ -15334,6 +15359,36 @@ _sprintf_div_dn:
 	LD	D,0
 	LD	H,B
 	LD	L,C
+	POP	BC
+	RET
+
+; Internal: print HL as unsigned octal to buffer.  Up to 6 octal digits
+; for a 16-bit value.  Counts and emits in reverse via the stack.
+_sprintf_prt_oct:
+	PUSH	BC
+	PUSH	DE
+	LD	B,0		; digit counter
+_sprintf_oct_lp:
+	LD	A,L
+	AND	7
+	PUSH	AF		; push digit (low 3 bits)
+	INC	B
+	; HL >>= 3
+	SRL	H
+	RR	L
+	SRL	H
+	RR	L
+	SRL	H
+	RR	L
+	LD	A,H
+	OR	L
+	JR	NZ,_sprintf_oct_lp
+_sprintf_oct_out:
+	POP	AF
+	ADD	A,'0'
+	CALL	_sprintf_putc
+	DJNZ	_sprintf_oct_out
+	POP	DE
 	POP	BC
 	RET
 
