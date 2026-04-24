@@ -565,8 +565,10 @@ _sprintf_uns32_join:
 	JP	_sprintf_dec32_have_sign
 
 _sprintf_oct:
-	; Output unsigned octal (no width / flag handling yet — values just
-	; printed in their natural digit count).
+	; Output unsigned octal.  'l' length → 32-bit path.
+	LD	A,(_sprintf_long)
+	OR	A
+	JP	NZ,_sprintf_oct32
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -580,6 +582,79 @@ _sprintf_oct:
 	EX	DE,HL		; HL = value
 	CALL	_sprintf_prt_oct
 	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
+_sprintf_oct32:
+	; %lo — 32-bit unsigned octal, natural width (no padding yet).
+	; Max 11 octal digits (0o37777777777 = 0xFFFFFFFF).
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt32_val),DE
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt32_val+2),DE
+
+	; Divide by 8 repeatedly, pushing each remainder.  Stops when
+	; value is 0 (B has the digit count; at least 1).
+	LD	B,0
+_sprintf_oct32_lp:
+	; Low 3 bits of _prt32_val are the digit.
+	LD	A,(_prt32_val)
+	AND	7
+	PUSH	AF
+	INC	B
+	; Shift right by 3: SRL _prt32_val+3, RR _prt32_val+2, RR +1, RR +0.
+	; Three times.
+	LD	A,3
+_sprintf_oct32_shift:
+	PUSH	AF
+	LD	HL,_prt32_val+3
+	SRL	(HL)
+	DEC	HL
+	RR	(HL)
+	DEC	HL
+	RR	(HL)
+	DEC	HL
+	RR	(HL)
+	POP	AF
+	DEC	A
+	JR	NZ,_sprintf_oct32_shift
+	; Done if value is 0
+	LD	HL,(_prt32_val)
+	LD	A,H
+	OR	L
+	JR	NZ,_sprintf_oct32_lp
+	LD	HL,(_prt32_val+2)
+	LD	A,H
+	OR	L
+	JR	NZ,_sprintf_oct32_lp
+
+	; Emit B digits.
+_sprintf_oct32_out:
+	POP	AF
+	ADD	A,'0'
+	PUSH	BC
+	CALL	_sprintf_putc
+	POP	BC
+	DJNZ	_sprintf_oct32_out
+
+	POP	BC
+	INC	C
+	INC	C
 	INC	C
 	INC	C
 	POP	HL
@@ -794,8 +869,10 @@ _sprintf_hex_common:
 	JP	_sprintf_loop
 
 _sprintf_hex32:
-	; %lx / %lX — 8 hex digits, no width or padding handling yet.
-	; Reads 4-byte arg from (IX+C..C+3), prints high word then low.
+	; %lx / %lX — 32-bit hex with leading-zero suppression, width
+	; padding, and left-justify.  The value is emitted into an
+	; 8-char DSEG buffer first, then we skip leading zeros and
+	; pad / emit.
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -803,24 +880,108 @@ _sprintf_hex32:
 	PUSH	IX
 	POP	DE
 	ADD	HL,DE
-	; Save offset HL on stack (we'll need to load high word too).
-	; Read low word into DE.
+	; Read 4 bytes into _prt32_val.
 	LD	E,(HL)
 	INC	HL
 	LD	D,(HL)
+	LD	(_prt32_val),DE
 	INC	HL
-	; Save low word.
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt32_val+2),DE
+
+	; Fill _sprintf_hexbuf with 8 hex digits, high to low.
+	LD	HL,_sprintf_hexbuf
+	LD	A,(_prt32_val+3)
+	CALL	_sprintf_hex_to_buf
+	LD	A,(_prt32_val+2)
+	CALL	_sprintf_hex_to_buf
+	LD	A,(_prt32_val+1)
+	CALL	_sprintf_hex_to_buf
+	LD	A,(_prt32_val)
+	CALL	_sprintf_hex_to_buf
+
+	; Find first non-zero digit.  If all zero, keep the last digit.
+	; We count "skipped leading zeros" in C (starts at 0), walking HL
+	; through the buffer up to 7 times.  On exit B = natural digit
+	; count = 8 - skipped.
+	LD	HL,_sprintf_hexbuf
+	LD	C,0		; skipped count
+	LD	B,7		; max skip
+_sprintf_hex32_strip:
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_sprintf_hex32_got
+	INC	HL
+	INC	C
+	DJNZ	_sprintf_hex32_strip
+_sprintf_hex32_got:
+	LD	A,8
+	SUB	C
+	LD	B,A		; B = natural digit count
+
+	; Compute pad budget and trailing pad, applying flags.
+	XOR	A
+	LD	(_sprintf_trail),A
+	LD	A,(_sprintf_width)
+	OR	A
+	JR	Z,_sprintf_hex32_emit
+	SUB	B
+	JR	Z,_sprintf_hex32_emit
+	JR	C,_sprintf_hex32_emit
+	; A = pad count.  If left-justify, put it in _sprintf_trail.
+	LD	E,A
+	LD	A,(_sprintf_left)
+	OR	A
+	JR	Z,_sprintf_hex32_lead_pad
+	LD	A,E
+	LD	(_sprintf_trail),A
+	JR	_sprintf_hex32_emit
+_sprintf_hex32_lead_pad:
+	; Right-justify: emit leading pad.  Char is ' ' or '0'.
+	LD	A,(_sprintf_zero)
+	OR	A
+	LD	A,' '
+	JR	Z,_sprintf_hex32_pad_lp
+	LD	A,'0'
+_sprintf_hex32_pad_lp:
+	PUSH	BC
 	PUSH	DE
-	; Read high word into DE.
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	; Print high word first (most significant).
-	EX	DE,HL		; HL = high word
-	CALL	_sprintf_prt_hex
-	; Print low word.
+	PUSH	HL
+	PUSH	AF
+	CALL	_sprintf_putc
+	POP	AF
 	POP	HL
-	CALL	_sprintf_prt_hex
+	POP	DE
+	POP	BC
+	DEC	E
+	JR	NZ,_sprintf_hex32_pad_lp
+
+_sprintf_hex32_emit:
+	; Emit B digits from HL
+	LD	A,(HL)
+	PUSH	BC
+	PUSH	HL
+	CALL	_sprintf_putc
+	POP	HL
+	POP	BC
+	INC	HL
+	DJNZ	_sprintf_hex32_emit
+
+	; Trailing pad for left-justify.
+	LD	A,(_sprintf_trail)
+	OR	A
+	JR	Z,_sprintf_hex32_done
+_sprintf_hex32_trail:
+	PUSH	AF
+	LD	A,' '
+	CALL	_sprintf_putc
+	POP	AF
+	DEC	A
+	JR	NZ,_sprintf_hex32_trail
+
+_sprintf_hex32_done:
 	POP	BC
 	; Long arg = 4 bytes.
 	INC	C
@@ -830,6 +991,38 @@ _sprintf_hex32:
 	POP	HL
 	INC	HL
 	JP	_sprintf_loop
+
+; Helper: split byte in A into two hex chars, write to (HL), HL+=2.
+_sprintf_hex_to_buf:
+	PUSH	AF
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	CALL	_sprintf_hexbuf1
+	POP	AF
+	; fall through
+_sprintf_hexbuf1:
+	PUSH	AF
+	AND	0FH
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_sprintf_hexbuf_store
+	PUSH	AF
+	LD	A,(_sprintf_upper)
+	OR	A
+	JR	NZ,_sprintf_hexbuf_uc
+	POP	AF
+	ADD	A,39		; lowercase a..f
+	JR	_sprintf_hexbuf_store
+_sprintf_hexbuf_uc:
+	POP	AF
+	ADD	A,7		; uppercase A..F
+_sprintf_hexbuf_store:
+	LD	(HL),A
+	INC	HL
+	POP	AF
+	RET
 
 _sprintf_done:
 	; Null terminate
@@ -1025,5 +1218,6 @@ _sprintf_hasprec: DS	1	; 1 if precision was specified
 _sprintf_trail:	DS	1	; trailing-pad count (left-justify)
 _sprintf_long:	DS	1	; 1 if 'l' length modifier was seen
 _sprintf_signch: DS	1	; saved sign char during 32-bit dec emit
+_sprintf_hexbuf: DS	8	; 8-digit hex scratch for %lx/%lX
 
 	END
