@@ -9533,25 +9533,42 @@ class CodeGenerator:
 
         # Detect bitfield groups: consecutive members sharing the same byte offset
         # Group them so we can pack their values at compile time
+        # Helper: does a member name correspond to a real bitfield?
+        def _bf_for(member_name):
+            for key, info in self.ctx.bitfield_info.items():
+                if key[1] == member_name:
+                    return info
+            return None
+
+        # Helper: a member shares its byte offset with another member only if
+        # both are bitfields packed into the same storage unit, OR one is a
+        # zero-size aggregate (e.g. struct {}) which doesn't really occupy
+        # the slot.  The latter must NOT be lumped into a "bitfield group"
+        # or we end up packing a normal scalar member with the empty struct
+        # and losing the scalar's emit altogether.
+        def _is_packable_bitfield(member_name, member_type):
+            if _bf_for(member_name) is not None:
+                return True
+            return False
+
         member_groups = []  # list of (offset, [(name, type, bf_info_or_None)])
         i = 0
         while i < len(members):
             name, mtype, offset = members[i]
-            # Collect consecutive members at the same offset = bitfield group
+            # Collect consecutive members at the same offset that are all
+            # genuine bitfields — that's the only valid reason to share an
+            # offset.  A zero-size aggregate sharing the offset breaks out.
             j = i + 1
-            while j < len(members) and members[j][2] == offset:
-                j += 1
+            if _is_packable_bitfield(name, mtype):
+                while (j < len(members) and members[j][2] == offset
+                       and _is_packable_bitfield(members[j][0], members[j][1])):
+                    j += 1
             if j > i + 1:
-                # Multiple members at same offset = bitfield group
+                # Multiple bitfield members at same offset = bitfield group
                 group = []
                 for k in range(i, j):
                     n, t, o = members[k]
-                    bf = None
-                    for key, info in self.ctx.bitfield_info.items():
-                        if key[1] == n:
-                            bf = info
-                            break
-                    group.append((n, t, bf))
+                    group.append((n, t, _bf_for(n)))
                 member_groups.append((offset, group))
                 i = j
             else:
