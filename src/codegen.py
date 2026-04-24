@@ -4437,9 +4437,22 @@ class CodeGenerator:
                 elif return_is_long and not self._is_long_expr(stmt.value) and not expr_is_float:
                     is_signed = self._is_signed_type(self._get_expr_type(stmt.value))
                     self._extend_hl_to_dehl(is_signed)
-                # Note: no char-to-HL extension needed here - gen_expr already
-                # produces a properly widened 16-bit value in HL for all cases
-                # (literals via LD HL,N, variables via load+sign-extend)
+                else:
+                    # Truncate to the declared return type's width.  Without
+                    # this, `uint8_t f(uint8_t s) { return s<<2; }` returns
+                    # the full 16-bit arithmetic result (0x290 for s=0xa4)
+                    # and the caller's comparison against an explicit
+                    # (uint8_t) cast sees the un-truncated upper bits.
+                    ret_size = self._type_size(ret_type) if ret_type else 2
+                    if ret_size == 1:
+                        if self._is_signed_type(ret_type):
+                            # Sign-extend low byte into high byte
+                            self.ctx.emit_instr("ld", "A,L")
+                            self.ctx.emit_instr("rla")
+                            self.ctx.emit_instr("sbc", "A,A")
+                            self.ctx.emit_instr("ld", "H,A")
+                        else:
+                            self.ctx.emit_instr("ld", "H,0")
         # Jump to function epilogue
         self.ctx.emit_instr("jp", f"@{self.ctx.current_function}_ret")
 
