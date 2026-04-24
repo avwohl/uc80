@@ -2296,11 +2296,27 @@ class CodeGenerator:
                              and self._is_signed_type(member.member_type))
 
                 if bf_width == 0:
-                    # Zero-width: force alignment to next storage unit boundary
-                    if bit_pos > 0:
-                        if not is_union:
-                            offset = storage_unit_start + storage_unit_size
+                    # Zero-width: force alignment to the next multiple of
+                    # the zero-width bitfield's own type-size (in bits),
+                    # not the current storage unit.  `char :0` advances
+                    # only to the next byte boundary — it doesn't have to
+                    # kick subsequent bitfields out of a shared int
+                    # storage unit, which the "close storage unit" rule
+                    # used to do.  Stays compatible with `int :0` because
+                    # int's type_size happens to equal storage_unit_size
+                    # for int-based bitfield groups.
+                    if is_union:
+                        continue
+                    align_bits = type_size * 8
+                    if align_bits > 0 and bit_pos % align_bits != 0:
+                        bit_pos = ((bit_pos + align_bits - 1)
+                                   // align_bits) * align_bits
+                    # If we've crossed the end of the current storage unit,
+                    # close it and advance to the next aligned byte.
+                    if storage_unit_size > 0 and bit_pos >= storage_unit_size * 8:
+                        offset = storage_unit_start + storage_unit_size
                         bit_pos = 0
+                        storage_unit_size = 0
                     continue
 
                 # Clamp width to type size
