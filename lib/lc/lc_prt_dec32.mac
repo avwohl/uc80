@@ -103,6 +103,7 @@ _div32_10_nosub:
 	RET
 
 	DSEG
+	PUBLIC	_prt32_val
 _prt32_val:	DS	4
 
 	END

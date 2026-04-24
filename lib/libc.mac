@@ -12279,6 +12279,7 @@ _div32_10_nosub:
 	RET
 
 	DSEG
+	PUBLIC	_prt32_val
 _prt32_val:	DS	4
 
 
@@ -14758,6 +14759,7 @@ _sprintf_format:
 	LD	(_sprintf_left),A
 	LD	(_sprintf_prec),A
 	LD	(_sprintf_hasprec),A
+	LD	(_sprintf_long),A
 	INC	HL
 	LD	A,(HL)
 	OR	A
@@ -14827,10 +14829,12 @@ _sprintf_nodig:
 	; Capture precision (".N"), skipping the '.' itself.
 	CP	'.'
 	JR	Z,_sprintf_set_hasprec
-	; Skip length modifiers: h, l, z
-	CP	'h'
-	JR	Z,_sprintf_fskip
+	; Length modifier 'l' marks the next conversion as long (32-bit).
+	; 'h' and 'z' are accepted but treated as int (16-bit on Z80, or
+	; 32-bit if --int=32 — same as plain).
 	CP	'l'
+	JR	Z,_sprintf_set_long
+	CP	'h'
 	JR	Z,_sprintf_fskip
 	CP	'z'
 	JR	Z,_sprintf_fskip
@@ -14877,6 +14881,10 @@ _sprintf_set_space:
 _sprintf_set_left:
 	LD	A,1
 	LD	(_sprintf_left),A
+	JR	_sprintf_fskip
+_sprintf_set_long:
+	LD	A,1
+	LD	(_sprintf_long),A
 	JR	_sprintf_fskip
 _sprintf_set_hasprec:
 	; Mark that a precision was specified (so prec=0 is meaningful)
@@ -15038,6 +15046,11 @@ _sprintf_str_done:
 
 _sprintf_dec:
 	; Output signed decimal with width / zero-pad / +/space flag support
+	; If 'l' length modifier was seen, dispatch to the 32-bit path.
+	LD	A,(_sprintf_long)
+	OR	A
+	JP	NZ,_sprintf_dec32
+
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -15181,7 +15194,10 @@ _sprintf_dec_done:
 	JP	_sprintf_loop
 
 _sprintf_uns:
-	; Output unsigned decimal
+	; Output unsigned decimal.  If 'l' length, dispatch to 32-bit path.
+	LD	A,(_sprintf_long)
+	OR	A
+	JP	NZ,_sprintf_uns32
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -15200,6 +15216,42 @@ _sprintf_uns:
 	POP	HL
 	INC	HL
 	JP	_sprintf_loop
+
+_sprintf_uns32:
+	; %lu — same as %ld but never emits a sign character.  We share
+	; _sprintf_dec32's code by clearing the sign-detect bit: load
+	; the value into _prt32_val, then jump straight into the digit
+	; loop with sign char = 0 (or '+' / ' ' if those flags are set).
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt32_val),DE
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt32_val+2),DE
+	; No sign for unsigned (but +/space flags still apply).
+	LD	D,0
+	LD	A,(_sprintf_plus)
+	OR	A
+	JR	Z,_sprintf_uns32_chk_space
+	LD	D,'+'
+	JR	_sprintf_uns32_join
+_sprintf_uns32_chk_space:
+	LD	A,(_sprintf_space)
+	OR	A
+	JR	Z,_sprintf_uns32_join
+	LD	D,' '
+_sprintf_uns32_join:
+	JP	_sprintf_dec32_have_sign
 
 _sprintf_oct:
 	; Output unsigned octal (no width / flag handling yet — values just
@@ -15223,6 +15275,179 @@ _sprintf_oct:
 	INC	HL
 	JP	_sprintf_loop
 
+; %ld / %li handler — 32-bit signed decimal.
+; Reuses width / zero-pad / sign / left-justify state set by the
+; common parser.  Doesn't yet share the leading-pad code with the
+; 16-bit path; precision and other niceties go through the same
+; helpers.
+_sprintf_dec32:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	; Read 4-byte arg into _prt32_val
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt32_val),DE	; low word
+	INC	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_prt32_val+2),DE	; high word
+
+	; Determine sign.  Bit 7 of high byte = sign.
+	LD	A,(_prt32_val+3)
+	LD	D,0
+	BIT	7,A
+	JR	Z,_sprintf_dec32_npos
+	; Negate _prt32_val in place: 0 - val.  D gets clobbered, so set
+	; the sign char in D *after* the negation completes.
+	LD	HL,0
+	LD	DE,(_prt32_val)
+	OR	A
+	SBC	HL,DE
+	LD	(_prt32_val),HL
+	LD	HL,0
+	LD	DE,(_prt32_val+2)
+	SBC	HL,DE
+	LD	(_prt32_val+2),HL
+	LD	D,'-'
+	JR	_sprintf_dec32_have_sign
+_sprintf_dec32_npos:
+	LD	A,(_sprintf_plus)
+	OR	A
+	JR	Z,_sprintf_dec32_chk_space
+	LD	D,'+'
+	JR	_sprintf_dec32_have_sign
+_sprintf_dec32_chk_space:
+	LD	A,(_sprintf_space)
+	OR	A
+	JR	Z,_sprintf_dec32_have_sign
+	LD	D,' '
+_sprintf_dec32_have_sign:
+	; Save sign char in a static so it survives the digit loop's
+	; pushes (we'd lose it if it were on the stack underneath all
+	; the AFs we're about to push).
+	LD	A,D
+	LD	(_sprintf_signch),A
+
+	; Convert to decimal digits on stack via _div32_10.
+	; Counts digits in B (start at 0).  _prt32_val gets consumed.
+	LD	B,0
+_sprintf_dec32_cvt:
+	CALL	_div32_10
+	PUSH	AF		; push remainder digit
+	INC	B
+	LD	HL,(_prt32_val)
+	LD	A,H
+	OR	L
+	JR	NZ,_sprintf_dec32_cvt
+	LD	HL,(_prt32_val+2)
+	LD	A,H
+	OR	L
+	JR	NZ,_sprintf_dec32_cvt
+	; Restore sign char from static into D.
+	LD	A,(_sprintf_signch)
+	LD	D,A
+	; Stack now: B digits.  Compute pad and emit per flags.
+	XOR	A
+	LD	(_sprintf_trail),A
+	LD	A,(_sprintf_width)
+	OR	A
+	JR	Z,_sprintf_dec32_skip_pad
+	SUB	B
+	JR	Z,_sprintf_dec32_skip_pad
+	JR	C,_sprintf_dec32_skip_pad
+	LD	E,A
+	LD	A,D
+	OR	A
+	JR	Z,_sprintf_dec32_have_budget
+	DEC	E
+	JR	Z,_sprintf_dec32_skip_pad
+	JR	C,_sprintf_dec32_skip_pad
+_sprintf_dec32_have_budget:
+	LD	A,(_sprintf_left)
+	OR	A
+	JR	Z,_sprintf_dec32_pad_check
+	LD	A,E
+	LD	(_sprintf_trail),A
+	JR	_sprintf_dec32_skip_pad
+_sprintf_dec32_pad_check:
+	LD	A,(_sprintf_zero)
+	OR	A
+	JR	NZ,_sprintf_dec32_zpad
+_sprintf_dec32_spad_loop:
+	PUSH	BC
+	PUSH	DE
+	LD	A,' '
+	CALL	_sprintf_putc
+	POP	DE
+	POP	BC
+	DEC	E
+	JR	NZ,_sprintf_dec32_spad_loop
+	JR	_sprintf_dec32_skip_pad
+_sprintf_dec32_zpad:
+	LD	A,D
+	OR	A
+	JR	Z,_sprintf_dec32_zpad_loop
+	PUSH	BC
+	PUSH	DE
+	LD	A,D
+	CALL	_sprintf_putc
+	POP	DE
+	POP	BC
+	LD	D,0
+_sprintf_dec32_zpad_loop:
+	PUSH	BC
+	PUSH	DE
+	LD	A,'0'
+	CALL	_sprintf_putc
+	POP	DE
+	POP	BC
+	DEC	E
+	JR	NZ,_sprintf_dec32_zpad_loop
+_sprintf_dec32_skip_pad:
+	LD	A,D
+	OR	A
+	JR	Z,_sprintf_dec32_emit
+	PUSH	BC
+	CALL	_sprintf_putc
+	POP	BC
+_sprintf_dec32_emit:
+	; Pop and print B digits.
+_sprintf_dec32_out:
+	POP	AF
+	ADD	A,'0'
+	PUSH	BC
+	CALL	_sprintf_putc
+	POP	BC
+	DJNZ	_sprintf_dec32_out
+	; Trailing pad
+	LD	A,(_sprintf_trail)
+	OR	A
+	JR	Z,_sprintf_dec32_done
+_sprintf_dec32_trail:
+	PUSH	AF
+	LD	A,' '
+	CALL	_sprintf_putc
+	POP	AF
+	DEC	A
+	JR	NZ,_sprintf_dec32_trail
+_sprintf_dec32_done:
+	POP	BC
+	; Long arg consumes 4 stack bytes (advance C by 4).
+	INC	C
+	INC	C
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
 _sprintf_hex_lc:
 	; Output hex (lowercase, %x)
 	XOR	A
@@ -15234,6 +15459,10 @@ _sprintf_hex_uc:
 	LD	A,1
 	LD	(_sprintf_upper),A
 _sprintf_hex_common:
+	; If 'l' length, dispatch to 32-bit hex (8 digits).
+	LD	A,(_sprintf_long)
+	OR	A
+	JP	NZ,_sprintf_hex32
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -15247,6 +15476,44 @@ _sprintf_hex_common:
 	EX	DE,HL
 	CALL	_sprintf_prt_hex
 	POP	BC
+	INC	C
+	INC	C
+	POP	HL
+	INC	HL
+	JP	_sprintf_loop
+
+_sprintf_hex32:
+	; %lx / %lX — 8 hex digits, no width or padding handling yet.
+	; Reads 4-byte arg from (IX+C..C+3), prints high word then low.
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	; Save offset HL on stack (we'll need to load high word too).
+	; Read low word into DE.
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	; Save low word.
+	PUSH	DE
+	; Read high word into DE.
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	; Print high word first (most significant).
+	EX	DE,HL		; HL = high word
+	CALL	_sprintf_prt_hex
+	; Print low word.
+	POP	HL
+	CALL	_sprintf_prt_hex
+	POP	BC
+	; Long arg = 4 bytes.
+	INC	C
+	INC	C
 	INC	C
 	INC	C
 	POP	HL
@@ -15445,6 +15712,8 @@ _sprintf_left:	DS	1	; '-' flag: left-justify
 _sprintf_prec:	DS	1	; precision count (max 255)
 _sprintf_hasprec: DS	1	; 1 if precision was specified
 _sprintf_trail:	DS	1	; trailing-pad count (left-justify)
+_sprintf_long:	DS	1	; 1 if 'l' length modifier was seen
+_sprintf_signch: DS	1	; saved sign char during 32-bit dec emit
 
 
 ; ============================================================
