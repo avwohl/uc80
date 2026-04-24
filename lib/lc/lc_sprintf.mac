@@ -213,7 +213,8 @@ _sprintf_chr:
 	JP	_sprintf_loop
 
 _sprintf_str:
-	; Output string
+	; Output string with width support (right-justify, space-pad).
+	; Left-justify ('-' flag) and precision ('.N') aren't supported yet.
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -224,6 +225,38 @@ _sprintf_str:
 	LD	E,(HL)
 	INC	HL
 	LD	D,(HL)		; DE = string pointer
+
+	; If width is set, count string length and emit padding first.
+	LD	A,(_sprintf_width)
+	OR	A
+	JR	Z,_sprintf_str_loop	; no width, skip padding
+
+	; Count string length into B (clamped to 255).
+	PUSH	DE
+	LD	B,0
+_sprintf_str_count:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_sprintf_str_count_done
+	INC	B
+	INC	DE
+	JR	NZ,_sprintf_str_count	; BC overflow guard
+_sprintf_str_count_done:
+	POP	DE
+	; Pad = width - length
+	LD	A,(_sprintf_width)
+	SUB	B
+	JR	Z,_sprintf_str_loop
+	JR	C,_sprintf_str_loop
+	LD	B,A
+_sprintf_str_pad:
+	PUSH	BC
+	PUSH	DE
+	LD	A,' '
+	CALL	_sprintf_putc
+	POP	DE
+	POP	BC
+	DJNZ	_sprintf_str_pad
 
 _sprintf_str_loop:
 	LD	A,(DE)
