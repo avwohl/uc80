@@ -43,11 +43,14 @@ RUNTIME = LIB_DIR / "runtime.lib"
 CPMEMU = Path("../cpmemu/src/cpmemu")
 
 # Tests that need longer timeouts (in seconds)
-# These are computationally expensive but correct
+# These are computationally expensive but correct.
+# Budgets are set for the worst-case config: --int=32 makes each
+# arithmetic op ~2x slower (DEHL instead of HL), and --long=64 doubles
+# again on top.  At --int=16 the same tests finish in a fraction of these.
 SLOW_TESTS = {
-    "00040": 300,  # 8-queens algorithm - O(n!) complexity
-    "00041": 30,   # Prime sieve to 5000 - many multiplications and modulos
-    "00200": 30,   # 64-bit shift operations - many test cases
+    "00040": 600,  # 8-queens algorithm - O(n!) complexity
+    "00041": 120,  # Prime sieve to 5000 - many multiplications and modulos
+    "00200": 120,  # 64-bit shift operations - many test cases
 }
 
 # Tests to skip with reason

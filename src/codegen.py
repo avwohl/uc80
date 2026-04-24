@@ -7913,6 +7913,12 @@ class CodeGenerator:
         elif isinstance(expr, ast.Identifier):
             if expr.name in ('__func__', '__FUNCTION__'):
                 return ast.PointerType(base_type=ast.BasicType(name="char"))
+            # Enum constants: have type int.  Without this, _is_long_expr
+            # falls through to _is_long_type(None) → False, and under
+            # --int=32 the call site pushes only HL (16 bits) for an enum
+            # arg, so variadic printf reads garbage from the next slot.
+            if expr.name in self.ctx.enum_constants:
+                return ast.BasicType(name="int", is_signed=True)
             sym = self.ctx.lookup(expr.name)
             if sym:
                 return sym.sym_type
@@ -7931,8 +7937,11 @@ class CodeGenerator:
         elif isinstance(expr, ast.UnaryOp) and expr.op == "!":
             # Logical NOT always returns int (C99 6.5.3.3)
             return ast.BasicType(name="int")
-        elif isinstance(expr, ast.UnaryOp) and expr.op in ("-", "+", "~"):
-            # These preserve the operand type
+        elif isinstance(expr, ast.UnaryOp) and expr.op in ("-", "+", "~", "++", "--"):
+            # These preserve the operand type.  ++/-- (post or pre) need to
+            # be in this list too, otherwise _is_long_expr falls back to
+            # _is_long_type(None) → False and the 32-bit binary-op codegen
+            # spuriously emits __sext32 over an already-32-bit value.
             return self._get_expr_type(expr.operand)
         elif isinstance(expr, ast.Index):
             # Array indexing: return element type
@@ -8429,11 +8438,13 @@ class CodeGenerator:
             # Explicit L suffix: always a long
             if expr.is_long:
                 return True
-            # When int and long are the same size (e.g. --int=32 long=32),
-            # a literal that fits in int is "long-sized" too.
-            if tc.int_size == tc.long_size and tc.int_size == 4:
-                # Any literal <= ULONG_MAX is 32-bit
-                if -(tc.long_max + 1) <= expr.value <= tc.ulong_max:
+            # Under --int=32, "int" itself is 32-bit and shares codegen with
+            # "long" (DEHL register pair).  Any literal that fits in int (or
+            # unsigned int) needs the 32-bit codegen path.  Without this,
+            # values 0x10000..0xFFFFFFFF would only get LD HL,low loaded and
+            # the high 16 bits would silently vanish.
+            if tc.int_size == 4:
+                if -(tc.int_max + 1) <= expr.value <= tc.uint_max:
                     return True
             # C standard type promotion for literals:
             # Decimal: int -> long -> long long
@@ -8483,6 +8494,12 @@ class CodeGenerator:
             # Check nested expressions
             return self._uses_tmp32(expr.left) or self._uses_tmp32(expr.right)
         if isinstance(expr, ast.UnaryOp):
+            # ++/-- on a 32-bit operand expands into __add32 etc., which
+            # writes the operand value to __tmp32 as scratch.  If the caller
+            # had set __tmp32 for an enclosing comparison, that gets stomped.
+            if expr.op in ("++", "--") and (self._is_long_expr(expr.operand)
+                                            or self._is_float_expr(expr.operand)):
+                return True
             return self._uses_tmp32(expr.operand)
         if isinstance(expr, ast.TernaryOp):
             return (self._uses_tmp32(expr.condition) or
