@@ -14755,6 +14755,9 @@ _sprintf_format:
 	LD	(_sprintf_zero),A
 	LD	(_sprintf_plus),A
 	LD	(_sprintf_space),A
+	LD	(_sprintf_left),A
+	LD	(_sprintf_prec),A
+	LD	(_sprintf_hasprec),A
 	INC	HL
 	LD	A,(HL)
 	OR	A
@@ -14812,19 +14815,18 @@ _sprintf_is_digit:
 	JR	C,_sprintf_is_digit
 
 _sprintf_nodig:
-	; Capture '+' and ' ' flags, skip '-' and '#' (left-justify and
-	; alternate form aren't supported yet but shouldn't error).
+	; Capture '+', ' ', '-' flags; skip '#' (alternate form not yet).
 	CP	'+'
 	JR	Z,_sprintf_set_plus
 	CP	' '
 	JR	Z,_sprintf_set_space
 	CP	'-'
-	JR	Z,_sprintf_fskip
+	JR	Z,_sprintf_set_left
 	CP	'#'
 	JR	Z,_sprintf_fskip
-	; Skip precision
+	; Capture precision (".N"), skipping the '.' itself.
 	CP	'.'
-	JR	Z,_sprintf_fskip
+	JR	Z,_sprintf_set_hasprec
 	; Skip length modifiers: h, l, z
 	CP	'h'
 	JR	Z,_sprintf_fskip
@@ -14868,6 +14870,40 @@ _sprintf_set_plus:
 _sprintf_set_space:
 	LD	A,1
 	LD	(_sprintf_space),A
+	JR	_sprintf_fskip
+_sprintf_set_left:
+	LD	A,1
+	LD	(_sprintf_left),A
+	JR	_sprintf_fskip
+_sprintf_set_hasprec:
+	; Mark that a precision was specified (so prec=0 is meaningful)
+	; and parse the digits that follow into _sprintf_prec.
+	LD	A,1
+	LD	(_sprintf_hasprec),A
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+_sprintf_set_precdig:
+	CP	'0'
+	JR	C,_sprintf_fmt2	; non-digit ends precision
+	CP	'9'+1
+	JR	NC,_sprintf_fmt2
+	SUB	'0'
+	LD	D,A
+	LD	A,(_sprintf_prec)
+	LD	E,A
+	ADD	A,A		; *2
+	ADD	A,A		; *4
+	ADD	A,E		; *5
+	ADD	A,A		; *10
+	ADD	A,D
+	LD	(_sprintf_prec),A
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JP	Z,_sprintf_done
+	JR	_sprintf_set_precdig
 	; fall through
 _sprintf_fskip:
 	INC	HL
@@ -14903,8 +14939,7 @@ _sprintf_chr:
 	JP	_sprintf_loop
 
 _sprintf_str:
-	; Output string with width support (right-justify, space-pad).
-	; Left-justify ('-' flag) and precision ('.N') aren't supported yet.
+	; Output string with width / precision / left-justify.
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -14916,45 +14951,79 @@ _sprintf_str:
 	INC	HL
 	LD	D,(HL)		; DE = string pointer
 
-	; If width is set, count string length and emit padding first.
-	LD	A,(_sprintf_width)
-	OR	A
-	JR	Z,_sprintf_str_loop	; no width, skip padding
-
-	; Count string length into B (clamped to 255).
+	; Count effective string length (capped by precision if any).
+	; B = effective length (0..255).
 	PUSH	DE
 	LD	B,0
 _sprintf_str_count:
 	LD	A,(DE)
 	OR	A
 	JR	Z,_sprintf_str_count_done
+	; If precision specified and we already emitted prec chars, stop.
+	LD	A,(_sprintf_hasprec)
+	OR	A
+	JR	Z,_sprintf_str_count_continue
+	LD	A,(_sprintf_prec)
+	CP	B
+	JR	Z,_sprintf_str_count_done
+_sprintf_str_count_continue:
 	INC	B
 	INC	DE
-	JR	NZ,_sprintf_str_count	; BC overflow guard
+	JR	NZ,_sprintf_str_count
 _sprintf_str_count_done:
 	POP	DE
-	; Pad = width - length
+
+	; Compute pad budget (width - effective length) into C.
+	LD	C,0
 	LD	A,(_sprintf_width)
+	OR	A
+	JR	Z,_sprintf_str_emit
 	SUB	B
-	JR	Z,_sprintf_str_loop
-	JR	C,_sprintf_str_loop
-	LD	B,A
-_sprintf_str_pad:
+	JR	Z,_sprintf_str_emit
+	JR	C,_sprintf_str_emit
+	LD	C,A
+
+	; Right-justify (default): emit padding first
+	LD	A,(_sprintf_left)
+	OR	A
+	JR	NZ,_sprintf_str_emit
+_sprintf_str_pad_left:
 	PUSH	BC
 	PUSH	DE
 	LD	A,' '
 	CALL	_sprintf_putc
 	POP	DE
 	POP	BC
-	DJNZ	_sprintf_str_pad
+	DEC	C
+	JR	NZ,_sprintf_str_pad_left
 
+_sprintf_str_emit:
+	; Emit B bytes from DE
+	LD	A,B
+	OR	A
+	JR	Z,_sprintf_str_after_emit
 _sprintf_str_loop:
+	PUSH	BC
 	LD	A,(DE)
+	CALL	_sprintf_putc
+	POP	BC
+	INC	DE
+	DJNZ	_sprintf_str_loop
+
+_sprintf_str_after_emit:
+	; Left-justify trailing pad (if any).
+	LD	A,C
 	OR	A
 	JR	Z,_sprintf_str_done
+_sprintf_str_pad_right:
+	PUSH	BC
+	PUSH	DE
+	LD	A,' '
 	CALL	_sprintf_putc
-	INC	DE
-	JR	_sprintf_str_loop
+	POP	DE
+	POP	BC
+	DEC	C
+	JR	NZ,_sprintf_str_pad_right
 
 _sprintf_str_done:
 	POP	BC
@@ -15019,7 +15088,10 @@ _sprintf_dec_count:
 _sprintf_dec_count_done:
 	POP	DE
 	POP	HL
-	; Compute padding: pad = width - digits - (sign?1:0)
+	; Compute total pad = width - digits - sign (clamped to 0).
+	; Stash trailing pad in (_sprintf_trail).
+	XOR	A
+	LD	(_sprintf_trail),A
 	LD	A,(_sprintf_width)
 	OR	A
 	JR	Z,_sprintf_dec_skip_pad
@@ -15029,11 +15101,20 @@ _sprintf_dec_count_done:
 	LD	E,A
 	LD	A,D
 	OR	A
-	JR	Z,_sprintf_dec_pad
+	JR	Z,_sprintf_dec_have_budget
 	DEC	E
 	JR	Z,_sprintf_dec_skip_pad
 	JR	C,_sprintf_dec_skip_pad
-_sprintf_dec_pad:
+_sprintf_dec_have_budget:
+	; If left-justify: all pad is trailing, no leading pad.
+	LD	A,(_sprintf_left)
+	OR	A
+	JR	Z,_sprintf_dec_pad_check
+	LD	A,E
+	LD	(_sprintf_trail),A
+	JR	_sprintf_dec_skip_pad
+_sprintf_dec_pad_check:
+	; Right-justify: leading pad is space or zero per _sprintf_zero.
 	LD	A,(_sprintf_zero)
 	OR	A
 	JR	NZ,_sprintf_dec_zpad
@@ -15077,6 +15158,18 @@ _sprintf_dec_emit:
 	XOR	A
 	LD	(_sprintf_width),A
 	CALL	_sprintf_prt_dec
+	; Emit trailing pad (only set when left-justify is active)
+	LD	A,(_sprintf_trail)
+	OR	A
+	JR	Z,_sprintf_dec_done
+_sprintf_dec_trail_loop:
+	PUSH	AF
+	LD	A,' '
+	CALL	_sprintf_putc
+	POP	AF
+	DEC	A
+	JR	NZ,_sprintf_dec_trail_loop
+_sprintf_dec_done:
 	POP	BC
 	INC	C
 	INC	C
@@ -15293,6 +15386,10 @@ _sprintf_zero:	DS	1	; Zero-padding flag
 _sprintf_upper:	DS	1	; Hex case: 0 = lowercase, 1 = uppercase
 _sprintf_plus:	DS	1	; '+' flag for non-negative %d
 _sprintf_space:	DS	1	; ' ' flag for non-negative %d
+_sprintf_left:	DS	1	; '-' flag: left-justify
+_sprintf_prec:	DS	1	; precision count (max 255)
+_sprintf_hasprec: DS	1	; 1 if precision was specified
+_sprintf_trail:	DS	1	; trailing-pad count (left-justify)
 
 
 ; ============================================================
