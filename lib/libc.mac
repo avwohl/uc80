@@ -14227,6 +14227,10 @@ _snprintf_loop:
 	JR	_snprintf_loop
 
 _snprintf_format:
+	; Reset per-conversion flags so they don't leak between %-specifiers.
+	XOR	A
+	LD	(_snprintf_plus),A
+	LD	(_snprintf_space),A
 	INC	HL
 	LD	A,(HL)
 	OR	A
@@ -14236,12 +14240,13 @@ _snprintf_format:
 	JR	Z,_snprintf_pct
 
 _snprintf_fmt2:
-	; Skip flags: -, +, space, #, 0
-	CP	'-'
-	JR	Z,_snprintf_fskip
+	; Flags: '-', '+', ' ', '#', '0'.  Capture the ones we use, skip
+	; (but don't error on) the rest.
 	CP	'+'
-	JR	Z,_snprintf_fskip
+	JR	Z,_snprintf_set_plus
 	CP	' '
+	JR	Z,_snprintf_set_space
+	CP	'-'
 	JR	Z,_snprintf_fskip
 	CP	'#'
 	JR	Z,_snprintf_fskip
@@ -14292,6 +14297,14 @@ _snprintf_nodig:
 	INC	HL
 	JP	_snprintf_loop
 
+_snprintf_set_plus:
+	LD	A,1
+	LD	(_snprintf_plus),A
+	JR	_snprintf_fskip
+_snprintf_set_space:
+	LD	A,1
+	LD	(_snprintf_space),A
+	; fall through to _snprintf_fskip
 _snprintf_fskip:
 	INC	HL
 	LD	A,(HL)
@@ -14364,7 +14377,7 @@ _snprintf_dec:
 	EX	DE,HL		; HL = value
 
 	BIT	7,H
-	JR	Z,_snprintf_dec_pos
+	JR	Z,_snprintf_dec_nonneg
 
 	LD	A,'-'
 	CALL	_snprintf_putc
@@ -14374,8 +14387,24 @@ _snprintf_dec:
 	OR	A
 	SBC	HL,DE
 	POP	DE
+	JR	_snprintf_dec_emit
 
-_snprintf_dec_pos:
+_snprintf_dec_nonneg:
+	; Non-negative: emit '+' if + flag, else ' ' if space flag.
+	LD	A,(_snprintf_plus)
+	OR	A
+	JR	Z,_snprintf_dec_chk_space
+	LD	A,'+'
+	CALL	_snprintf_putc
+	JR	_snprintf_dec_emit
+_snprintf_dec_chk_space:
+	LD	A,(_snprintf_space)
+	OR	A
+	JR	Z,_snprintf_dec_emit
+	LD	A,' '
+	CALL	_snprintf_putc
+
+_snprintf_dec_emit:
 	CALL	_snprintf_prt_dec
 	POP	BC
 	INC	C
@@ -14550,6 +14579,8 @@ _snprintf_out:	DS	2	; Current output pointer
 _snprintf_max:	DS	2	; Remaining space in buffer
 _snprintf_cnt:	DS	2	; Total character count
 _snprintf_upper: DS	1	; Hex case: 0 = lowercase, 1 = uppercase
+_snprintf_plus:	DS	1	; '+' flag: prepend + on non-negative %d
+_snprintf_space: DS	1	; ' ' flag: prepend ' ' on non-negative %d
 
 
 ; ============================================================
