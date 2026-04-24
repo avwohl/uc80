@@ -14231,6 +14231,8 @@ _snprintf_format:
 	XOR	A
 	LD	(_snprintf_plus),A
 	LD	(_snprintf_space),A
+	LD	(_snprintf_width),A
+	LD	(_snprintf_zero),A
 	INC	HL
 	LD	A,(HL)
 	OR	A
@@ -14251,12 +14253,14 @@ _snprintf_fmt2:
 	CP	'#'
 	JR	Z,_snprintf_fskip
 	CP	'0'
-	JR	Z,_snprintf_fskip
-	; Skip field width digits
+	JR	Z,_snprintf_set_zero
+	; Field width: capture digit into _snprintf_width.
+	; (zero-padding flag '0' was handled above; here '0' inside width
+	; just multiplies width by 10, i.e. width = width*10 + (A - '0').)
 	CP	'1'
 	JR	C,_snprintf_nodig
 	CP	'9'+1
-	JR	C,_snprintf_fskip
+	JR	C,_snprintf_set_widthdig
 _snprintf_nodig:
 	; Skip precision
 	CP	'.'
@@ -14304,7 +14308,39 @@ _snprintf_set_plus:
 _snprintf_set_space:
 	LD	A,1
 	LD	(_snprintf_space),A
-	; fall through to _snprintf_fskip
+	JR	_snprintf_fskip
+_snprintf_set_zero:
+	; '0' before any width digit = zero-pad flag; '0' after digits
+	; just keeps multiplying width by 10.
+	LD	A,(_snprintf_width)
+	OR	A
+	JR	NZ,_snprintf_widthdig_zero
+	LD	A,1
+	LD	(_snprintf_zero),A
+	JR	_snprintf_fskip
+_snprintf_widthdig_zero:
+	; width = width * 10 (digit is 0)
+	LD	A,(_snprintf_width)
+	LD	D,A
+	ADD	A,A		; *2
+	ADD	A,A		; *4
+	ADD	A,D		; *5
+	ADD	A,A		; *10
+	LD	(_snprintf_width),A
+	JR	_snprintf_fskip
+_snprintf_set_widthdig:
+	; width = width * 10 + (A - '0')
+	SUB	'0'
+	LD	D,A
+	LD	A,(_snprintf_width)
+	LD	E,A
+	ADD	A,A		; *2
+	ADD	A,A		; *4
+	ADD	A,E		; *5
+	ADD	A,A		; *10
+	ADD	A,D
+	LD	(_snprintf_width),A
+	JR	_snprintf_fskip
 _snprintf_fskip:
 	INC	HL
 	LD	A,(HL)
@@ -14376,34 +14412,104 @@ _snprintf_dec:
 	LD	D,(HL)
 	EX	DE,HL		; HL = value
 
+	; Determine sign char (D = char, 0 = none)
+	LD	D,0
 	BIT	7,H
-	JR	Z,_snprintf_dec_nonneg
-
-	LD	A,'-'
-	CALL	_snprintf_putc
+	JR	Z,_snprintf_dec_pos
+	LD	D,'-'
+	; Negate
 	PUSH	DE
 	EX	DE,HL
 	LD	HL,0
 	OR	A
 	SBC	HL,DE
 	POP	DE
-	JR	_snprintf_dec_emit
-
-_snprintf_dec_nonneg:
-	; Non-negative: emit '+' if + flag, else ' ' if space flag.
+	JR	_snprintf_dec_have_sign
+_snprintf_dec_pos:
 	LD	A,(_snprintf_plus)
 	OR	A
-	JR	Z,_snprintf_dec_chk_space
-	LD	A,'+'
-	CALL	_snprintf_putc
-	JR	_snprintf_dec_emit
-_snprintf_dec_chk_space:
+	JR	Z,_snprintf_dec_chk_space2
+	LD	D,'+'
+	JR	_snprintf_dec_have_sign
+_snprintf_dec_chk_space2:
 	LD	A,(_snprintf_space)
 	OR	A
-	JR	Z,_snprintf_dec_emit
+	JR	Z,_snprintf_dec_have_sign
+	LD	D,' '
+_snprintf_dec_have_sign:
+	; HL = positive value, D = sign char (or 0)
+	; Count digits of HL (B = digit count, minimum 1).
+	PUSH	HL
+	PUSH	DE		; save sign in D
+	LD	B,1
+_snprintf_dec_count:
+	LD	DE,10
+	CALL	_sprintf_div16	; HL = HL/10, DE = remainder
+	LD	A,H
+	OR	L
+	JR	Z,_snprintf_dec_count_done
+	INC	B
+	JR	_snprintf_dec_count
+_snprintf_dec_count_done:
+	POP	DE		; restore sign
+	POP	HL		; restore value
+	; Emit padding: pad = width - digit_count - (sign != 0)
+	LD	A,(_snprintf_width)
+	OR	A
+	JR	Z,_snprintf_dec_skip_pad
+	; A = width.  Subtract digit count (B) and sign (1 if D!=0).
+	SUB	B
+	JR	Z,_snprintf_dec_skip_pad
+	JR	C,_snprintf_dec_skip_pad
+	LD	E,A		; E = remaining padding budget
+	LD	A,D
+	OR	A
+	JR	Z,_snprintf_dec_pad_loop1
+	; sign present: subtract 1 more
+	DEC	E
+	JR	Z,_snprintf_dec_skip_pad
+	JR	C,_snprintf_dec_skip_pad
+_snprintf_dec_pad_loop1:
+	; Decide pad char: '0' if zero-flag and no negative-sign-already-printed
+	LD	A,(_snprintf_zero)
+	OR	A
+	JR	NZ,_snprintf_dec_zpad
+	; Space-pad: emit sign AFTER padding
+	PUSH	DE		; preserve sign in D, count in E
+_snprintf_dec_spad_loop:
+	PUSH	DE
 	LD	A,' '
 	CALL	_snprintf_putc
-
+	POP	DE
+	DEC	E
+	JR	NZ,_snprintf_dec_spad_loop
+	POP	DE
+	JR	_snprintf_dec_emit_sign
+_snprintf_dec_zpad:
+	; Zero-pad: emit sign BEFORE padding
+	LD	A,D
+	OR	A
+	JR	Z,_snprintf_dec_zpad_loop
+	PUSH	DE
+	LD	A,D
+	CALL	_snprintf_putc
+	POP	DE
+	LD	D,0		; clear so emit_sign doesn't re-emit
+_snprintf_dec_zpad_loop:
+	PUSH	DE
+	LD	A,'0'
+	CALL	_snprintf_putc
+	POP	DE
+	DEC	E
+	JR	NZ,_snprintf_dec_zpad_loop
+_snprintf_dec_skip_pad:
+_snprintf_dec_emit_sign:
+	LD	A,D
+	OR	A
+	JR	Z,_snprintf_dec_emit
+	PUSH	HL
+	CALL	_snprintf_putc
+	POP	HL
 _snprintf_dec_emit:
 	CALL	_snprintf_prt_dec
 	POP	BC
@@ -14581,6 +14687,8 @@ _snprintf_cnt:	DS	2	; Total character count
 _snprintf_upper: DS	1	; Hex case: 0 = lowercase, 1 = uppercase
 _snprintf_plus:	DS	1	; '+' flag: prepend + on non-negative %d
 _snprintf_space: DS	1	; ' ' flag: prepend ' ' on non-negative %d
+_snprintf_width: DS	1	; field width (0 = no width)
+_snprintf_zero:	DS	1	; '0' flag: zero-pad %d to width
 
 
 ; ============================================================
@@ -14640,6 +14748,13 @@ _sprintf_loop:
 	JR	_sprintf_loop
 
 _sprintf_format:
+	; Reset all per-conversion flags so they don't leak between
+	; %-specifiers within the same format string.
+	XOR	A
+	LD	(_sprintf_width),A
+	LD	(_sprintf_zero),A
+	LD	(_sprintf_plus),A
+	LD	(_sprintf_space),A
 	INC	HL
 	LD	A,(HL)
 	OR	A
@@ -14647,13 +14762,6 @@ _sprintf_format:
 
 	CP	'%'
 	JR	Z,_sprintf_pct
-
-	; Initialize width and zero-flag
-	PUSH	AF		; Save current char
-	XOR	A
-	LD	(_sprintf_width),A
-	LD	(_sprintf_zero),A
-	POP	AF		; Restore current char
 
 _sprintf_fmt2:
 	; Check for zero-padding flag (only at start)
@@ -14704,12 +14812,13 @@ _sprintf_is_digit:
 	JR	C,_sprintf_is_digit
 
 _sprintf_nodig:
-	; Skip flags: -, +, space, #
-	CP	'-'
-	JR	Z,_sprintf_fskip
+	; Capture '+' and ' ' flags, skip '-' and '#' (left-justify and
+	; alternate form aren't supported yet but shouldn't error).
 	CP	'+'
-	JR	Z,_sprintf_fskip
+	JR	Z,_sprintf_set_plus
 	CP	' '
+	JR	Z,_sprintf_set_space
+	CP	'-'
 	JR	Z,_sprintf_fskip
 	CP	'#'
 	JR	Z,_sprintf_fskip
@@ -14752,6 +14861,14 @@ _sprintf_nodig:
 	INC	HL
 	JP	_sprintf_loop
 
+_sprintf_set_plus:
+	LD	A,1
+	LD	(_sprintf_plus),A
+	JR	_sprintf_fskip
+_sprintf_set_space:
+	LD	A,1
+	LD	(_sprintf_space),A
+	; fall through
 _sprintf_fskip:
 	INC	HL
 	LD	A,(HL)
@@ -14815,7 +14932,7 @@ _sprintf_str_done:
 	JP	_sprintf_loop
 
 _sprintf_dec:
-	; Output signed decimal
+	; Output signed decimal with width / zero-pad / +/space flag support
 	PUSH	HL
 	LD	H,0
 	LD	L,C
@@ -14828,21 +14945,104 @@ _sprintf_dec:
 	LD	D,(HL)		; DE = value
 	EX	DE,HL		; HL = value
 
-	; Check for negative
+	; Determine sign char (D = char, 0 = none)
+	LD	D,0
 	BIT	7,H
-	JR	Z,_sprintf_dec_pos
-
-	; Negative - output minus and negate
-	LD	A,'-'
-	CALL	_sprintf_putc
+	JR	Z,_sprintf_dec_npos
+	LD	D,'-'
+	; Negate
 	PUSH	DE
 	EX	DE,HL
 	LD	HL,0
 	OR	A
 	SBC	HL,DE
 	POP	DE
-
-_sprintf_dec_pos:
+	JR	_sprintf_dec_have_sign
+_sprintf_dec_npos:
+	LD	A,(_sprintf_plus)
+	OR	A
+	JR	Z,_sprintf_dec_chk_space
+	LD	D,'+'
+	JR	_sprintf_dec_have_sign
+_sprintf_dec_chk_space:
+	LD	A,(_sprintf_space)
+	OR	A
+	JR	Z,_sprintf_dec_have_sign
+	LD	D,' '
+_sprintf_dec_have_sign:
+	; HL = positive value, D = sign char (or 0).
+	; Count digits of HL (B = digit count, minimum 1).
+	PUSH	HL
+	PUSH	DE
+	LD	B,1
+_sprintf_dec_count:
+	LD	DE,10
+	CALL	_sprintf_div16
+	LD	A,H
+	OR	L
+	JR	Z,_sprintf_dec_count_done
+	INC	B
+	JR	_sprintf_dec_count
+_sprintf_dec_count_done:
+	POP	DE
+	POP	HL
+	; Compute padding: pad = width - digits - (sign?1:0)
+	LD	A,(_sprintf_width)
+	OR	A
+	JR	Z,_sprintf_dec_skip_pad
+	SUB	B
+	JR	Z,_sprintf_dec_skip_pad
+	JR	C,_sprintf_dec_skip_pad
+	LD	E,A
+	LD	A,D
+	OR	A
+	JR	Z,_sprintf_dec_pad
+	DEC	E
+	JR	Z,_sprintf_dec_skip_pad
+	JR	C,_sprintf_dec_skip_pad
+_sprintf_dec_pad:
+	LD	A,(_sprintf_zero)
+	OR	A
+	JR	NZ,_sprintf_dec_zpad
+	; Space pad: emit sign AFTER padding
+_sprintf_dec_spad_loop:
+	PUSH	DE
+	LD	A,' '
+	CALL	_sprintf_putc
+	POP	DE
+	DEC	E
+	JR	NZ,_sprintf_dec_spad_loop
+	JR	_sprintf_dec_skip_pad
+_sprintf_dec_zpad:
+	; Zero pad: emit sign BEFORE padding
+	LD	A,D
+	OR	A
+	JR	Z,_sprintf_dec_zpad_loop
+	PUSH	DE
+	LD	A,D
+	CALL	_sprintf_putc
+	POP	DE
+	LD	D,0
+_sprintf_dec_zpad_loop:
+	PUSH	DE
+	LD	A,'0'
+	CALL	_sprintf_putc
+	POP	DE
+	DEC	E
+	JR	NZ,_sprintf_dec_zpad_loop
+_sprintf_dec_skip_pad:
+	; Emit sign if not already
+	LD	A,D
+	OR	A
+	JR	Z,_sprintf_dec_emit
+	PUSH	HL
+	CALL	_sprintf_putc
+	POP	HL
+_sprintf_dec_emit:
+	; _sprintf_prt_dec re-applies width itself.  We've already handled
+	; padding above, so zero the width so prt_dec just emits digits.
+	XOR	A
+	LD	(_sprintf_width),A
 	CALL	_sprintf_prt_dec
 	POP	BC
 	INC	C
@@ -15058,6 +15258,8 @@ _sprintf_cnt:	DS	2	; Character count
 _sprintf_width:	DS	1	; Field width (0 = no width)
 _sprintf_zero:	DS	1	; Zero-padding flag
 _sprintf_upper:	DS	1	; Hex case: 0 = lowercase, 1 = uppercase
+_sprintf_plus:	DS	1	; '+' flag for non-negative %d
+_sprintf_space:	DS	1	; ' ' flag for non-negative %d
 
 
 ; ============================================================
