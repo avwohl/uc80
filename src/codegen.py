@@ -4234,6 +4234,15 @@ class CodeGenerator:
         is_float = self._is_float_type(elem_type)
         is_32bit = is_long or is_float
 
+        # Determine the array's declared element count for tail zero-fill.
+        declared_n = None
+        if isinstance(array_type.size, ast.IntLiteral):
+            declared_n = array_type.size.value
+        elif array_type.size is not None:
+            sz = self._eval_const_expr(array_type.size)
+            if sz is not None:
+                declared_n = sz
+
         # Check for designated initializers with index/range designators
         has_index_designators = any(
             isinstance(v, ast.DesignatedInit) and v.designators and
@@ -4323,6 +4332,12 @@ class CodeGenerator:
                 else:
                     self.ctx.emit_instr("ld", f"({ix_off(frame_off)}),L")
                     self.ctx.emit_instr("ld", f"({ix_off(frame_off + 1)}),H")
+
+        # C99 6.7.8/21: zero-fill any unspecified trailing elements.
+        if declared_n is not None and declared_n > len(values):
+            tail_off = base_offset + len(values) * elem_size
+            tail_bytes = (declared_n - len(values)) * elem_size
+            self._gen_zero_init_region(sym, tail_off, tail_bytes)
 
     def _gen_designated_array_init_local(self, sym: 'Symbol', array_type: ast.ArrayType,
                                           values: list, base_offset: int) -> None:
