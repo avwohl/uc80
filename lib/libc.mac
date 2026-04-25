@@ -11190,7 +11190,7 @@ _prt_div16_dn:
 
 	DSEG
 
-_printf_hexbuf:	DS	4
+_printf_hexbuf:	DS	8	; 8 chars for %lx, lower 4 reused by 16-bit %x
 _printf_decbuf:	DS	6
 _printf_neg:	DB	0
 _printf_dptr:	DS	2
@@ -11963,22 +11963,109 @@ __printf_handle_lx:
 	LD	H,(HL)
 	LD	L,A
 	EX	DE,HL		; DEHL = value (DE=high, HL=low)
-	; Natural-width hex: if high word is non-zero, print it via
-	; _prt_hex (strips leading zeros) then the low word via
-	; _prt_hex4 (always 4 digits).  If high word is zero, print
-	; just the low word via _prt_hex which emits "0" for all-zero.
-	LD	A,D
-	OR	E
-	JR	Z,_lx_low_only
+
+	; Convert all 8 nibbles to ASCII in _printf_hexbuf (high to low).
 	PUSH	HL
-	EX	DE,HL
-	CALL	_prt_hex
+	PUSH	DE
+	LD	HL,_printf_hexbuf
+	EX	DE,HL		; DE = buffer pointer for _printf_nib2a
+	POP	HL		; HL = high word
+	; high byte
+	LD	A,H
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,H
+	AND	0FH
+	CALL	_printf_nib2a
+	; low byte of high word
+	LD	A,L
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,L
+	AND	0FH
+	CALL	_printf_nib2a
+	POP	HL		; HL = low word
+	LD	A,H
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,H
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,L
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,L
+	AND	0FH
+	CALL	_printf_nib2a
+
+	; Strip leading zeros (keep at least one digit).
+	LD	HL,_printf_hexbuf
+	LD	B,8
+_lx_strip:
+	LD	A,B
+	CP	1
+	JR	Z,_lx_pad
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_lx_pad
+	INC	HL
+	DEC	B
+	JR	_lx_strip
+_lx_pad:
+	; B = significant digits, HL = pointer to first.  Pad to width.
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_lx_out
+	SUB	B
+	JR	Z,_lx_out
+	JR	C,_lx_out
+	PUSH	HL
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_zero)
+	OR	A
+	LD	A,' '
+	JR	Z,_lx_plp
+	LD	A,'0'
+_lx_plp:
+	LD	E,A
+	PUSH	AF
+	PUSH	BC
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	BC
+	POP	AF
+	DJNZ	_lx_plp
+	POP	BC
 	POP	HL
-	CALL	_prt_hex4
-	JR	_lx_done
-_lx_low_only:
-	CALL	_prt_hex
-_lx_done:
+_lx_out:
+	LD	A,(HL)
+	LD	E,A
+	PUSH	BC
+	PUSH	HL
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	BC
+	INC	HL
+	DJNZ	_lx_out
+
 	POP	BC
 	LD	A,C
 	ADD	A,4

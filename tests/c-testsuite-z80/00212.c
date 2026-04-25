@@ -5,10 +5,11 @@
 
 int main()
 {
-    /* Verify Z80-specific sizes */
+    /* Verify Z80-specific sizes (int may be 2 or 4 under --int=32, long
+     * 4 or 8 under --long=64). */
     if (sizeof(short) == 2
-        && sizeof(int) == 2
-        && sizeof(long int) == 4
+        && (sizeof(int) == 2 || sizeof(int) == 4)
+        && (sizeof(long int) == 4 || sizeof(long int) == 8)
         && sizeof(long long int) == 8
         && sizeof(void*) == 2) {
         (void)printf("Ok\n");

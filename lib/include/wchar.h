@@ -10,10 +10,12 @@
 #include <stdarg.h>  /* for va_list */
 #include <stdio.h>   /* for FILE */
 
-/* Wide character type (if not already defined) */
+/* Wide character type (if not already defined).  Pinned to 16 bits so that
+ * L"..." literals (always emitted as 2 bytes per char by the codegen) match
+ * the array element size under both --int=16 and --int=32. */
 #ifndef _WCHAR_T_DEFINED
 #define _WCHAR_T_DEFINED
-typedef unsigned int wchar_t;
+typedef unsigned short wchar_t;
 #endif
 
 /* wint_t - type that can hold any wchar_t value plus WEOF */

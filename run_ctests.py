@@ -94,7 +94,8 @@ def apply_patch(c_file: Path, test_num: str) -> Path:
 
 
 def run_test(c_file: Path, verbose: bool = False, test_num: str = "",
-             extra_cflags: list[str] | None = None) -> tuple[str, str]:
+             extra_cflags: list[str] | None = None,
+             variant: str = "") -> tuple[str, str]:
     """Run a single test. Returns (status, message)."""
     # Apply platform-specific patch if available
     source_file = apply_patch(c_file, test_num) if test_num else c_file
@@ -103,11 +104,26 @@ def run_test(c_file: Path, verbose: bool = False, test_num: str = "",
     rel_file = mac_file.with_suffix(".rel")
     com_file = mac_file.with_suffix(".com")
 
-    # Check for Z80-specific expected file first, then fall back to original
-    z80_expected = Z80_DIR / f"{test_num}.c.expected" if test_num else None
-    if z80_expected and z80_expected.exists():
-        expected_file = z80_expected
-    else:
+    # Look up the expected output file.  Prefer (in order):
+    # 1. Most specific Z80 variant (e.g. 00178.int32.long64.c.expected)
+    # 2. Less specific variant (00178.int32.c.expected) — sizeof results
+    #    differ between --int=16 and --int=32, so each width has its own file
+    # 3. Z80 default (00178.c.expected)
+    # 4. Upstream (../external/c-testsuite/.../00178.c.expected)
+    expected_file = None
+    if test_num and variant:
+        # Try progressively shorter variant prefixes: "int32.long64", "int32"
+        parts = variant.split(".")
+        for i in range(len(parts), 0, -1):
+            v = Z80_DIR / f"{test_num}.{'.'.join(parts[:i])}.c.expected"
+            if v.exists():
+                expected_file = v
+                break
+    if expected_file is None and test_num:
+        z = Z80_DIR / f"{test_num}.c.expected"
+        if z.exists():
+            expected_file = z
+    if expected_file is None:
         expected_file = c_file.with_suffix(".c.expected")
 
     # Compile - use --no-whole-program to avoid ul80 linker bug with DSEG relocations
@@ -194,10 +210,16 @@ def main():
     args = parser.parse_args()
 
     extra_cflags = []
+    variant_parts = []
     if args.int_bits:
         extra_cflags.append(f"--int={args.int_bits}")
+        if args.int_bits != 16:
+            variant_parts.append(f"int{args.int_bits}")
     if args.long_bits:
         extra_cflags.append(f"--long={args.long_bits}")
+        if args.long_bits != 32:
+            variant_parts.append(f"long{args.long_bits}")
+    variant = ".".join(variant_parts)
 
     if args.tests:
         test_nums = args.tests
@@ -215,7 +237,8 @@ def main():
         if num in SKIP_TESTS:
             status, msg = "skip", SKIP_TESTS[num]
         else:
-            status, msg = run_test(c_file, args.verbose, num, extra_cflags)
+            status, msg = run_test(c_file, args.verbose, num, extra_cflags,
+                                   variant=variant)
         results[status].append(num)
 
         if args.verbose or status != "pass":

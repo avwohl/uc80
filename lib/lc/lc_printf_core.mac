@@ -758,7 +758,7 @@ _prt_div16_dn:
 
 	DSEG
 
-_printf_hexbuf:	DS	4
+_printf_hexbuf:	DS	8	; 8 chars for %lx, lower 4 reused by 16-bit %x
 _printf_decbuf:	DS	6
 _printf_neg:	DB	0
 _printf_dptr:	DS	2

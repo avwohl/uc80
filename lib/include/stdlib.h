@@ -2,10 +2,16 @@
 #ifndef _STDLIB_H
 #define _STDLIB_H
 
-/* Size type */
+/* Size type — pointer-width so libc stack offsets stay stable under --int=32 */
 #ifndef _SIZE_T_DEFINED
 #define _SIZE_T_DEFINED
+#if __SIZEOF_POINTER__ == __SIZEOF_INT__
 typedef unsigned int size_t;
+#elif __SIZEOF_POINTER__ == __SIZEOF_LONG__
+typedef unsigned long size_t;
+#elif __SIZEOF_POINTER__ == __SIZEOF_SHORT__
+typedef unsigned short size_t;
+#endif
 #endif
 
 /* NULL pointer */

@@ -3250,6 +3250,18 @@ class CodeGenerator:
                     elif is_long_long:
                         # 64-bit initialization
                         self._gen_64bit_operand(decl.init, to_tmp=False)
+                    elif (is_long and not is_float and init_is_float):
+                        # Under --int=32 a "long" target catches plain int too.
+                        # Float-literal init: fold at compile time; otherwise
+                        # generate the float and call __ftoi.
+                        if isinstance(decl.init, ast.FloatLiteral):
+                            int_val = int(decl.init.value)
+                            val32 = int_val & 0xFFFFFFFF
+                            self.ctx.emit_instr("ld", f"HL,{val32 & 0xFFFF}")
+                            self.ctx.emit_instr("ld", f"DE,{(val32 >> 16) & 0xFFFF}")
+                        else:
+                            self.gen_expr(decl.init, force_long=True)
+                            self._call_runtime("__ftoi")
                     else:
                         # Both long and float need 32-bit handling
                         need_32bit = is_long or is_float
@@ -6779,11 +6791,25 @@ class CodeGenerator:
                     continue
                 # Floats are also 32-bit, need to push 4 bytes
                 if arg_is_long or param_is_long or arg_is_float or param_is_float:
-                    self.gen_expr(arg, force_long=True)
+                    # Compile-time float→int when both arg and param are known.
+                    # Under --int=32, int is classified as "long", so the
+                    # float→int short-circuit above is skipped; handle it here.
+                    if (arg_is_float and param_is_long and not param_is_float
+                            and isinstance(arg, ast.FloatLiteral)):
+                        int_val = int(arg.value)
+                        val32 = int_val & 0xFFFFFFFF
+                        self.ctx.emit_instr("ld", f"HL,{val32 & 0xFFFF}")
+                        self.ctx.emit_instr("ld", f"DE,{(val32 >> 16) & 0xFFFF}")
+                    else:
+                        self.gen_expr(arg, force_long=True)
                     # Extend to 32-bit if argument is smaller than parameter
                     if param_is_long and not arg_is_long and not arg_is_float:
                         is_signed = not self._is_unsigned_expr(arg)
                         self._extend_hl_to_dehl(is_signed)
+                    # Convert float to int if needed (e.g. --int=32 where int is long)
+                    if (arg_is_float and param_is_long and not param_is_float
+                            and not isinstance(arg, ast.FloatLiteral)):
+                        self._call_runtime("__ftoi")
                     # Convert int to float if needed
                     if param_is_float and not arg_is_float:
                         # Integer argument to float parameter - convert to IEEE 754
