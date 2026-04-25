@@ -181,6 +181,10 @@ class Symbol:
     is_static: bool = False  # Static local - name already has underscore prefix
     uses_shared_storage: bool = False  # True if using shared automatic storage
     shared_offset: int = 0  # Offset within shared storage area
+    label_override: Optional[str] = None  # Mangled label (set when an
+                                           # earlier global already case-folds
+                                           # to this one, since um80 is
+                                           # case-insensitive).
 
     def label(self) -> str:
         """Get the assembly label for this symbol."""
@@ -188,7 +192,7 @@ class Symbol:
         if self.is_static:
             return self.name
         # Global symbols get _ prefix
-        return f"_{self.name}"
+        return f"_{self.label_override or self.name}"
 
 
 @dataclass
@@ -2031,6 +2035,19 @@ class CodeGenerator:
                             is_global=True
                         )
 
+        # Disambiguate globals whose case-folded names collide.  The MACRO-80
+        # assembler we target is case-insensitive, so e.g. `int sprite` and
+        # `const int SPRITE` both resolve to `_SPRITE` and the assembler
+        # rejects the second definition.  Append a numeric suffix to all
+        # but the first occurrence of each lowercase form.
+        lower_seen: dict[str, int] = {}
+        for name, sym in self.ctx.globals.items():
+            key = name.lower()
+            count = lower_seen.get(key, 0)
+            if count > 0:
+                sym.label_override = f"{name}_{count}"
+            lower_seen[key] = count + 1
+
         # Auto-detect printf features if not explicitly specified.
         # Run in both whole-program and separate-compilation modes so that the
         # compiled unit always emits its own __printf_format_table when it
@@ -2113,7 +2130,8 @@ class CodeGenerator:
 
         # Emit EXTRN for symbols that are extern-only (declared but not defined)
         for name in sorted(extern_only):
-            self.ctx.emit_instr("extrn", f"_{name}")
+            sym = self.ctx.globals.get(name)
+            self.ctx.emit_instr("extrn", sym.label() if sym else f"_{name}")
 
         # Separate globals into initialized (DSEG) and uninitialized (COMMON/BSS)
         init_globals = []
@@ -2123,7 +2141,9 @@ class CodeGenerator:
             self.ctx.emit("; Global variables")
             for name, decl in global_vars.items():
                 if decl.storage_class != "static":
-                    self.ctx.emit_instr("public", f"_{decl.name}")
+                    sym = self.ctx.globals.get(decl.name)
+                    label = sym.label() if sym else f"_{decl.name}"
+                    self.ctx.emit_instr("public", label)
             for name, decl in global_vars.items():
                 if decl.init:
                     init_globals.append((name, decl))
@@ -2152,7 +2172,8 @@ class CodeGenerator:
             for name, decl in init_globals:
                 sym = self.ctx.globals.get(name)
                 var_type = sym.sym_type if sym else decl.var_type
-                self.ctx.emit_label(f"_{decl.name}")
+                label = sym.label() if sym else f"_{decl.name}"
+                self.ctx.emit_label(label)
                 self._emit_initializer(decl.init, var_type)
 
         if init_statics:
@@ -2217,7 +2238,8 @@ class CodeGenerator:
                 sym = self.ctx.globals.get(name)
                 var_type = sym.sym_type if sym else decl.var_type
                 size = self._type_size(var_type)
-                self.ctx.emit_label(f"_{decl.name}")
+                label = sym.label() if sym else f"_{decl.name}"
+                self.ctx.emit_label(label)
                 self.ctx.emit_instr("ds", str(size))
 
         if uninit_statics:
@@ -2250,7 +2272,8 @@ class CodeGenerator:
                 # This is a function declaration without body - emit EXTRN
                 # (but not for static functions or functions defined in this file)
                 if decl.storage_class != "static" and decl.name not in self.ctx.function_names:
-                    self.ctx.emit_instr("extrn", f"_{decl.name}")
+                    sym = self.ctx.globals.get(decl.name)
+                    self.ctx.emit_instr("extrn", sym.label() if sym else f"_{decl.name}")
             # Other global variables are handled in data segment
             pass
         elif isinstance(decl, ast.DeclarationList):
@@ -3006,7 +3029,8 @@ class CodeGenerator:
         if func.body is None:
             # Just a declaration, emit EXTRN (but not for static or locally-defined functions)
             if func.storage_class != "static" and func.name not in self.ctx.function_names:
-                self.ctx.emit_instr("extrn", f"_{func.name}")
+                sym = self.ctx.globals.get(func.name)
+                self.ctx.emit_instr("extrn", sym.label() if sym else f"_{func.name}")
             return
 
         self.ctx.current_function = func.name
@@ -3032,14 +3056,16 @@ class CodeGenerator:
         self._shared_local_offset = 0  # Track offset within function's shared area
 
         # Make function public (unless static)
+        sym = self.ctx.globals.get(func.name)
+        func_label = sym.label() if sym else f"_{func.name}"
         if func.storage_class != "static":
-            self.ctx.emit_instr("public", f"_{func.name}")
+            self.ctx.emit_instr("public", func_label)
         self.ctx.emit()
         if use_shared_storage:
             self.ctx.emit(f"; Function {func.name} (uses shared storage)")
         else:
             self.ctx.emit(f"; Function {func.name}")
-        self.ctx.emit_label(f"_{func.name}")
+        self.ctx.emit_label(func_label)
 
         # Function prologue: save IX, set up frame
         self.ctx.emit_instr("push", "IX")
