@@ -315,15 +315,17 @@ def run_test(test_c: Path, test_name: str, work_dir: Path,
     rel_file = work_dir / f"{combined_name}.rel"
     com_file = work_dir / f"{combined_name}.com"
 
-    # Compile.  We deliberately don't pre-define SDCC=1 even though some
-    # tests have SDCC-specific branches: defining it pulls a few tests
-    # into code that uses other SDCC-only intrinsics (memory-space
-    # qualifiers, snprintf signatures) and produces more regressions
-    # than it fixes.  swap.c specifically loses (its non-SDCC uint32
-    # typedef is `unsigned int` = 16-bit on Z80) but that's a single
-    # test vs ~4 elsewhere.
+    # Compile.  We don't pre-define SDCC=1 globally — some tests then pull
+    # in SDCC-only intrinsics (memory-space qualifiers, snprintf signatures)
+    # we don't implement.  But a handful of tests fall on the wrong side of
+    # `#ifdef SDCC ... #else ... #endif` typedefs without it (e.g. swap.c
+    # uses `unsigned int` for uint32 in the non-SDCC branch — only 16 bits
+    # on Z80).  Whitelist those individually.
+    SDCC_ONLY_TESTS = {"swap"}
     cmd = [sys.executable, "-m", "src.main", str(combined_c), "-o", str(mac_file), "--no-whole-program",
            "-I", str(work_dir)]
+    if test_name in SDCC_ONLY_TESTS:
+        cmd.extend(["-D", "SDCC=1"])
     result = subprocess.run(cmd, capture_output=True, text=True, cwd=UC80_DIR)
     if result.returncode != 0:
         return "compile", result.stderr.strip()[:200]
