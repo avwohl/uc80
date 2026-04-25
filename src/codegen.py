@@ -5089,6 +5089,18 @@ class CodeGenerator:
             self.gen_logical_or(expr)
             return
 
+        # Comma: evaluate left for side effects, discard its value, return
+        # right.  This needs left-first ordering, but the 32/64-bit and float
+        # binary-op paths evaluate right first (since their runtime helpers
+        # take left in DEHL/__acc64 and right in __tmp32/__tmp64), which would
+        # silently drop the side effects of the right operand on memory the
+        # left operand also reads — exactly the va_arg(ap, T) pattern
+        # ((ap += N), (ap - N)) in stdarg.h.
+        if op == ",":
+            self.gen_expr(expr.left)
+            self.gen_expr(expr.right)
+            return
+
         # Check if this is a complex operation
         is_complex = self._is_complex_expr(expr.left) or self._is_complex_expr(expr.right)
 
@@ -7285,6 +7297,11 @@ class CodeGenerator:
         if isinstance(arr_type, (ast.ArrayType, ast.PointerType)):
             if isinstance(arr_type.base_type, ast.ArrayType):
                 return  # Address already in HL, no dereference needed
+            # Struct/union elements are too big to fit in a register: leave the
+            # address in HL so the caller (_gen_struct_copy_from_expr,
+            # _gen_struct_assignment, gen_call's struct push) can LDIR from it.
+            if isinstance(arr_type.base_type, ast.StructType):
+                return
 
         # Determine element size for proper load
         elem_size = self._get_index_elem_size(expr.array)
