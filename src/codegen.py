@@ -8139,6 +8139,16 @@ class CodeGenerator:
             left_type = self._get_expr_type(expr.left)
             right_type = self._get_expr_type(expr.right)
 
+            # Pointer arithmetic: ptr ± int → ptr.  Without this, an
+            # expression like `*(0 + (unsigned char *)&x)` infers `int` as
+            # the result type and gen_assignment emits a 2-byte store at
+            # the dereference instead of 1 byte.
+            if expr.op in ("+", "-"):
+                if isinstance(left_type, (ast.PointerType, ast.ArrayType)):
+                    return left_type
+                if isinstance(right_type, (ast.PointerType, ast.ArrayType)) and expr.op == "+":
+                    return right_type
+
             # For shift operations, result type is the promoted LEFT operand (C99 6.5.7)
             # Integer promotion: char promotes to int (6.3.1.1)
             if expr.op in ("<<", ">>"):
