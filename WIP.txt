@@ -4,34 +4,38 @@ Ask a human before adapting, modifying, working around, or skipping any test.
 Work In Progress Notes - uc80 C Compiler
 =========================================
 
-Current Status: 219/220 c-testsuite tests passing
+Current Status: 220/220 c-testsuite tests passing (full pass)
+                256/256 unit tests passing
 
 Recent Fixes:
+- Fixed compound literal of struct type used as a flat array element initializer
+  (test 00216).  Pattern:
+      struct Wrap local_wrap[] = {
+          ((struct Wrap){inc_global}),
+          inc_global,
+      };
+  _gen_flat_array_init was treating the (struct Wrap){...} compound literal
+  as a flat sequence of struct members — the compound's address was stored
+  into local_wrap[0].func instead of inc_global being copied out, so calling
+  through local_wrap[0].func jumped into the compound's data and looped until
+  cpmemu's instruction limit fired.  Fix: when flat-array elem is a struct
+  and the value is a Compound matching that struct type, recurse with
+  val.init.values as the member values for that one element.
 - Fixed negative constant comparison bug in AST optimizer constant folding
-  Unary minus and bitwise NOT folded values like -(1) to 65535 (masked unsigned)
-  instead of -1 (signed). _is_long_expr saw 65535 > 32767 and promoted to 32-bit,
-  where zero-extension (0x0000FFFF) mismatched sign-extended variables (0xFFFFFFFF).
-  This caused infinite loops in fgetc() != EOF and other negative comparisons.
-  Fixed both unary and binary constant folding to convert results back to signed.
-  Tests 00187, 00200, 00216, 00220 now passing (were failing before).
 - Fixed shift operator result type (C99 6.5.7 compliance)
 - Fixed float function calls and sin() implementation
 - Fixed enum switch cases and float operations
-- Fixed float division and nested float operations
-- Fixed float multiplication
-- Tests 00040, 00174, 00175, 00195, 00218 now passing (were failing before)
 
-Previous Fixes:
-- Fixed __tmp64 not being included in embedded runtime data section
-- Fixed 64-bit negation not calling __neg64
-- Fixed casts to 64-bit types not extending to __acc64
-- Fixed array/pointer increment/decrement (t[x]++ and (*p)++ were ignored)
-- Added per-test timeout configuration in run_ctests.py
-- Fixed fgets stack imbalance when EOF hit with no data read
-- Fixed parser typedef name handling after base type
-
-Remaining Failures (1 test):
-- 00204: Floating-point printf (%f format) - produces no output
+Build/Setup:
+- uc_core sister project at ../uc_core must be installed editable:
+      pip3 install --user --break-system-packages -e ../uc_core
+  (other sister projects upeepz80, um80, uplm80, uada80 are similarly editable.)
+- Before running run_ctests.py / run_sdcc.py / run_gcc_torture.py /
+  run_fujitsu.py, build the library .rel files:
+      um80 lib/crt0.mac -o lib/crt0.rel
+      python3 lib/build_libs.py
+  (build_libs.py builds runtime.lib + libc.lib + monolithic .rel; crt0 is
+  built separately because it's a startup module not a library.)
 
 Fujitsu Compiler Test Suite (../external/compiler-test-suite/C/):
 - 186 test directories, ~30K individual .c files with .reference_output
@@ -41,6 +45,3 @@ Fujitsu Compiler Test Suite (../external/compiler-test-suite/C/):
 - run_fujitsu.py written but not yet run - needs trial run
 - Test format: single .c file, compare stdout against .reference_output (strip "exit 0" line)
 - Next step: run all tests, do NOT exclude/skip any without a human checking first
-
-Notes:
-- Test 00204 requires %f printf format which isn't fully implemented

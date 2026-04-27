@@ -4003,6 +4003,13 @@ class CodeGenerator:
                         self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                         consumed += 1
                         continue
+                # Compound literal of matching struct type: descend into its
+                # initializer list (a complete struct value, not flat members).
+                if isinstance(val, ast.Compound) and isinstance(val.target_type, ast.StructType):
+                    if isinstance(val.init, ast.InitializerList):
+                        self._gen_struct_init_values(sym, elem_type, val.init.values, offset)
+                        consumed += 1
+                        continue
                 nested_consumed = self._gen_struct_init_values(sym, elem_type, values[idx:], offset)
                 consumed += nested_consumed
             elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
