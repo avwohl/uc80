@@ -6493,8 +6493,71 @@ class CodeGenerator:
             if sym:
                 is_float = self._is_float_type(sym.sym_type)
                 is_long = self._is_long_type(sym.sym_type)
+                is_long_long = self._is_long_long_type(sym.sym_type)
 
-                if is_float:
+                if is_long_long:
+                    # 64-bit increment/decrement
+                    self.ctx.runtime_used.add("__acc64")
+                    self.ctx.runtime_used.add("__tmp64")
+                    # Load value to __acc64
+                    if sym.is_global:
+                        self.ctx.emit_instr("ld", f"HL,{sym.label()}")
+                    elif sym.uses_shared_storage:
+                        self.ctx.emit_instr("ld", f"HL,??AUTO+{sym.shared_offset}")
+                    else:
+                        self.ctx.emit_instr("push", "IX")
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", f"DE,{sym.offset}")
+                        self.ctx.emit_instr("add", "HL,DE")
+                    self._call_runtime("__load64")
+                    # Postfix: save the original 64-bit value on stack
+                    if not expr.is_prefix:
+                        self.ctx.emit_instr("ld", "HL,(__acc64+6)")
+                        self.ctx.emit_instr("push", "HL")
+                        self.ctx.emit_instr("ld", "HL,(__acc64+4)")
+                        self.ctx.emit_instr("push", "HL")
+                        self.ctx.emit_instr("ld", "HL,(__acc64+2)")
+                        self.ctx.emit_instr("push", "HL")
+                        self.ctx.emit_instr("ld", "HL,(__acc64)")
+                        self.ctx.emit_instr("push", "HL")
+                    # Step (1 for integer; pointer scale for pointer)
+                    step = 1
+                    if isinstance(sym.sym_type, ast.PointerType):
+                        step = self._type_size(sym.sym_type.base_type)
+                        if step == 0:
+                            step = 1
+                    # __tmp64 = step (zero-extended)
+                    self.ctx.emit_instr("ld", f"HL,{step}")
+                    self.ctx.emit_instr("ld", "(__tmp64),HL")
+                    self.ctx.emit_instr("ld", "HL,0")
+                    self.ctx.emit_instr("ld", "(__tmp64+2),HL")
+                    self.ctx.emit_instr("ld", "(__tmp64+4),HL")
+                    self.ctx.emit_instr("ld", "(__tmp64+6),HL")
+                    if is_inc:
+                        self._call_runtime("__add64")
+                    else:
+                        self._call_runtime("__sub64")
+                    # Store result
+                    if sym.is_global:
+                        self.ctx.emit_instr("ld", f"HL,{sym.label()}")
+                        self._call_runtime("__store64")
+                    else:
+                        self._store_local_64(sym)
+                    # Postfix: restore the original value as the expression result
+                    if not expr.is_prefix:
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", "(__acc64),HL")
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", "(__acc64+2),HL")
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", "(__acc64+4),HL")
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", "(__acc64+6),HL")
+                    # Surface low 32 bits in DEHL for rvalue use
+                    self.ctx.emit_instr("ld", "HL,(__acc64)")
+                    self.ctx.emit_instr("ld", "DE,(__acc64+2)")
+
+                elif is_float:
                     # Float increment/decrement: use __fadd/__fsub with 1.0
                     if sym.is_global:
                         self.ctx.emit_instr("ld", f"HL,({sym.label()})")
@@ -8957,10 +9020,22 @@ class CodeGenerator:
     def _emit_condition_test(self, condition: ast.Expression) -> None:
         """Emit zero-test for a condition expression. Sets Z flag if zero.
         For 16-bit values: LD A,H; OR L
-        For 32-bit/64-bit (long/float/long long): LD A,H; OR L; OR E; OR D
+        For 32-bit (long/float): LD A,H; OR L; OR E; OR D
+        For 64-bit (long long): OR all 8 bytes via __acc64
         """
-        if (self._is_float_expr(condition) or self._is_long_expr(condition)
-                or self._is_long_long_expr(condition)):
+        if self._is_long_long_expr(condition):
+            # The full 64-bit value lives in __acc64; DEHL only mirrors the
+            # low 32 bits.  OR every byte so a non-zero high half can't slip
+            # past as zero.  Z80 has no `or (nn)`, so route each byte through
+            # B and accumulate into A.
+            self.ctx.runtime_used.add("__acc64")
+            self.ctx.emit_instr("ld", "A,(__acc64)")
+            for off in range(1, 8):
+                self.ctx.emit_instr("ld", "B,A")
+                self.ctx.emit_instr("ld", "A,(__acc64+%d)" % off)
+                self.ctx.emit_instr("or", "B")
+            return
+        if self._is_float_expr(condition) or self._is_long_expr(condition):
             self.ctx.emit_instr("ld", "A,H")
             self.ctx.emit_instr("or", "L")
             self.ctx.emit_instr("or", "E")
