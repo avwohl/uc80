@@ -6824,6 +6824,12 @@ class CodeGenerator:
                 '__builtin_puts':     'puts',
                 '__builtin_printf':   'printf',
                 '__builtin_putchar':  'putchar',
+                '__builtin_trap':     'abort',
+                '__builtin_unreachable': 'abort',
+                '__builtin_malloc':   'malloc',
+                '__builtin_calloc':   'calloc',
+                '__builtin_realloc':  'realloc',
+                '__builtin_free':     'free',
             }
             if expr.func.name in _BUILTIN_TO_LIBC:
                 expr = ast.Call(
