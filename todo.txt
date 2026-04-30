@@ -1,0 +1,50 @@
+We got this compiler to pass the test suites as much as possible.
+Some of the tests where listed as not passing due to the test assuming
+a given sizeof(int) or sizeof(long), or sizeof(long long).  We added
+compiler switches to specify each size so any code with assumptions
+could compile.  This uncovered various long math bugs.
+
+A follow project is building a 386 c compiler, check ../uc386
+to see if they are using more test suites that we have and import the tests.
+  -> Checked 2026-04-30: uc386 references the same external suites
+     (c-testsuite, llvm gcc-c-torture, sdcc-regression, Fujitsu).
+     Nothing new to import.
+
+Loop fixing our tests to run how that we support all the int sizes until
+all the tests that should run do run.  Generally all the test
+for ANSI c should run exept the few that exceed address space size, like malloc(100000)
+
+
+Status after 2026-04-30 sweep
+-----------------------------
+c-testsuite (220 tests):
+  --int=16 --long=32 (default):  220 / 220
+  --int=32 --long=32:            219 / 220 — 00200 .com >62KB TPA
+                                              (the address-space-exceeded case)
+  --int=16 --long=64:            218 / 220 — 00104, 00204 use int32_t but the
+                                              config has no native 32-bit type,
+                                              so stdint.h correctly doesn't
+                                              define int32_t (per the C
+                                              standard)
+  --int=32 --long=64:            219 / 220 — 00200 .com >62KB TPA
+
+gcc-c-torture (sample of 500): 418 pass (84%); remaining are GCC-specific
+  features the Z80 port can't reasonably implement (alloca, &&label /
+  computed goto, __builtin_return_address, nested-function trampolines,
+  __complex__, packed attributes) plus a handful of `int32plus`-required
+  tests that we run under default --int=16.
+
+Codegen / driver fixes landed during this pass:
+  - 64-bit ++/-- for long_long (was only updating low 16 bits)
+  - condition-test for long_long expressions (was only ORing low 32 bits)
+  - emit EXTRN for implicit-external function symbols (un-stuck many
+    torture tests that called abort()/exit() without a prototype)
+  - rewrite __builtin_memcpy / memset / abort / trap / unreachable /
+    malloc / etc. to their libc equivalents
+  - latin-1 fallback for non-UTF-8 source bytes
+  - __SIZE_TYPE__ / __PTRDIFF_TYPE__ / __WCHAR_TYPE__ predefined macros
+  - struct-array element initialized from a compound literal:
+    `struct Wrap arr[] = { (struct Wrap){fn}, fn };` was storing the
+    *address* of the materialized literal in the first member instead
+    of doing a byte-copy.  Manifested as an infinite loop in
+    c-testsuite 00216 under --long=64.
