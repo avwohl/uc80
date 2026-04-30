@@ -233,9 +233,18 @@ def main() -> int:
             if args.verbose:
                 print(f"Compiling {input_path}...")
 
-            # Read source
+            # Read source.  C source isn't strictly UTF-8 — string literals
+            # can contain arbitrary bytes (e.g. embedded \xff).  Fall back to
+            # latin-1 if utf-8 decoding fails so the lexer sees the file
+            # verbatim and the bytes survive into the output unchanged.
             try:
                 source = input_path.read_text()
+            except UnicodeDecodeError:
+                try:
+                    source = input_path.read_text(encoding='latin-1')
+                except Exception as e:
+                    print(f"uc80: error: Cannot read {input_path}: {e}", file=sys.stderr)
+                    return 1
             except Exception as e:
                 print(f"uc80: error: Cannot read {input_path}: {e}", file=sys.stderr)
                 return 1

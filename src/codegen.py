@@ -6802,6 +6802,36 @@ class CodeGenerator:
                 else:
                     self.ctx.emit_instr("ld", "HL,0")
                 return
+            # GCC builtin pass-throughs to libc.  GCC sometimes emits
+            # __builtin_memcpy directly (e.g. when the prototype isn't
+            # visible) — rewrite to the libc symbol so the linker can
+            # resolve it.
+            _BUILTIN_TO_LIBC = {
+                '__builtin_memcpy':   'memcpy',
+                '__builtin_memmove':  'memmove',
+                '__builtin_memset':   'memset',
+                '__builtin_memcmp':   'memcmp',
+                '__builtin_strlen':   'strlen',
+                '__builtin_strcpy':   'strcpy',
+                '__builtin_strncpy':  'strncpy',
+                '__builtin_strcmp':   'strcmp',
+                '__builtin_strncmp':  'strncmp',
+                '__builtin_strcat':   'strcat',
+                '__builtin_strncat':  'strncat',
+                '__builtin_strchr':   'strchr',
+                '__builtin_abort':    'abort',
+                '__builtin_exit':     'exit',
+                '__builtin_puts':     'puts',
+                '__builtin_printf':   'printf',
+                '__builtin_putchar':  'putchar',
+            }
+            if expr.func.name in _BUILTIN_TO_LIBC:
+                expr = ast.Call(
+                    func=ast.Identifier(name=_BUILTIN_TO_LIBC[expr.func.name],
+                                        location=expr.func.location),
+                    args=expr.args,
+                    location=expr.location,
+                )
 
         # Get function parameter types if available
         param_types: list[ast.TypeNode] = []
