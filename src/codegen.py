@@ -1728,6 +1728,11 @@ class CodeGenContext:
     # Function names (for distinguishing functions from variables)
     function_names: set[str] = field(default_factory=set)
 
+    # Implicitly-declared external symbols: any `_name` referenced in code
+    # without a matching declaration (e.g. abort()/exit() called in code that
+    # never #include'd stdlib.h).  Recorded so we can emit EXTRN at the end.
+    implicit_externs: set[str] = field(default_factory=set)
+
     # Enum constants: name -> integer value
     enum_constants: dict[str, int] = field(default_factory=dict)
 
@@ -2097,6 +2102,19 @@ class CodeGenerator:
             self.ctx.emit("; Runtime library functions")
             for name in sorted(self.ctx.runtime_used):
                 self.ctx.emit_instr("extrn", name)
+
+        # Emit EXTRN for any implicit externals discovered during codegen
+        # (functions called/referenced without an explicit prototype, e.g.
+        # abort() / exit() in pre-C99 source).
+        if self.ctx.implicit_externs:
+            already = set(self.ctx.runtime_used)
+            new_externs = sorted(n for n in self.ctx.implicit_externs
+                                 if n not in already)
+            if new_externs:
+                self.ctx.emit()
+                self.ctx.emit("; Implicit external functions")
+                for name in new_externs:
+                    self.ctx.emit_instr("extrn", name)
 
         # Data segment for global variables
         # Collect global variable declarations, merging tentative definitions
@@ -5006,7 +5024,11 @@ class CodeGenerator:
 
         sym = self.ctx.lookup(expr.name)
         if sym is None:
-            # Assume external function - load its address
+            # Assume external function - load its address.  Track it so we
+            # emit an EXTRN; otherwise um80 fails the assemble step with
+            # "Undefined symbol" (the linker would resolve it, but um80
+            # doesn't defer unknowns past the .rel boundary on its own).
+            self.ctx.implicit_externs.add(f"_{expr.name}")
             self.ctx.emit_instr("ld", f"HL,_{expr.name}")
             return
 
@@ -6995,6 +7017,13 @@ class CodeGenerator:
                 (func_sym and isinstance(func_sym.sym_type, ast.FunctionType))
             )
             if is_direct_function:
+                # Record EXTRN for any function we don't define locally.  The
+                # `function_names` set covers definitions and prototypes seen
+                # in this TU; func_sym alone (with FunctionType) means we
+                # have a declaration but no body — still external.
+                if (expr.func.name not in self.ctx.function_names
+                        and not (func_sym and getattr(func_sym, 'has_body', False))):
+                    self.ctx.implicit_externs.add(f"_{expr.func.name}")
                 self.ctx.emit_instr("call", f"_{expr.func.name}")
             else:
                 # Function pointer variable - load pointer and call indirectly
