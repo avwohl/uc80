@@ -4021,6 +4021,15 @@ class CodeGenerator:
                         self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                         consumed += 1
                         continue
+                # Compound literal `(struct S){...}` as an array element:
+                # copy from the materialized compound into this slot.
+                # Otherwise we'd treat the compound as a flat list of field
+                # values, which mangles the layout (the compound's address
+                # would land in the first field).
+                if isinstance(val, ast.Compound):
+                    self._gen_struct_copy_from_addr_expr(sym, offset, val, elem_size)
+                    consumed += 1
+                    continue
                 nested_consumed = self._gen_struct_init_values(sym, elem_type, values[idx:], offset)
                 consumed += nested_consumed
             elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
@@ -4368,6 +4377,14 @@ class CodeGenerator:
                 if src_sym and isinstance(src_sym.sym_type, ast.StructType):
                     self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                     continue
+
+            # Handle struct copy from compound literal: arr[] = { (struct S){...}, ... }
+            # gen_expr on a struct compound returns its address; we need an
+            # actual byte copy into the array slot, not the address stored
+            # into the first member.
+            if isinstance(elem_type, ast.StructType) and isinstance(val, ast.Compound):
+                self._gen_struct_copy_from_addr_expr(sym, offset, val, elem_size)
+                continue
 
             # Convert int literal to float if target is float
             if is_float and isinstance(val, ast.IntLiteral):
