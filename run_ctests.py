@@ -51,6 +51,9 @@ SLOW_TESTS = {
     "00040": 600,  # 8-queens algorithm - O(n!) complexity
     "00041": 120,  # Prime sieve to 5000 - many multiplications and modulos
     "00200": 120,  # 64-bit shift operations - many test cases
+    "00216": 30,   # Lots of struct init + per-byte print loops -
+                   # default 5s flakes on a busy host even though the
+                   # test finishes in well under 30s on its own.
 }
 
 # Tests to skip with reason
