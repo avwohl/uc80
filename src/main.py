@@ -8,8 +8,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from uc_core.lexer import Lexer, LexerError
-from uc_core.parser import Parser, ParseError
+from uc_core.frontend import parse as _frontend_parse
 from uc_core import ast as ast_module
 from uc_core.preprocessor import Preprocessor, PreprocessorError, Macro
 from uc_core.ast_optimizer import ASTOptimizer
@@ -285,16 +284,8 @@ def main() -> int:
                     print(source)
                     continue
 
-            # Lexical analysis
-            lexer = Lexer(source, str(input_path))
-            tokens = list(lexer.tokenize())
-
-            if args.verbose:
-                print(f"  Lexed {len(tokens)} tokens")
-
-            # Parsing
-            p = Parser(tokens)
-            ast = p.parse()
+            # Front-end: lex + parse via plox-driven c23 grammar.
+            ast = _frontend_parse(source, str(input_path))
             asts.append(ast)
 
             if args.verbose:
@@ -721,14 +712,6 @@ def main() -> int:
 
     except PreprocessorError as e:
         print(f"uc80: {e}", file=sys.stderr)
-        return 1
-
-    except LexerError as e:
-        print(f"uc80: {e}", file=sys.stderr)
-        return 1
-
-    except ParseError as e:
-        print(f"uc80: {e.location}: {e.message}", file=sys.stderr)
         return 1
 
     except Exception as e:
