@@ -27,7 +27,7 @@ from pathlib import Path
 import argparse
 
 UC80_DIR = Path(__file__).parent
-LIB_DIR = UC80_DIR / "lib"
+LIB_DIR = UC80_DIR / "src" / "uc80" / "lib"
 TEST_SUITE_DIR = Path("../external/c-testsuite/tests/single-exec")
 PATCH_DIR = UC80_DIR / "tests" / "c-testsuite-patches"
 Z80_DIR = UC80_DIR / "tests" / "c-testsuite-z80"
@@ -130,7 +130,7 @@ def run_test(c_file: Path, verbose: bool = False, test_num: str = "",
         expected_file = c_file.with_suffix(".c.expected")
 
     # Compile - use --no-whole-program to avoid ul80 linker bug with DSEG relocations
-    cc_cmd = [sys.executable, "-m", "src.main", str(source_file),
+    cc_cmd = [sys.executable, "-m", "uc80.main", str(source_file),
               "-o", str(mac_file), "--no-whole-program"]
     if extra_cflags:
         cc_cmd.extend(extra_cflags)

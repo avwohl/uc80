@@ -16,7 +16,7 @@ from pathlib import Path
 import argparse
 
 UC80_DIR = Path(__file__).parent
-LIB_DIR = UC80_DIR / "lib"
+LIB_DIR = UC80_DIR / "src" / "uc80" / "lib"
 TORTURE_DIR = Path("../external/llvm-test-suite/SingleSource/Regression/C/gcc-c-torture/execute")
 
 CRT0 = LIB_DIR / "crt0.rel"
@@ -64,7 +64,7 @@ def run_test(c_file: Path, verbose: bool = False, timeout: int = DEFAULT_TIMEOUT
 
     # Compile
     result = subprocess.run(
-        [sys.executable, "-m", "src.main", str(c_file), "-o", str(mac_file), "--no-whole-program"],
+        [sys.executable, "-m", "uc80.main", str(c_file), "-o", str(mac_file), "--no-whole-program"],
         capture_output=True, text=True, cwd=UC80_DIR
     )
     if result.returncode != 0:

@@ -1,6 +1,6 @@
 """Tests for assembly-level dead code elimination."""
 
-from src.asm_dce import AssemblyDCE, eliminate_dead_code
+from uc80.asm_dce import AssemblyDCE, eliminate_dead_code
 
 
 class TestAssemblyDCE:

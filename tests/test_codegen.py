@@ -2,7 +2,7 @@
 
 import pytest
 from uc_core.frontend import parse as _frontend_parse
-from src.codegen import CodeGenerator, CallGraphAnalyzer, generate
+from uc80.codegen import CodeGenerator, CallGraphAnalyzer, generate
 from uc_core import ast as ast_module
 
 

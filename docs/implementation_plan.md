@@ -169,13 +169,13 @@ Not currently used; available for future true double support.
 
 ```bash
 # Compile C to assembly
-python -m src.main input.c -o output.mac
+python -m uc80.main input.c -o output.mac
 
 # Assemble
 um80 output.mac
 
 # Link with runtime
-ul80 output.rel lib/crt0.rel lib/libc.rel -o program.com
+ul80 output.rel src/uc80/lib/crt0.rel src/uc80/lib/libc.rel -o program.com
 
 # Test
 ../cpmemu/src/cpmemu program.com

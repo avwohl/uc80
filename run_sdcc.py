@@ -22,7 +22,7 @@ from pathlib import Path
 import argparse
 
 UC80_DIR = Path(__file__).parent
-LIB_DIR = UC80_DIR / "lib"
+LIB_DIR = UC80_DIR / "src" / "uc80" / "lib"
 SDCC_DIR = Path("../external/sdcc-regression")
 TESTS_DIR = SDCC_DIR / "tests"
 FWK_DIR = SDCC_DIR / "fwk"
@@ -322,7 +322,7 @@ def run_test(test_c: Path, test_name: str, work_dir: Path,
     # uses `unsigned int` for uint32 in the non-SDCC branch — only 16 bits
     # on Z80).  Whitelist those individually.
     SDCC_ONLY_TESTS = {"swap"}
-    cmd = [sys.executable, "-m", "src.main", str(combined_c), "-o", str(mac_file), "--no-whole-program",
+    cmd = [sys.executable, "-m", "uc80.main", str(combined_c), "-o", str(mac_file), "--no-whole-program",
            "-I", str(work_dir)]
     if test_name in SDCC_ONLY_TESTS:
         cmd.extend(["-D", "SDCC=1"])

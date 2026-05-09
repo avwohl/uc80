@@ -25,7 +25,7 @@ pip install um80
 # Compile, assemble, and link a C program
 uc80 hello.c -o hello.mac
 um80 hello.mac -o hello.rel
-ul80 hello.rel lib/libc.lib lib/runtime.lib -o hello.com
+ul80 hello.rel src/uc80/lib/libc.lib src/uc80/lib/runtime.lib -o hello.com
 ```
 
 ## Best Optimization (Whole-Program)
@@ -38,7 +38,7 @@ compiling files separately:
 # Single-file (best optimization - all optimizations enabled by default)
 uc80 main.c utils.c -o program.mac
 um80 program.mac -o program.rel
-ul80 program.rel lib/libc.lib lib/runtime.lib -o program.com
+ul80 program.rel src/uc80/lib/libc.lib src/uc80/lib/runtime.lib -o program.com
 ```
 
 Default optimizations (all enabled unless disabled):

@@ -205,7 +205,7 @@ def main() -> int:
     # Set up include paths
     include_paths = list(args.include)
     # Add lib/include as default include path
-    lib_include = Path(__file__).parent.parent / "lib" / "include"
+    lib_include = Path(__file__).parent / "lib" / "include"
     if lib_include.exists():
         include_paths.append(str(lib_include))
 
@@ -368,7 +368,7 @@ def main() -> int:
                 startup_path = Path(args.startup_lib)
             else:
                 # Default: lib/crt0.mac relative to package
-                startup_path = Path(__file__).parent.parent / "lib" / "crt0.mac"
+                startup_path = Path(__file__).parent / "lib" / "crt0.mac"
 
             if startup_path.exists():
                 startup_content = startup_path.read_text()

@@ -9,7 +9,7 @@ from uc_core.frontend import parse
 from uc_core.ast_optimizer import ASTOptimizer
 from uc_core.type_config import TypeConfig, Z80_CPM, WATCOM_FLAT32
 from uc_core import ast as ast_module
-from src.codegen import CodeGenerator
+from uc80.codegen import CodeGenerator
 
 
 def _compile(src: str, tc: TypeConfig) -> str:
