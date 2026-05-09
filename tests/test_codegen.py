@@ -1,18 +1,14 @@
 """Tests for Z80 code generator."""
 
 import pytest
-from uc_core.lexer import Lexer
-from uc_core.parser import Parser
+from uc_core.frontend import parse as _frontend_parse
 from src.codegen import CodeGenerator, CallGraphAnalyzer, generate
 from uc_core import ast as ast_module
 
 
 def parse(source: str):
     """Parse source and return AST."""
-    lexer = Lexer(source, "<test>")
-    tokens = list(lexer.tokenize())
-    p = Parser(tokens)
-    return p.parse()
+    return _frontend_parse(source, "<test>")
 
 
 def gen(source: str) -> str:
