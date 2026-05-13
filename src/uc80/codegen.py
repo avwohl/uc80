@@ -1196,8 +1196,8 @@ class CallGraphAnalyzer:
         # - Function declarations that are live
         # - Function declarations without bodies (prototypes) - keep for linking
         new_decls = []
-        for decl in unit.declarations:
-            if isinstance(decl, ast.FunctionDecl):
+        for decl in unit.items:
+            if isinstance(decl, ast.FunctionDef):
                 # Keep if live, or if it's just a prototype (no body)
                 if decl.name in live or decl.body is None:
                     new_decls.append(decl)
@@ -1205,7 +1205,7 @@ class CallGraphAnalyzer:
                 # Filter function declarations within a list
                 filtered = []
                 for d in decl.declarations:
-                    if isinstance(d, ast.FunctionDecl):
+                    if isinstance(d, ast.FunctionDef):
                         if d.name in live or d.body is None:
                             filtered.append(d)
                     else:
@@ -1216,7 +1216,7 @@ class CallGraphAnalyzer:
                 # Keep all other declarations
                 new_decls.append(decl)
 
-        return ast.TranslationUnit(declarations=new_decls)
+        return ast.TranslationUnit(items=new_decls)
 
     def count_calls(self) -> dict[str, int]:
         """Count how many times each function is called."""
@@ -1255,7 +1255,7 @@ class CallGraphAnalyzer:
         else:
             return 1
 
-    def should_inline(self, func_name: str, func_bodies: dict[str, ast.FunctionDecl],
+    def should_inline(self, func_name: str, func_bodies: dict[str, ast.FunctionDef],
                      call_counts: dict[str, int]) -> bool:
         """Determine if a function should be inlined.
 
@@ -1305,7 +1305,7 @@ class CallGraphAnalyzer:
 
         return False
 
-    def _is_trivial_function(self, func: ast.FunctionDecl) -> bool:
+    def _is_trivial_function(self, func: ast.FunctionDef) -> bool:
         """Check if function is trivial (single return statement with expression)."""
         if func.body is None:
             return False
@@ -1409,7 +1409,7 @@ class CallGraphAnalyzer:
         return expr
 
     def _inline_expr(self, expr: ast.Expression,
-                    func_bodies: dict[str, ast.FunctionDecl],
+                    func_bodies: dict[str, ast.FunctionDef],
                     inlineable: set[str]) -> ast.Expression:
         """Recursively inline function calls in an expression."""
         if isinstance(expr, ast.Call):
@@ -1492,7 +1492,7 @@ class CallGraphAnalyzer:
         return expr
 
     def _inline_stmt(self, stmt: ast.Statement,
-                    func_bodies: dict[str, ast.FunctionDecl],
+                    func_bodies: dict[str, ast.FunctionDef],
                     inlineable: set[str]) -> ast.Statement:
         """Recursively inline function calls in a statement."""
         if isinstance(stmt, ast.ExpressionStmt):
@@ -1731,8 +1731,8 @@ class CallGraphAnalyzer:
                 collect_from_stmt(stmt.stmt)
 
         # Collect from all function bodies
-        for decl in unit.declarations:
-            if isinstance(decl, ast.FunctionDecl) and decl.body:
+        for decl in unit.items:
+            if isinstance(decl, ast.FunctionDef) and decl.body:
                 collect_from_stmt(decl.body)
 
         return call_args
@@ -1828,9 +1828,9 @@ class CallGraphAnalyzer:
         constant_params: dict[str, dict[int, int]] = {}
 
         # Build function info map
-        func_info: dict[str, ast.FunctionDecl] = {}
-        for decl in unit.declarations:
-            if isinstance(decl, ast.FunctionDecl) and decl.body:
+        func_info: dict[str, ast.FunctionDef] = {}
+        for decl in unit.items:
+            if isinstance(decl, ast.FunctionDef) and decl.body:
                 func_info[decl.name] = decl
 
         for func_name, all_args in call_args.items():
@@ -2064,14 +2064,14 @@ class CallGraphAnalyzer:
 
         # Transform the AST
         new_decls = []
-        for decl in unit.declarations:
-            if isinstance(decl, ast.FunctionDecl) and decl.body:
+        for decl in unit.items:
+            if isinstance(decl, ast.FunctionDef) and decl.body:
                 if decl.name in constant_params:
                     constants = constant_params[decl.name]
                     param_names = [p.name for p in decl.params if p.name]
 
                     new_body = self._substitute_stmt_constants(decl.body, param_names, constants)
-                    new_decls.append(ast.FunctionDecl(
+                    new_decls.append(ast.FunctionDef(
                         name=decl.name,
                         return_type=decl.return_type,
                         params=decl.params,
@@ -2086,7 +2086,7 @@ class CallGraphAnalyzer:
             else:
                 new_decls.append(decl)
 
-        return ast.TranslationUnit(declarations=new_decls), total_propagated
+        return ast.TranslationUnit(items=new_decls), total_propagated
 
 
 @dataclass
@@ -2389,11 +2389,11 @@ class CodeGenerator:
 
         # Dead function elimination
         if self.enable_dead_elimination and self.call_graph_analyzer:
-            original_count = sum(1 for d in unit.declarations
-                                if isinstance(d, ast.FunctionDecl) and d.body)
+            original_count = sum(1 for d in unit.items
+                                if isinstance(d, ast.FunctionDef) and d.body)
             unit = self.call_graph_analyzer.eliminate_dead_functions(unit)
-            new_count = sum(1 for d in unit.declarations
-                           if isinstance(d, ast.FunctionDecl) and d.body)
+            new_count = sum(1 for d in unit.items
+                           if isinstance(d, ast.FunctionDef) and d.body)
             self.dead_functions_removed = original_count - new_count
 
             # Rebuild call graph after elimination for accurate shared storage
@@ -2415,8 +2415,8 @@ class CodeGenerator:
         self.ctx.emit()
 
         # First pass: collect global declarations
-        for decl in unit.declarations:
-            if isinstance(decl, ast.FunctionDecl):
+        for decl in unit.items:
+            if isinstance(decl, ast.FunctionDef):
                 # Create FunctionType with return type and parameter types
                 func_type = ast.FunctionType(
                     return_type=decl.return_type,
@@ -2498,7 +2498,7 @@ class CodeGenerator:
             self.ctx.emit_instr("extrn", "_puts")
 
         # Generate code for each declaration
-        for decl in unit.declarations:
+        for decl in unit.items:
             self.gen_declaration(decl)
 
         # Emit printf/scanf dispatch tables if features are known
@@ -2532,7 +2532,7 @@ class CodeGenerator:
         global_vars: dict[str, ast.VarDecl] = {}  # name -> decl with init (or first decl)
         extern_only: set[str] = set()  # Names that only have extern declarations
 
-        for d in unit.declarations:
+        for d in unit.items:
             decls_to_check = []
             if isinstance(d, ast.VarDecl) and not isinstance(d.var_type, ast.FunctionType):
                 decls_to_check.append(d)
@@ -2689,7 +2689,7 @@ class CodeGenerator:
 
     def gen_declaration(self, decl: ast.Declaration) -> None:
         """Generate code for a declaration."""
-        if isinstance(decl, ast.FunctionDecl):
+        if isinstance(decl, ast.FunctionDef):
             self.gen_function(decl)
         elif isinstance(decl, ast.VarDecl):
             # Register any inline types (enums, etc.)
@@ -3210,8 +3210,8 @@ class CodeGenerator:
                         return False
             return True
 
-        for decl in unit.declarations:
-            if isinstance(decl, ast.FunctionDecl) and decl.body:
+        for decl in unit.items:
+            if isinstance(decl, ast.FunctionDef) and decl.body:
                 if not scan_stmt(decl.body):
                     return None  # Non-literal format → fall back to all
 
@@ -3327,8 +3327,8 @@ class CodeGenerator:
             elif isinstance(stmt, ast.LabelStmt):
                 rewrite_stmt(stmt.stmt)
 
-        for decl in unit.declarations:
-            if isinstance(decl, ast.FunctionDecl) and decl.body:
+        for decl in unit.items:
+            if isinstance(decl, ast.FunctionDef) and decl.body:
                 rewrite_stmt(decl.body)
 
         return rewrote
@@ -3447,59 +3447,57 @@ class CodeGenerator:
                 if stmt.init:
                     visit_expr(stmt.init)
 
-        for decl in unit.declarations:
-            if isinstance(decl, ast.FunctionDecl) and decl.body:
+        for decl in unit.items:
+            if isinstance(decl, ast.FunctionDef) and decl.body:
                 visit_stmt(decl.body)
 
-    def gen_function(self, func: ast.FunctionDecl) -> None:
-        """Generate code for a function."""
+    def gen_function(self, func) -> None:
+        """Generate code for a function definition (auto-AST FunctionDef)."""
+        name = function_name(func)
+        if name is None:
+            return
+        storage = decl_storage_class(func.decl_specs)
+        _, fn_type = resolve_type_from_decl(func.decl_specs, func.declarator)
+        return_type = fn_type.return_type if fn_type.kind == "function" else fn_type
+
         if func.body is None:
-            # Just a declaration, emit EXTRN (but not for static or locally-defined functions)
-            if func.storage_class != "static" and func.name not in self.ctx.function_names:
-                sym = self.ctx.globals.get(func.name)
-                self.ctx.emit_instr("extrn", sym.label() if sym else f"_{func.name}")
+            if storage != "static" and name not in self.ctx.function_names:
+                sym = self.ctx.globals.get(name)
+                self.ctx.emit_instr("extrn", sym.label() if sym else f"_{name}")
             return
 
-        self.ctx.current_function = func.name
-        self.ctx.current_return_type = func.return_type
+        self.ctx.current_function = name
+        self.ctx.current_return_type = return_type
         self.ctx.locals.clear()
         self.ctx.local_offset = 0
-        self.ctx.regs.reset()  # Reset register allocator for new function
+        self.ctx.regs.reset()
 
-        # Check if this function uses shared storage optimization
         use_shared_storage = (
             self.call_graph_analyzer is not None and
-            self.call_graph_analyzer.can_use_shared_storage(func.name)
+            self.call_graph_analyzer.can_use_shared_storage(name)
         )
-
-        # Track shared storage base offset for this function
         shared_base_offset = 0
         if use_shared_storage:
-            shared_base_offset = self.call_graph_analyzer.storage_offsets.get(func.name, 0)
-
-        # Store in context for local variable allocation
+            shared_base_offset = self.call_graph_analyzer.storage_offsets.get(name, 0)
         self._use_shared_storage = use_shared_storage
         self._shared_base_offset = shared_base_offset
-        self._shared_local_offset = 0  # Track offset within function's shared area
+        self._shared_local_offset = 0
 
-        # Make function public (unless static)
-        sym = self.ctx.globals.get(func.name)
-        func_label = sym.label() if sym else f"_{func.name}"
-        if func.storage_class != "static":
+        sym = self.ctx.globals.get(name)
+        func_label = sym.label() if sym else f"_{name}"
+        if storage != "static":
             self.ctx.emit_instr("public", func_label)
         self.ctx.emit()
         if use_shared_storage:
-            self.ctx.emit(f"; Function {func.name} (uses shared storage)")
+            self.ctx.emit(f"; Function {name} (uses shared storage)")
         else:
-            self.ctx.emit(f"; Function {func.name}")
+            self.ctx.emit(f"; Function {name}")
         self.ctx.emit_label(func_label)
 
-        # Function prologue: save IX, set up frame
         self.ctx.emit_instr("push", "IX")
         self.ctx.emit_instr("ld", "IX,0")
         self.ctx.emit_instr("add", "IX,SP")
 
-        # Calculate space needed for locals (only for stack-based functions)
         if not use_shared_storage:
             local_size = self._calc_locals_size(func.body)
             if local_size > 0:
@@ -3507,30 +3505,28 @@ class CodeGenerator:
                 self.ctx.emit_instr("add", "HL,SP")
                 self.ctx.emit_instr("ld", "SP,HL")
 
-        # Set up parameters in symbol table
-        # Parameters are at IX+4, IX+6, etc. (after saved IX and return address)
+        # Set up parameters from the auto-AST FnDeclarator.params list.
         param_offset = 4
-        for param in func.params:
-            if param.name:
-                size = self._type_size(param.param_type)
-                self.ctx.locals[param.name] = Symbol(
-                    name=param.name,
-                    sym_type=param.param_type,
+        for p in function_params(func):
+            if isinstance(p, ast.ParamDecl):
+                p_name = declarator_ident(p.declarator)
+                if p_name is None:
+                    continue
+                _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
+                size = self._type_size(p_type)
+                self.ctx.locals[p_name] = Symbol(
+                    name=p_name,
+                    sym_type=p_type,
                     offset=param_offset,
-                    is_param=True
+                    is_param=True,
                 )
-                # Round up to even for stack alignment (PUSH works in 2-byte words)
                 param_offset += (size + 1) & ~1
 
-        # Generate function body
         self.gen_compound_stmt(func.body)
 
-        # Epilogue label for early returns
-        epilogue_label = f"@{func.name}_ret"
+        epilogue_label = f"@{name}_ret"
         self.ctx.emit_label(epilogue_label)
 
-        # Function epilogue: restore SP, IX, return
-        # Note: For shared storage functions, SP hasn't changed, but this is still safe
         self.ctx.emit_instr("ld", "SP,IX")
         self.ctx.emit_instr("pop", "IX")
         self.ctx.emit_instr("ret")
