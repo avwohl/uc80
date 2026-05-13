@@ -5568,9 +5568,10 @@ class CodeGenerator:
             is_signed = self._is_signed_type(sym.sym_type)
             self._extend_hl_to_dehl(is_signed)
 
-    def gen_binary_op(self, expr: ast.BinaryOp) -> None:
-        """Generate code for binary operation."""
-        op = expr.op
+    def gen_binary_op(self, expr) -> None:
+        """Generate code for binary operation (auto-AST BinaryOp)."""
+        # expr.op is a Token (operator's source text in .text).
+        op = expr.op.text if hasattr(expr.op, "text") else expr.op
 
         # Handle assignment specially
         if op == "=":
@@ -6838,9 +6839,9 @@ class CodeGenerator:
 
         self.ctx.emit_label(end_label)
 
-    def gen_unary_op(self, expr: ast.UnaryOp) -> None:
-        """Generate code for unary operation."""
-        op = expr.op
+    def gen_unary_op(self, expr) -> None:
+        """Generate code for unary operation (auto-AST UnaryOp / PostfixOp)."""
+        op = expr.op.text if hasattr(expr.op, "text") else expr.op
 
         if op == "-":
             if self._is_long_long_expr(expr.operand):
