@@ -13,7 +13,7 @@ from pathlib import Path
 import argparse
 
 UC80_DIR = Path(__file__).parent
-LIB_DIR = UC80_DIR / "lib"
+LIB_DIR = UC80_DIR / "src" / "uc80" / "lib"
 FUJITSU_DIR = Path("../external/compiler-test-suite/C")
 
 CRT0 = LIB_DIR / "crt0.rel"
@@ -58,7 +58,7 @@ def run_test(c_file: Path, ref_file: Path, verbose: bool = False,
     com_file = mac_file.with_suffix(".com")
 
     # Compile
-    cc_cmd = [sys.executable, "-m", "src.main", str(c_file),
+    cc_cmd = [sys.executable, "-m", "uc80.main", str(c_file),
               "-o", str(mac_file), "--no-whole-program"]
     if extra_cflags:
         cc_cmd.extend(extra_cflags)

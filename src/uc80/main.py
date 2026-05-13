@@ -8,8 +8,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from uc_core.lexer import Lexer, LexerError
-from uc_core.parser import Parser, ParseError
+from uc_core.frontend import parse as _frontend_parse
 from uc_core import ast as ast_module
 from uc_core.preprocessor import Preprocessor, PreprocessorError, Macro
 from uc_core.ast_optimizer import ASTOptimizer
@@ -206,7 +205,7 @@ def main() -> int:
     # Set up include paths
     include_paths = list(args.include)
     # Add lib/include as default include path
-    lib_include = Path(__file__).parent.parent / "lib" / "include"
+    lib_include = Path(__file__).parent / "lib" / "include"
     if lib_include.exists():
         include_paths.append(str(lib_include))
 
@@ -233,9 +232,18 @@ def main() -> int:
             if args.verbose:
                 print(f"Compiling {input_path}...")
 
-            # Read source
+            # Read source.  C source isn't strictly UTF-8 — string literals
+            # can contain arbitrary bytes (e.g. embedded \xff).  Fall back to
+            # latin-1 if utf-8 decoding fails so the lexer sees the file
+            # verbatim and the bytes survive into the output unchanged.
             try:
                 source = input_path.read_text()
+            except UnicodeDecodeError:
+                try:
+                    source = input_path.read_text(encoding='latin-1')
+                except Exception as e:
+                    print(f"uc80: error: Cannot read {input_path}: {e}", file=sys.stderr)
+                    return 1
             except Exception as e:
                 print(f"uc80: error: Cannot read {input_path}: {e}", file=sys.stderr)
                 return 1
@@ -276,16 +284,8 @@ def main() -> int:
                     print(source)
                     continue
 
-            # Lexical analysis
-            lexer = Lexer(source, str(input_path))
-            tokens = list(lexer.tokenize())
-
-            if args.verbose:
-                print(f"  Lexed {len(tokens)} tokens")
-
-            # Parsing
-            p = Parser(tokens)
-            ast = p.parse()
+            # Front-end: lex + parse via plox-driven c23 grammar.
+            ast = _frontend_parse(source, str(input_path))
             asts.append(ast)
 
             if args.verbose:
@@ -368,7 +368,7 @@ def main() -> int:
                 startup_path = Path(args.startup_lib)
             else:
                 # Default: lib/crt0.mac relative to package
-                startup_path = Path(__file__).parent.parent / "lib" / "crt0.mac"
+                startup_path = Path(__file__).parent / "lib" / "crt0.mac"
 
             if startup_path.exists():
                 startup_content = startup_path.read_text()
@@ -712,14 +712,6 @@ def main() -> int:
 
     except PreprocessorError as e:
         print(f"uc80: {e}", file=sys.stderr)
-        return 1
-
-    except LexerError as e:
-        print(f"uc80: {e}", file=sys.stderr)
-        return 1
-
-    except ParseError as e:
-        print(f"uc80: {e.location}: {e.message}", file=sys.stderr)
         return 1
 
     except Exception as e:

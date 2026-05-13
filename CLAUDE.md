@@ -4,6 +4,8 @@ See ../projectname for documentation
 For the programming languages there
 are pdfs of the language refrence
 (plm, m80, l80). DO NOT READ DIRECTLY you will loop
+use git to preserve work no matter the state, git commit at least once per hour,
+ this is just an extra save, do not not change the way you work or bother the user or stop because of this
 
 See docs/paid/ISO+IEC+9899-2024.txt for the c standard we need to implement
 

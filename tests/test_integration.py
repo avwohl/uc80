@@ -8,7 +8,7 @@ from pathlib import Path
 def run_compiler(*args):
     """Run the uc80 compiler with given arguments."""
     result = subprocess.run(
-        [sys.executable, "-m", "src.main", *args],
+        [sys.executable, "-m", "uc80.main", *args],
         capture_output=True,
         text=True
     )

@@ -2,7 +2,7 @@
 
 import pytest
 from pathlib import Path
-from src.runtime import RuntimeLibrary, AsmFunction, load_runtime_library
+from uc80.runtime import RuntimeLibrary, AsmFunction, load_runtime_library
 
 
 class TestRuntimeLibrary:

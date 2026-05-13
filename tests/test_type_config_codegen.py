@@ -5,17 +5,15 @@ path (DEHL register pair, __add32 runtime) rather than the 16-bit path.
 """
 
 import pytest
-from uc_core.lexer import Lexer
-from uc_core.parser import Parser
+from uc_core.frontend import parse
 from uc_core.ast_optimizer import ASTOptimizer
 from uc_core.type_config import TypeConfig, Z80_CPM, WATCOM_FLAT32
 from uc_core import ast as ast_module
-from src.codegen import CodeGenerator
+from uc80.codegen import CodeGenerator
 
 
 def _compile(src: str, tc: TypeConfig) -> str:
-    tokens = list(Lexer(src, "<test>").tokenize())
-    unit = Parser(tokens).parse()
+    unit = parse(src, "<test>")
     unit = ASTOptimizer(3, type_config=tc).optimize(unit)
     return CodeGenerator(type_config=tc).generate(unit)
 

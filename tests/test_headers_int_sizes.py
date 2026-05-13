@@ -19,7 +19,7 @@ def _compile(src: str, tmp_path: Path, *extra_args: str) -> subprocess.Completed
     c_file.write_text(src)
     out = tmp_path / "hdr_test.mac"
     return subprocess.run(
-        [sys.executable, "-m", "src.main", str(c_file), "-o", str(out), *extra_args],
+        [sys.executable, "-m", "uc80.main", str(c_file), "-o", str(out), *extra_args],
         capture_output=True, text=True,
     )
 
@@ -102,7 +102,7 @@ class TestBundledHeaders:
         c.write_text("int main(void) { return sizeof(int); }\n")
         out = tmp_path / "so.mac"
         r = subprocess.run(
-            [sys.executable, "-m", "src.main", str(c), "-o", str(out), *args],
+            [sys.executable, "-m", "uc80.main", str(c), "-o", str(out), *args],
             capture_output=True, text=True,
         )
         assert r.returncode == 0, r.stderr
@@ -130,12 +130,12 @@ class TestMacrosAgreeWithRuntimeSizeof:
         """)
         out = tmp_path / "m.mac"
         # default
-        r = subprocess.run([sys.executable, "-m", "src.main", str(c), "-o", str(out)],
+        r = subprocess.run([sys.executable, "-m", "uc80.main", str(c), "-o", str(out)],
                            capture_output=True, text=True)
         assert r.returncode == 0
         assert "marker_int16" in out.read_text()
         # int=32
-        r = subprocess.run([sys.executable, "-m", "src.main", "--int=32", str(c), "-o", str(out)],
+        r = subprocess.run([sys.executable, "-m", "uc80.main", "--int=32", str(c), "-o", str(out)],
                            capture_output=True, text=True)
         assert r.returncode == 0
         assert "marker_int32" in out.read_text()

@@ -1728,6 +1728,11 @@ class CodeGenContext:
     # Function names (for distinguishing functions from variables)
     function_names: set[str] = field(default_factory=set)
 
+    # Implicitly-declared external symbols: any `_name` referenced in code
+    # without a matching declaration (e.g. abort()/exit() called in code that
+    # never #include'd stdlib.h).  Recorded so we can emit EXTRN at the end.
+    implicit_externs: set[str] = field(default_factory=set)
+
     # Enum constants: name -> integer value
     enum_constants: dict[str, int] = field(default_factory=dict)
 
@@ -2097,6 +2102,19 @@ class CodeGenerator:
             self.ctx.emit("; Runtime library functions")
             for name in sorted(self.ctx.runtime_used):
                 self.ctx.emit_instr("extrn", name)
+
+        # Emit EXTRN for any implicit externals discovered during codegen
+        # (functions called/referenced without an explicit prototype, e.g.
+        # abort() / exit() in pre-C99 source).
+        if self.ctx.implicit_externs:
+            already = set(self.ctx.runtime_used)
+            new_externs = sorted(n for n in self.ctx.implicit_externs
+                                 if n not in already)
+            if new_externs:
+                self.ctx.emit()
+                self.ctx.emit("; Implicit external functions")
+                for name in new_externs:
+                    self.ctx.emit_instr("extrn", name)
 
         # Data segment for global variables
         # Collect global variable declarations, merging tentative definitions
@@ -4003,13 +4021,15 @@ class CodeGenerator:
                         self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                         consumed += 1
                         continue
-                # Compound literal of matching struct type: descend into its
-                # initializer list (a complete struct value, not flat members).
-                if isinstance(val, ast.Compound) and isinstance(val.target_type, ast.StructType):
-                    if isinstance(val.init, ast.InitializerList):
-                        self._gen_struct_init_values(sym, elem_type, val.init.values, offset)
-                        consumed += 1
-                        continue
+                # Compound literal `(struct S){...}` as an array element:
+                # copy from the materialized compound into this slot.
+                # Otherwise we'd treat the compound as a flat list of field
+                # values, which mangles the layout (the compound's address
+                # would land in the first field).
+                if isinstance(val, ast.Compound):
+                    self._gen_struct_copy_from_addr_expr(sym, offset, val, elem_size)
+                    consumed += 1
+                    continue
                 nested_consumed = self._gen_struct_init_values(sym, elem_type, values[idx:], offset)
                 consumed += nested_consumed
             elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
@@ -4357,6 +4377,14 @@ class CodeGenerator:
                 if src_sym and isinstance(src_sym.sym_type, ast.StructType):
                     self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                     continue
+
+            # Handle struct copy from compound literal: arr[] = { (struct S){...}, ... }
+            # gen_expr on a struct compound returns its address; we need an
+            # actual byte copy into the array slot, not the address stored
+            # into the first member.
+            if isinstance(elem_type, ast.StructType) and isinstance(val, ast.Compound):
+                self._gen_struct_copy_from_addr_expr(sym, offset, val, elem_size)
+                continue
 
             # Convert int literal to float if target is float
             if is_float and isinstance(val, ast.IntLiteral):
@@ -5013,7 +5041,11 @@ class CodeGenerator:
 
         sym = self.ctx.lookup(expr.name)
         if sym is None:
-            # Assume external function - load its address
+            # Assume external function - load its address.  Track it so we
+            # emit an EXTRN; otherwise um80 fails the assemble step with
+            # "Undefined symbol" (the linker would resolve it, but um80
+            # doesn't defer unknowns past the .rel boundary on its own).
+            self.ctx.implicit_externs.add(f"_{expr.name}")
             self.ctx.emit_instr("ld", f"HL,_{expr.name}")
             return
 
@@ -6500,8 +6532,71 @@ class CodeGenerator:
             if sym:
                 is_float = self._is_float_type(sym.sym_type)
                 is_long = self._is_long_type(sym.sym_type)
+                is_long_long = self._is_long_long_type(sym.sym_type)
 
-                if is_float:
+                if is_long_long:
+                    # 64-bit increment/decrement
+                    self.ctx.runtime_used.add("__acc64")
+                    self.ctx.runtime_used.add("__tmp64")
+                    # Load value to __acc64
+                    if sym.is_global:
+                        self.ctx.emit_instr("ld", f"HL,{sym.label()}")
+                    elif sym.uses_shared_storage:
+                        self.ctx.emit_instr("ld", f"HL,??AUTO+{sym.shared_offset}")
+                    else:
+                        self.ctx.emit_instr("push", "IX")
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", f"DE,{sym.offset}")
+                        self.ctx.emit_instr("add", "HL,DE")
+                    self._call_runtime("__load64")
+                    # Postfix: save the original 64-bit value on stack
+                    if not expr.is_prefix:
+                        self.ctx.emit_instr("ld", "HL,(__acc64+6)")
+                        self.ctx.emit_instr("push", "HL")
+                        self.ctx.emit_instr("ld", "HL,(__acc64+4)")
+                        self.ctx.emit_instr("push", "HL")
+                        self.ctx.emit_instr("ld", "HL,(__acc64+2)")
+                        self.ctx.emit_instr("push", "HL")
+                        self.ctx.emit_instr("ld", "HL,(__acc64)")
+                        self.ctx.emit_instr("push", "HL")
+                    # Step (1 for integer; pointer scale for pointer)
+                    step = 1
+                    if isinstance(sym.sym_type, ast.PointerType):
+                        step = self._type_size(sym.sym_type.base_type)
+                        if step == 0:
+                            step = 1
+                    # __tmp64 = step (zero-extended)
+                    self.ctx.emit_instr("ld", f"HL,{step}")
+                    self.ctx.emit_instr("ld", "(__tmp64),HL")
+                    self.ctx.emit_instr("ld", "HL,0")
+                    self.ctx.emit_instr("ld", "(__tmp64+2),HL")
+                    self.ctx.emit_instr("ld", "(__tmp64+4),HL")
+                    self.ctx.emit_instr("ld", "(__tmp64+6),HL")
+                    if is_inc:
+                        self._call_runtime("__add64")
+                    else:
+                        self._call_runtime("__sub64")
+                    # Store result
+                    if sym.is_global:
+                        self.ctx.emit_instr("ld", f"HL,{sym.label()}")
+                        self._call_runtime("__store64")
+                    else:
+                        self._store_local_64(sym)
+                    # Postfix: restore the original value as the expression result
+                    if not expr.is_prefix:
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", "(__acc64),HL")
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", "(__acc64+2),HL")
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", "(__acc64+4),HL")
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("ld", "(__acc64+6),HL")
+                    # Surface low 32 bits in DEHL for rvalue use
+                    self.ctx.emit_instr("ld", "HL,(__acc64)")
+                    self.ctx.emit_instr("ld", "DE,(__acc64+2)")
+
+                elif is_float:
                     # Float increment/decrement: use __fadd/__fsub with 1.0
                     if sym.is_global:
                         self.ctx.emit_instr("ld", f"HL,({sym.label()})")
@@ -6724,6 +6819,42 @@ class CodeGenerator:
                 else:
                     self.ctx.emit_instr("ld", "HL,0")
                 return
+            # GCC builtin pass-throughs to libc.  GCC sometimes emits
+            # __builtin_memcpy directly (e.g. when the prototype isn't
+            # visible) — rewrite to the libc symbol so the linker can
+            # resolve it.
+            _BUILTIN_TO_LIBC = {
+                '__builtin_memcpy':   'memcpy',
+                '__builtin_memmove':  'memmove',
+                '__builtin_memset':   'memset',
+                '__builtin_memcmp':   'memcmp',
+                '__builtin_strlen':   'strlen',
+                '__builtin_strcpy':   'strcpy',
+                '__builtin_strncpy':  'strncpy',
+                '__builtin_strcmp':   'strcmp',
+                '__builtin_strncmp':  'strncmp',
+                '__builtin_strcat':   'strcat',
+                '__builtin_strncat':  'strncat',
+                '__builtin_strchr':   'strchr',
+                '__builtin_abort':    'abort',
+                '__builtin_exit':     'exit',
+                '__builtin_puts':     'puts',
+                '__builtin_printf':   'printf',
+                '__builtin_putchar':  'putchar',
+                '__builtin_trap':     'abort',
+                '__builtin_unreachable': 'abort',
+                '__builtin_malloc':   'malloc',
+                '__builtin_calloc':   'calloc',
+                '__builtin_realloc':  'realloc',
+                '__builtin_free':     'free',
+            }
+            if expr.func.name in _BUILTIN_TO_LIBC:
+                expr = ast.Call(
+                    func=ast.Identifier(name=_BUILTIN_TO_LIBC[expr.func.name],
+                                        location=expr.func.location),
+                    args=expr.args,
+                    location=expr.location,
+                )
 
         # Get function parameter types if available
         param_types: list[ast.TypeNode] = []
@@ -6939,6 +7070,13 @@ class CodeGenerator:
                 (func_sym and isinstance(func_sym.sym_type, ast.FunctionType))
             )
             if is_direct_function:
+                # Record EXTRN for any function we don't define locally.  The
+                # `function_names` set covers definitions and prototypes seen
+                # in this TU; func_sym alone (with FunctionType) means we
+                # have a declaration but no body — still external.
+                if (expr.func.name not in self.ctx.function_names
+                        and not (func_sym and getattr(func_sym, 'has_body', False))):
+                    self.ctx.implicit_externs.add(f"_{expr.func.name}")
                 self.ctx.emit_instr("call", f"_{expr.func.name}")
             else:
                 # Function pointer variable - load pointer and call indirectly
@@ -8964,10 +9102,22 @@ class CodeGenerator:
     def _emit_condition_test(self, condition: ast.Expression) -> None:
         """Emit zero-test for a condition expression. Sets Z flag if zero.
         For 16-bit values: LD A,H; OR L
-        For 32-bit/64-bit (long/float/long long): LD A,H; OR L; OR E; OR D
+        For 32-bit (long/float): LD A,H; OR L; OR E; OR D
+        For 64-bit (long long): OR all 8 bytes via __acc64
         """
-        if (self._is_float_expr(condition) or self._is_long_expr(condition)
-                or self._is_long_long_expr(condition)):
+        if self._is_long_long_expr(condition):
+            # The full 64-bit value lives in __acc64; DEHL only mirrors the
+            # low 32 bits.  OR every byte so a non-zero high half can't slip
+            # past as zero.  Z80 has no `or (nn)`, so route each byte through
+            # B and accumulate into A.
+            self.ctx.runtime_used.add("__acc64")
+            self.ctx.emit_instr("ld", "A,(__acc64)")
+            for off in range(1, 8):
+                self.ctx.emit_instr("ld", "B,A")
+                self.ctx.emit_instr("ld", "A,(__acc64+%d)" % off)
+                self.ctx.emit_instr("or", "B")
+            return
+        if self._is_float_expr(condition) or self._is_long_expr(condition):
             self.ctx.emit_instr("ld", "A,H")
             self.ctx.emit_instr("or", "L")
             self.ctx.emit_instr("or", "E")

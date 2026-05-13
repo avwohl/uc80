@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "uc80"
-version = "0.3.0"
+version = "0.4.2"
 description = "ANSI C compiler targeting Z80/CP/M"
 readme = "README.md"
 license = "GPL-3.0-or-later"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "upeepz80>=0.2.0",
-    "uc_core>=0.1.0",
+    "uc_core>=0.3.0",
 ]
 authors = [
     {name = "uc80 developers"}
@@ -27,6 +27,7 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -41,15 +42,19 @@ Repository = "https://github.com/avwohl/uc80"
 Issues = "https://github.com/avwohl/uc80/issues"
 
 [project.scripts]
-uc80 = "src.main:main"
+uc80 = "uc80.main:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["src*", "lib*"]
+where = ["src"]
 
 [tool.setuptools.package-data]
-src = ["py.typed"]
-lib = ["**/*.mac", "**/*.h"]
+uc80 = [
+    "py.typed",
+    "lib/**/*.mac",
+    "lib/**/*.lib",
+    "lib/**/*.rel",
+    "lib/**/*.h",
+]
 
 [project.optional-dependencies]
 dev = [
