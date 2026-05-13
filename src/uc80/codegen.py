@@ -302,6 +302,39 @@ def declarator_ident(node) -> Optional[str]:
     return None
 
 
+def _decode_string_literal(text: str) -> str:
+    """Decode a STRING_LIT source token to the bytes its content represents."""
+    if text.startswith("u8"):
+        text = text[2:]
+    elif text.startswith(("u", "U", "L")):
+        text = text[1:]
+    if text.startswith('"') and text.endswith('"'):
+        body = text[1:-1]
+    else:
+        body = text
+    esc = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", "'": "'", '"': '"',
+           "0": "\0", "a": "\a", "b": "\b", "f": "\f", "v": "\v"}
+    out: list[str] = []
+    i = 0
+    while i < len(body):
+        if body[i] == "\\" and i + 1 < len(body):
+            nxt = body[i + 1]
+            if nxt in esc:
+                out.append(esc[nxt])
+                i += 2
+                continue
+            out.append(nxt)
+            i += 2
+            continue
+        out.append(body[i])
+        i += 1
+    return "".join(out)
+
+
+def _string_is_wide(text: str) -> bool:
+    return text.startswith(("u", "U", "L")) and not text.startswith("u8")
+
+
 def _decoded_str_len(text: str) -> int:
     """Decoded byte length of a STRING_LIT token's source text."""
     if text.startswith("u8"):
@@ -5252,41 +5285,54 @@ class CodeGenerator:
         func = self.ctx.current_function or "global"
         self.ctx.emit_instr("jp", f"@L_{func}_{stmt.label}")
 
-    def gen_expr(self, expr: ast.Expression, force_long: bool = False) -> None:
+    def gen_expr(self, expr, force_long: bool = False) -> None:
         """Generate code for an expression. Result in HL (16-bit) or DEHL (32-bit)."""
         if isinstance(expr, ast.IntLiteral):
+            v = int_value(expr)
             if self._is_long_expr(expr) or force_long:
-                # 32-bit literal: load into DEHL (DE=high, HL=low)
-                val = expr.value & 0xFFFFFFFF
+                val = v & 0xFFFFFFFF
                 low = val & 0xFFFF
                 high = (val >> 16) & 0xFFFF
                 self.ctx.emit_instr("ld", f"HL,{low}")
                 self.ctx.emit_instr("ld", f"DE,{high}")
             else:
-                self.ctx.emit_instr("ld", f"HL,{expr.value}")
+                self.ctx.emit_instr("ld", f"HL,{v}")
 
         elif isinstance(expr, ast.FloatLiteral):
-            # Convert float to IEEE 754 single precision and load as 32-bit
-            ieee_val = float_to_ieee754(expr.value)
+            # FloatLiteral.value is a Token; parse the text.
+            text = expr.value.text.rstrip("fFlLiIjJ")
+            ieee_val = float_to_ieee754(float(text))
             low = ieee_val & 0xFFFF
             high = (ieee_val >> 16) & 0xFFFF
             self.ctx.emit_instr("ld", f"HL,{low}")
             self.ctx.emit_instr("ld", f"DE,{high}")
 
         elif isinstance(expr, ast.CharLiteral):
-            # Character constants have type int (C 6.4.4.4)
-            val = expr.value
+            # CharLiteral.value is a Token containing the source text
+            # like ``'A'`` or ``'\n'``. Decode to the int code point.
+            text = expr.value.text
+            i = 0
+            while i < len(text) and text[i] != "'":
+                i += 1
+            inner = text[i + 1:-1]
+            if inner.startswith("\\"):
+                esc = {"n": 10, "t": 9, "r": 13, "0": 0, "\\": 92,
+                       "'": 39, '"': 34, "a": 7, "b": 8, "f": 12, "v": 11}
+                val = esc.get(inner[1], ord(inner[1]) if len(inner) > 1 else 0)
+            else:
+                val = ord(inner) if inner else 0
             if val >= 0x80:
-                val = (val - 0x100) & 0xFFFF  # Sign extend signed char to 16-bit int
+                val = (val - 0x100) & 0xFFFF
             self.ctx.emit_instr("ld", f"HL,{val}")
 
         elif isinstance(expr, ast.StringLiteral):
-            label = self.ctx.add_string(expr.value, is_wide=expr.is_wide)
+            from uc_core._const import int_value as _iv  # noqa: F401
+            # Decode the string body once for label naming. The
+            # encoded form lives in the Token text; uc80 stores the
+            # decoded string for emission.
+            label = self.ctx.add_string(_decode_string_literal(expr.value.text),
+                                        is_wide=_string_is_wide(expr.value.text))
             self.ctx.emit_instr("ld", f"HL,{label}")
-
-        elif isinstance(expr, ast.BoolLiteral):
-            val = 1 if expr.value else 0
-            self.ctx.emit_instr("ld", f"HL,{val}")
 
         elif isinstance(expr, ast.NullptrLiteral):
             self.ctx.emit_instr("ld", "HL,0")
