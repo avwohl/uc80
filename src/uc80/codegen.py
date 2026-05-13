@@ -1430,7 +1430,7 @@ class CallGraphAnalyzer:
                 pos=expr.pos
             )
 
-        elif isinstance(expr, ast.Call):
+        elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
             return ast.Call(
                 func=self._substitute_params(expr.func, param_map),
                 args=[self._substitute_params(a, param_map) for a in expr.args],
@@ -1472,7 +1472,7 @@ class CallGraphAnalyzer:
                     func_bodies: dict[str, ast.FunctionDef],
                     inlineable: set[str]) -> ast.Expression:
         """Recursively inline function calls in an expression."""
-        if isinstance(expr, ast.Call):
+        if isinstance(expr, (ast.Call, ast.CallNoArgs)):
             # First, inline any calls in the arguments
             new_args = [self._inline_expr(a, func_bodies, inlineable) for a in expr.args]
 
@@ -1713,7 +1713,7 @@ class CallGraphAnalyzer:
         call_args: dict[str, list[list[ast.Expression]]] = {}
 
         def collect_from_expr(expr: ast.Expression) -> None:
-            if isinstance(expr, ast.Call):
+            if isinstance(expr, (ast.Call, ast.CallNoArgs)):
                 if isinstance(expr.func, ast.Identifier):
                     func_name = expr.func.name.text
                     if func_name not in call_args:
@@ -1981,7 +1981,7 @@ class CallGraphAnalyzer:
                 pos=expr.pos
             )
 
-        elif isinstance(expr, ast.Call):
+        elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
             return ast.Call(
                 func=self._substitute_param_constants(expr.func, param_names, constants),
                 args=[self._substitute_param_constants(a, param_names, constants) for a in expr.args],
@@ -3160,7 +3160,7 @@ class CodeGenerator:
         def scan_expr(expr: ast.Expression) -> bool:
             """Scan expression for printf calls. Returns False if non-literal format found."""
             nonlocal uses_printf
-            if isinstance(expr, ast.Call):
+            if isinstance(expr, (ast.Call, ast.CallNoArgs)):
                 # Check if this is a printf-family call
                 func_name = None
                 if isinstance(expr.func, ast.Identifier):
@@ -3336,7 +3336,7 @@ class CodeGenerator:
 
         def rewrite_expr(expr: ast.Expression) -> ast.Expression:
             nonlocal rewrote
-            if isinstance(expr, ast.Call):
+            if isinstance(expr, (ast.Call, ast.CallNoArgs)):
                 if (isinstance(expr.func, ast.Identifier) and
                     expr.func.name.text == 'printf' and
                     len(expr.args) == 1 and
@@ -3423,7 +3423,7 @@ class CodeGenerator:
         def visit_expr(expr):
             if expr is None:
                 return
-            if isinstance(expr, ast.Call):
+            if isinstance(expr, (ast.Call, ast.CallNoArgs)):
                 fname = expr.func.name.text if isinstance(expr.func, ast.Identifier) else None
                 if fname in scanf_funcs:
                     idx = scanf_funcs[fname]
@@ -5377,7 +5377,7 @@ class CodeGenerator:
         elif isinstance(expr, ast.UnaryOp):
             self.gen_unary_op(expr)
 
-        elif isinstance(expr, ast.Call):
+        elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
             self.gen_call(expr)
 
         elif isinstance(expr, ast.TernaryOp):
@@ -6719,7 +6719,7 @@ class CodeGenerator:
 
     def _expr_has_side_effects(self, expr: ast.Expression) -> bool:
         """Check if expression contains function calls or increment/decrement."""
-        if isinstance(expr, ast.Call):
+        if isinstance(expr, (ast.Call, ast.CallNoArgs)):
             return True
         if isinstance(expr, ast.UnaryOp):
             if expr.op in ('++', '--', 'post++', 'post--'):
@@ -8842,7 +8842,7 @@ class CodeGenerator:
                 return result_type
         elif isinstance(expr, ast.Cast):
             return expr.target_type
-        elif isinstance(expr, ast.Call):
+        elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
             # Get return type of function call
             if isinstance(expr.func, ast.Identifier):
                 sym = self.ctx.lookup(expr.func.name.text)
@@ -9048,7 +9048,7 @@ class CodeGenerator:
             # Address of *p is p
             self.gen_expr(expr.operand)
 
-        elif isinstance(expr, ast.Call):
+        elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
             # Function call returning struct: HL = address of __sret_buf
             self.gen_expr(expr)
             # For small structs (≤2 bytes), value is returned in HL, not address
@@ -9351,7 +9351,7 @@ class CodeGenerator:
             return (self._uses_tmp32(expr.condition) or
                     self._uses_tmp32(expr.true_expr) or
                     self._uses_tmp32(expr.false_expr))
-        if isinstance(expr, ast.Call):
+        if isinstance(expr, (ast.Call, ast.CallNoArgs)):
             # Function calls might clobber __tmp32 (conservative)
             return True
         if isinstance(expr, ast.Cast):
@@ -9374,7 +9374,7 @@ class CodeGenerator:
             return (self._uses_tmp64(expr.condition) or
                     self._uses_tmp64(expr.true_expr) or
                     self._uses_tmp64(expr.false_expr))
-        if isinstance(expr, ast.Call):
+        if isinstance(expr, (ast.Call, ast.CallNoArgs)):
             # Function calls might clobber __tmp64 (conservative)
             return True
         if isinstance(expr, ast.Cast):
