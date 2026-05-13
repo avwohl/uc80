@@ -329,6 +329,20 @@ def _outermost_fn_declarator(node):
     return None
 
 
+def _make_synthetic_token(name: str, text: str):
+    """Build a synthetic uplox Token (for codegen-synthesised expressions)."""
+    from uc_core.c23_parser import Token
+    return Token(name=name, text=text, line=0, column=0, offset=0, file_id=0)
+
+
+def make_identifier(name: str):
+    """Synthesise an ast.Identifier referring to the given C identifier."""
+    return ast.Identifier(
+        name=_make_synthetic_token("IDENT", name),
+        pos=ast._Pos(),
+    )
+
+
 def function_is_variadic(func) -> bool:
     """True if a FunctionDef's outermost FnDeclarator has VariadicParams."""
     fn = _outermost_fn_declarator(func.declarator) if hasattr(func, "declarator") else None
@@ -948,7 +962,7 @@ class CallGraphAnalyzer:
         if isinstance(expr, ast.Call):
             if isinstance(expr.func, ast.Identifier):
                 # Direct call
-                calls.add(expr.func.name)
+                calls.add(expr.func.name.text)
             else:
                 # Indirect call through pointer - track signature if possible
                 # For now, mark as having indirect calls
@@ -960,7 +974,7 @@ class CallGraphAnalyzer:
         elif isinstance(expr, ast.UnaryOp):
             if expr.op == "&" and isinstance(expr.operand, ast.Identifier):
                 # Address-of operator on identifier
-                address_taken.add(expr.operand.name)
+                address_taken.add(expr.operand.name.text)
             self._analyze_expr(expr.operand, calls, address_taken, indirect_sigs)
 
         elif isinstance(expr, ast.BinaryOp):
@@ -1417,8 +1431,8 @@ class CallGraphAnalyzer:
             new_args = [self._inline_expr(a, func_bodies, inlineable) for a in expr.args]
 
             # Check if this is a direct call to an inlineable function
-            if isinstance(expr.func, ast.Identifier) and expr.func.name in inlineable:
-                func = func_bodies[expr.func.name]
+            if isinstance(expr.func, ast.Identifier) and expr.func.name.text in inlineable:
+                func = func_bodies[expr.func.name.text]
                 if self._is_trivial_function(func):
                     # Build parameter -> argument map
                     param_map: dict[str, ast.Expression] = {}
@@ -1655,7 +1669,7 @@ class CallGraphAnalyzer:
         def collect_from_expr(expr: ast.Expression) -> None:
             if isinstance(expr, ast.Call):
                 if isinstance(expr.func, ast.Identifier):
-                    func_name = expr.func.name
+                    func_name = expr.func.name.text
                     if func_name not in call_args:
                         call_args[func_name] = []
                     call_args[func_name].append(list(expr.args))
@@ -3117,7 +3131,7 @@ class CodeGenerator:
                 # Check if this is a printf-family call
                 func_name = None
                 if isinstance(expr.func, ast.Identifier):
-                    func_name = expr.func.name
+                    func_name = expr.func.name.text
                 if func_name in printf_funcs:
                     uses_printf = True
                     fmt_idx = printf_funcs[func_name]
@@ -3291,7 +3305,7 @@ class CodeGenerator:
             nonlocal rewrote
             if isinstance(expr, ast.Call):
                 if (isinstance(expr.func, ast.Identifier) and
-                    expr.func.name == 'printf' and
+                    expr.func.name.text == 'printf' and
                     len(expr.args) == 1 and
                     isinstance(expr.args[0], ast.StringLiteral)):
                     s = expr.args[0].value
@@ -3377,7 +3391,7 @@ class CodeGenerator:
             if expr is None:
                 return
             if isinstance(expr, ast.Call):
-                fname = expr.func.name if isinstance(expr.func, ast.Identifier) else None
+                fname = expr.func.name.text if isinstance(expr.func, ast.Identifier) else None
                 if fname in scanf_funcs:
                     idx = scanf_funcs[fname]
                     if idx < len(expr.args) and isinstance(expr.args[idx], ast.StringLiteral):
@@ -6933,7 +6947,7 @@ class CodeGenerator:
         is_inc = expr.op == "++"
 
         if isinstance(expr.operand, ast.Identifier):
-            sym = self.ctx.lookup(expr.operand.name)
+            sym = self.ctx.lookup(expr.operand.name.text)
             if sym:
                 is_float = self._is_float_type(sym.sym_type)
                 is_long = self._is_long_type(sym.sym_type)
@@ -7217,7 +7231,7 @@ class CodeGenerator:
         """Generate code for function call."""
         # Handle GCC builtins
         if isinstance(expr.func, ast.Identifier):
-            if expr.func.name == '__builtin_expect':
+            if expr.func.name.text == '__builtin_expect':
                 # __builtin_expect(x, c) just returns x - it's a hint for branch prediction
                 if expr.args:
                     self.gen_expr(expr.args[0])
@@ -7253,18 +7267,17 @@ class CodeGenerator:
                 '__builtin_realloc':  'realloc',
                 '__builtin_free':     'free',
             }
-            if expr.func.name in _BUILTIN_TO_LIBC:
+            if expr.func.name.text in _BUILTIN_TO_LIBC:
                 expr = ast.Call(
-                    func=ast.Identifier(name=_BUILTIN_TO_LIBC[expr.func.name],
-                                        location=expr.func.location),
+                    func=make_identifier(_BUILTIN_TO_LIBC[expr.func.name.text]),
                     args=expr.args,
-                    location=expr.location,
+                    pos=expr.pos,
                 )
 
         # Get function parameter types if available
         param_types: list[ast.TypeNode] = []
         if isinstance(expr.func, ast.Identifier):
-            func_sym = self.ctx.lookup(expr.func.name)
+            func_sym = self.ctx.lookup(expr.func.name.text)
             if func_sym and isinstance(func_sym.sym_type, ast.FunctionType):
                 param_types = func_sym.sym_type.param_types
             elif (func_sym and isinstance(func_sym.sym_type, ast.PointerType)
@@ -7469,9 +7482,9 @@ class CodeGenerator:
         # Call the function
         if isinstance(expr.func, ast.Identifier):
             # Check if this is a direct function call or a call through a function pointer variable
-            func_sym = self.ctx.lookup(expr.func.name)
+            func_sym = self.ctx.lookup(expr.func.name.text)
             is_direct_function = (
-                expr.func.name in self.ctx.function_names or
+                expr.func.name.text in self.ctx.function_names or
                 (func_sym and isinstance(func_sym.sym_type, ast.FunctionType))
             )
             if is_direct_function:
@@ -7479,10 +7492,10 @@ class CodeGenerator:
                 # `function_names` set covers definitions and prototypes seen
                 # in this TU; func_sym alone (with FunctionType) means we
                 # have a declaration but no body — still external.
-                if (expr.func.name not in self.ctx.function_names
+                if (expr.func.name.text not in self.ctx.function_names
                         and not (func_sym and getattr(func_sym, 'has_body', False))):
-                    self.ctx.implicit_externs.add(f"_{expr.func.name}")
-                self.ctx.emit_instr("call", f"_{expr.func.name}")
+                    self.ctx.implicit_externs.add(f"_{expr.func.name.text}")
+                self.ctx.emit_instr("call", f"_{expr.func.name.text}")
             else:
                 # Function pointer variable - load pointer and call indirectly
                 self.gen_expr(expr.func)
@@ -7516,7 +7529,7 @@ class CodeGenerator:
                 and isinstance(return_type, ast.BasicType)
                 and return_type.name == "int"
                 and isinstance(expr.func, ast.Identifier)
-                and expr.func.name not in self.ctx.function_names):
+                and expr.func.name.text not in self.ctx.function_names):
             needs_int_widen = True
         if needs_int_widen:
             return_signed = (return_type.is_signed is None or return_type.is_signed)
@@ -8777,7 +8790,7 @@ class CodeGenerator:
         elif isinstance(expr, ast.Call):
             # Get return type of function call
             if isinstance(expr.func, ast.Identifier):
-                sym = self.ctx.lookup(expr.func.name)
+                sym = self.ctx.lookup(expr.func.name.text)
                 if sym and isinstance(sym.sym_type, ast.FunctionType):
                     return sym.sym_type.return_type
                 elif sym:
@@ -9574,7 +9587,7 @@ class CodeGenerator:
             # For &x, the type is pointer to x's type - return x's type size
             if expr.op == "&":
                 if isinstance(expr.operand, ast.Identifier):
-                    sym = self.ctx.lookup(expr.operand.name)
+                    sym = self.ctx.lookup(expr.operand.name.text)
                     if sym:
                         return self._type_size(sym.sym_type)
             # For p++ or p--, the type is the same as p
