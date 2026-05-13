@@ -8,10 +8,10 @@ import argparse
 import sys
 from pathlib import Path
 
-from uc_core.frontend import parse as _frontend_parse
-from uc_core import ast as ast_module
+from uc_core.frontend_legacy import parse as _frontend_parse
+from uc_core import ast_legacy as ast_module
 from uc_core.preprocessor import Preprocessor, PreprocessorError, Macro
-from uc_core.ast_optimizer import ASTOptimizer
+from uc_core.ast_optimizer_legacy import ASTOptimizer
 from uc_core.type_config import TypeConfig, Z80_CPM
 
 from .codegen import generate, CodeGenerator
