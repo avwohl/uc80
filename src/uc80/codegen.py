@@ -294,6 +294,41 @@ def declarator_ident(node) -> Optional[str]:
     return None
 
 
+def _decoded_str_len(text: str) -> int:
+    """Decoded byte length of a STRING_LIT token's source text."""
+    if text.startswith("u8"):
+        text = text[2:]
+    elif text.startswith(("u", "U", "L")):
+        text = text[1:]
+    if text.startswith('"') and text.endswith('"'):
+        body = text[1:-1]
+    else:
+        body = text
+    n = 0
+    i = 0
+    while i < len(body):
+        if body[i] == "\\" and i + 1 < len(body):
+            i += 2
+            n += 1
+        else:
+            i += 1
+            n += 1
+    return n
+
+
+def _outermost_fn_declarator(node):
+    """Walk a declarator chain through pointer/group wraps to find the
+    outermost FnDeclarator / FnDeclaratorEmpty, or None."""
+    while node is not None:
+        if isinstance(node, (ast.FnDeclarator, ast.FnDeclaratorEmpty)):
+            return node
+        sub = getattr(node, "inner", None)
+        if sub is None:
+            return None
+        node = sub
+    return None
+
+
 def iter_var_decls(declaration):
     """For an ``ast.Declaration``, yield (name, ResolvedType, init_or_None,
     is_func) for each init_declarator."""
@@ -523,177 +558,204 @@ class CallGraphAnalyzer:
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
         # Pass 0: Collect struct definitions for accurate size calculation
-        for decl in unit.declarations:
-            self._collect_struct_defs(decl)
+        for item in unit.items or []:
+            self._collect_struct_defs(item)
 
         # Pass 1: Collect all function names, signatures, and storage sizes
-        for decl in unit.declarations:
-            self._collect_function_info(decl)
+        for item in unit.items or []:
+            self._collect_function_info(item)
 
         # Pass 2: For each function, find all calls and address-taken
-        for decl in unit.declarations:
-            if isinstance(decl, ast.FunctionDecl) and decl.body:
-                self._analyze_function_body(decl)
+        for item in unit.items or []:
+            if isinstance(item, ast.FunctionDef):
+                self._analyze_function_body(item)
 
         # Pass 3: Analyze global variable initializers for address-taken functions
-        for decl in unit.declarations:
-            self._analyze_global_init(decl)
+        for item in unit.items or []:
+            self._analyze_global_init(item)
 
-    def _analyze_global_init(self, decl: ast.Declaration) -> None:
+    def _analyze_global_init(self, decl) -> None:
         """Analyze global variable initializers for address-taken functions."""
-        if isinstance(decl, ast.VarDecl) and decl.init:
-            address_taken: set[str] = set()
-            self._analyze_expr(decl.init, set(), address_taken, set())
-            # Filter to only known functions
-            self.address_taken.update(address_taken & self.has_body)
-        elif isinstance(decl, ast.DeclarationList):
-            for d in decl.declarations:
-                self._analyze_global_init(d)
+        if not isinstance(decl, ast.Declaration):
+            return
+        for init_decl in decl.declarators or []:
+            if isinstance(init_decl, ast.InitDeclaratorWithInit):
+                address_taken: set[str] = set()
+                self._analyze_expr(init_decl.init, set(), address_taken, set())
+                self.address_taken.update(address_taken & self.has_body)
 
-    def _collect_struct_defs(self, decl: ast.Declaration) -> None:
+    def _collect_struct_defs(self, decl) -> None:
         """Collect struct definitions for accurate size calculation."""
-        if isinstance(decl, ast.StructDecl) and decl.is_definition and decl.name:
-            size = 0
-            if decl.is_union:
-                for m in decl.members:
-                    size = max(size, self._var_size(m.member_type))
-            else:
-                for m in decl.members:
-                    size += self._var_size(m.member_type)
-            self.struct_sizes[decl.name] = size
-        elif isinstance(decl, ast.VarDecl):
-            # Collect struct defs from variable type declarations
-            self._collect_struct_from_type(decl.var_type)
-        elif isinstance(decl, ast.DeclarationList):
-            for d in decl.declarations:
-                self._collect_struct_defs(d)
-        elif isinstance(decl, ast.FunctionDecl):
-            # Collect struct defs from parameters and return type
-            self._collect_struct_from_type(decl.return_type)
-            for p in decl.params:
-                self._collect_struct_from_type(p.param_type)
-            # Collect struct defs from local variables
+        if isinstance(decl, ast.FunctionDef):
+            # Walk return type + parameters + local body for struct refs.
+            base = resolve_base_type(decl.decl_specs)
+            self._collect_struct_from_resolved(base)
+            fn = _outermost_fn_declarator(decl.declarator)
+            if isinstance(fn, ast.FnDeclarator):
+                params = fn.params
+                if isinstance(params, ast.VariadicParams):
+                    params = params.params
+                for p in params or []:
+                    if isinstance(p, ast.ParamDecl):
+                        _, pt = resolve_type_from_decl(p.decl_specs, p.declarator)
+                        self._collect_struct_from_resolved(pt)
+                    elif isinstance(p, ast.ParamDeclAbstract):
+                        _, pt = resolve_type_from_decl(p.decl_specs, p.declarator)
+                        self._collect_struct_from_resolved(pt)
+                    elif isinstance(p, ast.ParamDeclTypeOnly):
+                        self._collect_struct_from_resolved(resolve_base_type(p.decl_specs))
             if decl.body:
                 self._collect_struct_defs_from_body(decl.body)
+            return
+        if isinstance(decl, ast.Declaration):
+            # Each declarator gives one resolved type; also harvest any
+            # in-place struct/union/enum spec from decl_specs.
+            base = resolve_base_type(decl.decl_specs)
+            self._collect_struct_from_resolved(base)
+            for init_decl in decl.declarators or []:
+                inner = init_decl.declarator if isinstance(init_decl,
+                    (ast.InitDeclarator, ast.InitDeclaratorWithInit)) else None
+                _, full = _wrap_declarator(inner, base)
+                self._collect_struct_from_resolved(full)
+            return
 
-    def _collect_struct_from_type(self, t: ast.TypeNode) -> None:
-        """Collect struct definition from a type node."""
-        if isinstance(t, ast.StructType) and t.name and t.members:
+    def _collect_struct_from_resolved(self, t: ResolvedType) -> None:
+        """Record struct size from a ResolvedType (recurses through pointers/arrays)."""
+        if t is None:
+            return
+        if t.kind == "struct" and t.name and t.members:
             if t.name not in self.struct_sizes:
                 size = 0
                 if t.is_union:
-                    for m in t.members:
-                        size = max(size, self._var_size(m.member_type))
+                    for (_, mt, _) in t.members:
+                        size = max(size, self._var_size_r(mt))
                 else:
-                    for m in t.members:
-                        size += self._var_size(m.member_type)
+                    for (_, mt, _) in t.members:
+                        size += self._var_size_r(mt)
                 self.struct_sizes[t.name] = size
-        elif isinstance(t, ast.PointerType):
-            self._collect_struct_from_type(t.base_type)
-        elif isinstance(t, ast.ArrayType):
-            self._collect_struct_from_type(t.base_type)
+            for (_, mt, _) in t.members:
+                self._collect_struct_from_resolved(mt)
+        elif t.kind == "pointer":
+            self._collect_struct_from_resolved(t.pointee)
+        elif t.kind == "array":
+            self._collect_struct_from_resolved(t.element)
+        elif t.kind == "function":
+            self._collect_struct_from_resolved(t.return_type)
+            for pt in t.param_types:
+                self._collect_struct_from_resolved(pt)
 
     def _collect_struct_defs_from_body(self, body: ast.CompoundStmt) -> None:
         """Collect struct definitions from function body statements."""
-        for item in body.items:
-            if isinstance(item, ast.VarDecl):
-                self._collect_struct_from_type(item.var_type)
-            elif isinstance(item, ast.DeclarationList):
-                for d in item.declarations:
-                    if isinstance(d, ast.VarDecl):
-                        self._collect_struct_from_type(d.var_type)
-                    elif isinstance(d, ast.StructDecl) and d.is_definition and d.name:
-                        size = 0
-                        if d.is_union:
-                            for m in d.members:
-                                size = max(size, self._var_size(m.member_type))
-                        else:
-                            for m in d.members:
-                                size += self._var_size(m.member_type)
-                        self.struct_sizes[d.name] = size
+        for item in body.items or []:
+            if isinstance(item, ast.Declaration):
+                base = resolve_base_type(item.decl_specs)
+                self._collect_struct_from_resolved(base)
+                for init_decl in item.declarators or []:
+                    inner = init_decl.declarator if isinstance(init_decl,
+                        (ast.InitDeclarator, ast.InitDeclaratorWithInit)) else None
+                    _, full = _wrap_declarator(inner, base)
+                    self._collect_struct_from_resolved(full)
             elif isinstance(item, ast.CompoundStmt):
                 self._collect_struct_defs_from_body(item)
             elif isinstance(item, ast.ForStmt):
-                if isinstance(item.init, ast.VarDecl):
-                    self._collect_struct_from_type(item.init.var_type)
+                if isinstance(item.init, ast.Declaration):
+                    self._collect_struct_defs(item.init)
                 if isinstance(item.body, ast.CompoundStmt):
                     self._collect_struct_defs_from_body(item.body)
-            elif isinstance(item, ast.StructDecl) and item.is_definition and item.name:
-                size = 0
-                if item.is_union:
-                    for m in item.members:
-                        size = max(size, self._var_size(m.member_type))
-                else:
-                    for m in item.members:
-                        size += self._var_size(m.member_type)
-                self.struct_sizes[item.name] = size
+            elif isinstance(item, (ast.IfStmt, ast.IfStmtElse)):
+                if isinstance(item.then_branch, ast.CompoundStmt):
+                    self._collect_struct_defs_from_body(item.then_branch)
+                else_branch = getattr(item, "else_branch", None)
+                if isinstance(else_branch, ast.CompoundStmt):
+                    self._collect_struct_defs_from_body(else_branch)
+            elif isinstance(item, (ast.WhileStmt, ast.DoWhileStmt)):
+                if isinstance(item.body, ast.CompoundStmt):
+                    self._collect_struct_defs_from_body(item.body)
+            elif isinstance(item, ast.SwitchStmt):
+                if isinstance(item.body, ast.CompoundStmt):
+                    self._collect_struct_defs_from_body(item.body)
 
-    def _collect_function_info(self, decl: ast.Declaration) -> None:
+    def _collect_function_info(self, decl) -> None:
         """Collect function names, signatures, and storage requirements."""
-        if isinstance(decl, ast.FunctionDecl):
-            self.call_graph[decl.name] = set()
-            self.is_variadic[decl.name] = decl.is_variadic
-            self.is_static[decl.name] = (decl.storage_class == "static")
+        if isinstance(decl, ast.FunctionDef):
+            name = declarator_ident(decl.declarator)
+            if name is None:
+                return
+            _, fn_type = resolve_type_from_decl(decl.decl_specs, decl.declarator)
+            storage = decl_storage_class(decl.decl_specs)
+            self.call_graph[name] = set()
+            self.is_variadic[name] = fn_type.is_variadic if fn_type.kind == "function" else False
+            self.is_static[name] = (storage == "static")
+            ret_sig = self._type_signature_r(fn_type.return_type) if fn_type.kind == "function" else "unknown"
+            param_sigs = tuple(self._type_signature_r(p) for p in (fn_type.param_types if fn_type.kind == "function" else ()))
+            self.func_signatures[name] = (ret_sig, param_sigs)
+            self.has_body.add(name)
+            self.func_storage[name] = self._calc_locals_size(decl.body) if decl.body else 0
+            return
+        if isinstance(decl, ast.Declaration):
+            storage = decl_storage_class(decl.decl_specs)
+            for name, full, _init, is_fn in iter_var_decls(decl):
+                if not is_fn or name is None:
+                    continue
+                # Function prototype.
+                self.call_graph[name] = self.call_graph.get(name, set())
+                self.is_variadic[name] = full.is_variadic
+                self.is_static[name] = (storage == "static")
+                ret_sig = self._type_signature_r(full.return_type)
+                param_sigs = tuple(self._type_signature_r(p) for p in full.param_types)
+                self.func_signatures[name] = (ret_sig, param_sigs)
+                self.func_storage.setdefault(name, 0)
 
-            # Build signature tuple
-            ret_type = self._type_signature(decl.return_type)
-            param_types = tuple(self._type_signature(p.param_type) for p in decl.params)
-            self.func_signatures[decl.name] = (ret_type, param_types)
-
-            if decl.body:
-                self.has_body.add(decl.name)
-                self.func_storage[decl.name] = self._calc_locals_size(decl.body)
-            else:
-                self.func_storage[decl.name] = 0
-
-        elif isinstance(decl, ast.DeclarationList):
-            for d in decl.declarations:
-                self._collect_function_info(d)
-
-    def _type_signature(self, t: ast.TypeNode) -> str:
-        """Convert a type to a simple signature string for comparison."""
-        if isinstance(t, ast.BasicType):
+    def _type_signature_r(self, t: ResolvedType) -> str:
+        """Convert a ResolvedType to a simple signature string."""
+        if t is None:
+            return "unknown"
+        if t.kind == "basic":
             prefix = "u" if t.is_signed is False else ""
-            return prefix + t.name
-        elif isinstance(t, ast.PointerType):
+            return prefix + (t.name or "int")
+        if t.kind == "pointer":
             return "ptr"
-        elif isinstance(t, ast.ArrayType):
-            return "ptr"  # Arrays decay to pointers
-        elif isinstance(t, ast.FunctionType):
+        if t.kind == "array":
+            return "ptr"
+        if t.kind == "function":
             return "func"
-        elif isinstance(t, ast.StructType):
+        if t.kind == "struct":
             return f"struct_{t.name or 'anon'}"
-        elif isinstance(t, ast.EnumType):
+        if t.kind == "enum":
             return "int"
+        if t.kind == "typedef":
+            return t.name or "unknown"
         return "unknown"
 
     def _calc_locals_size(self, body: ast.CompoundStmt) -> int:
         """Calculate total size needed for local variables."""
         size = 0
-        for item in body.items:
-            if isinstance(item, ast.VarDecl):
-                if item.storage_class != "static":  # Static vars use global storage
-                    size += self._var_size_with_init(item)
-            elif isinstance(item, ast.DeclarationList):
-                for decl in item.declarations:
-                    if isinstance(decl, ast.VarDecl) and decl.storage_class != "static":
-                        size += self._var_size_with_init(decl)
+        for item in body.items or []:
+            if isinstance(item, ast.Declaration):
+                storage = decl_storage_class(item.decl_specs)
+                if storage == "static" or storage == "typedef":
+                    continue
+                for _name, full, init, is_fn in iter_var_decls(item):
+                    if is_fn:
+                        continue
+                    size += self._var_size_with_init_r(full, init)
             elif isinstance(item, ast.CompoundStmt):
                 size += self._calc_locals_size(item)
             elif isinstance(item, ast.ForStmt):
-                if isinstance(item.init, ast.VarDecl):
-                    size += self._var_size_with_init(item.init)
-                elif isinstance(item.init, ast.DeclarationList):
-                    for decl in item.init.declarations:
-                        if isinstance(decl, ast.VarDecl):
-                            size += self._var_size_with_init(decl)
+                if isinstance(item.init, ast.Declaration):
+                    storage = decl_storage_class(item.init.decl_specs)
+                    if storage != "static" and storage != "typedef":
+                        for _name, full, init, is_fn in iter_var_decls(item.init):
+                            if not is_fn:
+                                size += self._var_size_with_init_r(full, init)
                 if isinstance(item.body, ast.CompoundStmt):
                     size += self._calc_locals_size(item.body)
-            elif isinstance(item, ast.IfStmt):
+            elif isinstance(item, (ast.IfStmt, ast.IfStmtElse)):
                 if isinstance(item.then_branch, ast.CompoundStmt):
                     size += self._calc_locals_size(item.then_branch)
-                if isinstance(item.else_branch, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.else_branch)
+                else_b = getattr(item, "else_branch", None)
+                if isinstance(else_b, ast.CompoundStmt):
+                    size += self._calc_locals_size(else_b)
             elif isinstance(item, (ast.WhileStmt, ast.DoWhileStmt)):
                 if isinstance(item.body, ast.CompoundStmt):
                     size += self._calc_locals_size(item.body)
@@ -708,74 +770,87 @@ class CallGraphAnalyzer:
                     size += self._calc_locals_size(fake)
         return size
 
-    def _var_size_with_init(self, decl: ast.VarDecl) -> int:
-        """Return the size of a variable, inferring unsized array size from initializer."""
-        t = decl.var_type
-        if isinstance(t, ast.ArrayType) and t.size is None and decl.init:
-            # Infer array size from initializer
-            init = decl.init
-            if isinstance(init, ast.Compound):
-                init = init.init
-            if isinstance(init, ast.StringLiteral):
-                is_wide = getattr(init, 'is_wide', False)
-                elem_size = 2 if is_wide else 1
-                return (len(init.value) + 1) * elem_size
-            elif isinstance(init, ast.InitializerList):
-                # Braced string literal: char x[] = {"XXX"} -> size is string length + 1
-                if (len(init.values) == 1 and isinstance(init.values[0], ast.StringLiteral)
-                        and isinstance(t.base_type, ast.BasicType)
-                        and t.base_type.name in ("char", "signed char", "unsigned char")):
-                    return len(init.values[0].value) + 1
-                return self._var_size(t.base_type) * len(init.values)
-        return self._var_size(t)
+    def _var_size_with_init_r(self, t: ResolvedType, init) -> int:
+        """Size of a variable from its resolved type and (optional) initializer.
 
-    def _var_size(self, t: ast.TypeNode) -> int:
-        """Return the size of a type in bytes."""
-        if isinstance(t, ast.BasicType):
+        Mirrors the legacy _var_size_with_init: for unsized arrays, infer
+        size from the initializer (string literal length or brace-init
+        element count).
+        """
+        if t.kind == "array" and t.size_expr is None and init is not None:
+            inner = init
+            # Compound literal wraps (type){init}; new AST uses CompoundLiteral
+            if isinstance(inner, (ast.CompoundLiteral, ast.CompoundLiteralEmpty)):
+                inner = inner.items if hasattr(inner, "items") else None
+            if isinstance(inner, ast.StringLiteral):
+                elem_size = 1
+                return (_decoded_str_len(inner.value.text) + 1) * elem_size
+            if isinstance(inner, list) and inner and all(isinstance(p, ast.StringLiteral) for p in inner):
+                total = sum(_decoded_str_len(p.value.text) for p in inner)
+                return total + 1
+            if isinstance(inner, ast.InitializerList):
+                vals = inner.values or []
+                # char x[] = {"XXX"} → string length + 1
+                if (len(vals) == 1 and isinstance(vals[0], ast.StringLiteral)
+                        and t.element is not None and t.element.kind == "basic"
+                        and t.element.name in ("char", "signed char", "unsigned char")):
+                    return _decoded_str_len(vals[0].value.text) + 1
+                if t.element is not None:
+                    return self._var_size_r(t.element) * len(vals)
+        return self._var_size_r(t)
+
+    def _var_size_r(self, t: ResolvedType) -> int:
+        """Size of a ResolvedType in bytes."""
+        if t is None:
+            return 2
+        if t.kind == "basic":
             if t.name == "void":
                 return 0
             size = self.type_config.sizeof_basic(t.name)
             if size is not None:
                 return size
             return self.type_config.int_size
-        elif isinstance(t, ast.PointerType):
+        if t.kind == "pointer":
             return self.type_config.ptr_size
-        elif isinstance(t, ast.ArrayType):
-            base_size = self._var_size(t.base_type)
-            if t.size:
-                if isinstance(t.size, ast.IntLiteral):
-                    return base_size * t.size.value
-                size_val = self._eval_const_expr(t.size)
+        if t.kind == "array":
+            base_size = self._var_size_r(t.element) if t.element else 2
+            if t.size_expr is not None:
+                if isinstance(t.size_expr, ast.IntLiteral):
+                    return base_size * int_value(t.size_expr)
+                size_val = self._eval_const_expr(t.size_expr)
                 if size_val is not None:
                     return base_size * size_val
             return base_size
-        elif isinstance(t, ast.StructType):
-            # Check inline members first
+        if t.kind == "struct":
             if t.members:
                 if t.is_union:
-                    return max((self._var_size(m.member_type) for m in t.members), default=0)
-                else:
-                    return sum(self._var_size(m.member_type) for m in t.members)
-            # Look up from collected struct definitions
+                    return max((self._var_size_r(mt) for (_, mt, _) in t.members), default=0)
+                return sum(self._var_size_r(mt) for (_, mt, _) in t.members)
             if t.name and t.name in self.struct_sizes:
                 return self.struct_sizes[t.name]
-            return 4  # Fallback estimate
+            return 4
+        if t.kind == "enum":
+            return self.type_config.int_size
+        if t.kind == "function":
+            return self.type_config.ptr_size  # function-pointer decay
+        if t.kind == "typedef":
+            return self.type_config.int_size  # unresolved; estimate
         return 2
 
-    def _analyze_function_body(self, func: ast.FunctionDecl) -> None:
-        """Analyze a function body for calls and address-taken functions."""
+    def _analyze_function_body(self, func) -> None:
+        """Analyze a FunctionDef body for calls and address-taken functions."""
         if not func.body:
             return
-
+        name = declarator_ident(func.declarator)
+        if name is None:
+            return
         calls = set()
         address_taken = set()
         indirect_sigs: set[tuple] = set()
-
         self._analyze_stmt(func.body, calls, address_taken, indirect_sigs)
-
-        self.call_graph[func.name] = calls
+        self.call_graph[name] = calls
         self.address_taken.update(address_taken)
-        self.indirect_call_sigs[func.name] = indirect_sigs
+        self.indirect_call_sigs[name] = indirect_sigs
 
     def _analyze_stmt(self, stmt: ast.Statement, calls: set[str],
                       address_taken: set[str], indirect_sigs: set[tuple]) -> None:
