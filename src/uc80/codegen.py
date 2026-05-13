@@ -5357,12 +5357,18 @@ class CodeGenerator:
             self.ctx.emit_instr("ld", f"HL,{val}")
 
         elif isinstance(expr, ast.StringLiteral):
-            from uc_core._const import int_value as _iv  # noqa: F401
-            # Decode the string body once for label naming. The
-            # encoded form lives in the Token text; uc80 stores the
-            # decoded string for emission.
             label = self.ctx.add_string(_decode_string_literal(expr.value.text),
                                         is_wide=_string_is_wide(expr.value.text))
+            self.ctx.emit_instr("ld", f"HL,{label}")
+
+        elif isinstance(expr, list) and expr and all(isinstance(p, ast.StringLiteral) for p in expr):
+            # Adjacent C string literals concatenate. The auto-AST's
+            # <string_literal> rule is a list of <string_piece>; for a
+            # single literal it's a 1-element list, for "a" "b" it's
+            # multiple. Concat the decoded bodies and emit once.
+            decoded = "".join(_decode_string_literal(p.value.text) for p in expr)
+            is_wide = any(_string_is_wide(p.value.text) for p in expr)
+            label = self.ctx.add_string(decoded, is_wide=is_wide)
             self.ctx.emit_instr("ld", f"HL,{label}")
 
         elif isinstance(expr, ast.NullptrLiteral):
