@@ -302,6 +302,21 @@ def declarator_ident(node) -> Optional[str]:
     return None
 
 
+@dataclass
+class _SynthVarDecl:
+    """uc80-internal namespace bundling (name, var_type, init,
+    storage_class) for a single variable declaration. The auto-AST
+    Declaration node carries multiple declarators; we expand them via
+    iter_var_decls and dispatch to per-decl codegen with this shape so
+    the existing decl.name/decl.var_type/decl.init/decl.storage_class
+    accesses keep working unchanged.
+    """
+    name: str
+    var_type: object
+    init: object = None
+    storage_class: "Optional[str]" = None
+
+
 def _decode_string_literal(text: str) -> str:
     """Decode a STRING_LIT source token to the bytes its content represents."""
     if text.startswith("u8"):
@@ -961,7 +976,7 @@ class CallGraphAnalyzer:
             self._analyze_expr(stmt.expr, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.ReturnStmtValue):
             self._analyze_expr(stmt.value, calls, address_taken, indirect_sigs)
-        elif isinstance(stmt, ast.IfStmt):
+        elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
             self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
             self._analyze_stmt(stmt.then_branch, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.IfStmtElse):
@@ -1281,11 +1296,11 @@ class CallGraphAnalyzer:
                 else:
                     count += 1  # Declaration counts as 1
             return count
-        elif isinstance(stmt, ast.IfStmt):
+        elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
             count = 1
             count += self._count_statements(stmt.then_branch)
-            if stmt.else_branch:
-                count += self._count_statements(stmt.else_branch)
+            if getattr(stmt, "else_branch", None):
+                count += self._count_statements(getattr(stmt, "else_branch", None))
             return count
         elif isinstance(stmt, (ast.WhileStmt, ast.DoWhileStmt)):
             return 1 + self._count_statements(stmt.body)
@@ -1573,11 +1588,11 @@ class CallGraphAnalyzer:
                     new_items.append(item)
             return ast.CompoundStmt(items=new_items, pos=stmt.pos)
 
-        elif isinstance(stmt, ast.IfStmt):
+        elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
             return ast.IfStmt(
                 condition=self._inline_expr(stmt.condition, func_bodies, inlineable),
                 then_branch=self._inline_stmt(stmt.then_branch, func_bodies, inlineable),
-                else_branch=self._inline_stmt(stmt.else_branch, func_bodies, inlineable) if stmt.else_branch else None,
+                else_branch=self._inline_stmt(stmt.else_branch, func_bodies, inlineable) if getattr(stmt, "else_branch", None) else None,
                 pos=stmt.pos
             )
 
@@ -1748,11 +1763,11 @@ class CallGraphAnalyzer:
                         for d in item.declarations:
                             if isinstance(d, ast.VarDecl) and d.init:
                                 collect_from_expr(d.init)
-            elif isinstance(stmt, ast.IfStmt):
+            elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
                 collect_from_expr(stmt.condition)
                 collect_from_stmt(stmt.then_branch)
-                if stmt.else_branch:
-                    collect_from_stmt(stmt.else_branch)
+                if getattr(stmt, "else_branch", None):
+                    collect_from_stmt(getattr(stmt, "else_branch", None))
             elif isinstance(stmt, ast.WhileStmt):
                 collect_from_expr(stmt.condition)
                 collect_from_stmt(stmt.body)
@@ -2040,11 +2055,11 @@ class CallGraphAnalyzer:
                     new_items.append(item)
             return ast.CompoundStmt(items=new_items, pos=stmt.pos)
 
-        elif isinstance(stmt, ast.IfStmt):
+        elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
             return ast.IfStmt(
                 condition=self._substitute_param_constants(stmt.condition, param_names, constants),
                 then_branch=self._substitute_stmt_constants(stmt.then_branch, param_names, constants),
-                else_branch=self._substitute_stmt_constants(stmt.else_branch, param_names, constants) if stmt.else_branch else None,
+                else_branch=self._substitute_stmt_constants(stmt.else_branch, param_names, constants) if getattr(stmt, "else_branch", None) else None,
                 pos=stmt.pos
             )
 
@@ -3188,12 +3203,12 @@ class CodeGenerator:
                 for s in stmt.items:
                     if not scan_stmt(s):
                         return False
-            elif isinstance(stmt, ast.IfStmt):
+            elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
                 if not scan_expr(stmt.condition):
                     return False
                 if not scan_stmt(stmt.then_branch):
                     return False
-                if stmt.else_branch and not scan_stmt(stmt.else_branch):
+                if getattr(stmt, "else_branch", None) and not scan_stmt(stmt.else_branch):
                     return False
             elif isinstance(stmt, ast.WhileStmt):
                 if not scan_expr(stmt.condition):
@@ -3342,10 +3357,10 @@ class CodeGenerator:
             elif isinstance(stmt, ast.CompoundStmt):
                 for s in stmt.items:
                     rewrite_stmt(s)
-            elif isinstance(stmt, ast.IfStmt):
+            elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
                 rewrite_stmt(stmt.then_branch)
-                if stmt.else_branch:
-                    rewrite_stmt(stmt.else_branch)
+                if getattr(stmt, "else_branch", None):
+                    rewrite_stmt(getattr(stmt, "else_branch", None))
             elif isinstance(stmt, ast.WhileStmt):
                 rewrite_stmt(stmt.body)
             elif isinstance(stmt, ast.DoWhileStmt):
@@ -3446,11 +3461,11 @@ class CodeGenerator:
             elif isinstance(stmt, ast.CompoundStmt):
                 for s in stmt.items:
                     visit_stmt(s)
-            elif isinstance(stmt, ast.IfStmt):
+            elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
                 visit_expr(stmt.condition)
                 visit_stmt(stmt.then_branch)
-                if stmt.else_branch:
-                    visit_stmt(stmt.else_branch)
+                if getattr(stmt, "else_branch", None):
+                    visit_stmt(getattr(stmt, "else_branch", None))
             elif isinstance(stmt, ast.WhileStmt):
                 visit_expr(stmt.condition)
                 visit_stmt(stmt.body)
@@ -3580,30 +3595,46 @@ class CodeGenerator:
         # Restore block_externs on scope exit
         self.ctx.block_externs = saved_block_externs
 
-    def gen_local_decl(self, decl: ast.Declaration) -> None:
-        """Generate code for a local declaration."""
-        if isinstance(decl, ast.DeclarationList):
-            # Handle multiple declarations (e.g., 'int a, b;')
-            for d in decl.declarations:
-                self.gen_local_decl(d)
-            return
+    def gen_local_decl(self, decl) -> None:
+        """Generate code for a local declaration (auto-AST ast.Declaration).
 
-        if isinstance(decl, ast.StructDecl):
-            # Register local struct/union type declarations
-            self._register_struct(decl)
+        The auto-AST collapses ``T a, b, c;`` into ONE Declaration node
+        with multiple declarators. Dispatch each via a uc_core-internal
+        VarDecl-shaped namespace that the existing per-declarator
+        codegen below already expects.
+        """
+        if not isinstance(decl, ast.Declaration):
             return
-
-        if isinstance(decl, ast.EnumDecl):
-            # Register local enum constants
-            self._register_enum(decl)
+        storage = decl_storage_class(decl.decl_specs)
+        if storage == "typedef":
+            # uc_core typedef registration — handle once per Declaration
+            for name, full, _init, is_fn in iter_var_decls(decl):
+                if name is None or is_fn:
+                    continue
+                # Register typedef name → resolved type for downstream lookup.
+                if hasattr(self, "_register_typedef_name"):
+                    self._register_typedef_name(name, full)
             return
+        # Pick up any inline struct/enum specs from decl_specs.
+        for spec in decl.decl_specs or []:
+            if isinstance(spec, (ast.StructDef, ast.StructAnon)):
+                self._register_struct_from_spec(spec) if hasattr(self, "_register_struct_from_spec") else None
+            elif isinstance(spec, ast.EnumDef):
+                self._register_enum_from_spec(spec) if hasattr(self, "_register_enum_from_spec") else None
 
-        if isinstance(decl, ast.TypedefDecl):
-            # Register local typedef (including inline enum types)
-            self._register_typedef(decl)
-            return
+        for name, full, init, is_fn in iter_var_decls(decl):
+            if name is None or is_fn:
+                continue
+            self._gen_one_var_decl(name, full, init, storage)
 
-        if isinstance(decl, ast.VarDecl):
+    def _gen_one_var_decl(self, name, var_type, init, storage) -> None:
+        """Generate code for one variable declaration (post-iter_var_decls)."""
+        # Synthesise a VarDecl-shaped namespace object so the rest of
+        # the legacy body (rewritten below) can keep using
+        # decl.name / decl.var_type / decl.init / decl.storage_class.
+        decl = _SynthVarDecl(name=name, var_type=var_type, init=init,
+                             storage_class=storage)
+        if True:
             # Register any inline types (e.g., struct defined in local variable decl)
             self._register_inline_types(decl.var_type)
 
@@ -5004,12 +5035,12 @@ class CodeGenerator:
         # Test if result is zero
         self._emit_condition_test(stmt.condition)
 
-        if stmt.else_branch:
+        if getattr(stmt, "else_branch", None):
             self.ctx.emit_instr("jp", f"Z,{else_label}")
             self.gen_statement(stmt.then_branch)
             self.ctx.emit_instr("jp", end_label)
             self.ctx.emit_label(else_label)
-            self.gen_statement(stmt.else_branch)
+            self.gen_statement(getattr(stmt, "else_branch", None))
             self.ctx.emit_label(end_label)
         else:
             self.ctx.emit_instr("jp", f"Z,{end_label}")
@@ -9678,13 +9709,14 @@ class CodeGenerator:
                             size += self._type_size(decl.var_type)
                 if isinstance(item.body, ast.CompoundStmt):
                     size += self._calc_locals_size(item.body)
-            elif isinstance(item, ast.IfStmt):
+            elif isinstance(item, (ast.IfStmt, ast.IfStmtElse)):
                 if isinstance(item.then_branch, ast.CompoundStmt):
                     size += self._calc_locals_size(item.then_branch)
-                if isinstance(item.else_branch, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.else_branch)
-                elif isinstance(item.else_branch, ast.IfStmt):
-                    fake = ast.CompoundStmt(items=[item.else_branch])
+                else_b = getattr(item, "else_branch", None)
+                if isinstance(else_b, ast.CompoundStmt):
+                    size += self._calc_locals_size(else_b)
+                elif isinstance(else_b, (ast.IfStmt, ast.IfStmtElse)):
+                    fake = ast.CompoundStmt(items=[else_b])
                     size += self._calc_locals_size(fake)
             elif isinstance(item, (ast.WhileStmt, ast.DoWhileStmt)):
                 if isinstance(item.body, ast.CompoundStmt):
