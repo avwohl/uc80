@@ -10,6 +10,14 @@ from enum import Enum, auto
 import struct
 from typing import Callable, Iterator, Optional
 from uc_core import ast
+# Codegen-internal synthetic resolved types — the parser doesn't
+# produce these (the auto-AST is declarator-shaped), but codegen
+# needs concrete BasicType / PointerType / ArrayType / FunctionType /
+# StructType / EnumType instances to represent type-query results.
+# Pulled from uc_core.ast_legacy so the field shapes match what
+# every existing isinstance(t, ast.X) check expects after rebinding
+# the names to the legacy classes for type-tree purposes.
+from uc_core import ast_legacy as lt
 from uc_core._const import int_value, int_flags
 from uc_core.type_config import TypeConfig, Z80_CPM
 
@@ -30,7 +38,7 @@ from uc_core.type_config import TypeConfig, Z80_CPM
 class ResolvedType:
     """uc80-internal resolved-type info, derived from the auto-AST.
 
-    Codegen consumes this where it used to consume an ``ast.TypeNode``
+    Codegen consumes this where it used to consume an ``lt.TypeNode``
     subtree (BasicType / PointerType / ArrayType / FunctionType /
     StructType / EnumType). Each instance describes one type "layer":
     ``kind`` selects which fields are meaningful.
@@ -560,7 +568,7 @@ class RegisterAllocator:
 class Symbol:
     """Symbol table entry."""
     name: str
-    sym_type: ast.TypeNode
+    sym_type: lt.TypeNode
     offset: int = 0  # Stack offset for locals (negative from IX)
     is_global: bool = False
     is_param: bool = False
@@ -1335,9 +1343,9 @@ class CallGraphAnalyzer:
 
         return True
 
-    def _is_long_long_type_node(self, t: ast.TypeNode) -> bool:
+    def _is_long_long_type_node(self, t: lt.TypeNode) -> bool:
         """Check if a type node is a 64-bit integer type (byte-width dispatch)."""
-        if isinstance(t, ast.BasicType):
+        if isinstance(t, lt.BasicType):
             size = self.type_config.sizeof_basic(t.name)
             return size == 8 and t.name not in ("float", "double", "long double")
         return False
@@ -1430,7 +1438,7 @@ class CallGraphAnalyzer:
                         if param.name and i < len(new_args):
                             arg = new_args[i]
                             # Wrap in Cast for _Bool parameters (C99 6.3.1.2)
-                            if (isinstance(param.param_type, ast.BasicType)
+                            if (isinstance(param.param_type, lt.BasicType)
                                     and param.param_type.name == 'bool'):
                                 arg = ast.Cast(target_type=param.param_type, expr=arg)
                             param_map[param.name] = arg
@@ -2113,7 +2121,7 @@ class CodeGenContext:
 
     # Current function info
     current_function: Optional[str] = None
-    current_return_type: Optional[ast.TypeNode] = None  # Return type of current function
+    current_return_type: Optional[lt.TypeNode] = None  # Return type of current function
     local_offset: int = 0  # Current stack offset for locals
 
     # Loop context for break/continue
@@ -2124,10 +2132,10 @@ class CodeGenContext:
     runtime_used: set[str] = field(default_factory=set)
 
     # Struct definitions: name -> list of (member_name, member_type, offset)
-    structs: dict[str, list[tuple[str, ast.TypeNode, int]]] = field(default_factory=dict)
+    structs: dict[str, list[tuple[str, lt.TypeNode, int]]] = field(default_factory=dict)
 
     # Anonymous struct/union members: struct_name -> list of (anon_struct_type, offset)
-    anon_members: dict[str, list[tuple[ast.StructType, int]]] = field(default_factory=dict)
+    anon_members: dict[str, list[tuple[lt.StructType, int]]] = field(default_factory=dict)
 
     # Bitfield info: (struct_name, member_name) -> BitfieldInfo
     bitfield_info: dict[tuple[str, str], BitfieldInfo] = field(default_factory=dict)
@@ -2231,10 +2239,10 @@ class CodeGenerator:
         self._switch_cases: list[tuple[int, str]] = []
         self._switch_default: str | None = None
 
-    def _infer_array_size(self, var_type: ast.TypeNode,
-                          init: ast.Expression | None) -> ast.TypeNode:
+    def _infer_array_size(self, var_type: lt.TypeNode,
+                          init: ast.Expression | None) -> lt.TypeNode:
         """Infer array size from initializer for unsized arrays."""
-        if not isinstance(var_type, ast.ArrayType):
+        if not isinstance(var_type, lt.ArrayType):
             return var_type
         if var_type.size is not None:
             return var_type
@@ -2242,7 +2250,7 @@ class CodeGenerator:
         # String literal initializing char/wchar_t array
         if isinstance(init, ast.StringLiteral):
             array_size = len(init.value) + 1  # +1 for null terminator
-            return ast.ArrayType(
+            return lt.ArrayType(
                 base_type=var_type.base_type,
                 size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
             )
@@ -2254,10 +2262,10 @@ class CodeGenerator:
         # A braced string literal initializer for a char array
         base_type = var_type.base_type
         if (len(init.values) == 1 and isinstance(init.values[0], ast.StringLiteral)
-                and isinstance(base_type, ast.BasicType)
+                and isinstance(base_type, lt.BasicType)
                 and base_type.name in ("char", "signed char", "unsigned char")):
             array_size = len(init.values[0].value) + 1  # +1 for null terminator
-            return ast.ArrayType(
+            return lt.ArrayType(
                 base_type=base_type,
                 size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
             )
@@ -2278,7 +2286,7 @@ class CodeGenerator:
                     max_desig_index = max(max_desig_index, end_val)
 
         # Count elements in initializer
-        if isinstance(base_type, ast.StructType):
+        if isinstance(base_type, lt.StructType):
             # Check if initializer uses braced sub-initializers
             # e.g. {{1,2}, {3,4}} - each brace group is one element
             if init.values and isinstance(init.values[0], ast.InitializerList):
@@ -2298,33 +2306,33 @@ class CodeGenerator:
             array_size = max(array_size, max_desig_index + 1)
 
         # Create new ArrayType with inferred size
-        return ast.ArrayType(
+        return lt.ArrayType(
             base_type=base_type,
             size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
         )
 
-    def _merge_array_size(self, name: str, var_type: ast.TypeNode) -> ast.TypeNode:
+    def _merge_array_size(self, name: str, var_type: lt.TypeNode) -> lt.TypeNode:
         """If a prior extern declared a larger array size, use it (C99 6.9.2).
 
         e.g., extern char arr[3]; char arr[] = {1,}; → arr has size 3 with zero-padding.
         """
-        if not isinstance(var_type, ast.ArrayType):
+        if not isinstance(var_type, lt.ArrayType):
             return var_type
         prev = self.ctx.globals.get(name)
-        if not prev or not isinstance(prev.sym_type, ast.ArrayType):
+        if not prev or not isinstance(prev.sym_type, lt.ArrayType):
             return var_type
         prev_size = prev.sym_type.size
         cur_size = var_type.size
         if prev_size is not None and isinstance(prev_size, ast.IntLiteral):
             if cur_size is None or (isinstance(cur_size, ast.IntLiteral)
                                     and cur_size.value < prev_size.value):
-                return ast.ArrayType(
+                return lt.ArrayType(
                     base_type=var_type.base_type,
                     size=prev_size
                 )
         return var_type
 
-    def _count_struct_init_values(self, struct_type: ast.StructType) -> int:
+    def _count_struct_init_values(self, struct_type: lt.StructType) -> int:
         """Count flat values needed to init a struct (for size inference)."""
         # Get members from inline definition or registered structs
         if struct_type.members:
@@ -2344,9 +2352,9 @@ class CodeGenerator:
             count += self._count_member_init_values(m.member_type)
         return count
 
-    def _count_member_init_values(self, member_type: ast.TypeNode) -> int:
+    def _count_member_init_values(self, member_type: lt.TypeNode) -> int:
         """Count flat values for a member type."""
-        if isinstance(member_type, ast.ArrayType):
+        if isinstance(member_type, lt.ArrayType):
             array_size = 1
             if member_type.size:
                 if isinstance(member_type.size, ast.IntLiteral):
@@ -2356,10 +2364,10 @@ class CodeGenerator:
                     if sz is not None:
                         array_size = sz
             base_type = member_type.base_type
-            if isinstance(base_type, ast.StructType):
+            if isinstance(base_type, lt.StructType):
                 return array_size * self._count_struct_init_values(base_type)
             return array_size
-        elif isinstance(member_type, ast.StructType):
+        elif isinstance(member_type, lt.StructType):
             return self._count_struct_init_values(member_type)
         return 1
 
@@ -2525,11 +2533,11 @@ class CodeGenerator:
 
         for d in unit.items:
             decls_to_check = []
-            if isinstance(d, ast.VarDecl) and not isinstance(d.var_type, ast.FunctionType):
+            if isinstance(d, ast.VarDecl) and not isinstance(d.var_type, lt.FunctionType):
                 decls_to_check.append(d)
             elif isinstance(d, ast.DeclarationList):
                 for inner in d.declarations:
-                    if isinstance(inner, ast.VarDecl) and not isinstance(inner.var_type, ast.FunctionType):
+                    if isinstance(inner, ast.VarDecl) and not isinstance(inner.var_type, lt.FunctionType):
                         decls_to_check.append(inner)
             for decl in decls_to_check:
                 if decl.storage_class == "extern" and not decl.init:
@@ -2574,7 +2582,7 @@ class CodeGenerator:
         for label, entry in self.ctx.static_locals.items():
             var_type, init = entry[0], entry[1]
             resolved_addr = entry[2] if len(entry) > 2 else None
-            if resolved_addr and isinstance(var_type, ast.PointerType):
+            if resolved_addr and isinstance(var_type, lt.PointerType):
                 init_statics.append((label, entry, True))  # has resolved addr
             elif init:
                 init_statics.append((label, entry, False))
@@ -2686,7 +2694,7 @@ class CodeGenerator:
             # Register any inline types (enums, etc.)
             self._register_inline_types(decl.var_type)
             # Check if this is a function declaration (parsed as VarDecl with FunctionType)
-            if isinstance(decl.var_type, ast.FunctionType):
+            if isinstance(decl.var_type, lt.FunctionType):
                 # This is a function declaration without body - emit EXTRN
                 # (but not for static functions or functions defined in this file)
                 if decl.storage_class != "static" and decl.name not in self.ctx.function_names:
@@ -2705,8 +2713,8 @@ class CodeGenerator:
             self._register_typedef(decl)
 
     def _compute_struct_layout(self, struct_name: str, ast_members: list[ast.StructMember],
-                                is_union: bool) -> tuple[list[tuple[str, ast.TypeNode, int]],
-                                                          list[tuple[ast.StructType, int]], int]:
+                                is_union: bool) -> tuple[list[tuple[str, lt.TypeNode, int]],
+                                                          list[tuple[lt.StructType, int]], int]:
         """Compute struct layout with bitfield packing.
 
         Returns (members, anon_list, total_size) where members is a list of
@@ -2733,7 +2741,7 @@ class CodeGenerator:
                 type_size = self._type_size(member.member_type)
                 max_bits = type_size * 8
                 # Enum bitfields are unsigned (matches GCC; C leaves it impl-defined)
-                bf_signed = (not isinstance(member.member_type, ast.EnumType)
+                bf_signed = (not isinstance(member.member_type, lt.EnumType)
                              and self._is_signed_type(member.member_type))
 
                 if bf_width == 0:
@@ -2805,7 +2813,7 @@ class CodeGenerator:
 
                 if member.name:
                     members.append((member.name, member.member_type, offset))
-                elif isinstance(member.member_type, ast.StructType):
+                elif isinstance(member.member_type, lt.StructType):
                     anon_list.append((member.member_type, offset))
 
                 if not is_union:
@@ -2876,7 +2884,7 @@ class CodeGenerator:
             return self._eval_enum_expr(expr.expr)
         return None
 
-    def _register_enum_type_values(self, enum_type: ast.EnumType) -> None:
+    def _register_enum_type_values(self, enum_type: lt.EnumType) -> None:
         """Register enum constants from an inline EnumType."""
         if not enum_type.values:
             return
@@ -2908,11 +2916,11 @@ class CodeGenerator:
             self.ctx.enum_constants[enum_val.name] = next_value
             next_value += 1
 
-    def _register_inline_types(self, type_node: ast.TypeNode) -> None:
+    def _register_inline_types(self, type_node: lt.TypeNode) -> None:
         """Recursively register inline type definitions (enums in structs, etc.)."""
-        if isinstance(type_node, ast.EnumType):
+        if isinstance(type_node, lt.EnumType):
             self._register_enum_type_values(type_node)
-        elif isinstance(type_node, ast.StructType):
+        elif isinstance(type_node, lt.StructType):
             # Register the struct with member offsets if it has a name and members
             if type_node.name and type_node.members and type_node.name not in self.ctx.structs:
                 members, anon_list, total_size = self._compute_struct_layout(
@@ -2924,11 +2932,11 @@ class CodeGenerator:
             # Also register any nested inline types
             for member in type_node.members:
                 self._register_inline_types(member.member_type)
-        elif isinstance(type_node, ast.PointerType):
+        elif isinstance(type_node, lt.PointerType):
             self._register_inline_types(type_node.base_type)
-        elif isinstance(type_node, ast.ArrayType):
+        elif isinstance(type_node, lt.ArrayType):
             self._register_inline_types(type_node.base_type)
-        elif isinstance(type_node, ast.FunctionType):
+        elif isinstance(type_node, lt.FunctionType):
             self._register_inline_types(type_node.return_type)
             for param_type in type_node.param_types:
                 self._register_inline_types(param_type)
@@ -2938,7 +2946,7 @@ class CodeGenerator:
         # Register any inline types first
         self._register_inline_types(decl.target_type)
 
-        if isinstance(decl.target_type, ast.StructType):
+        if isinstance(decl.target_type, lt.StructType):
             struct_type = decl.target_type
             # If it's an anonymous struct with inline members, register under typedef name
             if struct_type.members:
@@ -3593,7 +3601,7 @@ class CodeGenerator:
                 return
 
             # Infer array size from initializer for unsized arrays (e.g., char s[] = "hello")
-            if isinstance(decl.var_type, ast.ArrayType) and decl.var_type.size is None and decl.init:
+            if isinstance(decl.var_type, lt.ArrayType) and decl.var_type.size is None and decl.init:
                 decl.var_type = self._infer_array_size(decl.var_type, decl.init)
 
             size = self._type_size(decl.var_type)
@@ -3629,30 +3637,30 @@ class CodeGenerator:
                     init_type = decl.init.target_type
 
                 # Handle string literal initializing an array (char[] or wchar_t[])
-                if isinstance(init_type, ast.ArrayType) and isinstance(init, ast.StringLiteral):
+                if isinstance(init_type, lt.ArrayType) and isinstance(init, ast.StringLiteral):
                     sym = self.ctx.locals[decl.name]
                     self._gen_local_string_array_init(sym, init_type, init)
                 # Handle braced string literal: char x[] = {"XXX"}
-                elif (isinstance(init_type, ast.ArrayType) and isinstance(init, ast.InitializerList)
+                elif (isinstance(init_type, lt.ArrayType) and isinstance(init, ast.InitializerList)
                       and len(init.values) == 1 and isinstance(init.values[0], ast.StringLiteral)
-                      and isinstance(init_type.base_type, ast.BasicType)
+                      and isinstance(init_type.base_type, lt.BasicType)
                       and init_type.base_type.name in ("char", "signed char", "unsigned char")):
                     sym = self.ctx.locals[decl.name]
                     self._gen_local_string_array_init(sym, init_type, init.values[0])
                 # Handle array initialization specially
-                elif isinstance(init_type, ast.ArrayType) and isinstance(init, ast.InitializerList):
+                elif isinstance(init_type, lt.ArrayType) and isinstance(init, ast.InitializerList):
                     # Temporarily replace decl.init with unwrapped init
                     old_init = decl.init
                     decl.init = init
                     self._gen_local_array_init(decl)
                     decl.init = old_init
-                elif isinstance(init_type, ast.StructType) and isinstance(init, ast.InitializerList):
+                elif isinstance(init_type, lt.StructType) and isinstance(init, ast.InitializerList):
                     # Temporarily replace decl.init with unwrapped init
                     old_init = decl.init
                     decl.init = init
                     self._gen_local_struct_init(decl)
                     decl.init = old_init
-                elif isinstance(decl.var_type, ast.StructType):
+                elif isinstance(decl.var_type, lt.StructType):
                     # Struct copy from expression (e.g., *ptr, or struct variable)
                     self._gen_struct_copy_from_expr(decl)
                 else:
@@ -3740,7 +3748,7 @@ class CodeGenerator:
     def _gen_static_local(self, decl: ast.VarDecl) -> None:
         """Handle static local variable."""
         # Infer array size from initializer for unsized arrays
-        if isinstance(decl.var_type, ast.ArrayType) and decl.var_type.size is None and decl.init:
+        if isinstance(decl.var_type, lt.ArrayType) and decl.var_type.size is None and decl.init:
             decl.var_type = self._infer_array_size(decl.var_type, decl.init)
 
         # Generate unique label for this static variable
@@ -3772,7 +3780,7 @@ class CodeGenerator:
         # Store type, init value, and pre-resolved address for data segment emission
         self.ctx.static_locals[label] = (decl.var_type, decl.init, resolved_addr)
 
-    def _gen_local_string_array_init(self, sym: 'Symbol', array_type: ast.ArrayType,
+    def _gen_local_string_array_init(self, sym: 'Symbol', array_type: lt.ArrayType,
                                       string_lit: ast.StringLiteral) -> None:
         """Initialize a local char/wchar_t array from a string literal."""
         is_wide = getattr(string_lit, 'is_wide', False)
@@ -3813,7 +3821,7 @@ class CodeGenerator:
 
         # Detect flat/mixed init for arrays of aggregates (sub-arrays or structs)
         # e.g., float y[4][3] = { 1, 3, 5, 2, 4, 6, 3, 5, 7 }
-        if isinstance(elem_type, (ast.StructType, ast.ArrayType)) and init_list.values:
+        if isinstance(elem_type, (lt.StructType, lt.ArrayType)) and init_list.values:
             has_flat = any(not isinstance(v, (ast.InitializerList, ast.DesignatedInit))
                           for v in init_list.values)
             if has_flat:
@@ -3847,7 +3855,7 @@ class CodeGenerator:
             offset = i * elem_size
 
             # Handle aggregate element types (struct/array) with InitializerList
-            if isinstance(elem_type, (ast.StructType, ast.ArrayType)) and isinstance(val, ast.InitializerList):
+            if isinstance(elem_type, (lt.StructType, lt.ArrayType)) and isinstance(val, ast.InitializerList):
                 self._gen_store_member_value(sym, elem_type, offset, val)
                 continue
 
@@ -3897,7 +3905,7 @@ class CodeGenerator:
         init_list = decl.init
 
         # Get struct members (handles both named and anonymous structs)
-        if not isinstance(struct_type, ast.StructType):
+        if not isinstance(struct_type, lt.StructType):
             return
         members = self._get_struct_members(struct_type)
         if not members:
@@ -4007,7 +4015,7 @@ class CodeGenerator:
         self.ctx.emit_instr("ld", f"BC,{struct_size}")
         self.ctx.emit_instr("ldir")
 
-    def _gen_struct_init_values(self, sym: 'Symbol', struct_type: ast.StructType,
+    def _gen_struct_init_values(self, sym: 'Symbol', struct_type: lt.StructType,
                                 values: list, base_offset: int) -> int:
         """Generate code to store struct initializer values. Returns number of values consumed."""
         members = self._get_struct_members(struct_type)
@@ -4033,13 +4041,13 @@ class CodeGenerator:
                 val = values[0]
                 if isinstance(val, ast.DesignatedInit):
                     val = val.value
-                if isinstance(member_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+                if isinstance(member_type, lt.ArrayType) and not isinstance(val, ast.InitializerList):
                     if isinstance(val, ast.StringLiteral) and self._is_char_array(member_type):
                         self._gen_string_init(sym, member_type, val, base_offset + member_offset)
                         return 1
                     else:
                         return self._gen_flat_array_init(sym, member_type, values, 0, base_offset + member_offset)
-                elif isinstance(member_type, ast.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
+                elif isinstance(member_type, lt.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
                     return self._gen_struct_init_values(sym, member_type, values, base_offset + member_offset)
                 else:
                     self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
@@ -4081,7 +4089,7 @@ class CodeGenerator:
                 value_index += 1
                 self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
                 continue
-            elif isinstance(member_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+            elif isinstance(member_type, lt.ArrayType) and not isinstance(val, ast.InitializerList):
                 # Check for string literal initializing char array
                 if isinstance(val, ast.StringLiteral) and self._is_char_array(member_type):
                     value_index += 1
@@ -4090,11 +4098,11 @@ class CodeGenerator:
                     # Flat initialization for array member - consume multiple values
                     consumed = self._gen_flat_array_init(sym, member_type, values, value_index, base_offset + member_offset)
                     value_index += consumed
-            elif isinstance(member_type, ast.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
+            elif isinstance(member_type, lt.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
                 # Check if value is an identifier referring to a struct variable
                 if isinstance(val, ast.Identifier):
                     src_sym = self.ctx.lookup(val.name)
-                    if src_sym and isinstance(src_sym.sym_type, ast.StructType):
+                    if src_sym and isinstance(src_sym.sym_type, lt.StructType):
                         # Copy the struct
                         value_index += 1
                         member_size = self._type_size(member_type)
@@ -4128,7 +4136,7 @@ class CodeGenerator:
 
         return value_index
 
-    def _gen_struct_init_designated(self, sym: 'Symbol', struct_type: ast.StructType,
+    def _gen_struct_init_designated(self, sym: 'Symbol', struct_type: lt.StructType,
                                      members: list, values: list, base_offset: int) -> int:
         """Handle local struct init with member designators (e.g., .a.j = 5).
 
@@ -4158,7 +4166,7 @@ class CodeGenerator:
                     active_nested_size = 0
                     active_nested_pos = 0
                     for mname, mtype, moff in members:
-                        if mname == desig_name and isinstance(mtype, ast.ArrayType) and mtype.size is not None:
+                        if mname == desig_name and isinstance(mtype, lt.ArrayType) and mtype.size is not None:
                             sz = mtype.size
                             active_nested_size = sz.value if isinstance(sz, ast.IntLiteral) else (sz if isinstance(sz, int) else 0)
                             last_desig = val.designators[-1]
@@ -4204,7 +4212,7 @@ class CodeGenerator:
             val = member_vals[member_name]
             if isinstance(val, list):
                 # Nested designators - list of (designators, value)
-                if isinstance(member_type, ast.ArrayType):
+                if isinstance(member_type, lt.ArrayType):
                     # Build index -> value map for array
                     elem_type = member_type.base_type
                     elem_size = self._type_size(elem_type)
@@ -4222,7 +4230,7 @@ class CodeGenerator:
                                 offset = base_offset + member_offset + idx_val * elem_size
                                 self._gen_store_member_value(sym, elem_type, offset, sub_val)
                                 next_idx = idx_val + 1
-                elif isinstance(member_type, ast.StructType) and member_type.name and member_type.name in self.ctx.structs:
+                elif isinstance(member_type, lt.StructType) and member_type.name and member_type.name in self.ctx.structs:
                     sub_members = self.ctx.structs[member_type.name]
                     for sub_desigs, sub_val in val:
                         if sub_desigs is not None and len(sub_desigs) == 1 and isinstance(sub_desigs[0], str):
@@ -4374,7 +4382,7 @@ class CodeGenerator:
         self.ctx.emit_instr("ld", f"BC,{size}")
         self.ctx.emit_instr("ldir")  # Copy BC bytes from HL to DE
 
-    def _gen_flat_array_init(self, sym: 'Symbol', array_type: ast.ArrayType,
+    def _gen_flat_array_init(self, sym: 'Symbol', array_type: lt.ArrayType,
                              values: list, start_index: int, base_offset: int) -> int:
         """Initialize an array from flat values. Returns number of values consumed."""
         elem_type = array_type.base_type
@@ -4408,11 +4416,11 @@ class CodeGenerator:
             offset = base_offset + i * elem_size
 
             # Handle nested types
-            if isinstance(elem_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+            if isinstance(elem_type, lt.StructType) and not isinstance(val, ast.InitializerList):
                 # Check if value is an identifier referring to a struct variable
                 if isinstance(val, ast.Identifier):
                     src_sym = self.ctx.lookup(val.name)
-                    if src_sym and isinstance(src_sym.sym_type, ast.StructType):
+                    if src_sym and isinstance(src_sym.sym_type, lt.StructType):
                         # Copy the struct
                         self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                         consumed += 1
@@ -4428,7 +4436,7 @@ class CodeGenerator:
                     continue
                 nested_consumed = self._gen_struct_init_values(sym, elem_type, values[idx:], offset)
                 consumed += nested_consumed
-            elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+            elif isinstance(elem_type, lt.ArrayType) and not isinstance(val, ast.InitializerList):
                 nested_consumed = self._gen_flat_array_init(sym, elem_type, values, idx, offset)
                 consumed += nested_consumed
             else:
@@ -4473,14 +4481,14 @@ class CodeGenerator:
 
         return consumed
 
-    def _is_char_array(self, array_type: ast.ArrayType) -> bool:
+    def _is_char_array(self, array_type: lt.ArrayType) -> bool:
         """Check if array is a char array (can be initialized with string literal)."""
         base = array_type.base_type
-        if isinstance(base, ast.BasicType) and base.name == "char":
+        if isinstance(base, lt.BasicType) and base.name == "char":
             return True
         return False
 
-    def _gen_string_init(self, sym: 'Symbol', array_type: ast.ArrayType, string_lit: ast.StringLiteral, base_offset: int) -> None:
+    def _gen_string_init(self, sym: 'Symbol', array_type: lt.ArrayType, string_lit: ast.StringLiteral, base_offset: int) -> None:
         """Initialize a char array from a string literal."""
         string_val = string_lit.value + '\0'  # Include null terminator
         array_size = 1
@@ -4516,7 +4524,7 @@ class CodeGenerator:
                 self.ctx.emit_instr("xor", "a")
                 self.ctx.emit_instr("ld", f"({ix_off(frame_off)}),A")
 
-    def _gen_zero_init_member(self, sym: 'Symbol', member_type: ast.TypeNode, offset: int) -> None:
+    def _gen_zero_init_member(self, sym: 'Symbol', member_type: lt.TypeNode, offset: int) -> None:
         """Zero-initialize a struct member."""
         size = self._type_size(member_type)
         # For now, just store zeros
@@ -4545,7 +4553,7 @@ class CodeGenerator:
                 else:
                     self.ctx.emit_instr("ld", f"({ix_off(frame_off + i)}),L")
 
-    def _gen_store_member_value(self, sym: 'Symbol', member_type: ast.TypeNode,
+    def _gen_store_member_value(self, sym: 'Symbol', member_type: lt.TypeNode,
                                  offset: int, val: ast.Expression) -> None:
         """Store a value at a struct member's location."""
         is_long = self._is_long_type(member_type)
@@ -4554,40 +4562,40 @@ class CodeGenerator:
         member_size = self._type_size(member_type)
 
         # Handle nested struct initialization
-        if isinstance(member_type, ast.StructType) and isinstance(val, ast.InitializerList):
+        if isinstance(member_type, lt.StructType) and isinstance(val, ast.InitializerList):
             self._gen_struct_init_values(sym, member_type, val.values, offset)
             return
 
         # Handle compound literal: (struct S){...}
-        if isinstance(member_type, ast.StructType) and isinstance(val, ast.Compound):
+        if isinstance(member_type, lt.StructType) and isinstance(val, ast.Compound):
             if isinstance(val.init, ast.InitializerList):
                 self._gen_struct_init_values(sym, member_type, val.init.values, offset)
             return
 
         # Handle nested array initialization
-        if isinstance(member_type, ast.ArrayType) and isinstance(val, ast.InitializerList):
+        if isinstance(member_type, lt.ArrayType) and isinstance(val, ast.InitializerList):
             self._gen_array_init_values(sym, member_type, val.values, offset)
             return
 
         # Handle struct copy from another struct variable
-        if isinstance(member_type, ast.StructType) and isinstance(val, ast.Identifier):
+        if isinstance(member_type, lt.StructType) and isinstance(val, ast.Identifier):
             src_sym = self.ctx.lookup(val.name)
-            if src_sym and isinstance(src_sym.sym_type, ast.StructType):
+            if src_sym and isinstance(src_sym.sym_type, lt.StructType):
                 self._gen_struct_copy(sym, offset, src_sym, 0, member_size)
                 return
 
         # Handle struct copy from pointer dereference
-        if isinstance(member_type, ast.StructType) and isinstance(val, ast.UnaryOp) and val.op == "*":
+        if isinstance(member_type, lt.StructType) and isinstance(val, ast.UnaryOp) and val.op == "*":
             self._gen_struct_copy_from_expr_to_member(sym, offset, val, member_size)
             return
 
         # Handle struct copy from member access (e.g., phdr->daddr)
-        if isinstance(member_type, ast.StructType) and isinstance(val, ast.Member):
+        if isinstance(member_type, lt.StructType) and isinstance(val, ast.Member):
             self._gen_struct_copy_from_addr_expr(sym, offset, val, member_size)
             return
 
         # Handle struct copy from cast of addressable expression (e.g., (struct S)w->t.s)
-        if isinstance(member_type, ast.StructType) and isinstance(val, ast.Cast):
+        if isinstance(member_type, lt.StructType) and isinstance(val, ast.Cast):
             inner = val.expr
             if isinstance(inner, (ast.Member, ast.UnaryOp, ast.Identifier)):
                 self._gen_struct_copy_from_addr_expr(sym, offset, inner, member_size)
@@ -4704,9 +4712,9 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", f"({ix_off(frame_off + 1)}),A")
         else:
             # 4-byte: fall back to full-width store (sub-word 32-bit bitfield init is rare)
-            self._gen_store_member_value(sym, ast.BasicType(name="long"), offset, val)
+            self._gen_store_member_value(sym, lt.BasicType(name="long"), offset, val)
 
-    def _gen_array_init_values(self, sym: 'Symbol', array_type: ast.ArrayType,
+    def _gen_array_init_values(self, sym: 'Symbol', array_type: lt.ArrayType,
                                 values: list, base_offset: int) -> None:
         """Generate code to store array initializer values at an offset."""
         elem_type = array_type.base_type
@@ -4746,7 +4754,7 @@ class CodeGenerator:
             return
 
         # Detect flat init: scalar values for aggregate element types
-        if isinstance(elem_type, (ast.StructType, ast.ArrayType)) and values:
+        if isinstance(elem_type, (lt.StructType, lt.ArrayType)) and values:
             has_flat = any(not isinstance(v, (ast.InitializerList, ast.DesignatedInit))
                           for v in values)
             if has_flat:
@@ -4760,17 +4768,17 @@ class CodeGenerator:
             offset = base_offset + i * elem_size
 
             # Handle nested initialization
-            if isinstance(elem_type, ast.StructType) and isinstance(val, ast.InitializerList):
+            if isinstance(elem_type, lt.StructType) and isinstance(val, ast.InitializerList):
                 self._gen_struct_init_values(sym, elem_type, val.values, offset)
                 continue
-            if isinstance(elem_type, ast.ArrayType) and isinstance(val, ast.InitializerList):
+            if isinstance(elem_type, lt.ArrayType) and isinstance(val, ast.InitializerList):
                 self._gen_array_init_values(sym, elem_type, val.values, offset)
                 continue
 
             # Handle struct copy from identifier
-            if isinstance(elem_type, ast.StructType) and isinstance(val, ast.Identifier):
+            if isinstance(elem_type, lt.StructType) and isinstance(val, ast.Identifier):
                 src_sym = self.ctx.lookup(val.name)
-                if src_sym and isinstance(src_sym.sym_type, ast.StructType):
+                if src_sym and isinstance(src_sym.sym_type, lt.StructType):
                     self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                     continue
 
@@ -4778,7 +4786,7 @@ class CodeGenerator:
             # gen_expr on a struct compound returns its address; we need an
             # actual byte copy into the array slot, not the address stored
             # into the first member.
-            if isinstance(elem_type, ast.StructType) and isinstance(val, ast.Compound):
+            if isinstance(elem_type, lt.StructType) and isinstance(val, ast.Compound):
                 self._gen_struct_copy_from_addr_expr(sym, offset, val, elem_size)
                 continue
 
@@ -4828,7 +4836,7 @@ class CodeGenerator:
             tail_bytes = (declared_n - len(values)) * elem_size
             self._gen_zero_init_region(sym, tail_off, tail_bytes)
 
-    def _gen_designated_array_init_local(self, sym: 'Symbol', array_type: ast.ArrayType,
+    def _gen_designated_array_init_local(self, sym: 'Symbol', array_type: lt.ArrayType,
                                           values: list, base_offset: int) -> None:
         """Generate code for local array init with designated [index] or [start...end] designators."""
         elem_type = array_type.base_type
@@ -4858,16 +4866,18 @@ class CodeGenerator:
                 self._gen_store_member_value(sym, elem_type, offset, val)
                 next_index += 1
 
-    def gen_statement(self, stmt: ast.Statement) -> None:
-        """Generate code for a statement."""
-        if isinstance(stmt, ast.ReturnStmt):
+    def gen_statement(self, stmt) -> None:
+        """Generate code for a statement (auto-AST kinds)."""
+        if isinstance(stmt, (ast.ReturnStmt, ast.ReturnStmtValue)):
             self.gen_return(stmt)
         elif isinstance(stmt, ast.ExpressionStmt):
             if stmt.expr:
                 self.gen_expr(stmt.expr)
+        elif isinstance(stmt, ast.EmptyStmt):
+            pass
         elif isinstance(stmt, ast.CompoundStmt):
             self.gen_compound_stmt(stmt)
-        elif isinstance(stmt, ast.IfStmt):
+        elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
             self.gen_if(stmt)
         elif isinstance(stmt, ast.WhileStmt):
             self.gen_while(stmt)
@@ -4883,66 +4893,55 @@ class CodeGenerator:
             self.gen_switch(stmt)
         elif isinstance(stmt, ast.CaseStmt):
             self.gen_case(stmt)
+        elif isinstance(stmt, ast.DefaultStmt):
+            # default: just emit a label + recurse into inner stmt
+            self.gen_statement(stmt.stmt)
         elif isinstance(stmt, ast.LabelStmt):
             self.gen_label(stmt)
         elif isinstance(stmt, ast.GotoStmt):
             self.gen_goto(stmt)
 
-    def gen_return(self, stmt: ast.ReturnStmt) -> None:
-        """Generate code for return statement."""
-        if stmt.value:
+    def gen_return(self, stmt) -> None:
+        """Generate code for `return;` (ReturnStmt) or `return expr;`
+        (ReturnStmtValue) — auto-AST splits the two."""
+        value = stmt.value if isinstance(stmt, ast.ReturnStmtValue) else None
+        if value is not None:
             ret_type = self.ctx.current_return_type
-            # Check for struct return > 2 bytes
-            if isinstance(ret_type, ast.StructType) and self._type_size(ret_type) > 2:
+            # ret_type is a ResolvedType (kind: basic / pointer / array /
+            # function / struct / enum / typedef).
+            ret_kind = getattr(ret_type, "kind", None) if ret_type else None
+
+            if ret_kind == "struct" and self._type_size(ret_type) > 2:
                 struct_size = self._type_size(ret_type)
                 self.ctx.runtime_used.add("__sret_buf")
-                # Get source address of the struct value
-                self._gen_address(stmt.value)
-                # Copy struct to __sret_buf: HL = source, DE = __sret_buf, BC = size
+                self._gen_address(value)
                 self.ctx.emit_instr("ld", "DE,__sret_buf")
                 self.ctx.emit_instr("ld", f"BC,{struct_size}")
                 self.ctx.emit_instr("ldir")
-                # Return address of __sret_buf
                 self.ctx.emit_instr("ld", "HL,__sret_buf")
             elif self._is_long_long_type(ret_type):
-                # 64-bit return: generate value into __acc64
-                self._gen_64bit_operand(stmt.value, to_tmp=False)
-                # Caller retrieves from __acc64
+                self._gen_64bit_operand(value, to_tmp=False)
             else:
                 return_is_long = self._is_long_type(ret_type)
                 return_is_float = self._is_float_type(ret_type)
-                expr_is_float = self._is_float_expr(stmt.value)
-                # Generate expression, forcing long if return type is long
-                self.gen_expr(stmt.value, force_long=return_is_long or return_is_float)
-                # Convert float expression to int/long return type
+                expr_is_float = self._is_float_expr(value)
+                self.gen_expr(value, force_long=return_is_long or return_is_float)
                 if expr_is_float and not return_is_float:
-                    self._call_runtime("__ftoi")  # returns 32-bit in DEHL
-                # Convert int expression to float return type
+                    self._call_runtime("__ftoi")
                 elif return_is_float and not expr_is_float:
-                    if not self._is_long_expr(stmt.value):
-                        self._extend_hl_to_dehl(self._is_signed_type(self._get_expr_type(stmt.value)))
+                    if not self._is_long_expr(value):
+                        self._extend_hl_to_dehl(self._is_signed_type(self._get_expr_type(value)))
                     self._call_runtime("__itof")
-                # Extend to 32-bit if return type is long but expression is not
-                elif return_is_long and not self._is_long_expr(stmt.value) and not expr_is_float:
-                    is_signed = self._is_signed_type(self._get_expr_type(stmt.value))
+                elif return_is_long and not self._is_long_expr(value) and not expr_is_float:
+                    is_signed = self._is_signed_type(self._get_expr_type(value))
                     self._extend_hl_to_dehl(is_signed)
                 else:
-                    # Truncate to the declared return type's width.  Without
-                    # this, `uint8_t f(uint8_t s) { return s<<2; }` returns
-                    # the full 16-bit arithmetic result (0x290 for s=0xa4)
-                    # and the caller's comparison against an explicit
-                    # (uint8_t) cast sees the un-truncated upper bits.
                     ret_size = self._type_size(ret_type) if ret_type else 2
                     if ret_size == 1:
-                        # Skip when the value is a compile-time IntLiteral
-                        # that already fits in the target type — gen_expr
-                        # emitted the right HL.  Skipping also dodges a
-                        # peephole rule that would otherwise eat
-                        # `LD HL,N; LD A,L` and leave H undefined.
                         is_signed = self._is_signed_type(ret_type)
                         skip = False
-                        if isinstance(stmt.value, ast.IntLiteral):
-                            v = stmt.value.value
+                        if isinstance(value, ast.IntLiteral):
+                            v = int_value(value)
                             if is_signed:
                                 if -128 <= v <= 127:
                                     skip = True
@@ -4951,7 +4950,6 @@ class CodeGenerator:
                                     skip = True
                         if not skip:
                             if is_signed:
-                                # Sign-extend low byte into high byte
                                 self.ctx.emit_instr("ld", "A,L")
                                 self.ctx.emit_instr("rla")
                                 self.ctx.emit_instr("sbc", "A,A")
@@ -5339,7 +5337,7 @@ class CodeGenerator:
         elif isinstance(expr, ast.Compound):
             # Compound literal: (type){initializer}
             target_type = expr.target_type
-            if isinstance(target_type, (ast.StructType, ast.ArrayType)):
+            if isinstance(target_type, (lt.StructType, lt.ArrayType)):
                 # Struct/array compound literal: materialize in memory, return address
                 label = self._materialize_compound_literal(expr)
                 self.ctx.emit_instr("ld", f"HL,{label}")
@@ -5448,12 +5446,12 @@ class CodeGenerator:
         # Check if this is a function (name matches a function we've seen)
         # Functions used as values decay to pointers - load address, not value
         # Only apply to global symbols - local variables can shadow function names
-        if isinstance(sym.sym_type, ast.FunctionType) or (sym.is_global and expr.name in self.ctx.function_names):
+        if isinstance(sym.sym_type, lt.FunctionType) or (sym.is_global and expr.name in self.ctx.function_names):
             self.ctx.emit_instr("ld", f"HL,{sym.label()}")
             return
 
         # Arrays decay to pointers - return address, not value
-        if isinstance(sym.sym_type, ast.ArrayType):
+        if isinstance(sym.sym_type, lt.ArrayType):
             if sym.is_global:
                 self.ctx.emit_instr("ld", f"HL,{sym.label()}")
             elif sym.uses_shared_storage:
@@ -5603,13 +5601,13 @@ class CodeGenerator:
         if op in ("+", "-"):
             left_type = self._get_expr_type(expr.left)
             right_type = self._get_expr_type(expr.right)
-            if isinstance(left_type, (ast.PointerType, ast.ArrayType)):
+            if isinstance(left_type, (lt.PointerType, lt.ArrayType)):
                 base = left_type.base_type
                 ptr_elem_size = self._type_size(base) if base else 1
-                if isinstance(right_type, (ast.PointerType, ast.ArrayType)):
+                if isinstance(right_type, (lt.PointerType, lt.ArrayType)):
                     # ptr - ptr: result is element count
                     ptr_sub = True
-            elif isinstance(right_type, (ast.PointerType, ast.ArrayType)):
+            elif isinstance(right_type, (lt.PointerType, lt.ArrayType)):
                 base = right_type.base_type
                 ptr_elem_size = self._type_size(base) if base else 1
 
@@ -5625,7 +5623,7 @@ class CodeGenerator:
         # Scale integer operand for pointer arithmetic (ptr + n -> ptr + n*size)
         if ptr_elem_size > 1 and not ptr_sub:
             right_type = self._get_expr_type(expr.right)
-            if not isinstance(right_type, (ast.PointerType, ast.ArrayType)):
+            if not isinstance(right_type, (lt.PointerType, lt.ArrayType)):
                 # Right is the integer - scale it
                 self._gen_mul_const(ptr_elem_size)
             # else: left is the integer, already on stack - need different approach
@@ -6386,7 +6384,7 @@ class CodeGenerator:
             return
 
         # Struct/union assignment: copy entire struct via LDIR
-        if isinstance(target_type, ast.StructType):
+        if isinstance(target_type, lt.StructType):
             struct_size = self._type_size(target_type)
             if struct_size > 2:
                 self._gen_struct_assignment(expr, struct_size)
@@ -6866,8 +6864,8 @@ class CodeGenerator:
             # Check if we're dereferencing a function pointer
             # Dereferencing a function pointer is a no-op (functions decay to pointers)
             operand_type = self._get_expr_type(expr.operand)
-            if isinstance(operand_type, ast.PointerType):
-                if isinstance(operand_type.base_type, ast.FunctionType):
+            if isinstance(operand_type, lt.PointerType):
+                if isinstance(operand_type.base_type, lt.FunctionType):
                     # *func_ptr is just func_ptr - no actual load needed
                     return
 
@@ -6877,7 +6875,7 @@ class CodeGenerator:
             if deref_size == 1:
                 # 8-bit load, sign/zero-extend to HL
                 deref_signed = True
-                if isinstance(operand_type, ast.PointerType):
+                if isinstance(operand_type, lt.PointerType):
                     deref_signed = self._is_signed_type(operand_type.base_type)
                 self.ctx.emit_instr("ld", "L,(HL)")
                 self._emit_char_to_hl(deref_signed)
@@ -6957,7 +6955,7 @@ class CodeGenerator:
                         self.ctx.emit_instr("push", "HL")
                     # Step (1 for integer; pointer scale for pointer)
                     step = 1
-                    if isinstance(sym.sym_type, ast.PointerType):
+                    if isinstance(sym.sym_type, lt.PointerType):
                         step = self._type_size(sym.sym_type.base_type)
                         if step == 0:
                             step = 1
@@ -7037,7 +7035,7 @@ class CodeGenerator:
                         self.ctx.emit_instr("push", "HL")
                     # Determine step
                     step = 1
-                    if isinstance(sym.sym_type, ast.PointerType):
+                    if isinstance(sym.sym_type, lt.PointerType):
                         step = self._type_size(sym.sym_type.base_type)
                         if step == 0:
                             step = 1
@@ -7081,7 +7079,7 @@ class CodeGenerator:
 
                     # Determine step size (for pointer types, scale by pointee size)
                     step = 1
-                    if isinstance(sym.sym_type, ast.PointerType):
+                    if isinstance(sym.sym_type, lt.PointerType):
                         step = self._type_size(sym.sym_type.base_type)
                         if step == 0:
                             step = 1
@@ -7146,7 +7144,7 @@ class CodeGenerator:
             if isinstance(expr.operand, ast.Index):
                 elem_size = self._get_index_elem_size(expr.operand.array)
                 arr_type = self._get_expr_type(expr.operand.array)
-                if isinstance(arr_type, (ast.ArrayType, ast.PointerType)):
+                if isinstance(arr_type, (lt.ArrayType, lt.PointerType)):
                     elem_type = arr_type.base_type
             else:
                 deref_type = self._get_expr_type(expr.operand)
@@ -7252,13 +7250,13 @@ class CodeGenerator:
                 )
 
         # Get function parameter types if available
-        param_types: list[ast.TypeNode] = []
+        param_types: list[lt.TypeNode] = []
         if isinstance(expr.func, ast.Identifier):
             func_sym = self.ctx.lookup(expr.func.name.text)
-            if func_sym and isinstance(func_sym.sym_type, ast.FunctionType):
+            if func_sym and isinstance(func_sym.sym_type, lt.FunctionType):
                 param_types = func_sym.sym_type.param_types
-            elif (func_sym and isinstance(func_sym.sym_type, ast.PointerType)
-                  and isinstance(func_sym.sym_type.base_type, ast.FunctionType)):
+            elif (func_sym and isinstance(func_sym.sym_type, lt.PointerType)
+                  and isinstance(func_sym.sym_type.base_type, lt.FunctionType)):
                 param_types = func_sym.sym_type.base_type.param_types
 
         # Push arguments right-to-left, tracking total stack size
@@ -7290,7 +7288,7 @@ class CodeGenerator:
                 param_is_ll = param_type and self._is_long_long_type(param_type)
                 if param_is_ll:
                     # Parameter is 64-bit: push 4 words (8 bytes)
-                    param_unsigned = (param_type and isinstance(param_type, ast.BasicType)
+                    param_unsigned = (param_type and isinstance(param_type, lt.BasicType)
                                      and param_type.is_signed == False)
                     self._push_long_long_arg(arg, force_unsigned=param_unsigned)
                     stack_size += 8
@@ -7401,7 +7399,7 @@ class CodeGenerator:
                 else:
                     # Check if argument is a struct type (pass by value)
                     arg_type = self._get_expr_type(arg)
-                    if isinstance(arg_type, ast.StructType):
+                    if isinstance(arg_type, lt.StructType):
                         struct_size = self._type_size(arg_type)
                         push_size = (struct_size + 1) & ~1  # Round up to word boundary
                         # Get the address of the struct data
@@ -7431,10 +7429,10 @@ class CodeGenerator:
                         # bytes (2 on Z80), so only widen basic integer
                         # types.
                         is_ptr_like = isinstance(arg_type,
-                                                 (ast.PointerType, ast.ArrayType))
+                                                 (lt.PointerType, lt.ArrayType))
                         widen_to_int32 = (param_type is None
                                 and self.type_config.int_size == 4
-                                and not isinstance(arg_type, ast.StructType)
+                                and not isinstance(arg_type, lt.StructType)
                                 and not is_ptr_like)
                         if widen_to_int32:
                             self.gen_expr(arg, force_long=True)
@@ -7462,7 +7460,7 @@ class CodeGenerator:
             func_sym = self.ctx.lookup(expr.func.name.text)
             is_direct_function = (
                 expr.func.name.text in self.ctx.function_names or
-                (func_sym and isinstance(func_sym.sym_type, ast.FunctionType))
+                (func_sym and isinstance(func_sym.sym_type, lt.FunctionType))
             )
             if is_direct_function:
                 # Record EXTRN for any function we don't define locally.  The
@@ -7503,7 +7501,7 @@ class CodeGenerator:
         # callee (libc float/long handlers are 32-bit aware).
         needs_int_widen = False
         if (return_is_32bit and self.type_config.int_size == 4
-                and isinstance(return_type, ast.BasicType)
+                and isinstance(return_type, lt.BasicType)
                 and return_type.name == "int"
                 and isinstance(expr.func, ast.Identifier)
                 and expr.func.name.text not in self.ctx.function_names):
@@ -7827,11 +7825,11 @@ class CodeGenerator:
                 self.ctx.emit_instr("sbc", "A,A")  # A = 0xFF if sign, 0x00 if not
                 self.ctx.emit_instr("ld", "H,A")
 
-    def _is_signed_type(self, t: ast.TypeNode | None) -> bool:
+    def _is_signed_type(self, t: lt.TypeNode | None) -> bool:
         """Check if a type is signed."""
         if t is None:
             return True  # Default to signed
-        if isinstance(t, ast.BasicType):
+        if isinstance(t, lt.BasicType):
             # Check if type has explicit is_signed attribute
             if hasattr(t, 'is_signed') and t.is_signed is not None:
                 return t.is_signed
@@ -7860,13 +7858,13 @@ class CodeGenerator:
         # Check if element is itself an array (multi-dimensional arrays):
         # array-to-pointer decay means we return the address, not a value
         arr_type = self._get_expr_type(expr.array)
-        if isinstance(arr_type, (ast.ArrayType, ast.PointerType)):
-            if isinstance(arr_type.base_type, ast.ArrayType):
+        if isinstance(arr_type, (lt.ArrayType, lt.PointerType)):
+            if isinstance(arr_type.base_type, lt.ArrayType):
                 return  # Address already in HL, no dereference needed
             # Struct/union elements are too big to fit in a register: leave the
             # address in HL so the caller (_gen_struct_copy_from_expr,
             # _gen_struct_assignment, gen_call's struct push) can LDIR from it.
-            if isinstance(arr_type.base_type, ast.StructType):
+            if isinstance(arr_type.base_type, lt.StructType):
                 return
 
         # Determine element size for proper load
@@ -7876,7 +7874,7 @@ class CodeGenerator:
             # 8-bit element, sign/zero-extend to HL
             elem_signed = True
             arr_type = self._get_expr_type(expr.array)
-            if isinstance(arr_type, (ast.ArrayType, ast.PointerType)):
+            if isinstance(arr_type, (lt.ArrayType, lt.PointerType)):
                 elem_signed = self._is_signed_type(arr_type.base_type)
             self.ctx.emit_instr("ld", "L,(HL)")
             self._emit_char_to_hl(elem_signed)
@@ -7923,7 +7921,7 @@ class CodeGenerator:
 
         # Check if member is an array - arrays decay to pointers (return address, not value)
         member_type = self._get_member_type(expr)
-        if isinstance(member_type, ast.ArrayType):
+        if isinstance(member_type, lt.ArrayType):
             # Array member: address is already in HL, just return it
             return
 
@@ -7966,11 +7964,11 @@ class CodeGenerator:
     def _get_bitfield_info(self, expr: ast.Member) -> BitfieldInfo | None:
         """Return BitfieldInfo if this member is a bitfield, else None."""
         struct_type = self._get_expr_type(expr.obj)
-        if isinstance(struct_type, ast.PointerType):
+        if isinstance(struct_type, lt.PointerType):
             struct_type = struct_type.base_type
-        elif isinstance(struct_type, ast.ArrayType):
+        elif isinstance(struct_type, lt.ArrayType):
             struct_type = struct_type.base_type
-        if not isinstance(struct_type, ast.StructType):
+        if not isinstance(struct_type, lt.StructType):
             return None
         # Check registered bitfield info by struct name
         if struct_type.name:
@@ -8394,15 +8392,15 @@ class CodeGenerator:
         self.ctx.emit_instr("pop", "HL")
         self.ctx.emit_instr("pop", "DE")
 
-    def _get_member_type(self, expr: ast.Member) -> ast.TypeNode | None:
+    def _get_member_type(self, expr: ast.Member) -> lt.TypeNode | None:
         """Get the type of a struct member."""
         struct_type = self._get_expr_type(expr.obj)
         # For arrow operator or array decay, get the element/base type
-        if isinstance(struct_type, ast.PointerType):
+        if isinstance(struct_type, lt.PointerType):
             struct_type = struct_type.base_type
-        elif isinstance(struct_type, ast.ArrayType):
+        elif isinstance(struct_type, lt.ArrayType):
             struct_type = struct_type.base_type
-        if isinstance(struct_type, ast.StructType):
+        if isinstance(struct_type, lt.StructType):
             # Try inline members first
             if struct_type.members:
                 for m in struct_type.members:
@@ -8410,7 +8408,7 @@ class CodeGenerator:
                         return m.member_type
                 # Search anonymous struct/union members inline
                 for m in struct_type.members:
-                    if m.name is None and isinstance(m.member_type, ast.StructType):
+                    if m.name is None and isinstance(m.member_type, lt.StructType):
                         if m.member_type.members:
                             for sm in m.member_type.members:
                                 if sm.name == expr.member:
@@ -8437,7 +8435,7 @@ class CodeGenerator:
         target_type = compound.target_type
         # Resolve struct members
         struct_type = target_type
-        if isinstance(struct_type, ast.StructType):
+        if isinstance(struct_type, lt.StructType):
             members = None
             if struct_type.members:
                 members = [(m.name, m.member_type) for m in struct_type.members]
@@ -8476,10 +8474,10 @@ class CodeGenerator:
         label = self.ctx.new_label("CL")
         target_type = compound.target_type
         # For arrays without explicit size, infer from initializer count
-        if isinstance(target_type, ast.ArrayType) and target_type.size is None:
+        if isinstance(target_type, lt.ArrayType) and target_type.size is None:
             if isinstance(compound.init, ast.InitializerList):
                 n = len(compound.init.values)
-                target_type = ast.ArrayType(base_type=target_type.base_type,
+                target_type = lt.ArrayType(base_type=target_type.base_type,
                                              size=ast.IntLiteral(value=n))
         size = self._type_size(target_type)
         # Queue the data for emission in the data section
@@ -8510,7 +8508,7 @@ class CodeGenerator:
                 return result
         return 0
 
-    def _resolve_member_offset(self, struct_type: ast.StructType, member_name: str) -> int:
+    def _resolve_member_offset(self, struct_type: lt.StructType, member_name: str) -> int:
         """Get offset of a member, searching inline members first then registry.
 
         Works for anonymous structs (no tag name) by computing offsets from
@@ -8553,7 +8551,7 @@ class CodeGenerator:
                         if bit_pos > 0 and not struct_type.is_union:
                             offset = storage_unit_start + storage_unit_size
                             bit_pos = 0
-                        if m.name is None and isinstance(m.member_type, ast.StructType):
+                        if m.name is None and isinstance(m.member_type, lt.StructType):
                             sub_result = self._resolve_member_offset(m.member_type, member_name)
                             if sub_result >= 0:
                                 return offset + sub_result
@@ -8565,7 +8563,7 @@ class CodeGenerator:
                 for m in struct_type.members:
                     if m.name == member_name:
                         return offset
-                    if m.name is None and isinstance(m.member_type, ast.StructType):
+                    if m.name is None and isinstance(m.member_type, lt.StructType):
                         # Anonymous sub-member - search recursively
                         sub_result = self._resolve_member_offset(m.member_type, member_name)
                         if sub_result >= 0:
@@ -8602,7 +8600,7 @@ class CodeGenerator:
                 # Recursively search nested anonymous members
                 if hasattr(anon_type, 'members') and anon_type.members:
                     for m in anon_type.members:
-                        if m.name is None and isinstance(m.member_type, ast.StructType):
+                        if m.name is None and isinstance(m.member_type, lt.StructType):
                             sub_members = self._get_struct_members(m.member_type)
                             sub_offset = 0 if anon_type.is_union else sum(
                                 self._type_size(sm.member_type) for sm in anon_type.members
@@ -8613,7 +8611,7 @@ class CodeGenerator:
                                     return anon_offset + soffset
         return None
 
-    def _find_anon_member_type(self, struct_name: str, member_name: str) -> ast.TypeNode | None:
+    def _find_anon_member_type(self, struct_name: str, member_name: str) -> lt.TypeNode | None:
         """Search for a member type in anonymous struct/union sub-members."""
         if struct_name in self.ctx.anon_members:
             for anon_type, anon_offset in self.ctx.anon_members[struct_name]:
@@ -8623,67 +8621,69 @@ class CodeGenerator:
                         return mtype
         return None
 
-    def _get_expr_type(self, expr: ast.Expression) -> ast.TypeNode | None:
-        """Try to infer the type of an expression."""
+    def _get_expr_type(self, expr) -> "ResolvedType | None":
+        """Try to infer the type of an expression (returns ResolvedType)."""
         if isinstance(expr, ast.IntLiteral):
-            # Integer literal type depends on suffix and value
-            # C standard type promotion for hex/octal:
-            #   int -> unsigned int -> long -> unsigned long -> long long -> unsigned long long
-            if expr.is_long:
-                return ast.BasicType(name="long", is_signed=not expr.is_unsigned)
-            val = expr.value
-            if expr.is_hex and not expr.is_unsigned:
+            is_long, is_long_long, is_unsigned, is_hex = int_flags(expr)
+            val = int_value(expr)
+            if is_long_long:
+                return ResolvedType(kind="basic", name="long long",
+                                    is_signed=not is_unsigned)
+            if is_long:
+                return ResolvedType(kind="basic", name="long",
+                                    is_signed=not is_unsigned)
+            if is_hex and not is_unsigned:
                 if 32768 <= val <= 65535:
-                    return ast.BasicType(name="int", is_signed=False)  # unsigned int
+                    return ResolvedType(kind="basic", name="int", is_signed=False)
                 if val > 65535 and val <= 2147483647:
-                    return ast.BasicType(name="long", is_signed=True)  # long
+                    return ResolvedType(kind="basic", name="long", is_signed=True)
                 if val > 2147483647 and val <= 4294967295:
-                    return ast.BasicType(name="long", is_signed=False)  # unsigned long
+                    return ResolvedType(kind="basic", name="long", is_signed=False)
                 if val > 4294967295:
-                    return ast.BasicType(name="long long", is_signed=False)  # unsigned long long
-            elif not expr.is_hex and not expr.is_unsigned:
-                # Decimal: int -> long -> long long
+                    return ResolvedType(kind="basic", name="long long", is_signed=False)
+            elif not is_hex and not is_unsigned:
                 if val > 32767 and val <= 2147483647:
-                    return ast.BasicType(name="long", is_signed=True)
+                    return ResolvedType(kind="basic", name="long", is_signed=True)
                 if val > 2147483647:
-                    return ast.BasicType(name="long long", is_signed=True)
-            return ast.BasicType(name="int", is_signed=not expr.is_unsigned)
+                    return ResolvedType(kind="basic", name="long long", is_signed=True)
+            return ResolvedType(kind="basic", name="int",
+                                is_signed=not is_unsigned)
         elif isinstance(expr, ast.CharLiteral):
-            return ast.BasicType(name="char")
+            return lt.BasicType(name="char")
         elif isinstance(expr, ast.StringLiteral):
             # String literals are char* (or const char* in C99+)
-            return ast.PointerType(base_type=ast.BasicType(name="char"))
+            return lt.PointerType(base_type=lt.BasicType(name="char"))
         elif isinstance(expr, ast.FloatLiteral):
-            return ast.BasicType(name="float" if expr.is_float else "double")
+            return lt.BasicType(name="float" if expr.is_float else "double")
         elif isinstance(expr, ast.BoolLiteral):
-            return ast.BasicType(name="bool")
+            return lt.BasicType(name="bool")
         elif isinstance(expr, ast.Identifier):
             if expr.name in ('__func__', '__FUNCTION__'):
-                return ast.PointerType(base_type=ast.BasicType(name="char"))
+                return lt.PointerType(base_type=lt.BasicType(name="char"))
             # Enum constants: have type int.  Without this, _is_long_expr
             # falls through to _is_long_type(None) → False, and under
             # --int=32 the call site pushes only HL (16 bits) for an enum
             # arg, so variadic printf reads garbage from the next slot.
             if expr.name in self.ctx.enum_constants:
-                return ast.BasicType(name="int", is_signed=True)
+                return lt.BasicType(name="int", is_signed=True)
             sym = self.ctx.lookup(expr.name)
             if sym:
                 return sym.sym_type
         elif isinstance(expr, ast.UnaryOp) and expr.op == "*":
             # Dereference - get base type of pointer (or array decayed to pointer)
             ptr_type = self._get_expr_type(expr.operand)
-            if isinstance(ptr_type, ast.PointerType):
+            if isinstance(ptr_type, lt.PointerType):
                 return ptr_type.base_type
-            elif isinstance(ptr_type, ast.ArrayType):
+            elif isinstance(ptr_type, lt.ArrayType):
                 return ptr_type.base_type
         elif isinstance(expr, ast.UnaryOp) and expr.op == "&":
             # Address-of: return pointer to operand type
             operand_type = self._get_expr_type(expr.operand)
             if operand_type:
-                return ast.PointerType(base_type=operand_type)
+                return lt.PointerType(base_type=operand_type)
         elif isinstance(expr, ast.UnaryOp) and expr.op == "!":
             # Logical NOT always returns int (C99 6.5.3.3)
-            return ast.BasicType(name="int")
+            return lt.BasicType(name="int")
         elif isinstance(expr, ast.UnaryOp) and expr.op in ("-", "+", "~", "++", "--"):
             # These preserve the operand type.  ++/-- (post or pre) need to
             # be in this list too, otherwise _is_long_expr falls back to
@@ -8693,9 +8693,9 @@ class CodeGenerator:
         elif isinstance(expr, ast.Index):
             # Array indexing: return element type
             array_type = self._get_expr_type(expr.array)
-            if isinstance(array_type, ast.ArrayType):
+            if isinstance(array_type, lt.ArrayType):
                 return array_type.base_type
-            elif isinstance(array_type, ast.PointerType):
+            elif isinstance(array_type, lt.PointerType):
                 return array_type.base_type
         elif isinstance(expr, ast.Member):
             # Member access: return member type
@@ -8710,19 +8710,19 @@ class CodeGenerator:
             # the result type and gen_assignment emits a 2-byte store at
             # the dereference instead of 1 byte.
             if expr.op in ("+", "-"):
-                if isinstance(left_type, (ast.PointerType, ast.ArrayType)):
+                if isinstance(left_type, (lt.PointerType, lt.ArrayType)):
                     return left_type
-                if isinstance(right_type, (ast.PointerType, ast.ArrayType)) and expr.op == "+":
+                if isinstance(right_type, (lt.PointerType, lt.ArrayType)) and expr.op == "+":
                     return right_type
 
             # For shift operations, result type is the promoted LEFT operand (C99 6.5.7)
             # Integer promotion: char promotes to int (6.3.1.1)
             if expr.op in ("<<", ">>"):
-                if left_type and isinstance(left_type, ast.BasicType) and left_type.name == 'char':
-                    return ast.BasicType(name="int")  # char promotes to int
+                if left_type and isinstance(left_type, lt.BasicType) and left_type.name == 'char':
+                    return lt.BasicType(name="int")  # char promotes to int
                 if left_type:
                     return left_type
-                return ast.BasicType(name="int")  # Default to int for literal 1
+                return lt.BasicType(name="int")  # Default to int for literal 1
 
             # Apply usual arithmetic conversions (C99 6.3.1.8):
             # 1. float/double wins over integer types
@@ -8731,7 +8731,7 @@ class CodeGenerator:
             left_is_float = self._is_float_type(left_type)
             right_is_float = self._is_float_type(right_type)
             if left_is_float or right_is_float:
-                return ast.BasicType(name="double")
+                return lt.BasicType(name="double")
 
             # "long long wins" — only when an operand is actually named
             # "long long".  Don't promote just because long happens to be
@@ -8739,11 +8739,11 @@ class CodeGenerator:
             # "long long" and pull it into the 64-bit codegen path even
             # when both operands were `long`.
             def _is_named_ll(t):
-                return isinstance(t, ast.BasicType) and t.name == "long long"
+                return isinstance(t, lt.BasicType) and t.name == "long long"
             if _is_named_ll(left_type) or _is_named_ll(right_type):
-                left_unsigned = isinstance(left_type, ast.BasicType) and left_type.is_signed == False
-                right_unsigned = isinstance(right_type, ast.BasicType) and right_type.is_signed == False
-                return ast.BasicType(name="long long", is_signed=not (left_unsigned or right_unsigned))
+                left_unsigned = isinstance(left_type, lt.BasicType) and left_type.is_signed == False
+                right_unsigned = isinstance(right_type, lt.BasicType) and right_type.is_signed == False
+                return lt.BasicType(name="long long", is_signed=not (left_unsigned or right_unsigned))
 
             # "long wins over int" — but only when an operand is actually
             # named "long" (or short/long long via earlier branches).  Don't
@@ -8751,15 +8751,15 @@ class CodeGenerator:
             # --int=32; that would inflate to 8 bytes under --long=64 and
             # mis-route variadic args to the 64-bit push path.
             def _is_named_long(t):
-                return isinstance(t, ast.BasicType) and t.name == "long"
+                return isinstance(t, lt.BasicType) and t.name == "long"
             if _is_named_long(left_type) or _is_named_long(right_type):
-                return ast.BasicType(name="long")
+                return lt.BasicType(name="long")
 
             # Integer promotion: char operands promote to int (C99 6.3.1.1)
             # All binary arithmetic/bitwise results are at least int-width
             result_type = left_type or right_type
-            if result_type and isinstance(result_type, ast.BasicType) and result_type.name == 'char':
-                return ast.BasicType(name="int")
+            if result_type and isinstance(result_type, lt.BasicType) and result_type.name == 'char':
+                return lt.BasicType(name="int")
             if result_type:
                 return result_type
         elif isinstance(expr, ast.Cast):
@@ -8768,19 +8768,19 @@ class CodeGenerator:
             # Get return type of function call
             if isinstance(expr.func, ast.Identifier):
                 sym = self.ctx.lookup(expr.func.name.text)
-                if sym and isinstance(sym.sym_type, ast.FunctionType):
+                if sym and isinstance(sym.sym_type, lt.FunctionType):
                     return sym.sym_type.return_type
                 elif sym:
                     # Function pointer variable: extract return type from pointer-to-function
-                    if isinstance(sym.sym_type, ast.PointerType) and isinstance(sym.sym_type.base_type, ast.FunctionType):
+                    if isinstance(sym.sym_type, lt.PointerType) and isinstance(sym.sym_type.base_type, lt.FunctionType):
                         return sym.sym_type.base_type.return_type
                     return sym.sym_type
             else:
                 # Function pointer call: (*p)(...) or similar
                 func_type = self._get_expr_type(expr.func)
-                if isinstance(func_type, ast.FunctionType):
+                if isinstance(func_type, lt.FunctionType):
                     return func_type.return_type
-                elif isinstance(func_type, ast.PointerType) and isinstance(func_type.base_type, ast.FunctionType):
+                elif isinstance(func_type, lt.PointerType) and isinstance(func_type.base_type, lt.FunctionType):
                     return func_type.base_type.return_type
         elif isinstance(expr, ast.TernaryOp):
             # Result type is the common type of true/false branches
@@ -8788,25 +8788,25 @@ class CodeGenerator:
             false_type = self._get_expr_type(expr.false_expr)
             # Apply usual arithmetic conversions
             if self._is_float_type(true_type) or self._is_float_type(false_type):
-                return ast.BasicType(name="double")
+                return lt.BasicType(name="double")
             # "long long wins" — only when an operand is actually named
             # "long long".  Don't promote `long` (8 bytes under --long=64)
             # into "long long" name and pull it through 64-bit codegen.
             def _is_named_ll(t):
-                return isinstance(t, ast.BasicType) and t.name == "long long"
+                return isinstance(t, lt.BasicType) and t.name == "long long"
             if _is_named_ll(true_type) or _is_named_ll(false_type):
-                return ast.BasicType(name="long long")
+                return lt.BasicType(name="long long")
             # "long wins over int" — only when an operand is actually named
             # "long".  Don't promote int → long just because both are 4 bytes
             # under --int=32 (would inflate to 8 under --long=64).
             def _is_named_long(t):
-                return isinstance(t, ast.BasicType) and t.name == "long"
+                return isinstance(t, lt.BasicType) and t.name == "long"
             if _is_named_long(true_type) or _is_named_long(false_type):
-                return ast.BasicType(name="long")
+                return lt.BasicType(name="long")
             # Pointer types
-            if isinstance(true_type, ast.PointerType):
+            if isinstance(true_type, lt.PointerType):
                 return true_type
-            if isinstance(false_type, ast.PointerType):
+            if isinstance(false_type, lt.PointerType):
                 return false_type
             return true_type or false_type
         elif isinstance(expr, ast.GenericSelection):
@@ -8825,15 +8825,15 @@ class CodeGenerator:
             # Compound literal type is its target type
             # For arrays without explicit size, infer from initializer
             target = expr.target_type
-            if isinstance(target, ast.ArrayType) and target.size is None:
+            if isinstance(target, lt.ArrayType) and target.size is None:
                 if isinstance(expr.init, ast.InitializerList):
                     n = len(expr.init.values)
-                    return ast.ArrayType(base_type=target.base_type,
+                    return lt.ArrayType(base_type=target.base_type,
                                          size=ast.IntLiteral(value=n))
             return target
         return None
 
-    def _types_compatible(self, expr_type: ast.TypeNode | None, sel_type: ast.TypeNode) -> bool:
+    def _types_compatible(self, expr_type: lt.TypeNode | None, sel_type: lt.TypeNode) -> bool:
         """Check if expression type matches selector type for _Generic.
 
         C11/C23 semantics (6.5.1.1): the controlling expression undergoes
@@ -8849,7 +8849,7 @@ class CodeGenerator:
             return False
 
         # Helper to check basic type compatibility
-        def basic_types_match(t1: ast.BasicType, t2: ast.BasicType) -> bool:
+        def basic_types_match(t1: lt.BasicType, t2: lt.BasicType) -> bool:
             # Name must match
             if t1.name != t2.name:
                 return False
@@ -8870,7 +8870,7 @@ class CodeGenerator:
             return True
 
         # Helper to check pointer type compatibility
-        def pointer_types_match(t1: ast.PointerType, t2: ast.PointerType) -> bool:
+        def pointer_types_match(t1: lt.PointerType, t2: lt.PointerType) -> bool:
             # For pointers, top-level const is stripped by lvalue conversion
             # But pointed-to type must match including qualifiers
             b1, b2 = t1.base_type, t2.base_type
@@ -8879,7 +8879,7 @@ class CodeGenerator:
             if type(b1) != type(b2):
                 return False
 
-            if isinstance(b1, ast.BasicType):
+            if isinstance(b1, lt.BasicType):
                 # For pointer-to-basic, check name, signedness, and constness of pointed-to type
                 if b1.name != b2.name:
                     return False
@@ -8900,22 +8900,22 @@ class CodeGenerator:
 
             return types_match(b1, b2)
 
-        def types_match(t1: ast.TypeNode, t2: ast.TypeNode) -> bool:
+        def types_match(t1: lt.TypeNode, t2: lt.TypeNode) -> bool:
             if type(t1) != type(t2):
                 # Special case: function type matches function pointer
-                if isinstance(t1, ast.FunctionType) and isinstance(t2, ast.PointerType):
-                    if isinstance(t2.base_type, ast.FunctionType):
+                if isinstance(t1, lt.FunctionType) and isinstance(t2, lt.PointerType):
+                    if isinstance(t2.base_type, lt.FunctionType):
                         return True
                 return False
-            if isinstance(t1, ast.BasicType):
+            if isinstance(t1, lt.BasicType):
                 return basic_types_match(t1, t2)
-            if isinstance(t1, ast.PointerType):
+            if isinstance(t1, lt.PointerType):
                 return pointer_types_match(t1, t2)
-            if isinstance(t1, ast.StructType):
+            if isinstance(t1, lt.StructType):
                 return t1.name == t2.name and t1.is_union == t2.is_union
-            if isinstance(t1, ast.EnumType):
+            if isinstance(t1, lt.EnumType):
                 return t1.name == t2.name
-            if isinstance(t1, ast.FunctionType):
+            if isinstance(t1, lt.FunctionType):
                 return True  # Simplified - just check it's a function type
             return False
 
@@ -8975,7 +8975,7 @@ class CodeGenerator:
             self.gen_expr(expr)
             # For small structs (≤2 bytes), value is returned in HL, not address
             ret_type = self._get_expr_type(expr)
-            if isinstance(ret_type, ast.StructType) and self._type_size(ret_type) <= 2:
+            if isinstance(ret_type, lt.StructType) and self._type_size(ret_type) <= 2:
                 self.ctx.runtime_used.add("__sret_buf")
                 self.ctx.emit_instr("ld", "(__sret_buf),HL")
                 self.ctx.emit_instr("ld", "HL,__sret_buf")
@@ -8988,7 +8988,7 @@ class CodeGenerator:
                 self.gen_expr(expr.obj)
                 # For small structs (≤2 bytes), value is in HL not address
                 ret_type = self._get_expr_type(expr.obj)
-                if isinstance(ret_type, ast.StructType) and self._type_size(ret_type) <= 2:
+                if isinstance(ret_type, lt.StructType) and self._type_size(ret_type) <= 2:
                     self.ctx.runtime_used.add("__sret_buf")
                     self.ctx.emit_instr("ld", "(__sret_buf),HL")
                     self.ctx.emit_instr("ld", "HL,__sret_buf")
@@ -8997,9 +8997,9 @@ class CodeGenerator:
 
             # Get struct type and member offset
             struct_type = self._get_expr_type(expr.obj)
-            if expr.is_arrow and isinstance(struct_type, ast.PointerType):
+            if expr.is_arrow and isinstance(struct_type, lt.PointerType):
                 struct_type = struct_type.base_type
-            if isinstance(struct_type, ast.StructType):
+            if isinstance(struct_type, lt.StructType):
                 offset = self._resolve_member_offset(struct_type, expr.member)
                 if offset > 0:
                     self.ctx.emit_instr("ld", f"DE,{offset}")
@@ -9060,7 +9060,7 @@ class CodeGenerator:
     def _is_unsigned_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has unsigned type."""
         expr_type = self._get_expr_type(expr)
-        if isinstance(expr_type, ast.BasicType):
+        if isinstance(expr_type, lt.BasicType):
             # is_signed=False means unsigned, is_signed=None means default (signed)
             return expr_type.is_signed == False
         return False
@@ -9074,7 +9074,7 @@ class CodeGenerator:
         - unsigned int, unsigned long, unsigned long long stay unsigned
         """
         expr_type = self._get_expr_type(expr)
-        if isinstance(expr_type, ast.BasicType):
+        if isinstance(expr_type, lt.BasicType):
             if expr_type.is_signed == False:
                 # unsigned char promotes to signed int
                 if expr_type.name == "char":
@@ -9082,35 +9082,36 @@ class CodeGenerator:
                 return True
         # IntLiteral with is_unsigned flag
         if isinstance(expr, ast.IntLiteral):
-            return expr.is_unsigned
+            _il, _ill, is_unsigned, _ih = int_flags(expr)
+            return is_unsigned
         return False
 
-    def _is_long_type(self, t: ast.TypeNode | None) -> bool:
+    def _is_long_type(self, t: lt.TypeNode | None) -> bool:
         """Check if a type is 32-bit integer (needs DEHL register pair).
 
         Byte-width dispatch: returns True for any BasicType whose TypeConfig
         size is exactly 4 bytes. With default Z80_CPM, that's only 'long';
         with --int=32, 'int' also hits this path.
         """
-        if isinstance(t, ast.BasicType):
+        if isinstance(t, lt.BasicType):
             size = self.type_config.sizeof_basic(t.name)
             return size == 4 and t.name not in ("float", "double", "long double")
         return False
 
-    def _is_long_long_type(self, t: ast.TypeNode | None) -> bool:
+    def _is_long_long_type(self, t: lt.TypeNode | None) -> bool:
         """Check if a type is 64-bit integer (needs __tmp64 slot).
 
         Byte-width dispatch: returns True for any BasicType whose TypeConfig
         size is exactly 8 bytes. With default Z80_CPM, that's only 'long long'.
         """
-        if isinstance(t, ast.BasicType):
+        if isinstance(t, lt.BasicType):
             size = self.type_config.sizeof_basic(t.name)
             return size == 8 and t.name not in ("float", "double", "long double")
         return False
 
-    def _is_float_type(self, t: ast.TypeNode | None) -> bool:
+    def _is_float_type(self, t: lt.TypeNode | None) -> bool:
         """Check if a type is floating-point (float or double)."""
-        if isinstance(t, ast.BasicType):
+        if isinstance(t, lt.BasicType):
             return t.name in ("float", "double", "long double")
         return False
 
@@ -9133,9 +9134,9 @@ class CodeGenerator:
         expr_type = self._get_expr_type(expr)
         return self._is_float_type(expr_type)
 
-    def _is_complex_type(self, t: ast.TypeNode | None) -> bool:
+    def _is_complex_type(self, t: lt.TypeNode | None) -> bool:
         """Check if a type is a complex number type (_Complex)."""
-        return isinstance(t, ast.ComplexType)
+        return isinstance(t, lt.ComplexType)
 
     def _is_complex_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has complex type."""
@@ -9154,18 +9155,17 @@ class CodeGenerator:
         expr_type = self._get_expr_type(expr)
         return self._is_complex_type(expr_type)
 
-    def _is_long_long_expr(self, expr: ast.Expression) -> bool:
+    def _is_long_long_expr(self, expr) -> bool:
         """Check if an expression has 64-bit type (long long)."""
         tc = self.type_config
         if isinstance(expr, ast.IntLiteral):
-            # Check for explicit LL suffix or value too large for 32-bit
-            if hasattr(expr, 'is_long_long') and expr.is_long_long:
+            is_long, is_long_long, is_unsigned, is_hex = int_flags(expr)
+            val = int_value(expr)
+            if is_long_long:
                 return True
-            # For hex or unsigned literals, values up to ULONG_MAX fit in unsigned long
-            if (expr.is_hex or expr.is_unsigned) and 0 <= expr.value <= tc.ulong_max:
+            if (is_hex or is_unsigned) and 0 <= val <= tc.ulong_max:
                 return False
-            # Values too large for signed long (and not hex unsigned long)
-            if expr.value > tc.long_max or expr.value < -(tc.long_max + 1):
+            if val > tc.long_max or val < -(tc.long_max + 1):
                 return True
             return False
         if isinstance(expr, ast.UnaryOp):
@@ -9189,11 +9189,11 @@ class CodeGenerator:
         expr_type = self._get_expr_type(expr)
         return self._is_long_long_type(expr_type)
 
-    def _try_get_ll_literal_value(self, expr: ast.Expression) -> int | None:
+    def _try_get_ll_literal_value(self, expr) -> int | None:
         """Try to extract a compile-time integer value from a long-long expression.
         Returns the 64-bit value or None if not a compile-time constant."""
         if isinstance(expr, ast.IntLiteral):
-            return expr.value
+            return int_value(expr)
         if isinstance(expr, ast.UnaryOp) and expr.op == "-":
             inner = self._try_get_ll_literal_value(expr.operand)
             if inner is not None:
@@ -9208,37 +9208,25 @@ class CodeGenerator:
             return self._try_get_ll_literal_value(expr.expr)
         return None
 
-    def _is_long_expr(self, expr: ast.Expression) -> bool:
+    def _is_long_expr(self, expr) -> bool:
         """Check if an expression has 32-bit type (long but not long long)."""
-        # First check if it's long long - if so, it's not just "long"
         if self._is_long_long_expr(expr):
             return False
         tc = self.type_config
         if isinstance(expr, ast.IntLiteral):
-            # Explicit L suffix: always a long
-            if expr.is_long:
+            is_long, is_long_long, is_unsigned, is_hex = int_flags(expr)
+            val = int_value(expr)
+            if is_long:
                 return True
-            # Under --int=32, "int" itself is 32-bit and shares codegen with
-            # "long" (DEHL register pair).  Any literal that fits in int (or
-            # unsigned int) needs the 32-bit codegen path.  Without this,
-            # values 0x10000..0xFFFFFFFF would only get LD HL,low loaded and
-            # the high 16 bits would silently vanish.
             if tc.int_size == 4:
-                if -(tc.int_max + 1) <= expr.value <= tc.uint_max:
+                if -(tc.int_max + 1) <= val <= tc.uint_max:
                     return True
-            # C standard type promotion for literals:
-            # Decimal: int -> long -> long long
-            # Hex/octal/U: int -> unsigned int -> long -> unsigned long -> ...
-            val = expr.value
             if val > tc.int_max or val < -(tc.int_max + 1):
-                # For hex/octal/unsigned literals, check if it fits in unsigned int
-                if (expr.is_hex or expr.is_unsigned) and 0 <= val <= tc.uint_max:
-                    return False  # Fits in unsigned int, stays int-sized
-                # Check if it fits in signed long
+                if (is_hex or is_unsigned) and 0 <= val <= tc.uint_max:
+                    return False
                 if -(tc.long_max + 1) <= val <= tc.long_max:
                     return True
-                # For hex/octal/unsigned, check unsigned long
-                if (expr.is_hex or expr.is_unsigned) and 0 <= val <= tc.ulong_max:
+                if (is_hex or is_unsigned) and 0 <= val <= tc.ulong_max:
                     return True
             return False
         if isinstance(expr, ast.UnaryOp):
@@ -9531,7 +9519,7 @@ class CodeGenerator:
 
     def _is_bool_type(self, t) -> bool:
         """Check if a type is _Bool/bool."""
-        return isinstance(t, ast.BasicType) and t.name in ('bool', '_Bool')
+        return isinstance(t, lt.BasicType) and t.name in ('bool', '_Bool')
 
     def _extend_hl_to_dehl(self, is_signed: bool = True) -> None:
         """Sign or zero extend HL to DEHL."""
@@ -9549,9 +9537,9 @@ class CodeGenerator:
         # Try to infer the type from the expression
         if isinstance(expr, ast.Identifier):
             sym = self.ctx.lookup(expr.name)
-            if sym and isinstance(sym.sym_type, ast.PointerType):
+            if sym and isinstance(sym.sym_type, lt.PointerType):
                 return self._type_size(sym.sym_type.base_type)
-            elif sym and isinstance(sym.sym_type, ast.ArrayType):
+            elif sym and isinstance(sym.sym_type, lt.ArrayType):
                 # Arrays decay to pointers; deref size is element size
                 return self._type_size(sym.sym_type.base_type)
 
@@ -9576,14 +9564,14 @@ class CodeGenerator:
 
         elif isinstance(expr, ast.Cast):
             # Use the cast target type
-            if isinstance(expr.target_type, ast.PointerType):
+            if isinstance(expr.target_type, lt.PointerType):
                 return self._type_size(expr.target_type.base_type)
 
         # General fallback: use _get_expr_type to determine the pointer/array type
         expr_type = self._get_expr_type(expr)
-        if isinstance(expr_type, ast.PointerType):
+        if isinstance(expr_type, lt.PointerType):
             return self._type_size(expr_type.base_type)
-        elif isinstance(expr_type, ast.ArrayType):
+        elif isinstance(expr_type, lt.ArrayType):
             return self._type_size(expr_type.base_type)
 
         # Default to 16-bit (int)
@@ -9597,24 +9585,24 @@ class CodeGenerator:
         if isinstance(array_expr, ast.Identifier):
             sym = self.ctx.lookup(array_expr.name)
             if sym:
-                if isinstance(sym.sym_type, ast.PointerType):
+                if isinstance(sym.sym_type, lt.PointerType):
                     return self._type_size(sym.sym_type.base_type)
-                elif isinstance(sym.sym_type, ast.ArrayType):
+                elif isinstance(sym.sym_type, lt.ArrayType):
                     return self._type_size(sym.sym_type.base_type)
         elif isinstance(array_expr, ast.Member):
             # Member expression like s.array or s->array
             member_type = self._get_member_type(array_expr)
             if member_type:
-                if isinstance(member_type, ast.ArrayType):
+                if isinstance(member_type, lt.ArrayType):
                     return self._type_size(member_type.base_type)
-                elif isinstance(member_type, ast.PointerType):
+                elif isinstance(member_type, lt.PointerType):
                     return self._type_size(member_type.base_type)
         elif isinstance(array_expr, ast.Index):
             # Nested index like arr[i][j] - get type of inner expression
             array_type = self._get_expr_type(array_expr)
-            if isinstance(array_type, ast.ArrayType):
+            if isinstance(array_type, lt.ArrayType):
                 return self._type_size(array_type.base_type)
-            elif isinstance(array_type, ast.PointerType):
+            elif isinstance(array_type, lt.PointerType):
                 return self._type_size(array_type.base_type)
 
         # Default to 16-bit
@@ -9667,18 +9655,18 @@ class CodeGenerator:
                     size += self._calc_locals_size(fake)
         return size
 
-    def _type_size(self, t: ast.TypeNode) -> int:
+    def _type_size(self, t: lt.TypeNode) -> int:
         """Return the size of a type in bytes."""
-        if isinstance(t, ast.BasicType):
+        if isinstance(t, lt.BasicType):
             if t.name == "void":
                 return 0
             size = self.type_config.sizeof_basic(t.name)
             if size is not None:
                 return size
             return self.type_config.int_size  # Default
-        elif isinstance(t, ast.PointerType):
+        elif isinstance(t, lt.PointerType):
             return self.type_config.ptr_size
-        elif isinstance(t, ast.ArrayType):
+        elif isinstance(t, lt.ArrayType):
             # Array size * element size
             base_size = self._type_size(t.base_type)
             if t.size:
@@ -9688,7 +9676,7 @@ class CodeGenerator:
                 if size_val is not None:
                     return base_size * size_val
             return 0  # Unsized/flexible array member - zero size for sizeof
-        elif isinstance(t, ast.StructType):
+        elif isinstance(t, lt.StructType):
             # Use cached size if available (handles bitfield packing correctly)
             if t.name and t.name in self.ctx.struct_sizes:
                 return self.ctx.struct_sizes[t.name]
@@ -9716,12 +9704,12 @@ class CodeGenerator:
                     # Struct: size is sum of all members
                     return sum(self._type_size(mt) for _, mt, _ in members)
             return 0  # Unknown struct
-        elif isinstance(t, ast.ComplexType):
+        elif isinstance(t, lt.ComplexType):
             # Complex types are two floats (real + imaginary)
             return 2 * self.type_config.float_size
         return self.type_config.int_size  # Default
 
-    def _get_struct_members(self, struct_type: ast.StructType) -> list:
+    def _get_struct_members(self, struct_type: lt.StructType) -> list:
         """Get struct members as list of (name, type, offset) tuples.
 
         Handles both inline struct definitions (with members) and named structs
@@ -9745,7 +9733,7 @@ class CodeGenerator:
                     members.append((m.name, m.member_type, offset))
                     if not struct_type.is_union:
                         offset += self._type_size(m.member_type)
-                elif isinstance(m.member_type, ast.StructType):
+                elif isinstance(m.member_type, lt.StructType):
                     # Anonymous struct/union member: flatten its fields so
                     # dotted designators (`.a`) and regular lookups work.
                     for sub_name, sub_type, sub_off in self._get_struct_members(m.member_type):
@@ -9762,12 +9750,12 @@ class CodeGenerator:
             return self.ctx.structs[struct_type.name]
         return []
 
-    def _count_flat_struct_values(self, struct_type: ast.StructType) -> int:
+    def _count_flat_struct_values(self, struct_type: lt.StructType) -> int:
         """Count total scalar values needed to initialize a struct with flat init."""
         members = self._get_struct_members(struct_type)
         count = 0
         for name, member_type, offset in members:
-            if isinstance(member_type, ast.ArrayType):
+            if isinstance(member_type, lt.ArrayType):
                 # Array member: count array elements
                 array_size = 1
                 if member_type.size:
@@ -9778,18 +9766,18 @@ class CodeGenerator:
                         if sz is not None:
                             array_size = sz
                 base_type = member_type.base_type
-                if isinstance(base_type, ast.StructType):
+                if isinstance(base_type, lt.StructType):
                     count += array_size * self._count_flat_struct_values(base_type)
                 else:
                     count += array_size
-            elif isinstance(member_type, ast.StructType):
+            elif isinstance(member_type, lt.StructType):
                 count += self._count_flat_struct_values(member_type)
             else:
                 count += 1
         return count
 
     def _emit_array_init_flat_inline(self, values: list, start_index: int,
-                                      array_type: ast.ArrayType) -> int:
+                                      array_type: lt.ArrayType) -> int:
         """Emit array initialization from flat values, handling inline struct types.
 
         Returns number of values consumed.
@@ -9804,7 +9792,7 @@ class CodeGenerator:
         else:
             # Unsized array - infer from number of values remaining
             # For struct arrays, count total flat values needed per struct
-            if isinstance(elem_type, ast.StructType):
+            if isinstance(elem_type, lt.StructType):
                 flat_count = self._count_flat_struct_values(elem_type)
                 if flat_count > 0:
                     remaining_values = len(values) - start_index
@@ -9824,14 +9812,14 @@ class CodeGenerator:
                 val = val.value
 
             # Handle nested types
-            if isinstance(elem_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+            if isinstance(elem_type, lt.StructType) and not isinstance(val, ast.InitializerList):
                 members = self._get_struct_members(elem_type)
                 if members:
                     if elem_type.is_union:
                         # Union: only initialize the first member, pad the rest
                         first_member = members[0]
                         first_size = self._type_size(first_member[1])
-                        if isinstance(first_member[1], ast.StructType):
+                        if isinstance(first_member[1], lt.StructType):
                             sub_members = self._get_struct_members(first_member[1])
                             if sub_members:
                                 nested_consumed = self._emit_struct_init_flat(values[idx:], sub_members)
@@ -9839,7 +9827,7 @@ class CodeGenerator:
                             else:
                                 consumed += 1
                                 self._emit_initializer(val, first_member[1])
-                        elif isinstance(first_member[1], ast.ArrayType):
+                        elif isinstance(first_member[1], lt.ArrayType):
                             nested_consumed = self._emit_array_init_flat_inline(values, idx, first_member[1])
                             consumed += nested_consumed
                         else:
@@ -9854,7 +9842,7 @@ class CodeGenerator:
                 else:
                     consumed += 1
                     self._emit_initializer(val, elem_type)
-            elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+            elif isinstance(elem_type, lt.ArrayType) and not isinstance(val, ast.InitializerList):
                 nested_consumed = self._emit_array_init_flat_inline(values, idx, elem_type)
                 consumed += nested_consumed
             else:
@@ -9864,7 +9852,7 @@ class CodeGenerator:
         return consumed
 
     def _emit_designated_array_init(self, init_list: ast.InitializerList,
-                                       array_type: ast.ArrayType) -> None:
+                                       array_type: lt.ArrayType) -> None:
         """Emit array initialization with designated initializers (including ranges).
 
         Handles [index] and [start ... end] designators, with proper overriding
@@ -9914,13 +9902,13 @@ class CodeGenerator:
             else:
                 self._emit_initializer(elem, base_type)
 
-    def _emit_initializer(self, init: ast.Expression, elem_type: ast.TypeNode) -> None:
+    def _emit_initializer(self, init: ast.Expression, elem_type: lt.TypeNode) -> None:
         """Emit initialized data for a global variable or array element."""
         elem_size = self._type_size(elem_type)
 
         if isinstance(init, ast.InitializerList):
             # Handle array or struct initializer
-            if isinstance(elem_type, ast.ArrayType):
+            if isinstance(elem_type, lt.ArrayType):
                 base_type = elem_type.base_type
                 base_size = self._type_size(base_type)
 
@@ -9942,13 +9930,13 @@ class CodeGenerator:
                     is_braced_string = (
                         len(init.values) == 1 and
                         isinstance(init.values[0], ast.StringLiteral) and
-                        isinstance(base_type, ast.BasicType) and
+                        isinstance(base_type, lt.BasicType) and
                         base_type.name in ("char", "signed char", "unsigned char")
                     )
                     # Check if this is a flat/mixed init for array of aggregates
                     # (structs or sub-arrays with some non-braced values)
                     is_flat_aggregate_init = (
-                        isinstance(base_type, (ast.StructType, ast.ArrayType)) and
+                        isinstance(base_type, (lt.StructType, lt.ArrayType)) and
                         init.values and
                         any(not isinstance(v, (ast.InitializerList, ast.DesignatedInit))
                             for v in init.values)
@@ -9977,7 +9965,7 @@ class CodeGenerator:
                             if remaining > 0:
                                 pad_size = remaining * base_size
                                 self.ctx.emit_instr("ds", str(pad_size))
-            elif isinstance(elem_type, ast.StructType):
+            elif isinstance(elem_type, lt.StructType):
                 # Struct/union initializer
                 members = self._get_struct_members(elem_type)
                 if members:
@@ -10092,7 +10080,7 @@ class CodeGenerator:
                     val = val - 0x100
                 self._emit_int_value(val, elem_size)
         elif isinstance(init, ast.StringLiteral):
-            if isinstance(elem_type, ast.PointerType):
+            if isinstance(elem_type, lt.PointerType):
                 # Pointer member initialized with string literal - emit pointer to string
                 label = self.ctx.add_string(init.value, is_wide=getattr(init, 'is_wide', False))
                 self.ctx.emit_instr("dw", label)
@@ -10196,7 +10184,7 @@ class CodeGenerator:
                 # &struct.member or &((struct*)base)->member chain
                 if not operand.is_arrow and isinstance(operand.obj, ast.Identifier):
                     sym = self.ctx.lookup(operand.obj.name)
-                    if sym and isinstance(sym.sym_type, ast.StructType):
+                    if sym and isinstance(sym.sym_type, lt.StructType):
                         offset = self._resolve_member_offset(sym.sym_type, operand.member)
                         if offset >= 0:
                             return (sym.label(), offset)
@@ -10212,7 +10200,7 @@ class CodeGenerator:
                         idx_val = self._eval_const_expr(operand.index)
                         if idx_val is not None:
                             arr_type = sym.sym_type
-                            if isinstance(arr_type, ast.ArrayType):
+                            if isinstance(arr_type, lt.ArrayType):
                                 elem_size = self._type_size(arr_type.base_type)
                                 return (sym.label(), idx_val * elem_size)
                 # &((struct*)base)->member[index] or &struct.member[index]
@@ -10223,7 +10211,7 @@ class CodeGenerator:
                         idx_val = self._eval_const_expr(operand.index)
                         if idx_val is not None:
                             member_type = self._get_expr_type(operand.array)
-                            if isinstance(member_type, ast.ArrayType):
+                            if isinstance(member_type, lt.ArrayType):
                                 elem_size = self._type_size(member_type.base_type)
                             else:
                                 elem_size = 1
@@ -10231,7 +10219,7 @@ class CodeGenerator:
         elif isinstance(expr, ast.Identifier):
             # For function pointers or array names
             sym = self.ctx.lookup(expr.name)
-            if sym and isinstance(sym.sym_type, (ast.FunctionType, ast.ArrayType)):
+            if sym and isinstance(sym.sym_type, (lt.FunctionType, lt.ArrayType)):
                 return (sym.label(), 0)
             elif expr.name in self.ctx.static_local_labels:
                 return (self.ctx.static_local_labels[expr.name], 0)
@@ -10243,7 +10231,7 @@ class CodeGenerator:
                 if const_val is not None:
                     # Scale by pointed-to type size for pointer arithmetic
                     left_type = self._get_expr_type(expr.left)
-                    if isinstance(left_type, ast.PointerType):
+                    if isinstance(left_type, lt.PointerType):
                         scale = self._type_size(left_type.base_type)
                     else:
                         scale = 1
@@ -10258,7 +10246,7 @@ class CodeGenerator:
                     label, base_offset = self._try_resolve_address_const(expr.right)
                     if label is not None:
                         right_type = self._get_expr_type(expr.right)
-                        if isinstance(right_type, ast.PointerType):
+                        if isinstance(right_type, lt.PointerType):
                             scale = self._type_size(right_type.base_type)
                         else:
                             scale = 1
@@ -10283,9 +10271,9 @@ class CodeGenerator:
             struct_type = None
             if isinstance(obj, ast.Cast):
                 base_val = self._eval_const_expr(obj.expr)
-                if isinstance(obj.target_type, ast.PointerType):
+                if isinstance(obj.target_type, lt.PointerType):
                     pt = obj.target_type.base_type
-                    if isinstance(pt, ast.StructType):
+                    if isinstance(pt, lt.StructType):
                         struct_type = pt
             if base_val is not None and struct_type is not None:
                 offset = self._resolve_member_offset(struct_type, member)
@@ -10297,7 +10285,7 @@ class CodeGenerator:
             # Dot access: obj.member
             if isinstance(obj, ast.Identifier):
                 sym = self.ctx.lookup(obj.name)
-                if sym and isinstance(sym.sym_type, ast.StructType):
+                if sym and isinstance(sym.sym_type, lt.StructType):
                     offset = self._resolve_member_offset(sym.sym_type, member)
                     if offset >= 0:
                         return (sym.label(), offset)
@@ -10308,7 +10296,7 @@ class CodeGenerator:
                     parent_label, parent_offset = parent_result
                     # Get the struct type of the parent member
                     parent_type = self._get_expr_type(obj)
-                    if isinstance(parent_type, ast.StructType):
+                    if isinstance(parent_type, lt.StructType):
                         inner_offset = self._resolve_member_offset(parent_type, member)
                         if inner_offset >= 0:
                             return (parent_label, parent_offset + inner_offset)
@@ -10439,7 +10427,7 @@ class CodeGenerator:
                 val = val.value
                 value_index += 1
                 self._emit_initializer(val, member_type)
-            elif isinstance(member_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+            elif isinstance(member_type, lt.ArrayType) and not isinstance(val, ast.InitializerList):
                 # Check for string literal initializing char array
                 if isinstance(val, ast.StringLiteral) and self._is_char_array(member_type):
                     value_index += 1
@@ -10448,7 +10436,7 @@ class CodeGenerator:
                     # Flat array init
                     consumed = self._emit_array_init_flat(values, value_index, member_type)
                     value_index += consumed
-            elif isinstance(member_type, ast.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
+            elif isinstance(member_type, lt.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
                 # Flat nested struct init (but not compound literals - those are complete values)
                 if member_type.is_union:
                     # Union: only init the first member, pad the rest
@@ -10456,7 +10444,7 @@ class CodeGenerator:
                     if nested_members:
                         first_member = nested_members[0]
                         first_size = self._type_size(first_member[1])
-                        if isinstance(first_member[1], ast.StructType):
+                        if isinstance(first_member[1], lt.StructType):
                             sub_members = self._get_struct_members(first_member[1])
                             if sub_members:
                                 consumed = self._emit_struct_init_flat(values[value_index:], sub_members)
@@ -10519,7 +10507,7 @@ class CodeGenerator:
                     active_nested_size = 0
                     active_nested_pos = 0
                     for mname, mtype, moff in members:
-                        if mname == name and isinstance(mtype, ast.ArrayType) and mtype.size is not None:
+                        if mname == name and isinstance(mtype, lt.ArrayType) and mtype.size is not None:
                             sz = mtype.size
                             active_nested_size = sz.value if isinstance(sz, ast.IntLiteral) else (sz if isinstance(sz, int) else 0)
                             # Compute next position from the last designator index
@@ -10568,12 +10556,12 @@ class CodeGenerator:
                     self._emit_initializer(vals[0], member_type)
                 elif any(isinstance(v, ast.DesignatedInit) for v in vals):
                     # Has designated inits - wrap in InitializerList and delegate
-                    if isinstance(member_type, ast.StructType):
+                    if isinstance(member_type, lt.StructType):
                         sub_members = self._get_struct_members(member_type)
                         if sub_members:
                             self._emit_struct_init_designated(vals, sub_members)
                             continue
-                    elif isinstance(member_type, ast.ArrayType):
+                    elif isinstance(member_type, lt.ArrayType):
                         init_list = ast.InitializerList(values=vals, pos=vals[0].pos if hasattr(vals[0], 'location') else None)
                         self._emit_initializer(init_list, member_type)
                         continue
@@ -10590,7 +10578,7 @@ class CodeGenerator:
 
         return len(values)
 
-    def _emit_array_init_flat(self, values: list, start_index: int, array_type: ast.ArrayType) -> int:
+    def _emit_array_init_flat(self, values: list, start_index: int, array_type: lt.ArrayType) -> int:
         """Emit array initialization from flat values. Returns values consumed."""
         elem_type = array_type.base_type
         elem_size = self._type_size(elem_type)
@@ -10618,7 +10606,7 @@ class CodeGenerator:
                 val = val.value
 
             # Handle nested types
-            if isinstance(elem_type, ast.StructType) and not isinstance(val, ast.InitializerList):
+            if isinstance(elem_type, lt.StructType) and not isinstance(val, ast.InitializerList):
                 nested_members = self._get_struct_members(elem_type)
                 if nested_members:
                     nested_consumed = self._emit_struct_init_flat(values[idx:], nested_members)
@@ -10626,7 +10614,7 @@ class CodeGenerator:
                 else:
                     consumed += 1
                     self._emit_initializer(val, elem_type)
-            elif isinstance(elem_type, ast.ArrayType) and not isinstance(val, ast.InitializerList):
+            elif isinstance(elem_type, lt.ArrayType) and not isinstance(val, ast.InitializerList):
                 nested_consumed = self._emit_array_init_flat(values, idx, elem_type)
                 consumed += nested_consumed
             else:
@@ -10635,7 +10623,7 @@ class CodeGenerator:
 
         return consumed
 
-    def _emit_string_for_array(self, string_lit: ast.StringLiteral, array_type: ast.ArrayType) -> None:
+    def _emit_string_for_array(self, string_lit: ast.StringLiteral, array_type: lt.ArrayType) -> None:
         """Emit a string literal to fill a char array, with proper padding."""
         array_size = 1
         if array_type.size:
@@ -10735,7 +10723,7 @@ class CodeGenerator:
                 return None
             # Apply type conversion based on target type
             target_type = expr.target_type
-            if isinstance(target_type, ast.BasicType):
+            if isinstance(target_type, lt.BasicType):
                 name = target_type.name
                 if self._is_float_type(target_type):
                     return float(inner_val)
@@ -10782,10 +10770,11 @@ class CodeGenerator:
                 # Need to determine signedness of left operand for arithmetic vs logical shift
                 left_type = self._get_expr_type(expr.left)
                 is_signed = True  # C default is signed
-                if left_type and isinstance(left_type, ast.BasicType):
+                if left_type and isinstance(left_type, lt.BasicType):
                     if left_type.is_signed is False:
                         is_signed = False
-                elif isinstance(expr.left, ast.IntLiteral) and expr.left.is_unsigned:
+                elif isinstance(expr.left, ast.IntLiteral) and int_flags(expr.left)[2]:
+                    # int_flags[2] is is_unsigned
                     is_signed = False
                 if is_signed:
                     # Determine width and do arithmetic shift
@@ -10793,7 +10782,7 @@ class CodeGenerator:
                     if left_type:
                         sz = self._type_size(left_type)
                         width = sz * 8
-                    elif isinstance(expr.left, ast.IntLiteral) and expr.left.is_long:
+                    elif isinstance(expr.left, ast.IntLiteral) and int_flags(expr.left)[0]:
                         if left_val > 0x7FFFFFFF or left_val < -0x80000000:
                             width = 64
                         else:
@@ -10802,16 +10791,14 @@ class CodeGenerator:
                     sign_bit = 1 << (width - 1)
                     val = left_val & mask
                     if val & sign_bit:
-                        # Negative in signed representation - arithmetic shift
-                        val = val - (1 << width)  # Convert to negative Python int
+                        val = val - (1 << width)
                     return (val >> right_val) & mask
                 else:
-                    # Unsigned logical shift - mask to appropriate width first
-                    width = 16  # default int
+                    width = 16
                     if left_type:
                         sz = self._type_size(left_type)
                         width = sz * 8
-                    elif isinstance(expr.left, ast.IntLiteral) and expr.left.is_long:
+                    elif isinstance(expr.left, ast.IntLiteral) and int_flags(expr.left)[0]:
                         if left_val > 0x7FFFFFFF or left_val < -0x80000000:
                             width = 64
                         else:
