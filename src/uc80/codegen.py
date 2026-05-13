@@ -1043,13 +1043,13 @@ class CallGraphAnalyzer:
         """Recursively analyze an expression for calls and address-taken."""
         if isinstance(expr, (ast.Call, ast.CallNoArgs)):
             if isinstance(expr.func, ast.Identifier):
-                # Direct call
+                # Direct call — don't recurse into expr.func (would
+                # wrongly add the callee name to address_taken).
                 calls.add(expr.func.name.text)
             else:
-                # Indirect call through pointer; analyze the callee expr
-                # below in case it has nested calls or address-of.
-                pass
-            self._analyze_expr(expr.func, calls, address_taken, indirect_sigs)
+                # Indirect call through expression — analyze it for
+                # nested calls and any &fn whose address is leaked.
+                self._analyze_expr(expr.func, calls, address_taken, indirect_sigs)
             args = getattr(expr, "args", None) or []
             for arg in args:
                 self._analyze_expr(arg, calls, address_taken, indirect_sigs)

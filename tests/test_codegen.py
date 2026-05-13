@@ -480,9 +480,9 @@ class TestMultiFileCompilation:
         ast1 = parse(source1)
         ast2 = parse(source2)
 
-        merged = ast_module.TranslationUnit(declarations=[])
-        merged.declarations.extend(ast1.declarations)
-        merged.declarations.extend(ast2.declarations)
+        merged = ast_module.TranslationUnit(items=[])
+        merged.items.extend(ast1.items)
+        merged.items.extend(ast2.items)
 
         # Disable inlining to test merging without optimization
         code = generate(merged, enable_shared_storage=True, enable_inlining=False)
@@ -672,7 +672,7 @@ class TestInlineExpansion:
 
         # Build func_bodies
         func_bodies = {}
-        for decl in unit.declarations:
+        for decl in unit.items:
             if isinstance(decl, ast_module.FunctionDecl) and decl.body:
                 func_bodies[decl.name] = decl
 
