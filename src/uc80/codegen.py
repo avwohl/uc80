@@ -905,28 +905,28 @@ class CallGraphAnalyzer:
         self.address_taken.update(address_taken)
         self.indirect_call_sigs[name] = indirect_sigs
 
-    def _analyze_stmt(self, stmt: ast.Statement, calls: set[str],
+    def _analyze_stmt(self, stmt, calls: set[str],
                       address_taken: set[str], indirect_sigs: set[tuple]) -> None:
         """Recursively analyze a statement for calls and address-taken."""
         if isinstance(stmt, ast.CompoundStmt):
-            for item in stmt.items:
-                if isinstance(item, ast.Statement):
+            for item in stmt.items or []:
+                if isinstance(item, ast.Declaration):
+                    for init_decl in item.declarators or []:
+                        if isinstance(init_decl, ast.InitDeclaratorWithInit):
+                            self._analyze_expr(init_decl.init, calls, address_taken, indirect_sigs)
+                else:
                     self._analyze_stmt(item, calls, address_taken, indirect_sigs)
-                elif isinstance(item, ast.VarDecl) and item.init:
-                    self._analyze_expr(item.init, calls, address_taken, indirect_sigs)
-                elif isinstance(item, ast.DeclarationList):
-                    for decl in item.declarations:
-                        if isinstance(decl, ast.VarDecl) and decl.init:
-                            self._analyze_expr(decl.init, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.ExpressionStmt) and stmt.expr:
             self._analyze_expr(stmt.expr, calls, address_taken, indirect_sigs)
-        elif isinstance(stmt, ast.ReturnStmt) and stmt.value:
+        elif isinstance(stmt, ast.ReturnStmtValue):
             self._analyze_expr(stmt.value, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.IfStmt):
             self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
             self._analyze_stmt(stmt.then_branch, calls, address_taken, indirect_sigs)
-            if stmt.else_branch:
-                self._analyze_stmt(stmt.else_branch, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.IfStmtElse):
+            self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
+            self._analyze_stmt(stmt.then_branch, calls, address_taken, indirect_sigs)
+            self._analyze_stmt(stmt.else_branch, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.WhileStmt):
             self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
             self._analyze_stmt(stmt.body, calls, address_taken, indirect_sigs)
@@ -934,41 +934,42 @@ class CallGraphAnalyzer:
             self._analyze_stmt(stmt.body, calls, address_taken, indirect_sigs)
             self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.ForStmt):
-            if stmt.init:
-                if isinstance(stmt.init, ast.Expression):
-                    self._analyze_expr(stmt.init, calls, address_taken, indirect_sigs)
-                elif isinstance(stmt.init, ast.VarDecl) and stmt.init.init:
-                    self._analyze_expr(stmt.init.init, calls, address_taken, indirect_sigs)
-                elif isinstance(stmt.init, ast.DeclarationList):
-                    for decl in stmt.init.declarations:
-                        if isinstance(decl, ast.VarDecl) and decl.init:
-                            self._analyze_expr(decl.init, calls, address_taken, indirect_sigs)
-            if stmt.condition:
+            init = stmt.init
+            if isinstance(init, ast.Declaration):
+                for init_decl in init.declarators or []:
+                    if isinstance(init_decl, ast.InitDeclaratorWithInit):
+                        self._analyze_expr(init_decl.init, calls, address_taken, indirect_sigs)
+            elif isinstance(init, ast.ExpressionStmt) and init.expr:
+                self._analyze_expr(init.expr, calls, address_taken, indirect_sigs)
+            if stmt.condition is not None:
                 self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
-            if stmt.update:
+            if stmt.update is not None:
                 self._analyze_expr(stmt.update, calls, address_taken, indirect_sigs)
             self._analyze_stmt(stmt.body, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.SwitchStmt):
             self._analyze_expr(stmt.expr, calls, address_taken, indirect_sigs)
             self._analyze_stmt(stmt.body, calls, address_taken, indirect_sigs)
-        elif isinstance(stmt, ast.CaseStmt) and stmt.stmt:
+        elif isinstance(stmt, ast.CaseStmt) and stmt.stmt is not None:
             self._analyze_stmt(stmt.stmt, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.LabelStmt):
             self._analyze_stmt(stmt.stmt, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.DefaultStmt) and stmt.stmt is not None:
+            self._analyze_stmt(stmt.stmt, calls, address_taken, indirect_sigs)
 
-    def _analyze_expr(self, expr: ast.Expression, calls: set[str],
+    def _analyze_expr(self, expr, calls: set[str],
                       address_taken: set[str], indirect_sigs: set[tuple]) -> None:
         """Recursively analyze an expression for calls and address-taken."""
-        if isinstance(expr, ast.Call):
+        if isinstance(expr, (ast.Call, ast.CallNoArgs)):
             if isinstance(expr.func, ast.Identifier):
                 # Direct call
                 calls.add(expr.func.name.text)
             else:
-                # Indirect call through pointer - track signature if possible
-                # For now, mark as having indirect calls
+                # Indirect call through pointer; analyze the callee expr
+                # below in case it has nested calls or address-of.
                 pass
-            # Analyze arguments
-            for arg in expr.args:
+            self._analyze_expr(expr.func, calls, address_taken, indirect_sigs)
+            args = getattr(expr, "args", None) or []
+            for arg in args:
                 self._analyze_expr(arg, calls, address_taken, indirect_sigs)
 
         elif isinstance(expr, ast.UnaryOp):
@@ -997,14 +998,14 @@ class CallGraphAnalyzer:
             self._analyze_expr(expr.expr, calls, address_taken, indirect_sigs)
 
         elif isinstance(expr, ast.SizeofExpr):
-            self._analyze_expr(expr.expr, calls, address_taken, indirect_sigs)
+            self._analyze_expr(expr.operand, calls, address_taken, indirect_sigs)
 
         elif isinstance(expr, ast.InitializerList):
-            for val in expr.values:
-                if isinstance(val, ast.Expression):
-                    self._analyze_expr(val, calls, address_taken, indirect_sigs)
-                elif isinstance(val, ast.DesignatedInit):
+            for val in expr.values or []:
+                if isinstance(val, ast.DesignatedInit):
                     self._analyze_expr(val.value, calls, address_taken, indirect_sigs)
+                else:
+                    self._analyze_expr(val, calls, address_taken, indirect_sigs)
 
         elif isinstance(expr, ast.Compound):
             self._analyze_expr(expr.init, calls, address_taken, indirect_sigs)
@@ -1205,29 +1206,18 @@ class CallGraphAnalyzer:
         """
         live = self.find_live_functions()
 
-        # Filter declarations, keeping:
-        # - All non-function declarations (variables, types, etc.)
-        # - Function declarations that are live
-        # - Function declarations without bodies (prototypes) - keep for linking
+        # Filter top-level items, keeping:
+        # - All non-function items (variables, types, etc.)
+        # - FunctionDefs that are live
+        # - Function prototypes (auto-AST: an ast.Declaration whose
+        #   resolved type is a function) — keep for linking
         new_decls = []
         for decl in unit.items:
             if isinstance(decl, ast.FunctionDef):
-                # Keep if live, or if it's just a prototype (no body)
-                if decl.name in live or decl.body is None:
+                nm = function_name(decl)
+                if nm in live or decl.body is None:
                     new_decls.append(decl)
-            elif isinstance(decl, ast.DeclarationList):
-                # Filter function declarations within a list
-                filtered = []
-                for d in decl.declarations:
-                    if isinstance(d, ast.FunctionDef):
-                        if d.name in live or d.body is None:
-                            filtered.append(d)
-                    else:
-                        filtered.append(d)
-                if filtered:
-                    new_decls.append(ast.DeclarationList(declarations=filtered))
             else:
-                # Keep all other declarations
                 new_decls.append(decl)
 
         return ast.TranslationUnit(items=new_decls)
@@ -1365,7 +1355,7 @@ class CallGraphAnalyzer:
                 op=expr.op,
                 left=self._substitute_params(expr.left, param_map),
                 right=self._substitute_params(expr.right, param_map),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.UnaryOp):
@@ -1373,7 +1363,7 @@ class CallGraphAnalyzer:
                 op=expr.op,
                 operand=self._substitute_params(expr.operand, param_map),
                 is_prefix=expr.is_prefix,
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.TernaryOp):
@@ -1381,21 +1371,21 @@ class CallGraphAnalyzer:
                 condition=self._substitute_params(expr.condition, param_map),
                 true_expr=self._substitute_params(expr.true_expr, param_map),
                 false_expr=self._substitute_params(expr.false_expr, param_map),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Call):
             return ast.Call(
                 func=self._substitute_params(expr.func, param_map),
                 args=[self._substitute_params(a, param_map) for a in expr.args],
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Index):
             return ast.Index(
                 array=self._substitute_params(expr.array, param_map),
                 index=self._substitute_params(expr.index, param_map),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Member):
@@ -1403,20 +1393,20 @@ class CallGraphAnalyzer:
                 obj=self._substitute_params(expr.obj, param_map),
                 member=expr.member,
                 is_arrow=expr.is_arrow,
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Cast):
             return ast.Cast(
                 target_type=expr.target_type,
                 expr=self._substitute_params(expr.expr, param_map),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.SizeofExpr):
             return ast.SizeofExpr(
                 expr=self._substitute_params(expr.expr, param_map),
-                location=expr.location
+                pos=expr.pos
             )
 
         # Literals and other expressions don't need substitution
@@ -1454,7 +1444,7 @@ class CallGraphAnalyzer:
             return ast.Call(
                 func=self._inline_expr(expr.func, func_bodies, inlineable),
                 args=new_args,
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.BinaryOp):
@@ -1462,7 +1452,7 @@ class CallGraphAnalyzer:
                 op=expr.op,
                 left=self._inline_expr(expr.left, func_bodies, inlineable),
                 right=self._inline_expr(expr.right, func_bodies, inlineable),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.UnaryOp):
@@ -1470,7 +1460,7 @@ class CallGraphAnalyzer:
                 op=expr.op,
                 operand=self._inline_expr(expr.operand, func_bodies, inlineable),
                 is_prefix=expr.is_prefix,
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.TernaryOp):
@@ -1478,14 +1468,14 @@ class CallGraphAnalyzer:
                 condition=self._inline_expr(expr.condition, func_bodies, inlineable),
                 true_expr=self._inline_expr(expr.true_expr, func_bodies, inlineable),
                 false_expr=self._inline_expr(expr.false_expr, func_bodies, inlineable),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Index):
             return ast.Index(
                 array=self._inline_expr(expr.array, func_bodies, inlineable),
                 index=self._inline_expr(expr.index, func_bodies, inlineable),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Member):
@@ -1493,14 +1483,14 @@ class CallGraphAnalyzer:
                 obj=self._inline_expr(expr.obj, func_bodies, inlineable),
                 member=expr.member,
                 is_arrow=expr.is_arrow,
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Cast):
             return ast.Cast(
                 target_type=expr.target_type,
                 expr=self._inline_expr(expr.expr, func_bodies, inlineable),
-                location=expr.location
+                pos=expr.pos
             )
 
         return expr
@@ -1513,7 +1503,7 @@ class CallGraphAnalyzer:
             if stmt.expr:
                 return ast.ExpressionStmt(
                     expr=self._inline_expr(stmt.expr, func_bodies, inlineable),
-                    location=stmt.location
+                    pos=stmt.pos
                 )
             return stmt
 
@@ -1521,7 +1511,7 @@ class CallGraphAnalyzer:
             if stmt.value:
                 return ast.ReturnStmt(
                     value=self._inline_expr(stmt.value, func_bodies, inlineable),
-                    location=stmt.location
+                    pos=stmt.pos
                 )
             return stmt
 
@@ -1536,32 +1526,32 @@ class CallGraphAnalyzer:
                         var_type=item.var_type,
                         init=self._inline_expr(item.init, func_bodies, inlineable),
                         storage_class=item.storage_class,
-                        location=item.location
+                        pos=item.pos
                     ))
                 else:
                     new_items.append(item)
-            return ast.CompoundStmt(items=new_items, location=stmt.location)
+            return ast.CompoundStmt(items=new_items, pos=stmt.pos)
 
         elif isinstance(stmt, ast.IfStmt):
             return ast.IfStmt(
                 condition=self._inline_expr(stmt.condition, func_bodies, inlineable),
                 then_branch=self._inline_stmt(stmt.then_branch, func_bodies, inlineable),
                 else_branch=self._inline_stmt(stmt.else_branch, func_bodies, inlineable) if stmt.else_branch else None,
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.WhileStmt):
             return ast.WhileStmt(
                 condition=self._inline_expr(stmt.condition, func_bodies, inlineable),
                 body=self._inline_stmt(stmt.body, func_bodies, inlineable),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.DoWhileStmt):
             return ast.DoWhileStmt(
                 body=self._inline_stmt(stmt.body, func_bodies, inlineable),
                 condition=self._inline_expr(stmt.condition, func_bodies, inlineable),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.ForStmt):
@@ -1573,28 +1563,28 @@ class CallGraphAnalyzer:
                 condition=self._inline_expr(stmt.condition, func_bodies, inlineable) if stmt.condition else None,
                 update=self._inline_expr(stmt.update, func_bodies, inlineable) if stmt.update else None,
                 body=self._inline_stmt(stmt.body, func_bodies, inlineable),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.SwitchStmt):
             return ast.SwitchStmt(
                 expr=self._inline_expr(stmt.expr, func_bodies, inlineable),
                 body=self._inline_stmt(stmt.body, func_bodies, inlineable),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.CaseStmt):
             return ast.CaseStmt(
                 value=stmt.value,
                 stmt=self._inline_stmt(stmt.stmt, func_bodies, inlineable) if stmt.stmt else None,
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.LabelStmt):
             return ast.LabelStmt(
                 label=stmt.label,
                 stmt=self._inline_stmt(stmt.stmt, func_bodies, inlineable),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         return stmt
@@ -1842,10 +1832,12 @@ class CallGraphAnalyzer:
         constant_params: dict[str, dict[int, int]] = {}
 
         # Build function info map
-        func_info: dict[str, ast.FunctionDef] = {}
+        func_info: dict[str, object] = {}
         for decl in unit.items:
             if isinstance(decl, ast.FunctionDef) and decl.body:
-                func_info[decl.name] = decl
+                nm = function_name(decl)
+                if nm is not None:
+                    func_info[nm] = decl
 
         for func_name, all_args in call_args.items():
             if func_name not in func_info:
@@ -1864,7 +1856,7 @@ class CallGraphAnalyzer:
             if not self.whole_program and not self.is_static.get(func_name, False):
                 continue
 
-            num_params = len(func.params)
+            num_params = len(function_params(func))
             param_constants: dict[int, int] = {}
 
             for param_idx in range(num_params):
@@ -1903,7 +1895,7 @@ class CallGraphAnalyzer:
             if expr.name in param_names:
                 param_idx = param_names.index(expr.name)
                 if param_idx in constants:
-                    return ast.IntLiteral(value=constants[param_idx], location=expr.location)
+                    return ast.IntLiteral(value=constants[param_idx], pos=expr.pos)
             return expr
 
         elif isinstance(expr, ast.BinaryOp):
@@ -1911,7 +1903,7 @@ class CallGraphAnalyzer:
                 op=expr.op,
                 left=self._substitute_param_constants(expr.left, param_names, constants),
                 right=self._substitute_param_constants(expr.right, param_names, constants),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.UnaryOp):
@@ -1922,7 +1914,7 @@ class CallGraphAnalyzer:
                 op=expr.op,
                 operand=self._substitute_param_constants(expr.operand, param_names, constants),
                 is_prefix=expr.is_prefix,
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.TernaryOp):
@@ -1930,21 +1922,21 @@ class CallGraphAnalyzer:
                 condition=self._substitute_param_constants(expr.condition, param_names, constants),
                 true_expr=self._substitute_param_constants(expr.true_expr, param_names, constants),
                 false_expr=self._substitute_param_constants(expr.false_expr, param_names, constants),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Call):
             return ast.Call(
                 func=self._substitute_param_constants(expr.func, param_names, constants),
                 args=[self._substitute_param_constants(a, param_names, constants) for a in expr.args],
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Index):
             return ast.Index(
                 array=self._substitute_param_constants(expr.array, param_names, constants),
                 index=self._substitute_param_constants(expr.index, param_names, constants),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Member):
@@ -1952,20 +1944,20 @@ class CallGraphAnalyzer:
                 obj=self._substitute_param_constants(expr.obj, param_names, constants),
                 member=expr.member,
                 is_arrow=expr.is_arrow,
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.Cast):
             return ast.Cast(
                 target_type=expr.target_type,
                 expr=self._substitute_param_constants(expr.expr, param_names, constants),
-                location=expr.location
+                pos=expr.pos
             )
 
         elif isinstance(expr, ast.SizeofExpr):
             return ast.SizeofExpr(
                 expr=self._substitute_param_constants(expr.expr, param_names, constants),
-                location=expr.location
+                pos=expr.pos
             )
 
         return expr
@@ -1978,7 +1970,7 @@ class CallGraphAnalyzer:
             if stmt.expr:
                 return ast.ExpressionStmt(
                     expr=self._substitute_param_constants(stmt.expr, param_names, constants),
-                    location=stmt.location
+                    pos=stmt.pos
                 )
             return stmt
 
@@ -1986,7 +1978,7 @@ class CallGraphAnalyzer:
             if stmt.value:
                 return ast.ReturnStmt(
                     value=self._substitute_param_constants(stmt.value, param_names, constants),
-                    location=stmt.location
+                    pos=stmt.pos
                 )
             return stmt
 
@@ -2001,32 +1993,32 @@ class CallGraphAnalyzer:
                         var_type=item.var_type,
                         init=self._substitute_param_constants(item.init, param_names, constants),
                         storage_class=item.storage_class,
-                        location=item.location
+                        pos=item.pos
                     ))
                 else:
                     new_items.append(item)
-            return ast.CompoundStmt(items=new_items, location=stmt.location)
+            return ast.CompoundStmt(items=new_items, pos=stmt.pos)
 
         elif isinstance(stmt, ast.IfStmt):
             return ast.IfStmt(
                 condition=self._substitute_param_constants(stmt.condition, param_names, constants),
                 then_branch=self._substitute_stmt_constants(stmt.then_branch, param_names, constants),
                 else_branch=self._substitute_stmt_constants(stmt.else_branch, param_names, constants) if stmt.else_branch else None,
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.WhileStmt):
             return ast.WhileStmt(
                 condition=self._substitute_param_constants(stmt.condition, param_names, constants),
                 body=self._substitute_stmt_constants(stmt.body, param_names, constants),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.DoWhileStmt):
             return ast.DoWhileStmt(
                 body=self._substitute_stmt_constants(stmt.body, param_names, constants),
                 condition=self._substitute_param_constants(stmt.condition, param_names, constants),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.ForStmt):
@@ -2038,28 +2030,28 @@ class CallGraphAnalyzer:
                 condition=self._substitute_param_constants(stmt.condition, param_names, constants) if stmt.condition else None,
                 update=self._substitute_param_constants(stmt.update, param_names, constants) if stmt.update else None,
                 body=self._substitute_stmt_constants(stmt.body, param_names, constants),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.SwitchStmt):
             return ast.SwitchStmt(
                 expr=self._substitute_param_constants(stmt.expr, param_names, constants),
                 body=self._substitute_stmt_constants(stmt.body, param_names, constants),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.CaseStmt):
             return ast.CaseStmt(
                 value=stmt.value,
                 stmt=self._substitute_stmt_constants(stmt.stmt, param_names, constants) if stmt.stmt else None,
-                location=stmt.location
+                pos=stmt.pos
             )
 
         elif isinstance(stmt, ast.LabelStmt):
             return ast.LabelStmt(
                 label=stmt.label,
                 stmt=self._substitute_stmt_constants(stmt.stmt, param_names, constants),
-                location=stmt.location
+                pos=stmt.pos
             )
 
         return stmt
@@ -2076,27 +2068,22 @@ class CallGraphAnalyzer:
 
         total_propagated = sum(len(v) for v in constant_params.values())
 
-        # Transform the AST
+        # Transform the AST: clone each FunctionDef whose params we
+        # constant-propagated, preserving decl_specs/declarator/pos.
         new_decls = []
         for decl in unit.items:
-            if isinstance(decl, ast.FunctionDef) and decl.body:
-                if decl.name in constant_params:
-                    constants = constant_params[decl.name]
-                    param_names = [p.name for p in decl.params if p.name]
-
-                    new_body = self._substitute_stmt_constants(decl.body, param_names, constants)
-                    new_decls.append(ast.FunctionDef(
-                        name=decl.name,
-                        return_type=decl.return_type,
-                        params=decl.params,
-                        body=new_body,
-                        is_variadic=decl.is_variadic,
-                        storage_class=decl.storage_class,
-                        is_inline=decl.is_inline,
-                        location=decl.location
-                    ))
-                else:
-                    new_decls.append(decl)
+            nm = function_name(decl) if isinstance(decl, ast.FunctionDef) else None
+            if (isinstance(decl, ast.FunctionDef) and decl.body
+                    and nm is not None and nm in constant_params):
+                constants = constant_params[nm]
+                param_names = function_param_names(decl)
+                new_body = self._substitute_stmt_constants(decl.body, param_names, constants)
+                new_decls.append(ast.FunctionDef(
+                    decl_specs=decl.decl_specs,
+                    declarator=decl.declarator,
+                    body=new_body,
+                    pos=decl.pos,
+                ))
             else:
                 new_decls.append(decl)
 
@@ -2428,40 +2415,30 @@ class CodeGenerator:
         self.ctx.emit("\t.z80")
         self.ctx.emit()
 
-        # First pass: collect global declarations
+        # First pass: collect global declarations from the auto-AST.
         for decl in unit.items:
             if isinstance(decl, ast.FunctionDef):
-                # Create FunctionType with return type and parameter types
-                func_type = ast.FunctionType(
-                    return_type=decl.return_type,
-                    param_types=[p.param_type for p in decl.params],
-                    is_variadic=decl.is_variadic
-                )
-                self.ctx.globals[decl.name] = Symbol(
-                    name=decl.name,
-                    sym_type=func_type,
-                    is_global=True
-                )
-                self.ctx.function_names.add(decl.name)
-            elif isinstance(decl, ast.VarDecl):
-                var_type = self._infer_array_size(decl.var_type, decl.init)
-                # If a prior extern declared a larger array size, use it (C99 6.9.2)
-                var_type = self._merge_array_size(decl.name, var_type)
-                self.ctx.globals[decl.name] = Symbol(
-                    name=decl.name,
-                    sym_type=var_type,
-                    is_global=True
-                )
-            elif isinstance(decl, ast.DeclarationList):
-                for d in decl.declarations:
-                    if isinstance(d, ast.VarDecl):
-                        var_type = self._infer_array_size(d.var_type, d.init)
-                        var_type = self._merge_array_size(d.name, var_type)
-                        self.ctx.globals[d.name] = Symbol(
-                            name=d.name,
-                            sym_type=var_type,
-                            is_global=True
-                        )
+                nm = function_name(decl)
+                if nm is None:
+                    continue
+                _, fn_type = resolve_type_from_decl(decl.decl_specs, decl.declarator)
+                self.ctx.globals[nm] = Symbol(name=nm, sym_type=fn_type, is_global=True)
+                self.ctx.function_names.add(nm)
+            elif isinstance(decl, ast.Declaration):
+                storage = decl_storage_class(decl.decl_specs)
+                if storage == "typedef":
+                    continue
+                for nm, full, init, is_fn in iter_var_decls(decl):
+                    if nm is None:
+                        continue
+                    if is_fn:
+                        # Function prototype.
+                        self.ctx.globals[nm] = Symbol(name=nm, sym_type=full, is_global=True)
+                        self.ctx.function_names.add(nm)
+                    else:
+                        var_type = self._infer_array_size(full, init)
+                        var_type = self._merge_array_size(nm, var_type)
+                        self.ctx.globals[nm] = Symbol(name=nm, sym_type=var_type, is_global=True)
 
         # Disambiguate globals whose case-folded names collide.  The MACRO-80
         # assembler we target is case-insensitive, so e.g. `int sprite` and
@@ -3311,10 +3288,10 @@ class CodeGenerator:
                     s = expr.args[0].value
                     if s.endswith('\n'):
                         # printf("...\n") → puts("...")
-                        new_str = ast.StringLiteral(value=s[:-1], location=expr.args[0].location)
-                        new_id = ast.Identifier(name='puts', location=expr.func.location)
+                        new_str = ast.StringLiteral(value=s[:-1], pos=expr.args[0].pos)
+                        new_id = ast.Identifier(name='puts', pos=expr.func.pos)
                         rewrote = True
-                        return ast.Call(func=new_id, args=[new_str], location=expr.location)
+                        return ast.Call(func=new_id, args=[new_str], pos=expr.pos)
                     # printf("...") without \n — leave as printf
             return expr
 
@@ -5442,7 +5419,7 @@ class CodeGenerator:
         # Handle __func__ (C99 predefined identifier)
         if expr.name in ('__func__', '__FUNCTION__'):
             func_name = getattr(self.ctx, 'current_function', 'unknown')
-            str_expr = ast.StringLiteral(value=func_name, location=expr.location)
+            str_expr = ast.StringLiteral(value=func_name, pos=expr.pos)
             self.gen_expr(str_expr, force_long)
             return
 
@@ -10529,7 +10506,7 @@ class CodeGenerator:
                 if len(val.designators) > 1:
                     # Nested designator like .a[1] or .a.j
                     sub_desig = ast.DesignatedInit(
-                        designators=val.designators[1:], value=val.value, location=val.location)
+                        designators=val.designators[1:], value=val.value, pos=val.pos)
                     if name in member_vals and len(member_vals[name]) == 1 and isinstance(member_vals[name][0], ast.InitializerList):
                         # Merge into existing InitializerList (e.g., {[1]=4,5} then .a[4]=1)
                         member_vals[name][0].values.append(sub_desig)
@@ -10597,14 +10574,14 @@ class CodeGenerator:
                             self._emit_struct_init_designated(vals, sub_members)
                             continue
                     elif isinstance(member_type, ast.ArrayType):
-                        init_list = ast.InitializerList(values=vals, location=vals[0].location if hasattr(vals[0], 'location') else None)
+                        init_list = ast.InitializerList(values=vals, pos=vals[0].pos if hasattr(vals[0], 'location') else None)
                         self._emit_initializer(init_list, member_type)
                         continue
                     # Fallback for single designated init
                     self._emit_initializer(vals[0].value if isinstance(vals[0], ast.DesignatedInit) else vals[0], member_type)
                 else:
                     # Multiple plain values - wrap as InitializerList
-                    init_list = ast.InitializerList(values=vals, location=None)
+                    init_list = ast.InitializerList(values=vals, pos=None)
                     self._emit_initializer(init_list, member_type)
             else:
                 size = self._type_size(member_type)
