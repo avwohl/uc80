@@ -329,6 +329,45 @@ def _outermost_fn_declarator(node):
     return None
 
 
+def function_is_variadic(func) -> bool:
+    """True if a FunctionDef's outermost FnDeclarator has VariadicParams."""
+    fn = _outermost_fn_declarator(func.declarator) if hasattr(func, "declarator") else None
+    return isinstance(fn, ast.FnDeclarator) and isinstance(fn.params, ast.VariadicParams)
+
+
+def function_name(func) -> Optional[str]:
+    """Innermost IDENT name of a FunctionDef's declarator chain."""
+    if not hasattr(func, "declarator"):
+        return None
+    return declarator_ident(func.declarator)
+
+
+def function_params(func) -> list:
+    """Return the params list of a FunctionDef (unwrap VariadicParams).
+
+    Each element is one of ParamDecl / ParamDeclAbstract / ParamDeclTypeOnly.
+    Returns an empty list for FnDeclaratorEmpty / no-params cases.
+    """
+    fn = _outermost_fn_declarator(func.declarator) if hasattr(func, "declarator") else None
+    if not isinstance(fn, ast.FnDeclarator):
+        return []
+    params = fn.params
+    if isinstance(params, ast.VariadicParams):
+        params = params.params
+    return list(params or [])
+
+
+def function_param_names(func) -> list[str]:
+    """Yield each parameter's IDENT name (skips abstract / type-only params)."""
+    out: list[str] = []
+    for p in function_params(func):
+        if isinstance(p, ast.ParamDecl):
+            nm = declarator_ident(p.declarator)
+            if nm is not None:
+                out.append(nm)
+    return out
+
+
 def iter_var_decls(declaration):
     """For an ``ast.Declaration``, yield (name, ResolvedType, init_or_None,
     is_func) for each init_declarator."""
@@ -1240,7 +1279,7 @@ class CallGraphAnalyzer:
             return False
 
         # Don't inline variadic functions
-        if func.is_variadic:
+        if function_is_variadic(func):
             return False
 
         # Don't inline if address is taken (could be called via pointer)
@@ -1556,11 +1595,14 @@ class CallGraphAnalyzer:
         max_iterations = 10  # Prevent infinite loops
 
         for _ in range(max_iterations):
-            # Build function body map
-            func_bodies: dict[str, ast.FunctionDecl] = {}
-            for decl in unit.declarations:
-                if isinstance(decl, ast.FunctionDecl) and decl.body:
-                    func_bodies[decl.name] = decl
+            # Build function body map keyed by IDENT name extracted from
+            # each FunctionDef's declarator chain.
+            func_bodies: dict[str, object] = {}
+            for item in unit.items or []:
+                if isinstance(item, ast.FunctionDef) and item.body:
+                    nm = declarator_ident(item.declarator)
+                    if nm is not None:
+                        func_bodies[nm] = item
 
             # Rebuild call graph for accurate counts
             self.call_graph.clear()
@@ -1584,28 +1626,22 @@ class CallGraphAnalyzer:
             inlined_count = sum(call_counts.get(f, 0) for f in inlineable)
             total_inlined += inlined_count
 
-            # Transform the AST
-            new_decls = []
-            for decl in unit.declarations:
-                if isinstance(decl, ast.FunctionDecl):
-                    if decl.body:
-                        new_body = self._inline_stmt(decl.body, func_bodies, inlineable)
-                        new_decls.append(ast.FunctionDecl(
-                            name=decl.name,
-                            return_type=decl.return_type,
-                            params=decl.params,
-                            body=new_body,
-                            is_variadic=decl.is_variadic,
-                            storage_class=decl.storage_class,
-                            is_inline=decl.is_inline,
-                            location=decl.location
-                        ))
-                    else:
-                        new_decls.append(decl)
+            # Transform the AST — copy each FunctionDef, replacing its
+            # body with the inlined version.
+            new_items = []
+            for item in unit.items or []:
+                if isinstance(item, ast.FunctionDef) and item.body:
+                    new_body = self._inline_stmt(item.body, func_bodies, inlineable)
+                    new_items.append(ast.FunctionDef(
+                        decl_specs=item.decl_specs,
+                        declarator=item.declarator,
+                        body=new_body,
+                        pos=item.pos,
+                    ))
                 else:
-                    new_decls.append(decl)
+                    new_items.append(item)
 
-            unit = ast.TranslationUnit(declarations=new_decls)
+            unit = ast.TranslationUnit(items=new_items)
 
         return unit, total_inlined
 
