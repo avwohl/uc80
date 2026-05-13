@@ -1391,30 +1391,25 @@ class CallGraphAnalyzer:
 
         return False
 
-    def _is_trivial_function(self, func: ast.FunctionDef) -> bool:
-        """Check if function is trivial (single return statement with expression)."""
+    def _is_trivial_function(self, func) -> bool:
+        """Check if function is trivial (single ``return expr;`` body)."""
         if func.body is None:
             return False
-
-        items = func.body.items
+        items = func.body.items or []
         if len(items) != 1:
             return False
-
-        if not isinstance(items[0], ast.ReturnStmt):
+        # The auto-AST splits return-with-value into ReturnStmtValue.
+        if not isinstance(items[0], ast.ReturnStmtValue):
             return False
-
-        if items[0].value is None:
+        # Don't inline if return type is 64-bit, or any param is 64-bit.
+        _, fn_type = resolve_type_from_decl(func.decl_specs, func.declarator)
+        if fn_type.kind != "function":
             return False
-
-        # Don't inline functions with 64-bit params or return type -
-        # the compiler can't do 64-bit arithmetic, and inlining loses
-        # the type widening needed for correct results
-        if self._is_long_long_type_node(func.return_type):
+        if fn_type.return_type and self._is_long_long_type_node(fn_type.return_type):
             return False
-        for param in func.params:
-            if self._is_long_long_type_node(param.param_type):
+        for pt in fn_type.param_types:
+            if self._is_long_long_type_node(pt):
                 return False
-
         return True
 
     def _is_long_long_type_node(self, t: lt.TypeNode) -> bool:
