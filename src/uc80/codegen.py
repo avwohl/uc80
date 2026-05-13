@@ -399,6 +399,32 @@ def make_identifier(name: str):
     )
 
 
+def is_function_type(t) -> bool:
+    """True if t represents a function type — accepts both legacy
+    lt.FunctionType and our codegen-internal ResolvedType."""
+    if isinstance(t, lt.FunctionType):
+        return True
+    return isinstance(t, ResolvedType) and t.kind == "function"
+
+
+def is_pointer_type(t) -> bool:
+    if isinstance(t, lt.PointerType):
+        return True
+    return isinstance(t, ResolvedType) and t.kind == "pointer"
+
+
+def is_array_type(t) -> bool:
+    if isinstance(t, lt.ArrayType):
+        return True
+    return isinstance(t, ResolvedType) and t.kind == "array"
+
+
+def is_struct_type(t) -> bool:
+    if isinstance(t, lt.StructType):
+        return True
+    return isinstance(t, ResolvedType) and t.kind == "struct"
+
+
 def function_is_variadic(func) -> bool:
     """True if a FunctionDef's outermost FnDeclarator has VariadicParams."""
     fn = _outermost_fn_declarator(func.declarator) if hasattr(func, "declarator") else None
@@ -1083,7 +1109,7 @@ class CallGraphAnalyzer:
             # An identifier used as a value (not in a call context) might be
             # a function whose address is taken (function name decays to pointer)
             # We'll record it; the caller should filter to only known functions
-            address_taken.add(expr.name)
+            address_taken.add(expr.name.text)
 
     def compute_active_together(self) -> None:
         """Compute which functions can be on stack simultaneously.
@@ -1402,8 +1428,8 @@ class CallGraphAnalyzer:
                           param_map: dict[str, ast.Expression]) -> ast.Expression:
         """Substitute parameter references with argument expressions."""
         if isinstance(expr, ast.Identifier):
-            if expr.name in param_map:
-                return param_map[expr.name]
+            if expr.name.text in param_map:
+                return param_map[expr.name.text]
             return expr
 
         elif isinstance(expr, ast.BinaryOp):
@@ -1872,11 +1898,11 @@ class CallGraphAnalyzer:
             return None
         elif isinstance(expr, ast.Identifier):
             # Check if this is an enum constant (only available in CodeGenerator context)
-            if hasattr(self, 'ctx') and expr.name in self.ctx.enum_constants:
-                return self.ctx.enum_constants[expr.name]
+            if hasattr(self, 'ctx') and expr.name.text in self.ctx.enum_constants:
+                return self.ctx.enum_constants[expr.name.text]
             # Also check if CallGraphAnalyzer has collected enum values
-            if hasattr(self, 'enum_values') and expr.name in self.enum_values:
-                return self.enum_values[expr.name]
+            if hasattr(self, 'enum_values') and expr.name.text in self.enum_values:
+                return self.enum_values[expr.name.text]
         return None
 
     def _find_constant_params(self, unit: ast.TranslationUnit) -> dict[str, dict[int, int]]:
@@ -1948,8 +1974,8 @@ class CallGraphAnalyzer:
         """Substitute constant values for parameters in an expression."""
         if isinstance(expr, ast.Identifier):
             # Check if this is a parameter with a known constant
-            if expr.name in param_names:
-                param_idx = param_names.index(expr.name)
+            if expr.name.text in param_names:
+                param_idx = param_names.index(expr.name.text)
                 if param_idx in constants:
                     return ast.IntLiteral(value=constants[param_idx], pos=expr.pos)
             return expr
@@ -2488,9 +2514,11 @@ class CodeGenerator:
                     if nm is None:
                         continue
                     if is_fn:
-                        # Function prototype.
+                        # Function prototype. Register the symbol so
+                        # callers resolve return type / arg types, but
+                        # don't add to function_names — that set means
+                        # "defined in this TU"; prototypes need EXTRN.
                         self.ctx.globals[nm] = Symbol(name=nm, sym_type=full, is_global=True)
-                        self.ctx.function_names.add(nm)
                     else:
                         var_type = self._infer_array_size(full, init)
                         var_type = self._merge_array_size(nm, var_type)
@@ -2734,31 +2762,27 @@ class CodeGenerator:
 
         return "\n".join(self.ctx.lines)
 
-    def gen_declaration(self, decl: ast.Declaration) -> None:
-        """Generate code for a declaration."""
+    def gen_declaration(self, decl) -> None:
+        """Generate code for a top-level declaration (auto-AST)."""
         if isinstance(decl, ast.FunctionDef):
             self.gen_function(decl)
-        elif isinstance(decl, ast.VarDecl):
-            # Register any inline types (enums, etc.)
-            self._register_inline_types(decl.var_type)
-            # Check if this is a function declaration (parsed as VarDecl with FunctionType)
-            if isinstance(decl.var_type, lt.FunctionType):
-                # This is a function declaration without body - emit EXTRN
-                # (but not for static functions or functions defined in this file)
-                if decl.storage_class != "static" and decl.name not in self.ctx.function_names:
-                    sym = self.ctx.globals.get(decl.name)
-                    self.ctx.emit_instr("extrn", sym.label() if sym else f"_{decl.name}")
-            # Other global variables are handled in data segment
-            pass
-        elif isinstance(decl, ast.DeclarationList):
-            for d in decl.declarations:
-                self.gen_declaration(d)
-        elif isinstance(decl, ast.StructDecl):
-            self._register_struct(decl)
-        elif isinstance(decl, ast.EnumDecl):
-            self._register_enum(decl)
-        elif isinstance(decl, ast.TypedefDecl):
-            self._register_typedef(decl)
+            return
+        if not isinstance(decl, ast.Declaration):
+            return
+        storage = decl_storage_class(decl.decl_specs)
+        if storage == "typedef":
+            # Typedefs registered elsewhere; no code emission.
+            return
+        for name, full, _init, is_fn in iter_var_decls(decl):
+            if name is None:
+                continue
+            if is_fn:
+                # Function prototype: emit EXTRN unless static or
+                # locally defined in this TU.
+                if storage != "static" and name not in self.ctx.function_names:
+                    sym = self.ctx.globals.get(name)
+                    self.ctx.emit_instr("extrn", sym.label() if sym else f"_{name}")
+            # Globals get their data-segment emission elsewhere.
 
     def _compute_struct_layout(self, struct_name: str, ast_members: list[ast.StructMember],
                                 is_union: bool) -> tuple[list[tuple[str, lt.TypeNode, int]],
@@ -2898,8 +2922,8 @@ class CodeGenerator:
         if isinstance(expr, ast.IntLiteral):
             return expr.value
         if isinstance(expr, ast.Identifier):
-            if expr.name in self.ctx.enum_constants:
-                return self.ctx.enum_constants[expr.name]
+            if expr.name.text in self.ctx.enum_constants:
+                return self.ctx.enum_constants[expr.name.text]
             return None
         if isinstance(expr, ast.UnaryOp):
             val = self._eval_enum_expr(expr.operand)
@@ -4382,7 +4406,7 @@ class CodeGenerator:
             self.gen_expr(expr.operand)
         elif isinstance(expr, ast.Identifier):
             # Simple identifier - get its address
-            src_sym = self.ctx.lookup(expr.name)
+            src_sym = self.ctx.lookup(expr.name.text)
             if src_sym:
                 if src_sym.is_global:
                     self.ctx.emit_instr("ld", f"HL,{src_sym.label()}")
@@ -5498,15 +5522,15 @@ class CodeGenerator:
     def gen_identifier(self, expr: ast.Identifier, force_long: bool = False) -> None:
         """Generate code to load an identifier's value into HL (or DEHL for 32-bit)."""
         # Handle __func__ (C99 predefined identifier)
-        if expr.name in ('__func__', '__FUNCTION__'):
+        if expr.name.text in ('__func__', '__FUNCTION__'):
             func_name = getattr(self.ctx, 'current_function', 'unknown')
             str_expr = ast.StringLiteral(value=func_name, pos=expr.pos)
             self.gen_expr(str_expr, force_long)
             return
 
         # Check for enum constant first
-        if expr.name in self.ctx.enum_constants:
-            val = self.ctx.enum_constants[expr.name]
+        if expr.name.text in self.ctx.enum_constants:
+            val = self.ctx.enum_constants[expr.name.text]
             self.ctx.emit_instr("ld", f"HL,{val}")
             if force_long:
                 # Sign-extend negative enum values to 32-bit
@@ -5516,20 +5540,20 @@ class CodeGenerator:
                     self.ctx.emit_instr("ld", "DE,0")
             return
 
-        sym = self.ctx.lookup(expr.name)
+        sym = self.ctx.lookup(expr.name.text)
         if sym is None:
             # Assume external function - load its address.  Track it so we
             # emit an EXTRN; otherwise um80 fails the assemble step with
             # "Undefined symbol" (the linker would resolve it, but um80
             # doesn't defer unknowns past the .rel boundary on its own).
-            self.ctx.implicit_externs.add(f"_{expr.name}")
-            self.ctx.emit_instr("ld", f"HL,_{expr.name}")
+            self.ctx.implicit_externs.add(f"_{expr.name.text}")
+            self.ctx.emit_instr("ld", f"HL,_{expr.name.text}")
             return
 
         # Check if this is a function (name matches a function we've seen)
         # Functions used as values decay to pointers - load address, not value
         # Only apply to global symbols - local variables can shadow function names
-        if isinstance(sym.sym_type, lt.FunctionType) or (sym.is_global and expr.name in self.ctx.function_names):
+        if isinstance(sym.sym_type, lt.FunctionType) or (sym.is_global and expr.name.text in self.ctx.function_names):
             self.ctx.emit_instr("ld", f"HL,{sym.label()}")
             return
 
@@ -6100,7 +6124,7 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", f"({target}+6),HL")
             elif isinstance(expr, ast.Identifier):
                 # Load 64-bit variable
-                sym = self.ctx.lookup(expr.name)
+                sym = self.ctx.lookup(expr.name.text)
                 if sym and sym.is_global:
                     self.ctx.emit_instr("ld", f"HL,{sym.label()}")
                     if to_tmp:
@@ -7544,7 +7568,7 @@ class CodeGenerator:
             func_sym = self.ctx.lookup(expr.func.name.text)
             is_direct_function = (
                 expr.func.name.text in self.ctx.function_names or
-                (func_sym and isinstance(func_sym.sym_type, lt.FunctionType))
+                (func_sym and is_function_type(func_sym.sym_type))
             )
             if is_direct_function:
                 # Record EXTRN for any function we don't define locally.  The
@@ -8742,15 +8766,15 @@ class CodeGenerator:
         elif isinstance(expr, ast.BoolLiteral):
             return lt.BasicType(name="bool")
         elif isinstance(expr, ast.Identifier):
-            if expr.name in ('__func__', '__FUNCTION__'):
+            if expr.name.text in ('__func__', '__FUNCTION__'):
                 return lt.PointerType(base_type=lt.BasicType(name="char"))
             # Enum constants: have type int.  Without this, _is_long_expr
             # falls through to _is_long_type(None) → False, and under
             # --int=32 the call site pushes only HL (16 bits) for an enum
             # arg, so variadic printf reads garbage from the next slot.
-            if expr.name in self.ctx.enum_constants:
+            if expr.name.text in self.ctx.enum_constants:
                 return lt.BasicType(name="int", is_signed=True)
-            sym = self.ctx.lookup(expr.name)
+            sym = self.ctx.lookup(expr.name.text)
             if sym:
                 return sym.sym_type
         elif isinstance(expr, ast.UnaryOp) and expr.op == "*":
@@ -9008,7 +9032,7 @@ class CodeGenerator:
     def _gen_address(self, expr: ast.Expression) -> None:
         """Generate code to compute address of an expression into HL."""
         if isinstance(expr, ast.Identifier):
-            sym = self.ctx.lookup(expr.name)
+            sym = self.ctx.lookup(expr.name.text)
             if sym:
                 if sym.is_global:
                     self.ctx.emit_instr("ld", f"HL,{sym.label()}")
@@ -9620,7 +9644,7 @@ class CodeGenerator:
         """
         # Try to infer the type from the expression
         if isinstance(expr, ast.Identifier):
-            sym = self.ctx.lookup(expr.name)
+            sym = self.ctx.lookup(expr.name.text)
             if sym and isinstance(sym.sym_type, lt.PointerType):
                 return self._type_size(sym.sym_type.base_type)
             elif sym and isinstance(sym.sym_type, lt.ArrayType):
@@ -9667,7 +9691,7 @@ class CodeGenerator:
         For array[index], this is the size of the element type.
         """
         if isinstance(array_expr, ast.Identifier):
-            sym = self.ctx.lookup(array_expr.name)
+            sym = self.ctx.lookup(array_expr.name.text)
             if sym:
                 if isinstance(sym.sym_type, lt.PointerType):
                     return self._type_size(sym.sym_type.base_type)
@@ -10303,11 +10327,11 @@ class CodeGenerator:
                             return (base_label, base_offset + idx_val * elem_size)
         elif isinstance(expr, ast.Identifier):
             # For function pointers or array names
-            sym = self.ctx.lookup(expr.name)
+            sym = self.ctx.lookup(expr.name.text)
             if sym and isinstance(sym.sym_type, (lt.FunctionType, lt.ArrayType)):
                 return (sym.label(), 0)
-            elif expr.name in self.ctx.static_local_labels:
-                return (self.ctx.static_local_labels[expr.name], 0)
+            elif expr.name.text in self.ctx.static_local_labels:
+                return (self.ctx.static_local_labels[expr.name.text], 0)
         elif isinstance(expr, ast.BinaryOp) and expr.op in ('+', '-'):
             # Address +/- constant offset
             label, base_offset = self._try_resolve_address_const(expr.left)
@@ -10779,8 +10803,8 @@ class CodeGenerator:
             return expr.value
         elif isinstance(expr, ast.Identifier):
             # Check for enum constant
-            if expr.name in self.ctx.enum_constants:
-                return self.ctx.enum_constants[expr.name]
+            if expr.name.text in self.ctx.enum_constants:
+                return self.ctx.enum_constants[expr.name.text]
             return None  # Not a compile-time constant
         elif isinstance(expr, ast.CharLiteral):
             # Character constants have type int; value is as-if stored in char
