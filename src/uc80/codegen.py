@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 import struct
 from typing import Callable, Iterator, Optional
-from uc_core import ast_legacy as ast
+from uc_core import ast
 from uc_core.type_config import TypeConfig, Z80_CPM
 
 
