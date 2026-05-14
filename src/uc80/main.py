@@ -289,7 +289,7 @@ def main() -> int:
             asts.append(ast)
 
             if args.verbose:
-                print(f"  Parsed {len(ast.declarations)} declarations")
+                print(f"  Parsed {len(ast.items)} declarations")
 
         # If preprocess-only mode, we're done
         if args.preprocess_only:
@@ -299,11 +299,11 @@ def main() -> int:
         if len(asts) == 1:
             merged_ast = asts[0]
         else:
-            merged_ast = ast_module.TranslationUnit(declarations=[])
+            merged_ast = ast_module.TranslationUnit(items=[])
             for unit in asts:
-                merged_ast.declarations.extend(unit.declarations)
+                merged_ast.items.extend(unit.items)
             if args.verbose:
-                print(f"Merged {len(asts)} files into {len(merged_ast.declarations)} declarations")
+                print(f"Merged {len(asts)} files into {len(merged_ast.items)} declarations")
 
         # AST-level expression optimization
         if not args.no_ast_optimize:

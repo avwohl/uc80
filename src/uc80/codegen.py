@@ -9165,10 +9165,10 @@ class CodeGenerator:
             self.ctx.emit_instr("ld", f"HL,{label}")
 
     @staticmethod
-    def _mul_shift_count(expr: ast.Expression) -> int | None:
+    def _mul_shift_count(expr) -> int | None:
         """If expr is an IntLiteral power-of-2 > 1, return log2. Else None."""
         if isinstance(expr, ast.IntLiteral):
-            v = expr.value
+            v = int_value(expr)
             if v > 1 and (v & (v - 1)) == 0:
                 return v.bit_length() - 1
         return None
