@@ -1494,34 +1494,44 @@ class CallGraphAnalyzer:
                     inlineable: set[str]) -> ast.Expression:
         """Recursively inline function calls in an expression."""
         if isinstance(expr, (ast.Call, ast.CallNoArgs)):
-            # First, inline any calls in the arguments
             new_args = [self._inline_expr(a, func_bodies, inlineable) for a in expr.args]
 
-            # Check if this is a direct call to an inlineable function
+            # Direct call to an inlineable function?
             if isinstance(expr.func, ast.Identifier) and expr.func.name.text in inlineable:
                 func = func_bodies[expr.func.name.text]
                 if self._is_trivial_function(func):
-                    # Build parameter -> argument map
-                    param_map: dict[str, ast.Expression] = {}
-                    for i, param in enumerate(func.params):
-                        if param.name and i < len(new_args):
-                            arg = new_args[i]
-                            # Wrap in Cast for _Bool parameters (C99 6.3.1.2)
-                            if (isinstance(param.param_type, lt.BasicType)
-                                    and param.param_type.name == 'bool'):
-                                arg = ast.Cast(target_type=param.param_type, expr=arg)
-                            param_map[param.name] = arg
-
-                    # Get the return expression and substitute parameters
+                    # Build parameter → argument map via the FnDeclarator.
+                    param_map: dict[str, object] = {}
+                    params = function_params(func)
+                    for i, p in enumerate(params):
+                        if not isinstance(p, ast.ParamDecl):
+                            continue
+                        pname = declarator_ident(p.declarator)
+                        if pname is None or i >= len(new_args):
+                            continue
+                        arg = new_args[i]
+                        _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
+                        # Wrap _Bool parameters in a Cast (C99 6.3.1.2).
+                        if p_type.kind == "basic" and p_type.name == "bool":
+                            arg = ast.Cast(
+                                target_type=lt.BasicType(name="bool"),
+                                expr=arg, pos=ast._Pos(),
+                            )
+                        param_map[pname] = arg
+                    # The trivial-function body is a single ReturnStmtValue.
                     ret_stmt = func.body.items[0]
-                    assert isinstance(ret_stmt, ast.ReturnStmt)
                     return self._substitute_params(ret_stmt.value, param_map)
 
-            # Return call with inlined arguments
+            # Return call with inlined arguments.
+            if isinstance(expr, ast.CallNoArgs) and not new_args:
+                return ast.CallNoArgs(
+                    func=self._inline_expr(expr.func, func_bodies, inlineable),
+                    pos=expr.pos,
+                )
             return ast.Call(
                 func=self._inline_expr(expr.func, func_bodies, inlineable),
                 args=new_args,
-                pos=expr.pos
+                pos=expr.pos,
             )
 
         elif isinstance(expr, ast.BinaryOp):
@@ -1536,8 +1546,13 @@ class CallGraphAnalyzer:
             return ast.UnaryOp(
                 op=expr.op,
                 operand=self._inline_expr(expr.operand, func_bodies, inlineable),
-                is_prefix=expr.is_prefix,
-                pos=expr.pos
+                pos=expr.pos,
+            )
+        elif isinstance(expr, ast.PostfixOp):
+            return ast.PostfixOp(
+                op=expr.op,
+                operand=self._inline_expr(expr.operand, func_bodies, inlineable),
+                pos=expr.pos,
             )
 
         elif isinstance(expr, ast.TernaryOp):
@@ -1585,36 +1600,50 @@ class CallGraphAnalyzer:
             return stmt
 
         elif isinstance(stmt, ast.ReturnStmt):
-            if stmt.value:
-                return ast.ReturnStmt(
-                    value=self._inline_expr(stmt.value, func_bodies, inlineable),
-                    pos=stmt.pos
-                )
             return stmt
+        elif isinstance(stmt, ast.ReturnStmtValue):
+            return ast.ReturnStmtValue(
+                value=self._inline_expr(stmt.value, func_bodies, inlineable),
+                pos=stmt.pos,
+            )
 
         elif isinstance(stmt, ast.CompoundStmt):
             new_items = []
-            for item in stmt.items:
-                if isinstance(item, ast.Statement):
-                    new_items.append(self._inline_stmt(item, func_bodies, inlineable))
-                elif isinstance(item, ast.VarDecl) and item.init:
-                    new_items.append(ast.VarDecl(
-                        name=item.name,
-                        var_type=item.var_type,
-                        init=self._inline_expr(item.init, func_bodies, inlineable),
-                        storage_class=item.storage_class,
-                        pos=item.pos
+            for item in stmt.items or []:
+                if isinstance(item, ast.Declaration):
+                    # Rebuild Declaration with each init_declarator's
+                    # initializer recursively inlined.
+                    new_inits = []
+                    for d in item.declarators or []:
+                        if isinstance(d, ast.InitDeclaratorWithInit):
+                            new_inits.append(ast.InitDeclaratorWithInit(
+                                declarator=d.declarator,
+                                init=self._inline_expr(d.init, func_bodies, inlineable),
+                                pos=d.pos,
+                            ))
+                        else:
+                            new_inits.append(d)
+                    new_items.append(ast.Declaration(
+                        decl_specs=item.decl_specs,
+                        declarators=new_inits,
+                        pos=item.pos,
                     ))
                 else:
-                    new_items.append(item)
+                    new_items.append(self._inline_stmt(item, func_bodies, inlineable))
             return ast.CompoundStmt(items=new_items, pos=stmt.pos)
 
-        elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
+        elif isinstance(stmt, ast.IfStmt):
             return ast.IfStmt(
                 condition=self._inline_expr(stmt.condition, func_bodies, inlineable),
                 then_branch=self._inline_stmt(stmt.then_branch, func_bodies, inlineable),
-                else_branch=self._inline_stmt(stmt.else_branch, func_bodies, inlineable) if getattr(stmt, "else_branch", None) else None,
-                pos=stmt.pos
+                pos=stmt.pos,
+            )
+        elif isinstance(stmt, ast.IfStmtElse):
+            return ast.IfStmtElse(
+                condition=self._inline_expr(stmt.condition, func_bodies, inlineable),
+                then_branch=self._inline_stmt(stmt.then_branch, func_bodies, inlineable),
+                else_branch=self._inline_stmt(stmt.else_branch, func_bodies, inlineable),
+                pos=stmt.pos,
             )
 
         elif isinstance(stmt, ast.WhileStmt):
@@ -1769,26 +1798,25 @@ class CallGraphAnalyzer:
                     elif isinstance(val, ast.DesignatedInit):
                         collect_from_expr(val.value)
 
-        def collect_from_stmt(stmt: ast.Statement) -> None:
+        def collect_from_stmt(stmt) -> None:
             if isinstance(stmt, ast.ExpressionStmt) and stmt.expr:
                 collect_from_expr(stmt.expr)
-            elif isinstance(stmt, ast.ReturnStmt) and stmt.value:
+            elif isinstance(stmt, ast.ReturnStmtValue):
                 collect_from_expr(stmt.value)
             elif isinstance(stmt, ast.CompoundStmt):
-                for item in stmt.items:
-                    if isinstance(item, ast.Statement):
-                        collect_from_stmt(item)
-                    elif isinstance(item, ast.VarDecl) and item.init:
-                        collect_from_expr(item.init)
-                    elif isinstance(item, ast.DeclarationList):
-                        for d in item.declarations:
-                            if isinstance(d, ast.VarDecl) and d.init:
+                for item in stmt.items or []:
+                    if isinstance(item, ast.Declaration):
+                        for d in item.declarators or []:
+                            if isinstance(d, ast.InitDeclaratorWithInit):
                                 collect_from_expr(d.init)
+                    else:
+                        collect_from_stmt(item)
             elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
                 collect_from_expr(stmt.condition)
                 collect_from_stmt(stmt.then_branch)
-                if getattr(stmt, "else_branch", None):
-                    collect_from_stmt(getattr(stmt, "else_branch", None))
+                else_b = getattr(stmt, "else_branch", None)
+                if else_b is not None:
+                    collect_from_stmt(else_b)
             elif isinstance(stmt, ast.WhileStmt):
                 collect_from_expr(stmt.condition)
                 collect_from_stmt(stmt.body)
@@ -1818,13 +1846,23 @@ class CallGraphAnalyzer:
 
         return call_args
 
-    def _eval_const_expr(self, expr: ast.Expression) -> int | None:
+    def _eval_const_expr(self, expr) -> int | None:
         """Evaluate a constant expression. Returns None if not constant."""
         if isinstance(expr, ast.IntLiteral):
-            return expr.value
+            return int_value(expr)
         elif isinstance(expr, ast.CharLiteral):
-            # Character constants have type int (C 6.4.4.4)
-            val = expr.value
+            # CharLiteral.value is a Token (text like ``'A'``); decode.
+            text = expr.value.text
+            i = 0
+            while i < len(text) and text[i] != "'":
+                i += 1
+            inner = text[i + 1:-1]
+            if inner.startswith("\\"):
+                esc = {"n": 10, "t": 9, "r": 13, "0": 0, "\\": 92,
+                       "'": 39, '"': 34, "a": 7, "b": 8, "f": 12, "v": 11}
+                val = esc.get(inner[1], ord(inner[1]) if len(inner) > 1 else 0)
+            else:
+                val = ord(inner) if inner else 0
             if val >= 0x80:
                 val = val - 0x100  # Sign extend signed char to int
             return val
@@ -1963,16 +2001,15 @@ class CallGraphAnalyzer:
 
         return constant_params
 
-    def _substitute_param_constants(self, expr: ast.Expression,
+    def _substitute_param_constants(self, expr,
                                     param_names: list[str],
-                                    constants: dict[int, int]) -> ast.Expression:
+                                    constants: dict[int, int]):
         """Substitute constant values for parameters in an expression."""
         if isinstance(expr, ast.Identifier):
-            # Check if this is a parameter with a known constant
             if expr.name.text in param_names:
                 param_idx = param_names.index(expr.name.text)
                 if param_idx in constants:
-                    return ast.IntLiteral(value=constants[param_idx], pos=expr.pos)
+                    return make_int_lit(constants[param_idx])
             return expr
 
         elif isinstance(expr, ast.BinaryOp):
@@ -1980,18 +2017,25 @@ class CallGraphAnalyzer:
                 op=expr.op,
                 left=self._substitute_param_constants(expr.left, param_names, constants),
                 right=self._substitute_param_constants(expr.right, param_names, constants),
-                pos=expr.pos
+                pos=expr.pos,
             )
 
         elif isinstance(expr, ast.UnaryOp):
-            # Don't substitute inside address-of - &(param) needs the actual parameter
-            if expr.op == "&":
+            op_text = expr.op.text if hasattr(expr.op, "text") else expr.op
+            # Don't substitute inside &param (needs the actual parameter).
+            if op_text == "&":
                 return expr
             return ast.UnaryOp(
                 op=expr.op,
                 operand=self._substitute_param_constants(expr.operand, param_names, constants),
-                is_prefix=expr.is_prefix,
-                pos=expr.pos
+                pos=expr.pos,
+            )
+
+        elif isinstance(expr, ast.PostfixOp):
+            return ast.PostfixOp(
+                op=expr.op,
+                operand=self._substitute_param_constants(expr.operand, param_names, constants),
+                pos=expr.pos,
             )
 
         elif isinstance(expr, ast.TernaryOp):
@@ -1999,42 +2043,49 @@ class CallGraphAnalyzer:
                 condition=self._substitute_param_constants(expr.condition, param_names, constants),
                 true_expr=self._substitute_param_constants(expr.true_expr, param_names, constants),
                 false_expr=self._substitute_param_constants(expr.false_expr, param_names, constants),
-                pos=expr.pos
+                pos=expr.pos,
             )
 
         elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
-            return ast.Call(
-                func=self._substitute_param_constants(expr.func, param_names, constants),
-                args=[self._substitute_param_constants(a, param_names, constants) for a in expr.args],
-                pos=expr.pos
-            )
+            new_args = [self._substitute_param_constants(a, param_names, constants)
+                        for a in expr.args]
+            new_func = self._substitute_param_constants(expr.func, param_names, constants)
+            if isinstance(expr, ast.CallNoArgs) and not new_args:
+                return ast.CallNoArgs(func=new_func, pos=expr.pos)
+            return ast.Call(func=new_func, args=new_args, pos=expr.pos)
 
         elif isinstance(expr, ast.Index):
             return ast.Index(
                 array=self._substitute_param_constants(expr.array, param_names, constants),
                 index=self._substitute_param_constants(expr.index, param_names, constants),
-                pos=expr.pos
+                pos=expr.pos,
             )
 
         elif isinstance(expr, ast.Member):
             return ast.Member(
                 obj=self._substitute_param_constants(expr.obj, param_names, constants),
                 member=expr.member,
-                is_arrow=expr.is_arrow,
-                pos=expr.pos
+                pos=expr.pos,
+            )
+
+        elif isinstance(expr, ast.ArrowMember):
+            return ast.ArrowMember(
+                obj=self._substitute_param_constants(expr.obj, param_names, constants),
+                member=expr.member,
+                pos=expr.pos,
             )
 
         elif isinstance(expr, ast.Cast):
             return ast.Cast(
                 target_type=expr.target_type,
                 expr=self._substitute_param_constants(expr.expr, param_names, constants),
-                pos=expr.pos
+                pos=expr.pos,
             )
 
         elif isinstance(expr, ast.SizeofExpr):
             return ast.SizeofExpr(
-                expr=self._substitute_param_constants(expr.expr, param_names, constants),
-                pos=expr.pos
+                operand=self._substitute_param_constants(expr.operand, param_names, constants),
+                pos=expr.pos,
             )
 
         return expr

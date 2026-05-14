@@ -673,8 +673,11 @@ class TestInlineExpansion:
         # Build func_bodies
         func_bodies = {}
         for decl in unit.items:
-            if isinstance(decl, ast_module.FunctionDecl) and decl.body:
-                func_bodies[decl.name] = decl
+            if isinstance(decl, ast_module.FunctionDef) and decl.body:
+                from uc80.codegen import function_name as _fn
+                _nm = _fn(decl)
+                if _nm:
+                    func_bodies[_nm] = decl
 
         call_counts = analyzer.count_calls()
 
