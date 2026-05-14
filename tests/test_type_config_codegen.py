@@ -9,6 +9,7 @@ from uc_core.frontend import parse
 from uc_core.ast_optimizer import ASTOptimizer
 from uc_core.type_config import TypeConfig, Z80_CPM, WATCOM_FLAT32
 from uc_core import ast as ast_module
+from uc_core import ast_legacy as lt
 from uc80.codegen import CodeGenerator
 
 
@@ -72,14 +73,14 @@ class TestTypeConfigPlumbing:
         """With int=32, BasicType 'int' counts as a long (4-byte) type."""
         tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
         gen = CodeGenerator(type_config=tc32)
-        int_type = ast_module.BasicType(name="int")
+        int_type = lt.BasicType(name="int")
         assert gen._is_long_type(int_type) is True
 
     def test_is_long_type_default_is_16bit(self):
         """With default Z80_CPM, int is 16-bit — not a long."""
         gen = CodeGenerator(type_config=Z80_CPM)
-        int_type = ast_module.BasicType(name="int")
-        long_type = ast_module.BasicType(name="long")
+        int_type = lt.BasicType(name="int")
+        long_type = lt.BasicType(name="long")
         assert gen._is_long_type(int_type) is False
         assert gen._is_long_type(long_type) is True
 
@@ -87,14 +88,14 @@ class TestTypeConfigPlumbing:
         """With long=64, a BasicType 'long' is 8 bytes."""
         tc_long64 = TypeConfig(int_size=4, long_size=8, long_long_size=8, ptr_size=4)
         gen = CodeGenerator(type_config=tc_long64)
-        long_type = ast_module.BasicType(name="long")
+        long_type = lt.BasicType(name="long")
         assert gen._is_long_long_type(long_type) is True
 
     def test_type_size_uses_config(self):
         tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
         gen = CodeGenerator(type_config=tc32)
-        assert gen._type_size(ast_module.BasicType(name="int")) == 4
-        assert gen._type_size(ast_module.PointerType(base_type=ast_module.BasicType(name="char"))) == 2
+        assert gen._type_size(lt.BasicType(name="int")) == 4
+        assert gen._type_size(lt.PointerType(base_type=lt.BasicType(name="char"))) == 2
 
 
 class TestPrintfDispatch:
