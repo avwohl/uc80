@@ -317,6 +317,35 @@ class _SynthVarDecl:
     storage_class: "Optional[str]" = None
 
 
+def _rewrite_str_token(string_lit, rewriter) -> None:
+    """Replace a StringLiteral's Token text in-place by running its
+    decoded body through ``rewriter`` and re-encoding."""
+    text = string_lit.value.text
+    prefix = ""
+    if text.startswith("u8"):
+        prefix = "u8"
+        text = text[2:]
+    elif text.startswith(("u", "U", "L")):
+        prefix = text[0]
+        text = text[1:]
+    assert text.startswith('"') and text.endswith('"')
+    decoded = _decode_string_literal(string_lit.value.text)
+    new_decoded = rewriter(decoded)
+    if new_decoded == decoded:
+        return
+    new_text = prefix + '"' + new_decoded.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    # Token is frozen; rebuild it.
+    from uc_core.c23_parser import Token as _Tok
+    string_lit.value = _Tok(
+        name=string_lit.value.name,
+        text=new_text,
+        line=string_lit.value.line,
+        column=string_lit.value.column,
+        offset=string_lit.value.offset,
+        file_id=string_lit.value.file_id,
+    )
+
+
 def _decode_string_literal(text: str) -> str:
     """Decode a STRING_LIT source token to the bytes its content represents."""
     if text.startswith("u8"):
@@ -3240,8 +3269,19 @@ class CodeGenerator:
                     fmt_idx = printf_funcs[func_name]
                     if fmt_idx < len(expr.args):
                         fmt_arg = expr.args[fmt_idx]
+                        # Auto-AST: a literal format string parses as a
+                        # list of StringLiteral pieces (single-element
+                        # list for one literal). Concat decoded bodies.
+                        decoded = None
                         if isinstance(fmt_arg, ast.StringLiteral):
-                            self._extract_printf_specifiers(fmt_arg.value, features)
+                            decoded = _decode_string_literal(fmt_arg.value.text)
+                        elif (isinstance(fmt_arg, list) and fmt_arg
+                              and all(isinstance(p, ast.StringLiteral) for p in fmt_arg)):
+                            decoded = "".join(
+                                _decode_string_literal(p.value.text) for p in fmt_arg
+                            )
+                        if decoded is not None:
+                            self._extract_printf_specifiers(decoded, features)
                         else:
                             return False  # Non-literal format string
                 # Scan arguments too (could have nested printf calls)
@@ -3291,21 +3331,20 @@ class CodeGenerator:
                 if not scan_expr(stmt.condition):
                     return False
             elif isinstance(stmt, ast.ForStmt):
-                if stmt.init:
-                    if isinstance(stmt.init, ast.Expression):
-                        if not scan_expr(stmt.init):
-                            return False
-                    else:
-                        if not scan_stmt(stmt.init):
-                            return False
-                if stmt.condition and not scan_expr(stmt.condition):
+                if isinstance(stmt.init, ast.Declaration):
+                    if not scan_stmt(stmt.init):
+                        return False
+                elif isinstance(stmt.init, ast.ExpressionStmt) and stmt.init.expr:
+                    if not scan_expr(stmt.init.expr):
+                        return False
+                if stmt.condition is not None and not scan_expr(stmt.condition):
                     return False
-                if stmt.update and not scan_expr(stmt.update):
+                if stmt.update is not None and not scan_expr(stmt.update):
                     return False
                 if not scan_stmt(stmt.body):
                     return False
-            elif isinstance(stmt, ast.ReturnStmt):
-                if stmt.value and not scan_expr(stmt.value):
+            elif isinstance(stmt, ast.ReturnStmtValue):
+                if not scan_expr(stmt.value):
                     return False
             elif isinstance(stmt, ast.SwitchStmt):
                 if not scan_expr(stmt.expr):
@@ -3318,13 +3357,11 @@ class CodeGenerator:
             elif isinstance(stmt, ast.LabelStmt):
                 if not scan_stmt(stmt.stmt):
                     return False
-            elif isinstance(stmt, ast.VarDecl):
-                if stmt.init and not scan_expr(stmt.init):
-                    return False
-            elif isinstance(stmt, ast.DeclarationList):
-                for d in stmt.declarations:
-                    if not scan_stmt(d):
-                        return False
+            elif isinstance(stmt, ast.Declaration):
+                for d in stmt.declarators or []:
+                    if isinstance(d, ast.InitDeclaratorWithInit):
+                        if not scan_expr(d.init):
+                            return False
             return True
 
         for decl in unit.items:
@@ -3497,11 +3534,17 @@ class CodeGenerator:
                 fname = expr.func.name.text if isinstance(expr.func, ast.Identifier) else None
                 if fname in scanf_funcs:
                     idx = scanf_funcs[fname]
-                    if idx < len(expr.args) and isinstance(expr.args[idx], ast.StringLiteral):
-                        lit = expr.args[idx]
-                        new_value = rewrite_format(lit.value)
-                        if new_value != lit.value:
-                            lit.value = new_value
+                    if idx < len(expr.args):
+                        fmt_arg = expr.args[idx]
+                        # Auto-AST: literal format strings parse as a
+                        # list of StringLiteral pieces (single-element
+                        # for one literal). Rewrite each piece's text.
+                        if isinstance(fmt_arg, ast.StringLiteral):
+                            _rewrite_str_token(fmt_arg, rewrite_format)
+                        elif (isinstance(fmt_arg, list)
+                              and all(isinstance(p, ast.StringLiteral) for p in fmt_arg)):
+                            for p in fmt_arg:
+                                _rewrite_str_token(p, rewrite_format)
                 visit_expr(expr.func)
                 for a in expr.args:
                     visit_expr(a)
@@ -3557,9 +3600,12 @@ class CodeGenerator:
                 visit_stmt(stmt.stmt)
             elif isinstance(stmt, ast.LabelStmt):
                 visit_stmt(stmt.stmt)
-            elif isinstance(stmt, ast.ReturnStmt):
-                if stmt.value:
-                    visit_expr(stmt.value)
+            elif isinstance(stmt, ast.ReturnStmtValue):
+                visit_expr(stmt.value)
+            elif isinstance(stmt, ast.Declaration):
+                for d in stmt.declarators or []:
+                    if isinstance(d, ast.InitDeclaratorWithInit):
+                        visit_expr(d.init)
             elif isinstance(stmt, ast.VarDecl):
                 if stmt.init:
                     visit_expr(stmt.init)
