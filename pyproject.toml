@@ -12,6 +12,7 @@ requires-python = ">=3.10"
 dependencies = [
     "upeepz80>=0.2.0",
     "uc_core>=0.3.0",
+    "uplox>=3.1.0",
 ]
 authors = [
     {name = "uc80 developers"}
