@@ -172,6 +172,7 @@ Remaining non-passing tests are environmental, not codegen bugs:
 - [um80_and_friends](https://github.com/avwohl/um80_and_friends) - Microsoft MACRO-80 compatible toolchain for Linux: assembler, linker, librarian, disassembler
 - [upeepz80](https://github.com/avwohl/upeepz80) - Z80 peephole optimizer
 - [uplm80](https://github.com/avwohl/uplm80) - PL/M-80 compiler targeting Intel 8080 and Zilog Z80 assembly language
+- [uplox](https://github.com/avwohl/uplox) - Parser/lexer-table generator that produces uc_core's C23 frontend (from `examples/c23.uplox`)
 - [z80cpmw](https://github.com/avwohl/z80cpmw) - Z80 CP/M emulator for Windows (RomWBW)
 
 ## License
