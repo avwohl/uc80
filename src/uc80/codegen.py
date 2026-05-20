@@ -10928,14 +10928,16 @@ class CodeGenerator:
                 escaped = self._escape_string(decoded)
                 self.ctx.emit_instr("db", f"'{escaped}',0")
         elif isinstance(init, ast.UnaryOp) and init.op == "-":
-            # Handle negative literals
+            # Handle negative literals — both IntLiteral.value and
+            # FloatLiteral.value are uplox Tokens; decode first.
             if isinstance(init.operand, ast.IntLiteral):
+                v = int_value(init.operand)
                 if self._is_float_type(elem_type):
-                    self._emit_float_value(float(-init.operand.value))
+                    self._emit_float_value(-float(v))
                 else:
-                    self._emit_int_value(-init.operand.value, elem_size)
+                    self._emit_int_value(-v, elem_size)
             elif isinstance(init.operand, ast.FloatLiteral):
-                self._emit_float_value(-init.operand.value)
+                self._emit_float_value(-float_value(init.operand))
             else:
                 # Complex expression - reserve space (runtime init would be needed)
                 self.ctx.emit_instr("ds", str(elem_size))
