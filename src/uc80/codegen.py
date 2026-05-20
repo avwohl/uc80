@@ -402,16 +402,27 @@ def _decoded_str_len(text: str) -> int:
 
 
 def _outermost_fn_declarator(node):
-    """Walk a declarator chain through pointer/group wraps to find the
-    outermost FnDeclarator / FnDeclaratorEmpty, or None."""
+    """Return the FnDeclarator that defines the function being declared.
+
+    For a function returning a function pointer like
+    `int (*foo(int x))(int y)`, the chain holds TWO FnDeclarators: the
+    OUTERMOST in the syntax tree is the function-pointer's call sig
+    (`[int y]` — part of the *return type*), and the one nested deeper
+    (closer to the identifier) is foo's own (`[int x]`). Per cdecl
+    rules (read right of the name first), foo's own FnDeclarator is
+    the LAST one on the .inner chain before the leaf — not the first.
+
+    Mirrors uc_core's `b220d5f` fix; fixes c-testsuite 00124.
+    """
+    last_fn = None
     while node is not None:
         if isinstance(node, (ast.FnDeclarator, ast.FnDeclaratorEmpty)):
-            return node
+            last_fn = node
         sub = getattr(node, "inner", None)
         if sub is None:
-            return None
+            return last_fn
         node = sub
-    return None
+    return last_fn
 
 
 def _make_synthetic_token(name: str, text: str):
@@ -2844,6 +2855,41 @@ class CodeGenerator:
             return
         if not isinstance(decl, ast.Declaration):
             return
+        # Register enum constants from inline EnumDef/EnumAnon specs
+        # so file-scope `enum E { x, y, z };` makes `x`/`y`/`z`
+        # available as compile-time constants. Without this, references
+        # later emit EXTRN _x and the linker fails with 'undefined
+        # symbol _x' (c-testsuite 00054/00055/00120/00198).
+        # Auto-AST splits enum values: bare `x` is EnumValue(name),
+        # `y = N` is EnumValueWithInit(name, value).
+        def _reg_enum_values(values):
+            next_value = 0
+            for v in values or []:
+                if isinstance(v, ast.EnumValueWithInit):
+                    evaluated = self._eval_enum_expr(v.value)
+                    if evaluated is not None:
+                        next_value = evaluated
+                self.ctx.enum_constants[v.name.text] = next_value
+                next_value += 1
+        def _walk_specs_for_enums(specs):
+            """Find every EnumDef/EnumAnon reachable through a decl_specs
+            list — including inline enums inside StructDef/StructAnon
+            members (which the auto-AST stores as further EnumDef/EnumAnon
+            entries in the member's own decl_specs, not as a resolved
+            lt.EnumType field on the member).
+            """
+            for sp in specs or []:
+                if isinstance(sp, (ast.EnumDef, ast.EnumAnon)):
+                    _reg_enum_values(sp.values)
+                elif isinstance(sp, (ast.StructDef, ast.StructAnon)):
+                    for mem in (getattr(sp, "members", None) or []):
+                        # StructMember has its own decl_specs; recurse.
+                        _walk_specs_for_enums(getattr(mem, "decl_specs", None))
+                        # Legacy resolved EnumType (if frontend ever does so).
+                        mt = getattr(mem, "member_type", None)
+                        if isinstance(mt, lt.EnumType) and mt.values:
+                            _reg_enum_values(mt.values)
+        _walk_specs_for_enums(decl.decl_specs)
         storage = decl_storage_class(decl.decl_specs)
         if storage == "typedef":
             # Typedefs registered elsewhere; no code emission.
@@ -2995,20 +3041,27 @@ class CodeGenerator:
         """Evaluate a constant expression for enum values, supporting references
         to previously defined enum constants and basic arithmetic."""
         if isinstance(expr, ast.IntLiteral):
-            return expr.value
+            # Auto-AST `.value` is a Token; use int_value to decode
+            # `42` / `0x10` / `010` / suffixes correctly.
+            try:
+                return int_value(expr)
+            except Exception:
+                return None
         if isinstance(expr, ast.Identifier):
             if expr.name.text in self.ctx.enum_constants:
                 return self.ctx.enum_constants[expr.name.text]
             return None
+        # Auto-AST op fields are Tokens; pull `.text` for comparison.
         if isinstance(expr, ast.UnaryOp):
             val = self._eval_enum_expr(expr.operand)
             if val is None:
                 return None
-            if expr.op == '-':
+            op = getattr(expr.op, "text", expr.op)
+            if op == '-':
                 return -val
-            if expr.op == '+':
+            if op == '+':
                 return val
-            if expr.op == '~':
+            if op == '~':
                 return ~val
             return None
         if isinstance(expr, ast.BinaryOp):
@@ -3016,16 +3069,17 @@ class CodeGenerator:
             right = self._eval_enum_expr(expr.right)
             if left is None or right is None:
                 return None
-            if expr.op == '+': return left + right
-            if expr.op == '-': return left - right
-            if expr.op == '*': return left * right
-            if expr.op == '/': return left // right if right != 0 else None
-            if expr.op == '%': return left % right if right != 0 else None
-            if expr.op == '<<': return left << right
-            if expr.op == '>>': return left >> right
-            if expr.op == '&': return left & right
-            if expr.op == '|': return left | right
-            if expr.op == '^': return left ^ right
+            op = getattr(expr.op, "text", expr.op)
+            if op == '+': return left + right
+            if op == '-': return left - right
+            if op == '*': return left * right
+            if op == '/': return left // right if right != 0 else None
+            if op == '%': return left % right if right != 0 else None
+            if op == '<<': return left << right
+            if op == '>>': return left >> right
+            if op == '&': return left & right
+            if op == '|': return left | right
+            if op == '^': return left ^ right
             return None
         if isinstance(expr, ast.Cast):
             return self._eval_enum_expr(expr.expr)
@@ -3038,13 +3092,20 @@ class CodeGenerator:
 
         next_value = 0
         for enum_val in enum_type.values:
-            if enum_val.value is not None:
-                evaluated = self._eval_enum_expr(enum_val.value)
+            # Auto-AST splits `EnumValue(name)` and
+            # `EnumValueWithInit(name, value)` — only the latter has a value.
+            v_expr = getattr(enum_val, "value", None)
+            if v_expr is not None:
+                evaluated = self._eval_enum_expr(v_expr)
                 if evaluated is not None:
                     next_value = evaluated
                 else:
                     next_value = 0
-            self.ctx.enum_constants[enum_val.name] = next_value
+            # `enum_val.name` may be a Token in the auto-AST; lift to str.
+            nm = enum_val.name
+            if hasattr(nm, "text"):
+                nm = nm.text
+            self.ctx.enum_constants[nm] = next_value
             next_value += 1
 
     def _register_enum(self, decl: ast.EnumDecl) -> None:
@@ -3721,6 +3782,33 @@ class CodeGenerator:
         """
         if not isinstance(decl, ast.Declaration):
             return
+        # Register enum constants reachable through this Declaration's
+        # specs, including:
+        #   - typedef enum { e, f, g } h;   (00198, typedef storage)
+        #   - struct { enum { X } x; } s;   (00120, inline within struct)
+        # The auto-AST stores inline enums as EnumAnon/EnumDef nodes
+        # nested in decl_specs (or in StructMember.decl_specs); none
+        # produce a resolved lt.EnumType field on the member.
+        def _reg_enum_values(values):
+            next_value = 0
+            for v in values or []:
+                if isinstance(v, ast.EnumValueWithInit):
+                    evaluated = self._eval_enum_expr(v.value)
+                    if evaluated is not None:
+                        next_value = evaluated
+                self.ctx.enum_constants[v.name.text] = next_value
+                next_value += 1
+        def _walk_specs_for_enums(specs):
+            for sp in specs or []:
+                if isinstance(sp, (ast.EnumDef, ast.EnumAnon)):
+                    _reg_enum_values(sp.values)
+                elif isinstance(sp, (ast.StructDef, ast.StructAnon)):
+                    for mem in (getattr(sp, "members", None) or []):
+                        _walk_specs_for_enums(getattr(mem, "decl_specs", None))
+                        mt = getattr(mem, "member_type", None)
+                        if isinstance(mt, lt.EnumType) and mt.values:
+                            _reg_enum_values(mt.values)
+        _walk_specs_for_enums(decl.decl_specs)
         storage = decl_storage_class(decl.decl_specs)
         if storage == "typedef":
             # uc_core typedef registration — handle once per Declaration
