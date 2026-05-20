@@ -2688,35 +2688,37 @@ class CodeGenerator:
                 for name in new_externs:
                     self.ctx.emit_instr("extrn", name)
 
-        # Data segment for global variables
-        # Collect global variable declarations, merging tentative definitions
-        # In C, multiple declarations of the same variable are allowed (tentative definitions)
-        # Only one can have an initializer
-        global_vars: dict[str, ast.VarDecl] = {}  # name -> decl with init (or first decl)
-        extern_only: set[str] = set()  # Names that only have extern declarations
+        # Data segment for global variables (auto-AST).
+        # Each top-level ast.Declaration may declare multiple variables;
+        # iter_var_decls unwraps them. C tentative-definition rules:
+        # multiple `int x;` declarations are allowed at file scope, but
+        # only one initializer; if none, x lands in BSS zero-initialized.
+        global_vars: dict[str, "_SynthVarDecl"] = {}
+        extern_only: set[str] = set()
 
         for d in unit.items:
-            decls_to_check = []
-            if isinstance(d, ast.VarDecl) and not isinstance(d.var_type, lt.FunctionType):
-                decls_to_check.append(d)
-            elif isinstance(d, ast.DeclarationList):
-                for inner in d.declarations:
-                    if isinstance(inner, ast.VarDecl) and not isinstance(inner.var_type, lt.FunctionType):
-                        decls_to_check.append(inner)
-            for decl in decls_to_check:
-                if decl.storage_class == "extern" and not decl.init:
-                    # Pure extern declaration - track it but don't define yet
-                    if decl.name not in global_vars:
-                        extern_only.add(decl.name)
+            if not isinstance(d, ast.Declaration):
+                continue
+            storage = decl_storage_class(d.decl_specs)
+            if storage == "typedef":
+                continue
+            for nm, full, init, is_fn in iter_var_decls(d):
+                if nm is None or is_fn:
+                    continue
+                if isinstance(full, lt.FunctionType):
+                    continue
+                synth = _SynthVarDecl(name=nm, var_type=full, init=init,
+                                      storage_class=storage)
+                if storage == "extern" and not init:
+                    if nm not in global_vars:
+                        extern_only.add(nm)
                 else:
-                    # This is a definition (not extern, or extern with init)
-                    extern_only.discard(decl.name)  # Remove from extern-only
-                    if decl.name in global_vars:
-                        # Already seen - prefer the one with initializer
-                        if decl.init and not global_vars[decl.name].init:
-                            global_vars[decl.name] = decl
+                    extern_only.discard(nm)
+                    if nm in global_vars:
+                        if init and not global_vars[nm].init:
+                            global_vars[nm] = synth
                     else:
-                        global_vars[decl.name] = decl
+                        global_vars[nm] = synth
 
         # Emit EXTRN for symbols that are extern-only (declared but not defined)
         for name in sorted(extern_only):
@@ -10355,11 +10357,13 @@ class CodeGenerator:
                 else:
                     self.ctx.emit_instr("ds", str(elem_size))
         elif isinstance(init, ast.IntLiteral):
-            # Check if target type is float - if so, convert to float representation
+            # init.value is a uplox Token; int_value(init) does the
+            # numeric decode (handles 0x… / 0… / suffix stripping).
+            iv = int_value(init)
             if self._is_float_type(elem_type):
-                self._emit_float_value(float(init.value))
+                self._emit_float_value(float(iv))
             else:
-                self._emit_int_value(init.value, elem_size)
+                self._emit_int_value(iv, elem_size)
         elif isinstance(init, ast.FloatLiteral):
             self._emit_float_value(init.value)
         elif isinstance(init, ast.CharLiteral):
