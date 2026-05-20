@@ -450,6 +450,16 @@ def make_identifier(name: str):
     )
 
 
+def _make_synthetic_float_literal(value: float) -> "ast.FloatLiteral":
+    """Synthesise an ast.FloatLiteral for a folded value.
+
+    FloatLiteral.value is a uplox Token whose .text needs to parse via
+    float() — so emit a plain Python repr.
+    """
+    tok = _make_synthetic_token("FLOAT_LIT", repr(value))
+    return ast.FloatLiteral(value=tok, pos=ast._Pos())
+
+
 def is_function_type(t) -> bool:
     """True if t represents a function type — accepts both legacy
     lt.FunctionType and our codegen-internal ResolvedType."""
@@ -4310,7 +4320,7 @@ class CodeGenerator:
 
             # Convert int literal to float if target is float
             if is_float and isinstance(val, ast.IntLiteral):
-                val = ast.FloatLiteral(value=float(val.value))
+                val = _make_synthetic_float_literal(float(int_value(val)))
 
             # Generate the value in HL (or DEHL for 32-bit)
             self.gen_expr(val, force_long=is_32bit)
@@ -4897,7 +4907,7 @@ class CodeGenerator:
                 consumed += 1
                 # Convert int literal to float if target is float
                 if is_float and isinstance(val, ast.IntLiteral):
-                    val = ast.FloatLiteral(value=float(val.value))
+                    val = _make_synthetic_float_literal(float(int_value(val)))
                 self.gen_expr(val, force_long=is_32bit)
                 if is_long and not is_float and not self._is_long_expr(val) and not self._is_float_expr(val):
                     is_signed = not self._is_unsigned_expr(val)
@@ -5245,7 +5255,7 @@ class CodeGenerator:
 
             # Convert int literal to float if target is float
             if is_float and isinstance(val, ast.IntLiteral):
-                val = ast.FloatLiteral(value=float(val.value))
+                val = _make_synthetic_float_literal(float(int_value(val)))
 
             # Generate value
             self.gen_expr(val, force_long=is_32bit)
@@ -7742,9 +7752,11 @@ class CodeGenerator:
                 )
 
         # Get function parameter types if available
-        param_types: list[lt.TypeNode] = []
+        param_types: list = []
         if isinstance(expr.func, ast.Identifier):
             func_sym = self.ctx.lookup(expr.func.name.text)
+            if func_sym is not None:
+                func_sym.sym_type = _to_legacy(func_sym.sym_type)
             if func_sym and isinstance(func_sym.sym_type, lt.FunctionType):
                 param_types = func_sym.sym_type.param_types
             elif (func_sym and isinstance(func_sym.sym_type, lt.PointerType)
@@ -7765,7 +7777,7 @@ class CodeGenerator:
             if arg_is_float and param_is_int:
                 # Float argument to int parameter - convert float literal at compile time
                 if isinstance(arg, ast.FloatLiteral):
-                    int_val = int(arg.value)
+                    int_val = int(float_value(arg))
                     self.ctx.emit_instr("ld", f"HL,{int_val}")
                 else:
                     # Runtime conversion needed
@@ -7857,7 +7869,7 @@ class CodeGenerator:
                     # float→int short-circuit above is skipped; handle it here.
                     if (arg_is_float and param_is_long and not param_is_float
                             and isinstance(arg, ast.FloatLiteral)):
-                        int_val = int(arg.value)
+                        int_val = int(float_value(arg))
                         val32 = int_val & 0xFFFFFFFF
                         self.ctx.emit_instr("ld", f"HL,{val32 & 0xFFFF}")
                         self.ctx.emit_instr("ld", f"DE,{(val32 >> 16) & 0xFFFF}")
@@ -9601,31 +9613,30 @@ class CodeGenerator:
             return is_unsigned
         return False
 
-    def _is_long_type(self, t: lt.TypeNode | None) -> bool:
+    def _is_long_type(self, t) -> bool:
         """Check if a type is 32-bit integer (needs DEHL register pair).
 
         Byte-width dispatch: returns True for any BasicType whose TypeConfig
         size is exactly 4 bytes. With default Z80_CPM, that's only 'long';
-        with --int=32, 'int' also hits this path.
+        with --int=32, 'int' also hits this path. Accepts ResolvedType too.
         """
+        t = _to_legacy(t)
         if isinstance(t, lt.BasicType):
             size = self.type_config.sizeof_basic(t.name)
             return size == 4 and t.name not in ("float", "double", "long double")
         return False
 
-    def _is_long_long_type(self, t: lt.TypeNode | None) -> bool:
-        """Check if a type is 64-bit integer (needs __tmp64 slot).
-
-        Byte-width dispatch: returns True for any BasicType whose TypeConfig
-        size is exactly 8 bytes. With default Z80_CPM, that's only 'long long'.
-        """
+    def _is_long_long_type(self, t) -> bool:
+        """Check if a type is 64-bit integer (needs __tmp64 slot)."""
+        t = _to_legacy(t)
         if isinstance(t, lt.BasicType):
             size = self.type_config.sizeof_basic(t.name)
             return size == 8 and t.name not in ("float", "double", "long double")
         return False
 
-    def _is_float_type(self, t: lt.TypeNode | None) -> bool:
+    def _is_float_type(self, t) -> bool:
         """Check if a type is floating-point (float or double)."""
+        t = _to_legacy(t)
         if isinstance(t, lt.BasicType):
             return t.name in ("float", "double", "long double")
         return False
