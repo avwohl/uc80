@@ -5948,6 +5948,14 @@ class CodeGenerator:
             # _Generic selection: evaluate matching expression
             self.gen_generic_selection(expr, force_long)
 
+        elif isinstance(expr, ast.SequenceExpr):
+            # Comma operator at expression-statement / initialiser scope:
+            # auto-AST emits ``SequenceExpr(left, right)`` rather than
+            # ``BinaryOp(",", left, right)`` here. Evaluate left for its
+            # side effects, then right for its value.
+            self.gen_expr(expr.left)
+            self.gen_expr(expr.right, force_long)
+
     def gen_stmt_expr(self, expr: ast.StmtExpr) -> None:
         """Generate code for statement expression ({ ... })."""
         # Statement expressions are like compound statements - use gen_compound_stmt
@@ -8462,10 +8470,11 @@ class CodeGenerator:
                 self.ctx.emit_instr("sbc", "A,A")  # A = 0xFF if sign, 0x00 if not
                 self.ctx.emit_instr("ld", "H,A")
 
-    def _is_signed_type(self, t: lt.TypeNode | None) -> bool:
+    def _is_signed_type(self, t) -> bool:
         """Check if a type is signed."""
         if t is None:
             return True  # Default to signed
+        t = _to_legacy(t)
         if isinstance(t, lt.BasicType):
             # Check if type has explicit is_signed attribute
             if hasattr(t, 'is_signed') and t.is_signed is not None:
