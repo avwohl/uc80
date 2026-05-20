@@ -10698,6 +10698,14 @@ class CodeGenerator:
             if len(init) == 1:
                 init = init[0]
         elem_type = _to_legacy(elem_type)
+        # A typedef name in a type-name position (e.g. ``(empty_s){}``)
+        # arrives here as ``lt.BasicType(name="<typedef>")``. Look it up
+        # in the typedef registry so e.g. typedef'd empty structs get the
+        # right size / member layout instead of falling through to the
+        # default int_size.
+        if (isinstance(elem_type, lt.BasicType) and elem_type.name
+                and elem_type.name in self.ctx.typedefs):
+            elem_type = _to_legacy(self.ctx.typedefs[elem_type.name])
         elem_size = self._type_size(elem_type)
 
         if isinstance(init, ast.InitializerList):
