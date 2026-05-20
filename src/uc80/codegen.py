@@ -18,7 +18,7 @@ from uc_core import ast
 # every existing isinstance(t, ast.X) check expects after rebinding
 # the names to the legacy classes for type-tree purposes.
 from uc_core import ast_legacy as lt
-from uc_core._const import int_value, int_flags
+from uc_core._const import int_value, int_flags, float_value
 from uc_core.type_config import TypeConfig, Z80_CPM
 
 
@@ -1142,8 +1142,9 @@ class CallGraphAnalyzer:
         elif isinstance(expr, ast.GenericSelection):
             # Analyze controlling expression and all association expressions
             self._analyze_expr(expr.controlling_expr, calls, address_taken, indirect_sigs)
-            for _, value_expr in expr.associations:
-                self._analyze_expr(value_expr, calls, address_taken, indirect_sigs)
+            # Auto-AST: .assocs is a list of GenericAssoc(target_type, expr).
+            for assoc in (expr.assocs or []):
+                self._analyze_expr(assoc.expr, calls, address_taken, indirect_sigs)
 
         elif isinstance(expr, ast.Identifier):
             # An identifier used as a value (not in a call context) might be
@@ -1475,11 +1476,11 @@ class CallGraphAnalyzer:
                 pos=expr.pos
             )
 
-        elif isinstance(expr, ast.UnaryOp):
-            return ast.UnaryOp(
+        elif isinstance(expr, (ast.UnaryOp, ast.PostfixOp)):
+            cls = type(expr)
+            return cls(
                 op=expr.op,
                 operand=self._substitute_params(expr.operand, param_map),
-                is_prefix=expr.is_prefix,
                 pos=expr.pos
             )
 
@@ -3961,7 +3962,7 @@ class CodeGenerator:
                                 self.ctx.emit_instr("inc", "L")
                         elif isinstance(decl.init, ast.FloatLiteral):
                             # Compile-time conversion
-                            int_val = int(decl.init.value)
+                            int_val = int(float_value(decl.init))
                             self.ctx.emit_instr("ld", f"HL,{int_val}")
                         else:
                             # Runtime conversion
@@ -3975,7 +3976,7 @@ class CodeGenerator:
                         # Float-literal init: fold at compile time; otherwise
                         # generate the float and call __ftoi.
                         if isinstance(decl.init, ast.FloatLiteral):
-                            int_val = int(decl.init.value)
+                            int_val = int(float_value(decl.init))
                             val32 = int_val & 0xFFFFFFFF
                             self.ctx.emit_instr("ld", f"HL,{val32 & 0xFFFF}")
                             self.ctx.emit_instr("ld", f"DE,{(val32 >> 16) & 0xFFFF}")
@@ -5588,7 +5589,7 @@ class CodeGenerator:
         elif isinstance(expr, ast.BinaryOp):
             self.gen_binary_op(expr)
 
-        elif isinstance(expr, ast.UnaryOp):
+        elif isinstance(expr, (ast.UnaryOp, ast.PostfixOp)):
             self.gen_unary_op(expr)
 
         elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
@@ -5687,7 +5688,8 @@ class CodeGenerator:
         default_expr = None
         matched_expr = None
 
-        for type_node, value_expr in expr.associations:
+        for assoc in (expr.assocs or []):
+            type_node, value_expr = assoc.target_type, assoc.expr
             if type_node is None:
                 default_expr = value_expr
             elif self._types_compatible(ctrl_type, type_node):
@@ -6297,7 +6299,7 @@ class CodeGenerator:
             # Already 64-bit - generate and store
             if isinstance(expr, ast.IntLiteral):
                 # Large literal - emit directly
-                val = expr.value & 0xFFFFFFFFFFFFFFFF
+                val = int_value(expr) & 0xFFFFFFFFFFFFFFFF
                 self.ctx.emit_instr("ld", f"HL,{val & 0xFFFF}")
                 self.ctx.emit_instr("ld", f"({target}),HL")
                 self.ctx.emit_instr("ld", f"HL,{(val >> 16) & 0xFFFF}")
@@ -7085,8 +7087,21 @@ class CodeGenerator:
         self.ctx.emit_label(end_label)
 
     def gen_unary_op(self, expr) -> None:
-        """Generate code for unary operation (auto-AST UnaryOp / PostfixOp)."""
+        """Generate code for unary operation (auto-AST UnaryOp / PostfixOp).
+
+        Auto-AST splits prefix from postfix into separate node kinds.
+        Synthesise is_prefix locally so the body's many ++/-- handlers
+        can keep using `expr.is_prefix` semantics via the local var.
+        """
         op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        is_postfix = isinstance(expr, ast.PostfixOp)
+        # Bind on the expression object so nested helpers (which the
+        # body of this function is) can still see expr.is_prefix.
+        # Use object.__setattr__ to bypass dataclass frozen-ness.
+        try:
+            object.__setattr__(expr, "is_prefix", not is_postfix)
+        except Exception:
+            pass
 
         if op == "-":
             if self._is_long_long_expr(expr.operand):
@@ -9106,15 +9121,16 @@ class CodeGenerator:
         elif isinstance(expr, ast.GenericSelection):
             # Resolve the _Generic to get matched expression's type
             ctrl_type = self._get_expr_type(expr.controlling_expr)
-            for type_node, value_expr in expr.associations:
+            for assoc in (expr.assocs or []):
+                type_node, value_expr = assoc.target_type, assoc.expr
                 if type_node is None:
                     continue
                 if self._types_compatible(ctrl_type, type_node):
                     return self._get_expr_type(value_expr)
             # Try default
-            for type_node, value_expr in expr.associations:
-                if type_node is None:
-                    return self._get_expr_type(value_expr)
+            for assoc in (expr.assocs or []):
+                if assoc.target_type is None:
+                    return self._get_expr_type(assoc.expr)
         elif isinstance(expr, ast.Compound):
             # Compound literal type is its target type
             # For arrays without explicit size, infer from initializer
@@ -10198,6 +10214,22 @@ class CodeGenerator:
             else:
                 self._emit_initializer(elem, base_type)
 
+    def _decode_char_literal(self, lit: "ast.CharLiteral") -> int:
+        """Decode CharLiteral (Token-valued in auto-AST) to int."""
+        text = lit.value.text if hasattr(lit.value, "text") else lit.value
+        if isinstance(text, int):
+            return text
+        # Skip wide-char prefix (L/u/U/u8) before the opening quote.
+        i = 0
+        while i < len(text) and text[i] != "'":
+            i += 1
+        inner = text[i + 1:-1]
+        if inner.startswith("\\"):
+            esc = {"n": 10, "t": 9, "r": 13, "0": 0, "\\": 92,
+                   "'": 39, '"': 34, "a": 7, "b": 8, "f": 12, "v": 11}
+            return esc.get(inner[1], ord(inner[1]) if len(inner) > 1 else 0)
+        return ord(inner) if inner else 0
+
     def _emit_initializer(self, init: ast.Expression, elem_type: lt.TypeNode) -> None:
         """Emit initialized data for a global variable or array element."""
         elem_size = self._type_size(elem_type)
@@ -10367,24 +10399,27 @@ class CodeGenerator:
             else:
                 self._emit_int_value(iv, elem_size)
         elif isinstance(init, ast.FloatLiteral):
-            self._emit_float_value(init.value)
+            self._emit_float_value(float_value(init))
         elif isinstance(init, ast.CharLiteral):
+            val = self._decode_char_literal(init)
             if elem_size == 1:
-                self.ctx.emit_instr("db", str(init.value))
+                self.ctx.emit_instr("db", str(val & 0xFF))
             else:
                 # Char constant has type int - sign extend per C 6.4.4.4
-                val = init.value
                 if val >= 0x80:
                     val = val - 0x100
                 self._emit_int_value(val, elem_size)
         elif isinstance(init, ast.StringLiteral):
+            text = init.value.text if hasattr(init.value, "text") else init.value
+            decoded = _decode_string_literal(text) if hasattr(init.value, "text") else text
             if isinstance(elem_type, lt.PointerType):
                 # Pointer member initialized with string literal - emit pointer to string
-                label = self.ctx.add_string(init.value, is_wide=getattr(init, 'is_wide', False))
+                label = self.ctx.add_string(decoded, is_wide=_string_is_wide(text)
+                                            if hasattr(init.value, "text") else False)
                 self.ctx.emit_instr("dw", label)
             else:
                 # Array or char member - emit as bytes
-                escaped = self._escape_string(init.value)
+                escaped = self._escape_string(decoded)
                 self.ctx.emit_instr("db", f"'{escaped}',0")
         elif isinstance(init, ast.UnaryOp) and init.op == "-":
             # Handle negative literals
