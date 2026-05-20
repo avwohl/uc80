@@ -18,7 +18,7 @@ from uc_core import ast
 # every existing isinstance(t, ast.X) check expects after rebinding
 # the names to the legacy classes for type-tree purposes.
 from uc_core import ast_legacy as lt
-from uc_core._const import int_value, int_flags, float_value
+from uc_core._const import int_value, int_flags, float_value, make_int_lit
 from uc_core.type_config import TypeConfig, Z80_CPM
 
 
@@ -444,36 +444,50 @@ def is_function_type(t) -> bool:
     lt.FunctionType and our codegen-internal ResolvedType."""
     if isinstance(t, lt.FunctionType):
         return True
-    return isinstance(t, ResolvedType) and t.kind == "function"
+    return _is_resolved_type(t) and t.kind == "function"
 
 
 def is_pointer_type(t) -> bool:
     if isinstance(t, lt.PointerType):
         return True
-    return isinstance(t, ResolvedType) and t.kind == "pointer"
+    return _is_resolved_type(t) and t.kind == "pointer"
 
 
 def is_array_type(t) -> bool:
     if isinstance(t, lt.ArrayType):
         return True
-    return isinstance(t, ResolvedType) and t.kind == "array"
+    return _is_resolved_type(t) and t.kind == "array"
 
 
 def is_struct_type(t) -> bool:
     if isinstance(t, lt.StructType):
         return True
-    return isinstance(t, ResolvedType) and t.kind == "struct"
+    return _is_resolved_type(t) and t.kind == "struct"
+
+
+def _is_resolved_type(t) -> bool:
+    """True for either uc80's local ResolvedType or uc_core's — they share
+    field layout, and uc_core.codegen_helpers' ResolvedType is what
+    ``iter_var_decls`` / ``resolve_type_from_decl`` actually return."""
+    if isinstance(t, ResolvedType):
+        return True
+    try:
+        from uc_core.codegen_helpers import ResolvedType as _CoreRT
+    except ImportError:
+        return False
+    return isinstance(t, _CoreRT)
 
 
 def _to_legacy(t):
-    """Convert a uc80 ResolvedType to its ast_legacy equivalent.
+    """Convert a ResolvedType (either uc80- or uc_core-class) to its
+    ast_legacy equivalent.
 
     Idempotent for already-legacy types. Used at codegen boundaries
     where the rest of the code expects ``lt.StructType`` /
     ``lt.PointerType`` / etc. (the legacy isinstance checks won't match
     a ``ResolvedType``).
     """
-    if t is None or not isinstance(t, ResolvedType):
+    if t is None or not _is_resolved_type(t):
         return t
     k = t.kind
     if k == "basic":
@@ -2451,12 +2465,24 @@ class CodeGenerator:
         if var_type.size is not None:
             return var_type
 
-        # String literal initializing char/wchar_t array
-        if isinstance(init, ast.StringLiteral):
-            array_size = len(init.value) + 1  # +1 for null terminator
+        # String literal initializing char/wchar_t array. The auto-AST
+        # wraps adjacent string literals in a Python list (so
+        # ``char x[] = "abc" "def"`` arrives as a 2-element list; even
+        # a single literal is wrapped).
+        if isinstance(init, list) and len(init) >= 1 and all(isinstance(p, ast.StringLiteral) for p in init):
+            decoded = "".join(_decode_string_literal(p.value.text) for p in init)
+            array_size = len(decoded) + 1
             return lt.ArrayType(
                 base_type=var_type.base_type,
-                size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
+                size=make_int_lit(array_size)
+            )
+        if isinstance(init, ast.StringLiteral):
+            text = init.value.text if hasattr(init.value, "text") else init.value
+            decoded = _decode_string_literal(text) if hasattr(init.value, "text") else text
+            array_size = len(decoded) + 1  # +1 for null terminator
+            return lt.ArrayType(
+                base_type=var_type.base_type,
+                size=make_int_lit(array_size)
             )
 
         if not isinstance(init, ast.InitializerList):
@@ -2471,7 +2497,7 @@ class CodeGenerator:
             array_size = len(init.values[0].value) + 1  # +1 for null terminator
             return lt.ArrayType(
                 base_type=base_type,
-                size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
+                size=make_int_lit(array_size)
             )
 
         # Check for designated initializers with array index - size = max_index + 1
@@ -2512,7 +2538,7 @@ class CodeGenerator:
         # Create new ArrayType with inferred size
         return lt.ArrayType(
             base_type=base_type,
-            size=ast.IntLiteral(value=array_size, is_long=False, is_unsigned=False)
+            size=make_int_lit(array_size)
         )
 
     def _merge_array_size(self, name: str, var_type: lt.TypeNode) -> lt.TypeNode:
@@ -3944,6 +3970,10 @@ class CodeGenerator:
 
     def _gen_one_var_decl(self, name, var_type, init, storage) -> None:
         """Generate code for one variable declaration (post-iter_var_decls)."""
+        # iter_var_decls returns the uc80-internal ResolvedType; convert
+        # once here so every downstream legacy-isinstance check just works
+        # (size inference, struct registration, array decay, etc.).
+        var_type = _to_legacy(var_type)
         # Synthesise a VarDecl-shaped namespace object so the rest of
         # the legacy body (rewritten below) can keep using
         # decl.name / decl.var_type / decl.init / decl.storage_class.
@@ -3978,6 +4008,13 @@ class CodeGenerator:
                         self.ctx.block_externs = set()
                     self.ctx.block_externs.add(decl.name)
                 return
+
+            # Normalise ResolvedType→legacy once: every legacy isinstance
+            # downstream relies on it (var_type comes from iter_var_decls as
+            # uc80 ResolvedType; without this conversion the unsized-array
+            # detection below fails, sizeof returns 0, and string-init
+            # arrays get garbage from arbitrary stack contents).
+            decl.var_type = _to_legacy(decl.var_type)
 
             # Infer array size from initializer for unsized arrays (e.g., char s[] = "hello")
             if isinstance(decl.var_type, lt.ArrayType) and decl.var_type.size is None and decl.init:
@@ -4015,6 +4052,17 @@ class CodeGenerator:
                     init = decl.init.init  # Get InitializerList from Compound
                     init_type = _to_legacy(decl.init.target_type)
 
+                # Auto-AST wraps adjacent string literals as a list.
+                if (isinstance(init_type, lt.ArrayType) and isinstance(init, list)
+                        and init and all(isinstance(p, ast.StringLiteral) for p in init)):
+                    if len(init) == 1:
+                        init = init[0]
+                    else:
+                        # Synthesise a concatenated string literal.
+                        from uc_core._const import _make_token as _mt  # type: ignore
+                        joined = "".join(_decode_string_literal(p.value.text) for p in init)
+                        tok = _mt("STRING_LIT", '"' + joined.replace('"', '\\"') + '"')
+                        init = ast.StringLiteral(value=tok, pos=init[0].pos)
                 # Handle string literal initializing an array (char[] or wchar_t[])
                 if isinstance(init_type, lt.ArrayType) and isinstance(init, ast.StringLiteral):
                     sym = self.ctx.locals[decl.name]
@@ -4162,9 +4210,17 @@ class CodeGenerator:
     def _gen_local_string_array_init(self, sym: 'Symbol', array_type: lt.ArrayType,
                                       string_lit: ast.StringLiteral) -> None:
         """Initialize a local char/wchar_t array from a string literal."""
-        is_wide = getattr(string_lit, 'is_wide', False)
+        # Auto-AST: string_lit.value is a uplox Token whose .text is the
+        # source token (`"hello"`, `L"hi"`, `"\x40"`, …). Decode once to
+        # the raw bytes / wchars before computing label + size.
+        token_text = string_lit.value.text if hasattr(string_lit.value, "text") else None
+        if token_text is not None:
+            value = _decode_string_literal(token_text)
+            is_wide = _string_is_wide(token_text)
+        else:
+            value = string_lit.value
+            is_wide = getattr(string_lit, 'is_wide', False)
         elem_size = self._type_size(array_type.base_type)
-        value = string_lit.value
 
         if is_wide:
             # Wide string: store the string data in the data segment, then LDIR
@@ -4283,7 +4339,11 @@ class CodeGenerator:
     def _gen_local_struct_init(self, decl: ast.VarDecl) -> None:
         """Generate code to initialize a local struct from an initializer list."""
         sym = self.ctx.locals[decl.name]
-        struct_type = decl.var_type
+        # decl.var_type may still be a uc80 ResolvedType — convert so
+        # the isinstance check below matches and the per-member layout
+        # can be looked up by name.
+        struct_type = _to_legacy(decl.var_type)
+        decl.var_type = struct_type
         init_list = decl.init
 
         # Get struct members (handles both named and anonymous structs)
@@ -4448,7 +4508,7 @@ class CodeGenerator:
                 if bf is not None:
                     # Bitfield: zero-init via bitfield write
                     self._gen_bitfield_init_store(sym, base_offset + member_offset, bf,
-                                                  ast.IntLiteral(value=0))
+                                                  make_int_lit(0))
                 else:
                     self._gen_zero_init_member(sym, member_type, base_offset + member_offset)
                 continue
@@ -7545,7 +7605,7 @@ class CodeGenerator:
                 bf = self._get_bitfield_info(expr.operand)
                 if bf is not None and not (bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8):
                     # Rewrite bf++ as bf = bf + 1, or ++bf similarly
-                    one = ast.IntLiteral(value=1)
+                    one = make_int_lit(1)
                     inner = ast.BinaryOp(op="+" if is_inc else "-",
                                          left=expr.operand, right=one)
                     assign = ast.BinaryOp(op="=", left=expr.operand, right=inner)
@@ -8879,7 +8939,7 @@ class CodeGenerator:
                         if isinstance(desig, str) and desig == member_name:
                             return v.value
                 # Not designated - member is zero-initialized
-                return ast.IntLiteral(value=0)
+                return make_int_lit(0)
             else:
                 # Positional: find member index
                 for i, (mname, mtype) in enumerate(members):
@@ -8889,7 +8949,7 @@ class CodeGenerator:
                             if isinstance(val, ast.DesignatedInit):
                                 val = val.value
                             return val
-                        return ast.IntLiteral(value=0)
+                        return make_int_lit(0)
         return None
 
     def _materialize_compound_literal(self, compound: ast.Compound) -> str:
@@ -8901,7 +8961,7 @@ class CodeGenerator:
             if isinstance(compound.init, ast.InitializerList):
                 n = len(compound.init.values)
                 target_type = lt.ArrayType(base_type=target_type.base_type,
-                                             size=ast.IntLiteral(value=n))
+                                             size=make_int_lit(n))
         size = self._type_size(target_type)
         # Queue the data for emission in the data section
         if not hasattr(self.ctx, 'compound_literals'):
@@ -9269,7 +9329,7 @@ class CodeGenerator:
                 if isinstance(expr.init, ast.InitializerList):
                     n = len(expr.init.values)
                     return lt.ArrayType(base_type=target.base_type,
-                                         size=ast.IntLiteral(value=n))
+                                         size=make_int_lit(n))
             return target
         return None
 
