@@ -10147,27 +10147,40 @@ class CodeGenerator:
         # Default to 16-bit
         return 2
 
-    def _calc_locals_size(self, body: ast.CompoundStmt) -> int:
-        """Calculate total size needed for local variables."""
+    def _calc_locals_size(self, body) -> int:
+        """Calculate total size needed for local variables.
+
+        Auto-AST: file-scope and block-scope variable declarations are
+        ``ast.Declaration`` (not legacy ``VarDecl``/``DeclarationList``).
+        Each Declaration may carry multiple init_declarators; iterate via
+        ``iter_var_decls`` and sum the resolved types' widths. Skip
+        function-typed declarators (prototypes inside function bodies).
+        """
         size = 0
-        for item in body.items:
-            if isinstance(item, ast.VarDecl):
-                if item.storage_class in ("static", "extern"):
+        if body is None:
+            return 0
+        items = getattr(body, "items", None)
+        if items is None:
+            return 0
+        for item in items:
+            if isinstance(item, ast.Declaration):
+                storage = decl_storage_class(item.decl_specs)
+                if storage in ("static", "extern", "typedef"):
                     continue
-                size += self._type_size(item.var_type)
-            elif isinstance(item, ast.DeclarationList):
-                for decl in item.declarations:
-                    if isinstance(decl, ast.VarDecl):
-                        size += self._type_size(decl.var_type)
+                for _nm, full, _init, is_fn in iter_var_decls(item):
+                    if is_fn:
+                        continue
+                    size += self._type_size(_to_legacy(full))
             elif isinstance(item, ast.CompoundStmt):
                 size += self._calc_locals_size(item)
             elif isinstance(item, ast.ForStmt):
-                if isinstance(item.init, ast.VarDecl):
-                    size += self._type_size(item.init.var_type)
-                elif isinstance(item.init, ast.DeclarationList):
-                    for decl in item.init.declarations:
-                        if isinstance(decl, ast.VarDecl):
-                            size += self._type_size(decl.var_type)
+                if isinstance(item.init, ast.Declaration):
+                    storage = decl_storage_class(item.init.decl_specs)
+                    if storage not in ("static", "extern", "typedef"):
+                        for _nm, full, _init, is_fn in iter_var_decls(item.init):
+                            if is_fn:
+                                continue
+                            size += self._type_size(_to_legacy(full))
                 if isinstance(item.body, ast.CompoundStmt):
                     size += self._calc_locals_size(item.body)
             elif isinstance(item, (ast.IfStmt, ast.IfStmtElse)):
@@ -10177,7 +10190,7 @@ class CodeGenerator:
                 if isinstance(else_b, ast.CompoundStmt):
                     size += self._calc_locals_size(else_b)
                 elif isinstance(else_b, (ast.IfStmt, ast.IfStmtElse)):
-                    fake = ast.CompoundStmt(items=[else_b])
+                    fake = ast.CompoundStmt(items=[else_b], pos=getattr(else_b, "pos", ast._Pos()))
                     size += self._calc_locals_size(fake)
             elif isinstance(item, (ast.WhileStmt, ast.DoWhileStmt)):
                 if isinstance(item.body, ast.CompoundStmt):
