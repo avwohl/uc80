@@ -1067,10 +1067,18 @@ class CallGraphAnalyzer:
                     return self._var_size_r(t.element) * len(vals)
         return self._var_size_r(t)
 
-    def _var_size_r(self, t: ResolvedType) -> int:
-        """Size of a ResolvedType in bytes."""
+    def _var_size_r(self, t) -> int:
+        """Size of a ResolvedType in bytes.
+
+        Auto-AST: sizeof(T) wraps T in ``ast.TypeName(decl_specs, ...)``
+        rather than handing us a resolved type. Run the standard resolver
+        on the way in so the rest of this method sees a ResolvedType.
+        """
         if t is None:
             return 2
+        if isinstance(t, ast.TypeName):
+            _, t = resolve_type_from_decl(t.decl_specs,
+                                           getattr(t, "abstract_declarator", None))
         if t.kind == "basic":
             if t.name == "void":
                 return 0
@@ -2059,7 +2067,14 @@ class CallGraphAnalyzer:
         elif isinstance(expr, ast.Cast):
             return self._eval_const_expr(expr.expr)
         elif isinstance(expr, ast.SizeofType):
-            return self._var_size(expr.target_type)
+            # Both CallGraphAnalyzer and CodeGenerator have a ``_var_size_r``
+            # method computing the size of a ResolvedType. CodeGenerator
+            # also has ``_var_size`` (legacy alias); use the *_r variant
+            # which exists on both.
+            fn = getattr(self, "_var_size_r", None) or getattr(self, "_var_size", None)
+            if fn is None:
+                return None
+            return fn(expr.target_type)
         elif isinstance(expr, ast.SizeofExpr):
             # For sizeof(expr), we need to infer the expression type
             # This is a simplified version - handles common cases
@@ -5864,8 +5879,17 @@ class CodeGenerator:
             self.ctx.emit_instr("ld", f"HL,{val}")
 
         elif isinstance(expr, ast.StringLiteral):
-            label = self.ctx.add_string(_decode_string_literal(expr.value.text),
-                                        is_wide=_string_is_wide(expr.value.text))
+            # value is a uplox Token in auto-AST; some synth paths
+            # (e.g. __func__ rewriting in gen_identifier) pass a bare
+            # str. Accept both.
+            v = expr.value
+            if hasattr(v, "text"):
+                decoded = _decode_string_literal(v.text)
+                is_wide = _string_is_wide(v.text)
+            else:
+                decoded = v
+                is_wide = False
+            label = self.ctx.add_string(decoded, is_wide=is_wide)
             self.ctx.emit_instr("ld", f"HL,{label}")
 
         elif isinstance(expr, list) and expr and all(isinstance(p, ast.StringLiteral) for p in expr):
@@ -11405,8 +11429,13 @@ class CodeGenerator:
 
         return consumed
 
-    def _emit_string_for_array(self, string_lit: ast.StringLiteral, array_type: lt.ArrayType) -> None:
-        """Emit a string literal to fill a char array, with proper padding."""
+    def _emit_string_for_array(self, string_lit, array_type) -> None:
+        """Emit a string literal to fill a char array, with proper padding.
+
+        Auto-AST: ``string_lit.value`` is a uplox Token; its ``.text`` is
+        the source-form `"hello\\n"` (with quotes / escapes). Decode to
+        the byte sequence before length / escape.
+        """
         array_size = 1
         if array_type.size:
             if isinstance(array_type.size, ast.IntLiteral):
@@ -11416,14 +11445,17 @@ class CodeGenerator:
                 if sz is not None:
                     array_size = sz
 
-        string_val = string_lit.value
-        escaped = self._escape_string(string_val)
+        if hasattr(string_lit.value, "text"):
+            decoded = _decode_string_literal(string_lit.value.text)
+        else:
+            decoded = string_lit.value
+        escaped = self._escape_string(decoded)
 
         # Emit the string with null terminator
         self.ctx.emit_instr("db", f"'{escaped}',0")
 
         # String length including null
-        string_len = len(string_val) + 1
+        string_len = len(decoded) + 1
 
         # Pad remaining bytes with zeros
         remaining = array_size - string_len
