@@ -465,6 +465,42 @@ def is_struct_type(t) -> bool:
     return isinstance(t, ResolvedType) and t.kind == "struct"
 
 
+def _to_legacy(t):
+    """Convert a uc80 ResolvedType to its ast_legacy equivalent.
+
+    Idempotent for already-legacy types. Used at codegen boundaries
+    where the rest of the code expects ``lt.StructType`` /
+    ``lt.PointerType`` / etc. (the legacy isinstance checks won't match
+    a ``ResolvedType``).
+    """
+    if t is None or not isinstance(t, ResolvedType):
+        return t
+    k = t.kind
+    if k == "basic":
+        return lt.BasicType(name=t.name or "int", is_signed=t.is_signed,
+                            is_const=t.is_const, is_volatile=t.is_volatile)
+    if k == "pointer":
+        return lt.PointerType(base_type=_to_legacy(t.pointee),
+                              is_const=t.is_const, is_volatile=t.is_volatile)
+    if k == "array":
+        return lt.ArrayType(base_type=_to_legacy(t.element), size=t.size_expr)
+    if k == "function":
+        return lt.FunctionType(return_type=_to_legacy(t.return_type),
+                               param_types=[_to_legacy(p) for p in t.param_types],
+                               is_variadic=t.is_variadic)
+    if k == "struct":
+        members = [lt.StructMember(name=nm, member_type=_to_legacy(mt),
+                                   bit_width=bw)
+                   for (nm, mt, bw) in t.members]
+        return lt.StructType(name=t.name, is_union=t.is_union,
+                             members=members, is_packed=False)
+    if k == "enum":
+        return lt.EnumType(name=t.name)
+    if k == "typedef":
+        return lt.TypedefName(name=t.name) if hasattr(lt, "TypedefName") else t
+    return t
+
+
 def function_is_variadic(func) -> bool:
     """True if a FunctionDef's outermost FnDeclarator has VariadicParams."""
     fn = _outermost_fn_declarator(func.declarator) if hasattr(func, "declarator") else None
@@ -2591,6 +2627,18 @@ class CodeGenerator:
         self.ctx.emit("\t.z80")
         self.ctx.emit()
 
+        # Pre-pass: register every file-scope struct/enum definition so
+        # later references (in other top-level declarations, in function
+        # bodies, in member accesses) can look up sizes and offsets by
+        # name. Mirrors the local-decl path in gen_local_decl.
+        for decl in unit.items:
+            if isinstance(decl, ast.Declaration):
+                try:
+                    base = resolve_base_type(decl.decl_specs)
+                    self._register_inline_types(_to_legacy(base))
+                except Exception:
+                    pass
+
         # First pass: collect global declarations from the auto-AST.
         for decl in unit.items:
             if isinstance(decl, ast.FunctionDef):
@@ -2900,6 +2948,15 @@ class CodeGenerator:
                         if isinstance(mt, lt.EnumType) and mt.values:
                             _reg_enum_values(mt.values)
         _walk_specs_for_enums(decl.decl_specs)
+        # Register struct definitions appearing in decl_specs (whether or
+        # not the declaration has any declarators). `struct fred { ... };`
+        # at file scope must put `fred` into ctx.structs so later member
+        # accesses on `struct fred *` / `struct fred` variables can resolve
+        # offsets — otherwise `bloggs.natasha` would silently use offset 0.
+        base = resolve_base_type(decl.decl_specs)
+        legacy_base = _to_legacy(base)
+        if hasattr(self, "_register_inline_types"):
+            self._register_inline_types(legacy_base)
         storage = decl_storage_class(decl.decl_specs)
         if storage == "typedef":
             # Typedefs registered elsewhere; no code emission.
@@ -5313,10 +5370,13 @@ class CodeGenerator:
         self.ctx.break_labels.append(end_label)
         self.ctx.continue_labels.append(update_label)
 
-        # Init
+        # Init: auto-AST wraps a bare for-init expression as
+        # ExpressionStmt(expr=...). gen_statement handles that uniformly.
         if stmt.init:
             if isinstance(stmt.init, ast.Declaration):
                 self.gen_local_decl(stmt.init)
+            elif isinstance(stmt.init, ast.ExpressionStmt):
+                self.gen_expr(stmt.init.expr)
             else:
                 self.gen_expr(stmt.init)
 
@@ -5554,18 +5614,8 @@ class CodeGenerator:
 
         elif isinstance(expr, ast.CharLiteral):
             # CharLiteral.value is a Token containing the source text
-            # like ``'A'`` or ``'\n'``. Decode to the int code point.
-            text = expr.value.text
-            i = 0
-            while i < len(text) and text[i] != "'":
-                i += 1
-            inner = text[i + 1:-1]
-            if inner.startswith("\\"):
-                esc = {"n": 10, "t": 9, "r": 13, "0": 0, "\\": 92,
-                       "'": 39, '"': 34, "a": 7, "b": 8, "f": 12, "v": 11}
-                val = esc.get(inner[1], ord(inner[1]) if len(inner) > 1 else 0)
-            else:
-                val = ord(inner) if inner else 0
+            # like ``'A'`` / ``'\n'`` / ``'\x40'`` / ``'\1'``.
+            val = self._decode_char_literal(expr)
             if val >= 0x80:
                 val = (val - 0x100) & 0xFFFF
             self.ctx.emit_instr("ld", f"HL,{val}")
@@ -8823,12 +8873,29 @@ class CodeGenerator:
                 return result
         return 0
 
-    def _resolve_member_offset(self, struct_type: lt.StructType, member_name: str) -> int:
+    def _resolve_member_offset(self, struct_type, member_name) -> int:
         """Get offset of a member, searching inline members first then registry.
 
         Works for anonymous structs (no tag name) by computing offsets from
         the StructType's inline member list.  Handles bitfield packing.
+
+        ``member_name`` may arrive as a uplox Token (auto-AST) — unwrap to
+        text so the str-keyed comparisons below match. ``struct_type`` may
+        be either a legacy ``lt.StructType`` or a uc80-internal
+        ``ResolvedType(kind="struct")``; convert the latter to legacy
+        StructMember form once so the rest of this function can stay shape-
+        agnostic.
         """
+        if hasattr(member_name, "text"):
+            member_name = member_name.text
+        if isinstance(struct_type, ResolvedType) and struct_type.kind == "struct":
+            struct_type = lt.StructType(
+                name=struct_type.name,
+                is_union=struct_type.is_union,
+                members=[lt.StructMember(name=nm, member_type=mt, bit_width=bw)
+                         for (nm, mt, bw) in struct_type.members],
+                is_packed=False,
+            )
         # Try inline members first
         if struct_type.members:
             has_bitfields = any(m.bit_width is not None for m in struct_type.members)
@@ -8983,7 +9050,7 @@ class CodeGenerator:
                 return lt.BasicType(name="int", is_signed=True)
             sym = self.ctx.lookup(expr.name.text)
             if sym:
-                return sym.sym_type
+                return _to_legacy(sym.sym_type)
         elif isinstance(expr, ast.UnaryOp) and expr.op == "*":
             # Dereference - get base type of pointer (or array decayed to pointer)
             ptr_type = self._get_expr_type(expr.operand)
@@ -9313,9 +9380,12 @@ class CodeGenerator:
 
             # Get struct type and member offset
             struct_type = self._get_expr_type(expr.obj)
-            if is_arrow and isinstance(struct_type, lt.PointerType):
-                struct_type = struct_type.base_type
-            if isinstance(struct_type, lt.StructType):
+            if is_arrow:
+                if isinstance(struct_type, lt.PointerType):
+                    struct_type = struct_type.base_type
+                elif isinstance(struct_type, ResolvedType) and struct_type.kind == "pointer":
+                    struct_type = struct_type.pointee
+            if is_struct_type(struct_type):
                 offset = self._resolve_member_offset(struct_type, expr.member)
                 if offset > 0:
                     self.ctx.emit_instr("ld", f"DE,{offset}")
@@ -9988,7 +10058,7 @@ class CodeGenerator:
             base_size = self._type_size(t.base_type)
             if t.size:
                 if isinstance(t.size, ast.IntLiteral):
-                    return base_size * t.size.value
+                    return base_size * int_value(t.size)
                 size_val = self._eval_const_expr(t.size)
                 if size_val is not None:
                     return base_size * size_val
@@ -10220,7 +10290,11 @@ class CodeGenerator:
                 self._emit_initializer(elem, base_type)
 
     def _decode_char_literal(self, lit: "ast.CharLiteral") -> int:
-        """Decode CharLiteral (Token-valued in auto-AST) to int."""
+        """Decode CharLiteral (Token-valued in auto-AST) to int.
+
+        Handles named escapes, octal (\\N, \\NN, \\NNN), hex
+        (\\xH+), and C23 \\u/\\U universal-character-names.
+        """
         text = lit.value.text if hasattr(lit.value, "text") else lit.value
         if isinstance(text, int):
             return text
@@ -10229,11 +10303,29 @@ class CodeGenerator:
         while i < len(text) and text[i] != "'":
             i += 1
         inner = text[i + 1:-1]
-        if inner.startswith("\\"):
-            esc = {"n": 10, "t": 9, "r": 13, "0": 0, "\\": 92,
-                   "'": 39, '"': 34, "a": 7, "b": 8, "f": 12, "v": 11}
-            return esc.get(inner[1], ord(inner[1]) if len(inner) > 1 else 0)
-        return ord(inner) if inner else 0
+        if not inner:
+            return 0
+        if not inner.startswith("\\"):
+            return ord(inner[0])
+        # Escape sequence.
+        c = inner[1] if len(inner) > 1 else ""
+        named = {"n": 10, "t": 9, "r": 13, "\\": 92,
+                 "'": 39, '"': 34, "a": 7, "b": 8, "f": 12, "v": 11,
+                 "?": 0x3f, "e": 0x1b}
+        if c in named:
+            return named[c]
+        if c in "01234567":
+            # Up to 3 octal digits.
+            j = 1
+            while j < 4 and j < len(inner) and inner[j] in "01234567":
+                j += 1
+            return int(inner[1:j], 8) & 0xff
+        if c == "x":
+            return int(inner[2:], 16) & 0xff if len(inner) > 2 else 0
+        if c in ("u", "U"):
+            return int(inner[2:], 16)
+        # Unknown escape: pass through the second char unchanged.
+        return ord(c) if c else 0
 
     def _emit_initializer(self, init: ast.Expression, elem_type: lt.TypeNode) -> None:
         """Emit initialized data for a global variable or array element."""
