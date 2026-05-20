@@ -5977,10 +5977,29 @@ class CodeGenerator:
         else:
             self.ctx.emit_instr("ld", "HL,0")
 
+    def _resolve_typename(self, t):
+        """Resolve an auto-AST TypeName / type-spec list to a legacy type.
+
+        ``_Generic`` selectors and cast targets arrive as
+        ``ast.TypeName(decl_specs=..., abstract_declarator=...)`` —
+        run the standard resolver and convert to legacy.
+        """
+        if t is None:
+            return None
+        # Already a legacy or uc80 ResolvedType — convert.
+        if _is_resolved_type(t) or hasattr(t, "name") and hasattr(t, "is_const"):
+            return _to_legacy(t)
+        if isinstance(t, ast.TypeName):
+            # TypeName has decl_specs + optional abstract_declarator.
+            _, resolved = resolve_type_from_decl(t.decl_specs,
+                                                  getattr(t, "abstract_declarator", None))
+            return _to_legacy(resolved)
+        return t
+
     def gen_generic_selection(self, expr: ast.GenericSelection, force_long: bool = False) -> None:
         """Generate code for _Generic selection expression."""
         # Get the type of the controlling expression
-        ctrl_type = self._get_expr_type(expr.controlling_expr)
+        ctrl_type = _to_legacy(self._get_expr_type(expr.controlling_expr))
 
         # Find the matching association
         default_expr = None
@@ -5990,7 +6009,8 @@ class CodeGenerator:
             if isinstance(assoc, ast.GenericDefault):
                 default_expr = assoc.expr
                 continue
-            type_node, value_expr = assoc.target_type, assoc.expr
+            type_node = self._resolve_typename(assoc.target_type)
+            value_expr = assoc.expr
             if self._types_compatible(ctrl_type, type_node):
                 matched_expr = value_expr
                 break
@@ -9453,11 +9473,11 @@ class CodeGenerator:
             return true_type or false_type
         elif isinstance(expr, ast.GenericSelection):
             # Resolve the _Generic to get matched expression's type
-            ctrl_type = self._get_expr_type(expr.controlling_expr)
+            ctrl_type = _to_legacy(self._get_expr_type(expr.controlling_expr))
             for assoc in (expr.assocs or []):
                 if isinstance(assoc, ast.GenericDefault):
                     continue
-                if self._types_compatible(ctrl_type, assoc.target_type):
+                if self._types_compatible(ctrl_type, self._resolve_typename(assoc.target_type)):
                     return self._get_expr_type(assoc.expr)
             # Try default
             for assoc in (expr.assocs or []):
