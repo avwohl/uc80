@@ -10463,8 +10463,17 @@ class CodeGenerator:
         # Unknown escape: pass through the second char unchanged.
         return ord(c) if c else 0
 
-    def _emit_initializer(self, init: ast.Expression, elem_type: lt.TypeNode) -> None:
+    def _emit_initializer(self, init, elem_type) -> None:
         """Emit initialized data for a global variable or array element."""
+        # Auto-AST wraps adjacent string literals in a Python list; collapse
+        # a single-element list to its StringLiteral (so the char-array
+        # init below matches), and route multi-piece concatenation through
+        # the existing list-of-StringLiteral branch farther down.
+        if (isinstance(init, list) and init
+                and all(isinstance(p, ast.StringLiteral) for p in init)):
+            if len(init) == 1:
+                init = init[0]
+        elem_type = _to_legacy(elem_type)
         elem_size = self._type_size(elem_type)
 
         if isinstance(init, ast.InitializerList):
