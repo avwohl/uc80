@@ -6026,8 +6026,11 @@ class CodeGenerator:
         """Resolve an auto-AST TypeName / type-spec list to a legacy type.
 
         ``_Generic`` selectors and cast targets arrive as
-        ``ast.TypeName(decl_specs=..., abstract_declarator=...)`` —
-        run the standard resolver and convert to legacy.
+        ``ast.TypeName(decl_specs=..., abstract_declarator=...)`` for the
+        no-declarator case, or ``ast.TypeNameWithDeclarator(decl_specs,
+        declarator)`` when the type-name includes pointer / array shape.
+        Both have the resolver run over decl_specs + their declarator
+        field.
         """
         if t is None:
             return None
@@ -6035,9 +6038,17 @@ class CodeGenerator:
         if _is_resolved_type(t) or hasattr(t, "name") and hasattr(t, "is_const"):
             return _to_legacy(t)
         if isinstance(t, ast.TypeName):
-            # TypeName has decl_specs + optional abstract_declarator.
-            _, resolved = resolve_type_from_decl(t.decl_specs,
-                                                  getattr(t, "abstract_declarator", None))
+            from uc_core.codegen_helpers import resolve_type_from_decl as _core_resolve
+            _, resolved = _core_resolve(
+                t.decl_specs, getattr(t, "abstract_declarator", None))
+            return _to_legacy(resolved)
+        if hasattr(ast, "TypeNameWithDeclarator") and isinstance(t, ast.TypeNameWithDeclarator):
+            # Use uc_core's resolve_type_from_decl directly — uc80's
+            # local one doesn't handle abstract pointer/array
+            # declarators (it falls through to ``return None, base``,
+            # silently dropping the pointer/array shape).
+            from uc_core.codegen_helpers import resolve_type_from_decl as _core_resolve
+            _, resolved = _core_resolve(t.decl_specs, t.declarator)
             return _to_legacy(resolved)
         return t
 
@@ -9357,6 +9368,10 @@ class CodeGenerator:
         elif isinstance(expr, ast.StringLiteral):
             # String literals are char* (or const char* in C99+)
             return lt.PointerType(base_type=lt.BasicType(name="char"))
+        elif (isinstance(expr, list) and expr
+              and all(isinstance(p, ast.StringLiteral) for p in expr)):
+            # Auto-AST list-wraps even a single string literal; same type.
+            return lt.PointerType(base_type=lt.BasicType(name="char"))
         elif isinstance(expr, ast.FloatLiteral):
             return lt.BasicType(name="float" if expr.is_float else "double")
         elif isinstance(expr, ast.BoolLiteral):
@@ -9410,8 +9425,8 @@ class CodeGenerator:
             return self._get_member_type(expr)
         elif isinstance(expr, ast.BinaryOp):
             # For arithmetic/bitwise ops, result type is based on operand types
-            left_type = self._get_expr_type(expr.left)
-            right_type = self._get_expr_type(expr.right)
+            left_type = _to_legacy(self._get_expr_type(expr.left))
+            right_type = _to_legacy(self._get_expr_type(expr.right))
 
             # Pointer arithmetic: ptr ± int → ptr.  Without this, an
             # expression like `*(0 + (unsigned char *)&x)` infers `int` as
