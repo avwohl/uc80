@@ -2562,7 +2562,7 @@ class CodeGenerator:
             array_size = 1
             if member_type.size:
                 if isinstance(member_type.size, ast.IntLiteral):
-                    array_size = member_type.size.value
+                    array_size = int_value(member_type.size)
                 else:
                     sz = self._eval_const_expr(member_type.size)
                     if sz is not None:
@@ -4010,10 +4010,10 @@ class CodeGenerator:
             if decl.init:
                 # Unwrap compound literal if needed
                 init = decl.init
-                init_type = decl.var_type
+                init_type = _to_legacy(decl.var_type)
                 if isinstance(decl.init, ast.Compound):
                     init = decl.init.init  # Get InitializerList from Compound
-                    init_type = decl.init.target_type
+                    init_type = _to_legacy(decl.init.target_type)
 
                 # Handle string literal initializing an array (char[] or wchar_t[])
                 if isinstance(init_type, lt.ArrayType) and isinstance(init, ast.StringLiteral):
@@ -4192,6 +4192,9 @@ class CodeGenerator:
         """Generate code to initialize a local array from an initializer list."""
         sym = self.ctx.locals[decl.name]
         init_list = decl.init
+        # decl.var_type may be a uc80 ResolvedType — normalise so the
+        # legacy .base_type / .size accesses below see lt.ArrayType.
+        decl.var_type = _to_legacy(decl.var_type)
         elem_type = decl.var_type.base_type
         elem_size = self._type_size(elem_type)
         is_long = self._is_long_type(elem_type)
@@ -4219,7 +4222,7 @@ class CodeGenerator:
         # tail of the array.
         declared_n = None
         if isinstance(decl.var_type.size, ast.IntLiteral):
-            declared_n = decl.var_type.size.value
+            declared_n = int_value(decl.var_type.size)
         # Also clamp the actual emitted count to the declared size if too many
         # initializers were given (excess-initializer warning territory).
         emit_n = len(init_list.values)
@@ -4774,7 +4777,7 @@ class CodeGenerator:
         array_size = 1
         if array_type.size:
             if isinstance(array_type.size, ast.IntLiteral):
-                array_size = array_type.size.value
+                array_size = int_value(array_type.size)
             else:
                 sz = self._eval_const_expr(array_type.size)
                 if sz is not None:
@@ -4873,7 +4876,7 @@ class CodeGenerator:
         array_size = 1
         if array_type.size:
             if isinstance(array_type.size, ast.IntLiteral):
-                array_size = array_type.size.value
+                array_size = int_value(array_type.size)
             else:
                 sz = self._eval_const_expr(array_type.size)
                 if sz is not None:
@@ -5105,7 +5108,7 @@ class CodeGenerator:
         # Determine the array's declared element count for tail zero-fill.
         declared_n = None
         if isinstance(array_type.size, ast.IntLiteral):
-            declared_n = array_type.size.value
+            declared_n = int_value(array_type.size)
         elif array_type.size is not None:
             sz = self._eval_const_expr(array_type.size)
             if sz is not None:
@@ -5122,7 +5125,7 @@ class CodeGenerator:
             array_size = 1
             if array_type.size:
                 if isinstance(array_type.size, ast.IntLiteral):
-                    array_size = array_type.size.value
+                    array_size = int_value(array_type.size)
                 else:
                     sz = self._eval_const_expr(array_type.size)
                     if sz is not None:
@@ -5831,6 +5834,12 @@ class CodeGenerator:
             return
 
         sym = self.ctx.lookup(expr.name.text)
+        if sym is not None:
+            # Normalise the symbol's type to legacy shape once so every
+            # downstream ``isinstance(sym.sym_type, lt.XxxType)`` check
+            # below works whether iter_var_decls handed us a uc80
+            # ResolvedType or a pre-existing lt type.
+            sym.sym_type = _to_legacy(sym.sym_type)
         if sym is None:
             # Assume external function - load its address.  Track it so we
             # emit an EXTRN; otherwise um80 fails the assemble step with
@@ -10197,7 +10206,7 @@ class CodeGenerator:
                 array_size = 1
                 if member_type.size:
                     if isinstance(member_type.size, ast.IntLiteral):
-                        array_size = member_type.size.value
+                        array_size = int_value(member_type.size)
                     else:
                         sz = self._eval_const_expr(member_type.size)
                         if sz is not None:
@@ -10225,7 +10234,7 @@ class CodeGenerator:
         # Get array size if known
         array_size = 1
         if array_type.size and isinstance(array_type.size, ast.IntLiteral):
-            array_size = array_type.size.value
+            array_size = int_value(array_type.size)
         else:
             # Unsized array - infer from number of values remaining
             # For struct arrays, count total flat values needed per struct
@@ -10300,7 +10309,7 @@ class CodeGenerator:
         array_size = 1
         if array_type.size:
             if isinstance(array_type.size, ast.IntLiteral):
-                array_size = array_type.size.value
+                array_size = int_value(array_type.size)
             else:
                 sz = self._eval_const_expr(array_type.size)
                 if sz is not None:
@@ -10432,7 +10441,7 @@ class CodeGenerator:
                         declared_size = None
                         if elem_type.size:
                             if isinstance(elem_type.size, ast.IntLiteral):
-                                declared_size = elem_type.size.value
+                                declared_size = int_value(elem_type.size)
                             else:
                                 declared_size = self._eval_const_expr(elem_type.size)
                         if declared_size is not None:
@@ -11067,7 +11076,7 @@ class CodeGenerator:
         array_size = 1
         if array_type.size:
             if isinstance(array_type.size, ast.IntLiteral):
-                array_size = array_type.size.value
+                array_size = int_value(array_type.size)
             else:
                 sz = self._eval_const_expr(array_type.size)
                 if sz is not None:
@@ -11108,7 +11117,7 @@ class CodeGenerator:
         array_size = 1
         if array_type.size:
             if isinstance(array_type.size, ast.IntLiteral):
-                array_size = array_type.size.value
+                array_size = int_value(array_type.size)
             else:
                 sz = self._eval_const_expr(array_type.size)
                 if sz is not None:
