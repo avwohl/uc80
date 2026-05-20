@@ -5457,6 +5457,21 @@ class CodeGenerator:
                                 offset = base_offset + idx * elem_size
                                 self._gen_store_member_value(sym, elem_type, offset, actual_val)
                             next_index = end + 1
+                    elif isinstance(desig, tuple) and len(desig) == 2:
+                        s, e = desig
+                        if isinstance(s, ast.IntLiteral):
+                            s = int_value(s)
+                        if isinstance(e, ast.IntLiteral):
+                            e = int_value(e)
+                        if isinstance(s, int) and isinstance(e, int):
+                            for idx in range(s, e + 1):
+                                offset = base_offset + idx * elem_size
+                                self._gen_store_member_value(sym, elem_type, offset, actual_val)
+                            next_index = e + 1
+                    elif isinstance(desig, int):
+                        offset = base_offset + desig * elem_size
+                        self._gen_store_member_value(sym, elem_type, offset, actual_val)
+                        next_index = desig + 1
                     else:
                         idx = self._eval_const_expr(desig)
                         if idx is not None:
