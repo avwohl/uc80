@@ -5273,11 +5273,8 @@ class CodeGenerator:
             self.gen_continue()
         elif isinstance(stmt, ast.SwitchStmt):
             self.gen_switch(stmt)
-        elif isinstance(stmt, ast.CaseStmt):
+        elif isinstance(stmt, (ast.CaseStmt, ast.DefaultStmt)):
             self.gen_case(stmt)
-        elif isinstance(stmt, ast.DefaultStmt):
-            # default: just emit a label + recurse into inner stmt
-            self.gen_statement(stmt.stmt)
         elif isinstance(stmt, ast.LabelStmt):
             self.gen_label(stmt)
         elif isinstance(stmt, ast.GotoStmt):
@@ -5468,29 +5465,30 @@ class CodeGenerator:
         cases: list[tuple[int, str]] = []  # (value, label)
         default_label: str | None = None
 
-        def collect_cases(s: ast.Statement) -> None:
+        def collect_cases(s) -> None:
             nonlocal default_label
             if isinstance(s, ast.SwitchStmt):
                 # Don't recurse into nested switch statements
                 return
+            if isinstance(s, ast.DefaultStmt):
+                # Auto-AST default: separate node kind (no value field).
+                default_label = self.ctx.new_label("DEFAULT")
+                if s.stmt:
+                    collect_cases(s.stmt)
+                return
             if isinstance(s, ast.CaseStmt):
-                if s.value is None:
-                    # default case
-                    default_label = self.ctx.new_label("DEFAULT")
-                else:
-                    # Regular case - evaluate constant expression
-                    const_val = self._eval_const_expr(s.value)
-                    if const_val is not None:
-                        label = self.ctx.new_label("CASE")
-                        cases.append((const_val, label))
+                # Regular case - evaluate constant expression
+                const_val = self._eval_const_expr(s.value)
+                if const_val is not None:
+                    label = self.ctx.new_label("CASE")
+                    cases.append((const_val, label))
                 # Recurse into the statement following the case label
                 # This handles consecutive case labels like "case 0: case 1:"
                 if s.stmt:
                     collect_cases(s.stmt)
             elif isinstance(s, ast.CompoundStmt):
                 for item in s.items:
-                    if isinstance(item, ast.Statement):
-                        collect_cases(item)
+                    collect_cases(item)
             # Recurse through other control structures to find case statements
             elif isinstance(s, ast.ForStmt):
                 if s.body:
@@ -5502,6 +5500,9 @@ class CodeGenerator:
                 if s.body:
                     collect_cases(s.body)
             elif isinstance(s, ast.IfStmt):
+                if s.then_branch:
+                    collect_cases(s.then_branch)
+            elif isinstance(s, ast.IfStmtElse):
                 if s.then_branch:
                     collect_cases(s.then_branch)
                 if s.else_branch:
@@ -5606,10 +5607,9 @@ class CodeGenerator:
             target = case_map.get(min_val + i, fall_label)
             self.ctx.emit_instr("dw", target)
 
-    def gen_case(self, stmt: ast.CaseStmt) -> None:
-        """Generate code for case label."""
-        if stmt.value is None:
-            # default case
+    def gen_case(self, stmt) -> None:
+        """Generate code for case / default label (auto-AST splits these)."""
+        if isinstance(stmt, ast.DefaultStmt):
             if self._switch_default:
                 self.ctx.emit_label(self._switch_default)
         else:
