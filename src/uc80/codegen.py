@@ -2575,6 +2575,42 @@ class CodeGenerator:
             return self._count_struct_init_values(member_type)
         return 1
 
+    def _normalize_op_fields(self, root) -> None:
+        """Recursively replace .op Token with its .text everywhere.
+
+        See the comment in ``generate`` for the rationale. Uses
+        ``dataclasses.fields`` to walk child nodes uniformly without
+        having to know every node kind. Tokens are leaves (no
+        ``__dataclass_fields__``), so we don't recurse into them
+        beyond the .op coercion.
+        """
+        seen = set()
+        try:
+            from dataclasses import fields as _dc_fields, is_dataclass
+        except Exception:
+            return
+
+        def walk(node):
+            if node is None or id(node) in seen:
+                return
+            if not is_dataclass(node):
+                if isinstance(node, (list, tuple)):
+                    for x in node:
+                        walk(x)
+                return
+            seen.add(id(node))
+            # Coerce a single .op field if present and Token-shaped.
+            op = getattr(node, "op", None)
+            if op is not None and hasattr(op, "text") and not isinstance(op, str):
+                try:
+                    object.__setattr__(node, "op", op.text)
+                except Exception:
+                    pass
+            for f in _dc_fields(node):
+                v = getattr(node, f.name, None)
+                walk(v)
+        walk(root)
+
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
         # Build call graph for optimizations
@@ -2626,6 +2662,14 @@ class CodeGenerator:
         self.ctx.emit()
         self.ctx.emit("\t.z80")
         self.ctx.emit()
+
+        # Pre-pass: normalise every operator-bearing node's .op field
+        # from a uplox Token to plain str. Codegen has 60+ sites doing
+        # ``expr.op == "+"`` / ``in ("++", "--")`` / etc.; Token __eq__
+        # against str returns False, so any path that needs the operator
+        # text silently picks the fallback branch (e.g. Count++ became
+        # Count--, ``+`` arithmetic skipped, ...). Mutate once here.
+        self._normalize_op_fields(unit)
 
         # Pre-pass: register every file-scope struct/enum definition so
         # later references (in other top-level declarations, in function
@@ -7282,7 +7326,8 @@ class CodeGenerator:
 
     def _gen_inc_dec(self, expr: ast.UnaryOp) -> None:
         """Generate code for increment/decrement."""
-        is_inc = expr.op == "++"
+        op_text = expr.op.text if hasattr(expr.op, "text") else expr.op
+        is_inc = op_text == "++"
 
         if isinstance(expr.operand, ast.Identifier):
             sym = self.ctx.lookup(expr.operand.name.text)
