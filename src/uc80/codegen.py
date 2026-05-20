@@ -2856,6 +2856,7 @@ class CodeGenerator:
             for nm, full, init, is_fn in iter_var_decls(d):
                 if nm is None or is_fn:
                     continue
+                full = _to_legacy(full)
                 if isinstance(full, lt.FunctionType):
                     continue
                 synth = _SynthVarDecl(name=nm, var_type=full, init=init,
@@ -3095,11 +3096,12 @@ class CodeGenerator:
 
             if bf_width is not None:
                 # Bitfield member
-                type_size = self._type_size(member.member_type)
+                mtype = _to_legacy(member.member_type)
+                type_size = self._type_size(mtype)
                 max_bits = type_size * 8
                 # Enum bitfields are unsigned (matches GCC; C leaves it impl-defined)
-                bf_signed = (not isinstance(member.member_type, lt.EnumType)
-                             and self._is_signed_type(member.member_type))
+                bf_signed = (not isinstance(mtype, lt.EnumType)
+                             and self._is_signed_type(mtype))
 
                 if bf_width == 0:
                     # Zero-width: force alignment to the next multiple of
@@ -8473,9 +8475,11 @@ class CodeGenerator:
             self.ctx.emit_instr("ld", "D,(HL)")
             self.ctx.emit_instr("ex", "DE,HL")
 
-    def _get_bitfield_info(self, expr: ast.Member) -> BitfieldInfo | None:
+    def _get_bitfield_info(self, expr) -> "BitfieldInfo | None":
         """Return BitfieldInfo if this member is a bitfield, else None."""
-        struct_type = self._get_expr_type(expr.obj)
+        struct_type = _to_legacy(self._get_expr_type(expr.obj))
+        # expr.member is a uplox Token in the auto-AST.
+        member_name = expr.member.text if hasattr(expr.member, "text") else expr.member
         if isinstance(struct_type, lt.PointerType):
             struct_type = struct_type.base_type
         elif isinstance(struct_type, lt.ArrayType):
@@ -8484,14 +8488,14 @@ class CodeGenerator:
             return None
         # Check registered bitfield info by struct name
         if struct_type.name:
-            key = (struct_type.name, expr.member)
+            key = (struct_type.name, member_name)
             bf = self.ctx.bitfield_info.get(key)
             if bf is not None:
                 return bf
         # Check inline members for bitfield info
         if struct_type.members:
             for m in struct_type.members:
-                if m.name == expr.member and m.bit_width is not None:
+                if m.name == member_name and m.bit_width is not None:
                     bf_width = self._eval_const_expr(m.bit_width)
                     if bf_width is not None and bf_width > 0:
                         type_size = self._type_size(m.member_type)
@@ -8499,7 +8503,7 @@ class CodeGenerator:
                             bf_width = type_size * 8
                         # Look up bit_offset from registered info or compute
                         anon_name = struct_type.name or f"__anon_{id(struct_type)}"
-                        key = (anon_name, expr.member)
+                        key = (anon_name, member_name)
                         bf = self.ctx.bitfield_info.get(key)
                         if bf is not None:
                             return bf
