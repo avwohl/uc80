@@ -1505,11 +1505,12 @@ class CallGraphAnalyzer:
                 pos=expr.pos
             )
 
-        elif isinstance(expr, ast.Member):
-            return ast.Member(
+        elif isinstance(expr, (ast.Member, ast.ArrowMember)):
+            # Auto-AST splits dot/arrow into separate node kinds.
+            cls = type(expr)
+            return cls(
                 obj=self._substitute_params(expr.obj, param_map),
                 member=expr.member,
-                is_arrow=expr.is_arrow,
                 pos=expr.pos
             )
 
@@ -1610,11 +1611,11 @@ class CallGraphAnalyzer:
                 pos=expr.pos
             )
 
-        elif isinstance(expr, ast.Member):
-            return ast.Member(
+        elif isinstance(expr, (ast.Member, ast.ArrowMember)):
+            cls = type(expr)
+            return cls(
                 obj=self._inline_expr(expr.obj, func_bodies, inlineable),
                 member=expr.member,
-                is_arrow=expr.is_arrow,
                 pos=expr.pos
             )
 
@@ -8196,7 +8197,7 @@ class CodeGenerator:
     def gen_member(self, expr: ast.Member) -> None:
         """Generate code for struct member access."""
         # Handle compound literal member access: ((struct){...}).member
-        if isinstance(expr.obj, ast.Compound) and not expr.is_arrow:
+        if isinstance(expr.obj, ast.Compound) and not isinstance(expr, ast.ArrowMember):
             val = self._compound_literal_member_value(expr.obj, expr.member)
             if val is not None:
                 member_type = self._get_member_type(expr)
@@ -9268,8 +9269,9 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", "(__sret_buf),HL")
                 self.ctx.emit_instr("ld", "HL,__sret_buf")
 
-        elif isinstance(expr, ast.Member):
-            if expr.is_arrow:
+        elif isinstance(expr, (ast.Member, ast.ArrowMember)):
+            is_arrow = isinstance(expr, ast.ArrowMember)
+            if is_arrow:
                 self.gen_expr(expr.obj)  # p->member: p is the address
             elif isinstance(expr.obj, ast.Call):
                 # Call returning struct: generate the call
@@ -9285,7 +9287,7 @@ class CodeGenerator:
 
             # Get struct type and member offset
             struct_type = self._get_expr_type(expr.obj)
-            if expr.is_arrow and isinstance(struct_type, lt.PointerType):
+            if is_arrow and isinstance(struct_type, lt.PointerType):
                 struct_type = struct_type.base_type
             if isinstance(struct_type, lt.StructType):
                 offset = self._resolve_member_offset(struct_type, expr.member)
@@ -10469,9 +10471,9 @@ class CodeGenerator:
                     return (self.ctx.static_local_labels[operand.name], 0)
                 else:
                     return (f"_{operand.name}", 0)
-            elif isinstance(operand, ast.Member):
+            elif isinstance(operand, (ast.Member, ast.ArrowMember)):
                 # &struct.member or &((struct*)base)->member chain
-                if not operand.is_arrow and isinstance(operand.obj, ast.Identifier):
+                if isinstance(operand, ast.Member) and isinstance(operand.obj, ast.Identifier):
                     sym = self.ctx.lookup(operand.obj.name)
                     if sym and isinstance(sym.sym_type, lt.StructType):
                         offset = self._resolve_member_offset(sym.sym_type, operand.member)
@@ -10553,7 +10555,7 @@ class CodeGenerator:
         obj = expr.obj
         member = expr.member
 
-        if expr.is_arrow:
+        if isinstance(expr, ast.ArrowMember):
             # Arrow access: base->member. Base must be a pointer to struct.
             # Check for cast of integer constant: ((struct*)0x1234)->member
             base_val = None
