@@ -1113,7 +1113,7 @@ class CallGraphAnalyzer:
             self._analyze_expr(expr.array, calls, address_taken, indirect_sigs)
             self._analyze_expr(expr.index, calls, address_taken, indirect_sigs)
 
-        elif isinstance(expr, ast.Member):
+        elif isinstance(expr, (ast.Member, ast.ArrowMember)):
             self._analyze_expr(expr.obj, calls, address_taken, indirect_sigs)
 
         elif isinstance(expr, ast.Cast):
@@ -1826,7 +1826,7 @@ class CallGraphAnalyzer:
             elif isinstance(expr, ast.Index):
                 collect_from_expr(expr.array)
                 collect_from_expr(expr.index)
-            elif isinstance(expr, ast.Member):
+            elif isinstance(expr, (ast.Member, ast.ArrowMember)):
                 collect_from_expr(expr.obj)
             elif isinstance(expr, ast.Cast):
                 collect_from_expr(expr.expr)
@@ -2102,8 +2102,9 @@ class CallGraphAnalyzer:
                 pos=expr.pos,
             )
 
-        elif isinstance(expr, ast.Member):
-            return ast.Member(
+        elif isinstance(expr, (ast.Member, ast.ArrowMember)):
+            cls = type(expr)
+            return cls(
                 obj=self._substitute_param_constants(expr.obj, param_names, constants),
                 member=expr.member,
                 pos=expr.pos,
@@ -3621,7 +3622,7 @@ class CodeGenerator:
                 visit_expr(expr.false_expr)
             elif isinstance(expr, ast.Cast):
                 visit_expr(expr.expr)
-            elif isinstance(expr, ast.Member):
+            elif isinstance(expr, (ast.Member, ast.ArrowMember)):
                 visit_expr(expr.obj)
             elif isinstance(expr, ast.Index):
                 visit_expr(expr.array)
@@ -4269,7 +4270,7 @@ class CodeGenerator:
             self._gen_address(right)
         elif isinstance(right, ast.UnaryOp) and right.op == "*":
             self.gen_expr(right.operand)
-        elif isinstance(right, ast.Member):
+        elif isinstance(right, (ast.Member, ast.ArrowMember)):
             self._gen_address(right)
         else:
             self.gen_expr(right)
@@ -4384,13 +4385,13 @@ class CodeGenerator:
                     self._gen_struct_copy_from_expr_to_member(sym, base_offset + member_offset, val, member_size)
                     continue
                 # Check for member access (e.g., phdr->daddr)
-                if isinstance(val, ast.Member):
+                if isinstance(val, (ast.Member, ast.ArrowMember)):
                     value_index += 1
                     member_size = self._type_size(member_type)
                     self._gen_struct_copy_from_addr_expr(sym, base_offset + member_offset, val, member_size)
                     continue
                 # Check for cast of addressable expression (e.g., (struct S)w->t.s)
-                if isinstance(val, ast.Cast) and isinstance(val.expr, (ast.Member, ast.UnaryOp, ast.Identifier)):
+                if isinstance(val, ast.Cast) and isinstance(val.expr, (ast.Member, ast.ArrowMember, ast.UnaryOp, ast.Identifier)):
                     value_index += 1
                     member_size = self._type_size(member_type)
                     self._gen_struct_copy_from_addr_expr(sym, base_offset + member_offset, val.expr, member_size)
@@ -4859,14 +4860,14 @@ class CodeGenerator:
             return
 
         # Handle struct copy from member access (e.g., phdr->daddr)
-        if isinstance(member_type, lt.StructType) and isinstance(val, ast.Member):
+        if isinstance(member_type, lt.StructType) and isinstance(val, (ast.Member, ast.ArrowMember)):
             self._gen_struct_copy_from_addr_expr(sym, offset, val, member_size)
             return
 
         # Handle struct copy from cast of addressable expression (e.g., (struct S)w->t.s)
         if isinstance(member_type, lt.StructType) and isinstance(val, ast.Cast):
             inner = val.expr
-            if isinstance(inner, (ast.Member, ast.UnaryOp, ast.Identifier)):
+            if isinstance(inner, (ast.Member, ast.ArrowMember, ast.UnaryOp, ast.Identifier)):
                 self._gen_struct_copy_from_addr_expr(sym, offset, inner, member_size)
                 return
 
@@ -5601,7 +5602,7 @@ class CodeGenerator:
         elif isinstance(expr, ast.Index):
             self.gen_index(expr)
 
-        elif isinstance(expr, ast.Member):
+        elif isinstance(expr, (ast.Member, ast.ArrowMember)):
             self.gen_member(expr)
 
         elif isinstance(expr, ast.SizeofType):
@@ -6837,7 +6838,7 @@ class CodeGenerator:
                 self.ctx.emit_instr("inc", "HL")
                 self.ctx.emit_instr("ld", "(HL),D")
                 self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
-        elif isinstance(expr.left, ast.Member):
+        elif isinstance(expr.left, (ast.Member, ast.ArrowMember)):
             # Check for bitfield assignment
             bf = self._get_bitfield_info(expr.left)
             if bf is not None:
@@ -6909,7 +6910,7 @@ class CodeGenerator:
             self._gen_64bit_operand(expr.right, to_tmp=False)  # Value into __acc64
             self.ctx.emit_instr("pop", "HL")    # Restore address
             self._call_runtime("__store64")
-        elif isinstance(expr.left, ast.Member):
+        elif isinstance(expr.left, (ast.Member, ast.ArrowMember)):
             # Struct member: compute address first, push it, then generate value
             self._gen_address(expr.left)         # Get member address in HL
             self.ctx.emit_instr("push", "HL")   # Save address
@@ -6939,7 +6940,7 @@ class CodeGenerator:
         if isinstance(expr, ast.BinaryOp):
             return (self._expr_has_side_effects(expr.left) or
                     self._expr_has_side_effects(expr.right))
-        if isinstance(expr, ast.Member):
+        if isinstance(expr, (ast.Member, ast.ArrowMember)):
             return self._expr_has_side_effects(expr.obj)
         if isinstance(expr, ast.Index):
             return (self._expr_has_side_effects(expr.array) or
@@ -7195,7 +7196,7 @@ class CodeGenerator:
 
         elif op == "&":
             # Address-of - cannot take address of bitfield
-            if isinstance(expr.operand, ast.Member):
+            if isinstance(expr.operand, (ast.Member, ast.ArrowMember)):
                 bf = self._get_bitfield_info(expr.operand)
                 if bf is not None and not (bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8):
                     self._error("cannot take address of bitfield", expr)
@@ -7405,11 +7406,11 @@ class CodeGenerator:
                         # Postfix: restore original value as result
                         self.ctx.emit_instr("pop", "HL")
 
-        elif isinstance(expr.operand, ast.Member) or \
+        elif isinstance(expr.operand, (ast.Member, ast.ArrowMember)) or \
              isinstance(expr.operand, ast.Index) or \
              (isinstance(expr.operand, ast.UnaryOp) and expr.operand.op == "*"):
             # Check for bitfield inc/dec - rewrite as compound assignment
-            if isinstance(expr.operand, ast.Member):
+            if isinstance(expr.operand, (ast.Member, ast.ArrowMember)):
                 bf = self._get_bitfield_info(expr.operand)
                 if bf is not None and not (bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8):
                     # Rewrite bf++ as bf = bf + 1, or ++bf similarly
@@ -8986,7 +8987,7 @@ class CodeGenerator:
                 return array_type.base_type
             elif isinstance(array_type, lt.PointerType):
                 return array_type.base_type
-        elif isinstance(expr, ast.Member):
+        elif isinstance(expr, (ast.Member, ast.ArrowMember)):
             # Member access: return member type
             return self._get_member_type(expr)
         elif isinstance(expr, ast.BinaryOp):
@@ -9879,7 +9880,7 @@ class CodeGenerator:
                     return self._type_size(sym.sym_type.base_type)
                 elif isinstance(sym.sym_type, lt.ArrayType):
                     return self._type_size(sym.sym_type.base_type)
-        elif isinstance(array_expr, ast.Member):
+        elif isinstance(array_expr, (ast.Member, ast.ArrowMember)):
             # Member expression like s.array or s->array
             member_type = self._get_member_type(array_expr)
             if member_type:
@@ -10495,7 +10496,7 @@ class CodeGenerator:
                                 elem_size = self._type_size(arr_type.base_type)
                                 return (sym.label(), idx_val * elem_size)
                 # &((struct*)base)->member[index] or &struct.member[index]
-                if isinstance(operand.array, ast.Member):
+                if isinstance(operand.array, (ast.Member, ast.ArrowMember)):
                     member_result = self._resolve_const_member_chain(operand.array)
                     if member_result is not None:
                         base_label, base_offset = member_result
@@ -10581,7 +10582,7 @@ class CodeGenerator:
                     if offset >= 0:
                         return (sym.label(), offset)
             # Nested member: obj.outer.inner
-            elif isinstance(obj, ast.Member):
+            elif isinstance(obj, (ast.Member, ast.ArrowMember)):
                 parent_result = self._resolve_const_member_chain(obj)
                 if parent_result is not None:
                     parent_label, parent_offset = parent_result
