@@ -11649,9 +11649,10 @@ class CodeGenerator:
                     result.append(c)
                 else:
                     # Non-printable / high-bit byte: numeric escape so the
-                    # assembler emits exactly one byte. Use the m80 ``',NH,'``
-                    # convention (close quote, hex byte, reopen quote).
-                    result.append(f"',{o:02X}H,'")
+                    # assembler emits exactly one byte. Use the m80 ``',0NH,'``
+                    # convention (leading 0 so hex >= A is a number, not an
+                    # identifier — um80 treats ``FFH`` as a symbol).
+                    result.append(f"',0{o:02X}H,'")
             i += 1
         return "".join(result)
 
