@@ -10631,6 +10631,23 @@ class CodeGenerator:
                                 if idx < array_size:
                                     elements[idx] = val.value
                             next_index = end + 1
+                    elif isinstance(desig, tuple) and len(desig) == 2:
+                        # Range designator after pre-pass normalisation:
+                        # (start, end) tuple of plain ints / IntLiterals.
+                        s, e = desig
+                        if isinstance(s, ast.IntLiteral):
+                            s = int_value(s)
+                        if isinstance(e, ast.IntLiteral):
+                            e = int_value(e)
+                        if isinstance(s, int) and isinstance(e, int):
+                            for idx in range(s, e + 1):
+                                if idx < array_size:
+                                    elements[idx] = val.value
+                            next_index = e + 1
+                    elif isinstance(desig, int):
+                        if desig < array_size:
+                            elements[desig] = val.value
+                        next_index = desig + 1
                     else:
                         idx = self._eval_const_expr(desig)
                         if idx is not None:
