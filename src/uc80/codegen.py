@@ -8904,9 +8904,11 @@ class CodeGenerator:
         self.ctx.emit_instr("pop", "HL")
         self.ctx.emit_instr("pop", "DE")
 
-    def _get_member_type(self, expr: ast.Member) -> lt.TypeNode | None:
+    def _get_member_type(self, expr) -> "lt.TypeNode | None":
         """Get the type of a struct member."""
-        struct_type = self._get_expr_type(expr.obj)
+        struct_type = _to_legacy(self._get_expr_type(expr.obj))
+        # Auto-AST: expr.member is a uplox Token.
+        member_name = expr.member.text if hasattr(expr.member, "text") else expr.member
         # For arrow operator or array decay, get the element/base type
         if isinstance(struct_type, lt.PointerType):
             struct_type = struct_type.base_type
@@ -8916,22 +8918,22 @@ class CodeGenerator:
             # Try inline members first
             if struct_type.members:
                 for m in struct_type.members:
-                    if m.name == expr.member:
+                    if m.name == member_name:
                         return m.member_type
                 # Search anonymous struct/union members inline
                 for m in struct_type.members:
                     if m.name is None and isinstance(m.member_type, lt.StructType):
                         if m.member_type.members:
                             for sm in m.member_type.members:
-                                if sm.name == expr.member:
+                                if sm.name == member_name:
                                     return sm.member_type
             # Then try registered structs
             if struct_type.name and struct_type.name in self.ctx.structs:
                 for name, member_type, _ in self.ctx.structs[struct_type.name]:
-                    if name == expr.member:
+                    if name == member_name:
                         return member_type
                 # Search anonymous members
-                result = self._find_anon_member_type(struct_type.name, expr.member)
+                result = self._find_anon_member_type(struct_type.name, member_name)
                 if result is not None:
                     return result
         return None
