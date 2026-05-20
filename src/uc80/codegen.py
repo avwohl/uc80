@@ -347,7 +347,18 @@ def _rewrite_str_token(string_lit, rewriter) -> None:
 
 
 def _decode_string_literal(text: str) -> str:
-    """Decode a STRING_LIT source token to the bytes its content represents."""
+    """Decode a STRING_LIT source token to the bytes its content represents.
+
+    Delegates to uc_core's reference decoder, which handles named escapes,
+    octal (\\N..\\NNN), hex (\\x<hexdigits>), and universal-character-name
+    (\\u, \\U) sequences. The earlier uc80-local implementation missed
+    \\x — so e.g. \"test \\x40\\n\" came through as literal `test x40\\n`.
+    """
+    try:
+        from uc_core.codegen_helpers import decode_string_literal as _core_decode
+        return _core_decode(text)
+    except ImportError:
+        pass
     if text.startswith("u8"):
         text = text[2:]
     elif text.startswith(("u", "U", "L")):
