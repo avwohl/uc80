@@ -3903,6 +3903,14 @@ class CodeGenerator:
                 if p_name is None:
                     continue
                 _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
+                p_type = _to_legacy(p_type)
+                # C99 6.7.6.3p7: parameter declared as ``T x[]`` (or with
+                # any other array shape) is adjusted to ``T *x``. Without
+                # this, indexing the param accesses the stack frame at
+                # the param's slot rather than through the pointer value
+                # the caller pushed.
+                if isinstance(p_type, lt.ArrayType):
+                    p_type = lt.PointerType(base_type=p_type.base_type)
                 size = self._type_size(p_type)
                 self.ctx.locals[p_name] = Symbol(
                     name=p_name,
