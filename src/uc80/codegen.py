@@ -10872,7 +10872,12 @@ class CodeGenerator:
                 else:
                     self._emit_int_value(const_val, elem_size)
             else:
-                self.ctx.emit_instr("ds", str(elem_size))
+                # Try address-constant resolution (e.g. (int*)&x.f).
+                label, offset = self._try_resolve_address_const(init)
+                if label is not None:
+                    self._emit_address_const(label, offset)
+                else:
+                    self.ctx.emit_instr("ds", str(elem_size))
         elif isinstance(init, ast.Compound):
             # Compound literal: (type){initializer} - extract the initializer
             self._emit_initializer(init.init, init.target_type)
@@ -11010,14 +11015,44 @@ class CodeGenerator:
             if isinstance(obj, ast.Cast):
                 base_val = self._eval_const_expr(obj.expr)
                 if isinstance(obj.target_type, lt.PointerType):
-                    pt = obj.target_type.base_type
+                    pt = _to_legacy(obj.target_type.base_type)
                     if isinstance(pt, lt.StructType):
                         struct_type = pt
             if base_val is not None and struct_type is not None:
                 offset = self._resolve_member_offset(struct_type, member)
                 if offset >= 0:
                     return (str(base_val + offset), 0)
-            # Arrow on a variable: ptr->member
+            # (array + N)->member: base is the array name + scaled index.
+            if isinstance(obj, ast.BinaryOp) and obj.op == "+":
+                # Try left = array identifier, right = int literal
+                arr_id, idx_lit = None, None
+                if isinstance(obj.left, ast.Identifier) and isinstance(obj.right, ast.IntLiteral):
+                    arr_id, idx_lit = obj.left, obj.right
+                elif isinstance(obj.right, ast.Identifier) and isinstance(obj.left, ast.IntLiteral):
+                    arr_id, idx_lit = obj.right, obj.left
+                if arr_id is not None:
+                    sym = self.ctx.lookup(arr_id.name)
+                    if sym:
+                        arr_t = _to_legacy(sym.sym_type)
+                        if isinstance(arr_t, lt.ArrayType):
+                            elem_t = _to_legacy(arr_t.base_type)
+                            if isinstance(elem_t, lt.StructType):
+                                idx_val = int_value(idx_lit)
+                                inner = self._resolve_member_offset(elem_t, member)
+                                if inner >= 0:
+                                    return (sym.label(),
+                                            idx_val * self._type_size(elem_t) + inner)
+            # array_name->member: array decays to pointer-to-first.
+            if isinstance(obj, ast.Identifier):
+                sym = self.ctx.lookup(obj.name)
+                if sym:
+                    arr_t = _to_legacy(sym.sym_type)
+                    if isinstance(arr_t, lt.ArrayType):
+                        elem_t = _to_legacy(arr_t.base_type)
+                        if isinstance(elem_t, lt.StructType):
+                            inner = self._resolve_member_offset(elem_t, member)
+                            if inner >= 0:
+                                return (sym.label(), inner)
             return None
         else:
             # Dot access: obj.member
