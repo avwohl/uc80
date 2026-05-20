@@ -2361,11 +2361,16 @@ class CodeGenContext:
             self.wide_strings.add(label)
         return label
 
-    def lookup(self, name: str) -> Optional[Symbol]:
+    def lookup(self, name) -> Optional[Symbol]:
         """Look up a symbol in local then global scope.
         If 'name' was declared extern in the current block scope,
         skip the local and go straight to globals (C99 6.2.2).
+
+        Accepts a str or a uplox Token (auto-AST identifier names) —
+        Token's __eq__ doesn't match the str keys our scope dicts use.
         """
+        if hasattr(name, "text"):
+            name = name.text
         if name in self.locals and name not in getattr(self, 'block_externs', ()):
             return self.locals[name]
         if name in self.globals:
