@@ -9328,6 +9328,10 @@ class CodeGenerator:
             # _is_long_type(None) → False and the 32-bit binary-op codegen
             # spuriously emits __sext32 over an already-32-bit value.
             return self._get_expr_type(expr.operand)
+        elif isinstance(expr, ast.PostfixOp):
+            # Auto-AST splits postfix ++/-- into its own node — same type
+            # as the operand (the value before the increment).
+            return self._get_expr_type(expr.operand)
         elif isinstance(expr, ast.Index):
             # Array indexing: return element type
             array_type = self._get_expr_type(expr.array)
