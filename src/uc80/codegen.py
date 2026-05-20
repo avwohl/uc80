@@ -2512,9 +2512,9 @@ class CodeGenerator:
         self._switch_cases: list[tuple[int, str]] = []
         self._switch_default: str | None = None
 
-    def _infer_array_size(self, var_type: lt.TypeNode,
-                          init: ast.Expression | None) -> lt.TypeNode:
+    def _infer_array_size(self, var_type, init):
         """Infer array size from initializer for unsized arrays."""
+        var_type = _to_legacy(var_type)
         if not isinstance(var_type, lt.ArrayType):
             return var_type
         if var_type.size is not None:
