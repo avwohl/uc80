@@ -5622,17 +5622,21 @@ class CodeGenerator:
         if stmt.stmt:
             self.gen_statement(stmt.stmt)
 
+    def _label_text(self, label) -> str:
+        """Extract a label name as plain str (auto-AST stores Token)."""
+        return label.text if hasattr(label, "text") else label
+
     def gen_label(self, stmt: ast.LabelStmt) -> None:
         """Generate code for a labeled statement."""
         # User labels are prefixed with @L_{funcname}_ to be unique per function
         func = self.ctx.current_function or "global"
-        self.ctx.emit_label(f"@L_{func}_{stmt.label}")
+        self.ctx.emit_label(f"@L_{func}_{self._label_text(stmt.label)}")
         self.gen_statement(stmt.stmt)
 
     def gen_goto(self, stmt: ast.GotoStmt) -> None:
         """Generate code for goto statement."""
         func = self.ctx.current_function or "global"
-        self.ctx.emit_instr("jp", f"@L_{func}_{stmt.label}")
+        self.ctx.emit_instr("jp", f"@L_{func}_{self._label_text(stmt.label)}")
 
     def gen_expr(self, expr, force_long: bool = False) -> None:
         """Generate code for an expression. Result in HL (16-bit) or DEHL (32-bit)."""
@@ -10016,10 +10020,11 @@ class CodeGenerator:
         if isinstance(array_expr, ast.Identifier):
             sym = self.ctx.lookup(array_expr.name.text)
             if sym:
-                if isinstance(sym.sym_type, lt.PointerType):
-                    return self._type_size(sym.sym_type.base_type)
-                elif isinstance(sym.sym_type, lt.ArrayType):
-                    return self._type_size(sym.sym_type.base_type)
+                st = _to_legacy(sym.sym_type)
+                if isinstance(st, lt.PointerType):
+                    return self._type_size(st.base_type)
+                elif isinstance(st, lt.ArrayType):
+                    return self._type_size(st.base_type)
         elif isinstance(array_expr, (ast.Member, ast.ArrowMember)):
             # Member expression like s.array or s->array
             member_type = self._get_member_type(array_expr)
