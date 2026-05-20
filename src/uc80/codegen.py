@@ -1523,7 +1523,7 @@ class CallGraphAnalyzer:
 
         elif isinstance(expr, ast.SizeofExpr):
             return ast.SizeofExpr(
-                expr=self._substitute_params(expr.expr, param_map),
+                operand=self._substitute_params(expr.operand, param_map),
                 pos=expr.pos
             )
 
@@ -1831,7 +1831,7 @@ class CallGraphAnalyzer:
             elif isinstance(expr, ast.Cast):
                 collect_from_expr(expr.expr)
             elif isinstance(expr, ast.SizeofExpr):
-                collect_from_expr(expr.expr)
+                collect_from_expr(expr.operand)
             elif isinstance(expr, ast.InitializerList):
                 for val in expr.values:
                     if isinstance(val, ast.Expression):
@@ -5613,12 +5613,12 @@ class CodeGenerator:
 
         elif isinstance(expr, ast.SizeofExpr):
             # sizeof(string_literal) returns the array size including null terminator
-            if isinstance(expr.expr, ast.StringLiteral):
-                size = len(expr.expr.value) + 1  # +1 for null terminator
+            if isinstance(expr.operand, ast.StringLiteral):
+                size = len(expr.operand.value) + 1  # +1 for null terminator
                 self.ctx.emit_instr("ld", f"HL,{size}")
             else:
                 # Infer type of expression and compute its size
-                expr_type = self._get_expr_type(expr.expr)
+                expr_type = self._get_expr_type(expr.operand)
                 if expr_type:
                     size = self._type_size(expr_type)
                 else:
@@ -5998,8 +5998,8 @@ class CodeGenerator:
         elif op == "<<":
             # Strength reduction: shift left by small constant → repeated ADD HL,HL
             # At this point: left in DE, right (shift count) in HL
-            if isinstance(expr.right, ast.IntLiteral) and 1 <= expr.right.value <= 8:
-                shift = expr.right.value
+            shift = int_value(expr.right) if isinstance(expr.right, ast.IntLiteral) else None
+            if shift is not None and 1 <= shift <= 8:
                 self.ctx.emit_instr("ex", "DE,HL")  # value to HL
                 for _ in range(shift):
                     self.ctx.emit_instr("add", "HL,HL")
@@ -6008,8 +6008,8 @@ class CodeGenerator:
         elif op == ">>":
             # Strength reduction: right shift by small constant → inline shifts
             # At this point: left in DE, right (shift count) in HL
-            if isinstance(expr.right, ast.IntLiteral) and 1 <= expr.right.value <= 4:
-                shift = expr.right.value
+            shift = int_value(expr.right) if isinstance(expr.right, ast.IntLiteral) else None
+            if shift is not None and 1 <= shift <= 4:
                 is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
                 self.ctx.emit_instr("ex", "DE,HL")  # value to HL
                 for _ in range(shift):
@@ -7985,14 +7985,16 @@ class CodeGenerator:
         target_is_64 = self._is_long_long_type(target_type)
         if (isinstance(expr.expr, (ast.IntLiteral, ast.CharLiteral)) and not target_is_float
                 and not source_is_float and not target_is_64):
+            # expr.expr.value is a uplox Token for IntLiteral; decode.
+            src_val = int_value(expr.expr) if isinstance(expr.expr, ast.IntLiteral) else expr.expr.value
             # _Bool constant fold: normalize to 0 or 1 (C99 6.3.1.2)
             if self._is_bool_type(target_type):
-                val = 0 if expr.expr.value == 0 else 1
+                val = 0 if src_val == 0 else 1
                 self.ctx.emit_instr("ld", f"HL,{val}")
                 return
             target_size = self._type_size(target_type)
             target_signed = self._is_signed_type(target_type)
-            val = expr.expr.value
+            val = src_val
             if target_size == 1:
                 val = val & 0xFF
                 if target_signed and val >= 0x80:
@@ -11120,7 +11122,7 @@ class CodeGenerator:
         elif isinstance(expr, ast.SizeofType):
             return self._type_size(expr.target_type)
         elif isinstance(expr, ast.SizeofExpr):
-            expr_type = self._get_expr_type(expr.expr)
+            expr_type = self._get_expr_type(expr.operand)
             if expr_type:
                 return self._type_size(expr_type)
             return None
