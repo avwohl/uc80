@@ -11486,44 +11486,43 @@ class CodeGenerator:
         return None  # Not a constant expression
 
     def _escape_string(self, s: str) -> str:
-        """Escape a string for assembly."""
-        # For now, just handle basic escapes
+        """Escape a string for assembly.
+
+        Non-ASCII / non-printable bytes are emitted as ``',HH,'`` numeric
+        escapes so the assembler sees one byte per char regardless of the
+        Python str's Unicode-codepoint encoding (otherwise chr(0x9d)
+        gets UTF-8 encoded to two bytes when the .mac file is written).
+        """
         result = []
         i = 0
-        while i < len(s):
+        n = len(s)
+        while i < n:
             c = s[i]
             if c == "'":
                 result.append("''")  # Escape single quote
-            elif c == "\n":
-                result.append("',0AH,'")
-            elif c == "\r":
-                result.append("',0DH,'")
-            elif c == "\t":
-                result.append("',09H,'")
-            elif c == "\\":
-                if i + 1 < len(s):
-                    next_c = s[i + 1]
-                    if next_c == "n":
-                        result.append("',0AH,'")
-                        i += 1
-                    elif next_c == "r":
-                        result.append("',0DH,'")
-                        i += 1
-                    elif next_c == "t":
-                        result.append("',09H,'")
-                        i += 1
-                    elif next_c == "'":
-                        result.append("''")
-                        i += 1
-                    elif next_c == "\\":
-                        result.append("\\")
-                        i += 1
-                    else:
-                        result.append(c)
+            elif c == "\\" and i + 1 < n:
+                # Source-level escape (kept after _decode_string_literal
+                # only for the literal `\` case). Pass through.
+                next_c = s[i + 1]
+                if next_c == "'":
+                    result.append("''")
+                    i += 1
+                elif next_c == "\\":
+                    result.append("\\")
+                    i += 1
                 else:
-                    result.append(c)
+                    # Unknown escape — pass the second char through.
+                    result.append(next_c)
+                    i += 1
             else:
-                result.append(c)
+                o = ord(c)
+                if 0x20 <= o <= 0x7e and c != "'":
+                    result.append(c)
+                else:
+                    # Non-printable / high-bit byte: numeric escape so the
+                    # assembler emits exactly one byte. Use the m80 ``',NH,'``
+                    # convention (close quote, hex byte, reopen quote).
+                    result.append(f"',{o:02X}H,'")
             i += 1
         return "".join(result)
 
