@@ -2656,6 +2656,63 @@ class CodeGenerator:
             return self._count_struct_init_values(member_type)
         return 1
 
+    def _normalize_designators(self, root) -> None:
+        """Replace FieldDesignator / IndexDesignator wrapper nodes with raw
+        str / int values so legacy code paths matching ``isinstance(d, str)``
+        / ``isinstance(d, int)`` work uniformly."""
+        try:
+            from dataclasses import fields as _dc_fields, is_dataclass
+        except Exception:
+            return
+        seen = set()
+
+        def _unwrap(d):
+            if isinstance(d, ast.FieldDesignator):
+                tok = d.field
+                return tok.text if hasattr(tok, "text") else tok
+            if isinstance(d, ast.IndexDesignator):
+                idx = d.index
+                # Try literal eval; fall back to the IntLiteral so the
+                # downstream code that handles ``ast.IntLiteral`` still works.
+                if isinstance(idx, ast.IntLiteral):
+                    try:
+                        return int_value(idx)
+                    except Exception:
+                        return idx
+                return idx
+            if isinstance(d, ast.RangeDesignator):
+                # Two-element tuple (start, end) as resolved ints when possible.
+                def _v(n):
+                    if isinstance(n, ast.IntLiteral):
+                        try:
+                            return int_value(n)
+                        except Exception:
+                            return n
+                    return n
+                return (_v(d.start), _v(d.end))
+            return d
+
+        def walk(node):
+            if node is None or id(node) in seen:
+                return
+            if isinstance(node, (list, tuple)):
+                for x in node:
+                    walk(x)
+                return
+            if not is_dataclass(node):
+                return
+            seen.add(id(node))
+            if isinstance(node, ast.DesignatedInit) and node.designators:
+                # Replace any wrapper designator with its scalar form.
+                try:
+                    object.__setattr__(node, "designators",
+                                       [_unwrap(d) for d in node.designators])
+                except Exception:
+                    pass
+            for f in _dc_fields(node):
+                walk(getattr(node, f.name, None))
+        walk(root)
+
     def _normalize_op_fields(self, root) -> None:
         """Recursively replace .op Token with its .text everywhere.
 
@@ -2751,6 +2808,10 @@ class CodeGenerator:
         # text silently picks the fallback branch (e.g. Count++ became
         # Count--, ``+`` arithmetic skipped, ...). Mutate once here.
         self._normalize_op_fields(unit)
+        # Same one-pass treatment for designators: replace
+        # FieldDesignator(field=Token) / IndexDesignator(index=...) with
+        # the bare str / int that the legacy aggregate-init code expects.
+        self._normalize_designators(unit)
 
         # Pre-pass: register every file-scope struct/enum definition AND
         # every file-scope typedef so later references can look up types
