@@ -11227,6 +11227,12 @@ class CodeGenerator:
                 continue
 
             val = values[value_index]
+            # Auto-AST: a single-element list of StringLiteral is the
+            # wrapper for one source-level string literal.
+            if (isinstance(val, list) and val
+                    and all(isinstance(p, ast.StringLiteral) for p in val)
+                    and len(val) == 1):
+                val = val[0]
 
             # Handle DesignatedInit (without member name - e.g. array index designator)
             if isinstance(val, ast.DesignatedInit):
