@@ -499,7 +499,7 @@ def _is_resolved_type(t) -> bool:
     return isinstance(t, _CoreRT)
 
 
-def _to_legacy(t):
+def _to_legacy(t, ctx=None):
     """Convert a ResolvedType (either uc80- or uc_core-class) to its
     ast_legacy equivalent.
 
@@ -507,6 +507,11 @@ def _to_legacy(t):
     where the rest of the code expects ``lt.StructType`` /
     ``lt.PointerType`` / etc. (the legacy isinstance checks won't match
     a ``ResolvedType``).
+
+    When ``ctx`` has a populated ``typedefs`` registry, a
+    ``ResolvedType(kind="typedef", name=N)`` is resolved by looking up
+    N's underlying type and recursing. uc_core hands these out when no
+    typedef-resolver scope is installed.
     """
     if t is None or not _is_resolved_type(t):
         return t
@@ -532,8 +537,19 @@ def _to_legacy(t):
     if k == "enum":
         return lt.EnumType(name=t.name)
     if k == "typedef":
+        # Resolve via the active codegen's typedef registry (set when a
+        # ``CodeGenerator`` is constructed). The registry maps typedef
+        # name → its resolved type; recurse to handle typedef-of-typedef.
+        reg = _ACTIVE_TYPEDEFS
+        if reg is not None and t.name in reg:
+            return _to_legacy(reg[t.name])
         return lt.TypedefName(name=t.name) if hasattr(lt, "TypedefName") else t
     return t
+
+
+# Set by ``CodeGenerator.__init__`` to its ctx.typedefs dict; consulted
+# by the module-level ``_to_legacy`` to resolve uc_core typedef nodes.
+_ACTIVE_TYPEDEFS = None
 
 
 def function_is_variadic(func) -> bool:
@@ -2383,6 +2399,13 @@ class CodeGenContext:
     # Cached struct sizes (for structs with bitfields where _type_size can't compute from members alone)
     struct_sizes: dict[str, int] = field(default_factory=dict)
 
+    # Typedef registry: typedef-name -> resolved type. Populated by
+    # gen_declaration / gen_local_decl when storage_class == "typedef".
+    # ``_to_legacy`` consults this to resolve ResolvedType(kind="typedef")
+    # nodes (uc_core hands those out when no typedef-resolver scope is
+    # installed; rather than installing one, we resolve lazily here).
+    typedefs: dict[str, "object"] = field(default_factory=dict)
+
     # Function names (for distinguishing functions from variables)
     function_names: set[str] = field(default_factory=set)
 
@@ -2467,6 +2490,11 @@ class CodeGenerator:
                  type_config: TypeConfig | None = None):
         self.module_name = module_name
         self.ctx = CodeGenContext()
+        # Wire module-level ``_to_legacy`` to consult this codegen's
+        # typedef registry. (Single-threaded codegen, so a module-level
+        # pointer is fine; reset in finally/exit if we ever grow re-entry.)
+        global _ACTIVE_TYPEDEFS
+        _ACTIVE_TYPEDEFS = self.ctx.typedefs
         self.enable_shared_storage = enable_shared_storage
         self.enable_dead_elimination = enable_dead_elimination
         self.enable_inlining = enable_inlining
@@ -2724,15 +2752,22 @@ class CodeGenerator:
         # Count--, ``+`` arithmetic skipped, ...). Mutate once here.
         self._normalize_op_fields(unit)
 
-        # Pre-pass: register every file-scope struct/enum definition so
-        # later references (in other top-level declarations, in function
-        # bodies, in member accesses) can look up sizes and offsets by
-        # name. Mirrors the local-decl path in gen_local_decl.
+        # Pre-pass: register every file-scope struct/enum definition AND
+        # every file-scope typedef so later references can look up types
+        # by name. Mirrors the local-decl path in gen_local_decl.
         for decl in unit.items:
             if isinstance(decl, ast.Declaration):
                 try:
                     base = resolve_base_type(decl.decl_specs)
                     self._register_inline_types(_to_legacy(base))
+                except Exception:
+                    pass
+                # File-scope typedef registration.
+                try:
+                    if decl_storage_class(decl.decl_specs) == "typedef":
+                        for nm, full, _init, _is_fn in iter_var_decls(decl):
+                            if nm is not None:
+                                self.ctx.typedefs[nm] = full
                 except Exception:
                     pass
 
@@ -3985,13 +4020,12 @@ class CodeGenerator:
         _walk_specs_for_enums(decl.decl_specs)
         storage = decl_storage_class(decl.decl_specs)
         if storage == "typedef":
-            # uc_core typedef registration — handle once per Declaration
+            # Record typedef name → resolved type so later uses can
+            # resolve through ``_to_legacy`` (typedef kind → underlying).
             for name, full, _init, is_fn in iter_var_decls(decl):
-                if name is None or is_fn:
+                if name is None:
                     continue
-                # Register typedef name → resolved type for downstream lookup.
-                if hasattr(self, "_register_typedef_name"):
-                    self._register_typedef_name(name, full)
+                self.ctx.typedefs[name] = full
             return
         # Pick up any inline struct/enum specs from decl_specs.
         for spec in decl.decl_specs or []:
