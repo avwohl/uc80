@@ -5689,10 +5689,11 @@ class CodeGenerator:
         matched_expr = None
 
         for assoc in (expr.assocs or []):
+            if isinstance(assoc, ast.GenericDefault):
+                default_expr = assoc.expr
+                continue
             type_node, value_expr = assoc.target_type, assoc.expr
-            if type_node is None:
-                default_expr = value_expr
-            elif self._types_compatible(ctrl_type, type_node):
+            if self._types_compatible(ctrl_type, type_node):
                 matched_expr = value_expr
                 break
 
@@ -7865,7 +7866,7 @@ class CodeGenerator:
         """Push an 8-byte (long long) argument onto the stack (4 words, high to low)."""
         if isinstance(arg, ast.IntLiteral):
             # Constant: split into 4 words
-            val = arg.value & 0xFFFFFFFFFFFFFFFF
+            val = int_value(arg) & 0xFFFFFFFFFFFFFFFF
             w0 = val & 0xFFFF          # lowest word
             w1 = (val >> 16) & 0xFFFF
             w2 = (val >> 32) & 0xFFFF
@@ -9122,14 +9123,13 @@ class CodeGenerator:
             # Resolve the _Generic to get matched expression's type
             ctrl_type = self._get_expr_type(expr.controlling_expr)
             for assoc in (expr.assocs or []):
-                type_node, value_expr = assoc.target_type, assoc.expr
-                if type_node is None:
+                if isinstance(assoc, ast.GenericDefault):
                     continue
-                if self._types_compatible(ctrl_type, type_node):
-                    return self._get_expr_type(value_expr)
+                if self._types_compatible(ctrl_type, assoc.target_type):
+                    return self._get_expr_type(assoc.expr)
             # Try default
             for assoc in (expr.assocs or []):
-                if assoc.target_type is None:
+                if isinstance(assoc, ast.GenericDefault):
                     return self._get_expr_type(assoc.expr)
         elif isinstance(expr, ast.Compound):
             # Compound literal type is its target type
@@ -11022,9 +11022,9 @@ class CodeGenerator:
     def _eval_const_expr(self, expr: ast.Expression) -> int | float | None:
         """Try to evaluate a constant expression at compile time. Returns None if not constant."""
         if isinstance(expr, ast.IntLiteral):
-            return expr.value
+            return int_value(expr)
         elif isinstance(expr, ast.FloatLiteral):
-            return expr.value
+            return float_value(expr)
         elif isinstance(expr, ast.Identifier):
             # Check for enum constant
             if expr.name.text in self.ctx.enum_constants:
@@ -11033,7 +11033,7 @@ class CodeGenerator:
         elif isinstance(expr, ast.CharLiteral):
             # Character constants have type int; value is as-if stored in char
             # first then converted to int (C 6.4.4.4). Char is signed by default.
-            val = expr.value
+            val = self._decode_char_literal(expr)
             if val >= 0x80:
                 val = val - 0x100  # Sign extend signed char to int
             return val
@@ -11041,13 +11041,14 @@ class CodeGenerator:
             operand_val = self._eval_const_expr(expr.operand)
             if operand_val is None:
                 return None
-            if expr.op == "-":
+            op_text = expr.op.text if hasattr(expr.op, "text") else expr.op
+            if op_text == "-":
                 return -operand_val
-            elif expr.op == "+":
+            elif op_text == "+":
                 return operand_val
-            elif expr.op == "~" and not isinstance(operand_val, float):
+            elif op_text == "~" and not isinstance(operand_val, float):
                 return ~operand_val
-            elif expr.op == "!":
+            elif op_text == "!":
                 return 0 if operand_val else 1
         elif isinstance(expr, ast.Cast):
             # Evaluate the inner expression
@@ -11079,27 +11080,28 @@ class CodeGenerator:
             if left_val is None or right_val is None:
                 return None
             is_float = isinstance(left_val, float) or isinstance(right_val, float)
-            if expr.op == "+":
+            op = expr.op.text if hasattr(expr.op, "text") else expr.op
+            if op == "+":
                 return left_val + right_val
-            elif expr.op == "-":
+            elif op == "-":
                 return left_val - right_val
-            elif expr.op == "*":
+            elif op == "*":
                 return left_val * right_val
-            elif expr.op == "/" and right_val != 0:
+            elif op == "/" and right_val != 0:
                 if is_float:
                     return left_val / right_val
                 return left_val // right_val
-            elif expr.op == "%" and right_val != 0:
+            elif op == "%" and right_val != 0:
                 return left_val % right_val
-            elif expr.op == "&" and not is_float:
+            elif op == "&" and not is_float:
                 return left_val & right_val
-            elif expr.op == "|" and not is_float:
+            elif op == "|" and not is_float:
                 return left_val | right_val
-            elif expr.op == "^" and not is_float:
+            elif op == "^" and not is_float:
                 return left_val ^ right_val
-            elif expr.op == "<<":
+            elif op == "<<":
                 return left_val << right_val
-            elif expr.op == ">>":
+            elif op == ">>":
                 # Need to determine signedness of left operand for arithmetic vs logical shift
                 left_type = self._get_expr_type(expr.left)
                 is_signed = True  # C default is signed
@@ -11138,21 +11140,21 @@ class CodeGenerator:
                             width = 32
                     mask = (1 << width) - 1
                     return (left_val & mask) >> right_val
-            elif expr.op == "==":
+            elif op == "==":
                 return 1 if left_val == right_val else 0
-            elif expr.op == "!=":
+            elif op == "!=":
                 return 1 if left_val != right_val else 0
-            elif expr.op == "<":
+            elif op == "<":
                 return 1 if left_val < right_val else 0
-            elif expr.op == ">":
+            elif op == ">":
                 return 1 if left_val > right_val else 0
-            elif expr.op == "<=":
+            elif op == "<=":
                 return 1 if left_val <= right_val else 0
-            elif expr.op == ">=":
+            elif op == ">=":
                 return 1 if left_val >= right_val else 0
-            elif expr.op == "&&":
+            elif op == "&&":
                 return 1 if left_val and right_val else 0
-            elif expr.op == "||":
+            elif op == "||":
                 return 1 if left_val or right_val else 0
         elif isinstance(expr, ast.SizeofType):
             return self._type_size(expr.target_type)
