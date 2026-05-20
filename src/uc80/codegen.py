@@ -765,6 +765,12 @@ class Symbol:
                                            # to this one, since um80 is
                                            # case-insensitive).
 
+    def __post_init__(self):
+        # Normalise ResolvedType to legacy at construction so every
+        # ``isinstance(sym.sym_type, lt.XxxType)`` site downstream just
+        # works without having to remember to convert.
+        self.sym_type = _to_legacy(self.sym_type)
+
     def label(self) -> str:
         """Get the assembly label for this symbol."""
         # Static locals already have __ prefix, don't add another _
