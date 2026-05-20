@@ -4661,6 +4661,11 @@ class CodeGenerator:
                 continue
 
             val = values[value_index]
+            # Auto-AST: collapse 1-element list-of-StringLiteral.
+            if (isinstance(val, list) and val
+                    and all(isinstance(p, ast.StringLiteral) for p in val)
+                    and len(val) == 1):
+                val = val[0]
 
             # Check if this member is a bitfield
             bf = self.ctx.bitfield_info.get((struct_name, member_name)) if struct_name else None
@@ -5077,9 +5082,17 @@ class CodeGenerator:
             return True
         return False
 
-    def _gen_string_init(self, sym: 'Symbol', array_type: lt.ArrayType, string_lit: ast.StringLiteral, base_offset: int) -> None:
-        """Initialize a char array from a string literal."""
-        string_val = string_lit.value + '\0'  # Include null terminator
+    def _gen_string_init(self, sym, array_type, string_lit, base_offset: int) -> None:
+        """Initialize a char array from a string literal.
+
+        Auto-AST: string_lit.value is a Token; decode to the byte sequence
+        first. Otherwise the raw source-form (including quotes/escapes)
+        was iterated char-by-char into the array.
+        """
+        if hasattr(string_lit.value, "text"):
+            string_val = _decode_string_literal(string_lit.value.text) + '\0'
+        else:
+            string_val = string_lit.value + '\0'  # Include null terminator
         array_size = 1
         if array_type.size:
             if isinstance(array_type.size, ast.IntLiteral):
