@@ -10161,8 +10161,14 @@ class CodeGenerator:
                     size += self._calc_locals_size(fake)
         return size
 
-    def _type_size(self, t: lt.TypeNode) -> int:
+    def _type_size(self, t) -> int:
         """Return the size of a type in bytes."""
+        # Accept ResolvedType (either uc80- or uc_core-class) by routing
+        # through the legacy conversion once. Without this, the
+        # isinstance checks below all miss and every ResolvedType returns
+        # int_size (the default), so struct params land in the wrong
+        # stack slots and struct fields collide.
+        t = _to_legacy(t)
         if isinstance(t, lt.BasicType):
             if t.name == "void":
                 return 0
