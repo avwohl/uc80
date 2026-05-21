@@ -302,6 +302,46 @@ __sar16_loop:
 	RET
 
 ; ============================================================
+; __ffs16 — find lowest set bit (1-indexed), 0 if none.
+; Models __builtin_ffs / POSIX ffs for 16-bit operands. uc80 calls
+; this from gen_call when the user invokes ``__builtin_ffs(int)``.
+; In:  HL = value
+; Out: HL = 1..16 (position of lowest set bit) or 0 if HL==0
+; ============================================================
+	PUBLIC	__ffs16
+__ffs16:
+	LD	A,H
+	OR	L
+	JR	Z,__ffs16_zero
+	PUSH	BC
+	LD	B,1		; current bit position
+	LD	A,L
+__ffs16_lo:
+	RRCA
+	JR	C,__ffs16_found
+	INC	B
+	LD	C,A
+	LD	A,B
+	CP	9
+	LD	A,C
+	JR	NZ,__ffs16_lo
+	; First 8 bits all zero; move to high byte
+	LD	A,H
+__ffs16_hi:
+	RRCA
+	JR	C,__ffs16_found
+	INC	B
+	JR	__ffs16_hi
+__ffs16_found:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ffs16_zero:
+	LD	HL,0
+	RET
+
+; ============================================================
 ; Indirect call through HL
 ; ============================================================
 	PUBLIC	__callhl

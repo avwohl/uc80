@@ -8113,6 +8113,15 @@ class CodeGenerator:
                 self.ctx.emit_instr("push", "IX")
                 self.ctx.emit_instr("pop", "HL")
                 return
+            if expr.func.name.text == '__builtin_ffs':
+                # Find first-set bit (1-indexed) of a 16-bit int operand,
+                # 0 if zero. Routes to runtime helper ``__ffs16``.
+                if expr.args:
+                    self.gen_expr(expr.args[0])
+                else:
+                    self.ctx.emit_instr("ld", "HL,0")
+                self._call_runtime("__ffs16")
+                return
             # GCC builtin pass-throughs to libc.  GCC sometimes emits
             # __builtin_memcpy directly (e.g. when the prototype isn't
             # visible) — rewrite to the libc symbol so the linker can
