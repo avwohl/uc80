@@ -8609,13 +8609,19 @@ class CodeGenerator:
         source_is_64 = self._is_long_long_expr(expr.expr)
 
         if target_is_64 and not source_is_64:
-            # Need to extend to 64-bit in __acc64
+            # Need to extend to 64-bit in __acc64. Sign/zero choice follows
+            # the SOURCE's signedness, not the destination's — C 6.3.1.3
+            # says a negative value first preserves its mathematical value
+            # then wraps mod 2^N into the unsigned dest. Equivalently:
+            # sign-extend signed sources, zero-extend unsigned ones.
             self.ctx.runtime_used.add("__acc64")
+            src_is_signed = (self._is_signed_type(source_type)
+                             if source_type is not None else target_signed)
             if source_size <= 2:
                 # From 16-bit or smaller: HL -> DEHL -> __acc64
-                self._extend_hl_to_dehl(target_signed)
+                self._extend_hl_to_dehl(src_is_signed)
             # Now we have DEHL, extend to __acc64
-            if target_signed:
+            if src_is_signed:
                 self._call_runtime("__sext64")
             else:
                 self._call_runtime("__zext64")
