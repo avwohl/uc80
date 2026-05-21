@@ -1731,10 +1731,20 @@ class CallGraphAnalyzer:
                             continue
                         arg = new_args[i]
                         _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
-                        # Wrap _Bool parameters in a Cast (C99 6.3.1.2).
-                        if p_type.kind == "basic" and p_type.name == "bool":
+                        # When inlining, the implicit "convert arg to
+                        # parameter type" that gen_call would do at the
+                        # callee's IX+ slot has to be made explicit —
+                        # otherwise narrowing (int→signed char, _Bool
+                        # normalize, …) is lost and the body sees the
+                        # caller's wider value verbatim. Always wrap a
+                        # narrowing param type in an explicit Cast.
+                        if p_type.kind == "basic" and p_type.name in (
+                                "bool", "char", "signed char", "unsigned char",
+                                "short", "unsigned short"):
                             arg = ast.Cast(
-                                target_type=lt.BasicType(name="bool"),
+                                target_type=lt.BasicType(
+                                    name=p_type.name,
+                                    is_signed=(False if p_type.is_signed is False else True)),
                                 expr=arg, pos=ast._Pos(),
                             )
                         param_map[pname] = arg
