@@ -4693,6 +4693,127 @@ class CodeGenerator:
         self.ctx.emit_instr("ld", f"BC,{size}")
         self.ctx.emit_instr("ldir")  # Copy BC bytes from HL to DE
 
+    def _gen_compound_init_to_label(self, label: str, struct_type, values: list) -> None:
+        """Emit per-field runtime stores into the DSEG location at
+        ``label``. Designated initializers (``.foo = v``) target the
+        named member; positional initializers fall in declaration order.
+        Members not initialised are left as zero (the DSEG slot is
+        zero-initialised by ctx.compound_literals emission for const
+        positions; for non-const positions we explicitly store 0 here).
+        Nested designators (``.outer.inner = v``) are routed by peeling
+        the head of the designator chain and recursing into the matching
+        sub-aggregate.
+        """
+        members = self._get_struct_members(struct_type)
+        if not members:
+            return
+
+        # Build member-name → list-of-value-or-sub-DesignatedInit map.
+        # A nested designator like ``.outer.inner = v`` is rewritten into
+        # a ``DesignatedInit(designators=[inner], value=v)`` under key
+        # "outer" — we'll process the recursive call with that list.
+        # Designators may be ``FieldDesignator`` nodes wrapping Tokens
+        # if the normalization pass hasn't unwrapped them yet.
+        def _desig_name(d):
+            if isinstance(d, str):
+                return d
+            if hasattr(d, "field"):
+                tok = d.field
+                return tok.text if hasattr(tok, "text") else str(tok)
+            return None
+
+        by_name: dict[str, list] = {}
+        positional: list = []
+        for v in values:
+            head = None
+            if isinstance(v, ast.DesignatedInit) and v.designators:
+                head = _desig_name(v.designators[0])
+            if head is not None:
+                if len(v.designators) == 1:
+                    by_name.setdefault(head, []).append(v.value)
+                else:
+                    sub = ast.DesignatedInit(
+                        designators=v.designators[1:],
+                        value=v.value, pos=v.pos)
+                    by_name.setdefault(head, []).append(sub)
+            else:
+                vv = v.value if isinstance(v, ast.DesignatedInit) else v
+                positional.append(vv)
+
+        # Union semantics: all members share storage, so we only
+        # initialise the FIRST member (or whichever member the user's
+        # designators target). For struct types we walk all members.
+        is_union = getattr(struct_type, "is_union", False)
+        pos_idx = 0
+        for mi, (mname, mtype, moff) in enumerate(members):
+            if not mname:
+                continue
+            if is_union and mi > 0 and mname not in by_name:
+                # Don't re-zero overlapping union members
+                continue
+            mt = _to_legacy(mtype)
+            if mname in by_name:
+                vlist = by_name[mname]
+                # If any of the values are DesignatedInit (sub-
+                # designator chains) or InitializerList, recurse into
+                # the nested struct/union at this offset.
+                if isinstance(mt, lt.StructType) and any(
+                        isinstance(v, (ast.DesignatedInit, ast.InitializerList))
+                        for v in vlist):
+                    sub_label = f"{label}+{moff}"
+                    # Flatten any wrapping InitializerList into raw
+                    # value/designator stream.
+                    flat = []
+                    for v in vlist:
+                        if isinstance(v, ast.InitializerList):
+                            flat.extend(v.values)
+                        else:
+                            flat.append(v)
+                    self._gen_compound_init_to_label(sub_label, mt, flat)
+                    continue
+                val = vlist[0]
+            elif pos_idx < len(positional):
+                val = positional[pos_idx]
+                pos_idx += 1
+            else:
+                val = None  # unspecified — already zeroed by DSEG emit
+
+            mt = _to_legacy(mtype)
+            msize = self._type_size(mt)
+            # Recurse into nested struct members.
+            if val is not None and isinstance(mt, lt.StructType):
+                if isinstance(val, ast.InitializerList):
+                    sub_label = label + f"+{moff}"
+                    # Without a dedicated helper, just emit per-field
+                    # writes by adjusting offsets relative to label.
+                    self._gen_compound_init_to_label(sub_label, mt, val.values)
+                continue
+            if val is None:
+                # Explicit zero — the DSEG emit may already have ds N
+                # but we re-zero to be safe in re-entered scopes.
+                for k in range(msize):
+                    self.ctx.emit_instr("xor", "A")
+                    self.ctx.emit_instr("ld", f"({label}+{moff + k}),A")
+                continue
+            if msize == 1:
+                self.gen_expr(val)
+                self.ctx.emit_instr("ld", "A,L")
+                self.ctx.emit_instr("ld", f"({label}+{moff}),A")
+            elif msize == 2:
+                self.gen_expr(val)
+                self.ctx.emit_instr("ld", f"({label}+{moff}),HL")
+            elif msize == 4:
+                if self._is_float_type(mt):
+                    self.gen_expr(val)
+                else:
+                    self.gen_expr(val, force_long=True)
+                    if not self._is_long_expr(val):
+                        is_signed = not self._is_unsigned_expr(val)
+                        self._extend_hl_to_dehl(is_signed)
+                self.ctx.emit_instr("ld", f"({label}+{moff}),HL")
+                self.ctx.emit_instr("ld", f"({label}+{moff + 2}),DE")
+            # 8-byte and exotic sizes: skip (handle later as needed).
+
     def _gen_compound_to_sret(self, struct_type, values: list) -> None:
         """Evaluate each member of an InitializerList at runtime and
         store the resulting bytes at ``__sret_buf + offset``. Used by
@@ -6241,9 +6362,26 @@ class CodeGenerator:
         elif isinstance(expr, ast.Compound):
             # Compound literal: (type){initializer}
             target_type = expr.target_type
-            if isinstance(target_type, (lt.StructType, lt.ArrayType)):
-                # Struct/array compound literal: materialize in memory, return address
+            # Resolve typedef for the type-check below.
+            tt_resolved = target_type
+            if (isinstance(tt_resolved, lt.BasicType)
+                    and tt_resolved.name in self.ctx.typedefs):
+                tt_resolved = _to_legacy(self.ctx.typedefs[tt_resolved.name])
+            if isinstance(tt_resolved, (lt.StructType, lt.ArrayType)):
+                # Struct/array compound literal: materialize in memory, return address.
+                # If the initializer has any non-const expression (a
+                # function call, ``++i`` etc.), the materialized DSEG
+                # slot would just be ``ds N`` for those positions. Emit
+                # runtime stores at the use-site so each evaluation
+                # picks up the current values; the label still acts as
+                # the stable address for the literal's block-scope
+                # lifetime.
                 label = self._materialize_compound_literal(expr)
+                if (isinstance(expr.init, ast.InitializerList)
+                        and isinstance(tt_resolved, lt.StructType)
+                        and self._compound_has_nonconst(expr.init)):
+                    self._gen_compound_init_to_label(label, tt_resolved,
+                                                       expr.init.values)
                 self.ctx.emit_instr("ld", f"HL,{label}")
             elif isinstance(expr.init, ast.InitializerList) and len(expr.init.values) >= 1:
                 # Scalar compound literal: evaluate the value
@@ -10422,8 +10560,19 @@ class CodeGenerator:
                     self.ctx.emit_instr("add", "HL,DE")
 
         elif isinstance(expr, ast.Compound):
-            # Compound literal: materialize in DSEG, return address
+            # Compound literal: materialize in DSEG, return address.
+            # If the initializer references runtime values, emit per-
+            # field stores into the DSEG slot before exposing it (same
+            # rationale as ``gen_expr`` for Compound — the materialised
+            # storage's static slot is ``ds N`` for non-const inits).
             label = self._materialize_compound_literal(expr)
+            tt = expr.target_type
+            if (isinstance(tt, lt.BasicType) and tt.name in self.ctx.typedefs):
+                tt = _to_legacy(self.ctx.typedefs[tt.name])
+            if (isinstance(expr.init, ast.InitializerList)
+                    and isinstance(tt, lt.StructType)
+                    and self._compound_has_nonconst(expr.init)):
+                self._gen_compound_init_to_label(label, tt, expr.init.values)
             self.ctx.emit_instr("ld", f"HL,{label}")
 
     @staticmethod
