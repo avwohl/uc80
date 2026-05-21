@@ -5959,7 +5959,12 @@ class CodeGenerator:
             self.gen_member(expr)
 
         elif isinstance(expr, ast.SizeofType):
-            size = self._type_size(expr.target_type)
+            # target_type is an auto-AST ``TypeName`` /
+            # ``TypeNameWithDeclarator`` — resolve to legacy first so the
+            # struct/array/typedef shapes match ``_type_size``'s
+            # isinstance checks.
+            tt = self._resolve_typename(expr.target_type)
+            size = self._type_size(tt)
             self.ctx.emit_instr("ld", f"HL,{size}")
 
         elif isinstance(expr, ast.SizeofExpr):
@@ -11714,7 +11719,8 @@ class CodeGenerator:
             elif op == "||":
                 return 1 if left_val or right_val else 0
         elif isinstance(expr, ast.SizeofType):
-            return self._type_size(expr.target_type)
+            tt = self._resolve_typename(expr.target_type) if hasattr(self, "_resolve_typename") else expr.target_type
+            return self._type_size(tt)
         elif isinstance(expr, ast.SizeofExpr):
             expr_type = self._get_expr_type(expr.operand)
             if expr_type:
