@@ -7719,6 +7719,11 @@ class CodeGenerator:
                 if isinstance(operand_type.base_type, lt.FunctionType):
                     # *func_ptr is just func_ptr - no actual load needed
                     return
+                if isinstance(operand_type.base_type, lt.ArrayType):
+                    # *p where p is pointer-to-array. In an rvalue
+                    # context the array decays to a pointer to its
+                    # first element — same address as p. No load.
+                    return
 
             # Determine size of dereferenced type
             deref_size = self._get_deref_size(expr.operand)
