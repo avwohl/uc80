@@ -48,6 +48,11 @@ Z80_CPM_PREDEFINES = {
     "__SIZEOF_DOUBLE__": "4",
     "__SIZEOF_LONG_DOUBLE__": "4",
     "__SIZEOF_SHORT__": "2",
+    # GCC defines ``__builtin_va_list`` as a built-in type; uc80's
+    # ``va_list`` is just ``char *`` (see stdarg.h). Map the builtin
+    # name to the same so tests that spell their typedef as
+    # ``typedef __builtin_va_list va_list;`` compile.
+    "__builtin_va_list": "char *",
 }
 
 
