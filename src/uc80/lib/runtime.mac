@@ -3188,6 +3188,34 @@ __fdiv_man:
 __fcmp:
 	PUSH	BC
 
+	; IEEE 754: -0.0 == +0.0. Special-case zero before the bit-pattern
+	; compare so a signed-zero pair doesn't end up "left < right" just
+	; because the sign bit differs.
+	LD	A,D
+	AND	7FH		; mask off left's sign bit
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fcmp_lnz
+	; left magnitude == 0; check right
+	LD	A,(__tmp32+3)
+	AND	7FH
+	LD	B,A
+	LD	A,(__tmp32+2)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32+1)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32)
+	OR	B
+	JR	NZ,__fcmp_lnz
+	; both zero (any sign) — return Z, NC
+	XOR	A		; clears Z=1 actually? XOR A sets Z; CP A is cleaner
+	POP	BC
+	RET
+__fcmp_lnz:
+
 	; Compare: left (DEHL) vs right (__tmp32)
 	; Sets Z if equal, C if left < right
 	; Flip sign bits to make unsigned comparison work for signed floats
