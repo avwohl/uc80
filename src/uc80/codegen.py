@@ -8276,6 +8276,8 @@ class CodeGenerator:
                 '__builtin_calloc':   'calloc',
                 '__builtin_realloc':  'realloc',
                 '__builtin_free':     'free',
+                '__builtin_setjmp':   'setjmp',
+                '__builtin_longjmp':  'longjmp',
                 # POSIX bcopy/bzero family some tests reach for. Hand them
                 # to the equivalent libc routine — bzero(p,n) ↔ memset(p,0,n)
                 # is one extra arg so we leave that alone; bcopy/explicit
