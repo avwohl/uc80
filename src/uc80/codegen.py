@@ -10662,8 +10662,21 @@ class CodeGenerator:
                     consumed += 1
                     self._emit_initializer(val, elem_type)
             elif isinstance(elem_type, lt.ArrayType) and not isinstance(val, ast.InitializerList):
-                nested_consumed = self._emit_array_init_flat_inline(values, idx, elem_type)
-                consumed += nested_consumed
+                # If this slot's element type is a char-array and the
+                # value is a string literal, emit padded string bytes
+                # rather than descending element-wise (which would
+                # consume one outer value per inner char slot).
+                str_val = val
+                if (isinstance(str_val, list) and len(str_val) == 1
+                        and isinstance(str_val[0], ast.StringLiteral)):
+                    str_val = str_val[0]
+                if (isinstance(str_val, ast.StringLiteral)
+                        and self._is_char_array(elem_type)):
+                    consumed += 1
+                    self._emit_string_for_array(str_val, elem_type)
+                else:
+                    nested_consumed = self._emit_array_init_flat_inline(values, idx, elem_type)
+                    consumed += nested_consumed
             else:
                 consumed += 1
                 self._emit_initializer(val, elem_type)
@@ -10980,6 +10993,12 @@ class CodeGenerator:
                 label = self.ctx.add_string(decoded, is_wide=_string_is_wide(text)
                                             if hasattr(init.value, "text") else False)
                 self.ctx.emit_instr("dw", label)
+            elif isinstance(elem_type, lt.ArrayType):
+                # Sized char array member: emit string + null, then pad to
+                # the declared size so the next sibling array starts at
+                # the correct offset (``char a[2][3] = {"1", "12"}`` —
+                # row 0 needs ``db '1',0; ds 1`` so row 1 starts at +3).
+                self._emit_string_for_array(init, elem_type)
             else:
                 # Array or char member - emit as bytes
                 escaped = self._escape_string(decoded)
