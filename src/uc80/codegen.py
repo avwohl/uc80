@@ -6929,9 +6929,12 @@ class CodeGenerator:
 
         # Generate right operand, extend to 32-bit if needed
         self.gen_expr(expr.right, force_long=True)
-        if not right_is_long and not right_is_long_long:
+        if (not right_is_long and not right_is_long_long
+                and not self._gen_expr_produces_dehl(expr.right)):
             # Need to extend 16-bit to 32-bit
-            # (long long already produces 32-bit in DEHL via __load64)
+            # (long long already produces 32-bit in DEHL via __load64;
+            #  IntLiteral/FloatLiteral with force_long=True already
+            #  emit both HL and DE — a second extend would clobber DE.)
             is_signed = not self._is_unsigned_expr(expr.right)
             self._extend_hl_to_dehl(is_signed)
 
@@ -6950,7 +6953,8 @@ class CodeGenerator:
         # Generate left operand, extend to 32-bit if needed
         left_is_long_long = self._is_long_long_expr(expr.left)
         self.gen_expr(expr.left, force_long=True)
-        if not left_is_long and not left_is_long_long:
+        if (not left_is_long and not left_is_long_long
+                and not self._gen_expr_produces_dehl(expr.left)):
             is_signed = not self._is_unsigned_expr(expr.left)
             self._extend_hl_to_dehl(is_signed)
 
@@ -8458,7 +8462,13 @@ class CodeGenerator:
         # Handle GCC builtins
         if isinstance(expr.func, ast.Identifier):
             if expr.func.name.text == '__builtin_expect':
-                # __builtin_expect(x, c) just returns x - it's a hint for branch prediction
+                # __builtin_expect(x, c) returns x — it's a hint for
+                # branch prediction. ``c`` is normally a constant, but
+                # the C standard treats it as a regular function call
+                # so its side effects must still happen. Evaluate
+                # extra args (typically just ``c``) first for effect.
+                for extra in (expr.args or [])[1:]:
+                    self.gen_expr(extra)
                 if expr.args:
                     self.gen_expr(expr.args[0])
                 else:
@@ -11232,6 +11242,16 @@ class CodeGenerator:
             self._call_runtime("__sext32")
         else:
             self._call_runtime("__zext32")
+
+    def _gen_expr_produces_dehl(self, expr) -> bool:
+        """True if ``gen_expr(expr, force_long=True)`` already loads
+        both HL and DE (the full 32-bit value) so a follow-on
+        ``_extend_hl_to_dehl`` would clobber DE. Currently the leaf
+        literals with native ``force_long`` handling — IntLiteral,
+        FloatLiteral, NullptrLiteral.
+        """
+        return isinstance(expr, (ast.IntLiteral, ast.FloatLiteral,
+                                  ast.NullptrLiteral))
 
     def _get_deref_size(self, expr: ast.Expression) -> int:
         """Get the size of the type that would be loaded when dereferencing expr.
