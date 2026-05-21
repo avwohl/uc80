@@ -1629,6 +1629,16 @@ class CallGraphAnalyzer:
         for pt in fn_type.param_types:
             if self._is_long_long_type_node(pt):
                 return False
+        # Don't inline struct-returning functions. The by-value semantics
+        # of ``struct T f()`` requires a temporary buffer; inlining
+        # ``*q = f()`` whose body is ``return *p`` would collapse to a
+        # single ``*q = *p`` LDIR — wrong when q and p alias (e.g. across
+        # the two layouts of a union). Keep the call so __sret_buf gets
+        # the temp copy.
+        rt = fn_type.return_type
+        rt_legacy = _to_legacy(rt) if rt is not None else None
+        if isinstance(rt_legacy, lt.StructType):
+            return False
         return True
 
     def _is_long_long_type_node(self, t: lt.TypeNode) -> bool:
