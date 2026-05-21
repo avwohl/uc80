@@ -10848,6 +10848,19 @@ class CodeGenerator:
             return True
         if isinstance(expr, ast.Cast):
             return self._uses_tmp32(expr.expr)
+        if isinstance(expr, ast.Index):
+            # ``a[i+1]`` computes ``i+1`` and scales it — if either subexpr
+            # involves 32-bit arithmetic or other tmp32-using ops, the
+            # index calc will smash __tmp32 set up by the surrounding
+            # binary op.
+            return self._uses_tmp32(expr.array) or self._uses_tmp32(expr.index)
+        if isinstance(expr, (ast.Member, ast.ArrowMember)):
+            return self._uses_tmp32(expr.obj)
+        if isinstance(expr, ast.PostfixOp):
+            if (self._is_long_expr(expr.operand)
+                    or self._is_float_expr(expr.operand)):
+                return True
+            return self._uses_tmp32(expr.operand)
         # Simple expressions (identifiers, literals) don't use __tmp32
         return False
 
