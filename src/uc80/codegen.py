@@ -4688,8 +4688,17 @@ class CodeGenerator:
 
         value_index = 0
 
-        # Check if struct has bitfields (need struct_name for bitfield_info lookup)
-        struct_name = struct_type.name
+        # Check if struct has bitfields. For anonymous structs the
+        # bitfield_info was registered under a synthesized
+        # ``__anon_<id>`` key (see ``_get_struct_members``); match that
+        # here so local-scope ``struct { int bit0:1; … } s = {…};``
+        # actually goes through the read-modify-write path instead of
+        # falling back to per-member 16-bit stores that clobber siblings.
+        struct_name = (struct_type.name
+                       or (f"__anon_{id(struct_type)}"
+                           if any(m.bit_width is not None
+                                  for m in struct_type.members)
+                           else None))
 
         for member_name, member_type, member_offset in members:
             if value_index >= len(values):
