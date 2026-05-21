@@ -4693,6 +4693,48 @@ class CodeGenerator:
         self.ctx.emit_instr("ld", f"BC,{size}")
         self.ctx.emit_instr("ldir")  # Copy BC bytes from HL to DE
 
+    def _gen_compound_to_sret(self, struct_type, values: list) -> None:
+        """Evaluate each member of an InitializerList at runtime and
+        store the resulting bytes at ``__sret_buf + offset``. Used by
+        gen_return when the function is returning a compound literal
+        whose initializer expressions aren't compile-time constants."""
+        members = self._get_struct_members(struct_type)
+        if not members:
+            return
+        struct_size = self._type_size(struct_type)
+        # Zero the whole sret_buf first so members not in ``values``
+        # (and the .dummy padding fields) end up at 0.
+        for byte_off in range(struct_size):
+            self.ctx.emit_instr("xor", "A")
+            self.ctx.emit_instr("ld", f"(__sret_buf+{byte_off}),A")
+        for i, (mname, mtype, moff) in enumerate(members):
+            if i >= len(values) or not mname:
+                continue
+            val = values[i]
+            if isinstance(val, ast.DesignatedInit):
+                val = val.value
+            mt = _to_legacy(mtype)
+            msize = self._type_size(mt)
+            if msize == 1:
+                self.gen_expr(val)
+                self.ctx.emit_instr("ld", "A,L")
+                self.ctx.emit_instr("ld", f"(__sret_buf+{moff}),A")
+            elif msize == 2:
+                self.gen_expr(val)
+                self.ctx.emit_instr("ld", f"(__sret_buf+{moff}),HL")
+            elif msize == 4:
+                if self._is_float_type(mt):
+                    self.gen_expr(val)
+                else:
+                    self.gen_expr(val, force_long=True)
+                    if not self._is_long_expr(val):
+                        is_signed = not self._is_unsigned_expr(val)
+                        self._extend_hl_to_dehl(is_signed)
+                self.ctx.emit_instr("ld", f"(__sret_buf+{moff}),HL")
+                self.ctx.emit_instr("ld", f"(__sret_buf+{moff + 2}),DE")
+            # Skip 8-byte and exotic sizes for now (rare in compound
+            # literals).
+
     def _compound_has_nonconst(self, node) -> bool:
         """True if any initializer expression inside an InitializerList
         chain is not a compile-time constant (literal, address-of, etc.).
@@ -5718,11 +5760,36 @@ class CodeGenerator:
             if ret_kind == "struct" and self._type_size(ret_type) > 2:
                 struct_size = self._type_size(ret_type)
                 self.ctx.runtime_used.add("__sret_buf")
-                self._gen_address(value)
-                self.ctx.emit_instr("ld", "DE,__sret_buf")
-                self.ctx.emit_instr("ld", f"BC,{struct_size}")
-                self.ctx.emit_instr("ldir")
-                self.ctx.emit_instr("ld", "HL,__sret_buf")
+                # If the return expression is a compound literal whose
+                # initializer references runtime values, evaluating
+                # ``_gen_address`` would yield the DSEG-materialized
+                # @CL label — which holds uninit ``ds N`` slots for the
+                # non-const positions. Emit per-field stores directly
+                # to __sret_buf instead.
+                if (isinstance(value, ast.Compound)
+                        and isinstance(value.init, ast.InitializerList)
+                        and self._compound_has_nonconst(value.init)):
+                    target_type = value.target_type
+                    if (isinstance(target_type, lt.BasicType)
+                            and target_type.name in self.ctx.typedefs):
+                        target_type = _to_legacy(self.ctx.typedefs[target_type.name])
+                    if isinstance(target_type, lt.StructType):
+                        self._gen_compound_to_sret(target_type,
+                                                    value.init.values)
+                        self.ctx.emit_instr("ld", "HL,__sret_buf")
+                    else:
+                        # Fallback: original path
+                        self._gen_address(value)
+                        self.ctx.emit_instr("ld", "DE,__sret_buf")
+                        self.ctx.emit_instr("ld", f"BC,{struct_size}")
+                        self.ctx.emit_instr("ldir")
+                        self.ctx.emit_instr("ld", "HL,__sret_buf")
+                else:
+                    self._gen_address(value)
+                    self.ctx.emit_instr("ld", "DE,__sret_buf")
+                    self.ctx.emit_instr("ld", f"BC,{struct_size}")
+                    self.ctx.emit_instr("ldir")
+                    self.ctx.emit_instr("ld", "HL,__sret_buf")
             elif self._is_long_long_type(ret_type):
                 self._gen_64bit_operand(value, to_tmp=False)
             else:
