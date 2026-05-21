@@ -10735,7 +10735,19 @@ class CodeGenerator:
         - unsigned char promotes to (signed) int (all values fit in 16-bit int)
         - unsigned short = unsigned int on 16-bit systems, stays unsigned
         - unsigned int, unsigned long, unsigned long long stay unsigned
+        - A bitfield narrower than ``int`` promotes to signed int even
+          if declared with an unsigned base type (its value range fits).
         """
+        # Bitfield member access: width-aware promotion (C 6.3.1.1).
+        if isinstance(expr, (ast.Member, ast.ArrowMember)):
+            bf = self._get_bitfield_info(expr)
+            if bf is not None:
+                int_bits = self.type_config.int_size * 8
+                if bf.bit_width < int_bits:
+                    # Fits in signed int's value range → promotes to int.
+                    return False
+                # Same width as int: signedness follows the declared type.
+                return not bf.is_signed
         expr_type = self._get_expr_type(expr)
         if isinstance(expr_type, lt.BasicType):
             if expr_type.is_signed == False:
