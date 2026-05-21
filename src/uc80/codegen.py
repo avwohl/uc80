@@ -11814,8 +11814,21 @@ class CodeGenerator:
             decoded = _decode_string_literal(string_lit.value.text)
         else:
             decoded = string_lit.value
-        escaped = self._escape_string(decoded)
 
+        if array_size and len(decoded) >= array_size:
+            # C 6.7.9 ¶14: when the array is too small to hold the
+            # terminating ``\0``, the string occupies exactly the array
+            # cells. Truncate to array_size bytes and drop the null.
+            # This is what GCC does for ``char a[3] = "1234"`` (stores
+            # ``'1','2','3'`` with no terminator), and what nested-string
+            # initializers like ``char a[2][3] = {"1234","xyz"}`` rely on
+            # for the second row to land at the right offset.
+            truncated = decoded[:array_size]
+            escaped = self._escape_string(truncated)
+            self.ctx.emit_instr("db", f"'{escaped}'")
+            return
+
+        escaped = self._escape_string(decoded)
         # Emit the string with null terminator
         self.ctx.emit_instr("db", f"'{escaped}',0")
 
