@@ -630,6 +630,123 @@ __zext32:
 	LD	DE,0
 	RET
 
+; ============================================================
+; __clz32 — count leading zeros of 32-bit DEHL.
+; Returns count in HL (0..32). 32 if input zero (defensive).
+; ============================================================
+	PUBLIC	__clz32
+__clz32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__clz32_zero
+	PUSH	BC
+	LD	B,0		; counter
+__clz32_lp:
+	BIT	7,D
+	JR	NZ,__clz32_done
+	INC	B
+	; Shift DEHL left by 1
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	JR	__clz32_lp
+__clz32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__clz32_zero:
+	LD	HL,32
+	RET
+
+; ============================================================
+; __ctz32 — count trailing zeros of 32-bit DEHL.
+; ============================================================
+	PUBLIC	__ctz32
+__ctz32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__ctz32_zero
+	PUSH	BC
+	LD	B,0
+__ctz32_lp:
+	BIT	0,L
+	JR	NZ,__ctz32_done
+	INC	B
+	; Shift DEHL right by 1
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	__ctz32_lp
+__ctz32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ctz32_zero:
+	LD	HL,32
+	RET
+
+; ============================================================
+; __popcount32 — count set bits in 32-bit DEHL.
+; ============================================================
+	PUBLIC	__popcount32
+__popcount32:
+	PUSH	BC
+	LD	B,0
+	LD	C,32
+__popcount32_lp:
+	; Shift DEHL right by 1; check carry
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	NC,__popcount32_skip
+	INC	B
+__popcount32_skip:
+	DEC	C
+	JR	NZ,__popcount32_lp
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+
+; ============================================================
+; __ffs32 — 1-indexed lowest set bit of DEHL, 0 if none.
+; ============================================================
+	PUBLIC	__ffs32
+__ffs32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__ffs32_zero
+	PUSH	BC
+	LD	B,1
+__ffs32_lp:
+	BIT	0,L
+	JR	NZ,__ffs32_done
+	INC	B
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	__ffs32_lp
+__ffs32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ffs32_zero:
+	LD	HL,0
+	RET
+
 	DSEG
 	PUBLIC	__tmp32
 __tmp32:

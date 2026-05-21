@@ -8122,6 +8122,46 @@ class CodeGenerator:
                     self.ctx.emit_instr("ld", "HL,0")
                 self._call_runtime("__ffs16")
                 return
+            _BITOP_RUNTIME = {
+                "__builtin_clz":         ("__clz16",       16),
+                "__builtin_ctz":         ("__ctz16",       16),
+                "__builtin_popcount":    ("__popcount16",  16),
+                "__builtin_parity":      ("__popcount16",  16),
+                "__builtin_ffs":         ("__ffs16",       16),
+                "__builtin_clzl":        ("__clz32",       32),
+                "__builtin_ctzl":        ("__ctz32",       32),
+                "__builtin_popcountl":   ("__popcount32",  32),
+                "__builtin_parityl":     ("__popcount32",  32),
+                "__builtin_ffsl":        ("__ffs32",       32),
+                "__builtin_clzll":       ("__clz64",       64),
+                "__builtin_ctzll":       ("__ctz64",       64),
+                "__builtin_popcountll":  ("__popcount64",  64),
+                "__builtin_parityll":    ("__popcount64",  64),
+                "__builtin_ffsll":       ("__ffs64",       64),
+                "__builtin_clrsb":       ("__clz16",       16),  # close-enough fallback
+                "__builtin_clrsbl":      ("__clz32",       32),
+                "__builtin_clrsbll":     ("__clz64",       64),
+            }
+            if expr.func.name.text in _BITOP_RUNTIME:
+                helper, width = _BITOP_RUNTIME[expr.func.name.text]
+                arg = expr.args[0] if expr.args else make_int_lit(0)
+                if width == 64:
+                    self.ctx.runtime_used.add("__acc64")
+                    self._gen_64bit_operand(arg, to_tmp=False)
+                elif width == 32:
+                    self.gen_expr(arg, force_long=True)
+                else:
+                    self.gen_expr(arg)
+                self._call_runtime(helper)
+                if expr.func.name.text in ("__builtin_parity",
+                                            "__builtin_parityl",
+                                            "__builtin_parityll"):
+                    # Parity = popcount & 1
+                    self.ctx.emit_instr("ld", "A,L")
+                    self.ctx.emit_instr("and", "1")
+                    self.ctx.emit_instr("ld", "L,A")
+                    self.ctx.emit_instr("ld", "H,0")
+                return
             if expr.func.name.text == '__builtin_bswap16':
                 # Reverse the two bytes of a 16-bit value.
                 if expr.args:
@@ -9862,6 +9902,23 @@ class CodeGenerator:
                 "__builtin_bswap32": lt.BasicType(name="long", is_signed=False),
                 "__builtin_bswap16": lt.BasicType(name="int", is_signed=False),
                 "__builtin_ffs": lt.BasicType(name="int", is_signed=True),
+                "__builtin_ffsl": lt.BasicType(name="int", is_signed=True),
+                "__builtin_ffsll": lt.BasicType(name="int", is_signed=True),
+                "__builtin_clz": lt.BasicType(name="int", is_signed=True),
+                "__builtin_clzl": lt.BasicType(name="int", is_signed=True),
+                "__builtin_clzll": lt.BasicType(name="int", is_signed=True),
+                "__builtin_ctz": lt.BasicType(name="int", is_signed=True),
+                "__builtin_ctzl": lt.BasicType(name="int", is_signed=True),
+                "__builtin_ctzll": lt.BasicType(name="int", is_signed=True),
+                "__builtin_popcount": lt.BasicType(name="int", is_signed=True),
+                "__builtin_popcountl": lt.BasicType(name="int", is_signed=True),
+                "__builtin_popcountll": lt.BasicType(name="int", is_signed=True),
+                "__builtin_parity": lt.BasicType(name="int", is_signed=True),
+                "__builtin_parityl": lt.BasicType(name="int", is_signed=True),
+                "__builtin_parityll": lt.BasicType(name="int", is_signed=True),
+                "__builtin_clrsb": lt.BasicType(name="int", is_signed=True),
+                "__builtin_clrsbl": lt.BasicType(name="int", is_signed=True),
+                "__builtin_clrsbll": lt.BasicType(name="int", is_signed=True),
                 "__builtin_constant_p": lt.BasicType(name="int", is_signed=True),
                 "__builtin_classify_type": lt.BasicType(name="int", is_signed=True),
                 "__builtin_signbit": lt.BasicType(name="int", is_signed=True),

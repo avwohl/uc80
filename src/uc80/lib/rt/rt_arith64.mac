@@ -1061,6 +1061,197 @@ __smod64_dvspos:
 	JP	__neg64		; tail call
 
 ; ============================================================
+; __clz64 / __ctz64 / __popcount64 / __ffs64 — bit-count helpers
+; on __acc64. All return HL = result (0..64), H=0. Defensive on
+; zero: clz/ctz return 64 instead of UB.
+; ============================================================
+	PUBLIC	__clz64
+__clz64:
+	; Test if zero
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__clz64_nz
+	LD	HL,64
+	RET
+__clz64_nz:
+	PUSH	BC
+	LD	BC,0		; counter
+__clz64_lp:
+	; Test bit 7 of high byte (byte 7)
+	LD	A,(__acc64+7)
+	AND	80H
+	JR	NZ,__clz64_done
+	INC	BC
+	; Shift __acc64 left by 1
+	LD	HL,(__acc64)
+	ADD	HL,HL
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	ADC	HL,HL
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	ADC	HL,HL
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	ADC	HL,HL
+	LD	(__acc64+6),HL
+	JR	__clz64_lp
+__clz64_done:
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+	PUBLIC	__ctz64
+__ctz64:
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__ctz64_nz
+	LD	HL,64
+	RET
+__ctz64_nz:
+	PUSH	BC
+	LD	BC,0
+__ctz64_lp:
+	LD	A,(__acc64)
+	AND	1
+	JR	NZ,__ctz64_done
+	INC	BC
+	; Shift __acc64 right by 1
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	JR	__ctz64_lp
+__ctz64_done:
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+	PUBLIC	__popcount64
+__popcount64:
+	PUSH	BC
+	LD	BC,0		; counter
+	LD	A,64		; bits remaining (using A; saved counter in BC)
+	PUSH	AF
+__popcount64_lp:
+	; Shift __acc64 right by 1; CF = LSB before shift
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	JR	NC,__popcount64_skip
+	INC	BC
+__popcount64_skip:
+	POP	AF
+	DEC	A
+	PUSH	AF
+	JR	NZ,__popcount64_lp
+	POP	AF
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+	PUBLIC	__ffs64
+__ffs64:
+	; If zero return 0; else return 1+CTZ
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__ffs64_nz
+	LD	HL,0
+	RET
+__ffs64_nz:
+	CALL	__ctz64
+	INC	HL
+	RET
+
+; ============================================================
 ; __bswap64 — reverse the byte order of __acc64.
 ; Models __builtin_bswap64(uint64_t). uc80 routes that builtin here.
 ; ============================================================

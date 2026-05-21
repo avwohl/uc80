@@ -302,6 +302,81 @@ __sar16_loop:
 	RET
 
 ; ============================================================
+; __clz16 — count leading zeros of 16-bit HL.
+; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
+; ============================================================
+	PUBLIC	__clz16
+__clz16:
+	LD	A,H
+	OR	L
+	JR	Z,__clz16_zero
+	PUSH	BC
+	LD	B,0		; counter
+	; Probe bits from high (15) down to 0
+__clz16_lp:
+	BIT	7,H
+	JR	NZ,__clz16_done
+	INC	B
+	ADD	HL,HL
+	JR	__clz16_lp
+__clz16_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__clz16_zero:
+	LD	HL,16
+	RET
+
+; ============================================================
+; __ctz16 — count trailing zeros of 16-bit HL.
+; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
+; ============================================================
+	PUBLIC	__ctz16
+__ctz16:
+	LD	A,H
+	OR	L
+	JR	Z,__ctz16_zero
+	PUSH	BC
+	LD	B,0
+__ctz16_lp:
+	BIT	0,L
+	JR	NZ,__ctz16_done
+	INC	B
+	SRL	H
+	RR	L
+	JR	__ctz16_lp
+__ctz16_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ctz16_zero:
+	LD	HL,16
+	RET
+
+; ============================================================
+; __popcount16 — count set bits in HL.
+; ============================================================
+	PUBLIC	__popcount16
+__popcount16:
+	PUSH	BC
+	LD	B,0		; counter
+	LD	C,16		; bits remaining
+__popcount16_lp:
+	SRL	H
+	RR	L
+	JR	NC,__popcount16_skip
+	INC	B
+__popcount16_skip:
+	DEC	C
+	JR	NZ,__popcount16_lp
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+
+; ============================================================
 ; __ffs16 — find lowest set bit (1-indexed), 0 if none.
 ; Models __builtin_ffs / POSIX ffs for 16-bit operands. uc80 calls
 ; this from gen_call when the user invokes ``__builtin_ffs(int)``.
@@ -981,6 +1056,123 @@ __sext32:
 	PUBLIC	__zext32
 __zext32:
 	LD	DE,0
+	RET
+
+; ============================================================
+; __clz32 — count leading zeros of 32-bit DEHL.
+; Returns count in HL (0..32). 32 if input zero (defensive).
+; ============================================================
+	PUBLIC	__clz32
+__clz32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__clz32_zero
+	PUSH	BC
+	LD	B,0		; counter
+__clz32_lp:
+	BIT	7,D
+	JR	NZ,__clz32_done
+	INC	B
+	; Shift DEHL left by 1
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	JR	__clz32_lp
+__clz32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__clz32_zero:
+	LD	HL,32
+	RET
+
+; ============================================================
+; __ctz32 — count trailing zeros of 32-bit DEHL.
+; ============================================================
+	PUBLIC	__ctz32
+__ctz32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__ctz32_zero
+	PUSH	BC
+	LD	B,0
+__ctz32_lp:
+	BIT	0,L
+	JR	NZ,__ctz32_done
+	INC	B
+	; Shift DEHL right by 1
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	__ctz32_lp
+__ctz32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ctz32_zero:
+	LD	HL,32
+	RET
+
+; ============================================================
+; __popcount32 — count set bits in 32-bit DEHL.
+; ============================================================
+	PUBLIC	__popcount32
+__popcount32:
+	PUSH	BC
+	LD	B,0
+	LD	C,32
+__popcount32_lp:
+	; Shift DEHL right by 1; check carry
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	NC,__popcount32_skip
+	INC	B
+__popcount32_skip:
+	DEC	C
+	JR	NZ,__popcount32_lp
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+
+; ============================================================
+; __ffs32 — 1-indexed lowest set bit of DEHL, 0 if none.
+; ============================================================
+	PUBLIC	__ffs32
+__ffs32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__ffs32_zero
+	PUSH	BC
+	LD	B,1
+__ffs32_lp:
+	BIT	0,L
+	JR	NZ,__ffs32_done
+	INC	B
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	__ffs32_lp
+__ffs32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ffs32_zero:
+	LD	HL,0
 	RET
 
 	DSEG
@@ -2061,6 +2253,197 @@ __smod64_dvspos:
 	BIT	7,A
 	RET	Z
 	JP	__neg64		; tail call
+
+; ============================================================
+; __clz64 / __ctz64 / __popcount64 / __ffs64 — bit-count helpers
+; on __acc64. All return HL = result (0..64), H=0. Defensive on
+; zero: clz/ctz return 64 instead of UB.
+; ============================================================
+	PUBLIC	__clz64
+__clz64:
+	; Test if zero
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__clz64_nz
+	LD	HL,64
+	RET
+__clz64_nz:
+	PUSH	BC
+	LD	BC,0		; counter
+__clz64_lp:
+	; Test bit 7 of high byte (byte 7)
+	LD	A,(__acc64+7)
+	AND	80H
+	JR	NZ,__clz64_done
+	INC	BC
+	; Shift __acc64 left by 1
+	LD	HL,(__acc64)
+	ADD	HL,HL
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	ADC	HL,HL
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	ADC	HL,HL
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	ADC	HL,HL
+	LD	(__acc64+6),HL
+	JR	__clz64_lp
+__clz64_done:
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+	PUBLIC	__ctz64
+__ctz64:
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__ctz64_nz
+	LD	HL,64
+	RET
+__ctz64_nz:
+	PUSH	BC
+	LD	BC,0
+__ctz64_lp:
+	LD	A,(__acc64)
+	AND	1
+	JR	NZ,__ctz64_done
+	INC	BC
+	; Shift __acc64 right by 1
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	JR	__ctz64_lp
+__ctz64_done:
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+	PUBLIC	__popcount64
+__popcount64:
+	PUSH	BC
+	LD	BC,0		; counter
+	LD	A,64		; bits remaining (using A; saved counter in BC)
+	PUSH	AF
+__popcount64_lp:
+	; Shift __acc64 right by 1; CF = LSB before shift
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	JR	NC,__popcount64_skip
+	INC	BC
+__popcount64_skip:
+	POP	AF
+	DEC	A
+	PUSH	AF
+	JR	NZ,__popcount64_lp
+	POP	AF
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+	PUBLIC	__ffs64
+__ffs64:
+	; If zero return 0; else return 1+CTZ
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__ffs64_nz
+	LD	HL,0
+	RET
+__ffs64_nz:
+	CALL	__ctz64
+	INC	HL
+	RET
 
 ; ============================================================
 ; __bswap64 — reverse the byte order of __acc64.

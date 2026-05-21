@@ -286,6 +286,81 @@ __sar16_loop:
 	RET
 
 ; ============================================================
+; __clz16 — count leading zeros of 16-bit HL.
+; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
+; ============================================================
+	PUBLIC	__clz16
+__clz16:
+	LD	A,H
+	OR	L
+	JR	Z,__clz16_zero
+	PUSH	BC
+	LD	B,0		; counter
+	; Probe bits from high (15) down to 0
+__clz16_lp:
+	BIT	7,H
+	JR	NZ,__clz16_done
+	INC	B
+	ADD	HL,HL
+	JR	__clz16_lp
+__clz16_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__clz16_zero:
+	LD	HL,16
+	RET
+
+; ============================================================
+; __ctz16 — count trailing zeros of 16-bit HL.
+; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
+; ============================================================
+	PUBLIC	__ctz16
+__ctz16:
+	LD	A,H
+	OR	L
+	JR	Z,__ctz16_zero
+	PUSH	BC
+	LD	B,0
+__ctz16_lp:
+	BIT	0,L
+	JR	NZ,__ctz16_done
+	INC	B
+	SRL	H
+	RR	L
+	JR	__ctz16_lp
+__ctz16_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ctz16_zero:
+	LD	HL,16
+	RET
+
+; ============================================================
+; __popcount16 — count set bits in HL.
+; ============================================================
+	PUBLIC	__popcount16
+__popcount16:
+	PUSH	BC
+	LD	B,0		; counter
+	LD	C,16		; bits remaining
+__popcount16_lp:
+	SRL	H
+	RR	L
+	JR	NC,__popcount16_skip
+	INC	B
+__popcount16_skip:
+	DEC	C
+	JR	NZ,__popcount16_lp
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+
+; ============================================================
 ; __ffs16 — find lowest set bit (1-indexed), 0 if none.
 ; Models __builtin_ffs / POSIX ffs for 16-bit operands. uc80 calls
 ; this from gen_call when the user invokes ``__builtin_ffs(int)``.
