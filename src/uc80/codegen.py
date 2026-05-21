@@ -11256,6 +11256,36 @@ class CodeGenerator:
 
                         last_desig = all_desigs[-1] if all_desigs else None
 
+                        # No designators + nested ``{{...}}`` shape: the
+                        # inner list initializes the union's first sub-
+                        # aggregate as a whole. C 6.7.9 ¶17 — when an
+                        # InitializerList for a union is itself a single
+                        # ``{...}``, that brace-enclosed list is treated
+                        # as initializing the first named member, OR the
+                        # first sub-aggregate when the first member is
+                        # an anonymous struct/union.
+                        first_raw = (elem_type.members[0]
+                                     if elem_type.members else None)
+                        if (last_desig is None
+                                and first_raw is not None
+                                and first_raw.name is None
+                                and isinstance(first_raw.member_type, lt.StructType)
+                                and len(init.values) == 1
+                                and isinstance(init.values[0], ast.InitializerList)):
+                            anon_type = first_raw.member_type
+                            anon_mems = self._get_struct_members(anon_type)
+                            if anon_mems:
+                                sub_sname = anon_type.name or f"__anon_{id(anon_type)}"
+                                self._emit_struct_init_flat(init.values[0].values,
+                                                            anon_mems,
+                                                            struct_name=sub_sname)
+                                emitted_size = self._type_size(anon_type)
+                                union_size = self._type_size(elem_type)
+                                if union_size > emitted_size:
+                                    self.ctx.emit_instr("ds",
+                                                        str(union_size - emitted_size))
+                                return
+
                         if last_desig is not None:
                             desig_name = last_desig.designators[0]
                             # Check if designator matches a direct member
