@@ -29,6 +29,14 @@ typedef short ptrdiff_t;
 /* Maximum alignment type (on Z80, alignment is always 1) */
 typedef long double max_align_t;
 
+/* wchar_t — same width as ``__WCHAR_TYPE__``; on uc80 that's
+ * ``short int`` (2 bytes). Defined in stddef.h per C99 7.17p2.
+ */
+#ifndef _WCHAR_T_DEFINED
+#define _WCHAR_T_DEFINED
+typedef __WCHAR_TYPE__ wchar_t;
+#endif
+
 /* Offset of member in struct */
 #define offsetof(type, member) ((size_t)&((type *)0)->member)
 

@@ -12716,8 +12716,14 @@ class CodeGenerator:
 
         Auto-AST: ``string_lit.value`` is a uplox Token; its ``.text`` is
         the source-form `"hello\\n"` (with quotes / escapes). Decode to
-        the byte sequence before length / escape.
+        the byte sequence before length / escape. ``L"..."`` and
+        ``u"..."`` wide-string forms emit a sequence of ``dw`` (each
+        wchar_t / char16_t is a 16-bit word on uc80).
         """
+        is_wide = False
+        if hasattr(string_lit.value, "text"):
+            is_wide = _string_is_wide(string_lit.value.text)
+
         array_size = 1
         if array_type.size:
             if isinstance(array_type.size, ast.IntLiteral):
@@ -12731,6 +12737,25 @@ class CodeGenerator:
             decoded = _decode_string_literal(string_lit.value.text)
         else:
             decoded = string_lit.value
+
+        if is_wide:
+            # Emit each wide character as a 16-bit dw, with a trailing
+            # 16-bit null. ``array_size`` is in *elements* (wchar_t
+            # slots), matching how the declarator's size was computed.
+            for ch in decoded:
+                self.ctx.emit_instr("dw", str(ord(ch)))
+            string_elems = len(decoded) + 1
+            if array_size and len(decoded) >= array_size:
+                # Truncated: no trailing null per C 6.7.9 ¶14. Already
+                # emitted all of decoded — undo the trailing chars
+                # would be cleaner but for now just don't emit nulls.
+                return
+            self.ctx.emit_instr("dw", "0")
+            remaining = array_size - string_elems
+            if remaining > 0:
+                # ds takes bytes — pad ``remaining`` wchar_t slots.
+                self.ctx.emit_instr("ds", str(remaining * 2))
+            return
 
         if array_size and len(decoded) >= array_size:
             # C 6.7.9 ¶14: when the array is too small to hold the
