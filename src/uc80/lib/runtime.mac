@@ -1588,22 +1588,27 @@ __mul64_loop:
 	RR	L
 	LD	(__mul64_mpr),HL
 	JR	NC,__mul64_noadd
-	; Add multiplicand to result
+	; Add multiplicand to result. NB: load through DE rather than BC —
+	; ``LD BC,(nn)`` would clobber B, which is our DJNZ loop counter.
+	; That was the long-standing miscompile in this routine: any
+	; iteration where the add path ran (multiplier bit set) overwrote
+	; B with a byte of the multiplicand, terminating the loop early
+	; once mcd's high byte happened to be 1.
 	LD	HL,(__acc64)
-	LD	BC,(__mul64_mcd)
-	ADD	HL,BC
+	LD	DE,(__mul64_mcd)
+	ADD	HL,DE
 	LD	(__acc64),HL
 	LD	HL,(__acc64+2)
-	LD	BC,(__mul64_mcd+2)
-	ADC	HL,BC
+	LD	DE,(__mul64_mcd+2)
+	ADC	HL,DE
 	LD	(__acc64+2),HL
 	LD	HL,(__acc64+4)
-	LD	BC,(__mul64_mcd+4)
-	ADC	HL,BC
+	LD	DE,(__mul64_mcd+4)
+	ADC	HL,DE
 	LD	(__acc64+4),HL
 	LD	HL,(__acc64+6)
-	LD	BC,(__mul64_mcd+6)
-	ADC	HL,BC
+	LD	DE,(__mul64_mcd+6)
+	ADC	HL,DE
 	LD	(__acc64+6),HL
 __mul64_noadd:
 	; Shift multiplicand left
