@@ -17,6 +17,8 @@ PRTSTR	EQU	9
 	EXTRN	_sprintf_prt_hex
 	EXTRN	_sprintf_out
 	EXTRN	_sprintf_cnt
+	EXTRN	_printf_putc	; shared with printf core; bumps _printf_count
+	EXTRN	_printf_count
 
 	CSEG
 
@@ -32,6 +34,8 @@ _fprintf:
 	ADD	IX,SP
 	PUSH	BC
 	PUSH	DE
+	LD	HL,0
+	LD	(_fprintf_count),HL	; reset byte counter
 
 	; stream at IX+4, fmt at IX+6, first vararg at IX+8
 	LD	E,(IX+4)
@@ -58,6 +62,7 @@ _fprintf_loop:
 	LD	D,0
 	PUSH	DE		; char arg
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	BC
@@ -144,6 +149,7 @@ _fprintf_pct:
 	LD	DE,'%'
 	PUSH	DE
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	BC
@@ -166,6 +172,7 @@ _fprintf_chr:
 	PUSH	BC		; stream
 	PUSH	DE		; char
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	BC
@@ -198,6 +205,7 @@ _fprintf_str_lp:
 	LD	D,0
 	PUSH	DE
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	DE
@@ -254,10 +262,29 @@ _fprintf_hex:
 	JP	_fprintf_loop
 
 _fprintf_done:
-	LD	HL,0		; Return 0
+	LD	HL,(_fprintf_count)	; Return count of bytes written
 	POP	DE
 	POP	BC
 	POP	IX
+	RET
+
+; ============================================================
+; Helper: bump ``_fprintf_count`` AFTER an _fputc call. We cannot
+; *wrap* CALL _fputc in another routine because the helper's own
+; return address would land between the caller's pushed args and
+; _fputc's PUSH IX, shifting the IX+4 / IX+6 offsets that _fputc
+; uses to read its (char, stream) args. Instead each call site
+; does ``CALL _fputc`` followed by ``CALL _fprintf_bump``.
+; Preserves HL (which carries _fputc's return value).
+; ============================================================
+	PUBLIC	_fprintf_count
+	PUBLIC	_fprintf_bump
+_fprintf_bump:
+	PUSH	HL
+	LD	HL,(_fprintf_count)
+	INC	HL
+	LD	(_fprintf_count),HL
+	POP	HL
 	RET
 
 ; fprintf helper: print HL as decimal to stream
@@ -275,6 +302,7 @@ _fprintf_prt_dec:
 	LD	DE,'-'
 	PUSH	DE
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	HL
@@ -309,6 +337,7 @@ _fprintf_dec_pr:
 	LD	D,0
 	PUSH	DE
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	BC
@@ -350,6 +379,7 @@ _fprintf_hex_dig:
 	LD	D,0
 	PUSH	DE
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	BC
@@ -368,12 +398,14 @@ _vprintf:
 	LD	IX,0
 	ADD	IX,SP
 	; fmt at IX+4, ap at IX+6
+	LD	HL,0
+	LD	(_printf_count),HL	; share counter with _printf_putc
 	LD	L,(IX+4)
 	LD	H,(IX+5)	; HL = format string
 	LD	E,(IX+6)
 	LD	D,(IX+7)	; DE = va_list (pointer to args)
 	LD	(_vprintf_ap),DE
-	LD	BC,0		; Character count
+	LD	BC,0		; (still tracked for legacy callers, but final return uses _printf_count)
 
 _vprintf_loop:
 	LD	A,(HL)
@@ -387,8 +419,7 @@ _vprintf_loop:
 	PUSH	HL
 	PUSH	BC
 	LD	E,A
-	LD	C,2
-	CALL	5
+	CALL	_printf_putc
 	POP	BC
 	POP	HL
 	INC	BC
@@ -407,8 +438,7 @@ _vprintf_fmt:
 	PUSH	HL
 	PUSH	BC
 	LD	E,'%'
-	LD	C,2
-	CALL	5
+	CALL	_printf_putc
 	POP	BC
 	POP	HL
 	INC	BC
@@ -485,8 +515,7 @@ _vprintf_str_lp:
 	JR	Z,_vprintf_str_dn
 	LD	E,A
 	PUSH	HL
-	LD	C,2
-	CALL	5
+	CALL	_printf_putc
 	POP	HL
 	INC	HL
 	JR	_vprintf_str_lp
@@ -522,8 +551,7 @@ _vprintf_chr:
 	INC	HL
 	INC	HL
 	LD	(_vprintf_ap),HL
-	LD	C,2
-	CALL	5
+	CALL	_printf_putc
 	POP	BC
 	POP	HL
 	INC	HL
@@ -611,8 +639,7 @@ _vprintf_lx:
 	JP	_vprintf_loop
 
 _vprintf_done:
-	LD	H,B
-	LD	L,C		; Return count
+	LD	HL,(_printf_count)	; Return count (set by _printf_putc)
 	POP	IX
 	RET
 
@@ -628,6 +655,8 @@ _vfprintf:
 	LD	L,(IX+4)
 	LD	H,(IX+5)
 	LD	(_fprintf_stream),HL
+	LD	HL,0
+	LD	(_fprintf_count),HL	; reset shared byte counter
 	LD	L,(IX+6)
 	LD	H,(IX+7)	; HL = format
 	LD	E,(IX+8)
@@ -650,6 +679,7 @@ _vfprintf_loop:
 	LD	D,0
 	PUSH	DE
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	BC
@@ -672,6 +702,7 @@ _vfprintf_fmt:
 	LD	DE,'%'
 	PUSH	DE
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	BC
@@ -754,6 +785,7 @@ _vfprintf_str_lp:
 	LD	D,0
 	PUSH	DE
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	HL
@@ -794,6 +826,7 @@ _vfprintf_chr:
 	LD	D,0
 	PUSH	DE
 	CALL	_fputc
+	CALL	_fprintf_bump
 	POP	DE
 	POP	DE
 	POP	BC
@@ -818,8 +851,7 @@ _vfprintf_hex:
 	JP	_vfprintf_loop
 
 _vfprintf_done:
-	LD	H,B
-	LD	L,C
+	LD	HL,(_fprintf_count)	; shared counter (bumped by _fprintf_bump)
 	POP	IX
 	RET
 
@@ -995,6 +1027,7 @@ _vsprintf_done:
 ; fprintf/vfprintf working storage
 	PUBLIC	_fprintf_stream
 _fprintf_stream: DS	2
+_fprintf_count:	DS	2	; running byte count for fprintf/v*printf
 
 ; vprintf/vfprintf/vsprintf shared working storage
 	PUBLIC	_vprintf_ap
