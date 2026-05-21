@@ -11349,6 +11349,23 @@ class CodeGenerator:
                 return self._type_size(array_type.base_type)
             elif isinstance(array_type, lt.PointerType):
                 return self._type_size(array_type.base_type)
+        elif isinstance(array_expr, ast.UnaryOp) and array_expr.op == "*":
+            # Deref-then-index like ``(*p)[0]`` where p is ``T (*)[N]``.
+            # The deref's result is the array; its element type is what
+            # we need. Fall back to ``_get_expr_type`` since the deref
+            # is an rvalue here.
+            array_type = self._get_expr_type(array_expr)
+            if isinstance(array_type, lt.ArrayType):
+                return self._type_size(array_type.base_type)
+            elif isinstance(array_type, lt.PointerType):
+                return self._type_size(array_type.base_type)
+        elif isinstance(array_expr, ast.Cast):
+            # ``((T*)x)[i]`` — element size from the cast target type.
+            tt = array_expr.target_type
+            if isinstance(tt, lt.PointerType):
+                return self._type_size(tt.base_type)
+            if isinstance(tt, lt.ArrayType):
+                return self._type_size(tt.base_type)
 
         # Default to 16-bit
         return 2
