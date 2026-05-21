@@ -10105,6 +10105,9 @@ class CodeGenerator:
         if isinstance(expr, ast.BinaryOp):
             if expr.op in ("==", "!=", "<", ">", "<=", ">="):
                 return False
+            # C 6.5.13/6.5.14: logical AND/OR always yield ``int``.
+            if expr.op in ("&&", "||"):
+                return False
             # For shift operations, result type is determined only by LEFT operand (C99 6.5.7)
             if expr.op in ("<<", ">>"):
                 return self._is_long_long_expr(expr.left)
@@ -10169,6 +10172,9 @@ class CodeGenerator:
         if isinstance(expr, ast.BinaryOp):
             # Comparison operators always return int (0 or 1), not long
             if expr.op in ("==", "!=", "<", ">", "<=", ">="):
+                return False
+            # C 6.5.13/6.5.14: logical AND/OR always yield ``int``.
+            if expr.op in ("&&", "||"):
                 return False
             # For shift operations, result type is determined only by LEFT operand (C99 6.5.7)
             if expr.op in ("<<", ">>"):
