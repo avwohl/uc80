@@ -6825,6 +6825,20 @@ class CodeGenerator:
         """Generate a 64-bit operand, storing to __acc64 or __tmp64."""
         target = "__tmp64" if to_tmp else "__acc64"
 
+        # Peel a Cast(long long, <integer-literal>) wrapper so the
+        # ``isinstance(expr, IntLiteral)`` fast-path below catches it
+        # and emits four 16-bit immediate stores. Without this, the
+        # fallback ``gen_expr(expr)`` runs gen_cast → gen_expr on the
+        # IntLiteral with force_long=False, which emits a single
+        # ``ld HL,<full 64-bit value>`` — um80 silently truncates to
+        # the low 16 bits and the high bytes of __acc64 / __tmp64
+        # stay whatever they were before. Visible as e.g. signed
+        # long-long compares of large negatives going wrong.
+        if (isinstance(expr, ast.Cast)
+                and self._is_long_long_type(expr.target_type)
+                and isinstance(expr.expr, (ast.IntLiteral, ast.CharLiteral))):
+            expr = expr.expr
+
         if self._is_long_long_expr(expr):
             # Already 64-bit - generate and store
             if isinstance(expr, ast.IntLiteral):
