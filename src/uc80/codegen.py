@@ -8122,6 +8122,40 @@ class CodeGenerator:
                     self.ctx.emit_instr("ld", "HL,0")
                 self._call_runtime("__ffs16")
                 return
+            if expr.func.name.text == '__builtin_bswap16':
+                # Reverse the two bytes of a 16-bit value.
+                if expr.args:
+                    self.gen_expr(expr.args[0])
+                else:
+                    self.ctx.emit_instr("ld", "HL,0")
+                self.ctx.emit_instr("ld", "A,H")
+                self.ctx.emit_instr("ld", "H,L")
+                self.ctx.emit_instr("ld", "L,A")
+                return
+            if expr.func.name.text == '__builtin_bswap32':
+                # Reverse 4 bytes of a 32-bit value in DEHL → result DEHL'.
+                if expr.args:
+                    self.gen_expr(expr.args[0], force_long=True)
+                else:
+                    self.ctx.emit_instr("ld", "HL,0")
+                    self.ctx.emit_instr("ld", "DE,0")
+                # Swap byte order: D E H L → L H E D
+                self.ctx.emit_instr("ld", "A,L")
+                self.ctx.emit_instr("ld", "L,D")
+                self.ctx.emit_instr("ld", "D,A")
+                self.ctx.emit_instr("ld", "A,H")
+                self.ctx.emit_instr("ld", "H,E")
+                self.ctx.emit_instr("ld", "E,A")
+                return
+            if expr.func.name.text == '__builtin_bswap64':
+                # Reverse byte order of a 64-bit value in __acc64.
+                self._gen_64bit_operand(expr.args[0] if expr.args else make_int_lit(0),
+                                         to_tmp=False)
+                self._call_runtime("__bswap64")
+                # Reload DEHL with the new low 32 bits for compatibility.
+                self.ctx.emit_instr("ld", "HL,(__acc64)")
+                self.ctx.emit_instr("ld", "DE,(__acc64+2)")
+                return
             # GCC builtin pass-throughs to libc.  GCC sometimes emits
             # __builtin_memcpy directly (e.g. when the prototype isn't
             # visible) — rewrite to the libc symbol so the linker can
@@ -9744,9 +9778,25 @@ class CodeGenerator:
         elif isinstance(expr, ast.Cast):
             return expr.target_type
         elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
+            # Known GCC builtins we handle inline — record their return
+            # types here so callers don't widen the 16-bit HL output
+            # back over an in-flight __acc64 result.
+            _BUILTIN_RET = {
+                "__builtin_bswap64": lt.BasicType(name="long long", is_signed=False),
+                "__builtin_bswap32": lt.BasicType(name="long", is_signed=False),
+                "__builtin_bswap16": lt.BasicType(name="int", is_signed=False),
+                "__builtin_ffs": lt.BasicType(name="int", is_signed=True),
+                "__builtin_constant_p": lt.BasicType(name="int", is_signed=True),
+                "__builtin_classify_type": lt.BasicType(name="int", is_signed=True),
+                "__builtin_return_address": lt.PointerType(base_type=lt.BasicType(name="void")),
+                "__builtin_frame_address": lt.PointerType(base_type=lt.BasicType(name="void")),
+            }
             # Get return type of function call
             if isinstance(expr.func, ast.Identifier):
-                sym = self.ctx.lookup(expr.func.name.text)
+                fname = expr.func.name.text
+                if fname in _BUILTIN_RET:
+                    return _BUILTIN_RET[fname]
+                sym = self.ctx.lookup(fname)
                 if sym and isinstance(sym.sym_type, lt.FunctionType):
                     return sym.sym_type.return_type
                 elif sym:

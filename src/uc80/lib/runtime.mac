@@ -2062,6 +2062,42 @@ __smod64_dvspos:
 	RET	Z
 	JP	__neg64		; tail call
 
+; ============================================================
+; __bswap64 — reverse the byte order of __acc64.
+; Models __builtin_bswap64(uint64_t). uc80 routes that builtin here.
+; ============================================================
+	PUBLIC	__bswap64
+__bswap64:
+	; Swap byte 0 <-> byte 7
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+7)
+	LD	(__acc64),A
+	LD	A,B
+	LD	(__acc64+7),A
+	; Swap byte 1 <-> byte 6
+	LD	A,(__acc64+1)
+	LD	B,A
+	LD	A,(__acc64+6)
+	LD	(__acc64+1),A
+	LD	A,B
+	LD	(__acc64+6),A
+	; Swap byte 2 <-> byte 5
+	LD	A,(__acc64+2)
+	LD	B,A
+	LD	A,(__acc64+5)
+	LD	(__acc64+2),A
+	LD	A,B
+	LD	(__acc64+5),A
+	; Swap byte 3 <-> byte 4
+	LD	A,(__acc64+3)
+	LD	B,A
+	LD	A,(__acc64+4)
+	LD	(__acc64+3),A
+	LD	A,B
+	LD	(__acc64+4),A
+	RET
+
 
 ; ============================================================
 ; rt_complex.mac
