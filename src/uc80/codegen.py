@@ -11215,7 +11215,9 @@ class CodeGenerator:
                             # designators; it's at offset 0 in the union,
                             # and the union has no other initialized members
                             # when we took this branch.
-                            self._emit_struct_init_designated(init.values, anon_mems)
+                            sub_sname = anon_type.name or f"__anon_{id(anon_type)}"
+                            self._emit_struct_init_designated(init.values, anon_mems,
+                                                               struct_name=sub_sname)
                             emitted_size = self._type_size(anon_type)
                             union_size = self._type_size(elem_type)
                             if union_size > emitted_size:
@@ -11611,7 +11613,8 @@ class CodeGenerator:
         )
 
         if has_member_desig:
-            return self._emit_struct_init_designated(values, members)
+            return self._emit_struct_init_designated(values, members,
+                                                      struct_name=struct_name)
 
         # Detect bitfield groups: consecutive members sharing the same byte offset
         # Group them so we can pack their values at compile time
@@ -11768,8 +11771,18 @@ class CodeGenerator:
 
         return value_index
 
-    def _emit_struct_init_designated(self, values: list, members: list) -> int:
-        """Emit struct init with member designators. Values go to designated member positions."""
+    def _emit_struct_init_designated(self, values: list, members: list,
+                                      struct_name: str | None = None) -> int:
+        """Emit struct init with member designators. Values go to designated member positions.
+
+        ``struct_name`` (optional) lets us look up ``bitfield_info`` for
+        members. When present, consecutive bitfield members sharing a
+        storage unit get packed at compile time and the unit is emitted
+        once at its correct offset / width — without this, a designator
+        like ``{.s = 1}`` for a 1-bit field whose storage layout starts
+        at bit-offset 1 would emit ``dw 1`` (setting bit 0) instead of
+        ``dw 2`` (setting bit 1).
+        """
         # Build member -> value list mapping
         # Each member maps to a list of values (DesignatedInit or plain) to allow
         # continuation after nested designators (e.g., .a[1]=4, 7 -> a gets both)
@@ -11839,8 +11852,50 @@ class CodeGenerator:
                             member_vals[mname] = [actual_val]
                         next_idx += 1
 
-        # Emit members in declaration order
-        for member_name, member_type, member_offset in members:
+        # Helper: bitfield_info lookup, mirrors the helper inside
+        # _emit_struct_init_flat. None when the field isn't a bitfield.
+        def _bf_for(member_name):
+            if struct_name is not None:
+                return self.ctx.bitfield_info.get((struct_name, member_name))
+            for key, info in self.ctx.bitfield_info.items():
+                if key[1] == member_name:
+                    return info
+            return None
+
+        # Emit members in declaration order, but group consecutive
+        # bitfield members that share a storage unit (same offset +
+        # same storage_size) so the unit can be packed in one go.
+        i = 0
+        while i < len(members):
+            member_name, member_type, member_offset = members[i]
+            bf = _bf_for(member_name) if member_name else None
+
+            if bf is not None:
+                # Walk forward to find all bitfield members at this offset
+                # that share the storage unit (storage_size & offset).
+                packed_value = 0
+                end = i
+                while end < len(members):
+                    nm2, mt2, off2 = members[end]
+                    if off2 != member_offset or not nm2:
+                        break
+                    bf2 = _bf_for(nm2)
+                    if bf2 is None or bf2.storage_size != bf.storage_size:
+                        break
+                    if nm2 in member_vals:
+                        v = member_vals[nm2][0]
+                        if isinstance(v, ast.DesignatedInit):
+                            v = v.value
+                        val = self._eval_const_expr(v)
+                        if val is None:
+                            val = 0
+                        mask = (1 << bf2.bit_width) - 1
+                        packed_value |= (int(val) & mask) << bf2.bit_offset
+                    end += 1
+                self._emit_int_value(packed_value, bf.storage_size)
+                i = end
+                continue
+
             if member_name and member_name in member_vals:
                 vals = member_vals[member_name]
                 if len(vals) == 1 and not isinstance(vals[0], ast.DesignatedInit):
@@ -11852,10 +11907,12 @@ class CodeGenerator:
                         sub_members = self._get_struct_members(member_type)
                         if sub_members:
                             self._emit_struct_init_designated(vals, sub_members)
+                            i += 1
                             continue
                     elif isinstance(member_type, lt.ArrayType):
                         init_list = ast.InitializerList(values=vals, pos=vals[0].pos if hasattr(vals[0], 'location') else None)
                         self._emit_initializer(init_list, member_type)
+                        i += 1
                         continue
                     # Fallback for single designated init
                     self._emit_initializer(vals[0].value if isinstance(vals[0], ast.DesignatedInit) else vals[0], member_type)
@@ -11867,6 +11924,7 @@ class CodeGenerator:
                 size = self._type_size(member_type)
                 if size > 0:
                     self.ctx.emit_instr("ds", str(size))
+            i += 1
 
         return len(values)
 
