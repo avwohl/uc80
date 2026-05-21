@@ -1,6 +1,8 @@
 ; lc_printf_s.mac - printf %s handler
 	.Z80
 
+
+	EXTRN	_printf_putc
 BDOS	EQU	5
 CONOUT	EQU	2
 
@@ -48,8 +50,7 @@ _phs_nolim:
 	PUSH	DE
 	PUSH	BC
 	LD	E,A
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	BC
 	POP	DE
 	INC	DE

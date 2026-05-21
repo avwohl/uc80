@@ -1,6 +1,8 @@
 ; lc_printf_d.mac - printf %d/%i handler
 	.Z80
 
+
+	EXTRN	_printf_putc
 BDOS	EQU	5
 CONOUT	EQU	2
 
@@ -95,8 +97,7 @@ _phd_spad:
 	PUSH	BC
 	PUSH	DE
 	LD	E,' '
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	DE
 	POP	BC
 	DJNZ	_phd_spad
@@ -109,8 +110,7 @@ _phd_zpad:
 	PUSH	BC
 	PUSH	DE
 	LD	E,'-'
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	DE
 	POP	BC
 	XOR	A
@@ -119,8 +119,7 @@ _phd_zpd2:
 	PUSH	BC
 	PUSH	DE
 	LD	E,'0'
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	DE
 	POP	BC
 	DJNZ	_phd_zpd2
@@ -132,8 +131,7 @@ _phd_nopad:
 	JR	Z,_phd_digs
 	PUSH	BC
 	LD	E,'-'
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	BC
 _phd_digs:
 	LD	HL,(_printf_dstart)
@@ -143,8 +141,7 @@ _phd_dlp:
 	LD	E,(HL)
 	PUSH	BC
 	PUSH	HL
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	HL
 	POP	BC
 	INC	HL

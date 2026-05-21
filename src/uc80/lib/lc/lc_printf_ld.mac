@@ -1,6 +1,8 @@
 ; lc_printf_ld.mac - printf %ld handler (signed long decimal)
 	.Z80
 
+
+	EXTRN	_printf_putc
 BDOS	EQU	5
 CONOUT	EQU	2
 
@@ -37,8 +39,7 @@ __printf_handle_ld:
 	PUSH	HL
 	PUSH	DE
 	LD	E,'-'
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	DE
 	POP	HL
 	; Negate DEHL

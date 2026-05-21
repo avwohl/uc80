@@ -1,6 +1,8 @@
 ; lc_printf_lx.mac - printf %lx and %lX handlers (long hex)
 	.Z80
 
+
+	EXTRN	_printf_putc
 BDOS	EQU	5
 CONOUT	EQU	2
 
@@ -125,8 +127,7 @@ _lx_plp:
 	LD	E,A
 	PUSH	AF
 	PUSH	BC
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	BC
 	POP	AF
 	DJNZ	_lx_plp
@@ -137,8 +138,7 @@ _lx_out:
 	LD	E,A
 	PUSH	BC
 	PUSH	HL
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	HL
 	POP	BC
 	INC	HL

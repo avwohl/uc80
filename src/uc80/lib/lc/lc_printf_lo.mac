@@ -1,6 +1,8 @@
 ; lc_printf_lo.mac - printf %lo handler (unsigned long octal)
 	.Z80
 
+
+	EXTRN	_printf_putc
 BDOS	EQU	5
 CONOUT	EQU	2
 
@@ -92,8 +94,7 @@ _plo_out:
 	POP	AF
 	LD	E,A
 	PUSH	BC
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	BC
 	DJNZ	_plo_out
 	POP	IX

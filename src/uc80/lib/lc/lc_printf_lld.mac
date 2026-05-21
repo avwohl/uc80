@@ -1,6 +1,8 @@
 ; lc_printf_lld.mac - printf %lld handler (signed long long decimal)
 	.Z80
 
+
+	EXTRN	_printf_putc
 BDOS	EQU	5
 CONOUT	EQU	2
 
@@ -48,8 +50,7 @@ __printf_handle_lld:
 	; Negative - print minus sign
 	PUSH	BC
 	LD	E,'-'
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	BC
 
 	; Negate 64-bit value (0 - _prt64_val)

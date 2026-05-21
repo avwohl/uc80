@@ -1,6 +1,8 @@
 ; lc_printf_u.mac - printf %u handler
 	.Z80
 
+
+	EXTRN	_printf_putc
 BDOS	EQU	5
 CONOUT	EQU	2
 
@@ -69,8 +71,7 @@ _phu_plp:
 	LD	E,A
 	PUSH	AF
 	PUSH	BC
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	BC
 	POP	AF
 	DJNZ	_phu_plp
@@ -83,8 +84,7 @@ _phu_digs:
 	LD	E,(HL)
 	PUSH	BC
 	PUSH	HL
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	_printf_putc
 	POP	HL
 	POP	BC
 	INC	HL
