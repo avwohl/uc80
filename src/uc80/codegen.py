@@ -8406,12 +8406,32 @@ class CodeGenerator:
                         # Get the address of the struct data
                         self._gen_address(arg)
                         # HL = address of struct data
-                        # Push from high end to low end (so low bytes end up at lower stack address)
+                        # Push from high end to low end (so low bytes
+                        # end up at lower stack address). For an odd-
+                        # sized struct, the topmost push reads ONE byte
+                        # (the struct's last) and pads the other half of
+                        # the word with zero — otherwise we'd read past
+                        # the struct's storage and push a garbage byte
+                        # that the callee then sees as part of the
+                        # struct's image at its highest offset.
                         if push_size > 0:
-                            self.ctx.emit_instr("ld", f"DE,{push_size - 2}")
-                            self.ctx.emit_instr("add", "HL,DE")
-                            # HL points to last word
                             remaining = push_size
+                            if struct_size & 1:
+                                # Position HL at the struct's last (odd)
+                                # byte, push it with high-pad 0.
+                                self.ctx.emit_instr("ld", f"DE,{struct_size - 1}")
+                                self.ctx.emit_instr("add", "HL,DE")
+                                self.ctx.emit_instr("ld", "E,(HL)")
+                                self.ctx.emit_instr("ld", "D,0")
+                                self.ctx.emit_instr("push", "DE")
+                                remaining -= 2
+                                if remaining > 0:
+                                    self.ctx.emit_instr("dec", "HL")
+                                    self.ctx.emit_instr("dec", "HL")
+                            else:
+                                self.ctx.emit_instr("ld", f"DE,{push_size - 2}")
+                                self.ctx.emit_instr("add", "HL,DE")
+                            # HL points to next word to push (or below)
                             while remaining > 0:
                                 self.ctx.emit_instr("ld", "E,(HL)")
                                 self.ctx.emit_instr("inc", "HL")
@@ -10392,6 +10412,8 @@ class CodeGenerator:
             return self._uses_tmp64(expr.left) or self._uses_tmp64(expr.right)
         if isinstance(expr, ast.UnaryOp):
             return self._uses_tmp64(expr.operand)
+        if isinstance(expr, ast.PostfixOp):
+            return self._uses_tmp64(expr.operand)
         if isinstance(expr, ast.TernaryOp):
             return (self._uses_tmp64(expr.condition) or
                     self._uses_tmp64(expr.true_expr) or
@@ -10401,6 +10423,14 @@ class CodeGenerator:
             return True
         if isinstance(expr, ast.Cast):
             return self._uses_tmp64(expr.expr)
+        # Member / array access on a call expression (or any chain
+        # ending in a call) inherits the clobber. Without this,
+        # ``foo(a, b).b != 8LL`` lets the right operand's pre-staged
+        # __tmp64 = 8LL get stomped by foo's internal long-long ops.
+        if isinstance(expr, (ast.Member, ast.ArrowMember)):
+            return self._uses_tmp64(expr.obj)
+        if isinstance(expr, ast.Index):
+            return self._uses_tmp64(expr.array) or self._uses_tmp64(expr.index)
         # Simple expressions (identifiers, literals) don't use __tmp64
         return False
 
