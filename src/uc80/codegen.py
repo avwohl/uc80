@@ -1146,10 +1146,10 @@ class CallGraphAnalyzer:
         elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
             self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
             self._analyze_stmt(stmt.then_branch, calls, address_taken, indirect_sigs)
-        elif isinstance(stmt, ast.IfStmtElse):
-            self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
-            self._analyze_stmt(stmt.then_branch, calls, address_taken, indirect_sigs)
-            self._analyze_stmt(stmt.else_branch, calls, address_taken, indirect_sigs)
+            # IfStmtElse adds the else branch; the broader tuple above
+            # was previously eating the IfStmtElse-only elif below.
+            if isinstance(stmt, ast.IfStmtElse):
+                self._analyze_stmt(stmt.else_branch, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.WhileStmt):
             self._analyze_expr(stmt.condition, calls, address_taken, indirect_sigs)
             self._analyze_stmt(stmt.body, calls, address_taken, indirect_sigs)
