@@ -75,19 +75,26 @@ def run_test(c_file: Path, verbose: bool = False, timeout: int = DEFAULT_TIMEOUT
     if result.returncode != 0:
         return "compile", result.stderr.strip()[:200]
 
-    # Assemble
-    result = subprocess.run(
-        ["um80", str(mac_file)],
-        capture_output=True, text=True
-    )
+    # Assemble (with timeout — large generated .mac files have been
+    # known to wedge um80 for tens of minutes)
+    try:
+        result = subprocess.run(
+            ["um80", str(mac_file)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return "asm", "um80 timed out after 30s"
     if result.returncode != 0:
         return "asm", result.stderr.strip()[:200]
 
     # Link
-    result = subprocess.run(
-        ["ul80", str(CRT0), str(rel_file), str(LIBC), str(RUNTIME), "-o", str(com_file)],
-        capture_output=True, text=True
-    )
+    try:
+        result = subprocess.run(
+            ["ul80", str(CRT0), str(rel_file), str(LIBC), str(RUNTIME), "-o", str(com_file)],
+            capture_output=True, text=True, timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return "link", "ul80 timed out after 30s"
     if result.returncode != 0:
         return "link", result.stderr.strip()[:200]
 
