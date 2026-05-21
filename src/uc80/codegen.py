@@ -11176,6 +11176,14 @@ class CodeGenerator:
                 result = self._resolve_const_member_chain(operand)
                 if result is not None:
                     return result
+            elif isinstance(operand, ast.Compound):
+                # &(type){…} at file scope: materialize the compound literal
+                # into a queued DSEG label (it'll be emitted by the post-pass
+                # over ctx.compound_literals), then refer to that label.
+                # Lets ``struct B e = { &(struct A){1,2} };`` actually
+                # link rather than emitting ``ds 2`` for the pointer.
+                label = self._materialize_compound_literal(operand)
+                return (label, 0)
             elif isinstance(operand, ast.Index):
                 # &array[index] - try to resolve as base + index*elem_size
                 if isinstance(operand.array, ast.Identifier):
