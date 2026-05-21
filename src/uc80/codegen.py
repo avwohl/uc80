@@ -6358,9 +6358,16 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", f"HL,{v}")
 
         elif isinstance(expr, ast.FloatLiteral):
-            # FloatLiteral.value is a Token; parse the text.
+            # FloatLiteral.value is a Token; parse the text. Python's
+            # ``float()`` accepts decimal literals but not hex floats
+            # like ``0x1.0p-500`` — fall back to ``float.fromhex`` for
+            # those (C99/C11 hex float syntax).
             text = expr.value.text.rstrip("fFlLiIjJ")
-            ieee_val = float_to_ieee754(float(text))
+            try:
+                val = float(text)
+            except ValueError:
+                val = float.fromhex(text)
+            ieee_val = float_to_ieee754(val)
             low = ieee_val & 0xFFFF
             high = (ieee_val >> 16) & 0xFFFF
             self.ctx.emit_instr("ld", f"HL,{low}")
