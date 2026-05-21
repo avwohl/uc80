@@ -3085,11 +3085,30 @@ __fmul:
 	; this, the wrapped 16-bit value becomes a huge bogus exponent and __fpack
 	; emits a giant garbage float instead of 0.
 	JR	C,__fmul_zero
+	; Pre-check for unambiguous overflow before mantissa multiply.
+	; (__fmul_man may bump exp by +1 below.)
+	LD	A,H
+	OR	A
+	JR	NZ,__fmul_inf	; HL > 0xFF → certainly inf
+	LD	A,L
+	CP	255
+	JR	NC,__fmul_inf	; HL >= 255 → inf
 	LD	(__fexp1),HL
 
 	; Multiply mantissas (24-bit x 24-bit -> 48-bit, take high 24)
 	; Simplified: use 16x16 multiplications
 	CALL	__fmul_man
+
+	; Post-check: __fmul_man may have bumped exp by 1 for product
+	; overflow into [2.0, 4.0). If the new exp is >= 255 the result
+	; is inf — short-circuit before __fpack would encode a NaN.
+	LD	HL,(__fexp1)
+	LD	A,H
+	OR	A
+	JR	NZ,__fmul_inf
+	LD	A,L
+	CP	255
+	JR	NC,__fmul_inf
 
 	; Pack result (normalization handled in __fmul_man)
 	LD	HL,(__fman1)
@@ -3102,6 +3121,22 @@ __fmul:
 __fmul_zero:
 	LD	HL,0
 	LD	DE,0
+	JR	__fmul_done
+
+__fmul_inf:
+	; Build +/- inf: exp=255, mantissa=0. Sign = xor of operand signs,
+	; already stored in (__fsgn1).
+	LD	A,(__fsgn1)
+	OR	A
+	JR	Z,__fmul_inf_pos
+	; Negative inf: 0xFF800000
+	LD	HL,0
+	LD	DE,0FF80H
+	JR	__fmul_done
+__fmul_inf_pos:
+	; Positive inf: 0x7F800000
+	LD	HL,0
+	LD	DE,07F80H
 
 __fmul_done:
 	POP	IX
