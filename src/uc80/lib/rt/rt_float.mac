@@ -636,6 +636,14 @@ __fdiv_do_div:
 	; into a bogus near-one float via the truncated low byte.
 	BIT	7,H
 	JR	NZ,__fdiv_underflow
+	; Overflow: if HL >= 255 the result is inf. (HL > 0xFF is also
+	; overflow; check that first.)
+	LD	A,H
+	OR	A
+	JR	NZ,__fdiv_inf
+	LD	A,L
+	CP	255
+	JR	NC,__fdiv_inf
 	LD	(__fexp1),HL
 
 	; Divide mantissas using long division
@@ -655,6 +663,19 @@ __fdiv_do_div:
 
 __fdiv_underflow:
 	LD	DE,0
+	LD	HL,0
+	JR	@fdiv_exit
+
+__fdiv_inf:
+	; +/- inf based on result sign (xor'd into __fsgn1 above).
+	LD	A,(__fsgn1)
+	OR	A
+	JR	Z,__fdiv_inf_pos
+	LD	DE,0FF80H		; -inf
+	LD	HL,0
+	JR	@fdiv_exit
+__fdiv_inf_pos:
+	LD	DE,07F80H		; +inf
 	LD	HL,0
 	JR	@fdiv_exit
 
