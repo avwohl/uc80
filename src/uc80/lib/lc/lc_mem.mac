@@ -42,6 +42,40 @@ _memcpy_done:
 	RET
 
 ; ============================================================
+; void *mempcpy(void *dest, const void *src, size_t n)
+; Copy n bytes from src to dest, return dest + n.
+; GNU extension some torture tests reach for.
+; ============================================================
+	PUBLIC	_mempcpy
+_mempcpy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_mempcpy_done
+
+	LDIR			; Block copy — DE is incremented past dest+n
+
+_mempcpy_done:
+	; Return dest+n. After LDIR, DE = original_dest + n (or
+	; unchanged if n was 0). For the n=0 path we still want
+	; dest+0 = dest, which is what DE holds.
+	EX	DE,HL
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
 ; void *memset(void *s, int c, size_t n)
 ; Fill n bytes of s with c
 ; Returns: s
