@@ -4693,11 +4693,65 @@ class CodeGenerator:
         self.ctx.emit_instr("ld", f"BC,{size}")
         self.ctx.emit_instr("ldir")  # Copy BC bytes from HL to DE
 
+    def _compound_has_nonconst(self, node) -> bool:
+        """True if any initializer expression inside an InitializerList
+        chain is not a compile-time constant (literal, address-of, etc.).
+        Used to decide whether a ``dst = (T){...}`` assignment can use a
+        DSEG-materialized copy or must do per-field runtime stores."""
+        if isinstance(node, ast.InitializerList):
+            return any(self._compound_has_nonconst(v) for v in node.values or [])
+        if isinstance(node, ast.DesignatedInit):
+            return self._compound_has_nonconst(node.value)
+        # Compile-time constant kinds — descend on Compound/Cast.
+        if isinstance(node, (ast.IntLiteral, ast.FloatLiteral,
+                              ast.CharLiteral, ast.StringLiteral,
+                              ast.NullptrLiteral, ast.BoolLiteral)):
+            return False
+        if isinstance(node, list):
+            return any(self._compound_has_nonconst(v) for v in node)
+        if isinstance(node, ast.UnaryOp) and node.op == "-":
+            return self._compound_has_nonconst(node.operand)
+        if isinstance(node, ast.UnaryOp) and node.op == "&":
+            # & of a static is a constant address.
+            return False
+        if isinstance(node, ast.Compound):
+            return self._compound_has_nonconst(node.init)
+        if isinstance(node, ast.Cast):
+            return self._compound_has_nonconst(node.expr)
+        if isinstance(node, ast.SizeofType) or isinstance(node, ast.SizeofExpr):
+            return False
+        # Identifier, Call, BinaryOp(+ ÷ × …), UnaryOp(++/--/!/* etc.),
+        # ternary, member access — all potentially non-constant. Treat
+        # them as runtime.
+        return True
+
     def _gen_struct_assignment(self, expr: ast.BinaryOp, struct_size: int) -> None:
         """Generate struct/union assignment via LDIR copy."""
         # Evaluate source expression to get source address in HL
         right = expr.right
         if isinstance(right, ast.Compound):
+            # If the compound literal has any non-const initializer
+            # expression AND the destination is a simple local variable,
+            # bypass DSEG materialization and write fields directly to
+            # the destination — otherwise the non-const slots end up as
+            # ``ds N`` in DSEG and the runtime values (e.g. ``++i``)
+            # are lost on every iteration of an enclosing loop.
+            if (isinstance(expr.left, ast.Identifier)
+                    and isinstance(right.init, ast.InitializerList)
+                    and self._compound_has_nonconst(right.init)):
+                sym = self.ctx.lookup(expr.left.name.text)
+                target_type = right.target_type
+                # The compound literal's ``target_type`` is often spelt
+                # as the typedef name (``(T){...}``); unwrap so the
+                # StructType check matches.
+                if (isinstance(target_type, lt.BasicType)
+                        and target_type.name in self.ctx.typedefs):
+                    target_type = _to_legacy(self.ctx.typedefs[target_type.name])
+                if (sym is not None
+                        and isinstance(target_type, lt.StructType)):
+                    self._gen_struct_init_values(sym, target_type,
+                                                  right.init.values, 0)
+                    return
             # Compound literal: materialize in DSEG and use its address
             label = self._materialize_compound_literal(right)
             self.ctx.emit_instr("ld", f"HL,{label}")
