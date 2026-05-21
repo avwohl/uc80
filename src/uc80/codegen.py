@@ -4780,13 +4780,19 @@ class CodeGenerator:
 
             mt = _to_legacy(mtype)
             msize = self._type_size(mt)
-            # Recurse into nested struct members.
-            if val is not None and isinstance(mt, lt.StructType):
-                if isinstance(val, ast.InitializerList):
-                    sub_label = label + f"+{moff}"
-                    # Without a dedicated helper, just emit per-field
-                    # writes by adjusting offsets relative to label.
-                    self._gen_compound_init_to_label(sub_label, mt, val.values)
+            # Recurse into nested struct/array members when the init
+            # value is a brace-list. For non-brace-list values (a struct
+            # lvalue like ``s->d``) fall through to the size-based
+            # dispatch which does an LDIR copy for >4-byte aggregates.
+            if val is not None and isinstance(mt, lt.StructType) \
+                    and isinstance(val, ast.InitializerList):
+                self._gen_compound_init_to_label(
+                    f"{label}+{moff}", mt, val.values)
+                continue
+            if val is not None and isinstance(mt, lt.ArrayType) \
+                    and isinstance(val, ast.InitializerList):
+                self._gen_compound_array_init_to_label(
+                    f"{label}+{moff}", mt, val.values)
                 continue
             if val is None:
                 # Explicit zero — the DSEG emit may already have ds N
@@ -4812,7 +4818,64 @@ class CodeGenerator:
                         self._extend_hl_to_dehl(is_signed)
                 self.ctx.emit_instr("ld", f"({label}+{moff}),HL")
                 self.ctx.emit_instr("ld", f"({label}+{moff + 2}),DE")
-            # 8-byte and exotic sizes: skip (handle later as needed).
+            else:
+                # > 4-byte member (nested struct/array or long long).
+                # If the value is itself an aggregate lvalue (Identifier,
+                # Member, ArrowMember, Index, Call returning struct),
+                # take its address and LDIR ``msize`` bytes into the
+                # member's slot. Skip otherwise — exotic literal forms
+                # would need their own handler.
+                if isinstance(val, (ast.Identifier, ast.Member, ast.ArrowMember,
+                                    ast.Index, ast.UnaryOp, ast.Call,
+                                    ast.CallNoArgs)):
+                    if isinstance(val, ast.Call) or isinstance(val, ast.CallNoArgs):
+                        self.gen_expr(val)
+                    elif isinstance(val, ast.UnaryOp) and val.op == "*":
+                        self.gen_expr(val.operand)
+                    else:
+                        self._gen_address(val)
+                    self.ctx.emit_instr("ld", f"DE,{label}+{moff}")
+                    self.ctx.emit_instr("ld", f"BC,{msize}")
+                    self.ctx.emit_instr("ldir")
+
+    def _gen_compound_array_init_to_label(self, label: str, array_type, values: list) -> None:
+        """Emit per-element runtime stores into the DSEG location at
+        ``label`` for an array compound literal whose values are not all
+        compile-time constants — e.g. ``(int[]){0, f(), 2}``. Without
+        this, the materialised slot would just be ``ds N`` for the
+        non-const positions and ``f()`` would never be called."""
+        base_type = _to_legacy(array_type.base_type)
+        elem_size = self._type_size(base_type)
+        for i, v in enumerate(values or []):
+            if isinstance(v, ast.DesignatedInit):
+                v = v.value
+            off = i * elem_size
+            if isinstance(base_type, lt.StructType) and isinstance(v, ast.InitializerList):
+                self._gen_compound_init_to_label(
+                    f"{label}+{off}", base_type, v.values)
+                continue
+            if isinstance(base_type, lt.ArrayType) and isinstance(v, ast.InitializerList):
+                self._gen_compound_array_init_to_label(
+                    f"{label}+{off}", base_type, v.values)
+                continue
+            if elem_size == 1:
+                self.gen_expr(v)
+                self.ctx.emit_instr("ld", "A,L")
+                self.ctx.emit_instr("ld", f"({label}+{off}),A")
+            elif elem_size == 2:
+                self.gen_expr(v)
+                self.ctx.emit_instr("ld", f"({label}+{off}),HL")
+            elif elem_size == 4:
+                if self._is_float_type(base_type):
+                    self.gen_expr(v)
+                else:
+                    self.gen_expr(v, force_long=True)
+                    if not self._is_long_expr(v):
+                        is_signed = not self._is_unsigned_expr(v)
+                        self._extend_hl_to_dehl(is_signed)
+                self.ctx.emit_instr("ld", f"({label}+{off}),HL")
+                self.ctx.emit_instr("ld", f"({label}+{off + 2}),DE")
+            # 8-byte / exotic sizes: skip until needed.
 
     def _gen_compound_to_sret(self, struct_type, values: list) -> None:
         """Evaluate each member of an InitializerList at runtime and
@@ -4915,8 +4978,25 @@ class CodeGenerator:
                     self._gen_struct_init_values(sym, target_type,
                                                   right.init.values, 0)
                     return
-            # Compound literal: materialize in DSEG and use its address
+            # Compound literal: materialize in DSEG and use its address.
             label = self._materialize_compound_literal(right)
+            # If the literal has non-const initializers, populate the
+            # DSEG slot at runtime *before* LDIR-copying it to the
+            # destination. Without this the LDIR reads stale (or zero)
+            # bytes from positions where the source value was a
+            # function call or a member read.
+            if (isinstance(right.init, ast.InitializerList)
+                    and self._compound_has_nonconst(right.init)):
+                target_type = right.target_type
+                if (isinstance(target_type, lt.BasicType)
+                        and target_type.name in self.ctx.typedefs):
+                    target_type = _to_legacy(self.ctx.typedefs[target_type.name])
+                if isinstance(target_type, lt.StructType):
+                    self._gen_compound_init_to_label(
+                        label, target_type, right.init.values)
+                elif isinstance(target_type, lt.ArrayType):
+                    self._gen_compound_array_init_to_label(
+                        label, target_type, right.init.values)
             self.ctx.emit_instr("ld", f"HL,{label}")
         elif isinstance(right, ast.Call):
             # Function call returning struct - returns address in HL
@@ -6378,10 +6458,13 @@ class CodeGenerator:
                 # lifetime.
                 label = self._materialize_compound_literal(expr)
                 if (isinstance(expr.init, ast.InitializerList)
-                        and isinstance(tt_resolved, lt.StructType)
                         and self._compound_has_nonconst(expr.init)):
-                    self._gen_compound_init_to_label(label, tt_resolved,
-                                                       expr.init.values)
+                    if isinstance(tt_resolved, lt.StructType):
+                        self._gen_compound_init_to_label(
+                            label, tt_resolved, expr.init.values)
+                    elif isinstance(tt_resolved, lt.ArrayType):
+                        self._gen_compound_array_init_to_label(
+                            label, tt_resolved, expr.init.values)
                 self.ctx.emit_instr("ld", f"HL,{label}")
             elif isinstance(expr.init, ast.InitializerList) and len(expr.init.values) >= 1:
                 # Scalar compound literal: evaluate the value
@@ -6806,9 +6889,11 @@ class CodeGenerator:
         elif op == ">>":
             # Strength reduction: right shift by small constant → inline shifts
             # At this point: left in DE, right (shift count) in HL
+            # Per C 6.5.7p5, the result type is that of the promoted *left*
+            # operand — the right operand's signedness is irrelevant.
             shift = int_value(expr.right) if isinstance(expr.right, ast.IntLiteral) else None
+            is_unsigned = self._is_promoted_unsigned(expr.left)
             if shift is not None and 1 <= shift <= 4:
-                is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
                 self.ctx.emit_instr("ex", "DE,HL")  # value to HL
                 for _ in range(shift):
                     if is_unsigned:
@@ -6817,7 +6902,6 @@ class CodeGenerator:
                         self.ctx.emit_instr("sra", "H")
                     self.ctx.emit_instr("rr", "L")
             else:
-                is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
                 if is_unsigned:
                     self._call_runtime("__shr16")
                 else:
@@ -7518,10 +7602,19 @@ class CodeGenerator:
             self._gen_assignment_64(expr)
             return
 
-        # Struct/union assignment: copy entire struct via LDIR
+        # Struct/union assignment: copy entire struct via LDIR. For size
+        # ≤ 2, the LDIR path is overkill — but the scalar fallback only
+        # handles non-aggregate RHS; if the RHS is itself a Compound
+        # literal (``a.b = (T){...}``) or another struct lvalue, the
+        # value sits at an address and a register copy would write the
+        # *pointer*. Route those through the LDIR copier too.
         if isinstance(target_type, lt.StructType):
             struct_size = self._type_size(target_type)
-            if struct_size > 2:
+            rhs_is_aggregate = isinstance(
+                expr.right,
+                (ast.Compound, ast.Member, ast.ArrowMember,
+                 ast.Index, ast.Identifier, ast.Call, ast.CallNoArgs))
+            if struct_size > 2 or rhs_is_aggregate:
                 self._gen_struct_assignment(expr, struct_size)
                 return
 
@@ -7867,7 +7960,9 @@ class CodeGenerator:
         elif op == "<<":
             self._call_runtime("__shl16")
         elif op == ">>":
-            is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
+            # C 6.5.7p5: result type is that of the promoted *left* operand;
+            # right operand's signedness is irrelevant.
+            is_unsigned = self._is_promoted_unsigned(expr.left)
             self._call_runtime("__shr16" if is_unsigned else "__sar16")
 
         # Result in HL. Pop saved address, store back.
@@ -10570,9 +10665,12 @@ class CodeGenerator:
             if (isinstance(tt, lt.BasicType) and tt.name in self.ctx.typedefs):
                 tt = _to_legacy(self.ctx.typedefs[tt.name])
             if (isinstance(expr.init, ast.InitializerList)
-                    and isinstance(tt, lt.StructType)
                     and self._compound_has_nonconst(expr.init)):
-                self._gen_compound_init_to_label(label, tt, expr.init.values)
+                if isinstance(tt, lt.StructType):
+                    self._gen_compound_init_to_label(label, tt, expr.init.values)
+                elif isinstance(tt, lt.ArrayType):
+                    self._gen_compound_array_init_to_label(
+                        label, tt, expr.init.values)
             self.ctx.emit_instr("ld", f"HL,{label}")
 
     @staticmethod
