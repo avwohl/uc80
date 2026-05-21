@@ -5564,6 +5564,14 @@ class CodeGenerator:
         value = stmt.value if isinstance(stmt, ast.ReturnStmtValue) else None
         if value is not None:
             ret_type = self.ctx.current_return_type
+            # If the return type is a typedef-name, resolve through the
+            # registry so e.g. ``typedef struct {...} T; T foo(...)``
+            # routes through the struct-return path rather than being
+            # treated as a basic scalar (the typedef kind has no size).
+            while (ret_type is not None
+                   and _is_resolved_type(ret_type) and ret_type.kind == "typedef"
+                   and ret_type.name in self.ctx.typedefs):
+                ret_type = self.ctx.typedefs[ret_type.name]
             # ret_type is a ResolvedType (kind: basic / pointer / array /
             # function / struct / enum / typedef).
             ret_kind = getattr(ret_type, "kind", None) if ret_type else None
