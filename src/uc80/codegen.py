@@ -8779,6 +8779,21 @@ class CodeGenerator:
                 # to the equivalent libc routine — bzero(p,n) ↔ memset(p,0,n)
                 # is one extra arg so we leave that alone; bcopy/explicit
                 # memcpy mirror only if signature matches.
+                # IEEE-754 classification builtins (math.h family).
+                # uc80's ``double`` and ``long double`` are 4-byte floats,
+                # so the f/l-suffixed variants share the same runtime.
+                '__builtin_isinf':       'isinf',
+                '__builtin_isinff':      'isinf',
+                '__builtin_isinfl':      'isinf',
+                '__builtin_isnan':       'isnan',
+                '__builtin_isnanf':      'isnan',
+                '__builtin_isnanl':      'isnan',
+                '__builtin_isfinite':    'isfinite',
+                '__builtin_isnormal':    'isnormal',
+                '__builtin_signbit':     'signbit',
+                '__builtin_signbitf':    'signbit',
+                '__builtin_signbitl':    'signbit',
+                '__builtin_fpclassify':  'fpclassify',
             }
             if expr.func.name.text in _BUILTIN_TO_LIBC:
                 expr = ast.Call(
