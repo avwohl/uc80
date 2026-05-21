@@ -8156,6 +8156,47 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", "HL,(__acc64)")
                 self.ctx.emit_instr("ld", "DE,(__acc64+2)")
                 return
+            if expr.func.name.text in ("__builtin_signbit",
+                                       "__builtin_signbitf",
+                                       "__builtin_signbitl"):
+                # Return 1 if the float's sign bit is set, else 0. For our
+                # 32-bit IEEE 754 doubles, the sign bit is bit 7 of D
+                # (top byte of DEHL).
+                if expr.args:
+                    self.gen_expr(expr.args[0])
+                else:
+                    self.ctx.emit_instr("ld", "HL,0")
+                    self.ctx.emit_instr("ld", "DE,0")
+                self.ctx.emit_instr("ld", "A,D")
+                self.ctx.emit_instr("and", "80H")
+                self.ctx.emit_instr("ld", "HL,0")
+                self.ctx.emit_instr("jr", "Z,$+3")
+                self.ctx.emit_instr("inc", "L")
+                return
+            if expr.func.name.text in ("__builtin_copysign",
+                                       "__builtin_copysignf",
+                                       "__builtin_copysignl"):
+                # copysign(x, y) returns x with the sign of y. Two float
+                # args; only the second's sign bit matters. We push x then
+                # y, evaluate y (its sign bit is bit 7 of D), then x, then
+                # OR / mask the sign bits.
+                if len(expr.args) >= 2:
+                    # Evaluate y first, save its sign byte.
+                    self.gen_expr(expr.args[1])
+                    self.ctx.emit_instr("ld", "A,D")
+                    self.ctx.emit_instr("and", "80H")
+                    self.ctx.emit_instr("push", "AF")
+                    self.gen_expr(expr.args[0])
+                    self.ctx.emit_instr("pop", "AF")
+                    self.ctx.emit_instr("ld", "B,A")
+                    self.ctx.emit_instr("ld", "A,D")
+                    self.ctx.emit_instr("and", "7FH")
+                    self.ctx.emit_instr("or", "B")
+                    self.ctx.emit_instr("ld", "D,A")
+                else:
+                    self.ctx.emit_instr("ld", "HL,0")
+                    self.ctx.emit_instr("ld", "DE,0")
+                return
             # GCC builtin pass-throughs to libc.  GCC sometimes emits
             # __builtin_memcpy directly (e.g. when the prototype isn't
             # visible) — rewrite to the libc symbol so the linker can
@@ -8173,17 +8214,32 @@ class CodeGenerator:
                 '__builtin_strcat':   'strcat',
                 '__builtin_strncat':  'strncat',
                 '__builtin_strchr':   'strchr',
+                '__builtin_strrchr':  'strrchr',
+                '__builtin_strstr':   'strstr',
                 '__builtin_abort':    'abort',
                 '__builtin_exit':     'exit',
                 '__builtin_puts':     'puts',
                 '__builtin_printf':   'printf',
+                '__builtin_fprintf':  'fprintf',
+                '__builtin_sprintf':  'sprintf',
+                '__builtin_snprintf': 'snprintf',
+                '__builtin_vprintf':  'vprintf',
+                '__builtin_vfprintf': 'vfprintf',
+                '__builtin_vsprintf': 'vsprintf',
                 '__builtin_putchar':  'putchar',
+                '__builtin_putc':     'putc',
+                '__builtin_fputc':    'fputc',
+                '__builtin_fputs':    'fputs',
                 '__builtin_trap':     'abort',
                 '__builtin_unreachable': 'abort',
                 '__builtin_malloc':   'malloc',
                 '__builtin_calloc':   'calloc',
                 '__builtin_realloc':  'realloc',
                 '__builtin_free':     'free',
+                # POSIX bcopy/bzero family some tests reach for. Hand them
+                # to the equivalent libc routine — bzero(p,n) ↔ memset(p,0,n)
+                # is one extra arg so we leave that alone; bcopy/explicit
+                # memcpy mirror only if signature matches.
             }
             if expr.func.name.text in _BUILTIN_TO_LIBC:
                 expr = ast.Call(
@@ -9788,6 +9844,12 @@ class CodeGenerator:
                 "__builtin_ffs": lt.BasicType(name="int", is_signed=True),
                 "__builtin_constant_p": lt.BasicType(name="int", is_signed=True),
                 "__builtin_classify_type": lt.BasicType(name="int", is_signed=True),
+                "__builtin_signbit": lt.BasicType(name="int", is_signed=True),
+                "__builtin_signbitf": lt.BasicType(name="int", is_signed=True),
+                "__builtin_signbitl": lt.BasicType(name="int", is_signed=True),
+                "__builtin_copysign": lt.BasicType(name="double"),
+                "__builtin_copysignf": lt.BasicType(name="float"),
+                "__builtin_copysignl": lt.BasicType(name="long double"),
                 "__builtin_return_address": lt.PointerType(base_type=lt.BasicType(name="void")),
                 "__builtin_frame_address": lt.PointerType(base_type=lt.BasicType(name="void")),
             }
