@@ -8189,6 +8189,20 @@ class CodeGenerator:
                 # (=0). This is a hint, never observable behaviour.
                 self.ctx.emit_instr("ld", "HL,0")
                 return
+            if expr.func.name.text == '__builtin_choose_expr':
+                # GCC: __builtin_choose_expr(c, x, y) — if c is a non-zero
+                # compile-time constant, evaluate x; else evaluate y. The
+                # un-chosen branch isn't even type-checked. We approximate
+                # by treating it like a ternary on the (constant-folded) c.
+                if len(expr.args) >= 3:
+                    cond_val = self._eval_const_expr(expr.args[0])
+                    if cond_val is None:
+                        cond_val = 0
+                    chosen = expr.args[1] if cond_val else expr.args[2]
+                    self.gen_expr(chosen)
+                else:
+                    self.ctx.emit_instr("ld", "HL,0")
+                return
             if expr.func.name.text == '__builtin_unreachable':
                 # Compiler hint that this point isn't reached. We emit
                 # nothing — control flow falls through, which is the
@@ -8415,6 +8429,30 @@ class CodeGenerator:
                 '__builtin_free':     'free',
                 '__builtin_setjmp':   'setjmp',
                 '__builtin_longjmp':  'longjmp',
+                '__builtin_abs':      'abs',
+                '__builtin_labs':     'labs',
+                '__builtin_llabs':    'llabs',
+                '__builtin_fabs':     'fabs',
+                '__builtin_fabsf':    'fabsf',
+                '__builtin_fabsl':    'fabsl',
+                '__builtin_atexit':   'atexit',
+                '__builtin_getenv':   'getenv',
+                '__builtin_system':   'system',
+                '__builtin_strpbrk':  'strpbrk',
+                '__builtin_strspn':   'strspn',
+                '__builtin_strcspn':  'strcspn',
+                '__builtin_strtok':   'strtok',
+                '__builtin_strdup':   'strdup',
+                '__builtin_strndup':  'strndup',
+                '__builtin_isalpha':  'isalpha',
+                '__builtin_isdigit':  'isdigit',
+                '__builtin_isalnum':  'isalnum',
+                '__builtin_isspace':  'isspace',
+                '__builtin_isxdigit': 'isxdigit',
+                '__builtin_islower':  'islower',
+                '__builtin_isupper':  'isupper',
+                '__builtin_tolower':  'tolower',
+                '__builtin_toupper':  'toupper',
                 # POSIX bcopy/bzero family some tests reach for. Hand them
                 # to the equivalent libc routine — bzero(p,n) ↔ memset(p,0,n)
                 # is one extra arg so we leave that alone; bcopy/explicit
@@ -12344,6 +12382,24 @@ class CodeGenerator:
             if expr.name.text in self.ctx.enum_constants:
                 return self.ctx.enum_constants[expr.name.text]
             return None  # Not a compile-time constant
+        elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
+            # Handle a couple of GCC builtins as constant expressions:
+            # __builtin_constant_p — 1 if the arg is a compile-time
+            # constant we can evaluate, else 0; __builtin_choose_expr —
+            # pick its 2nd or 3rd arg based on a constant condition.
+            if isinstance(expr.func, ast.Identifier):
+                fname = expr.func.name.text
+                if fname == "__builtin_constant_p":
+                    if not expr.args:
+                        return 0
+                    v = self._eval_const_expr(expr.args[0])
+                    return 1 if v is not None else 0
+                if fname == "__builtin_choose_expr" and len(expr.args) >= 3:
+                    c = self._eval_const_expr(expr.args[0])
+                    if c is None:
+                        c = 0
+                    return self._eval_const_expr(expr.args[1] if c else expr.args[2])
+            return None
         elif isinstance(expr, ast.CharLiteral):
             # Character constants have type int; value is as-if stored in char
             # first then converted to int (C 6.4.4.4). Char is signed by default.
