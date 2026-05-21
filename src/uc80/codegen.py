@@ -1247,6 +1247,17 @@ class CallGraphAnalyzer:
             for assoc in (expr.assocs or []):
                 self._analyze_expr(assoc.expr, calls, address_taken, indirect_sigs)
 
+        elif isinstance(expr, ast.SequenceExpr):
+            # Auto-AST comma operator at expression-statement scope —
+            # both sides may contain calls / address-takens.
+            self._analyze_expr(expr.left, calls, address_taken, indirect_sigs)
+            self._analyze_expr(expr.right, calls, address_taken, indirect_sigs)
+
+        elif isinstance(expr, ast.PostfixOp):
+            # i++ / i-- on an expression — analyse the operand (rarely
+            # contains calls, but for completeness).
+            self._analyze_expr(expr.operand, calls, address_taken, indirect_sigs)
+
         elif isinstance(expr, ast.Identifier):
             # An identifier used as a value (not in a call context) might be
             # a function whose address is taken (function name decays to pointer)
