@@ -28,6 +28,26 @@ Z80_CPM_PREDEFINES = {
     "__UC80_VERSION__": "100",
     "__Z80__": "1",
     "__CPM__": "1",
+    # Integer-range GCC predefines — values match the Z80/CP/M 16-bit-int
+    # data model (uc80 uses int=16, long=32, long long=64; size_t and
+    # ptrdiff_t are 16-bit). Source that references e.g. ``__INT_MAX__``
+    # directly compiles without including <limits.h>.
+    "__SHRT_MAX__": "32767",
+    "__INT_MAX__": "32767",
+    "__LONG_MAX__": "2147483647L",
+    "__LONG_LONG_MAX__": "9223372036854775807LL",
+    "__SIZE_MAX__": "65535U",
+    "__PTRDIFF_MAX__": "32767",
+    "__SIZEOF_INT__": "2",
+    "__SIZEOF_LONG__": "4",
+    "__SIZEOF_LONG_LONG__": "8",
+    "__SIZEOF_POINTER__": "2",
+    "__SIZEOF_SIZE_T__": "2",
+    "__SIZEOF_PTRDIFF_T__": "2",
+    "__SIZEOF_FLOAT__": "4",
+    "__SIZEOF_DOUBLE__": "4",
+    "__SIZEOF_LONG_DOUBLE__": "4",
+    "__SIZEOF_SHORT__": "2",
 }
 
 

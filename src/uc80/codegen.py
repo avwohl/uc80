@@ -7973,6 +7973,54 @@ class CodeGenerator:
                 else:
                     self.ctx.emit_instr("ld", "HL,0")
                 return
+            if expr.func.name.text == '__builtin_constant_p':
+                # __builtin_constant_p(x) returns 1 if x is a compile-time
+                # constant, else 0. The "compile-time constant" we can
+                # cheaply recognise is an IntLiteral / FloatLiteral /
+                # CharLiteral / StringLiteral or a UnaryOp on one. We're
+                # conservative: when in doubt, say 0.
+                def _is_compile_time_const(e) -> bool:
+                    if isinstance(e, (ast.IntLiteral, ast.FloatLiteral,
+                                      ast.CharLiteral, ast.StringLiteral)):
+                        return True
+                    if isinstance(e, ast.UnaryOp):
+                        return _is_compile_time_const(e.operand)
+                    if isinstance(e, ast.BinaryOp):
+                        return (_is_compile_time_const(e.left)
+                                and _is_compile_time_const(e.right))
+                    if isinstance(e, ast.Cast):
+                        return _is_compile_time_const(e.expr) if hasattr(e, "expr") else False
+                    return False
+                val = 1 if expr.args and _is_compile_time_const(expr.args[0]) else 0
+                self.ctx.emit_instr("ld", f"HL,{val}")
+                return
+            if expr.func.name.text == '__builtin_classify_type':
+                # Returns an integer code per GCC's typeclass enum. We don't
+                # support most of these — treat unknown as "other_type_class"
+                # (=0). This is a hint, never observable behaviour.
+                self.ctx.emit_instr("ld", "HL,0")
+                return
+            if expr.func.name.text == '__builtin_unreachable':
+                # Compiler hint that this point isn't reached. We emit
+                # nothing — control flow falls through, which is the
+                # conservative behaviour.
+                return
+            if expr.func.name.text == '__builtin_prefetch':
+                # No-op on Z80 — the architecture has no prefetch insn.
+                # Evaluate args for side effects then return 0.
+                for a in expr.args:
+                    self.gen_expr(a)
+                self.ctx.emit_instr("ld", "HL,0")
+                return
+            if expr.func.name.text == '__builtin_return_address':
+                # Always 0 on Z80 — we have no frame walker.
+                self.ctx.emit_instr("ld", "HL,0")
+                return
+            if expr.func.name.text == '__builtin_frame_address':
+                # Return current IX as an approximation.
+                self.ctx.emit_instr("push", "IX")
+                self.ctx.emit_instr("pop", "HL")
+                return
             # GCC builtin pass-throughs to libc.  GCC sometimes emits
             # __builtin_memcpy directly (e.g. when the prototype isn't
             # visible) — rewrite to the libc symbol so the linker can
