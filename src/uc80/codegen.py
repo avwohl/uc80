@@ -7607,14 +7607,16 @@ class CodeGenerator:
         # handles non-aggregate RHS; if the RHS is itself a Compound
         # literal (``a.b = (T){...}``) or another struct lvalue, the
         # value sits at an address and a register copy would write the
-        # *pointer*. Route those through the LDIR copier too.
+        # *pointer*. Route those through the LDIR copier too. Calls
+        # returning small structs return the *value* in HL (not an
+        # address), so we keep them on the scalar path.
         if isinstance(target_type, lt.StructType):
             struct_size = self._type_size(target_type)
-            rhs_is_aggregate = isinstance(
+            rhs_is_addressable_aggregate = isinstance(
                 expr.right,
                 (ast.Compound, ast.Member, ast.ArrowMember,
-                 ast.Index, ast.Identifier, ast.Call, ast.CallNoArgs))
-            if struct_size > 2 or rhs_is_aggregate:
+                 ast.Index, ast.Identifier))
+            if struct_size > 2 or rhs_is_addressable_aggregate:
                 self._gen_struct_assignment(expr, struct_size)
                 return
 
