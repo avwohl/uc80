@@ -637,9 +637,21 @@ def iter_var_decls(declaration):
 
 
 def float_to_ieee754(f: float) -> int:
-    """Convert a Python float to IEEE 754 single-precision (32-bit) integer representation."""
+    """Convert a Python float to IEEE 754 single-precision (32-bit) integer representation.
+
+    uc80's runtime ``__fmul`` / ``__fdiv`` flush denormal results to
+    zero (no gradual underflow support). Match that here so a
+    static initializer evaluated by Python doesn't end up with
+    denormal bits that the runtime would never produce — comparing
+    a static-init denormal against the runtime's zero would abort
+    (torture pr23941). Sign of zero is preserved.
+    """
     packed = struct.pack('>f', f)  # Big-endian single precision
-    return struct.unpack('>I', packed)[0]
+    val = struct.unpack('>I', packed)[0]
+    # Denormal: exp == 0 and mantissa != 0. Flush to signed zero.
+    if (val & 0x7F800000) == 0 and (val & 0x007FFFFF) != 0:
+        return val & 0x80000000
+    return val
 
 
 def ix_off(offset: int) -> str:
@@ -12809,12 +12821,22 @@ class CodeGenerator:
                 self.ctx.emit_instr("ds", str(size - 2))
 
     def _emit_float_value(self, value: float) -> None:
-        """Emit a 32-bit IEEE-754 float value."""
+        """Emit a 32-bit IEEE-754 float value.
+
+        uc80's runtime flushes denormals to zero, so static initialisers
+        computed by Python (which keeps gradual-underflow bits) must do
+        the same — otherwise a static-init value will never compare
+        equal to the runtime computation that produced zero (torture
+        pr23941).
+        """
         import struct
         # Pack as little-endian 32-bit float
         packed = struct.pack('<f', value)
         # Unpack as little-endian 32-bit unsigned integer
         ieee_val = struct.unpack('<I', packed)[0]
+        # Flush denormal: exp == 0 and mantissa != 0 → signed zero.
+        if (ieee_val & 0x7F800000) == 0 and (ieee_val & 0x007FFFFF) != 0:
+            ieee_val &= 0x80000000
         low = ieee_val & 0xFFFF
         high = (ieee_val >> 16) & 0xFFFF
         self.ctx.emit_instr("dw", str(low))
