@@ -11481,6 +11481,26 @@ class CodeGenerator:
                 return (sym.label(), 0)
             elif expr.name.text in self.ctx.static_local_labels:
                 return (self.ctx.static_local_labels[expr.name.text], 0)
+        elif isinstance(expr, ast.StringLiteral):
+            # ``static const char *p = "foo" + 1;`` arrives here as
+            # BinaryOp(+, StringLiteral, IntLiteral). Surface the string
+            # literal's storage label so the +/- pointer-arithmetic
+            # branch below can fold the offset into it.
+            text = expr.value.text if hasattr(expr.value, "text") else expr.value
+            decoded = _decode_string_literal(text) if hasattr(expr.value, "text") else text
+            label = self.ctx.add_string(decoded, is_wide=_string_is_wide(text)
+                                        if hasattr(expr.value, "text") else False)
+            return (label, 0)
+        elif (isinstance(expr, list) and expr
+              and all(isinstance(p, ast.StringLiteral) for p in expr)):
+            # Auto-AST list-wrapped string literal — same shape as above.
+            decoded = "".join(
+                (_decode_string_literal(p.value.text) if hasattr(p.value, "text") else p.value)
+                for p in expr)
+            is_wide = any(_string_is_wide(p.value.text) for p in expr
+                          if hasattr(p.value, "text"))
+            label = self.ctx.add_string(decoded, is_wide=is_wide)
+            return (label, 0)
         elif isinstance(expr, ast.BinaryOp) and expr.op in ('+', '-'):
             # Address +/- constant offset
             label, base_offset = self._try_resolve_address_const(expr.left)
