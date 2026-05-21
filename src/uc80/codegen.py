@@ -9334,6 +9334,23 @@ class CodeGenerator:
         if not isinstance(compound.init, ast.InitializerList):
             return None
         target_type = compound.target_type
+        # Member-name may be a uplox Token; unwrap so the str-comparison
+        # below matches the StructMember.name string.
+        if hasattr(member_name, "text"):
+            member_name = member_name.text
+        # The compound literal's target_type often arrives as the typedef
+        # *name* in the source (``(A){...}`` where ``A`` is a typedef);
+        # convert to its underlying struct so the rest of this routine can
+        # walk member lists. Without this resolution, the codegen would
+        # fall through to ``_materialize_compound_literal`` and emit a
+        # DSEG label that references the in-init expression as if it were
+        # a static — fine for ``&x``, but garbage for a local variable.
+        if isinstance(target_type, lt.BasicType) and target_type.name in self.ctx.typedefs:
+            target_type = _to_legacy(self.ctx.typedefs[target_type.name])
+        elif hasattr(target_type, "kind") and target_type.kind == "typedef":
+            resolved = self.ctx.typedefs.get(target_type.name)
+            if resolved is not None:
+                target_type = _to_legacy(resolved)
         # Resolve struct members
         struct_type = target_type
         if isinstance(struct_type, lt.StructType):
