@@ -513,7 +513,35 @@ def _to_legacy(t, ctx=None):
     N's underlying type and recursing. uc_core hands these out when no
     typedef-resolver scope is installed.
     """
-    if t is None or not _is_resolved_type(t):
+    if t is None:
+        return t
+    if not _is_resolved_type(t):
+        # Already legacy. But a legacy ``BasicType`` whose name is a
+        # typedef-name (uc_core's resolved_to_legacy preserves typedef
+        # names as BasicType when the resolver isn't installed) needs
+        # the same resolution to its underlying type so downstream
+        # size/signedness/float-classification checks all see the real
+        # primitive (e.g. ``typedef double L;`` → BasicType("L") →
+        # BasicType("double")).
+        reg = _ACTIVE_TYPEDEFS
+        _builtin_names = {
+            "void", "bool", "_Bool",
+            "char", "signed char", "unsigned char",
+            "short", "unsigned short", "int", "unsigned int",
+            "long", "unsigned long", "long long", "unsigned long long",
+            "float", "double", "long double",
+        }
+        if (isinstance(t, lt.BasicType) and t.name
+                and t.name not in _builtin_names
+                and reg is not None and t.name in reg):
+            inner = _to_legacy(reg[t.name])
+            # Preserve any const/volatile on the outer typedef-reference.
+            if isinstance(inner, lt.BasicType):
+                return lt.BasicType(
+                    name=inner.name, is_signed=inner.is_signed,
+                    is_const=t.is_const or inner.is_const,
+                    is_volatile=t.is_volatile or inner.is_volatile)
+            return inner
         return t
     k = t.kind
     if k == "basic":
@@ -10324,9 +10352,18 @@ class CodeGenerator:
                 return self._get_deref_size(expr.operand)
 
         elif isinstance(expr, ast.Cast):
-            # Use the cast target type
-            if isinstance(expr.target_type, lt.PointerType):
-                return self._type_size(expr.target_type.base_type)
+            # Use the cast target type. Run it through _resolve_typename
+            # / _to_legacy so a cast to a typedef-of-pointer (e.g.
+            # ``(L *)x`` where L = double) resolves the L to its
+            # underlying type before the size lookup.
+            tt = self._resolve_typename(expr.target_type) if hasattr(self, "_resolve_typename") else expr.target_type
+            tt = _to_legacy(tt)
+            if isinstance(tt, lt.PointerType):
+                base = _to_legacy(tt.base_type)
+                if (isinstance(base, lt.BasicType) and base.name
+                        and base.name in self.ctx.typedefs):
+                    base = _to_legacy(self.ctx.typedefs[base.name])
+                return self._type_size(base)
 
         # General fallback: use _get_expr_type to determine the pointer/array type
         expr_type = self._get_expr_type(expr)
