@@ -6587,7 +6587,23 @@ class CodeGenerator:
             else:
                 self._call_runtime("__sar32")
         elif op in ("==", "!=", "<", ">", "<=", ">="):
-            is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
+            # C 6.3.1.8 usual arithmetic conversions: when only one side
+            # is 32-bit, the narrower side promotes to that 32-bit type
+            # — its own signedness is irrelevant. So the comparison's
+            # signedness follows the 32-bit operand's. When both are
+            # 32-bit, either being unsigned makes the comparison unsigned.
+            left_long = self._is_long_expr(expr.left) or self._is_long_long_expr(expr.left)
+            right_long = self._is_long_expr(expr.right) or self._is_long_long_expr(expr.right)
+            left_u = self._is_promoted_unsigned(expr.left)
+            right_u = self._is_promoted_unsigned(expr.right)
+            if left_long and right_long:
+                is_unsigned = left_u or right_u
+            elif left_long:
+                is_unsigned = left_u
+            elif right_long:
+                is_unsigned = right_u
+            else:
+                is_unsigned = left_u or right_u
             self._gen_comparison_32(op, is_unsigned)
         elif op == ",":
             pass  # Result is already in DEHL
@@ -6732,7 +6748,22 @@ class CodeGenerator:
             else:
                 self._call_runtime("__sar64")
         elif op in ("==", "!=", "<", ">", "<=", ">="):
-            is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
+            # As with 32-bit comparison (see _gen_binary_op_32 above):
+            # the comparison's signedness follows the long-long operand's
+            # when only one side is 64-bit; the smaller side is promoted
+            # to it and its own signedness no longer matters.
+            left_ll = self._is_long_long_expr(expr.left)
+            right_ll = self._is_long_long_expr(expr.right)
+            left_u = self._is_promoted_unsigned(expr.left)
+            right_u = self._is_promoted_unsigned(expr.right)
+            if left_ll and right_ll:
+                is_unsigned = left_u or right_u
+            elif left_ll:
+                is_unsigned = left_u
+            elif right_ll:
+                is_unsigned = right_u
+            else:
+                is_unsigned = left_u or right_u
             self._gen_comparison_64(op, is_unsigned)
         elif op == ",":
             pass  # Result is already in __acc64
@@ -11208,6 +11239,21 @@ class CodeGenerator:
                             else:
                                 elem_size = 1
                             return (base_label, base_offset + idx_val * elem_size)
+                # Nested multi-dimensional &a[i][j]…: walk the inner Index
+                # chain recursively. The inner expression has type
+                # ``array of (something)``; treat it as ``& (inner) + j * sizeof(elem)``.
+                if isinstance(operand.array, ast.Index):
+                    inner_addr = self._try_resolve_address_const(
+                        ast.UnaryOp(op="&", operand=operand.array, pos=operand.pos))
+                    if inner_addr[0] is not None:
+                        idx_val = self._eval_const_expr(operand.index)
+                        if idx_val is not None:
+                            inner_type = self._get_expr_type(operand.array)
+                            if isinstance(inner_type, lt.ArrayType):
+                                elem_size = self._type_size(inner_type.base_type)
+                            else:
+                                elem_size = 2
+                            return (inner_addr[0], inner_addr[1] + idx_val * elem_size)
         elif isinstance(expr, ast.Identifier):
             # For function pointers or array names
             sym = self.ctx.lookup(expr.name.text)
