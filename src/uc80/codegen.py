@@ -10364,11 +10364,14 @@ class CodeGenerator:
             # named "long" (or short/long long via earlier branches).  Don't
             # promote to "long" just because int happens to be 4 bytes under
             # --int=32; that would inflate to 8 bytes under --long=64 and
-            # mis-route variadic args to the 64-bit push path.
+            # mis-route variadic args to the 64-bit push path. Per C 6.3.1.8,
+            # if either operand is unsigned the result is unsigned.
             def _is_named_long(t):
                 return isinstance(t, lt.BasicType) and t.name == "long"
             if _is_named_long(left_type) or _is_named_long(right_type):
-                return lt.BasicType(name="long")
+                left_unsigned = isinstance(left_type, lt.BasicType) and left_type.is_signed == False
+                right_unsigned = isinstance(right_type, lt.BasicType) and right_type.is_signed == False
+                return lt.BasicType(name="long", is_signed=not (left_unsigned or right_unsigned))
 
             # Integer promotion: char operands promote to int (C99 6.3.1.1)
             # All binary arithmetic/bitwise results are at least int-width.
@@ -10391,7 +10394,18 @@ class CodeGenerator:
             if result_type:
                 return result_type
         elif isinstance(expr, ast.Cast):
-            return expr.target_type
+            # target_type can be an auto-AST ``TypeName`` /
+            # ``TypeNameWithDeclarator`` (typedef-spelt casts arrive
+            # this way); resolve through to a legacy BasicType so
+            # signedness flows for the subsequent arithmetic-conversion
+            # rules. Also unwrap typedef references so
+            # ``(uint32_t)`` becomes ``unsigned long int`` rather than
+            # an opaque ``BasicType(name="uint32_t")`` whose
+            # ``is_signed`` field is unset.
+            tt = self._resolve_typename(expr.target_type)
+            if isinstance(tt, lt.BasicType) and tt.name in self.ctx.typedefs:
+                tt = _to_legacy(self.ctx.typedefs[tt.name])
+            return tt
         elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
             # Known GCC builtins we handle inline — record their return
             # types here so callers don't widen the 16-bit HL output
