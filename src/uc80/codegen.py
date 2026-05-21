@@ -849,11 +849,15 @@ class CallGraphAnalyzer:
     is_static: dict[str, bool] = field(default_factory=dict)  # func -> is static (internal linkage)
     whole_program: bool = True  # True = no other C files at link time
     struct_sizes: dict[str, int] = field(default_factory=dict)  # struct name -> size in bytes
+    typedefs: dict[str, "ResolvedType"] = field(default_factory=dict)  # typedef name -> resolved type
     type_config: TypeConfig = field(default_factory=lambda: Z80_CPM)
 
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
-        # Pass 0: Collect struct definitions for accurate size calculation
+        # Pass 0: Collect typedefs first (struct size calc may reference them)
+        for item in unit.items or []:
+            self._collect_typedefs(item)
+        # Pass 0b: Collect struct definitions for accurate size calculation
         for item in unit.items or []:
             self._collect_struct_defs(item)
 
@@ -914,6 +918,37 @@ class CallGraphAnalyzer:
                 _, full = _wrap_declarator(inner, base)
                 self._collect_struct_from_resolved(full)
             return
+
+    def _collect_typedefs(self, decl) -> None:
+        """Collect ``typedef T name;`` declarations so ``_var_size_r``
+        can resolve typedef-named local variables to their real size.
+
+        Without this, ``typedef struct {…} T; T local;`` makes the
+        analyzer think ``local`` is int-sized (the typedef-fallback) and
+        underestimate the function's storage need — which then causes
+        the shared-storage allocator to overlap it with a caller's
+        live local on the call stack."""
+        if not isinstance(decl, ast.Declaration):
+            return
+        if decl_storage_class(decl.decl_specs) != "typedef":
+            return
+        base = resolve_base_type(decl.decl_specs)
+        for init_decl in decl.declarators or []:
+            inner = init_decl.declarator if isinstance(init_decl,
+                (ast.InitDeclarator, ast.InitDeclaratorWithInit)) else None
+            name, full = _wrap_declarator(inner, base)
+            if name:
+                self.typedefs[name] = full
+
+    def _resolve_typedef(self, t):
+        """Walk ``self.typedefs`` to bottom out at a non-typedef type."""
+        seen: set[str] = set()
+        while t is not None and t.kind == "typedef" and t.name and t.name in self.typedefs:
+            if t.name in seen:
+                break
+            seen.add(t.name)
+            t = self.typedefs[t.name]
+        return t
 
     def _collect_struct_from_resolved(self, t: ResolvedType) -> None:
         """Record struct size from a ResolvedType (recurses through pointers/arrays)."""
@@ -1138,6 +1173,9 @@ class CallGraphAnalyzer:
         if t.kind == "function":
             return self.type_config.ptr_size  # function-pointer decay
         if t.kind == "typedef":
+            resolved = self._resolve_typedef(t)
+            if resolved is not None and resolved.kind != "typedef":
+                return self._var_size_r(resolved)
             return self.type_config.int_size  # unresolved; estimate
         return 2
 
