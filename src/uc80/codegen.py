@@ -1738,19 +1738,47 @@ class CallGraphAnalyzer:
                         # normalize, …) is lost and the body sees the
                         # caller's wider value verbatim. Always wrap a
                         # narrowing param type in an explicit Cast.
+                        # Skip the wrap if the arg is already a Cast to
+                        # the right narrowing type to avoid double-Cast
+                        # bloat (peephole and ast_optimizer don't fold
+                        # back-to-back same-target casts).
                         if p_type.kind == "basic" and p_type.name in (
                                 "bool", "char", "signed char", "unsigned char",
                                 "short", "unsigned short"):
-                            arg = ast.Cast(
-                                target_type=lt.BasicType(
-                                    name=p_type.name,
-                                    is_signed=(False if p_type.is_signed is False else True)),
-                                expr=arg, pos=ast._Pos(),
-                            )
+                            need_cast = True
+                            if isinstance(arg, ast.Cast):
+                                tt = arg.target_type
+                                if (isinstance(tt, lt.BasicType)
+                                        and tt.name == p_type.name):
+                                    need_cast = False
+                            if need_cast:
+                                arg = ast.Cast(
+                                    target_type=lt.BasicType(
+                                        name=p_type.name,
+                                        is_signed=(False if p_type.is_signed is False else True)),
+                                    expr=arg, pos=ast._Pos(),
+                                )
                         param_map[pname] = arg
                     # The trivial-function body is a single ReturnStmtValue.
                     ret_stmt = func.body.items[0]
-                    return self._substitute_params(ret_stmt.value, param_map)
+                    body = self._substitute_params(ret_stmt.value, param_map)
+                    # Narrow the body's value to the function's return
+                    # type. Without this, an inlined ``signed char foo
+                    # (...){return a * b;}`` leaks the int-width product
+                    # back to the caller, so e.g. ``foo(0xC8, 0xCA) > 0``
+                    # sees 3024 > 0 instead of -48 > 0.
+                    _, fn_type = resolve_type_from_decl(func.decl_specs, func.declarator)
+                    rt = fn_type.return_type if fn_type.kind == "function" else None
+                    if (rt is not None and rt.kind == "basic"
+                            and rt.name in ("bool", "char", "signed char",
+                                            "unsigned char", "short", "unsigned short")):
+                        body = ast.Cast(
+                            target_type=lt.BasicType(
+                                name=rt.name,
+                                is_signed=(False if rt.is_signed is False else True)),
+                            expr=body, pos=ast._Pos(),
+                        )
+                    return body
 
             # Return call with inlined arguments.
             if isinstance(expr, ast.CallNoArgs) and not new_args:
