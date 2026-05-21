@@ -9682,10 +9682,23 @@ class CodeGenerator:
                 return lt.BasicType(name="long")
 
             # Integer promotion: char operands promote to int (C99 6.3.1.1)
-            # All binary arithmetic/bitwise results are at least int-width
+            # All binary arithmetic/bitwise results are at least int-width.
+            # Apply same-width signedness resolution from C 6.3.1.8: if
+            # both operands promote to int-width and at least one is
+            # unsigned, the result is unsigned int. This makes
+            # ``0U ^ (short)x`` come out unsigned (so the subsequent
+            # widening to long-long zero-extends).
+            def _is_unsigned_basic(t):
+                return isinstance(t, lt.BasicType) and t.is_signed is False
+            left_u = _is_unsigned_basic(left_type)
+            right_u = _is_unsigned_basic(right_type)
             result_type = left_type or right_type
             if result_type and isinstance(result_type, lt.BasicType) and result_type.name == 'char':
-                return lt.BasicType(name="int")
+                return lt.BasicType(name="int", is_signed=not (left_u or right_u))
+            if (left_u or right_u) and isinstance(result_type, lt.BasicType):
+                # At least one operand is unsigned — result is unsigned of
+                # the wider type (or int when neither is wider than int).
+                return lt.BasicType(name=result_type.name, is_signed=False)
             if result_type:
                 return result_type
         elif isinstance(expr, ast.Cast):
