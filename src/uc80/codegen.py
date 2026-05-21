@@ -2279,12 +2279,16 @@ class CallGraphAnalyzer:
             return ast.CompoundStmt(items=new_items, pos=stmt.pos)
 
         elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
-            return ast.IfStmt(
-                condition=self._substitute_param_constants(stmt.condition, param_names, constants),
-                then_branch=self._substitute_stmt_constants(stmt.then_branch, param_names, constants),
-                else_branch=self._substitute_stmt_constants(stmt.else_branch, param_names, constants) if getattr(stmt, "else_branch", None) else None,
-                pos=stmt.pos
-            )
+            cond = self._substitute_param_constants(stmt.condition, param_names, constants)
+            then_b = self._substitute_stmt_constants(stmt.then_branch, param_names, constants)
+            else_b = getattr(stmt, "else_branch", None)
+            if else_b is not None:
+                return ast.IfStmtElse(
+                    condition=cond, then_branch=then_b,
+                    else_branch=self._substitute_stmt_constants(else_b, param_names, constants),
+                    pos=stmt.pos,
+                )
+            return ast.IfStmt(condition=cond, then_branch=then_b, pos=stmt.pos)
 
         elif isinstance(stmt, ast.WhileStmt):
             return ast.WhileStmt(
