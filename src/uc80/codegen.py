@@ -3186,8 +3186,30 @@ class CodeGenerator:
                 else:
                     self._emit_initializer(init, var_type)
 
+        # Compound literals materialized during code generation —
+        # MUST be emitted before strings because a struct compound
+        # literal whose member is initialised with a string literal
+        # (``(struct s){"hi", 1}``) only registers ``@STR1`` here,
+        # via ``add_string``, during the compound emit. If strings
+        # were emitted first, ``@STR1`` would be referenced but never
+        # defined and um80 would error out.
+        if hasattr(self.ctx, 'compound_literals') and self.ctx.compound_literals:
+            if not in_dseg:
+                self.ctx.emit("\tdseg")
+                in_dseg = True
+            self.ctx.emit()
+            self.ctx.emit("; Compound literals")
+            for label, init, target_type, size in self.ctx.compound_literals:
+                self.ctx.emit_label(label)
+                if isinstance(init, ast.InitializerList):
+                    self._emit_initializer(init, target_type)
+                else:
+                    self.ctx.emit_instr("ds", str(size))
+            self.ctx.compound_literals = []
+
         # Data segment with string literals (emitted after globals so that
-        # strings created during global initializer emission are included)
+        # strings created during global initializer emission are included,
+        # and after compound literals for the same reason — see above).
         if self.ctx.strings:
             if not in_dseg:
                 self.ctx.emit("\tdseg")
@@ -3206,7 +3228,9 @@ class CodeGenerator:
                     escaped = self._escape_string(value)
                     self.ctx.emit_instr("db", f"'{escaped}',0")
 
-        # Compound literals materialized during code generation
+        # Compound literals — old emit point, kept here so we don't
+        # leak any literals that somehow weren't in the queue at the
+        # first emit (e.g. registered by an unusual late path).
         if hasattr(self.ctx, 'compound_literals') and self.ctx.compound_literals:
             if not in_dseg:
                 self.ctx.emit("\tdseg")
