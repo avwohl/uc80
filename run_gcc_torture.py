@@ -62,13 +62,25 @@ def run_test(c_file: Path, verbose: bool = False, timeout: int = DEFAULT_TIMEOUT
     rel_file = mac_file.with_suffix(".rel")
     com_file = mac_file.with_suffix(".com")
 
+    # Honor ``dg-require-effective-target int32plus`` — tests so tagged
+    # rely on a 32-bit int. Compile them with ``--int=32`` so values
+    # like ``0x12345`` or ``-131070`` survive the test arithmetic.
+    # Other dg requirements (alloca, vector, int128, …) are excluded.
+    cli = [sys.executable, "-m", "uc80.main", str(c_file), "-o", str(mac_file),
+           "--no-whole-program"]
+    try:
+        head = c_file.read_text(errors="replace")[:4096]
+    except OSError:
+        head = ""
+    if "int32plus" in head:
+        cli.append("--int=32")
+
     # Compile (with a hard cap — pr23135 / pr28982b can wedge uc80 for
     # 30+ minutes on some optimizer pass, so treat that as a compile
     # failure rather than letting the runner hang)
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "uc80.main", str(c_file), "-o", str(mac_file), "--no-whole-program"],
-            capture_output=True, text=True, cwd=UC80_DIR, timeout=30
+            cli, capture_output=True, text=True, cwd=UC80_DIR, timeout=30
         )
     except subprocess.TimeoutExpired:
         return "compile", "compile timed out after 30s"
