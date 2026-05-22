@@ -663,6 +663,41 @@ __clz32_zero:
 	RET
 
 ; ============================================================
+; __clrsb32 — count leading sign bits minus 1 (32-bit signed DEHL).
+; clrsb(x) = clz(x ^ (x >> 31)) - 1, with clrsb(0) / clrsb(-1) = 31.
+; ============================================================
+	PUBLIC	__clrsb32
+__clrsb32:
+	; If MSB (bit 31, D bit 7) is set, XOR DEHL with 0xFFFFFFFF.
+	BIT	7,D
+	JR	Z,__clrsb32_pos
+	LD	A,D
+	XOR	0FFH
+	LD	D,A
+	LD	A,E
+	XOR	0FFH
+	LD	E,A
+	LD	A,H
+	XOR	0FFH
+	LD	H,A
+	LD	A,L
+	XOR	0FFH
+	LD	L,A
+__clrsb32_pos:
+	; All bits 0 → all sign bits → 31.
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__clrsb32_all_same
+	CALL	__clz32
+	DEC	HL
+	RET
+__clrsb32_all_same:
+	LD	HL,31
+	RET
+
+; ============================================================
 ; __ctz32 — count trailing zeros of 32-bit DEHL.
 ; ============================================================
 	PUBLIC	__ctz32

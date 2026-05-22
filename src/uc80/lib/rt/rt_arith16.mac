@@ -313,6 +313,35 @@ __clz16_zero:
 	RET
 
 ; ============================================================
+; __clrsb16 — count leading sign bits minus 1 (16-bit signed HL).
+; clrsb(x) = clz(x ^ (x >> 15)) - 1, with clrsb(0) and clrsb(-1) = 15.
+; ============================================================
+	PUBLIC	__clrsb16
+__clrsb16:
+	; If MSB set (negative), XOR with 0xFFFF (flip all bits).
+	; Otherwise leave HL alone.
+	BIT	7,H
+	JR	Z,__clrsb16_pos
+	; Negative: XOR HL with 0xFFFF
+	LD	A,H
+	XOR	0FFH
+	LD	H,A
+	LD	A,L
+	XOR	0FFH
+	LD	L,A
+__clrsb16_pos:
+	; Now HL has leading 0 bits we count, MSB is 0.
+	LD	A,H
+	OR	L
+	JR	Z,__clrsb16_all_same	; all bits matched sign → 15
+	CALL	__clz16
+	DEC	HL
+	RET
+__clrsb16_all_same:
+	LD	HL,15
+	RET
+
+; ============================================================
 ; __ctz16 — count trailing zeros of 16-bit HL.
 ; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
 ; ============================================================

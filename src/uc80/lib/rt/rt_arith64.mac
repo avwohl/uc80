@@ -1122,6 +1122,59 @@ __clz64_done:
 	POP	BC
 	RET
 
+; ============================================================
+; __clrsb64 — count leading sign bits minus 1 (64-bit signed __acc64).
+; clrsb(x) = clz(x ^ (x >> 63)) - 1, with clrsb(0) / clrsb(-1) = 63.
+; ============================================================
+	PUBLIC	__clrsb64
+__clrsb64:
+	; If MSB of byte 7 set, XOR every byte of __acc64 with 0xFF.
+	LD	A,(__acc64+7)
+	AND	80H
+	JR	Z,__clrsb64_pos
+	; Negative: flip all bits
+	PUSH	BC
+	LD	HL,__acc64
+	LD	B,8
+__clrsb64_flip:
+	LD	A,(HL)
+	XOR	0FFH
+	LD	(HL),A
+	INC	HL
+	DJNZ	__clrsb64_flip
+	POP	BC
+__clrsb64_pos:
+	; Check for zero (all bits matched sign)
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	Z,__clrsb64_all_same
+	CALL	__clz64
+	DEC	HL
+	RET
+__clrsb64_all_same:
+	LD	HL,63
+	RET
+
 	PUBLIC	__ctz64
 __ctz64:
 	LD	A,(__acc64)

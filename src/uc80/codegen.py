@@ -8590,9 +8590,9 @@ class CodeGenerator:
                 "__builtin_popcountll":  ("__popcount64",  64),
                 "__builtin_parityll":    ("__popcount64",  64),
                 "__builtin_ffsll":       ("__ffs64",       64),
-                "__builtin_clrsb":       ("__clz16",       16),  # close-enough fallback
-                "__builtin_clrsbl":      ("__clz32",       32),
-                "__builtin_clrsbll":     ("__clz64",       64),
+                "__builtin_clrsb":       ("__clrsb16",     16),
+                "__builtin_clrsbl":      ("__clrsb32",     32),
+                "__builtin_clrsbll":     ("__clrsb64",     64),
             }
             if expr.func.name.text in _BITOP_RUNTIME:
                 helper, width = _BITOP_RUNTIME[expr.func.name.text]
