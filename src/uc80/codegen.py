@@ -10853,8 +10853,13 @@ class CodeGenerator:
             tt = expr.target_type
             if (isinstance(tt, lt.BasicType) and tt.name in self.ctx.typedefs):
                 tt = _to_legacy(self.ctx.typedefs[tt.name])
-            if (isinstance(expr.init, ast.InitializerList)
-                    and self._compound_has_nonconst(expr.init)):
+            # When the address of the compound literal is taken (this is
+            # the ``_gen_address`` path), C 6.5.2.5 p6 says the object has
+            # automatic storage duration — each evaluation gets a fresh
+            # initialised slot. Even fully-constant inits must be re-emitted
+            # on every entry because a previous invocation may have mutated
+            # the slot through the taken address (torture 20000722-1).
+            if isinstance(expr.init, ast.InitializerList):
                 if isinstance(tt, lt.StructType):
                     self._gen_compound_init_to_label(label, tt, expr.init.values)
                 elif isinstance(tt, lt.ArrayType):
