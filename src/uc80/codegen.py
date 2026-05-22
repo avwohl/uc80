@@ -3782,6 +3782,23 @@ class CodeGenerator:
             elif isinstance(expr, ast.Compound):
                 if expr.init and not scan_expr(expr.init):
                     return False
+            elif isinstance(expr, ast.SequenceExpr):
+                # Comma operator — scan both sides.
+                if not scan_expr(expr.left) or not scan_expr(expr.right):
+                    return False
+            elif isinstance(expr, ast.StmtExpr):
+                # ``({ ... })`` — scan body items.
+                if not scan_stmt(expr.body):
+                    return False
+            elif isinstance(expr, ast.Index):
+                if not scan_expr(expr.array) or not scan_expr(expr.index):
+                    return False
+            elif isinstance(expr, (ast.Member, ast.ArrowMember)):
+                if not scan_expr(expr.obj):
+                    return False
+            elif isinstance(expr, ast.PostfixOp):
+                if not scan_expr(expr.operand):
+                    return False
             return True
 
         def scan_stmt(stmt) -> bool:
@@ -8151,6 +8168,13 @@ class CodeGenerator:
                     # context the array decays to a pointer to its
                     # first element — same address as p. No load.
                     return
+            # Array-typed operands: ``(*p) + i0`` for ``p`` ptr-to-multi-
+            # dim-array yields an ArrayType (not yet decayed), and the
+            # outer ``*`` then takes us into the next dimension. In an
+            # rvalue context the result is again an array that decays
+            # to a pointer — no load, just keep the address in HL.
+            if isinstance(operand_type, lt.ArrayType) and isinstance(operand_type.base_type, lt.ArrayType):
+                return
 
             # Determine size of dereferenced type
             deref_size = self._get_deref_size(expr.operand)
