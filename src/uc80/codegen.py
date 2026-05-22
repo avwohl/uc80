@@ -6470,9 +6470,14 @@ class CodeGenerator:
 
         elif isinstance(expr, ast.CharLiteral):
             # CharLiteral.value is a Token containing the source text
-            # like ``'A'`` / ``'\n'`` / ``'\x40'`` / ``'\1'``.
+            # like ``'A'`` / ``'\n'`` / ``'\x40'`` / ``L'Ä'``. Wide-char
+            # prefixes (L/u/U) hold the unmodified codepoint; only
+            # narrow chars sign-extend per C 6.4.4.4.
             val = self._decode_char_literal(expr)
-            if val >= 0x80:
+            text = expr.value.text if hasattr(expr.value, "text") else ""
+            is_wide = isinstance(text, str) and (
+                text.startswith(("L'", "u'", "U'")) or text.startswith("u8'"))
+            if not is_wide and val >= 0x80:
                 val = (val - 0x100) & 0xFFFF
             self.ctx.emit_instr("ld", f"HL,{val}")
 
@@ -12111,11 +12116,17 @@ class CodeGenerator:
             self._emit_float_value(float_value(init))
         elif isinstance(init, ast.CharLiteral):
             val = self._decode_char_literal(init)
+            text = init.value.text if hasattr(init.value, "text") else ""
+            is_wide = isinstance(text, str) and (
+                text.startswith(("L'", "u'", "U'")) or text.startswith("u8'"))
             if elem_size == 1:
                 self.ctx.emit_instr("db", str(val & 0xFF))
             else:
-                # Char constant has type int - sign extend per C 6.4.4.4
-                if val >= 0x80:
+                # Narrow char constant has type int — sign extend per
+                # C 6.4.4.4. Wide character constants (L'…' / u'…' /
+                # U'…') hold the unmodified wchar_t / char16_t / char32_t
+                # value; don't sign-extend.
+                if not is_wide and val >= 0x80:
                     val = val - 0x100
                 self._emit_int_value(val, elem_size)
         elif isinstance(init, ast.StringLiteral):
