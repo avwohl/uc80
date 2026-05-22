@@ -3727,10 +3727,16 @@ class CodeGenerator:
         Returns a feature set (possibly empty) if all format strings are literals,
         or None if a non-literal format string is found (must use 'all').
         """
-        # Printf-family functions and the index of their format string argument
+        # Printf-family functions and the index of their format string argument.
+        # GCC __builtin_* variants are routed to the libc function later in
+        # gen_call, but auto-detection happens earlier — list both spellings.
         printf_funcs = {
             'printf': 0, 'fprintf': 1, 'sprintf': 1, 'snprintf': 2,
             'vprintf': 0, 'vfprintf': 1, 'vsprintf': 1,
+            '__builtin_printf': 0, '__builtin_fprintf': 1,
+            '__builtin_sprintf': 1, '__builtin_snprintf': 2,
+            '__builtin_vprintf': 0, '__builtin_vfprintf': 1,
+            '__builtin_vsprintf': 1,
         }
         features: set[str] = set()
         uses_printf = False
