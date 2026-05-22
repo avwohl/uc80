@@ -12191,22 +12191,28 @@ class CodeGenerator:
                 # Complex expression - reserve space (runtime init would be needed)
                 self.ctx.emit_instr("ds", str(elem_size))
         elif isinstance(init, ast.Identifier):
-            # Check for enum constant first
-            if init.name in self.ctx.enum_constants:
-                val = self.ctx.enum_constants[init.name]
+            # Auto-AST: ``init.name`` is a uplox Token; the enum-constant
+            # registry is keyed by the source text. Look it up via
+            # ``.text`` so a static init like ``static T foo = { x };``
+            # where ``x`` is an enum constant gets folded to its value
+            # instead of emitting ``dw <Token repr>`` (the result
+            # otherwise survives to um80 which can't parse it).
+            name = init.name.text if hasattr(init.name, "text") else init.name
+            if name in self.ctx.enum_constants:
+                val = self.ctx.enum_constants[name]
                 if self._is_float_type(elem_type):
                     self._emit_float_value(float(val))
                 else:
                     self._emit_int_value(val, elem_size)
             else:
                 # Address of a symbol - emit as label reference
-                sym = self.ctx.lookup(init.name)
+                sym = self.ctx.lookup(name)
                 if sym:
                     label = sym.label()
-                elif init.name in self.ctx.static_local_labels:
-                    label = self.ctx.static_local_labels[init.name]
+                elif name in self.ctx.static_local_labels:
+                    label = self.ctx.static_local_labels[name]
                 else:
-                    label = f"_{init.name}"
+                    label = f"_{name}"
                 self.ctx.emit_instr("dw", label)
         elif isinstance(init, ast.UnaryOp) and init.op == "&":
             # Address-of expression
