@@ -8574,6 +8574,19 @@ class CodeGenerator:
                     elem_size = self._type_size(deref_type)
                     elem_type = deref_type
 
+            # For pointer-typed lvalues (``(*p)++`` where ``*p`` is itself a
+            # pointer), C 6.5.6 says ``++`` adds 1 in the pointee's units —
+            # i.e. ``sizeof(**p)`` bytes. Without this, advancing an
+            # ``int*`` via the dereferenced lvalue only adds 1 byte
+            # instead of 2.
+            step = 1
+            elem_type_legacy = _to_legacy(elem_type) if elem_type is not None else None
+            if isinstance(elem_type_legacy, lt.PointerType):
+                pointee = elem_type_legacy.base_type
+                step = self._type_size(pointee) if pointee is not None else 1
+                if step == 0:
+                    step = 1
+
             # Calculate address and save it
             self._gen_address(expr.operand)
             self.ctx.emit_instr("push", "HL")  # Save address
@@ -8592,11 +8605,20 @@ class CodeGenerator:
                 # Postfix: save original value
                 self.ctx.emit_instr("push", "HL")
 
-            # Increment or decrement
-            if is_inc:
-                self.ctx.emit_instr("inc", "HL")
+            # Increment or decrement by ``step`` (1 for scalars, pointee
+            # size for pointer lvalues).
+            if step <= 4:
+                for _ in range(step):
+                    if is_inc:
+                        self.ctx.emit_instr("inc", "HL")
+                    else:
+                        self.ctx.emit_instr("dec", "HL")
             else:
-                self.ctx.emit_instr("dec", "HL")
+                if is_inc:
+                    self.ctx.emit_instr("ld", f"DE,{step}")
+                else:
+                    self.ctx.emit_instr("ld", f"DE,{(-step) & 0xFFFF}")
+                self.ctx.emit_instr("add", "HL,DE")
 
             # Store back: address is on stack (under original value if postfix)
             if not expr.is_prefix:
