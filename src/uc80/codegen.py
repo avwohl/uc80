@@ -4519,8 +4519,15 @@ class CodeGenerator:
         self.ctx.static_locals[label] = (decl.var_type, decl.init, resolved_addr)
 
     def _gen_local_string_array_init(self, sym: 'Symbol', array_type: lt.ArrayType,
-                                      string_lit: ast.StringLiteral) -> None:
-        """Initialize a local char/wchar_t array from a string literal."""
+                                      string_lit: ast.StringLiteral,
+                                      offset: int = 0) -> None:
+        """Initialize a local char/wchar_t array from a string literal.
+
+        ``offset`` is the byte offset within ``sym`` where the array
+        starts — needed when this init lives inside a larger aggregate
+        (e.g. ``char a[2][3] = {"12"}`` initialises ``a[0]`` at offset 0
+        and ``a[1]`` at offset 3).
+        """
         # Auto-AST: string_lit.value is a uplox Token whose .text is the
         # source token (`"hello"`, `L"hi"`, `"\x40"`, …). Decode once to
         # the raw bytes / wchars before computing label + size.
@@ -4533,27 +4540,64 @@ class CodeGenerator:
             is_wide = getattr(string_lit, 'is_wide', False)
         elem_size = self._type_size(array_type.base_type)
 
+        # Declared array length in elements (chars for narrow strings,
+        # wchar_t for wide). C 6.7.9 ¶14: if the array is too small to
+        # hold the trailing nul, truncate to the array's size.
+        declared_n = None
+        if array_type.size is not None:
+            if isinstance(array_type.size, ast.IntLiteral):
+                declared_n = int_value(array_type.size)
+            else:
+                sz = self._eval_const_expr(array_type.size)
+                if sz is not None:
+                    declared_n = sz
+
         if is_wide:
-            # Wide string: store the string data in the data segment, then LDIR
             label = self.ctx.add_string(value, is_wide=True)
-            total_size = (len(value) + 1) * elem_size  # +1 for null terminator
+            copy_n = len(value) + 1
         else:
-            # Narrow string: same approach - store in data segment, LDIR
             label = self.ctx.add_string(value)
-            total_size = len(value) + 1  # +1 for null terminator
+            copy_n = len(value) + 1
+
+        # Clamp copy length to declared array size; remaining bytes need
+        # zero-fill so the array's tail is well-defined per the same
+        # paragraph ("the remainder ... shall be initialised implicitly").
+        if declared_n is not None:
+            if copy_n > declared_n:
+                copy_n = declared_n
+            tail_n = declared_n - copy_n
+        else:
+            tail_n = 0
+
+        total_size = copy_n * elem_size
 
         # Source: string literal in data segment
         self.ctx.emit_instr("ld", f"HL,{label}")
-        # Destination: local variable address
+        # Destination: local variable address (plus offset)
         if sym.uses_shared_storage:
-            self.ctx.emit_instr("ld", f"DE,??AUTO+{sym.shared_offset}")
+            self.ctx.emit_instr("ld", f"DE,??AUTO+{sym.shared_offset + offset}")
         else:
             self.ctx.emit_instr("push", "HL")
-            self._gen_lea_ix_offset(sym.offset)
+            self._gen_lea_ix_offset(sym.offset + offset)
             self.ctx.emit_instr("ex", "DE,HL")
             self.ctx.emit_instr("pop", "HL")
         self.ctx.emit_instr("ld", f"BC,{total_size}")
         self.ctx.emit_instr("ldir")
+
+        # Zero-fill the tail elements (when string + nul shorter than
+        # the declared array length).
+        if tail_n > 0:
+            # DE points just past the LDIR'd bytes; zero ``tail_n``
+            # elements (== tail_n * elem_size bytes).
+            tail_bytes = tail_n * elem_size
+            self.ctx.emit_instr("ld", "L,E")
+            self.ctx.emit_instr("ld", "H,D")
+            self.ctx.emit_instr("inc", "DE")
+            self.ctx.emit_instr("xor", "A")
+            self.ctx.emit_instr("ld", "(HL),A")
+            if tail_bytes > 1:
+                self.ctx.emit_instr("ld", f"BC,{tail_bytes - 1}")
+                self.ctx.emit_instr("ldir")
 
     def _gen_local_array_init(self, decl: ast.VarDecl) -> None:
         """Generate code to initialize a local array from an initializer list."""
@@ -5501,8 +5545,24 @@ class CodeGenerator:
                 nested_consumed = self._gen_struct_init_values(sym, elem_type, values[idx:], offset)
                 consumed += nested_consumed
             elif isinstance(elem_type, lt.ArrayType) and not isinstance(val, ast.InitializerList):
-                nested_consumed = self._gen_flat_array_init(sym, elem_type, values, idx, offset)
-                consumed += nested_consumed
+                # ``char a[N][M] = { "string" }`` — initialise the inner
+                # char array from the string literal directly rather
+                # than treating the string as a scalar value and trying
+                # to flatten it across char cells. Auto-AST may wrap a
+                # single string literal in a 1-element list, so peek
+                # through that wrapper too.
+                str_val = val
+                if (isinstance(str_val, list) and len(str_val) == 1
+                        and isinstance(str_val[0], ast.StringLiteral)):
+                    str_val = str_val[0]
+                if (isinstance(str_val, ast.StringLiteral)
+                        and isinstance(elem_type.base_type, lt.BasicType)
+                        and elem_type.base_type.name in ("char", "signed char", "unsigned char")):
+                    self._gen_local_string_array_init(sym, elem_type, str_val, offset)
+                    consumed += 1
+                else:
+                    nested_consumed = self._gen_flat_array_init(sym, elem_type, values, idx, offset)
+                    consumed += nested_consumed
             else:
                 # Scalar element or nested InitializerList
                 consumed += 1
