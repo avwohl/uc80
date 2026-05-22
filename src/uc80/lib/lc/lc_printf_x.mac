@@ -6,6 +6,8 @@ CONOUT	EQU	2
 
 	EXTRN	_printf_loop
 	EXTRN	_printf_upper
+	EXTRN	_printf_alt
+	EXTRN	_printf_putc
 	EXTRN	_printf_prt_hex
 
 	CSEG
@@ -37,6 +39,28 @@ __printf_handle_x:
 	INC	HL
 	LD	D,(HL)
 	EX	DE,HL
+	; If # flag set and value != 0, emit "0x" / "0X" prefix per
+	; C 7.21.6.1 ¶6 (alternative form for x/X conversion).
+	LD	A,(_printf_alt)
+	OR	A
+	JR	Z,__printf_x_noalt
+	LD	A,H
+	OR	L
+	JR	Z,__printf_x_noalt	; zero value → no prefix
+	PUSH	HL
+	PUSH	BC
+	LD	E,'0'
+	CALL	_printf_putc
+	LD	A,(_printf_upper)
+	OR	A
+	LD	E,'x'
+	JR	Z,__printf_x_lc
+	LD	E,'X'
+__printf_x_lc:
+	CALL	_printf_putc
+	POP	BC
+	POP	HL
+__printf_x_noalt:
 	CALL	_printf_prt_hex
 	POP	BC
 	INC	C

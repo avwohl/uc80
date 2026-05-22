@@ -34,6 +34,7 @@ CONOUT	EQU	2
 	PUBLIC	_printf_upper
 	PUBLIC	_printf_prec
 	PUBLIC	_printf_hasprec
+	PUBLIC	_printf_alt
 	PUBLIC	_printf_neg
 	PUBLIC	_printf_hexbuf
 	PUBLIC	_printf_decbuf
@@ -116,6 +117,7 @@ _printf_format:
 	LD	(_printf_upper),A
 	LD	(_printf_prec),A
 	LD	(_printf_hasprec),A
+	LD	(_printf_alt),A
 	LD	A,(HL)
 	OR	A
 	JP	Z,_printf_done
@@ -162,7 +164,13 @@ _printf_notdot:
 	CP	' '
 	JR	Z,_printf_skip
 	CP	'#'
-	JR	Z,_printf_skip
+	JR	NZ,_printf_not_alt
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_alt),A
+	POP	AF
+	JR	_printf_skip
+_printf_not_alt:
 	; Check for digits (1-9)
 	CP	'1'
 	JR	C,_printf_nodig
@@ -780,6 +788,7 @@ _printf_zero:	DB	0
 _printf_upper:	DB	0
 _printf_prec:	DB	0
 _printf_hasprec:	DB	0
+_printf_alt:	DB	0	; '#' flag — alt form for o/x/X
 _printf_ll_w0:	DS	2
 _printf_ll_w1:	DS	2
 _printf_ll_w2:	DS	2

@@ -9,6 +9,7 @@ CONOUT	EQU	2
 	EXTRN	_printf_loop
 	EXTRN	_printf_width
 	EXTRN	_printf_zero
+	EXTRN	_printf_alt
 	EXTRN	_printf_decbuf
 	EXTRN	_printf_dstart
 	EXTRN	_printf_dcnt
@@ -81,6 +82,21 @@ _pho_plp:
 	DJNZ	_pho_plp
 	POP	BC
 _pho_nopad:
+	; Alternative form (# flag): C 7.21.6.1¶6 says force the first
+	; digit to be '0'. Value 0 already gives "0" — only emit the
+	; prefix when the first digit isn't already '0'.
+	LD	A,(_printf_alt)
+	OR	A
+	JR	Z,_pho_no_alt
+	LD	HL,(_printf_dstart)
+	LD	A,(HL)
+	CP	'0'
+	JR	Z,_pho_no_alt
+	PUSH	BC
+	LD	E,'0'
+	CALL	_printf_putc
+	POP	BC
+_pho_no_alt:
 	LD	HL,(_printf_dstart)
 	LD	A,(_printf_dcnt)
 	LD	B,A

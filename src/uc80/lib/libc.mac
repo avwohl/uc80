@@ -10530,6 +10530,7 @@ __printf_handle_c32:
 	PUBLIC	_printf_upper
 	PUBLIC	_printf_prec
 	PUBLIC	_printf_hasprec
+	PUBLIC	_printf_alt
 	PUBLIC	_printf_neg
 	PUBLIC	_printf_hexbuf
 	PUBLIC	_printf_decbuf
@@ -10612,6 +10613,7 @@ _printf_format:
 	LD	(_printf_upper),A
 	LD	(_printf_prec),A
 	LD	(_printf_hasprec),A
+	LD	(_printf_alt),A
 	LD	A,(HL)
 	OR	A
 	JP	Z,_printf_done
@@ -10658,7 +10660,13 @@ _printf_notdot:
 	CP	' '
 	JR	Z,_printf_skip
 	CP	'#'
-	JR	Z,_printf_skip
+	JR	NZ,_printf_not_alt
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_alt),A
+	POP	AF
+	JR	_printf_skip
+_printf_not_alt:
 	; Check for digits (1-9)
 	CP	'1'
 	JR	C,_printf_nodig
@@ -11276,6 +11284,7 @@ _printf_zero:	DB	0
 _printf_upper:	DB	0
 _printf_prec:	DB	0
 _printf_hasprec:	DB	0
+_printf_alt:	DB	0	; '#' flag — alt form for o/x/X
 _printf_ll_w0:	DS	2
 _printf_ll_w1:	DS	2
 _printf_ll_w2:	DS	2
@@ -12221,6 +12230,21 @@ _pho_plp:
 	DJNZ	_pho_plp
 	POP	BC
 _pho_nopad:
+	; Alternative form (# flag): C 7.21.6.1¶6 says force the first
+	; digit to be '0'. Value 0 already gives "0" — only emit the
+	; prefix when the first digit isn't already '0'.
+	LD	A,(_printf_alt)
+	OR	A
+	JR	Z,_pho_no_alt
+	LD	HL,(_printf_dstart)
+	LD	A,(HL)
+	CP	'0'
+	JR	Z,_pho_no_alt
+	PUSH	BC
+	LD	E,'0'
+	CALL	_printf_putc
+	POP	BC
+_pho_no_alt:
 	LD	HL,(_printf_dstart)
 	LD	A,(_printf_dcnt)
 	LD	B,A
@@ -12433,6 +12457,28 @@ __printf_handle_x:
 	INC	HL
 	LD	D,(HL)
 	EX	DE,HL
+	; If # flag set and value != 0, emit "0x" / "0X" prefix per
+	; C 7.21.6.1 ¶6 (alternative form for x/X conversion).
+	LD	A,(_printf_alt)
+	OR	A
+	JR	Z,__printf_x_noalt
+	LD	A,H
+	OR	L
+	JR	Z,__printf_x_noalt	; zero value → no prefix
+	PUSH	HL
+	PUSH	BC
+	LD	E,'0'
+	CALL	_printf_putc
+	LD	A,(_printf_upper)
+	OR	A
+	LD	E,'x'
+	JR	Z,__printf_x_lc
+	LD	E,'X'
+__printf_x_lc:
+	CALL	_printf_putc
+	POP	BC
+	POP	HL
+__printf_x_noalt:
 	CALL	_printf_prt_hex
 	POP	BC
 	INC	C
