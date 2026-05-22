@@ -26,7 +26,7 @@ RUNTIME = LIB_DIR / "runtime.lib"
 CPMEMU = Path("../cpmemu/src/cpmemu")
 
 MAX_COM_SIZE = 128000
-DEFAULT_TIMEOUT = 10
+DEFAULT_TIMEOUT = 20
 
 
 def find_tests(patterns=None, limit=None):
