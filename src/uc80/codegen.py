@@ -6897,17 +6897,24 @@ class CodeGenerator:
             is_long_long = self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right)
             is_long = self._is_long_expr(expr.left) or self._is_long_expr(expr.right)
 
-        # With --int=32, ``int`` is 4 bytes wide so any operand that
-        # promotes to int (char / short / unsigned short / bitfield)
-        # makes the operation 32-bit. The per-operand ``_is_long_expr``
-        # checks above only catch operands whose declared type is
-        # already long-wide; without this promotion check, ``short *
-        # unsigned short`` would still dispatch to ``_gen_binary_op_16``
-        # and truncate to 16-bit (torture usmul: -2 * 0xFFFF wraps to 2).
-        if (not is_long_long and not is_long
-                and self.type_config.int_size == 4
-                and op not in ("&&", "||")):
-            is_long = True
+        # With --int=32, multiplication of two int-promotable operands
+        # is performed in int (= 32-bit) per C 6.3.1.1, so the result
+        # may not fit in 16-bit. Force the 32-bit multiply runtime in
+        # that case — without this, ``short(-2) * unsigned short(0xFFFF)``
+        # truncates to 2 instead of -131070 (torture usmul). For other
+        # operators (+/-/&/|/^/etc.) 16-bit is fine when both operands
+        # fit, and avoids massively slower 32-bit code in tight loops.
+        if (op == "*" and not is_long_long and not is_long
+                and self.type_config.int_size == 4):
+            left_t = self._get_expr_type(expr.left)
+            right_t = self._get_expr_type(expr.right)
+            def _promotes_to_int(t):
+                return (isinstance(t, lt.BasicType)
+                        and t.name in ("char", "signed char", "unsigned char",
+                                       "short", "unsigned short",
+                                       "short int", "unsigned short int"))
+            if _promotes_to_int(left_t) and _promotes_to_int(right_t):
+                is_long = True
 
         if is_long_long:
             self._gen_binary_op_64(expr, op)
@@ -11121,39 +11128,36 @@ class CodeGenerator:
                 return False
             # Address-of, dereference - fall through to type checking
         if isinstance(expr, ast.BinaryOp):
-            # Comparison operators: the result is ``int`` (C 6.5.8 p6 /
-            # 6.5.9 p3). With --int=32 that's a 32-bit value.
+            # Comparison operators always return int (0 or 1), not long
             if expr.op in ("==", "!=", "<", ">", "<=", ">="):
-                return tc.int_size == 4
+                return False
             # C 6.5.13/6.5.14: logical AND/OR always yield ``int``.
             if expr.op in ("&&", "||"):
-                return tc.int_size == 4
+                return False
             # For shift operations, result type is determined only by LEFT operand (C99 6.5.7)
             if expr.op in ("<<", ">>"):
-                if self._is_long_expr(expr.left):
-                    return True
-                # With --int=32 the promoted left operand is at least
-                # ``int`` = 32-bit, so the shift result is too.
-                return tc.int_size == 4
-            # Binary operation is long if either operand is long.
-            # (Excluding assignment operators which return target type.)
-            # With --int=32, the C 6.3.1.1 integer promotion lifts any
-            # smaller integer operand to int = 32-bit, so the arithmetic
-            # is performed in 32-bit. Without recognising that here,
-            # ``short * unsigned short`` would dispatch to the 16-bit
-            # path and truncate.
+                return self._is_long_expr(expr.left)
+            # Binary operation is long if either operand is long
+            # (excluding assignment operators which return target type)
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
                 if self._is_long_expr(expr.left) or self._is_long_expr(expr.right):
                     return True
-                if tc.int_size == 4:
-                    # Both operands are integer-promoted to int — result is int (32-bit).
-                    # (Float would have been caught upstream by the float-vs-int dispatch.)
+                # With --int=32 and short-typed operands, ``short * unsigned short``
+                # promotes both to int (32-bit) per C 6.3.1.1; the multiply must
+                # use the 32-bit runtime or it truncates (torture usmul). Only
+                # do this for multiplication — for ``+`` / ``-`` / ``&`` / etc.,
+                # 16-bit is safe when both operands fit in 16-bit and gives much
+                # better code (avoids pulling in 4096-iter 32-bit loops in
+                # tests like pr51581-1).
+                if expr.op == "*" and tc.int_size == 4:
                     left_t = self._get_expr_type(expr.left)
                     right_t = self._get_expr_type(expr.right)
-                    if (isinstance(left_t, lt.BasicType)
-                            and isinstance(right_t, lt.BasicType)
-                            and left_t.name not in ("float", "double", "long double")
-                            and right_t.name not in ("float", "double", "long double")):
+                    def _is_int_promote(t):
+                        return (isinstance(t, lt.BasicType)
+                                and t.name in ("char", "signed char", "unsigned char",
+                                               "short", "unsigned short",
+                                               "short int", "unsigned short int"))
+                    if _is_int_promote(left_t) and _is_int_promote(right_t):
                         return True
                 return False
         expr_type = self._get_expr_type(expr)
