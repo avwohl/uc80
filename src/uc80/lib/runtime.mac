@@ -2995,6 +2995,18 @@ __fadd_sub_m1_m2:
 __fadd_normalize:
 	; Normalize result in __fman1, __fexp1, __fsgn1
 	CALL	__fnorm
+	; Overflow check: __fnorm may have bumped __fexp1 (right-shift
+	; renormalisation when the sum carried into bit 24). If the
+	; biased exponent now hits 255 the result is inf; otherwise
+	; __fpack would encode it as a NaN-shaped value (exp=255 with
+	; non-zero mantissa).
+	LD	HL,(__fexp1)
+	LD	A,H
+	OR	A
+	JR	NZ,__fadd_inf
+	LD	A,L
+	CP	255
+	JR	NC,__fadd_inf
 	; Pack result
 	LD	HL,(__fman1)
 	LD	DE,(__fman1+2)
@@ -3006,6 +3018,18 @@ __fadd_done:
 	POP	IX
 	POP	BC
 	RET
+
+__fadd_inf:
+	LD	A,(__fsgn1)
+	OR	A
+	JR	Z,__fadd_inf_pos
+	LD	DE,0FF80H
+	LD	HL,0
+	JR	__fadd_done
+__fadd_inf_pos:
+	LD	DE,07F80H
+	LD	HL,0
+	JR	__fadd_done
 
 ; ============================================================
 ; Float Subtraction: DEHL = DEHL - (__tmp32)
