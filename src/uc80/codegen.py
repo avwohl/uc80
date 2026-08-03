@@ -10695,6 +10695,13 @@ class CodeGenerator:
                 return lt.BasicType(name=result_type.name, is_signed=False)
             if result_type:
                 return result_type
+        elif isinstance(expr, ast.SequenceExpr):
+            # C23 6.5.18: the comma operator's result has the type and
+            # value of its RIGHT operand (after lvalue conversion).
+            # SequenceExpr is NOT a subclass of BinaryOp, so without this
+            # branch a comma expression falls through to ``return None``
+            # and is treated as a 16-bit signed int.
+            return self._get_expr_type(expr.right)
         elif isinstance(expr, ast.Cast):
             # target_type can be an auto-AST ``TypeName`` /
             # ``TypeNameWithDeclarator`` (typedef-spelt casts arrive
@@ -11136,6 +11143,9 @@ class CodeGenerator:
         """Check if an expression has floating-point type."""
         if isinstance(expr, ast.FloatLiteral):
             return True
+        if isinstance(expr, ast.SequenceExpr):
+            # Comma operator: result is the right operand (C23 6.5.18).
+            return self._is_float_expr(expr.right)
         if isinstance(expr, ast.UnaryOp):
             if expr.op in ("-", "+"):
                 return self._is_float_expr(expr.operand)
@@ -11157,6 +11167,9 @@ class CodeGenerator:
 
     def _is_complex_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has complex type."""
+        if isinstance(expr, ast.SequenceExpr):
+            # Comma operator: result is the right operand (C23 6.5.18).
+            return self._is_complex_expr(expr.right)
         if isinstance(expr, ast.UnaryOp):
             if expr.op in ("-", "+"):
                 return self._is_complex_expr(expr.operand)
@@ -11174,6 +11187,9 @@ class CodeGenerator:
 
     def _is_long_long_expr(self, expr) -> bool:
         """Check if an expression has 64-bit type (long long)."""
+        if isinstance(expr, ast.SequenceExpr):
+            # Comma operator: result is the right operand (C23 6.5.18).
+            return self._is_long_long_expr(expr.right)
         tc = self.type_config
         if isinstance(expr, ast.IntLiteral):
             is_long, is_long_long, is_unsigned, is_hex = int_flags(expr)
@@ -11232,6 +11248,9 @@ class CodeGenerator:
         """Check if an expression has 32-bit type (long but not long long)."""
         if self._is_long_long_expr(expr):
             return False
+        if isinstance(expr, ast.SequenceExpr):
+            # Comma operator: result is the right operand (C23 6.5.18).
+            return self._is_long_expr(expr.right)
         tc = self.type_config
         if isinstance(expr, ast.IntLiteral):
             is_long, is_long_long, is_unsigned, is_hex = int_flags(expr)

@@ -508,6 +508,117 @@ class TestLiteralTokenDecoding:
         assert "call\t_h" in code
 
 
+def _find_sequence_expr(node):
+    """Return the first ast.SequenceExpr reachable from ``node``.
+
+    Breadth-first with an identity-keyed seen set: auto-AST nodes carry
+    back-references, so a naive recursive walk loops forever.
+    """
+    seen = set()
+    queue = [node]
+    while queue:
+        item = queue.pop(0)
+        if id(item) in seen:
+            continue
+        seen.add(id(item))
+        if isinstance(item, ast_module.SequenceExpr):
+            return item
+        if isinstance(item, (list, tuple)):
+            queue.extend(item)
+        elif hasattr(item, "__dict__"):
+            queue.extend(vars(item).values())
+    return None
+
+
+class TestCommaOperator:
+    """The comma operator's result type is its RIGHT operand (C23 6.5.18).
+
+    uc_core spells the comma operator ``ast.SequenceExpr``, which is NOT a
+    subclass of ``ast.BinaryOp``, so every type-inference helper used to
+    fall through and report "16-bit signed int".  A wide comma result was
+    then re-converted (``__sext32``/``__itof`` on top of a finished float)
+    or truncated to its low word.
+    """
+
+    def test_comma_double_result_converted_once(self):
+        """double d = (g(), (double)f()); converts exactly once."""
+        code = gen("void g(void); unsigned int f(void);"
+                   "int main(void){ double d=(g(),(double)f()); return (int)d; }")
+        assert code.count("call\t__uitof") == 1
+        assert "call\t__itof" not in code    # the bogus second conversion
+        assert "call\t__sext32" not in code  # ... and its sign extension
+
+    def test_comma_double_return_value(self):
+        """return (g(), (double)f()); does not re-convert the float.
+
+        whole_program=False keeps the function out of the inliner so the
+        return path itself is what is under test.
+        """
+        code = generate(parse("void g(void); unsigned int f(void);"
+                              "double fre(void){ return (g(),(double)f()); }"),
+                        whole_program=False)
+        assert code.count("call\t__uitof") == 1
+        assert "call\t__itof" not in code
+        assert "call\t__sext32" not in code
+
+    def test_comma_double_variadic_arg_pushes_all_four_bytes(self):
+        """A 4-byte double argument pushes DE:HL, not HL alone."""
+        code = gen('int printf(const char*,...); void g(void); unsigned int f(void);'
+                   'int main(void){ printf("%f\\n",(g(),(double)f())); return 0; }')
+        body = code.split("; Printf format")[0]
+        assert "call\t__uitof" in body
+        assert "push\tDE\n\tpush\tHL" in body
+
+    def test_comma_long_result_not_re_extended(self):
+        """long v = (g(), f()); with f() returning long needs no __sext32."""
+        code = gen("void g(void); long f(void); long v;"
+                   "int main(void){ v=(g(),f()); return 0; }")
+        assert "call\t__sext32" not in code
+
+    def test_comma_long_long_result_not_re_extended(self):
+        """long long is 64-bit; the comma must not re-extend from 16 bits."""
+        code = gen("void g(void); long long f(void); long long v;"
+                   "int main(void){ v=(g(),f()); return 0; }")
+        assert "call\t__sext64_hl" not in code
+
+    def test_comma_long_long_variadic_arg_pushes_all_eight_bytes(self):
+        """A long long argument goes through the 64-bit push helper."""
+        code = gen('int printf(const char*,...); void g(void); long long f(void);'
+                   'int main(void){ printf("%lld\\n",(g(),f())); return 0; }')
+        assert "call\t__push64_acc" in code
+
+    def test_sizeof_comma_is_size_of_right_operand(self):
+        """sizeof((g(), 1.0)) is sizeof(double) == 4, not sizeof(int)."""
+        code = gen("void g(void); int main(void){ return (int)sizeof((g(),1.0)); }")
+        assert "ld\tHL,4" in code
+
+    def test_get_expr_type_of_comma_is_right_operand(self):
+        """_get_expr_type delegates to the right operand instead of None."""
+        unit = parse("void g(void); double f(void);"
+                     "int main(void){ double d=(g(),f()); return (int)d; }")
+        seq = _find_sequence_expr(unit)
+        assert seq is not None
+        cg = CodeGenerator("test")
+        cg.generate(unit)
+        assert cg._get_expr_type(seq) is not None
+        assert cg._is_float_expr(seq)
+
+    def test_type_predicates_delegate_to_right_operand(self):
+        """_is_long_expr / _is_long_long_expr see through the comma."""
+        unit = parse("void g(void); long f(void); long long h(void);"
+                     "long a; long long b;"
+                     "int main(void){ a=(g(),f()); b=(g(),h()); return 0; }")
+        cg = CodeGenerator("test")
+        cg.generate(unit)
+        body = unit.items[-1]
+        long_seq = _find_sequence_expr(body.body.items[0])
+        ll_seq = _find_sequence_expr(body.body.items[1])
+        assert cg._is_long_expr(long_seq)
+        assert not cg._is_long_long_expr(long_seq)
+        assert cg._is_long_long_expr(ll_seq)
+        assert not cg._is_long_expr(ll_seq)
+
+
 class TestCallGraphAnalyzer:
     """Test call graph analysis for shared storage optimization."""
 
