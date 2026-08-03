@@ -412,6 +412,22 @@ def _decoded_str_len(text: str) -> int:
     return n
 
 
+def _string_literal_length(value) -> int:
+    """Decoded byte length of an ``ast.StringLiteral``'s ``value``.
+
+    ``StringLiteral.value`` is a uplox Token carrying the *source* text
+    (quotes, prefix and escapes included), so ``len(value)`` is both a
+    TypeError and, for a bare str, the wrong answer. A few synthesized
+    paths do hand over an already-decoded str; accept both.
+    """
+    if hasattr(value, "text"):
+        # Not _decoded_str_len: that one counts \x41 and \101 as three
+        # bytes apiece. _decode_string_literal defers to uc_core's
+        # reference decoder, which gets hex and octal escapes right.
+        return len(_decode_string_literal(value.text))
+    return len(value)
+
+
 def _outermost_fn_declarator(node):
     """Return the FnDeclarator that defines the function being declared.
 
@@ -2747,7 +2763,7 @@ class CodeGenerator:
         if (len(init.values) == 1 and isinstance(init.values[0], ast.StringLiteral)
                 and isinstance(base_type, lt.BasicType)
                 and base_type.name in ("char", "signed char", "unsigned char")):
-            array_size = len(init.values[0].value) + 1  # +1 for null terminator
+            array_size = _string_literal_length(init.values[0].value) + 1
             return lt.ArrayType(
                 base_type=base_type,
                 size=make_int_lit(array_size)
@@ -2761,12 +2777,13 @@ class CodeGenerator:
                 if isinstance(d, int):
                     max_desig_index = max(max_desig_index, d)
                 elif isinstance(d, ast.IntLiteral):
-                    max_desig_index = max(max_desig_index, d.value)
+                    max_desig_index = max(max_desig_index, int_value(d))
                 elif isinstance(d, tuple) and len(d) == 2:
                     # Range designator [start...end]
                     _, end = d
-                    end_val = end.value if isinstance(end, ast.IntLiteral) else end
-                    max_desig_index = max(max_desig_index, end_val)
+                    end_val = int_value(end) if isinstance(end, ast.IntLiteral) else end
+                    if isinstance(end_val, int):
+                        max_desig_index = max(max_desig_index, end_val)
 
         # Count elements in initializer
         if isinstance(base_type, lt.StructType):
@@ -4522,7 +4539,7 @@ class CodeGenerator:
                         if self._is_bool_type(decl.var_type):
                             # Float-to-bool: any non-zero float becomes 1 (C99 6.3.1.2)
                             if isinstance(decl.init, ast.FloatLiteral):
-                                bool_val = 0 if decl.init.value == 0.0 else 1
+                                bool_val = 0 if float_value(decl.init) == 0.0 else 1
                                 self.ctx.emit_instr("ld", f"HL,{bool_val}")
                             else:
                                 self.gen_expr(decl.init, force_long=True)
@@ -5385,12 +5402,12 @@ class CodeGenerator:
                     for mname, mtype, moff in members:
                         if mname == desig_name and isinstance(mtype, lt.ArrayType) and mtype.size is not None:
                             sz = mtype.size
-                            active_nested_size = sz.value if isinstance(sz, ast.IntLiteral) else (sz if isinstance(sz, int) else 0)
+                            active_nested_size = int_value(sz) if isinstance(sz, ast.IntLiteral) else (sz if isinstance(sz, int) else 0)
                             last_desig = val.designators[-1]
                             if isinstance(last_desig, int):
                                 active_nested_pos = last_desig + 1
                             elif isinstance(last_desig, ast.IntLiteral):
-                                active_nested_pos = last_desig.value + 1
+                                active_nested_pos = int_value(last_desig) + 1
                             elif hasattr(last_desig, 'value') and isinstance(last_desig.value, int):
                                 active_nested_pos = last_desig.value + 1
                             break
@@ -5441,8 +5458,14 @@ class CodeGenerator:
                             self._gen_store_member_value(sym, elem_type, offset, sub_val)
                             next_idx += 1
                         elif len(sub_desigs) == 1 and not isinstance(sub_desigs[0], str):
-                            # Array index designator like [1]
-                            idx_val = self._eval_const_expr(sub_desigs[0])
+                            # Array index designator like [1].  ``_normalize_designators``
+                            # has already reduced most of these to a raw int, which
+                            # ``_eval_const_expr`` (an AST walker) cannot evaluate.
+                            sub_desig = sub_desigs[0]
+                            if isinstance(sub_desig, int):
+                                idx_val = sub_desig
+                            else:
+                                idx_val = self._eval_const_expr(sub_desig)
                             if idx_val is not None:
                                 offset = base_offset + member_offset + idx_val * elem_size
                                 self._gen_store_member_value(sym, elem_type, offset, sub_val)
@@ -6654,7 +6677,7 @@ class CodeGenerator:
         elif isinstance(expr, ast.SizeofExpr):
             # sizeof(string_literal) returns the array size including null terminator
             if isinstance(expr.operand, ast.StringLiteral):
-                size = len(expr.operand.value) + 1  # +1 for null terminator
+                size = _string_literal_length(expr.operand.value) + 1
                 self.ctx.emit_instr("ld", f"HL,{size}")
             else:
                 # Infer type of expression and compute its size
@@ -9448,7 +9471,7 @@ class CodeGenerator:
                 self._call_runtime("__push64_acc")
         elif isinstance(arg, ast.UnaryOp) and arg.op == "-" and isinstance(arg.operand, ast.IntLiteral):
             # Negative constant
-            val = (-arg.operand.value) & 0xFFFFFFFFFFFFFFFF
+            val = (-int_value(arg.operand)) & 0xFFFFFFFFFFFFFFFF
             w0 = val & 0xFFFF
             w1 = (val >> 16) & 0xFFFF
             w2 = (val >> 32) & 0xFFFF
@@ -11349,7 +11372,8 @@ class CodeGenerator:
     def _get_expr_size(self, expr: ast.Expression) -> int:
         """Get the size of an expression result in bytes."""
         if isinstance(expr, ast.IntLiteral):
-            if expr.value > 32767 or expr.value < -32768:
+            v = int_value(expr)
+            if v > 32767 or v < -32768:
                 return 4
             return 2
         if isinstance(expr, ast.CharLiteral):
@@ -12845,13 +12869,13 @@ class CodeGenerator:
                     for mname, mtype, moff in members:
                         if mname == name and isinstance(mtype, lt.ArrayType) and mtype.size is not None:
                             sz = mtype.size
-                            active_nested_size = sz.value if isinstance(sz, ast.IntLiteral) else (sz if isinstance(sz, int) else 0)
+                            active_nested_size = int_value(sz) if isinstance(sz, ast.IntLiteral) else (sz if isinstance(sz, int) else 0)
                             # Compute next position from the last designator index
                             last_desig = val.designators[-1]
                             if isinstance(last_desig, int):
                                 active_nested_pos = last_desig + 1
                             elif isinstance(last_desig, ast.IntLiteral):
-                                active_nested_pos = last_desig.value + 1
+                                active_nested_pos = int_value(last_desig) + 1
                             elif hasattr(last_desig, 'value') and isinstance(last_desig.value, int):
                                 active_nested_pos = last_desig.value + 1
                             break

@@ -397,6 +397,117 @@ class TestCodegenError:
         assert str(e) == "no position here"
 
 
+class TestDesignatedInitializers:
+    """Designated initializers that index a nested array member.
+
+    These used to die with ``uc80: internal error: '>' not supported
+    between instances of 'Token' and 'int'`` — the array member's size
+    was read straight off ``ast.IntLiteral.value``, which is a Token.
+    """
+
+    STRUCT = "struct S { int arr[4]; int x; };\n"
+
+    def test_static_nested_index_with_continuation(self):
+        """struct S g = {.arr[1]=7, 8, 9}; fills arr[1..3], x stays 0."""
+        code = gen(self.STRUCT + "struct S g = { .arr[1] = 7, 8, 9 };\n")
+        body = code[code.index("_g:"):]
+        assert body.splitlines()[1].strip() == "ds\t2"    # arr[0] == 0
+        assert "dw\t7" in body and "dw\t8" in body and "dw\t9" in body
+
+    def test_local_nested_index_with_continuation(self):
+        """The local twin stores 7/8/9 at arr[1], arr[2], arr[3]."""
+        code = gen(self.STRUCT + "int use(struct S *p);\n"
+                   "int main(void) { struct S s = { .arr[1] = 7, 8, 9 };"
+                   " return use(&s); }\n")
+        body = code[code.index("_main:"):]
+        # arr[1..3] live at byte offsets 2, 4, 6 of the object.
+        for value, offset in ((7, 2), (8, 4), (9, 6)):
+            assert f"ld\tHL,{value}" in body
+            assert f"ld\t(??AUTO+{offset}),HL" in body
+
+    def test_local_nested_index_alone(self):
+        """A lone .arr[3]=5 must not be dropped (it silently was)."""
+        code = gen(self.STRUCT + "int use(struct S *p);\n"
+                   "int main(void) { struct S s = { .arr[3] = 5 };"
+                   " return use(&s); }\n")
+        body = code[code.index("_main:"):]
+        assert "ld\tHL,5" in body
+        assert "ld\t(??AUTO+6),HL" in body
+
+    def test_continuation_stops_at_member_capacity(self):
+        """Values past the array's end continue into the next member."""
+        code = gen(self.STRUCT +
+                   "struct S g = { .arr[2] = 1, 2, 3, 4 };\n")
+        body = code[code.index("_g:"):]
+        # arr[2]=1, arr[3]=2, then x=3; the 4 has nowhere left to go.
+        assert "dw\t1" in body and "dw\t2" in body and "dw\t3" in body
+
+
+class TestBoolInitFromFloatLiteral:
+    """_Bool from a float literal (C99 6.3.1.2)."""
+
+    def test_zero_float_is_false(self):
+        """_Bool b = 0.0; is 0 — Token == 0.0 was always False, giving 1."""
+        code = gen("int f(int); int main(void) { _Bool b = 0.0; return f(b); }")
+        body = code[code.index("_main:"):]
+        assert "ld\tHL,0" in body
+        assert "ld\tHL,1" not in body
+
+    def test_nonzero_float_is_true(self):
+        """_Bool b = 1.5; is 1."""
+        code = gen("int f(int); int main(void) { _Bool b = 1.5; return f(b); }")
+        body = code[code.index("_main:"):]
+        assert "ld\tHL,1" in body
+
+
+class TestLiteralTokenDecoding:
+    """Literal values are Tokens; every read must decode, never use .value.
+
+    ``_string_literal_length`` replaces a bare ``len(literal.value)`` on
+    branches that are unreachable on today's AST shapes but are one
+    upstream change away from being live, so it is pinned directly.
+    """
+
+    def test_string_literal_length_from_token(self):
+        """A StringLiteral's value is source text, quotes and all."""
+        from uc80.codegen import _string_literal_length
+        unit = parse('char *s = "abcd";')
+        literal = unit.items[0].declarators[0].init
+        if isinstance(literal, list):
+            literal = literal[0]
+        assert _string_literal_length(literal.value) == 4
+
+    def test_string_literal_length_counts_escapes_once(self):
+        """Each escape sequence is one byte."""
+        from uc80.codegen import _string_literal_length
+        unit = parse(r'char *s = "a\n\t\x41";')
+        literal = unit.items[0].declarators[0].init
+        if isinstance(literal, list):
+            literal = literal[0]
+        assert _string_literal_length(literal.value) == 4
+
+    def test_string_literal_length_accepts_a_bare_str(self):
+        """Synthesized paths hand over an already-decoded str."""
+        from uc80.codegen import _string_literal_length
+        assert _string_literal_length("abcd") == 4
+
+    def test_array_size_from_index_designator(self):
+        """int a[] = {[5] = 1}; is 6 elements."""
+        code = gen("int a[] = {[5] = 1};\nint main(void) { return a[0]; }")
+        assert "ds\t2" in code  # 6 ints, one initialized -> 5 words padding
+        assert "dw\t1" in code
+
+    def test_array_size_from_range_designator(self):
+        """int b[] = {[2 ... 4] = 1}; is 5 elements."""
+        code = gen("int b[] = {[2 ... 4] = 1};\nint main(void) { return b[0]; }")
+        assert "_b:" in code
+
+    def test_negative_long_long_argument(self):
+        """A negated integer constant passed as long long."""
+        code = gen("void h(long long v);\nint main(void) { h(-5); return 0; }")
+        assert "call\t_h" in code
+
+
 class TestCallGraphAnalyzer:
     """Test call graph analysis for shared storage optimization."""
 
