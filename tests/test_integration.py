@@ -204,3 +204,33 @@ class TestOptimizationFlags:
 
         code = output.read_text().lower()
         assert "public\t_unused" in code
+
+
+class TestUserFacingDiagnostics:
+    """A CodegenError must reach the user as a clean diagnostic."""
+
+    def test_conflicting_array_sizes_are_diagnosed(self, tmp_path):
+        """Conflicting array sizes exit non-zero with 'uc80: error:'."""
+        src = tmp_path / "arr.c"
+        src.write_text("extern int arr[100];\nint arr[200];\n")
+
+        result = run_compiler(str(src), "-o", str(tmp_path / "arr.mac"))
+
+        assert result.returncode != 0
+        assert "uc80: error:" in result.stderr
+        assert "conflicting types for 'arr'" in result.stderr
+        # A source fault is not a compiler bug: no "internal error", and
+        # no Python traceback leaking through.
+        assert "internal error" not in result.stderr
+        assert "Traceback" not in result.stderr
+
+    def test_matching_array_sizes_compile(self, tmp_path):
+        """The same extern and definition size is accepted (was a crash)."""
+        src = tmp_path / "arr.c"
+        src.write_text("extern int arr[100];\nint arr[100];\n")
+        output = tmp_path / "arr.mac"
+
+        result = run_compiler(str(src), "-o", str(output))
+
+        assert result.returncode == 0, f"Compiler failed: {result.stderr}"
+        assert "ds\t200" in output.read_text()

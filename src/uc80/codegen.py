@@ -2634,6 +2634,48 @@ class CodeGenContext:
         return None
 
 
+def _node_line(node):
+    """Source line an AST node starts on, or None.
+
+    The uplox auto-AST hangs a ``pos`` record off most nodes; nodes the
+    codegen synthesizes have none.  Note that a statement-level node's
+    ``pos`` often starts at its terminating token rather than its first
+    one, so only the line is trustworthy — don't report the column.
+    """
+    pos = getattr(node, "pos", None)
+    return getattr(pos, "start_line", None)
+
+
+class CodegenError(Exception):
+    """A user-facing code-generation diagnostic — not an internal error.
+
+    Raise this when the *source* is at fault (a constraint violation the
+    front end doesn't catch, an unsupported construct), never for a bug
+    in uc80 itself.  ``main`` catches it and prints
+
+        uc80: error: line 12: conflicting types for 'arr': ...
+
+    with no traceback; the ``uc80: internal error:`` prefix stays
+    reserved for unexpected exceptions, i.e. genuine compiler bugs.
+
+    Pass the AST node the diagnostic is about as ``node`` and its line is
+    picked up automatically.  Two caveats on that line number, both
+    shared with every other uc80 diagnostic: it counts lines of the
+    *preprocessed* translation unit (the preprocessor does not preserve
+    line numbering), and no file name is available because a multi-file
+    build merges every input into one ``TranslationUnit`` before codegen
+    runs.
+    """
+
+    def __init__(self, message: str, node=None):
+        self.message = message
+        self.line = _node_line(node)
+        if self.line is not None:
+            super().__init__(f"line {self.line}: {message}")
+        else:
+            super().__init__(message)
+
+
 class CodeGenerator:
     """Z80 code generator."""
 
@@ -2752,10 +2794,22 @@ class CodeGenerator:
             size=make_int_lit(array_size)
         )
 
-    def _merge_array_size(self, name: str, var_type: lt.TypeNode) -> lt.TypeNode:
-        """If a prior extern declared a larger array size, use it (C99 6.9.2).
+    def _merge_array_size(self, name: str, var_type: lt.TypeNode,
+                          declared: lt.TypeNode | None = None,
+                          node=None) -> lt.TypeNode:
+        """Composite a redeclared array type with the prior declaration's.
 
-        e.g., extern char arr[3]; char arr[] = {1,}; → arr has size 3 with zero-padding.
+        C17 6.2.7p3: when two compatible array types are composited and
+        only one has a known constant size, the composite takes that
+        size — e.g. ``extern char arr[3]; char arr[] = {1,};`` gives arr
+        size 3, zero-padded.  C17 6.7.6.2p6: if *both* sizes are known
+        they must be equal, otherwise the types are incompatible and
+        6.7p4 makes the redeclaration a constraint violation.
+
+        ``declared`` is the type built from the declarator alone, before
+        ``_infer_array_size`` completed it from an initializer; it is how
+        we tell ``T a[N];`` (explicit size, must match) from
+        ``T a[] = {...};`` (size inferred, may be padded up).
         """
         if not isinstance(var_type, lt.ArrayType):
             return var_type
@@ -2763,15 +2817,43 @@ class CodeGenerator:
         if not prev or not isinstance(prev.sym_type, lt.ArrayType):
             return var_type
         prev_size = prev.sym_type.size
+        prev_n = self._const_array_len(prev_size)
+        if prev_n is None:
+            return var_type
+        keep_prev = lt.ArrayType(base_type=var_type.base_type, size=prev_size)
         cur_size = var_type.size
-        if prev_size is not None and isinstance(prev_size, ast.IntLiteral):
-            if cur_size is None or (isinstance(cur_size, ast.IntLiteral)
-                                    and cur_size.value < prev_size.value):
-                return lt.ArrayType(
-                    base_type=var_type.base_type,
-                    size=prev_size
-                )
-        return var_type
+        if cur_size is None:
+            return keep_prev
+        cur_n = self._const_array_len(cur_size)
+        if cur_n is None or cur_n == prev_n:
+            return var_type
+        size_is_explicit = (isinstance(declared, lt.ArrayType)
+                            and declared.size is not None)
+        if size_is_explicit:
+            raise CodegenError(
+                f"conflicting types for '{name}': array of {cur_n} element(s) "
+                f"redeclares an array of {prev_n} element(s)", node)
+        if cur_n > prev_n:
+            raise CodegenError(
+                f"excess elements in initializer for '{name}': "
+                f"{cur_n} initializer(s) for an array of {prev_n} element(s)",
+                node)
+        return keep_prev
+
+    def _const_array_len(self, size_expr) -> int | None:
+        """Decode an array-size expression to a Python int, or None.
+
+        ``ast.IntLiteral.value`` is a uplox ``Token``, never an ``int``
+        (see ``uc_core._const``), so ``.value`` must not be compared or
+        arithmetic'd directly.  ``_eval_const_expr`` goes through
+        ``int_value`` and folds ``[3+4]`` and enum constants as well.
+        """
+        if size_expr is None:
+            return None
+        n = self._eval_const_expr(size_expr)
+        if n is None or isinstance(n, float):
+            return None
+        return int(n)
 
     def _count_struct_init_values(self, struct_type: lt.StructType) -> int:
         """Count flat values needed to init a struct (for size inference)."""
@@ -3011,8 +3093,11 @@ class CodeGenerator:
                         # "defined in this TU"; prototypes need EXTRN.
                         self.ctx.globals[nm] = Symbol(name=nm, sym_type=full, is_global=True)
                     else:
+                        declared = _to_legacy(full)
                         var_type = self._infer_array_size(full, init)
-                        var_type = self._merge_array_size(nm, var_type)
+                        var_type = self._merge_array_size(nm, var_type,
+                                                          declared=declared,
+                                                          node=decl)
                         self.ctx.globals[nm] = Symbol(name=nm, sym_type=var_type, is_global=True)
 
         # Disambiguate globals whose case-folded names collide.  The MACRO-80

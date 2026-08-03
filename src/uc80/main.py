@@ -14,7 +14,7 @@ from uc_core.preprocessor import Preprocessor, PreprocessorError, Macro
 from uc_core.ast_optimizer import ASTOptimizer
 from uc_core.type_config import TypeConfig, Z80_CPM
 
-from .codegen import generate, CodeGenerator
+from .codegen import generate, CodeGenerator, CodegenError
 from .runtime import RuntimeLibrary, load_runtime_library
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
 
@@ -737,6 +737,12 @@ def main() -> int:
 
     except PreprocessorError as e:
         print(f"uc80: {e}", file=sys.stderr)
+        return 1
+
+    except CodegenError as e:
+        # A fault in the user's source, not in uc80 — no traceback and
+        # no "internal error:" prefix.
+        print(f"uc80: error: {e}", file=sys.stderr)
         return 1
 
     except Exception as e:

@@ -2,7 +2,7 @@
 
 import pytest
 from uc_core.frontend import parse as _frontend_parse
-from uc80.codegen import CodeGenerator, CallGraphAnalyzer, generate
+from uc80.codegen import CodeGenerator, CallGraphAnalyzer, CodegenError, generate
 from uc_core import ast as ast_module
 
 
@@ -259,6 +259,142 @@ class TestExternDeclarations:
         """Function declaration without body generates EXTRN."""
         code = gen("void foo(void);")
         assert "extrn\t_foo" in code
+
+
+class TestArrayRedeclaration:
+    """Compositing an array type across declarations (C17 6.2.7p3).
+
+    Every case here used to die with ``uc80: internal error: '<' not
+    supported between instances of 'Token' and 'Token'``, because
+    ``ast.IntLiteral.value`` is a uplox Token and _merge_array_size
+    compared two of them directly.
+    """
+
+    def test_matching_explicit_sizes(self):
+        """extern then definition with the same size is accepted."""
+        code = gen("extern int arr[100];\nint arr[100];\n")
+        assert "_arr:" in code
+        assert "ds\t200" in code
+
+    def test_definition_before_extern(self):
+        """Definition first, extern second, is also accepted."""
+        code = gen("int arr[100];\nextern int arr[100];\n")
+        assert "ds\t200" in code
+
+    def test_repeated_extern(self):
+        """An unguarded header declaring the same extern twice is fine."""
+        code = gen("extern int a[5];\nextern int a[5];\nint a[5];\n")
+        assert "ds\t10" in code
+
+    def test_extern_size_completes_short_initializer(self):
+        """extern int a[3]; int a[] = {1,2}; -> 3 elements, tail zeroed."""
+        code = gen("extern int a[3];\nint a[] = {1,2};\n")
+        assert "dw\t1" in code
+        assert "dw\t2" in code
+        assert "ds\t2" in code  # third element zero-padded
+
+    def test_extern_size_completes_string_initializer(self):
+        """extern char s[10]; char s[] = "hi"; -> 10 bytes."""
+        code = gen('extern char s[10];\nchar s[] = "hi";\n')
+        assert "db\t'hi',0" in code
+        assert "ds\t7" in code  # 3 emitted + 7 padding == 10
+
+    def test_unsized_extern_takes_definition_size(self):
+        """extern int a[]; int a[7]; -> 7 elements."""
+        code = gen("extern int a[];\nint a[7];\n")
+        assert "ds\t14" in code
+
+    def test_unsized_definition_takes_extern_size(self):
+        """extern int a[3]; int a[]; -> 3 elements."""
+        code = gen("extern int a[3];\nint a[];\n")
+        assert "ds\t6" in code
+
+    def test_multidimensional(self):
+        """Multi-dimensional arrays composite too."""
+        code = gen("extern int m[4][3];\nint m[4][3];\n")
+        assert "ds\t24" in code
+
+    def test_array_of_struct(self):
+        """Arrays of struct composite too."""
+        code = gen("struct S { int x; int y; };\n"
+                   "extern struct S t[4];\nstruct S t[4];\n")
+        assert "ds\t16" in code
+
+    def test_constant_expression_size(self):
+        """A non-literal constant size folds instead of being skipped."""
+        code = gen("extern int a[3+4];\nint a[3+4];\n")
+        assert "ds\t14" in code
+
+    def test_enum_constant_size(self):
+        """An enum-constant size is accepted."""
+        code = gen("enum { N = 6 };\nextern int a[N];\nint a[N];\n")
+        assert "ds\t12" in code
+
+    def test_two_translation_units(self):
+        """A header's extern in one TU and the definition in another."""
+        ast1 = parse("extern int shared[5];\nint getb(void) { return shared[4]; }")
+        ast2 = parse("extern int shared[5];\nint shared[5] = {1,2,3,4,5};")
+        merged = ast_module.TranslationUnit(items=[])
+        merged.items.extend(ast1.items)
+        merged.items.extend(ast2.items)
+        code = generate(merged, enable_inlining=False)
+        assert "_shared:" in code
+
+    def test_conflicting_larger_size_is_an_error(self):
+        """extern int a[100]; int a[200]; is a constraint violation."""
+        with pytest.raises(CodegenError) as exc:
+            gen("extern int arr[100];\nint arr[200];\n")
+        assert "conflicting types for 'arr'" in str(exc.value)
+        assert "200" in str(exc.value) and "100" in str(exc.value)
+
+    def test_conflicting_smaller_size_is_an_error(self):
+        """extern int a[100]; int a[50]; is a constraint violation too."""
+        with pytest.raises(CodegenError) as exc:
+            gen("extern int arr[100];\nint arr[50];\n")
+        assert "conflicting types for 'arr'" in str(exc.value)
+
+    def test_excess_initializer_is_an_error(self):
+        """More initializers than the extern's size is an error."""
+        with pytest.raises(CodegenError) as exc:
+            gen("extern int a[3];\nint a[] = {1,2,3,4};\n")
+        assert "excess elements in initializer for 'a'" in str(exc.value)
+
+    def test_excess_string_initializer_is_an_error(self):
+        """A string literal too long for the extern's size is an error."""
+        with pytest.raises(CodegenError) as exc:
+            gen('extern char s[2];\nchar s[] = "hello";\n')
+        assert "excess elements in initializer for 's'" in str(exc.value)
+
+    def test_error_reports_the_source_line(self):
+        """The diagnostic names the line of the offending declaration."""
+        with pytest.raises(CodegenError) as exc:
+            gen("extern int arr[100];\n\n\nint arr[200];\n")
+        assert exc.value.line == 4
+        assert str(exc.value).startswith("line 4: ")
+
+
+class TestCodegenError:
+    """The user-facing diagnostic mechanism itself."""
+
+    def test_message_without_a_node(self):
+        """With no AST node the message is passed through verbatim."""
+        e = CodegenError("something is wrong")
+        assert str(e) == "something is wrong"
+        assert e.line is None
+        assert e.message == "something is wrong"
+
+    def test_message_with_a_node(self):
+        """With an AST node the line is prefixed."""
+        unit = parse("int x;\nint y;\n")
+        e = CodegenError("something is wrong", unit.items[1])
+        assert e.line == 2
+        assert str(e) == "line 2: something is wrong"
+
+    def test_node_without_a_pos_is_tolerated(self):
+        """Synthesized nodes carry no pos; that must not raise."""
+        e = CodegenError("no position here", object())
+        assert e.line is None
+        assert str(e) == "no position here"
 
 
 class TestCallGraphAnalyzer:
