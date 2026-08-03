@@ -48,3 +48,113 @@ Codegen / driver fixes landed during this pass:
     *address* of the materialized literal in the first member instead
     of doing a byte-copy.  Manifested as an infinite loop in
     c-testsuite 00216 under --long=64.
+
+
+Bugs reported from mbasic, 2026-08-03
+--------------------------------------
+Found while switching the mbasic BASIC compiler's Z80/CP/M backend over to
+uc80 + um80 + ul80 as its preferred toolchain (it was on z88dk).  Each item
+below was reproduced directly; the full write-up with build commands is in
+/home/wohl/src/mbasic/docs/dev/UC80_BUGS_TODO.md.
+
+The first four fail SILENTLY - clean exit, working-looking binary, wrong
+behaviour - which is what makes them worth doing ahead of the rest.
+
+1. asm("...") is parsed and then silently discarded.  No error, no warning,
+   no code emitted.  The grammar accepts asm/__asm__ (with volatile and
+   operand lists) and codegen has no handler, so the node is dropped.
+
+       int marker;
+       void f(void) { asm("ld hl,1234\n\tld (_marker),hl"); }
+       int main(void){ f(); return marker; }
+
+       $ uc80 -P a.c -o a.mac      # exit 0, silent
+       $ grep -c 1234 a.mac
+       0
+
+   Either implement it or make it a hard error.  Emitting nothing quietly is
+   the worst option.  (#asm/#endasm and __naked correctly do error out.)
+
+2. A .mac passed to uc80 is placed in BSS and zeroed by crt0 at startup.
+   `uc80 prog.c helper.mac` is the documented way to supply hand-written
+   assembly; it compiles, links, runs, and the routine returns garbage.
+   A helper that does `LD HL,4660 / RET` returned 65281 (0xFF01).
+
+   Cause: uc80 strips the CSEG directive from an appended .mac (it is in the
+   skip-headers set) and appends the file AFTER its own `common //` BSS
+   directive, so the code lands in the COMMON block and crt0's zeroing loop
+   wipes it before main().  It only appears to work when the C program has no
+   BSS at all.
+
+   Fix ideas: preserve the segment directive, or append .mac content before
+   the BSS directive, or reject .mac inputs and point at the separate-
+   assembly route (um80 helper.mac -o helper.rel, then link the .rel), which
+   is the workaround mbasic now uses.
+
+3. (um80) Z80 mnemonics assemble as 8080 without a .z80 directive, and um80
+   writes an output file anyway after reporting errors.
+
+       CSEG
+       TSTOP: LD HL,0
+              ADD HL,SP      <-- accepted, assembles to the wrong opcode
+              ADD HL,BC      <-- "Error at line N: ADD requires one operand"
+              RET
+              END
+
+   So `LD HL,0 / ADD HL,SP` silently returns 0 instead of SP.  Two issues:
+   the inconsistency between the two ADD HL,rr forms, and that errors do not
+   suppress the output file or force a non-zero exit - a build script that
+   checks for the output rather than the status proceeds with a corrupt .rel.
+
+4. printf %e and %g produce EMPTY output.  %f works.  Built with
+   --printf int --printf float:
+
+       f=[%f] -> f=[28.000000]
+       e=[%e] -> e=[]
+       g=[%g] -> g=[]
+
+   %g matters for BASIC PRINT - it drops trailing zeros the way MBASIC does.
+   Related trap: the --printf flags accumulate rather than replace, so
+   --printf float alone silently drops %d.
+
+5. Internal error on the ordinary header-declares/source-defines idiom:
+
+       extern int arr[100];
+       int arr[100];
+
+       uc80: internal error: '<' not supported between instances of
+             'Token' and 'Token'
+
+   uc80/codegen.py:2769 in _merge_array_size compares `cur_size.value <
+   prev_size.value` where both .value are Token objects rather than ints.
+   Needs the sizes evaluated before comparison.  Blocks most real multi-file
+   projects; an unsized extern (`extern int arr[];`) is the workaround.
+
+6. Console output uses bare LF, not CRLF.  Real CP/M and real MBASIC end
+   console lines with CRLF; uc80's libc does not translate \n on the way
+   out, so output stair-steps on a real CP/M terminal.
+
+7. Packaging: libc.lib and runtime.lib are build artifacts that the pip
+   package does not ship, and in a source checkout they land in the repo's
+   top-level lib/ rather than beside the package in src/uc80/lib/.  There is
+   no flag, env var, or API reporting the path, so every consumer guesses.
+   A `uc80 --print-lib-dir` (or shipping the .lib files) would fix it.
+
+Not bugs, recorded so they are not re-reported:
+  - Last-digit float differences vs z88dk built with --math-mbf32.  uc80 is
+    32-bit IEEE 754; same 24-bit mantissa, different rounding, so results can
+    differ by one ULP (5.859874 vs 5.859875).  Working as designed.
+  - MKS$/CVS binary round-trips producing garbage.  Those depend on MBASIC's
+    float bit patterns, which only MBF gives; not fixable short of adding MBF
+    support.  Such programs stay on z88dk.
+  - `label: }` rejected - uc80 is right, C17 requires a statement after a
+    label.  mbasic was wrong and now emits `label: ;`.
+
+Open, not yet attributed to either project:
+  - FRE(A$) returns a wrong value in uc80-built mbasic programs (23808 where
+    z88dk reports 47043; 0 in a reduced case).  The pool bootstrap is NOT the
+    cause - an instrumented build showed bss=16208 sp=64760 size=47530, which
+    matches z88dk's pool almost exactly - so it is downstream, in the runtime
+    or in how `(gc(), (double)get_free_space())` compiles.  A direct
+    uint16_t-to-double conversion test passed, so it is not the cast alone.
+    Needs isolating before it can be filed.
