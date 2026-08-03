@@ -8145,6 +8145,11 @@ class CodeGenerator:
         """Check if expression contains function calls or increment/decrement."""
         if isinstance(expr, (ast.Call, ast.CallNoArgs)):
             return True
+        if isinstance(expr, ast.SequenceExpr):
+            # The comma operator is ast.SequenceExpr, not ast.BinaryOp, so
+            # it needs its own branch; BOTH operands are evaluated.
+            return (self._expr_has_side_effects(expr.left) or
+                    self._expr_has_side_effects(expr.right))
         if isinstance(expr, ast.UnaryOp):
             if expr.op in ('++', '--', 'post++', 'post--'):
                 return True
@@ -11314,6 +11319,9 @@ class CodeGenerator:
 
     def _uses_tmp32(self, expr: ast.Expression) -> bool:
         """Check if an expression might use __tmp32 (and thus clobber it)."""
+        if isinstance(expr, ast.SequenceExpr):
+            # Both operands are evaluated, so either can clobber __tmp32.
+            return self._uses_tmp32(expr.left) or self._uses_tmp32(expr.right)
         # Complex expressions that use __tmp32 internally
         if isinstance(expr, ast.BinaryOp):
             # Any 32-bit binary op (long or float) will use __tmp32
@@ -11357,6 +11365,9 @@ class CodeGenerator:
 
     def _uses_tmp64(self, expr: ast.Expression) -> bool:
         """Check if an expression might use __tmp64 (and thus clobber it)."""
+        if isinstance(expr, ast.SequenceExpr):
+            # Both operands are evaluated, so either can clobber __tmp64.
+            return self._uses_tmp64(expr.left) or self._uses_tmp64(expr.right)
         # Complex expressions that use __tmp64 internally
         if isinstance(expr, ast.BinaryOp):
             # Any 64-bit binary op will use __tmp64

@@ -234,3 +234,60 @@ class TestUserFacingDiagnostics:
 
         assert result.returncode == 0, f"Compiler failed: {result.stderr}"
         assert "ds\t200" in output.read_text()
+
+
+class TestCommaOperatorThroughDriver:
+    """The comma operator's result type survives the whole driver.
+
+    The unit tests in test_codegen.py call ``generate()`` directly; this
+    exercises preprocessor + optimizer + codegen + asm DCE, which is the
+    path mbasic's generated C actually takes.
+    """
+
+    def test_wide_comma_result_is_converted_once(self, tmp_path):
+        """The mbasic FRE shape: return (gc(), (double)free_space()).
+
+        Compiled without whole-program so the function is not inlined and
+        the return path itself is under test.
+        """
+        src = tmp_path / "fre.c"
+        src.write_text(
+            "typedef unsigned int uint16_t;\n"
+            "void gc(void);\n"
+            "uint16_t free_space(void);\n"
+            "double fre(void) { return (gc(), (double)free_space()); }\n"
+        )
+        output = tmp_path / "fre.mac"
+
+        result = run_compiler("--no-whole-program", str(src), "-o", str(output))
+
+        assert result.returncode == 0, f"Compiler failed: {result.stderr}"
+        code = output.read_text()
+        # uint16 -> unsigned 32 -> float, exactly once.
+        assert code.count("call\t__uitof") == 1
+        # A second, bogus signed conversion applied to the float's low
+        # word is what produced the wrong FRE value.
+        assert "call\t__itof" not in code
+        assert "call\t__sext32" not in code
+
+    def test_wide_comma_variadic_arg_is_pushed_whole(self, tmp_path):
+        """printf("%f", (gc(), (double)f())) pushes all four bytes."""
+        src = tmp_path / "arg.c"
+        src.write_text(
+            "int printf(const char *, ...);\n"
+            "void gc(void);\n"
+            "unsigned int free_space(void);\n"
+            "int main(void) {\n"
+            '    printf("%f\\n", (gc(), (double)free_space()));\n'
+            "    return 0;\n"
+            "}\n"
+        )
+        output = tmp_path / "arg.mac"
+
+        result = run_compiler(str(src), "-o", str(output))
+
+        assert result.returncode == 0, f"Compiler failed: {result.stderr}"
+        code = output.read_text().split("; Printf format")[0]
+        # Only HL was pushed before, so printf read the format pointer as
+        # the double's high half and printed 0.000000.
+        assert "push\tDE\n\tpush\tHL" in code

@@ -619,6 +619,55 @@ class TestCommaOperator:
         assert not cg._is_long_expr(ll_seq)
 
 
+class TestCommaOperatorEvaluation:
+    """A comma expression evaluates BOTH operands, exactly once each.
+
+    ``_expr_has_side_effects`` and ``_uses_tmp32``/``_uses_tmp64`` also
+    dispatched on ``ast.BinaryOp`` only, so a comma expression was judged
+    side-effect-free (its subexpression was then re-evaluated) and was not
+    recognised as clobbering the 32/64-bit scratch cells.
+    """
+
+    def test_comma_subscript_evaluated_once(self):
+        """a[(h(), 1)] += 10; calls h() once, not twice."""
+        code = gen("int calls; int a[4]; int h(void){calls++;return 1;}"
+                   "int main(void){ a[(h(),1)] += 10; return calls; }")
+        assert code.count("call\t_h") == 1
+
+    def test_expr_has_side_effects_sees_into_comma(self):
+        """A call in either operand makes the comma expression impure."""
+        unit = parse("int h(void); int main(void){ int i=(h(),1); return i; }")
+        seq = _find_sequence_expr(unit)
+        assert seq is not None
+        cg = CodeGenerator("test")
+        cg.generate(unit)
+        assert cg._expr_has_side_effects(seq)
+
+    def test_comma_left_operand_tmp32_is_saved(self):
+        """(g(), x/y) - z: the comma clobbers __tmp32, which holds z."""
+        code = gen("void g(void); long x,y,z,r;"
+                   "int main(void){ r = (g(), x/y) - z; return 0; }")
+        assert "ld\tHL,(__tmp32)\n\tpush\tHL" in code
+
+    def test_comma_left_operand_tmp64_is_saved(self):
+        """Same hazard on the 64-bit path uses the runtime save/restore."""
+        code = gen("void g(void); long long x,y,z,r;"
+                   "int main(void){ r = (g(), x/y) - z; return 0; }")
+        assert "call\t__save_tmp64" in code
+        assert "call\t__restore_tmp64" in code
+
+    def test_uses_tmp32_and_tmp64_see_into_comma(self):
+        """The predicates themselves report the hazard."""
+        unit = parse("void g(void); long x,y; long long p,q;"
+                     "long a; long long b;"
+                     "int main(void){ a=(g(),x/y); b=(g(),p/q); return 0; }")
+        cg = CodeGenerator("test")
+        cg.generate(unit)
+        body = unit.items[-1]
+        assert cg._uses_tmp32(_find_sequence_expr(body.body.items[0]))
+        assert cg._uses_tmp64(_find_sequence_expr(body.body.items[1]))
+
+
 class TestCallGraphAnalyzer:
     """Test call graph analysis for shared storage optimization."""
 
