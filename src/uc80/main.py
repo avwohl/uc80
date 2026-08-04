@@ -5,6 +5,7 @@ Compiles C source to Z80 assembly compatible with um80 assembler.
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -54,6 +55,80 @@ Z80_CPM_PREDEFINES = {
     # ``typedef __builtin_va_list va_list;`` compile.
     "__builtin_va_list": "char *",
 }
+
+
+def _is_end_directive(line: str) -> bool:
+    """True if `line` is a MACRO-80 END directive.
+
+    END may carry a start address (``END START``), so a plain equality test
+    against "END" is not enough.
+    """
+    stripped = line.strip().upper()
+    return (stripped == 'END'
+            or stripped.startswith('END\t')
+            or stripped.startswith('END '))
+
+
+def _tail_insert_index(lines: list[str]) -> int:
+    """Index in `lines` at which assembly appended to a module must be spliced.
+
+    The code generator emits the COMMON (BSS) block last, immediately before
+    END, and crt0 zeroes the whole COMMON region before main() runs.  Anything
+    placed after ``common //`` therefore lands in BSS: it is wiped at startup
+    and, being uninitialised storage, is not even present in the .com image.
+
+    Re-establishing CSEG after the COMMON directive does NOT help.  um80
+    cannot leave a COMMON block: the segment directive is ignored and the
+    bytes that follow are dropped from the object file (um80 0.3.43,
+    um80.py:2266-2303).  Appended code must therefore go *before* the COMMON
+    directive, not after it.
+
+    Returns the index of the COMMON directive - or of the comment banner
+    introducing it - when the module has a BSS block, the index of the END
+    directive when it does not, and len(lines) when it has neither.
+    """
+    for i, line in enumerate(lines):
+        if re.match(r'\s*COMMON\b', line, re.IGNORECASE):
+            # Keep the "; BSS - ..." banner attached to its directive.
+            while i > 0 and lines[i - 1].strip().startswith(';'):
+                i -= 1
+            return i
+    for i, line in enumerate(lines):
+        if _is_end_directive(line):
+            return i
+    return len(lines)
+
+
+def _filter_hand_written_asm(asm_text: str):
+    """Prepare one hand-written assembly module for appending to the output.
+
+    Only two things are dropped: ``.Z80`` (already emitted at the top of the
+    generated module) and END (a single END is appended after everything).
+    Segment directives are deliberately KEPT - hand-written assembly must
+    control its own CSEG/DSEG placement.  Stripping them makes the appended
+    code inherit whichever segment the generated code happened to end in,
+    which is how it used to land in BSS and get zeroed by crt0.
+
+    Returns (lines, publics, defined_labels):
+        lines           the filtered assembly
+        publics         names the module declares PUBLIC
+        defined_labels  every label the module defines
+    """
+    lines = []
+    publics = set()
+    defined_labels = set()
+    for line in asm_text.splitlines():
+        if line.strip().upper() == '.Z80' or _is_end_directive(line):
+            continue
+        lines.append(line)
+        match = re.match(r'\s*PUBLIC\s+(.+)', line, re.IGNORECASE)
+        if match:
+            for label in match.group(1).split(','):
+                publics.add(label.strip())
+        match = re.match(r'^(\@?\?*\w+):', line)
+        if match:
+            defined_labels.add(match.group(1))
+    return lines, publics, defined_labels
 
 
 def main() -> int:
@@ -436,8 +511,13 @@ def main() -> int:
         # Collect program's own PUBLIC labels before embedding libraries.
         # These become the entry points for assembly DCE in whole-program mode,
         # allowing unreachable library functions to be trimmed.
-        import re
         program_public_labels = set()
+        # Labels defined by hand-written assembly (appended .mac files).  These
+        # are always assembly-DCE entry points: uc80 cannot see how user
+        # assembly reaches its own labels (computed jumps, address-taken
+        # labels), so it must not assume an unreferenced label is dead.  Any
+        # future source of hand-written assembly should add its labels here.
+        asm_entry_labels = set()
         for line in code.splitlines():
             match = re.match(r'\s*PUBLIC\s+(.+)', line, re.IGNORECASE)
             if match:
@@ -662,27 +742,23 @@ def main() -> int:
         if mac_files:
             # Strip END directives from main code and mac files, add single END at end
             code_lines = code.splitlines()
-            code_lines = [l for l in code_lines if l.strip().upper() != 'END']
+            code_lines = [l for l in code_lines if not _is_end_directive(l)]
 
+            mac_block = []
             for mac_content in mac_files:
-                mac_lines = mac_content.splitlines()
-                # Skip header directives that are already in main output
-                skip_headers = {'.Z80', 'CSEG', 'DSEG'}
-                filtered = []
-                for line in mac_lines:
-                    stripped = line.strip().upper()
-                    if stripped in skip_headers:
-                        continue
-                    if stripped == 'END':
-                        continue
-                    filtered.append(line)
-                    # Also collect PUBLIC labels from appended .mac files
-                    match = re.match(r'\s*PUBLIC\s+(.+)', line, re.IGNORECASE)
-                    if match:
-                        for label in match.group(1).split(','):
-                            program_public_labels.add(label.strip())
-                code_lines.extend(['', '; Included assembly file'])
-                code_lines.extend(filtered)
+                filtered, publics, defined_labels = _filter_hand_written_asm(mac_content)
+                program_public_labels.update(publics)
+                asm_entry_labels.update(defined_labels)
+                # Start in CSEG: the splice point below is not guaranteed to be
+                # in any particular segment.
+                mac_block.extend(['', '; Included assembly file', '\tcseg'])
+                mac_block.extend(filtered)
+
+            # Splice the assembly in *before* the COMMON (BSS) block - see
+            # _tail_insert_index.  Appending it at the end of the module puts
+            # it inside COMMON, where crt0 zeroes it before main() runs.
+            insert_at = _tail_insert_index(code_lines)
+            code_lines[insert_at:insert_at] = mac_block
 
             code_lines.append('\n\tEND')
             code = '\n'.join(code_lines)
@@ -701,13 +777,16 @@ def main() -> int:
                 # are entry points. Library functions are kept only if reachable.
                 # Also include address-taken static functions (they aren't PUBLIC
                 # but their addresses are used, so DCE must not eliminate them).
-                asm_entry_points = set(program_public_labels)
+                asm_entry_points = set(program_public_labels) | asm_entry_labels
                 if gen.call_graph_analyzer:
                     for func_name in gen.call_graph_analyzer.address_taken:
                         asm_entry_points.add(f"_{func_name}")
                 code = asm_eliminate_dead_code(code, entry_points=asm_entry_points)
             else:
-                code = asm_eliminate_dead_code(code)
+                # extra_entry_points, not entry_points: passing entry_points
+                # would switch asm_dce into whole-program mode and drop
+                # unreferenced PUBLIC data.
+                code = asm_eliminate_dead_code(code, extra_entry_points=asm_entry_labels)
             lines_after = len(code.splitlines())
 
             if args.verbose and lines_before != lines_after:

@@ -42,12 +42,19 @@ class AssemblyDCE:
         self.current_segment = "CSEG"
         self._explicit_entry = False  # True when caller provides entry points
 
-    def eliminate_dead_code(self, asm_text: str, entry_points: set[str] | None = None) -> str:
+    def eliminate_dead_code(self, asm_text: str, entry_points: set[str] | None = None,
+                            extra_entry_points: set[str] | None = None) -> str:
         """Remove unreachable code and data from assembly.
 
         Args:
             asm_text: The assembly source text
             entry_points: Set of entry point labels. If None, uses _main and all PUBLIC.
+            extra_entry_points: Additional entry points, unioned with whichever
+                set is used above. Unlike `entry_points` these do not switch on
+                explicit-entry (whole-program) mode, so the default
+                PUBLIC-data preservation rule is unchanged. Used for labels
+                defined by hand-written assembly, whose reachability uc80
+                cannot infer.
 
         Returns:
             Assembly with dead code and data removed.
@@ -57,12 +64,15 @@ class AssemblyDCE:
         # Determine entry points
         if entry_points is not None:
             self._explicit_entry = True
+            entry_points = set(entry_points)  # don't mutate the caller's set
         else:
             entry_points = set()
             if "_main" in self.blocks:
                 entry_points.add("_main")
             # All PUBLIC labels are potential entry points
             entry_points.update(self.public_labels)
+        if extra_entry_points:
+            entry_points |= extra_entry_points
 
         # Find reachable code blocks
         reachable_code = self._find_reachable(entry_points)
@@ -511,15 +521,18 @@ class AssemblyDCE:
         return '\n'.join(lines)
 
 
-def eliminate_dead_code(asm_text: str, entry_points: set[str] | None = None) -> str:
+def eliminate_dead_code(asm_text: str, entry_points: set[str] | None = None,
+                        extra_entry_points: set[str] | None = None) -> str:
     """Remove unreachable code from assembly.
 
     Args:
         asm_text: The assembly source text
         entry_points: Set of entry point labels. If None, uses _main and all PUBLIC.
+        extra_entry_points: Extra entry points added on top of the chosen set,
+            without switching to explicit-entry mode.
 
     Returns:
         Assembly with dead code removed.
     """
     dce = AssemblyDCE()
-    return dce.eliminate_dead_code(asm_text, entry_points)
+    return dce.eliminate_dead_code(asm_text, entry_points, extra_entry_points)
