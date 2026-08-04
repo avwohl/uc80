@@ -95,7 +95,9 @@ Default optimizations (all enabled unless disabled):
 ### Printf Control
 
 The compiler auto-detects which printf format specifiers your program uses
-and links only the needed handlers. You can also control this explicitly:
+and links only the needed handlers. That inference needs the whole program, so
+under `--no-whole-program` it is not used — see [Separate
+Compilation](#separate-compilation). You can also control this explicitly:
 
 ```bash
 # Command line
@@ -174,6 +176,23 @@ whole-program mode:
 LIB=$(uc80 --print-lib-dir)
 ul80 $LIB/crt0.rel module.rel main.rel $LIB/libc.lib $LIB/runtime.lib -o prog.com
 ```
+
+Pass the **same `--printf`/`--scanf` set to every unit** of the program. Each
+unit that calls `printf` emits the dispatch table, because the compiler's table
+has to beat the 16-bit-int default in libc; L80 keeps the first definition of a
+multiply-defined global and links on without complaint, so two units that
+disagree about the table leave the link order deciding which conversions work.
+
+Auto-detection cannot help here — a unit only ever sees its own format strings
+— so with no explicit flag every handler is registered and uc80 says so:
+
+```
+uc80: warning: separate compilation (--no-whole-program) cannot see the format
+strings in the other translation units, so every printf handler is registered;
+pass an explicit --printf to select a smaller set
+```
+
+Passing a matching `--printf` to each unit silences it and shrinks the binary.
 
 ### Inline Assembly
 

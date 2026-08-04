@@ -4,6 +4,46 @@ All notable changes to uc80 are recorded here. Versions follow
 `major.minor.patch`: the minor number is raised when a release changes the
 observable behaviour of a program uc80 compiles.
 
+## Unreleased
+
+### Fixed
+
+- **Separate compilation no longer lets link order decide which printf
+  conversions work.** Regression introduced in 0.6.0 by the per-specifier
+  float filter.
+
+  Every unit that calls `printf` emits its own `PUBLIC
+  __printf_format_table`, because the compiler's table has to beat the
+  16-bit-int default in libc's `lc_printf_all` module. L80 keeps the *first*
+  definition of a multiply-defined global and links on, so under
+  `--no-whole-program` the units must not disagree about the contents. 0.6.0's
+  filter registered only the float conversions each unit's own literal format
+  strings used, so a unit printing `%f` and a unit printing `%e` emitted
+  different tables — and whichever was linked first won:
+
+  ```
+  ul80 crt0.rel a.rel b.rel ...   ->  A=[7][1.500000]|  B=[%e][%g][0]|
+  ul80 crt0.rel b.rel a.rel ...   ->  A=[7][%f]|        B=[2.800000e+01][28][3]|
+  ```
+
+  Worse, a unit that called no `printf` at all still emitted an *empty* table;
+  linked first, it disabled every conversion in the program. Both cases were
+  silent — clean compile, clean link, exit 0. ul80 does record a
+  multiply-defined global, but its command line does not report a recorded
+  error when the link itself succeeds, so nothing downstream caught it either.
+
+  Under `--no-whole-program` the compiler now registers all six float
+  conversions rather than the ones one unit happens to use, and a unit that
+  calls no `printf` defines no table. An auto-detected feature set widens to
+  every handler, since a unit cannot see its siblings' format strings; that
+  costs space, so it is now a warning naming `--printf`. Pass the same
+  explicit `--printf`/`--scanf` to every unit to get the small table back —
+  an explicit set is taken as the whole-program answer and used as given.
+
+  Whole-program mode is unaffected and byte-identical: there the inference is
+  sound, and the filter that keeps a `%f`-only program from linking `%e`/`%g`
+  handlers still applies.
+
 ## 0.6.0
 
 A behaviour-changing release. Rebuild the libraries after upgrading:

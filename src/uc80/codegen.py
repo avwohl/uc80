@@ -2828,6 +2828,10 @@ class CodeGenerator:
         # (length_modifier, conversion_char) pairs seen in literal printf
         # format strings, for _warn_unhandled_printf_specs.
         self._printf_specs_used: list[tuple[str, str]] = []
+        # Whether this unit calls a printf-family function at all, set by
+        # _auto_detect_printf_features.  Distinguishes "printf with no
+        # conversions" from "no printf", which both yield an empty feature set.
+        self._printf_calls_seen: bool = False
         self.dead_functions_removed: int = 0
         self.inlined_calls: int = 0
         self.constants_propagated: int = 0
@@ -3245,6 +3249,7 @@ class CodeGenerator:
         # calls printf.  Without the codegen-emitted table, libc.rel's
         # concat-baked default table wins, and that default only knows the
         # 16-bit-int handlers — breaking --int=32 and --long=64.
+        explicit_printf_features = self.printf_features is not None
         if self.printf_features is None:
             detected = self._auto_detect_printf_features(unit)
             if detected is not None:
@@ -3262,6 +3267,8 @@ class CodeGenerator:
             # still want the literal format strings so we can warn about the
             # conversions that set does not cover.
             self._auto_detect_printf_features(unit)
+        if not self.whole_program:
+            self._widen_printf_features_for_separate_units(explicit_printf_features)
 
         # Under --int=32, scanf's %d/%u/%x/%i store only 2 bytes into the
         # (4-byte) int pointed at, leaving the upper half garbage.  The
@@ -3284,7 +3291,7 @@ class CodeGenerator:
             self.gen_declaration(decl)
 
         # Emit printf/scanf dispatch tables if features are known
-        if self.printf_features is not None:
+        if self._should_emit_printf_tables():
             self._emit_printf_format_tables()
             self._warn_unhandled_printf_specs()
 
@@ -3940,6 +3947,64 @@ class CodeGenerator:
                 f"at run time and every later conversion in that call will "
                 f"read the wrong argument")
 
+    def _widen_printf_features_for_separate_units(self, explicit: bool) -> None:
+        """Make the dispatch table identical in every unit of a separate build.
+
+        Each unit that calls printf emits its own ``PUBLIC
+        __printf_format_table`` so that the codegen table beats the default in
+        libc's ``lc_printf_all`` module, which only knows the 16-bit-int
+        handlers and so breaks ``--int=32`` and ``--long=64``.  L80 keeps the
+        FIRST definition of a multiply-defined global and links on, so if two
+        units disagree about the table then link order silently decides which
+        conversions work.  Nothing downstream catches it: ul80 records the
+        duplicate but its command line does not surface a recorded error when
+        the link itself succeeds.
+
+        Under ``--no-whole-program`` this unit has seen only its own format
+        strings, so anything inferred from them is unsound for the program:
+
+        - the per-specifier float filter is dropped (the ``spec:`` markers
+          left by ``_extract_printf_specifiers``), so every unit that selects
+          ``float`` registers all six float conversions rather than only the
+          ones it happens to print itself;
+        - an auto-detected feature set widens to ``all``, because a unit that
+          prints no float cannot know that another unit does.  That costs
+          space, so say so and name the flag that takes it back.
+
+        An explicit ``--printf``/``#pragma`` is the user stating the
+        whole-program answer, so it is honoured as given.  Passing *different*
+        explicit sets to different units is still order-dependent and is not
+        something codegen can see; the README documents it.
+        """
+        features = self.printf_features
+        if features is None or not self._printf_calls_seen:
+            return
+        self.printf_features = {f for f in features if not f.startswith('spec:')}
+        if explicit or self.printf_features == {"all"}:
+            return
+        self.printf_features = {"all"}
+        self.warnings.append(
+            "separate compilation (--no-whole-program) cannot see the format "
+            "strings in the other translation units, so every printf handler "
+            "is registered; pass an explicit --printf to select a smaller set "
+            "(use the same one for every unit of the program)")
+
+    def _should_emit_printf_tables(self) -> bool:
+        """Whether this unit defines the program's printf dispatch tables.
+
+        In whole-program mode the unit is the program, so it always does.
+
+        Under ``--no-whole-program`` a unit that calls no printf must stay out
+        of it.  Its table would hold whatever its own (absent) format strings
+        implied -- an empty table under auto-detection -- and because L80 keeps
+        the first definition of a multiply-defined global, linking that unit
+        ahead of the one that does call printf silently disabled every
+        conversion in the whole program.
+        """
+        if self.printf_features is None:
+            return False
+        return self.whole_program or self._printf_calls_seen
+
     def _emit_printf_format_tables(self) -> None:
         """Emit printf format dispatch tables based on #pragma printf features.
 
@@ -4231,8 +4296,10 @@ class CodeGenerator:
         for decl in unit.items:
             if isinstance(decl, ast.FunctionDef) and decl.body:
                 if not scan_stmt(decl.body):
+                    self._printf_calls_seen = uses_printf
                     return None  # Non-literal format → fall back to all
 
+        self._printf_calls_seen = uses_printf
         if not uses_printf:
             return set()  # No printf calls → empty features (minimal tables)
 
