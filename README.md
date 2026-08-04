@@ -69,6 +69,41 @@ uc80 program.c --printf float         # add %f
 #pragma printf long
 ```
 
+### Console Line Endings
+
+Console output ends a line with CR LF, because that is what a real CP/M
+terminal needs. An ADM-3A, a Kaypro or a Televideo treats a bare LF as
+"cursor down" only, so output written with a bare LF stair-steps down the
+screen. CP/M itself translates nothing, so the program must emit both bytes.
+z88dk builds its CP/M library the same way, and C23 7.23.2 allows a text
+stream to alter characters on output to match the host convention.
+
+libc does the translation in one place, `lib/lc/lc_conout.mac`, which every
+console writer calls. A CR is only inserted before an LF that does not
+already follow a CR, so a program that prints `"\r\n"` does not get
+`"\r\r\n"`, and a `"\r"` progress-bar redraw still works.
+
+To get raw LF instead:
+
+```bash
+uc80 --no-crlf program.c -o program.mac
+```
+
+```c
+#include <stdio.h>       /* declares __crlf_mode */
+__crlf_mode = 0;         /* raw LF from here on; 1 turns it back on */
+```
+
+Two things to know about `--no-crlf`. It only takes effect on the translation
+unit that defines `main()`, because the flag is a runtime byte in libc and
+the compiler zeroes it at the top of `main()`; libc ships prebuilt, so the
+compiler cannot select different library source. And it links that byte's
+module, about 44 bytes, into a program that would otherwise do no I/O.
+
+File streams are never translated, with or without the flag. `fwrite` and
+`fputc` to a `FILE *` write the exact bytes you hand them, in both `"w"` and
+`"wb"` mode.
+
 ### Configurable Integer Sizes
 
 By default `int` is 16 bits (natural Z80 word width).  Code that assumes
@@ -189,6 +224,7 @@ Remaining non-passing tests are environmental, not codegen bugs:
 - Modular library with selective linking
 - Whole-program optimization
 - Basic inline assembly (`asm("...")`), emitted verbatim and never optimized
+- CP/M console line endings (CR LF by default, `--no-crlf` for raw LF)
 - CP/M target with embedded crt0
 
 ## Related Projects
