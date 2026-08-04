@@ -11093,70 +11093,43 @@ _prt_round_add:
 	OR	A
 	JP	Z,_prt_float_zero
 
-	; Extract mantissa
-	LD	A,L
-	AND	7FH
-	OR	80H
-	LD	L,A
-
+	; Above 2^31 the integer no longer fits the int32 that __ftoi
+	; returns -- it saturates at 2147483647 and the fraction loop then
+	; emits bytes that are not even digits.  Such a value is an exact
+	; integer (a float has 24 mantissa bits), so print it exactly.
+	; Compare the BIASED exponent: 127+31 = 158.  Subtracting the bias
+	; first and comparing against 31 would be a signed test written
+	; with an unsigned CP, and every |value| < 1 (negative unbiased
+	; exponent, so 0xFF..0x80 as a byte) would take the big path.
 	LD	A,B
-	SUB	127
+	CP	158			; unbiased exponent >= 31, i.e. >= 2^31
+	JP	NC,_prt_float_big
 
-	LD	(__fman),DE
-	LD	A,L
-	LD	(__fman+2),A
+	; ---- Integer part ----
+	; __ftoi truncates the pre-rounded value to a 32-bit integer and
+	; _prt_dec32 prints all 32 bits of it, which is what the %ld
+	; handler already does.
+	;
+	; This replaces a hand-rolled mantissa walk that assembled the
+	; integer part in H:L:E and then printed it with the 16-bit
+	; _prt_dec, dropping E: every |value| >= 65536 came out wrong,
+	; and often not even as digits, because the leftover low byte
+	; was emitted as a character.  1000000.0 printed as "3906.00///".
+	; The >= 2^24 path shifted a 16-bit HL left and yielded 0.
+	; sprintf in this same libc has always done it the way below.
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__ftoi
+	LD	(__fint),HL
+	LD	(__fint+2),DE
+	CALL	_prt_dec32
 
-	LD	A,B
-	SUB	127
-	LD	B,A
-
-	BIT	7,B
-	JP	NZ,_prt_float_small
-
-	LD	A,B
-	CP	24
-	JP	NC,_prt_float_large
-
-	LD	A,23
-	SUB	B
-	LD	B,A
-
-	LD	A,(__fman+2)
-	LD	H,A
-	LD	A,(__fman+1)
-	LD	L,A
-	LD	A,(__fman)
-	LD	E,A
-
-	PUSH	HL
-	PUSH	DE
-
-	LD	A,B
-	OR	A
-	JR	Z,_prt_float_noshr
-_prt_float_shrloop:
-	SRL	H
-	RR	L
-	RR	E
-	DEC	A
-	JR	NZ,_prt_float_shrloop
-_prt_float_noshr:
-	LD	A,H
-	OR	A
-	JR	NZ,_prt_float_use_hl
-	LD	H,L
-	LD	L,E
-_prt_float_use_hl:
-	PUSH	HL
-	CALL	_prt_dec
 	LD	E,'.'
 	CALL	_printf_putc
-	POP	HL
 
-	POP	DE
-	POP	DE
-
-	LD	DE,0
+	; frac = value - (float)int
+	LD	HL,(__fint)
+	LD	DE,(__fint+2)
 	CALL	__itof
 	LD	(__tmp32),HL
 	LD	(__tmp32+2),DE
@@ -11170,6 +11143,8 @@ _prt_float_use_hl:
 	LD	B,A
 	OR	A
 	JP	Z,_prt_float_done
+	JP	_prt_float_frac
+
 _prt_float_frac:
 	PUSH	BC
 	LD	HL,(__fwork)
@@ -11203,109 +11178,122 @@ _prt_float_frac:
 	DJNZ	_prt_float_frac
 	JP	_prt_float_done
 
-_prt_float_small:
-	PUSH	BC
-	LD	E,'0'
-	CALL	_printf_putc
-	LD	E,'.'
-	CALL	_printf_putc
-	POP	BC
-	LD	A,B
-	ADD	A,127
-	LD	B,A
-	LD	A,B
-	SRL	A
-	LD	D,A
-	LD	A,B
-	AND	1
-	RLCA
-	RLCA
-	RLCA
-	RLCA
-	RLCA
-	RLCA
-	RLCA
-	LD	C,A
-	LD	A,(__fman+2)
-	AND	7FH
-	OR	C
-	LD	E,A
-	LD	A,(__fman+1)
-	LD	H,A
-	LD	A,(__fman)
-	LD	L,A
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-	LD	A,(_prt_float_prec)
-	LD	B,A
-	OR	A
-	JP	Z,_prt_float_done
-_prt_float_sm_lp:
-	PUSH	BC
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	DE,4120H
-	LD	HL,0
-	CALL	__fmul
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-	CALL	__ftoi
-	LD	A,L
+; ============================================================
+; %f for |value| >= 2^31.
+;
+; value = mantissa * 2^(e-23) with a 24-bit mantissa, so it is a whole
+; number and its decimal form is exact.  Feed the mantissa's bits into
+; a decimal accumulator most significant first, then double (e-23) more
+; times.  Doubling a decimal digit string is exact at every step, so the
+; digits printed are the value's own -- unlike scaling by powers of ten
+; in float, which runs out of precision after about seven digits.
+;
+; Entry: HL = high half of |value| (L holds the top mantissa bits),
+;        DE = low half, A = biased exponent.
+; ============================================================
+_prt_float_big:
 	PUSH	AF
+	LD	A,E
+	LD	(_pbig_m),A
+	LD	A,D
+	LD	(_pbig_m+1),A
+	LD	A,L
+	AND	7FH
+	OR	80H			; restore the implicit leading 1
+	LD	(_pbig_m+2),A
+
+	XOR	A
+	LD	HL,_prt_big
+	LD	B,40
+_pbig_clr:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_pbig_clr
+	LD	A,1
+	LD	(_prt_biglen),A
+
+	LD	B,24
+_pbig_bits:
+	PUSH	BC
+	LD	A,(_pbig_m)
+	ADD	A,A
+	LD	(_pbig_m),A
+	LD	A,(_pbig_m+1)
+	ADC	A,A
+	LD	(_pbig_m+1),A
+	LD	A,(_pbig_m+2)
+	ADC	A,A
+	LD	(_pbig_m+2),A
+	LD	A,0
+	ADC	A,0			; A = the bit shifted out of the top
+	CALL	_pbig_dbl
+	POP	BC
+	DJNZ	_pbig_bits
+
+	POP	AF
+	SUB	150			; (e - 127) - 23, straight off the biased form
+	JR	Z,_pbig_print
+	LD	B,A
+_pbig_more:
+	PUSH	BC
+	XOR	A
+	CALL	_pbig_dbl
+	POP	BC
+	DJNZ	_pbig_more
+
+_pbig_print:
+	LD	A,(_prt_biglen)
+	LD	B,A
+	LD	HL,_prt_big
+	LD	D,0
+	LD	E,A
+	ADD	HL,DE
+	DEC	HL			; most significant digit
+_pbig_po:
+	PUSH	BC
+	PUSH	HL
+	LD	A,(HL)
 	ADD	A,'0'
 	LD	E,A
 	CALL	_printf_putc
-	POP	AF
-	LD	L,A
-	LD	H,0
-	LD	DE,0
-	CALL	__itof
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	CALL	__fsub
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
+	POP	HL
+	DEC	HL
 	POP	BC
-	DJNZ	_prt_float_sm_lp
-	JP	_prt_float_done
+	DJNZ	_pbig_po
+	JP	_prt_float_dot_zeros
 
-_prt_float_large:
-	LD	A,(__fman+2)
-	LD	H,A
-	LD	A,(__fman+1)
-	LD	L,A
-	LD	A,B
-	SUB	23
+; Double the decimal accumulator, adding the carry-in in A.
+_pbig_dbl:
+	LD	C,A
+	LD	HL,_prt_big
+	LD	A,(_prt_biglen)
 	LD	B,A
+_pbig_dl:
+	LD	A,(HL)
+	ADD	A,A
+	ADD	A,C
+	LD	C,0
+	CP	10
+	JR	C,_pbig_nc
+	SUB	10
+	LD	C,1
+_pbig_nc:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_pbig_dl
+	LD	A,C
 	OR	A
-	JR	Z,_prt_float_lg2
-_prt_float_shlloop:
-	SLA	L
-	RL	H
-	DJNZ	_prt_float_shlloop
-_prt_float_lg2:
-	CALL	_prt_dec
-	LD	E,'.'
-	CALL	_printf_putc
-	LD	A,(_prt_float_prec)
-	LD	B,A
-	OR	A
-	JR	Z,_prt_float_done
-_prt_float_lg3:
-	PUSH	BC
-	LD	E,'0'
-	CALL	_printf_putc
-	POP	BC
-	DJNZ	_prt_float_lg3
-	JR	_prt_float_done
+	RET	Z
+	LD	(HL),1
+	LD	A,(_prt_biglen)
+	INC	A
+	LD	(_prt_biglen),A
+	RET
 
 _prt_float_zero:
 	LD	E,'0'
 	CALL	_printf_putc
+_prt_float_dot_zeros:
 	LD	E,'.'
 	CALL	_printf_putc
 	LD	A,(_prt_float_prec)
@@ -11417,8 +11405,11 @@ _printf_ll_w2:	DS	2
 _printf_ll_w3:	DS	2
 _prt_float_prec:	DB	6
 __ftmp:		DS	4
-__fman:		DS	4
 __fwork:	DS	4
+__fint:		DS	4	; %f integer part, as a 32-bit integer
+_pbig_m:	DS	3	; %f >= 2^31: the 24-bit mantissa, shifted out MSB first
+_prt_big:	DS	40	; %f >= 2^31: decimal digits, least significant first
+_prt_biglen:	DB	1
 
 
 ; ============================================================
@@ -13708,6 +13699,11 @@ __printf_x_noalt:
 ; lc_prt_dec32.mac - print DEHL as 32-bit decimal
 
 
+; Output goes through _printf_putc, not straight to __conout, so the
+; digits are counted in _printf_count and the printf family returns the
+; number of bytes it actually wrote.  Writing directly meant printf("%ld")
+; returned 3 for a ten-byte "[1234567]\n".  Every caller of _prt_dec32
+; (printf core, %ld, %lu, fprintf) links the printf core that defines it.
 
 	CSEG
 
@@ -13743,7 +13739,7 @@ _prt32_out:
 	ADD	A,'0'
 	LD	E,A
 	PUSH	BC
-	CALL	__conout
+	CALL	_printf_putc
 	POP	BC
 	DJNZ	_prt32_out
 

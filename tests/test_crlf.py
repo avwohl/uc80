@@ -72,13 +72,29 @@ class TestChokePointInvariant:
             "console output must go through __conout; found direct BDOS 2 "
             "calls in %r" % offenders)
 
-    @pytest.mark.parametrize("module", CONSOLE_MODULES)
-    def test_console_module_declares_the_extern(self, module):
-        assert "\tEXTRN\t__conout\n" in (LC_DIR / module).read_text()
+    # A console module reaches __conout either directly or through
+    # _printf_putc, which is lc_printf_core's one-line wrapper around it
+    # (it calls __conout and bumps _printf_count so the printf family can
+    # return a byte count).  Both routes end at the same choke point, so
+    # CR LF translation applies either way; what must never happen is a
+    # module reaching BDOS by some third route, and
+    # test_only_lc_conout_writes_to_bdos_2 above is what forbids that.
+    _ROUTES = (("\tEXTRN\t__conout\n", "CALL\t__conout"),
+               ("\tEXTRN\t_printf_putc\n", "CALL\t_printf_putc"))
 
     @pytest.mark.parametrize("module", CONSOLE_MODULES)
-    def test_console_module_calls_the_choke_point(self, module):
-        assert "CALL\t__conout" in (LC_DIR / module).read_text()
+    def test_console_module_reaches_the_choke_point(self, module):
+        src = (LC_DIR / module).read_text()
+        assert any(extern in src and call in src
+                   for extern, call in self._ROUTES), (
+            "%s writes to the console but neither calls __conout nor goes "
+            "through _printf_putc" % module)
+
+    def test_the_wrapper_itself_calls_the_choke_point(self):
+        """_printf_putc is only an acceptable route because it ends here."""
+        src = (LC_DIR / "lc_printf_core.mac").read_text()
+        putc = src.split("_printf_putc:", 1)[1].split("\tRET", 1)[0]
+        assert "CALL\t__conout" in putc
 
 
 class TestConoutModule:

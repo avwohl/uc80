@@ -4,7 +4,12 @@
 BDOS	EQU	5
 CONOUT	EQU	2
 
-	EXTRN	__conout
+; Output goes through _printf_putc, not straight to __conout, so the
+; digits are counted in _printf_count and the printf family returns the
+; number of bytes it actually wrote.  Writing directly meant printf("%ld")
+; returned 3 for a ten-byte "[1234567]\n".  Every caller of _prt_dec32
+; (printf core, %ld, %lu, fprintf) links the printf core that defines it.
+	EXTRN	_printf_putc
 
 	CSEG
 
@@ -40,7 +45,7 @@ _prt32_out:
 	ADD	A,'0'
 	LD	E,A
 	PUSH	BC
-	CALL	__conout
+	CALL	_printf_putc
 	POP	BC
 	DJNZ	_prt32_out
 
