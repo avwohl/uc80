@@ -5204,11 +5204,29 @@ class CodeGenerator:
         # Initialize struct with values from initializer list
         self._gen_struct_init_values(sym, struct_type, init_list.values, 0)
 
+    def _peel_comma(self, expr):
+        """Emit a comma chain's discarded operands; return the value operand.
+
+        C23 6.5.18: ``(a, b)`` evaluates a, discards the result, and has
+        b's value.  Codegen dispatches on expression SHAPE in several
+        places -- struct copies, 64-bit operands, conditions -- and a
+        comma wrapping the shape they look for sent them down a generic
+        path that does not produce what the caller needs.  Emitting the
+        left operands here and handing back the rightmost one lets those
+        dispatches see through the comma, and keeps the left operand's
+        side effects, which the generic path dropped outright in
+        argument position.
+        """
+        while isinstance(expr, ast.SequenceExpr):
+            self.gen_expr(expr.left)
+            expr = expr.right
+        return expr
+
     def _gen_struct_copy_from_expr(self, decl: ast.VarDecl) -> None:
         """Copy a struct from an expression (e.g., *ptr, struct variable)."""
         sym = self.ctx.locals[decl.name]
         size = self._type_size(decl.var_type)
-        init = decl.init
+        init = self._peel_comma(decl.init)
 
         # Get source address into HL
         if isinstance(init, ast.UnaryOp) and init.op == "*":
@@ -11358,6 +11376,13 @@ class CodeGenerator:
 
     def _gen_address(self, expr: ast.Expression) -> None:
         """Generate code to compute address of an expression into HL."""
+        # `(f(), obj)` designates obj, so run f() and take obj's address.
+        # Without this the comma matched no shape below and fell through
+        # to the generic arm, which produced the struct's first word
+        # rather than its address -- a struct argument, and `(f(), s).m`,
+        # both read from whatever that word pointed at -- and the left
+        # operand was never emitted at all, so f() did not run.
+        expr = self._peel_comma(expr)
         if isinstance(expr, ast.Identifier):
             sym = self.ctx.lookup(expr.name.text)
             if sym:

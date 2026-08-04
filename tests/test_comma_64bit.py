@@ -18,6 +18,10 @@ always stores the full width:
 
 Each test poisons __acc64 first with a distinctive value, because the bug
 is invisible when the accumulator happens to be zero.
+
+TestStructValued covers a second, separate gap of the same kind that the
+result-type work never reached: struct-valued commas, where the shape
+dispatches produced the struct's first word where its address belonged.
 """
 
 import os
@@ -187,3 +191,73 @@ class TestVariadicArgument:
         out = build_and_run(tmp_path, """
   printf("r=%lld\\n", twoll((note(), 1LL), (note(), 42LL)));""")
         assert out == "r=142\n"
+
+
+class TestStructValued:
+    """`(f(), s)` designates s, so it copies s and still runs f().
+
+    Struct-valued commas were never fixed by the result-type work: the
+    shape dispatches for struct copies and for _gen_address matched
+    Identifier, Call and *ptr and nothing else, so a comma fell to a
+    generic arm that produced the struct's first word where its address
+    belonged.  The value was garbage and, in argument position, the left
+    operand was not emitted at all.
+    """
+
+    PRELUDE = """
+struct S { int a; long long b; double c; };
+struct S g = { 1, 123456789012LL, 2.5 };
+void takes(struct S v){ printf("a=%d b=%lld c=%f\\n", v.a, v.b, v.c); }
+struct S ret(void){ return (note(), g); }
+"""
+
+    def build(self, tmp_path, body, name):
+        # PRELUDE has to land before main(), which build_and_run wraps.
+        c_file = tmp_path / (name + ".c")
+        c_file.write_text(PRELUDE + self.PRELUDE
+                          + "int main(void){\nsink = poison();\n%s\nreturn 0;}\n"
+                          % body)
+        mac, rel, com = (tmp_path / (name + e) for e in (".mac", ".rel", ".com"))
+        r = subprocess.run([sys.executable, "-m", "uc80.main", str(c_file),
+                            "-o", str(mac)], capture_output=True, text=True,
+                           cwd=str(REPO))
+        assert r.returncode == 0, r.stderr
+        subprocess.run(["um80", str(mac), "-o", str(rel)],
+                       check=True, capture_output=True, text=True)
+        subprocess.run(["ul80", str(rel), str(LIB_DIR / "libc.lib"),
+                        str(LIB_DIR / "runtime.lib"), "-o", str(com)],
+                       check=True, capture_output=True, text=True)
+        env = dict(os.environ, PYTHONHASHSEED="0")
+        run = subprocess.run([str(CPMEMU), str(com)],
+                             capture_output=True, timeout=60, env=env)
+        return run.stdout.decode("latin-1").replace("\r", "")
+
+    def test_initialiser(self, tmp_path):
+        out = self.build(tmp_path, """
+  struct S v = (note(), g);
+  printf("a=%d b=%lld c=%f n=%d\\n", v.a, v.b, v.c, flag);""", "si")
+        assert out == "a=1 b=123456789012 c=2.500000 n=1\n"
+
+    def test_argument_keeps_the_side_effect(self, tmp_path):
+        out = self.build(tmp_path, """
+  takes((note(), g));
+  printf("n=%d\\n", flag);""", "sa")
+        assert out == "a=1 b=123456789012 c=2.500000\nn=1\n"
+
+    def test_struct_return(self, tmp_path):
+        out = self.build(tmp_path, """
+  struct S r = ret();
+  printf("a=%d b=%lld n=%d\\n", r.a, r.b, flag);""", "sr")
+        assert out == "a=1 b=123456789012 n=1\n"
+
+    def test_member_access(self, tmp_path):
+        out = self.build(tmp_path, """
+  long long b = (note(), g).b;
+  printf("b=%lld n=%d\\n", b, flag);""", "sm")
+        assert out == "b=123456789012 n=1\n"
+
+    def test_nested(self, tmp_path):
+        out = self.build(tmp_path, """
+  int a = (note(), (note(), g)).a;
+  printf("a=%d n=%d\\n", a, flag);""", "sn")
+        assert out == "a=1 n=2\n"
