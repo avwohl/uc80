@@ -3186,6 +3186,12 @@ class CodeGenerator:
         # by name. Mirrors the local-decl path in gen_local_decl.
         for decl in unit.items:
             if isinstance(decl, ast.Declaration):
+                # Enum constants first: an array bound may be spelled with
+                # one, and the composite below has to be able to fold it.
+                try:
+                    self._register_decl_spec_enums(decl.decl_specs)
+                except Exception:
+                    pass
                 try:
                     base = resolve_base_type(decl.decl_specs)
                     self._register_inline_types(_to_legacy(base))
@@ -3518,41 +3524,7 @@ class CodeGenerator:
             return
         if not isinstance(decl, ast.Declaration):
             return
-        # Register enum constants from inline EnumDef/EnumAnon specs
-        # so file-scope `enum E { x, y, z };` makes `x`/`y`/`z`
-        # available as compile-time constants. Without this, references
-        # later emit EXTRN _x and the linker fails with 'undefined
-        # symbol _x' (c-testsuite 00054/00055/00120/00198).
-        # Auto-AST splits enum values: bare `x` is EnumValue(name),
-        # `y = N` is EnumValueWithInit(name, value).
-        def _reg_enum_values(values):
-            next_value = 0
-            for v in values or []:
-                if isinstance(v, ast.EnumValueWithInit):
-                    evaluated = self._eval_enum_expr(v.value)
-                    if evaluated is not None:
-                        next_value = evaluated
-                self.ctx.enum_constants[v.name.text] = next_value
-                next_value += 1
-        def _walk_specs_for_enums(specs):
-            """Find every EnumDef/EnumAnon reachable through a decl_specs
-            list — including inline enums inside StructDef/StructAnon
-            members (which the auto-AST stores as further EnumDef/EnumAnon
-            entries in the member's own decl_specs, not as a resolved
-            lt.EnumType field on the member).
-            """
-            for sp in specs or []:
-                if isinstance(sp, (ast.EnumDef, ast.EnumAnon)):
-                    _reg_enum_values(sp.values)
-                elif isinstance(sp, (ast.StructDef, ast.StructAnon)):
-                    for mem in (getattr(sp, "members", None) or []):
-                        # StructMember has its own decl_specs; recurse.
-                        _walk_specs_for_enums(getattr(mem, "decl_specs", None))
-                        # Legacy resolved EnumType (if frontend ever does so).
-                        mt = getattr(mem, "member_type", None)
-                        if isinstance(mt, lt.EnumType) and mt.values:
-                            _reg_enum_values(mt.values)
-        _walk_specs_for_enums(decl.decl_specs)
+        self._register_decl_spec_enums(decl.decl_specs)
         # Register struct definitions appearing in decl_specs (whether or
         # not the declaration has any declarators). `struct fred { ... };`
         # at file scope must put `fred` into ctx.structs so later member
@@ -3780,6 +3752,60 @@ class CodeGenerator:
                 nm = nm.text
             self.ctx.enum_constants[nm] = next_value
             next_value += 1
+
+    def _register_decl_spec_enums(self, specs) -> None:
+        """Register every enum constant reachable through a decl_specs list.
+
+        File-scope ``enum E { x, y, z };`` has to make ``x``/``y``/``z``
+        available as compile-time constants; without it, references emit
+        EXTRN _x and the linker fails with 'undefined symbol _x'
+        (c-testsuite 00054/00055/00120/00198).
+
+        This runs in generate()'s pre-pass as well as from
+        gen_declaration, because array bounds are composited before any
+        code is generated: ``enum { N = 8 }; extern int a[N]; int a[];``
+        needs N to be known when _merge_array_size asks how long a[N] is.
+        It was not, so the composite silently kept the unsized type and
+        emitted ``ds 0`` -- a zero-byte object that the next global then
+        got written through.  Registering twice is harmless: the same
+        names are given the same values.
+
+        Note this walks the raw decl_specs rather than the resolved type.
+        _to_legacy() drops an EnumType's values, so the resolved-type
+        route registers nothing at all.
+        """
+        def reg_values(values):
+            # Auto-AST splits enum values: bare `x` is EnumValue(name),
+            # `y = N` is EnumValueWithInit(name, value).
+            next_value = 0
+            for v in values or []:
+                if isinstance(v, ast.EnumValueWithInit):
+                    evaluated = self._eval_enum_expr(v.value)
+                    if evaluated is not None:
+                        next_value = evaluated
+                self.ctx.enum_constants[v.name.text] = next_value
+                next_value += 1
+
+        def walk(specs):
+            """Every EnumDef/EnumAnon reachable through a decl_specs list,
+            including inline enums inside StructDef/StructAnon members
+            (which the auto-AST stores as further EnumDef/EnumAnon entries
+            in the member's own decl_specs, not as a resolved lt.EnumType
+            field on the member).
+            """
+            for sp in specs or []:
+                if isinstance(sp, (ast.EnumDef, ast.EnumAnon)):
+                    reg_values(sp.values)
+                elif isinstance(sp, (ast.StructDef, ast.StructAnon)):
+                    for mem in (getattr(sp, "members", None) or []):
+                        walk(getattr(mem, "decl_specs", None))
+                        # Legacy resolved EnumType (if the frontend ever
+                        # does resolve one here).
+                        mt = getattr(mem, "member_type", None)
+                        if isinstance(mt, lt.EnumType) and mt.values:
+                            reg_values(mt.values)
+
+        walk(specs)
 
     def _register_enum(self, decl: ast.EnumDecl) -> None:
         """Register enum constants for later use."""
