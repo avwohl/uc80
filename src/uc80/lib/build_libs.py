@@ -201,8 +201,18 @@ def build_libc():
         return False
     return ok
 
-def main():
-    targets = sys.argv[1:] if len(sys.argv) > 1 else ["runtime", "libc"]
+def main(targets=None):
+    """Build the requested targets, defaulting to both.
+
+    *targets* defaults to sys.argv[1:] so running this script directly keeps
+    working.  Callers that import the module - `uc80 --build-libs` - must
+    pass the list explicitly, because their sys.argv holds their own flags
+    and would otherwise be read as target names.
+    """
+    if targets is None:
+        targets = sys.argv[1:] if len(sys.argv) > 1 else ["runtime", "libc"]
+    if not targets:
+        targets = ["runtime", "libc"]
     ok = True
     for target in targets:
         if target == "runtime":

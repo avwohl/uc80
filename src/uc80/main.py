@@ -15,6 +15,7 @@ from uc_core.preprocessor import Preprocessor, PreprocessorError, Macro
 from uc_core.ast_optimizer import ASTOptimizer
 from uc_core.type_config import TypeConfig, Z80_CPM
 
+from . import lib_dir, lib_file
 from .codegen import generate, CodeGenerator, CodegenError
 from .runtime import RuntimeLibrary, load_runtime_library
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
@@ -192,6 +193,106 @@ def _close_format_features(feats):
     return f
 
 
+class _PrintLibDirAction(argparse.Action):
+    """``--print-lib-dir``: print the library directory, then exit 0.
+
+    ``nargs=0`` plus the immediate ``parser.exit()`` make argparse run this
+    the moment the flag is seen - before it checks that the required
+    ``input`` positional was supplied - exactly the way ``-h`` already
+    behaves.  Without that, ``uc80 --print-lib-dir`` would die with "the
+    following arguments are required: input" and exit 2, which is the whole
+    reason consumers had to guess the path instead of asking for it.
+
+    The output is one line and nothing else, so ``LIB=$(uc80
+    --print-lib-dir)`` is safe.  It is a path query, not a health check: it
+    succeeds whether or not libc.lib has been built yet, and the caller
+    tests for the file it needs.
+    """
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS,
+                 default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings=option_strings, dest=dest,
+                         default=default, nargs=0, help=help)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(lib_dir())
+        parser.exit(0)
+
+
+class _BuildLibsAction(argparse.Action):
+    """``--build-libs``: assemble libc.lib, runtime.lib and crt0.rel, then exit.
+
+    Wheels built since 0.6.0 already ship those three, so this is for a git
+    checkout (where they are gitignored build output) and for rebuilding
+    after editing lc/*.mac or rt/*.mac.  Needs um80/ulib80 on PATH.
+    """
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS,
+                 default=argparse.SUPPRESS, help=None):
+        super().__init__(option_strings=option_strings, dest=dest,
+                         default=default, nargs=0, help=help)
+
+    @staticmethod
+    def _read_only_advice(target):
+        """Explain how to build the libraries out of tree."""
+        print(f"uc80: error: cannot write to {target}", file=sys.stderr)
+        print("The library directory is read-only, which usually means uc80 "
+              "was installed into a system-owned site-packages.",
+              file=sys.stderr)
+        print("Build the libraries somewhere writable and point UC80_LIB_DIR "
+              "at them:", file=sys.stderr)
+        print(f"  cp -r {target} ~/uc80lib", file=sys.stderr)
+        print("  (cd ~/uc80lib && python3 build_libs.py "
+              "&& um80 crt0.mac -o crt0.rel)", file=sys.stderr)
+        print("  export UC80_LIB_DIR=~/uc80lib", file=sys.stderr)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        import os
+        import subprocess
+        from .lib import build_libs
+
+        # build_libs.py reads and writes beside itself, i.e. inside the
+        # packaged tree - it has no output-directory option - so this cannot
+        # honour UC80_LIB_DIR as a destination.
+        target = Path(build_libs.SCRIPT_DIR)
+        # Check writability up front. Without this the failure surfaces as
+        # one "Permission denied" line per module - 89 of them - because
+        # build_libs runs um80 as a subprocess and reports each assembly as
+        # a plain failure.
+        if not os.access(target, os.W_OK):
+            self._read_only_advice(target)
+            parser.exit(1)
+        try:
+            # Pass the targets explicitly: build_libs.main() otherwise reads
+            # sys.argv, which here holds uc80's own flags and would make it
+            # report "Unknown target: --build-libs".
+            build_libs.main(["runtime", "libc"])
+            # build_libs.py builds the libraries but not the startup module.
+            crt0_mac, crt0_rel = target / "crt0.mac", target / "crt0.rel"
+            if crt0_mac.exists():
+                result = subprocess.run(
+                    ["um80", str(crt0_mac), "-o", str(crt0_rel)],
+                    capture_output=True, text=True)
+                if result.returncode:
+                    print(result.stdout + result.stderr, file=sys.stderr)
+                    parser.exit(1)
+                print("  Assembled crt0.rel")
+        except SystemExit as e:
+            if e.code:
+                parser.exit(int(e.code))
+        except PermissionError:
+            # Backstop for a directory that is writable but holds a
+            # read-only file, which the os.access() check above cannot see.
+            self._read_only_advice(target)
+            parser.exit(1)
+        except FileNotFoundError as e:
+            print(f"uc80: error: {e.filename or e}: not found", file=sys.stderr)
+            print("Building the libraries needs um80 and ulib80 on PATH: "
+                  "pip install um80", file=sys.stderr)
+            parser.exit(1)
+        parser.exit(0)
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -202,6 +303,21 @@ def main() -> int:
         "input",
         nargs='+',
         help="Input C source file(s) or .mac assembly file(s)"
+    )
+    # Query/maintenance flags. These act the moment argparse sees them and
+    # exit, so they work without an input file despite `input` being
+    # required.
+    parser.add_argument(
+        "--print-lib-dir",
+        action=_PrintLibDirAction,
+        help="Print the directory holding crt0.rel, libc.lib and "
+             "runtime.lib, then exit"
+    )
+    parser.add_argument(
+        "--build-libs",
+        action=_BuildLibsAction,
+        help="Assemble libc.lib, runtime.lib and crt0.rel into that "
+             "directory, then exit"
     )
     parser.add_argument(
         "-o", "--output",
@@ -381,7 +497,7 @@ def main() -> int:
     # Set up include paths
     include_paths = list(args.include)
     # Add lib/include as default include path
-    lib_include = Path(__file__).parent / "lib" / "include"
+    lib_include = lib_file("include")
     if lib_include.exists():
         include_paths.append(str(lib_include))
 
@@ -552,8 +668,8 @@ def main() -> int:
             if args.startup_lib:
                 startup_path = Path(args.startup_lib)
             else:
-                # Default: lib/crt0.mac relative to package
-                startup_path = Path(__file__).parent / "lib" / "crt0.mac"
+                # Default: crt0.mac from the package's library directory
+                startup_path = lib_file("crt0.mac")
 
             if startup_path.exists():
                 startup_content = startup_path.read_text()

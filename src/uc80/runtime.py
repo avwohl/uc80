@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from dataclasses import dataclass, field
 
+from . import lib_file
+
 
 @dataclass
 class AsmFunction:
@@ -377,7 +379,7 @@ class RuntimeLibrary:
 def load_runtime_library() -> RuntimeLibrary:
     """Load the default runtime library."""
     lib = RuntimeLibrary()
-    runtime_path = Path(__file__).parent / "lib" / "runtime.mac"
+    runtime_path = lib_file("runtime.mac")
     if runtime_path.exists():
         lib.load_file(runtime_path)
     return lib
