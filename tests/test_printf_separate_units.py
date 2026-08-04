@@ -76,30 +76,42 @@ def table_specs(mac_path):
     return None if entries is None else [c for c, _ in entries]
 
 
-class TestTablesAgreeAcrossUnits:
-    """Text-level checks -- fast, and they pin the exact failure mode."""
+class TestExactlyOneUnitDefinesTheTable:
+    """The tables are PUBLIC, so two definitions are a link error.
 
-    def test_units_using_different_float_conversions_agree(self, tmp_path):
+    Making every printf-using unit emit an identical table was not enough:
+    identical or not, a program with two printf-calling units defined the
+    symbol twice, and ul80 reports that (L80 silently keeps the first).
+    The unit defining main() is the one that exists exactly once in any
+    link -- crt0 requires it -- so it carries them.
+    """
+
+    def test_main_unit_defines_them(self, tmp_path):
         a, _ = compile_unit(tmp_path, "a", A_C, "--no-whole-program")
+        assert base_table(a) is not None
+
+    def test_non_main_unit_does_not(self, tmp_path):
         b, _ = compile_unit(tmp_path, "b", B_C, "--no-whole-program")
-        assert base_table(a) == base_table(b)
+        assert base_table(b) is None
+        assert "__printf_format_table" not in b.read_text()
 
     def test_all_six_float_conversions_are_registered(self, tmp_path):
-        """A unit printing only %f must still carry %e/%g for its siblings."""
+        """The main unit prints only %f; its siblings may print %e and %g."""
         a, _ = compile_unit(tmp_path, "a", A_C, "--no-whole-program")
         assert set("fFeEgG") <= set(table_specs(a))
 
-    def test_unit_without_printf_defines_no_table(self, tmp_path):
+    def test_unit_without_printf_or_main_defines_no_table(self, tmp_path):
         helper, _ = compile_unit(tmp_path, "helper", HELPER_C,
                                  "--no-whole-program")
         assert base_table(helper) is None
         assert "__printf_format_table" not in helper.read_text()
 
-    def test_explicit_printf_flags_also_agree(self, tmp_path):
+    def test_main_unit_defines_them_even_with_explicit_flags(self, tmp_path):
         flags = ("--no-whole-program", "--printf", "int", "--printf", "float")
         a, _ = compile_unit(tmp_path, "a", A_C, *flags)
         b, _ = compile_unit(tmp_path, "b", B_C, *flags)
-        assert base_table(a) == base_table(b)
+        assert base_table(a) is not None
+        assert base_table(b) is None
         assert set("fFeEgG") <= set(table_specs(a))
 
     def test_whole_program_still_filters_by_specifier(self, tmp_path):
@@ -130,6 +142,12 @@ class TestWideningIsAnnounced:
         _, err = compile_unit(tmp_path, "a", A_C, "--no-whole-program",
                               "--printf", "int", "--printf", "float")
         assert WIDEN_WARNING not in err
+
+    def test_non_main_unit_calling_printf_is_told_where_the_table_lives(
+            self, tmp_path):
+        _, err = compile_unit(tmp_path, "b", B_C, "--no-whole-program")
+        assert "does not define main()" in err
+        assert "--printf" in err
 
     def test_unit_without_printf_is_quiet(self, tmp_path):
         _, err = compile_unit(tmp_path, "helper", HELPER_C,

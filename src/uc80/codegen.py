@@ -4003,10 +4003,31 @@ class CodeGenerator:
         something codegen can see; the README documents it.
         """
         features = self.printf_features
-        if features is None or not self._printf_calls_seen:
+        if features is None:
+            return
+        defines_main = "main" in self.ctx.function_names
+        if not defines_main:
+            # This unit emits no table (see _should_emit_printf_tables), so
+            # its own feature set decides nothing.  It does decide whether
+            # the program works, though: the unit carrying the table cannot
+            # see this unit's format strings, so say so where the user can
+            # act on it.
+            if self._printf_calls_seen and not explicit:
+                self.warnings.append(
+                    "this unit calls printf but does not define main(), and "
+                    "under --no-whole-program the dispatch table is emitted by "
+                    "the unit that does; compile that unit with an explicit "
+                    "--printf covering the conversions used here, or its "
+                    "table will not carry them")
             return
         self.printf_features = {f for f in features if not f.startswith('spec:')}
-        if explicit or self.printf_features == {"all"}:
+        if explicit or not self._printf_calls_seen:
+            # An explicit set is the user stating the whole-program answer.
+            # A main() that calls no printf gives auto-detection nothing to
+            # widen from, and widening to "all" there would drag every
+            # handler into a program that may not print at all.
+            return
+        if self.printf_features == {"all"}:
             return
         self.printf_features = {"all"}
         self.warnings.append(
@@ -4020,16 +4041,23 @@ class CodeGenerator:
 
         In whole-program mode the unit is the program, so it always does.
 
-        Under ``--no-whole-program`` a unit that calls no printf must stay out
-        of it.  Its table would hold whatever its own (absent) format strings
-        implied -- an empty table under auto-detection -- and because L80 keeps
-        the first definition of a multiply-defined global, linking that unit
-        ahead of the one that does call printf silently disabled every
-        conversion in the whole program.
+        Under ``--no-whole-program`` exactly one unit may: the tables are
+        PUBLIC, and two definitions of a PUBLIC global are a link error
+        (ul80 reports it, and L80 silently keeps the first).  The unit
+        defining ``main`` is the one that always exists exactly once in a
+        link -- crt0 requires it -- so it carries them, whether or not it
+        calls printf itself.  Choosing "every unit that calls printf"
+        instead leaves a program with two printf-calling units emitting
+        the symbol twice.
+
+        A link with no ``main`` at all -- a library built on its own --
+        emits no table and falls back to the default in libc's
+        lc_printf_all, which only knows the 16-bit-int handlers.  That is
+        the pre-existing behaviour for such a link.
         """
         if self.printf_features is None:
             return False
-        return self.whole_program or self._printf_calls_seen
+        return self.whole_program or "main" in self.ctx.function_names
 
     def _emit_printf_format_tables(self) -> None:
         """Emit printf format dispatch tables based on #pragma printf features.
