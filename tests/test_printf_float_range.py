@@ -148,3 +148,31 @@ class TestReturnValue:
     def test_large_float_conversion_is_counted(self, tmp_path):
         out = build_and_run(tmp_path, 'printf("n=%d\\n", printf("[%f]\\n", 1e10f));')
         assert "n=21\n" in out
+
+
+class TestPointAndSign:
+    """Two things %f got wrong that %e and %g already got right."""
+
+    def test_zero_precision_emits_no_point(self, tmp_path):
+        """C 7.21.6.1: no point after %.0f unless # asks for one."""
+        out = build_and_run(tmp_path, 'printf("[%.0f][%#.0f]\\n", 2.0f, 2.0f);')
+        assert out == "[2][2.]\n"
+
+    def test_negative_zero_keeps_its_sign(self, tmp_path):
+        """The zero test masked the sign bit off before it was checked."""
+        out = build_and_run(tmp_path, 'printf("[%f][%f]\\n", -0.0f, 0.0f);')
+        assert out == "[-0.000000][0.000000]\n"
+
+    def test_negative_zero_in_every_conversion(self, tmp_path):
+        out = build_and_run(tmp_path,
+                            'printf("[%f][%e][%g]\\n", -0.0f, -0.0f, -0.0f);')
+        assert out == "[-0.000000][-0.000000e+00][-0]\n"
+
+    def test_point_rule_matches_e_and_g(self, tmp_path):
+        out = build_and_run(tmp_path,
+                            'printf("[%.0f][%.0e][%.0g]\\n", 2.0f, 2.0f, 2.0f);')
+        assert out == "[2][2e+00][2]\n"
+
+    def test_small_negative_still_signed(self, tmp_path):
+        out = build_and_run(tmp_path, 'printf("[%.1f]\\n", -0.04f);')
+        assert out == "[-0.0]\n"

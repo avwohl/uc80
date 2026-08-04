@@ -476,19 +476,14 @@ _prt_float:
 	LD	DE,(__ftmp)
 	LD	HL,(__ftmp+2)
 
-	; Check for zero
-	LD	A,H
-	AND	7FH
-	OR	L
-	OR	D
-	OR	E
-	JP	Z,_prt_float_zero
-
-	; Check sign bit
+	; Sign first, then zero.  The zero test masks the sign bit off, so
+	; testing it first sent -0.0 to _prt_float_zero with the '-' never
+	; emitted: printf("%f", -0.0) printed "0.000000".  C 7.21.6.1 says
+	; the sign of a negative value is always printed, and negative zero
+	; is a negative value.
 	BIT	7,H
-	JR	Z,_prt_float_pos
+	JR	Z,_prt_float_signdone
 
-	; Print minus sign
 	PUSH	HL
 	PUSH	DE
 	LD	E,'-'
@@ -496,6 +491,14 @@ _prt_float:
 	POP	DE
 	POP	HL
 	RES	7,H
+
+_prt_float_signdone:
+	; Check for zero (the sign bit is already cleared)
+	LD	A,H
+	OR	L
+	OR	D
+	OR	E
+	JP	Z,_prt_float_zero
 
 _prt_float_pos:
 	EX	DE,HL
@@ -581,8 +584,7 @@ _prt_round_add:
 	LD	(__fint+2),DE
 	CALL	_prt_dec32
 
-	LD	E,'.'
-	CALL	_printf_putc
+	CALL	_prt_float_point
 
 	; frac = value - (float)int
 	LD	HL,(__fint)
@@ -747,12 +749,27 @@ _pbig_nc:
 	LD	(_prt_biglen),A
 	RET
 
+; Emit the decimal point, unless there are no digits to follow it.
+; C 7.21.6.1: for %f the point appears only when the precision is
+; non-zero, or when the # flag asks for it.  printf("%.0f", 2.0) was
+; printing "2." , which no conforming implementation produces and which
+; %e and %g in this same libc already got right.
+_prt_float_point:
+	LD	A,(_prt_float_prec)
+	OR	A
+	JR	NZ,_prt_float_point_yes
+	LD	A,(_printf_alt)
+	OR	A
+	RET	Z
+_prt_float_point_yes:
+	LD	E,'.'
+	JP	_printf_putc
+
 _prt_float_zero:
 	LD	E,'0'
 	CALL	_printf_putc
 _prt_float_dot_zeros:
-	LD	E,'.'
-	CALL	_printf_putc
+	CALL	_prt_float_point
 	LD	A,(_prt_float_prec)
 	LD	B,A
 	OR	A
