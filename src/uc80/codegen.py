@@ -6665,8 +6665,7 @@ class CodeGenerator:
         end_label = self.ctx.new_label("ENDIF")
 
         # Evaluate condition - use force_long for float/long conditions
-        cond_is_32 = self._is_float_expr(stmt.condition) or self._is_long_expr(stmt.condition)
-        self.gen_expr(stmt.condition, force_long=cond_is_32)
+        self._gen_condition_value(stmt.condition)
 
         # Test if result is zero
         self._emit_condition_test(stmt.condition)
@@ -6692,8 +6691,7 @@ class CodeGenerator:
         self.ctx.continue_labels.append(start_label)
 
         self.ctx.emit_label(start_label)
-        cond_is_32 = self._is_float_expr(stmt.condition) or self._is_long_expr(stmt.condition)
-        self.gen_expr(stmt.condition, force_long=cond_is_32)
+        self._gen_condition_value(stmt.condition)
         self._emit_condition_test(stmt.condition)
         self.ctx.emit_instr("jp", f"Z,{end_label}")
 
@@ -6717,8 +6715,7 @@ class CodeGenerator:
         self.gen_statement(stmt.body)
 
         self.ctx.emit_label(cond_label)
-        cond_is_32 = self._is_float_expr(stmt.condition) or self._is_long_expr(stmt.condition)
-        self.gen_expr(stmt.condition, force_long=cond_is_32)
+        self._gen_condition_value(stmt.condition)
         self._emit_condition_test(stmt.condition)
         self.ctx.emit_instr("jp", f"NZ,{start_label}")
         self.ctx.emit_label(end_label)
@@ -6749,8 +6746,7 @@ class CodeGenerator:
 
         # Condition
         if stmt.condition:
-            cond_is_32 = self._is_float_expr(stmt.condition) or self._is_long_expr(stmt.condition)
-            self.gen_expr(stmt.condition, force_long=cond_is_32)
+            self._gen_condition_value(stmt.condition)
             self._emit_condition_test(stmt.condition)
             self.ctx.emit_instr("jp", f"Z,{end_label}")
 
@@ -7883,6 +7879,34 @@ class CodeGenerator:
                 and isinstance(expr.expr, (ast.IntLiteral, ast.CharLiteral))):
             expr = expr.expr
 
+        # C23 6.5.18: a comma expression has the value of its right
+        # operand, so evaluate the left for its side effects and build the
+        # 64-bit value from the right.  Recursing keeps the fast paths
+        # below reachable through a comma: without this the generic
+        # "complex 64-bit expression" arm ran gen_expr over the whole
+        # SequenceExpr, and an IntLiteral right operand emits a 16-bit
+        # ``ld HL,<v>`` that never touches __acc64 -- so `(f(), 42LL)`
+        # evaluated to whatever the accumulator happened to hold.  Before
+        # the comma operator had a result type this went through the
+        # sign-extend path below and happened to work.
+        if isinstance(expr, ast.SequenceExpr):
+            self.gen_expr(expr.left)
+            self._gen_64bit_operand(expr.right, to_tmp)
+            return
+
+        # ...and the same shape written as ``(long long)(f(), 42LL)``,
+        # where the comma is inside the cast rather than around it.  Drop
+        # the left operand's value, then apply the cast to the right one.
+        if (isinstance(expr, ast.Cast)
+                and isinstance(expr.expr, ast.SequenceExpr)):
+            self.gen_expr(expr.expr.left)
+            self._gen_64bit_operand(
+                ast.Cast(target_type=expr.target_type,
+                         expr=expr.expr.right,
+                         pos=expr.pos),
+                to_tmp)
+            return
+
         if self._is_long_long_expr(expr):
             # Already 64-bit - generate and store
             if isinstance(expr, ast.IntLiteral):
@@ -8651,13 +8675,11 @@ class CodeGenerator:
         false_label = self.ctx.new_label("AND_F")
         end_label = self.ctx.new_label("AND_E")
 
-        left_is_32 = self._is_float_expr(expr.left) or self._is_long_expr(expr.left)
-        self.gen_expr(expr.left, force_long=left_is_32)
+        self._gen_condition_value(expr.left)
         self._emit_condition_test(expr.left)
         self.ctx.emit_instr("jp", f"Z,{false_label}")
 
-        right_is_32 = self._is_float_expr(expr.right) or self._is_long_expr(expr.right)
-        self.gen_expr(expr.right, force_long=right_is_32)
+        self._gen_condition_value(expr.right)
         self._emit_condition_test(expr.right)
         self.ctx.emit_instr("jp", f"Z,{false_label}")
 
@@ -8674,13 +8696,11 @@ class CodeGenerator:
         true_label = self.ctx.new_label("OR_T")
         end_label = self.ctx.new_label("OR_E")
 
-        left_is_32 = self._is_float_expr(expr.left) or self._is_long_expr(expr.left)
-        self.gen_expr(expr.left, force_long=left_is_32)
+        self._gen_condition_value(expr.left)
         self._emit_condition_test(expr.left)
         self.ctx.emit_instr("jp", f"NZ,{true_label}")
 
-        right_is_32 = self._is_float_expr(expr.right) or self._is_long_expr(expr.right)
-        self.gen_expr(expr.right, force_long=right_is_32)
+        self._gen_condition_value(expr.right)
         self._emit_condition_test(expr.right)
         self.ctx.emit_instr("jp", f"NZ,{true_label}")
 
@@ -9885,8 +9905,12 @@ class CodeGenerator:
             # (e.g. a call to a function returning long long)
             expr_is_ll = self._is_long_long_expr(arg)
             if expr_is_ll:
-                # Expression computes 64-bit result in __acc64
-                self.gen_expr(arg, force_long=True)
+                # __push64_acc pushes __acc64, so the value has to be
+                # there.  gen_expr leaves it there for a real 64-bit
+                # computation but not for a literal or a comma whose right
+                # operand is one, which emit a bare ``ld HL,<v>``;
+                # _gen_64bit_operand always stores the full width.
+                self._gen_64bit_operand(arg, to_tmp=False)
                 self._call_runtime("__push64_acc")
                 return
 
@@ -9918,8 +9942,7 @@ class CodeGenerator:
         false_is_long = self._is_long_expr(expr.false_expr) or self._is_float_expr(expr.false_expr)
         need_long = true_is_long or false_is_long
 
-        cond_is_32 = self._is_float_expr(expr.condition) or self._is_long_expr(expr.condition)
-        self.gen_expr(expr.condition, force_long=cond_is_32)
+        self._gen_condition_value(expr.condition)
         self._emit_condition_test(expr.condition)
         self.ctx.emit_instr("jp", f"Z,{else_label}")
 
@@ -11968,6 +11991,28 @@ class CodeGenerator:
         self.ctx.runtime_used.add("__tmp32")
         self.ctx.emit_instr("ld", "(__tmp32),HL")
         self.ctx.emit_instr("ld", "(__tmp32+2),DE")
+
+    def _gen_condition_value(self, condition: ast.Expression) -> None:
+        """Evaluate a condition where _emit_condition_test will look for it.
+
+        Pairs with _emit_condition_test: whatever that reads, this has to
+        have written.  A 64-bit condition is tested by ORing the eight
+        bytes of __acc64, and gen_expr leaves the value there for a real
+        64-bit computation but not for the shapes that have a 16-bit fast
+        path -- a literal, or a comma whose right operand is one, which
+        emits a bare ``ld HL,<v>``.  _gen_64bit_operand always stores the
+        full width, so route 64-bit conditions through it.
+
+        Without this the test read a stale accumulator, so after any
+        earlier long long in the same function ``if ((f(), 0LL))`` took
+        the true branch.
+        """
+        if self._is_long_long_expr(condition):
+            self._gen_64bit_operand(condition, to_tmp=False)
+            return
+        force_long = (self._is_float_expr(condition)
+                      or self._is_long_expr(condition))
+        self.gen_expr(condition, force_long=force_long)
 
     def _emit_condition_test(self, condition: ast.Expression) -> None:
         """Emit zero-test for a condition expression. Sets Z flag if zero.
