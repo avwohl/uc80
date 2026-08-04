@@ -6,43 +6,97 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+A correctness release. Two of the fixes are for regressions in 0.6.0, so
+0.6.0 is superseded rather than merely improved on. Rebuild the libraries
+after upgrading:
+
+```bash
+uc80 --build-libs
+```
+
+Everything here came out of an independent verification pass over the seven
+bugs the mbasic project reported, carried out by verifiers working from the
+reports rather than from the fixes. It found more than it confirmed.
+
 ### Fixed
 
-- **Separate compilation no longer lets link order decide which printf
-  conversions work.** Regression introduced in 0.6.0 by the per-specifier
-  float filter.
+- **`printf("%f")` was wrong for every `|value| >= 65536`,** and usually did
+  not even emit digits: `1000000.0` printed as `3906.00///` and `-123456.0`
+  emitted a raw backslash. The integer part was built in `H:L:E` and printed
+  with the 16-bit `_prt_dec`, which drops `E`; above 2^24 a second path
+  shifted a 16-bit `HL` and printed `0`. `sprintf` in the same libc had
+  always been right, so one program could print one value two ways and get
+  two answers. Values beyond 2^31 -- where an `int32` no longer holds the
+  integer part -- now print exactly, by decimal doubling of the mantissa, so
+  `3.4e38` gives all 39 digits. Not a regression; it predates the %e/%g work.
 
-  Every unit that calls `printf` emits its own `PUBLIC
-  __printf_format_table`, because the compiler's table has to beat the
-  16-bit-int default in libc's `lc_printf_all` module. L80 keeps the *first*
-  definition of a multiply-defined global and links on, so under
-  `--no-whole-program` the units must not disagree about the contents. 0.6.0's
-  filter registered only the float conversions each unit's own literal format
-  strings used, so a unit printing `%f` and a unit printing `%e` emitted
-  different tables — and whichever was linked first won:
+- **The whole printf family shares one formatter.** `sprintf`, `snprintf`,
+  `fprintf`, `vprintf`, `vfprintf` and `vsprintf` each carried their own
+  conversion chain, so 0.6.0's `%e` and `%g` reached `printf` and nothing
+  else -- they printed an empty field and, because a table miss does not
+  advance the vararg offset, desynced every later conversion in the call.
+  `fprintf` and `snprintf` had no `%f` at all. A program calling both
+  `printf` and `sprintf` shrinks from 7040 to 5248 bytes, the duplicate
+  formatters having been linked in alongside the real one.
 
-  ```
-  ul80 crt0.rel a.rel b.rel ...   ->  A=[7][1.500000]|  B=[%e][%g][0]|
-  ul80 crt0.rel b.rel a.rel ...   ->  A=[7][%f]|        B=[2.800000e+01][28][3]|
-  ```
+- **A comma expression yielding `long long` carried a stale value.**
+  Regression in 0.6.0: once the comma operator had a result type,
+  `(f(), 42LL)` reported itself as 64-bit, and three places took that to mean
+  the value was in `__acc64`. A 64-bit literal has a 16-bit fast path, so it
+  was not, and the expression evaluated to whatever the accumulator last
+  held. Affected initialisers, every condition (`if`/`while`/`do`/`for`/
+  `&&`/`||`/`?:`) and variadic arguments.
 
-  Worse, a unit that called no `printf` at all still emitted an *empty* table;
-  linked first, it disabled every conversion in the program. Both cases were
-  silent — clean compile, clean link, exit 0. ul80 does record a
-  multiply-defined global, but its command line does not report a recorded
-  error when the link itself succeeds, so nothing downstream caught it either.
+- **A struct-valued comma produced garbage** and, in argument position,
+  dropped the left operand's side effect entirely. Not a regression -- an
+  unfixed gap of the same kind.
 
-  Under `--no-whole-program` the compiler now registers all six float
-  conversions rather than the ones one unit happens to use, and a unit that
-  calls no `printf` defines no table. An auto-detected feature set widens to
-  every handler, since a unit cannot see its siblings' format strings; that
-  costs space, so it is now a warning naming `--printf`. Pass the same
-  explicit `--printf`/`--scanf` to every unit to get the small table back —
-  an explicit set is taken as the whole-program answer and used as given.
+- **Under `--no-whole-program`, link order decided which printf conversions
+  worked.** Regression in 0.6.0: the per-specifier float filter made each
+  unit emit a different `PUBLIC __printf_format_table`, and L80 keeps the
+  first definition. A unit calling no `printf` emitted an *empty* table, so
+  linking it first disabled every conversion in the program. The table is now
+  emitted by the unit defining `main()` -- exactly one per link -- and a unit
+  that prints conversions that unit does not is told to pass an explicit
+  `--printf`. Whole-program mode is byte-identical.
 
-  Whole-program mode is unaffected and byte-identical: there the inference is
-  sound, and the filter that keeps a `%f`-only program from linking `%e`/`%g`
-  handlers still applies.
+- **An array bound spelled with an enum constant was ignored** when
+  compositing `extern int a[N];` with `int a[];`, giving a zero-byte object
+  that the next global was written through, and skipping the C 6.7.6.2p6
+  conflict check. Enum constants are now registered before declarations are
+  composited.
+
+- **Adjacent string literals initialised nothing.** `char s[] = "ab" "cd";`
+  emitted correctly sized, entirely zero storage; inside a struct initialiser
+  the pieces were spread across the following members, so a `char *` member
+  got a string's bytes where its pointer belonged.
+
+- **An appended `.mac` is fenced from the optimizers,** as inline `asm()`
+  already was. The peephole fused `LD A,(HL)` + `LD C,A` with `A` still live,
+  deleted a label caught between the fused pair (turning a working helper
+  into an `Undefined symbol` from um80), and discarded `ORG` and `ASEG`.
+
+- **`printf("%f", -0.0)` printed `0.000000`** -- the zero test masked the sign
+  bit off before anything checked it -- and **`printf("%.0f", 2.0)` printed
+  `2.`**, a trailing point with no digits after it. `%e` and `%g` already got
+  both right.
+
+- The printf family returns the number of bytes it actually wrote.
+  `_prt_dec32` wrote straight to `__conout`, so `printf("[%ld]\n", 1234567L)`
+  returned 3 for the ten bytes it produced.
+
+### Known limitations
+
+Recorded so they are not rediscovered; `todo.txt` has the full list.
+
+- Field width and the `-`, `+` and ` ` flags do nothing on a float
+  conversion. The format parser discards those three flags for every
+  conversion, so they have never been implemented.
+- `%.*f` / `%*f`, and `%lf` / `%le` / `%lg` under auto-detection or
+  `--printf float`, are not registered: the conversion is echoed verbatim and
+  every later one in that call reads the wrong argument.
+- `__sret_buf` is defined by both the embedded runtime and `runtime.lib`, so
+  the documented link line can define it twice; L80 keeps the first.
 
 ## 0.6.0
 

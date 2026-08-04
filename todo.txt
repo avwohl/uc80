@@ -50,95 +50,164 @@ Codegen / driver fixes landed during this pass:
     c-testsuite 00216 under --long=64.
 
 
-Bugs reported from mbasic, 2026-08-03
---------------------------------------
+Bugs reported from mbasic, 2026-08-03 - ALL RESOLVED 2026-08-04
+---------------------------------------------------------------
 Found while switching the mbasic BASIC compiler's Z80/CP/M backend over to
-uc80 + um80 + ul80 as its preferred toolchain (it was on z88dk).  Each item
-below was reproduced directly; the full write-up with build commands is in
-/home/wohl/src/mbasic/docs/dev/UC80_BUGS_TODO.md.
+uc80 + um80 + ul80 as its preferred toolchain (it was on z88dk).  The
+original write-up, with build commands, is in
+/home/wohl/src/mbasic/docs/dev/UC80_BUGS_TODO.md, which also carries the
+per-item status for mbasic's side.
 
-The first four fail SILENTLY - clean exit, working-looking binary, wrong
-behaviour - which is what makes them worth doing ahead of the rest.
+Every item was re-verified end to end after being fixed - built, linked and
+run under cpmemu - by verifiers working from the reports alone rather than
+from the fixes.  That pass found considerably more than it confirmed; the
+new items are listed further down.
 
-1. asm("...") is parsed and then silently discarded.  No error, no warning,
-   no code emitted.  The grammar accepts asm/__asm__ (with volatile and
-   operand lists) and codegen has no handler, so the node is dropped.
+	1 asm("...") discarded		fixed		cfeed03, 44487a7
+	2 appended .mac in BSS		fixed		e422207, ee5ef8e
+	3 um80 operand handling		see below	um80 0d6bb2f, a38cc15
+	4 printf %e and %g		fixed		215b864 + ea8b824
+	5 extern array merge crash	fixed		f96c829, 744c3f2
+	6 console CR LF			fixed		96d866f
+	7 .lib packaging		fixed		bc0463e, 84ca138
 
-       int marker;
-       void f(void) { asm("ld hl,1234\n\tld (_marker),hl"); }
-       int main(void){ f(); return marker; }
+Item 3 did not reproduce as reported and never could have: um80 rejects
+ADD HL,BC and ADD HL,SP identically, exits non-zero and writes no output.
+What the report describes is genuine MACRO-80 3.44 behaviour, not um80's.
+There was a real operand-dropping bug next door, and then two more found
+while checking it - see the um80 entries below.
 
-       $ uc80 -P a.c -o a.mac      # exit 0, silent
-       $ grep -c 1234 a.mac
-       0
+Item 4 was fixed in printf only.  sprintf, snprintf, fprintf, vprintf,
+vfprintf and vsprintf each carried their own conversion chain, so %e and %g
+still printed an empty field there, and fprintf/snprintf had no %f at all.
+ea8b824 gives the whole family one formatter, which also shrank a program
+using printf and sprintf from 7040 to 5248 bytes.
 
-   Either implement it or make it a hard error.  Emitting nothing quietly is
-   the worst option.  (#asm/#endasm and __naked correctly do error out.)
+The FRE(A$) question, previously "not yet attributed", is answered: it was a
+uc80 miscompile.  The comma operator had no result type, so
+(gc(), (double)get_free_space()) was treated as int and only half the
+double reached printf.  Fixed by 68d4356, 8b9ce6e, 11cbd0d, ada0e32 - and
+see the two follow-on defects below, both of which that work introduced or
+left behind.
 
-2. A .mac passed to uc80 is placed in BSS and zeroed by crt0 at startup.
-   `uc80 prog.c helper.mac` is the documented way to supply hand-written
-   assembly; it compiles, links, runs, and the routine returns garbage.
-   A helper that does `LD HL,4660 / RET` returned 65281 (0xFF01).
 
-   Cause: uc80 strips the CSEG directive from an appended .mac (it is in the
-   skip-headers set) and appends the file AFTER its own `common //` BSS
-   directive, so the code lands in the COMMON block and crt0's zeroing loop
-   wipes it before main().  It only appears to work when the C program has no
-   BSS at all.
+Found by the verification pass, 2026-08-04
+-------------------------------------------
+Two of these were regressions in 0.6.0, which is why 0.6.0 should be treated
+as superseded rather than merely improved on.
 
-   Fix ideas: preserve the segment directive, or append .mac content before
-   the BSS directive, or reject .mac inputs and point at the separate-
-   assembly route (um80 helper.mac -o helper.rel, then link the .rel), which
-   is the workaround mbasic now uses.
+	%f wrong above 65535		fixed	9306503
+	comma with a 64-bit literal	fixed	c000f4c   (0.6.0 regression)
+	printf table per unit		fixed	673ee5b, 1fb6474 (0.6.0 regression)
+	printf family divergence	fixed	ea8b824
+	enum array bound ignored	fixed	f90c57a
+	"ab" "cd" initialiser dropped	fixed	27e69d6
+	.mac rewritten by peephole	fixed	1563862
+	struct-valued comma		fixed	3c430d9
+	%f of -0.0, and %.0f		fixed	f708023
+	um80 CP A,5 drops the 5		fixed	um80 a38cc15
+	um80 .Z80 leaks across passes	fixed	um80 a38cc15
+	ul80 discarded its own errors	fixed	um80 54e9a20
 
-3. (um80) Z80 mnemonics assemble as 8080 without a .z80 directive, and um80
-   writes an output file anyway after reporting errors.
+printf("%f") was wrong for every |value| >= 65536 and often emitted bytes
+that were not digits - 1000000.0 printed as "3906.00///" and -123456.0
+emitted a raw backslash.  sprintf in the same libc had always been right,
+so one program could print one value two ways and get two answers.  Not a
+regression; it predates the %e/%g work.
 
-       CSEG
-       TSTOP: LD HL,0
-              ADD HL,SP      <-- accepted, assembles to the wrong opcode
-              ADD HL,BC      <-- "Error at line N: ADD requires one operand"
-              RET
-              END
 
-   So `LD HL,0 / ADD HL,SP` silently returns 0 instead of SP.  Two issues:
-   the inconsistency between the two ADD HL,rr forms, and that errors do not
-   suppress the output file or force a non-zero exit - a build script that
-   checks for the output rather than the status proceeds with a corrupt .rel.
+Still open
+----------
+None of these is a silent wrong answer except where marked.  Each was
+reproduced by the verification pass; repros are in the mbasic write-up.
 
-4. printf %e and %g produce EMPTY output.  %f works.  Built with
-   --printf int --printf float:
+  - printf field width and the '-', '+' and ' ' flags do nothing on a float
+    conversion.  This is not float-specific: the format parser skips '-',
+    '+' and ' ' outright for every conversion, so they have never been
+    implemented at all.  %10.2f prints "1.50", not "      1.50".  Adding
+    them is a feature rather than a fix, which is why it was not rushed in
+    alongside the corrections above.
 
-       f=[%f] -> f=[28.000000]
-       e=[%e] -> e=[]
-       g=[%g] -> g=[]
+  - %.*f and %*f are unsupported: the specification is echoed verbatim, the
+    int argument is not consumed, and every later conversion in that call
+    reads the wrong argument.  SILENT.  The compile-time diagnostic does not
+    catch it either, because _extract_printf_specifiers swallows the '*'.
 
-   %g matters for BASIC PRINT - it drops trailing zeros the way MBASIC does.
-   Related trap: the --printf flags accumulate rather than replace, so
-   --printf float alone silently drops %d.
+  - %lf, %le and %lg are not registered by auto-detection or by
+    --printf float, because _extract_printf_specifiers never adds the 'long'
+    feature for a float conversion.  SILENT.  mbasic's generated C emits %lg.
 
-5. Internal error on the ordinary header-declares/source-defines idiom:
+  - _auto_detect_printf_features does not descend into a `default:` label or
+    an initializer list, so a printf there is invisible to it.  SILENT.
 
-       extern int arr[100];
-       int arr[100];
+  - __sret_buf is defined by the embedded runtime AND by runtime.lib, so
+    uc80's own documented link line can define it twice.  L80 keeps the
+    first, and the two definitions are not even the same size (64 bytes in
+    the legacy libc.rel.mac, 256 in the runtime), so a struct return larger
+    than the surviving buffer would overflow it.  ul80 now reports the
+    duplicate; the fix belongs here.
 
-       uc80: internal error: '<' not supported between instances of
-             'Token' and 'Token'
+  - _merge_array_size compares only the outermost element count.  Inner
+    dimensions, element types and declarator shape are never checked, so
+    incompatible redeclarations gcc rejects are accepted and the object size
+    depends on declaration order.  SILENT.
 
-   uc80/codegen.py:2769 in _merge_array_size compares `cur_size.value <
-   prev_size.value` where both .value are Token objects rather than ints.
-   Needs the sizes evaluated before comparison.  Blocks most real multi-file
-   projects; an unsized extern (`extern int arr[];`) is the workaround.
+  - A negative or zero array size is accepted; a floating-point one is not
+    diagnosed by uc80 and surfaces as a um80 parse error with no source line.
 
-6. Console output uses bare LF, not CRLF.  Real CP/M and real MBASIC end
-   console lines with CRLF; uc80's libc does not translate \n on the way
-   out, so output stair-steps on a real CP/M terminal.
+  - Compound assignment to a 32-bit, 64-bit or float array element evaluates
+    the subscript twice, so a side-effecting subscript runs twice.  SILENT.
+    ada0e32's test covers only a 16-bit array.
 
-7. Packaging: libc.lib and runtime.lib are build artifacts that the pip
-   package does not ship, and in a source checkout they land in the repo's
-   top-level lib/ rather than beside the package in src/uc80/lib/.  There is
-   no flag, env var, or API reporting the path, so every consumer guesses.
-   A `uc80 --print-lib-dir` (or shipping the .lib files) would fix it.
+  - uc80 --build-libs ignores UC80_LIB_DIR for its destination while
+    --print-lib-dir reports the override, so `uc80 --build-libs &&
+    LIB=$(uc80 --print-lib-dir)` links against libraries that were never
+    rebuilt.  SILENT.  lib_dir() also does not make a relative UC80_LIB_DIR
+    absolute, so the CLI and the Python API can disagree by cwd.
+
+  - Extended asm and asm goto are not diagnosed when the enclosing function
+    is eliminated as dead; the check lives in gen_asm, which never runs for
+    code that is not generated.  The AST optimizer also deletes an asm block
+    that is unreachable or in a constant-false branch, which matches gcc -O0
+    but contradicts the README's "the optimizers do not change, move or
+    delete it".
+
+  - _format_asm_block's indentation heuristic rewrites a colon-less MACRO-80
+    label whose name happens to be a mnemonic or directive (SET, END, IN,
+    OUT, AND, OR, SUB, CP, RES, PAGE, NAME), which the README's "goes into
+    the output assembly unchanged" does not allow for.
+
+  - The CR-suppression state tracks only bytes written through __conout, so
+    a console write that bypasses it - inline asm today, and BDOS-1 input
+    echo on real hardware - leaves it stale and the next '\n' loses its CR.
+
+  - --no-crlf is silently ignored on a translation unit that does not define
+    main(), with no warning.
+
+  - No diagnostic for comma-operator constraint violations: (a,b)=5, &(a,b)
+    and (a,b)++ are accepted, and file-scope `int g = (1,2);` is silently
+    initialised to 0.
+
+  - %F of infinity prints "inf" rather than "INF"; %E and %G are correct.
+
+  - %f ties at precision 0 round half away from zero, where IEEE and glibc
+    round half to even (2.5 -> 3 against glibc's 2).  Consistent across
+    %f/%e/%g.  Defensible, recorded so it is not re-reported as a surprise.
+
+  - um80 leaves a stale .rel/.prn from an earlier successful run in place
+    when a later assembly fails, so a build script that checks for the file
+    rather than the status picks up the old object.
+
+  - um80 accepts a malformed expression: DB 1+*2 assembles to 01.  SILENT.
+
+  - um80 error line numbers inside macro, REPT and IRP expansions point at
+    the wrong source line.
+
+  - ul80 reports a multiply-defined global but still exits 0, because L80
+    keeps the first definition and produces output.  Whether the status
+    should change is a policy question; it would reject link lines L80
+    accepts, including uc80's own (see __sret_buf above).
+
 
 Not bugs, recorded so they are not re-reported:
   - Last-digit float differences vs z88dk built with --math-mbf32.  uc80 is
@@ -149,12 +218,3 @@ Not bugs, recorded so they are not re-reported:
     support.  Such programs stay on z88dk.
   - `label: }` rejected - uc80 is right, C17 requires a statement after a
     label.  mbasic was wrong and now emits `label: ;`.
-
-Open, not yet attributed to either project:
-  - FRE(A$) returns a wrong value in uc80-built mbasic programs (23808 where
-    z88dk reports 47043; 0 in a reduced case).  The pool bootstrap is NOT the
-    cause - an instrumented build showed bss=16208 sp=64760 size=47530, which
-    matches z88dk's pool almost exactly - so it is downstream, in the runtime
-    or in how `(gc(), (double)get_free_space())` compiles.  A direct
-    uint16_t-to-double conversion test passed, so it is not the cast alone.
-    Needs isolating before it can be filed.
