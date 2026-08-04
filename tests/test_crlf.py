@@ -240,7 +240,8 @@ def _toolchain_available():
 class TestOnEmulator:
     """Text inspection cannot see a line ending; these run on a real Z80."""
 
-    def build_and_run(self, tmp_path, body, *extra_args, prelude=""):
+    def build_and_run(self, tmp_path, body, *extra_args, prelude="",
+                      raw_files=False):
         c_file = tmp_path / "prog.c"
         c_file.write_text("#include <stdio.h>\n%s\nint main(void){\n%s\n"
                           "return 0;}\n" % (prelude, body))
@@ -257,9 +258,19 @@ class TestOnEmulator:
         link += [str(LIB_DIR / "libc.lib"), str(LIB_DIR / "runtime.lib"),
                  "-o", str(com)]
         subprocess.run(link, check=True, capture_output=True, text=True)
+        target = str(com)
+        if raw_files:
+            # cpmemu's own text mode rewrites CP/M "\r\n" to "\n" when it
+            # writes a host file (cpmemu.cc:715-730), which would hide a CR
+            # that libc wrongly injected.  Turn that off so the host file is
+            # byte-exact -- otherwise the file test could not fail.
+            cfg = tmp_path / "prog.cfg"
+            cfg.write_text("program = %s\ndefault_mode = binary\n"
+                           "eol_convert = false\n" % com.name)
+            target = str(cfg)
         env = dict(os.environ, PYTHONHASHSEED="0")
         # NOT text=True: the whole point is the exact bytes on the wire.
-        run = subprocess.run([str(CPMEMU), str(com)], capture_output=True,
+        run = subprocess.run([str(CPMEMU), target], capture_output=True,
                              timeout=30, env=env, cwd=str(tmp_path))
         return run.stdout
 
@@ -342,7 +353,8 @@ class TestOnEmulator:
             FILE *g = fopen("OUTT.DAT", "w");
             fputs("ef\ngh\n", g); fputc('\n', g); fclose(g);
             printf("done\n");
-        ''')
+        ''', raw_files=True)
         assert out == b"done\r\n"
-        assert (tmp_path / "outb.dat").read_bytes() == b"ab\ncd\n"
-        assert (tmp_path / "outt.dat").read_bytes() == b"ef\ngh\n\n"
+        # CP/M pads the last 128-byte record with ^Z.
+        assert (tmp_path / "outb.dat").read_bytes().rstrip(b"\x1a") == b"ab\ncd\n"
+        assert (tmp_path / "outt.dat").read_bytes().rstrip(b"\x1a") == b"ef\ngh\n\n"
