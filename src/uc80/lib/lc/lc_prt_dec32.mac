@@ -4,6 +4,8 @@
 BDOS	EQU	5
 CONOUT	EQU	2
 
+	EXTRN	__conout
+
 	CSEG
 
 	PUBLIC	_prt_dec32
@@ -38,8 +40,7 @@ _prt32_out:
 	ADD	A,'0'
 	LD	E,A
 	PUSH	BC
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	POP	BC
 	DJNZ	_prt32_out
 

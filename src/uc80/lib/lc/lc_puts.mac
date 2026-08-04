@@ -7,6 +7,8 @@ CONOUT	EQU	2
 CONIN	EQU	1
 PRTSTR	EQU	9
 
+	EXTRN	__conout
+
 	CSEG
 
 ; ============================================================
@@ -32,21 +34,17 @@ _puts_loop:
 	JR	Z,_puts_newline	; End of string
 
 	LD	E,A		; Character in E
-	LD	C,CONOUT
-	PUSH	HL
-	CALL	BDOS
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_puts_loop
 
 _puts_newline:
-	; Output newline (CR LF)
-	LD	E,0DH		; CR
-	LD	C,CONOUT
-	CALL	BDOS
-	LD	E,0AH		; LF
-	LD	C,CONOUT
-	CALL	BDOS
+	; Output newline.  __conout supplies the CR when ___crlf_mode is
+	; set; puts() used to hard-code CR LF here while printf/putchar/
+	; fputs emitted a bare LF, so one program printed two different
+	; line terminators depending on which stdio call it used.
+	LD	E,0AH
+	CALL	__conout
 
 	; Return 0 (success)
 	LD	HL,0
@@ -76,10 +74,7 @@ _cputs_loop:
 	JR	Z,_cputs_done
 
 	LD	E,A
-	LD	C,CONOUT
-	PUSH	HL
-	CALL	BDOS
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_cputs_loop
 

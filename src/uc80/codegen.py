@@ -2796,7 +2796,8 @@ class CodeGenerator:
                  embed_runtime: bool = False,
                  printf_features: set[str] | None = None,
                  scanf_features: set[str] | None = None,
-                 type_config: TypeConfig | None = None):
+                 type_config: TypeConfig | None = None,
+                 crlf_console: bool = True):
         self.module_name = module_name
         self.ctx = CodeGenContext()
         # Wire module-level ``_to_legacy`` to consult this codegen's
@@ -2813,6 +2814,13 @@ class CodeGenerator:
         self.printf_features = printf_features  # None = no pragma (emit default all table)
         self.scanf_features = scanf_features    # None = no pragma
         self.type_config = type_config if type_config is not None else Z80_CPM
+        # Console line endings.  libc translates '\n' to CR LF by default
+        # (lc_conout.mac), which is what a real CP/M terminal needs.  The
+        # library ships prebuilt, so the compiler cannot select different
+        # library source; instead libc keeps the policy in a runtime byte
+        # and gen_function stores 0 into it at the top of main() when this
+        # is False.  See _emit_crlf_mode_init.
+        self.crlf_console = crlf_console
         self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
         # Non-fatal diagnostics collected during generate(); main.py prints
         # them.  Codegen itself never writes to stderr.
@@ -4481,6 +4489,29 @@ class CodeGenerator:
             if isinstance(decl, ast.FunctionDef) and decl.body:
                 visit_stmt(decl.body)
 
+    def _emit_crlf_mode_init(self) -> None:
+        """Emit the --no-crlf store at the top of main().
+
+        libc's console choke point (lc/lc_conout.mac) translates '\\n' to
+        CR LF unless the byte ``___crlf_mode`` is zero.  That byte, not a
+        second copy of the library, is what --no-crlf flips: libc ships as
+        a prebuilt libc.lib, so there is no library source for the compiler
+        to reselect, and injecting the store into crt0 would only work in
+        whole-program mode (in --no-whole-program builds the prebuilt
+        crt0.rel is linked instead and the injection would silently be
+        skipped).  A four-byte store at the top of main() works identically
+        in both modes.
+
+        Consequences, documented in README: the flag only takes effect on
+        the translation unit that defines main(), and referencing
+        ___crlf_mode is what pulls lc_conout into a program that would
+        otherwise do no I/O at all.
+        """
+        self.ctx.emit_instr("extrn", "___crlf_mode")
+        self.ctx.emit("; --no-crlf: disable libc's LF -> CR LF console translation")
+        self.ctx.emit_instr("xor", "A")
+        self.ctx.emit_instr("ld", "(___crlf_mode),A")
+
     def gen_function(self, func) -> None:
         """Generate code for a function definition (auto-AST FunctionDef)."""
         name = function_name(func)
@@ -4559,6 +4590,10 @@ class CodeGenerator:
                     is_param=True,
                 )
                 param_offset += (size + 1) & ~1
+
+        # Must come after the prologue and before anything main() can print.
+        if name == "main" and not self.crlf_console:
+            self._emit_crlf_mode_init()
 
         self.gen_compound_stmt(func.body)
 
@@ -13680,8 +13715,10 @@ def generate(unit: ast.TranslationUnit, module_name: str = "main",
              enable_inlining: bool = True,
              enable_const_propagation: bool = True,
              whole_program: bool = True,
-             embed_runtime: bool = False) -> str:
+             embed_runtime: bool = False,
+             crlf_console: bool = True) -> str:
     """Generate Z80 assembly for a translation unit."""
     gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
-                       enable_inlining, enable_const_propagation, whole_program, embed_runtime)
+                       enable_inlining, enable_const_propagation, whole_program, embed_runtime,
+                       crlf_console=crlf_console)
     return gen.generate(unit)

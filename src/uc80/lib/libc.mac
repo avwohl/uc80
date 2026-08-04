@@ -313,21 +313,16 @@ __assert_fail:
 
 	; Print ":"
 	LD	E,':'
-	LD	C,2
-	CALL	5
+	CALL	__conout
 
 	; Print line number
 	LD	L,(IX+6)
 	LD	H,(IX+7)
 	CALL	_assert_prt_dec
 
-	; Print newline
-	LD	E,0DH
-	LD	C,2
-	CALL	5
+	; Print newline (__conout supplies the CR when ___crlf_mode is set)
 	LD	E,0AH
-	LD	C,2
-	CALL	5
+	CALL	__conout
 
 	; Exit
 	JP	0
@@ -338,10 +333,7 @@ _assert_puts:
 	OR	A
 	RET	Z
 	LD	E,A
-	PUSH	HL
-	LD	C,2
-	CALL	5
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_assert_puts
 
@@ -364,8 +356,7 @@ _assert_dec_out:
 	ADD	A,'0'
 	LD	E,A
 	PUSH	BC
-	LD	C,2
-	CALL	5
+	CALL	__conout
 	POP	BC
 	DJNZ	_assert_dec_out
 	POP	DE
@@ -3927,6 +3918,90 @@ _cplx_res:	DS	8	; Result storage
 
 
 ; ============================================================
+; lc_conout.mac
+; ============================================================
+	CSEG
+; lc_conout.mac - the single console-output choke point for libc
+;
+; EVERY libc routine that writes a character to the CP/M console calls
+; __conout.  Nothing else in lc/*.mac may call BDOS function 2 directly;
+; the only two `LD C,CONOUT' in the whole library live in this file.
+; (See the grep in tests/test_crlf.py, which enforces that.)
+;
+; A real CP/M console (ADM-3A, Kaypro, Televideo, ...) treats LF as
+; "cursor down" only, so a bare LF makes output stair-step down the
+; screen.  The CP/M convention is that the *program* emits CR LF.
+; __conout does that translation, which C23 7.23.2 explicitly allows
+; for a text stream ("Characters can be added, altered, or deleted on
+; input and output to conform to differing conventions for representing
+; text in the host environment").
+;
+; A CR is inserted before LF unless the previous character written was
+; already a CR, so a program that already prints "\r\n" does not get
+; "\r\r\n", and a "\r"-only progress-bar redraw still works.  That
+; suppression is the reason every console writer - including the digit
+; emitters in lc_prt_dec32/dec64/hex, which never emit a newline
+; themselves - has to come through here: if one of them wrote straight
+; to BDOS, __conout_last would go stale and a CR could be wrongly
+; suppressed.
+;
+; ___crlf_mode (byte, default 1) disables the translation when zeroed.
+; uc80 --no-crlf makes main() zero it; a program can do it itself with
+;     #include <stdio.h>       /* declares __crlf_mode */
+;     __crlf_mode = 0;
+; The C name __crlf_mode becomes ___crlf_mode in assembly because uc80
+; prefixes every C identifier with one underscore.
+;
+; File streams are NOT affected: lc_file.mac routes only its console
+; branch (stream id < 3) through __conout, so fwrite/fputc to a real
+; FILE * stay byte-for-byte raw in both "w" and "wb" mode.
+;
+; Entry:  E = character to write
+; Exit:   BC, DE, HL preserved; AF destroyed (same as a bare BDOS call,
+;         which preserves nothing) - so `CALL __conout' is a drop-in
+;         replacement for `LD C,CONOUT / CALL BDOS'.
+
+
+
+	CSEG
+
+	PUBLIC	__conout
+__conout:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD	A,E
+	LD	HL,__conout_last
+	LD	C,(HL)		; C = previous character written
+	LD	(HL),A		; remember this one
+	CP	0AH		; LF?
+	JR	NZ,__conout_put
+	LD	A,(___crlf_mode)
+	OR	A
+	JR	Z,__conout_put	; translation disabled - pass LF through
+	LD	A,C
+	CP	0DH		; already preceded by CR?
+	JR	Z,__conout_put
+	LD	E,0DH		; no - emit CR first
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,0AH
+__conout_put:
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+	DSEG
+
+	PUBLIC	___crlf_mode
+___crlf_mode:	DB	1	; non-zero: translate LF -> CR LF
+__conout_last:	DB	0	; last character handed to BDOS
+
+
+; ============================================================
 ; lc_cos.mac
 ; ============================================================
 	CSEG
@@ -5552,10 +5627,11 @@ _fputc:
 	CP	3
 	JR	NC,_fputc_file
 
-	; Console output
+	; Console output.  Only this branch translates LF -> CR LF; the
+	; _fputc_file branch below writes raw bytes, so "w" and "wb"
+	; streams both stay byte-for-byte what the program handed us.
 	LD	E,(IX+4)
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	LD	L,(IX+4)
 	LD	H,0
 	JP	_fputc_ret
@@ -6846,21 +6922,16 @@ _perror_uloop:
 	OR	A
 	JR	Z,_perror_colon
 	LD	E,A
-	PUSH	HL
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_perror_uloop
 
 _perror_colon:
 	; Print ": "
 	LD	E,':'
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	LD	E,' '
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 
 _perror_errmsg:
 	; Print generic error message (CP/M doesn't have errno)
@@ -6870,21 +6941,14 @@ _perror_loop:
 	OR	A
 	JR	Z,_perror_nl
 	LD	E,A
-	PUSH	HL
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_perror_loop
 
 _perror_nl:
-	; Print newline
-	LD	E,13
-	LD	C,CONOUT
-	CALL	BDOS
+	; Print newline (__conout supplies the CR when ___crlf_mode is set)
 	LD	E,10
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 
 	POP	DE
 	POP	BC
@@ -10578,8 +10642,7 @@ _printf_putc:
 	PUSH	BC
 	PUSH	DE
 	PUSH	HL
-	LD	C,CONOUT
-	CALL	BDOS	; the only real BDOS call in printf land
+	CALL	__conout	; the only console write in printf land
 	LD	HL,(_printf_count)
 	INC	HL
 	LD	(_printf_count),HL
@@ -13645,6 +13708,7 @@ __printf_x_noalt:
 ; lc_prt_dec32.mac - print DEHL as 32-bit decimal
 
 
+
 	CSEG
 
 	PUBLIC	_prt_dec32
@@ -13679,8 +13743,7 @@ _prt32_out:
 	ADD	A,'0'
 	LD	E,A
 	PUSH	BC
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	POP	BC
 	DJNZ	_prt32_out
 
@@ -13755,6 +13818,7 @@ _prt32_val:	DS	4
 ; lc_prt_dec64.mac - print 64-bit value as unsigned decimal
 
 
+
 	CSEG
 
 	PUBLIC	_prt_dec64
@@ -13794,8 +13858,7 @@ _prt64_out:
 	ADD	A,'0'
 	LD	E,A
 	PUSH	BC
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	POP	BC
 	DJNZ	_prt64_out
 
@@ -13938,16 +14001,14 @@ _prt_hex:
 	JR	NZ,_prt_hexf
 	LD	A,'0'
 	LD	E,A
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	POP	BC
 	RET
 _prt_hexf:
 	LD	B,1
 	CALL	_prt_hex_nib
 	LD	E,A
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	POP	BC
 	RET
 
@@ -13963,8 +14024,7 @@ _prt_hexd1:
 	CALL	_prt_hex_nib
 	LD	E,A
 	PUSH	BC
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	POP	BC
 	RET
 
@@ -13990,8 +14050,7 @@ _prt_hex4_nib:
 	AND	0FH
 	CALL	_prt_hex_nib
 	LD	E,A
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	RET
 
 
@@ -14000,6 +14059,7 @@ _prt_hex4_nib:
 ; ============================================================
 	CSEG
 ; lc_putchar.mac - putchar
+
 
 
 	CSEG
@@ -14019,8 +14079,7 @@ _putchar:
 	PUSH	DE		; Restore arg for caller cleanup
 	PUSH	HL		; Restore return address
 
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 
 	; Return value - get arg again
 	LD	HL,2
@@ -14035,6 +14094,7 @@ _putchar:
 ; ============================================================
 	CSEG
 ; lc_puts.mac - puts, cputs
+
 
 
 	CSEG
@@ -14062,21 +14122,17 @@ _puts_loop:
 	JR	Z,_puts_newline	; End of string
 
 	LD	E,A		; Character in E
-	LD	C,CONOUT
-	PUSH	HL
-	CALL	BDOS
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_puts_loop
 
 _puts_newline:
-	; Output newline (CR LF)
-	LD	E,0DH		; CR
-	LD	C,CONOUT
-	CALL	BDOS
-	LD	E,0AH		; LF
-	LD	C,CONOUT
-	CALL	BDOS
+	; Output newline.  __conout supplies the CR when ___crlf_mode is
+	; set; puts() used to hard-code CR LF here while printf/putchar/
+	; fputs emitted a bare LF, so one program printed two different
+	; line terminators depending on which stdio call it used.
+	LD	E,0AH
+	CALL	__conout
 
 	; Return 0 (success)
 	LD	HL,0
@@ -14106,10 +14162,7 @@ _cputs_loop:
 	JR	Z,_cputs_done
 
 	LD	E,A
-	LD	C,CONOUT
-	PUSH	HL
-	CALL	BDOS
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_cputs_loop
 

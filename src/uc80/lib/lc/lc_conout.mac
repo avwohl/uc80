@@ -1,0 +1,84 @@
+; lc_conout.mac - the single console-output choke point for libc
+;
+; EVERY libc routine that writes a character to the CP/M console calls
+; __conout.  Nothing else in lc/*.mac may call BDOS function 2 directly;
+; the only two `LD C,CONOUT' in the whole library live in this file.
+; (See the grep in tests/test_crlf.py, which enforces that.)
+;
+; A real CP/M console (ADM-3A, Kaypro, Televideo, ...) treats LF as
+; "cursor down" only, so a bare LF makes output stair-step down the
+; screen.  The CP/M convention is that the *program* emits CR LF.
+; __conout does that translation, which C23 7.23.2 explicitly allows
+; for a text stream ("Characters can be added, altered, or deleted on
+; input and output to conform to differing conventions for representing
+; text in the host environment").
+;
+; A CR is inserted before LF unless the previous character written was
+; already a CR, so a program that already prints "\r\n" does not get
+; "\r\r\n", and a "\r"-only progress-bar redraw still works.  That
+; suppression is the reason every console writer - including the digit
+; emitters in lc_prt_dec32/dec64/hex, which never emit a newline
+; themselves - has to come through here: if one of them wrote straight
+; to BDOS, __conout_last would go stale and a CR could be wrongly
+; suppressed.
+;
+; ___crlf_mode (byte, default 1) disables the translation when zeroed.
+; uc80 --no-crlf makes main() zero it; a program can do it itself with
+;     #include <stdio.h>       /* declares __crlf_mode */
+;     __crlf_mode = 0;
+; The C name __crlf_mode becomes ___crlf_mode in assembly because uc80
+; prefixes every C identifier with one underscore.
+;
+; File streams are NOT affected: lc_file.mac routes only its console
+; branch (stream id < 3) through __conout, so fwrite/fputc to a real
+; FILE * stay byte-for-byte raw in both "w" and "wb" mode.
+;
+; Entry:  E = character to write
+; Exit:   BC, DE, HL preserved; AF destroyed (same as a bare BDOS call,
+;         which preserves nothing) - so `CALL __conout' is a drop-in
+;         replacement for `LD C,CONOUT / CALL BDOS'.
+
+	.Z80
+
+; CP/M BDOS function numbers
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	CSEG
+
+	PUBLIC	__conout
+__conout:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD	A,E
+	LD	HL,__conout_last
+	LD	C,(HL)		; C = previous character written
+	LD	(HL),A		; remember this one
+	CP	0AH		; LF?
+	JR	NZ,__conout_put
+	LD	A,(___crlf_mode)
+	OR	A
+	JR	Z,__conout_put	; translation disabled - pass LF through
+	LD	A,C
+	CP	0DH		; already preceded by CR?
+	JR	Z,__conout_put
+	LD	E,0DH		; no - emit CR first
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,0AH
+__conout_put:
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+	DSEG
+
+	PUBLIC	___crlf_mode
+___crlf_mode:	DB	1	; non-zero: translate LF -> CR LF
+__conout_last:	DB	0	; last character handed to BDOS
+
+	END

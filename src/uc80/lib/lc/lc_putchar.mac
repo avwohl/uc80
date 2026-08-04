@@ -7,6 +7,8 @@ CONOUT	EQU	2
 CONIN	EQU	1
 PRTSTR	EQU	9
 
+	EXTRN	__conout
+
 	CSEG
 
 ; ============================================================
@@ -24,8 +26,7 @@ _putchar:
 	PUSH	DE		; Restore arg for caller cleanup
 	PUSH	HL		; Restore return address
 
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 
 	; Return value - get arg again
 	LD	HL,2

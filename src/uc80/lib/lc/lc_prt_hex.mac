@@ -9,6 +9,7 @@ BDOS	EQU	5
 CONOUT	EQU	2
 
 	EXTRN	_printf_upper
+	EXTRN	__conout
 
 	CSEG
 
@@ -64,16 +65,14 @@ _prt_hex:
 	JR	NZ,_prt_hexf
 	LD	A,'0'
 	LD	E,A
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	POP	BC
 	RET
 _prt_hexf:
 	LD	B,1
 	CALL	_prt_hex_nib
 	LD	E,A
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	POP	BC
 	RET
 
@@ -89,8 +88,7 @@ _prt_hexd1:
 	CALL	_prt_hex_nib
 	LD	E,A
 	PUSH	BC
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	POP	BC
 	RET
 
@@ -116,8 +114,7 @@ _prt_hex4_nib:
 	AND	0FH
 	CALL	_prt_hex_nib
 	LD	E,A
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	RET
 
 	END

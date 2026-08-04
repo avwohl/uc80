@@ -11,6 +11,7 @@ PRTSTR	EQU	9
 	EXTRN	__div16
 	EXTRN	__mul16
 	EXTRN	_putchar
+	EXTRN	__conout
 
 	CSEG
 
@@ -609,10 +610,11 @@ _fputc:
 	CP	3
 	JR	NC,_fputc_file
 
-	; Console output
+	; Console output.  Only this branch translates LF -> CR LF; the
+	; _fputc_file branch below writes raw bytes, so "w" and "wb"
+	; streams both stay byte-for-byte what the program handed us.
 	LD	E,(IX+4)
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	LD	L,(IX+4)
 	LD	H,0
 	JP	_fputc_ret
@@ -1903,21 +1905,16 @@ _perror_uloop:
 	OR	A
 	JR	Z,_perror_colon
 	LD	E,A
-	PUSH	HL
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_perror_uloop
 
 _perror_colon:
 	; Print ": "
 	LD	E,':'
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 	LD	E,' '
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 
 _perror_errmsg:
 	; Print generic error message (CP/M doesn't have errno)
@@ -1927,21 +1924,14 @@ _perror_loop:
 	OR	A
 	JR	Z,_perror_nl
 	LD	E,A
-	PUSH	HL
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_perror_loop
 
 _perror_nl:
-	; Print newline
-	LD	E,13
-	LD	C,CONOUT
-	CALL	BDOS
+	; Print newline (__conout supplies the CR when ___crlf_mode is set)
 	LD	E,10
-	LD	C,CONOUT
-	CALL	BDOS
+	CALL	__conout
 
 	POP	DE
 	POP	BC

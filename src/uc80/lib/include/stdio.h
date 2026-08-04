@@ -48,6 +48,15 @@ extern FILE *stdin;
 extern FILE *stdout;
 extern FILE *stderr;
 
+/* uc80 extension: console line-ending policy.  Non-zero (the default)
+ * makes '\n' written to the console come out as CR LF, which is what a
+ * real CP/M terminal needs - a bare LF is "cursor down" only, so output
+ * stair-steps.  Set it to 0 for raw LF, or compile with uc80 --no-crlf,
+ * which emits that store at the top of main().  File streams are never
+ * affected: fwrite/fputc to a FILE * always write raw bytes.
+ */
+extern char __crlf_mode;
+
 /* Standard I/O functions */
 int putchar(int c);
 int getchar(void);

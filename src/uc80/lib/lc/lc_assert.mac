@@ -10,6 +10,7 @@ PRTSTR	EQU	9
 
 	EXTRN	_puts
 	EXTRN	_abort
+	EXTRN	__conout
 
 	CSEG
 
@@ -35,21 +36,16 @@ __assert_fail:
 
 	; Print ":"
 	LD	E,':'
-	LD	C,2
-	CALL	5
+	CALL	__conout
 
 	; Print line number
 	LD	L,(IX+6)
 	LD	H,(IX+7)
 	CALL	_assert_prt_dec
 
-	; Print newline
-	LD	E,0DH
-	LD	C,2
-	CALL	5
+	; Print newline (__conout supplies the CR when ___crlf_mode is set)
 	LD	E,0AH
-	LD	C,2
-	CALL	5
+	CALL	__conout
 
 	; Exit
 	JP	0
@@ -60,10 +56,7 @@ _assert_puts:
 	OR	A
 	RET	Z
 	LD	E,A
-	PUSH	HL
-	LD	C,2
-	CALL	5
-	POP	HL
+	CALL	__conout	; preserves HL
 	INC	HL
 	JR	_assert_puts
 
@@ -86,8 +79,7 @@ _assert_dec_out:
 	ADD	A,'0'
 	LD	E,A
 	PUSH	BC
-	LD	C,2
-	CALL	5
+	CALL	__conout
 	POP	BC
 	DJNZ	_assert_dec_out
 	POP	DE

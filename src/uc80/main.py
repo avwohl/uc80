@@ -304,6 +304,15 @@ def main() -> int:
         help="Startup code .mac file (default: lib/crt0.mac)"
     )
     parser.add_argument(
+        "--no-crlf",
+        action="store_true",
+        help="Do not translate '\\n' to CR LF on console output. The default "
+             "translates, which is what a real CP/M terminal needs. Only the "
+             "translation unit containing main() honours this flag; a program "
+             "can also flip it at run time with <stdio.h>'s __crlf_mode. "
+             "File streams are never translated either way."
+    )
+    parser.add_argument(
         "--printf",
         action="append",
         default=[],
@@ -512,7 +521,8 @@ def main() -> int:
                            embed_runtime=embed_runtime,
                            printf_features=printf_features,
                            scanf_features=scanf_features,
-                           type_config=type_config)
+                           type_config=type_config,
+                           crlf_console=not args.no_crlf)
         code = gen.generate(merged_ast)
 
         for w in gen.warnings:

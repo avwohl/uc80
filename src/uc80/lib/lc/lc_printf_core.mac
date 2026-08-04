@@ -20,6 +20,7 @@ BDOS	EQU	5
 CONOUT	EQU	2
 
 	EXTRN	__printf_format_table
+	EXTRN	__conout
 
 	CSEG
 
@@ -64,8 +65,7 @@ _printf_putc:
 	PUSH	BC
 	PUSH	DE
 	PUSH	HL
-	LD	C,CONOUT
-	CALL	BDOS	; the only real BDOS call in printf land
+	CALL	__conout	; the only console write in printf land
 	LD	HL,(_printf_count)
 	INC	HL
 	LD	(_printf_count),HL
