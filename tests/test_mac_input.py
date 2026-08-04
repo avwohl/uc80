@@ -6,6 +6,9 @@ crt0 zeroes the whole COMMON region before main() runs, so a hand-written
 routine placed there executed as zeroed memory.  It must be spliced in
 *before* the COMMON directive: um80 cannot leave a COMMON block, so simply
 re-establishing CSEG afterwards does not work.
+
+The embedded runtime library is appended by the same mechanism and is
+subject to the same rule, so it is covered here too.
 """
 
 import os
@@ -245,6 +248,64 @@ int main(void) { big[0] = 1; printf("%u\\n", ka()); return 0; }
         assert "PUBLIC" in code.upper()
 
 
+class TestRuntimeEmbedBeforeBss:
+    """The embedded runtime is subject to the same COMMON-block rule.
+
+    Same root cause as the .mac bug, different path: the runtime was appended
+    after the COMMON directive with a `cseg` in front of it, which um80
+    ignores.  With assembly DCE on this was masked (DCE re-sorts the
+    segments); under --no-asm-dce it miscompiled.
+    """
+
+    # tab[] is BSS, and the 32-bit multiply pulls in embedded runtime code.
+    RT_C = """
+#include <stdio.h>
+static long tab[32];
+int main(void) { long a = 100000L, b = 3L; tab[0] = a * b; printf("%ld\\n", tab[0]); return 0; }
+"""
+
+    def compile_rt(self, tmp_path, *extra_args):
+        c_file = tmp_path / "rt.c"
+        c_file.write_text(self.RT_C)
+        output = tmp_path / "rt.mac"
+        result = run_compiler(str(c_file), "--printf", "long",
+                              "-o", str(output), *extra_args)
+        assert result.returncode == 0, f"Compiler failed: {result.stderr}"
+        return output.read_text()
+
+    def test_runtime_precedes_common_without_dce(self, tmp_path):
+        code = self.compile_rt(tmp_path, "--no-asm-dce")
+        lines = code.splitlines()
+        banner = index_of(lines, lambda l: "Embedded runtime library functions" in l)
+        assert banner >= 0, "runtime was not embedded"
+        bss = common_index(code)
+        assert bss >= 0, "test program should have a BSS block"
+        assert banner < bss, "embedded runtime landed in BSS"
+
+    def test_runtime_helper_precedes_common_without_dce(self, tmp_path):
+        """The 32-bit multiply helper must be real code, not zeroed BSS."""
+        code = self.compile_rt(tmp_path, "--no-asm-dce")
+        mul = label_index(code, "__mul32")
+        assert mul >= 0, "runtime helper was not embedded"
+        assert mul < common_index(code)
+
+    def test_runtime_precedes_common_with_dce(self, tmp_path):
+        code = self.compile_rt(tmp_path)
+        bss = common_index(code)
+        assert bss >= 0
+        assert label_index(code, "__mul32") < bss
+
+    def test_common_block_is_last(self, tmp_path):
+        """END terminates the module, after the COMMON block - not before it."""
+        for extra in ([], ["--no-asm-dce"]):
+            code = self.compile_rt(tmp_path, *extra)
+            lines = code.splitlines()
+            end = index_of(lines, _is_end_directive)
+            assert end >= 0, "module has no END directive"
+            assert common_index(code) < end, "COMMON block emitted after END"
+            assert end == len(lines) - 1, "END is not the last line"
+
+
 class TestTailInsertIndex:
     """Unit tests for the splice-point helper."""
 
@@ -447,3 +508,22 @@ int main(void) { big[0] = 1; printf("%u %u\\n", ka(), kb()); return 0; }
 """
         out = self.build_and_run(tmp_path, c_source, [MAC_A, MAC_B])
         assert "1111 2222" in out
+
+    def test_embedded_runtime_without_dce(self, tmp_path):
+        """The runtime-embed path obeys the same COMMON-block rule."""
+        c_file = tmp_path / "rt.c"
+        c_file.write_text(TestRuntimeEmbedBeforeBss.RT_C)
+        mac = tmp_path / "rt.mac"
+        result = run_compiler(str(c_file), "--printf", "long", "--no-asm-dce",
+                              "-o", str(mac))
+        assert result.returncode == 0, result.stderr
+        rel = tmp_path / "rt.rel"
+        com = tmp_path / "rt.com"
+        subprocess.run(["um80", str(mac), "-o", str(rel)],
+                       check=True, capture_output=True, text=True)
+        subprocess.run(["ul80", str(rel), str(LIB_DIR / "libc.lib"),
+                        str(LIB_DIR / "runtime.lib"), "-o", str(com)],
+                       check=True, capture_output=True, text=True)
+        run = subprocess.run([str(CPMEMU), str(com)], capture_output=True,
+                             text=True, timeout=30)
+        assert "300000" in run.stdout, f"miscompiled: {run.stdout!r}"

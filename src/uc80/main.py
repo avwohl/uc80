@@ -560,13 +560,9 @@ def main() -> int:
                 funcs, gen.ctx.runtime_used) if (funcs or gen.ctx.runtime_used) else ''
 
             if funcs or data_section:
-                # Insert runtime functions before END directive
-                lines = code.splitlines()
-                end_idx = None
-                for i, line in enumerate(lines):
-                    if line.strip().upper() == 'END':
-                        end_idx = i
-                        break
+                # The module's own END is dropped; a single END is appended
+                # after everything below.
+                lines = [l for l in code.splitlines() if not _is_end_directive(l)]
 
                 runtime_code = []
 
@@ -607,11 +603,15 @@ def main() -> int:
                         runtime_code.append("\n\tcseg")
                     runtime_code.append(data_section)
 
-                if end_idx is not None:
-                    lines = lines[:end_idx] + runtime_code + ["\n\tend"]
-                else:
-                    lines.extend(runtime_code)
-                    lines.append("\n\tend")
+                # Splice the runtime in *before* the COMMON (BSS) block - see
+                # _tail_insert_index.  Emitting it after the COMMON directive
+                # puts it in BSS, where crt0 zeroes it before main() runs; the
+                # `cseg` above cannot rescue it because um80 cannot leave a
+                # COMMON block.  With assembly DCE on this was masked, because
+                # DCE re-sorts the segments; under --no-asm-dce it miscompiled.
+                insert_at = _tail_insert_index(lines)
+                lines[insert_at:insert_at] = runtime_code
+                lines.append("\n\tend")
 
                 code = '\n'.join(lines)
 
@@ -740,9 +740,9 @@ def main() -> int:
 
         # Append any .mac files from input
         if mac_files:
-            # Strip END directives from main code and mac files, add single END at end
-            code_lines = code.splitlines()
-            code_lines = [l for l in code_lines if not _is_end_directive(l)]
+            # The module's own END is dropped (the .mac's END goes with it, in
+            # _filter_hand_written_asm); a single END is appended below.
+            code_lines = [l for l in code.splitlines() if not _is_end_directive(l)]
 
             mac_block = []
             for mac_content in mac_files:
@@ -776,7 +776,8 @@ def main() -> int:
                 # In whole-program mode, only the program's own PUBLIC labels
                 # are entry points. Library functions are kept only if reachable.
                 # Also include address-taken static functions (they aren't PUBLIC
-                # but their addresses are used, so DCE must not eliminate them).
+                # but their addresses are used, so DCE must not eliminate them)
+                # and every label defined by hand-written assembly.
                 asm_entry_points = set(program_public_labels) | asm_entry_labels
                 if gen.call_graph_analyzer:
                     for func_name in gen.call_graph_analyzer.address_taken:
