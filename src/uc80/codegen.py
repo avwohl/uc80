@@ -2719,6 +2719,12 @@ class CodeGenerator:
         self.scanf_features = scanf_features    # None = no pragma
         self.type_config = type_config if type_config is not None else Z80_CPM
         self.call_graph_analyzer: Optional[CallGraphAnalyzer] = None
+        # Non-fatal diagnostics collected during generate(); main.py prints
+        # them.  Codegen itself never writes to stderr.
+        self.warnings: list[str] = []
+        # (length_modifier, conversion_char) pairs seen in literal printf
+        # format strings, for _warn_unhandled_printf_specs.
+        self._printf_specs_used: list[tuple[str, str]] = []
         self.dead_functions_removed: int = 0
         self.inlined_calls: int = 0
         self.constants_propagated: int = 0
@@ -3148,6 +3154,11 @@ class CodeGenerator:
             else:
                 # Non-literal format string somewhere — must include every handler.
                 self.printf_features = {"all"}
+        else:
+            # An explicit --printf/#pragma feature set skips detection, but we
+            # still want the literal format strings so we can warn about the
+            # conversions that set does not cover.
+            self._auto_detect_printf_features(unit)
 
         # Under --int=32, scanf's %d/%u/%x/%i store only 2 bytes into the
         # (4-byte) int pointed at, leaving the upper half garbage.  The
@@ -3172,6 +3183,7 @@ class CodeGenerator:
         # Emit printf/scanf dispatch tables if features are known
         if self.printf_features is not None:
             self._emit_printf_format_tables()
+            self._warn_unhandled_printf_specs()
 
         # Emit EXTRN for runtime functions used (unless embedding runtime)
         if self.ctx.runtime_used and not self.embed_runtime:
@@ -3712,6 +3724,112 @@ class CodeGenerator:
                     self.ctx.anon_members[struct_name] = anon_list
         # For enum types, nothing special needed - enum values are already constants
 
+    # Float conversions and the libc handler that implements each one.
+    # 'F' shares %f's handler; 'E'/'G' are 6-byte aliases that set
+    # _printf_upper and fall into the lowercase entry point, exactly like
+    # %X -> __printf_handle_xu.
+    _FLOAT_HANDLERS = [('f', '__printf_handle_f'),
+                       ('F', '__printf_handle_f'),
+                       ('e', '__printf_handle_e'),
+                       ('E', '__printf_handle_eu'),
+                       ('g', '__printf_handle_g'),
+                       ('G', '__printf_handle_gu')]
+
+    @staticmethod
+    def _float_table_entries(features):
+        """(spec, handler) pairs for the float conversions this unit needs.
+
+        Every table entry references its handler, so the linker pulls in
+        whatever is listed.  When auto-detection had the literal format
+        strings in hand it left a ``spec:<c>`` marker in *features* for each
+        float conversion actually written; register only those.  Registering
+        all six unconditionally costs +1280 bytes on every program that
+        prints a single %f (measured: 4992 -> 6272).
+
+        With no markers -- an explicit --printf/#pragma feature set, "all",
+        or a non-literal format string anywhere -- register all six, because
+        we cannot know what the format strings will ask for.
+        """
+        seen = {f[5:] for f in features if f.startswith('spec:')}
+        return [(spec, handler)
+                for spec, handler in CodeGenerator._FLOAT_HANDLERS
+                if not seen or spec in seen]
+
+    # Length modifiers the runtime dispatcher swallows before looking the
+    # conversion up in the base table (lc_printf_core.mac, _printf_nodig).
+    # 'j' and 't' are NOT in that list, so %jd/%td miss the table.
+    _PRINTF_IGNORED_LENGTHS = ('', 'h', 'hh', 'z', 'L')
+
+    @staticmethod
+    def _printf_table_specs(features):
+        """The conversion characters each dispatch table will end up holding.
+
+        Mirrors _emit_printf_format_tables.  Kept as a separate pure function
+        so the compile-time diagnostic can also ask "would ANY feature set
+        have handled this?" without emitting anything.  A test in
+        tests/test_printf_dispatch.py asserts the two stay in step.
+        """
+        base, lng, ll = set(), set(), set()
+        float_specs = set()
+        if "float" in features or "all" in features:
+            float_specs = {s for s, _ in CodeGenerator._float_table_entries(features)}
+        if "int" in features or "all" in features:
+            base |= set("diuoxXscp")
+        if "long" in features or "llong" in features or "all" in features:
+            base.add('l')
+        base |= float_specs
+        if "long" in features or "all" in features:
+            lng |= set("diuoxX")
+            lng |= float_specs
+        if "llong" in features or "all" in features:
+            lng.add('l')
+            ll |= set("diux")
+        return base, lng, ll
+
+    def _warn_unhandled_printf_specs(self) -> None:
+        """Warn about conversions that no dispatch-table entry will match.
+
+        A table miss is not merely an empty field.  Only a handler advances
+        the vararg offset, so a miss leaves every later conversion in the
+        same printf call reading the wrong argument; the runtime echoes the
+        specification verbatim (lc_printf_core.mac, _printf_unknown) but it
+        cannot resync.  Catch it at compile time wherever the format string
+        is a literal -- which is exactly where the runtime echo is least
+        needed, and vice versa.
+        """
+        if not self._printf_specs_used:
+            return
+        features = self.printf_features or set()
+        base, lng, ll = self._printf_table_specs(features)
+        all_base, all_lng, all_ll = self._printf_table_specs({"all"})
+        selected = ', '.join(sorted(f for f in features
+                                    if not f.startswith('spec:'))) or 'none'
+        seen = set()
+        for length, spec in self._printf_specs_used:
+            if length in self._PRINTF_IGNORED_LENGTHS:
+                handled, exists = spec in base, spec in all_base
+            elif length == 'l':
+                handled = 'l' in base and spec in lng
+                exists = 'l' in all_base and spec in all_lng
+            elif length == 'll':
+                handled = 'l' in base and 'l' in lng and spec in ll
+                exists = 'l' in all_base and 'l' in all_lng and spec in all_ll
+            else:
+                # 'j'/'t' never reach a conversion lookup at all.
+                handled = exists = False
+            if handled:
+                continue
+            text = '%' + length + spec
+            if text in seen:
+                continue
+            seen.add(text)
+            why = (f"is not covered by the selected printf features ({selected})"
+                   if exists else "has no handler in this libc")
+            self.warnings.append(
+                f"printf conversion '{text}' {why}; it will be echoed verbatim "
+                f"at run time and every later conversion in that call will "
+                f"read the wrong argument")
+
     def _emit_printf_format_tables(self) -> None:
         """Emit printf format dispatch tables based on #pragma printf features.
 
@@ -3761,7 +3879,8 @@ class CodeGenerator:
                            '__printf_handle_lo', '__printf_handle_lx',
                            '__printf_handle_lxu'])
         if "float" in features or "all" in features:
-            handlers.add('__printf_handle_f')
+            for _spec, _handler in self._float_table_entries(features):
+                handlers.add(_handler)
         if "llong" in features or "all" in features:
             handlers.update(['__printf_handle_lld', '__printf_handle_llu',
                            '__printf_handle_llx'])
@@ -3794,9 +3913,10 @@ class CodeGenerator:
             self.ctx.runtime_used.add("__printf_handle_l")
 
         if "float" in features or "all" in features:
-            self.ctx.emit(f"\tdb\t'f'")
-            self.ctx.emit(f"\tdw\t__printf_handle_f")
-            self.ctx.runtime_used.add("__printf_handle_f")
+            for spec, handler in self._float_table_entries(features):
+                self.ctx.emit(f"\tdb\t'{spec}'")
+                self.ctx.emit(f"\tdw\t{handler}")
+                self.ctx.runtime_used.add(handler)
 
         self.ctx.emit("\tdb\t0\t\t; sentinel")
 
@@ -3816,10 +3936,12 @@ class CodeGenerator:
                 self.ctx.emit(f"\tdw\t{handler}")
                 self.ctx.runtime_used.add(handler)
 
-            # %lf same as %f
+            # %lf same as %f (and %le/%lg the same as %e/%g — 'l' has no
+            # effect on a float conversion, C23 7.23.6.1p7).
             if "float" in features or "all" in features:
-                self.ctx.emit(f"\tdb\t'f'")
-                self.ctx.emit(f"\tdw\t__printf_handle_f")
+                for spec, handler in self._float_table_entries(features):
+                    self.ctx.emit(f"\tdb\t'{spec}'")
+                    self.ctx.emit(f"\tdw\t{handler}")
 
         if "llong" in features or "all" in features:
             self.ctx.emit(f"\tdb\t'l'")
@@ -3866,6 +3988,9 @@ class CodeGenerator:
         }
         features: set[str] = set()
         uses_printf = False
+        # Reset here rather than in __init__ so a second (diagnostics-only)
+        # pass over the same unit does not double-report.
+        self._printf_specs_used = []
 
         def scan_expr(expr: ast.Expression) -> bool:
             """Scan expression for printf calls. Returns False if non-literal format found."""
@@ -3892,7 +4017,8 @@ class CodeGenerator:
                                 _decode_string_literal(p.value.text) for p in fmt_arg
                             )
                         if decoded is not None:
-                            self._extract_printf_specifiers(decoded, features)
+                            self._extract_printf_specifiers(
+                                decoded, features, self._printf_specs_used)
                         else:
                             return False  # Non-literal format string
                 # Scan arguments too (could have nested printf calls)
@@ -4003,8 +4129,14 @@ class CodeGenerator:
         return features
 
     @staticmethod
-    def _extract_printf_specifiers(fmt: str, features: set[str]) -> None:
-        """Parse a printf format string and add required feature flags."""
+    def _extract_printf_specifiers(fmt: str, features: set[str],
+                                   used: list | None = None) -> None:
+        """Parse a printf format string and add required feature flags.
+
+        *used* , when given, collects every ``(length_modifier, conversion)``
+        pair the string asks for -- including ones this libc has no handler
+        for, which is what the compile-time diagnostic reports on.
+        """
         i = 0
         while i < len(fmt):
             if fmt[i] != '%':
@@ -4046,6 +4178,8 @@ class CodeGenerator:
             if i < len(fmt):
                 spec = fmt[i]
                 i += 1
+                if used is not None:
+                    used.append((length, spec))
                 if spec in 'dDiuUoOxXcCsSpn':
                     if length == 'll':
                         features.add('llong')
@@ -4059,6 +4193,9 @@ class CodeGenerator:
                 elif spec in 'fFeEgGaA':
                     features.add('float')
                     features.add('int')
+                    # Keep the exact conversion char so _float_table_entries
+                    # can register just the handlers this unit really uses.
+                    features.add('spec:' + spec)
 
     def _rewrite_printf_to_puts(self, unit: ast.TranslationUnit) -> bool:
         """Rewrite printf("...\n") to puts("...") when no format specifiers are used.
