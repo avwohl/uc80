@@ -7622,1022 +7622,184 @@ _signbit:
 ; lc_fprintf.mac
 ; ============================================================
 	CSEG
-; lc_fprintf.mac - fprintf, vfprintf, vprintf, vsprintf
-
+; lc_fprintf.mac - fprintf, vfprintf, vprintf, vsprintf.
+;
+; Each of these carried its own formatter, so a conversion the printf
+; table knew about was invisible here.  fprintf had no float handler at
+; all -- fprintf(stdout, "%f", 1.5) printed an empty field and desynced
+; the rest of the argument list -- and none of the four knew %e, %g or
+; %F.  See lc_sprintf.mac for why there is only one formatter now.
+;
+; A va_list in uc80 is a pointer to the arguments, which is exactly the
+; base the engine indexes from, so the v* forms set IX = ap and C = 0 and
+; are otherwise identical to their variadic counterparts.
 
 
 	CSEG
 
-; ============================================================
-; int fprintf(FILE *stream, const char *fmt, ...)
-; Print formatted output to a file stream
-; Supports %d, %s, %c, %x, %%
-; ============================================================
 	PUBLIC	_fprintf
+	PUBLIC	_vfprintf
+	PUBLIC	_vprintf
+	PUBLIC	_vsprintf
+
+; int fprintf(FILE *stream, const char *fmt, ...)
 _fprintf:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
 	PUSH	BC
 	PUSH	DE
-	LD	HL,0
-	LD	(_fprintf_count),HL	; reset byte counter
 
-	; stream at IX+4, fmt at IX+6, first vararg at IX+8
-	LD	E,(IX+4)
-	LD	D,(IX+5)
-	LD	(_fprintf_stream),DE	; Save stream
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = format string pointer
-	LD	C,8		; C = offset to next argument
-
-_fprintf_loop:
-	LD	A,(HL)
-	OR	A
-	JP	Z,_fprintf_done
-
-	CP	'%'
-	JR	Z,_fprintf_format
-
-	; Regular character - output via fputc
-	PUSH	HL
-	PUSH	BC
-	LD	DE,(_fprintf_stream)
-	PUSH	DE		; stream arg
-	LD	E,A
-	LD	D,0
-	PUSH	DE		; char arg
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	BC
-	POP	HL
-	INC	HL
-	JR	_fprintf_loop
-
-_fprintf_format:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_fprintf_done
-
-	CP	'%'
-	JR	Z,_fprintf_pct
-
-_fprintf_fmt2:
-	; Skip flags: -, +, space, #, 0
-	CP	'-'
-	JR	Z,_fprintf_fskip
-	CP	'+'
-	JR	Z,_fprintf_fskip
-	CP	' '
-	JR	Z,_fprintf_fskip
-	CP	'#'
-	JR	Z,_fprintf_fskip
-	CP	'0'
-	JR	Z,_fprintf_fskip
-	; Skip field width digits
-	CP	'1'
-	JR	C,_fprintf_nodig
-	CP	'9'+1
-	JR	C,_fprintf_fskip
-_fprintf_nodig:
-	; Skip precision
-	CP	'.'
-	JR	Z,_fprintf_fskip
-	; Skip length modifiers: h, l, z
-	CP	'h'
-	JR	Z,_fprintf_fskip
-	CP	'l'
-	JR	Z,_fprintf_fskip
-	CP	'z'
-	JR	Z,_fprintf_fskip
-	; Now check format specifiers
-	CP	's'
-	JR	Z,_fprintf_str
-
-	CP	'd'
-	JR	Z,_fprintf_dec
-
-	CP	'i'
-	JR	Z,_fprintf_dec
-
-	CP	'c'
-	JR	Z,_fprintf_chr
-
-	CP	'x'
-	JR	Z,_fprintf_hex
-
-	CP	'X'
-	JR	Z,_fprintf_hex
-
-	CP	'u'
-	JR	Z,_fprintf_dec	; %u same as %d for now
-
-	; Unknown format - skip
-	INC	HL
-	JP	_fprintf_loop
-
-_fprintf_fskip:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_fprintf_done
-	JR	_fprintf_fmt2
-
-_fprintf_pct:
-	; Output literal %
-	PUSH	HL
-	PUSH	BC
-	LD	DE,(_fprintf_stream)
-	PUSH	DE
-	LD	DE,'%'
-	PUSH	DE
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_fprintf_loop
-
-_fprintf_chr:
-	; Output character argument
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)		; E = char
-	LD	D,0
-	LD	BC,(_fprintf_stream)
-	PUSH	BC		; stream
-	PUSH	DE		; char
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_fprintf_loop
-
-_fprintf_str:
-	; Output string argument
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = string pointer
-_fprintf_str_lp:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_fprintf_str_end
-	PUSH	DE
-	LD	BC,(_fprintf_stream)
-	PUSH	BC
-	LD	E,A
-	LD	D,0
-	PUSH	DE
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	DE
-	INC	DE
-	JR	_fprintf_str_lp
-_fprintf_str_end:
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_fprintf_loop
-
-_fprintf_dec:
-	; Output decimal number
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EX	DE,HL		; HL = value
-	CALL	_fprintf_prt_dec
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_fprintf_loop
-
-_fprintf_hex:
-	; Output hex number
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EX	DE,HL		; HL = value
-	CALL	_fprintf_prt_hex
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_fprintf_loop
-
-_fprintf_done:
-	LD	HL,(_fprintf_count)	; Return count of bytes written
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; Helper: bump ``_fprintf_count`` AFTER an _fputc call. We cannot
-; *wrap* CALL _fputc in another routine because the helper's own
-; return address would land between the caller's pushed args and
-; _fputc's PUSH IX, shifting the IX+4 / IX+6 offsets that _fputc
-; uses to read its (char, stream) args. Instead each call site
-; does ``CALL _fputc`` followed by ``CALL _fprintf_bump``.
-; Preserves HL (which carries _fputc's return value).
-; ============================================================
-	PUBLIC	_fprintf_count
-	PUBLIC	_fprintf_bump
-_fprintf_bump:
-	PUSH	HL
-	LD	HL,(_fprintf_count)
-	INC	HL
-	LD	(_fprintf_count),HL
-	POP	HL
-	RET
-
-; fprintf helper: print HL as decimal to stream
-	PUBLIC	_fprintf_prt_dec
-_fprintf_prt_dec:
-	PUSH	BC
-	PUSH	DE
-	; Check for negative
-	BIT	7,H
-	JR	Z,_fprintf_dec_pos
-	; Negative - print minus sign
-	PUSH	HL
-	LD	DE,(_fprintf_stream)
-	PUSH	DE
-	LD	DE,'-'
-	PUSH	DE
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	HL
-	; Negate HL
-	LD	A,L
-	CPL
-	LD	L,A
-	LD	A,H
-	CPL
-	LD	H,A
-	INC	HL
-_fprintf_dec_pos:
-	; Convert to decimal digits on stack
-	LD	DE,10
-	LD	B,0		; Digit counter
-_fprintf_dec_lp:
-	CALL	_prt_div16	; HL = HL / 10, DE = remainder
-	PUSH	DE		; Push digit
-	INC	B
-	LD	A,H
-	OR	L
-	JR	NZ,_fprintf_dec_lp
-	; Pop and print digits
-_fprintf_dec_pr:
-	POP	DE		; Get digit
-	LD	A,E
-	ADD	A,'0'
-	PUSH	BC
-	LD	DE,(_fprintf_stream)
-	PUSH	DE
-	LD	E,A
-	LD	D,0
-	PUSH	DE
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	BC
-	DJNZ	_fprintf_dec_pr
-	POP	DE
-	POP	BC
-	RET
-
-; fprintf helper: print HL as hex to stream
-	PUBLIC	_fprintf_prt_hex
-_fprintf_prt_hex:
-	PUSH	BC
-	PUSH	DE
-	LD	B,4		; 4 hex digits
-	LD	C,H		; Save high byte
-_fprintf_hex_lp:
-	; Rotate left 4 bits
-	ADD	HL,HL
-	RL	C
-	ADD	HL,HL
-	RL	C
-	ADD	HL,HL
-	RL	C
-	ADD	HL,HL
-	RL	C
-	; Get top nibble
-	LD	A,C
-	AND	0FH
-	ADD	A,'0'
-	CP	'9'+1
-	JR	C,_fprintf_hex_dig
-	ADD	A,7		; A-F
-_fprintf_hex_dig:
-	PUSH	HL
-	PUSH	BC
-	LD	DE,(_fprintf_stream)
-	PUSH	DE
-	LD	E,A
-	LD	D,0
-	PUSH	DE
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	BC
-	POP	HL
-	DJNZ	_fprintf_hex_lp
-	POP	DE
-	POP	BC
-	RET
-
-; ============================================================
-; int vprintf(const char *fmt, va_list ap)
-; ============================================================
-	PUBLIC	_vprintf
-_vprintf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	; fmt at IX+4, ap at IX+6
-	LD	HL,0
-	LD	(_printf_count),HL	; share counter with _printf_putc
 	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = format string
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; DE = va_list (pointer to args)
-	LD	(_vprintf_ap),DE
-	LD	BC,0		; (still tracked for legacy callers, but final return uses _printf_count)
+	LD	H,(IX+5)
+	LD	(_fprintf_stream),HL
 
-_vprintf_loop:
-	LD	A,(HL)
-	OR	A
-	JP	Z,_vprintf_done
-
-	CP	'%'
-	JP	Z,_vprintf_fmt
-
-	; Regular char - output
+	LD	HL,(_printf_sink)
 	PUSH	HL
-	PUSH	BC
-	LD	E,A
-	CALL	_printf_putc
+	LD	HL,_fprintf_sink
+	LD	(_printf_sink),HL
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)		; HL = format string
+	LD	C,8			; first vararg at IX+8
+	CALL	_printf_engine
+
+	POP	HL
+	LD	(_printf_sink),HL
+	LD	HL,(_printf_count)
+	POP	DE
 	POP	BC
-	POP	HL
-	INC	BC
-	INC	HL
-	JP	_vprintf_loop
-
-_vprintf_fmt:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_vprintf_done
-
-	CP	'%'
-	JR	NZ,_vprintf_fmt2
-	; Literal %
-	PUSH	HL
-	PUSH	BC
-	LD	E,'%'
-	CALL	_printf_putc
-	POP	BC
-	POP	HL
-	INC	BC
-	INC	HL
-	JP	_vprintf_loop
-
-_vprintf_fmt2:
-	; Skip flags: -, +, space, #, 0
-	CP	'-'
-	JR	Z,_vprintf_skip
-	CP	'+'
-	JR	Z,_vprintf_skip
-	CP	' '
-	JR	Z,_vprintf_skip
-	CP	'#'
-	JR	Z,_vprintf_skip
-	CP	'0'
-	JR	Z,_vprintf_skip
-	; Skip field width digits
-	CP	'1'
-	JR	C,_vprintf_nodig
-	CP	'9'+1
-	JR	C,_vprintf_skip
-_vprintf_nodig:
-	; Skip precision
-	CP	'.'
-	JR	Z,_vprintf_skip
-	; Skip length modifiers: h, z (l handled separately for long)
-	CP	'h'
-	JR	Z,_vprintf_skip
-	CP	'z'
-	JR	Z,_vprintf_skip
-	; Now check format specifiers
-	CP	's'
-	JP	Z,_vprintf_str
-	CP	'd'
-	JP	Z,_vprintf_dec
-	CP	'i'
-	JP	Z,_vprintf_dec
-	CP	'c'
-	JP	Z,_vprintf_chr
-	CP	'x'
-	JP	Z,_vprintf_hex
-	CP	'X'
-	JP	Z,_vprintf_hex
-	CP	'u'
-	JP	Z,_vprintf_uns
-	CP	'l'
-	JP	Z,_vprintf_long
-	; Unknown - skip
-	INC	HL
-	JP	_vprintf_loop
-_vprintf_skip:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_vprintf_done
-	JP	_vprintf_fmt2
-
-_vprintf_str:
-	; Print string
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	EX	DE,HL		; HL = string
-_vprintf_str_lp:
-	LD	A,(HL)
-	OR	A
-	JR	Z,_vprintf_str_dn
-	LD	E,A
-	PUSH	HL
-	CALL	_printf_putc
-	POP	HL
-	INC	HL
-	JR	_vprintf_str_lp
-_vprintf_str_dn:
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vprintf_loop
-
-_vprintf_dec:
-	; Print signed int
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	EX	DE,HL
-	CALL	_prt_dec
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vprintf_loop
-
-_vprintf_chr:
-	; Print character
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	INC	HL
-	LD	(_vprintf_ap),HL
-	CALL	_printf_putc
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vprintf_loop
-
-_vprintf_hex:
-	; Print hex
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	EX	DE,HL
-	CALL	_prt_hex
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vprintf_loop
-
-_vprintf_uns:
-	; Same as dec for now
-	JP	_vprintf_dec
-
-_vprintf_long:
-	; Handle 'l' modifier
-	INC	HL
-	LD	A,(HL)
-	CP	'd'
-	JP	Z,_vprintf_ld
-	CP	'x'
-	JP	Z,_vprintf_lx
-	JP	_vprintf_loop
-
-_vprintf_ld:
-	; Print long decimal
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	C,(HL)
-	INC	HL
-	LD	B,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	; DEHL = low, BC = high (need to swap)
-	PUSH	BC
-	EX	DE,HL
-	POP	DE		; Now DEHL is 32-bit value
-	CALL	_prt_dec32
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vprintf_loop
-
-_vprintf_lx:
-	; Print long hex
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	C,(HL)
-	INC	HL
-	LD	B,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	; Print BC (high), then DE (low)
-	PUSH	DE
-	LD	H,B
-	LD	L,C
-	CALL	_prt_hex
-	POP	HL
-	CALL	_prt_hex
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vprintf_loop
-
-_vprintf_done:
-	LD	HL,(_printf_count)	; Return count (set by _printf_putc)
 	POP	IX
 	RET
 
-; ============================================================
 ; int vfprintf(FILE *stream, const char *fmt, va_list ap)
-; ============================================================
-	PUBLIC	_vfprintf
 _vfprintf:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	; stream at IX+4, fmt at IX+6, ap at IX+8
+	PUSH	BC
+	PUSH	DE
+
 	LD	L,(IX+4)
 	LD	H,(IX+5)
 	LD	(_fprintf_stream),HL
-	LD	HL,0
-	LD	(_fprintf_count),HL	; reset shared byte counter
+
+	LD	HL,(_printf_sink)
+	PUSH	HL
+	LD	HL,_fprintf_sink
+	LD	(_printf_sink),HL
+
 	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = format
+	LD	H,(IX+7)		; HL = format string
 	LD	E,(IX+8)
-	LD	D,(IX+9)	; DE = va_list
-	LD	(_vprintf_ap),DE
-	LD	BC,0		; Count
-
-_vfprintf_loop:
-	LD	A,(HL)
-	OR	A
-	JP	Z,_vfprintf_done
-	CP	'%'
-	JP	Z,_vfprintf_fmt
-	; Regular char
+	LD	D,(IX+9)		; DE = va_list
 	PUSH	HL
-	PUSH	BC
-	LD	DE,(_fprintf_stream)
 	PUSH	DE
-	LD	E,A
-	LD	D,0
-	PUSH	DE
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
+	POP	IX			; IX = ap, the argument base
+	POP	HL
+	LD	C,0
+	CALL	_printf_engine
+
+	POP	HL
+	LD	(_printf_sink),HL
+	LD	HL,(_printf_count)
 	POP	DE
 	POP	BC
-	POP	HL
-	INC	BC
-	INC	HL
-	JP	_vfprintf_loop
-
-_vfprintf_fmt:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_vfprintf_done
-	CP	'%'
-	JR	NZ,_vfprintf_fmt2
-	PUSH	HL
-	PUSH	BC
-	LD	DE,(_fprintf_stream)
-	PUSH	DE
-	LD	DE,'%'
-	PUSH	DE
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	BC
-	POP	HL
-	INC	BC
-	INC	HL
-	JP	_vfprintf_loop
-
-_vfprintf_fmt2:
-	; Skip flags: -, +, space, #, 0
-	CP	'-'
-	JR	Z,_vfprintf_skip
-	CP	'+'
-	JR	Z,_vfprintf_skip
-	CP	' '
-	JR	Z,_vfprintf_skip
-	CP	'#'
-	JR	Z,_vfprintf_skip
-	CP	'0'
-	JR	Z,_vfprintf_skip
-	; Skip field width digits
-	CP	'1'
-	JR	C,_vfprintf_nodig
-	CP	'9'+1
-	JR	C,_vfprintf_skip
-_vfprintf_nodig:
-	; Skip precision
-	CP	'.'
-	JR	Z,_vfprintf_skip
-	; Skip length modifiers: l, h, z
-	CP	'l'
-	JR	Z,_vfprintf_skip
-	CP	'h'
-	JR	Z,_vfprintf_skip
-	CP	'z'
-	JR	Z,_vfprintf_skip
-	; Now check format specifiers
-	CP	's'
-	JP	Z,_vfprintf_str
-	CP	'd'
-	JP	Z,_vfprintf_dec
-	CP	'i'
-	JP	Z,_vfprintf_dec
-	CP	'u'
-	JP	Z,_vfprintf_dec
-	CP	'x'
-	JP	Z,_vfprintf_hex
-	CP	'X'
-	JP	Z,_vfprintf_hex
-	CP	'c'
-	JP	Z,_vfprintf_chr
-	; Unknown specifier - skip it
-	INC	HL
-	JP	_vfprintf_loop
-_vfprintf_skip:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_vfprintf_done
-	JP	_vfprintf_fmt2
-
-_vfprintf_str:
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	EX	DE,HL
-_vfprintf_str_lp:
-	LD	A,(HL)
-	OR	A
-	JR	Z,_vfprintf_str_dn
-	PUSH	HL
-	LD	DE,(_fprintf_stream)
-	PUSH	DE
-	LD	E,A
-	LD	D,0
-	PUSH	DE
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	HL
-	INC	HL
-	JR	_vfprintf_str_lp
-_vfprintf_str_dn:
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vfprintf_loop
-
-_vfprintf_dec:
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	EX	DE,HL
-	CALL	_fprintf_prt_dec
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vfprintf_loop
-
-_vfprintf_chr:
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	INC	HL
-	LD	(_vprintf_ap),HL
-	LD	DE,(_fprintf_stream)
-	PUSH	DE
-	LD	D,0
-	PUSH	DE
-	CALL	_fputc
-	CALL	_fprintf_bump
-	POP	DE
-	POP	DE
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vfprintf_loop
-
-_vfprintf_hex:
-	PUSH	HL
-	PUSH	BC
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	EX	DE,HL
-	CALL	_fprintf_prt_hex
-	POP	BC
-	POP	HL
-	INC	HL
-	JP	_vfprintf_loop
-
-_vfprintf_done:
-	LD	HL,(_fprintf_count)	; shared counter (bumped by _fprintf_bump)
 	POP	IX
 	RET
 
-; ============================================================
+; int vprintf(const char *fmt, va_list ap)
+_vprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	HL,(_printf_sink)
+	PUSH	HL
+	LD	HL,__conout
+	LD	(_printf_sink),HL
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)		; HL = format string
+	LD	E,(IX+6)
+	LD	D,(IX+7)		; DE = va_list
+	PUSH	HL
+	PUSH	DE
+	POP	IX
+	POP	HL
+	LD	C,0
+	CALL	_printf_engine
+
+	POP	HL
+	LD	(_printf_sink),HL
+	LD	HL,(_printf_count)
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
 ; int vsprintf(char *str, const char *fmt, va_list ap)
-; ============================================================
-	PUBLIC	_vsprintf
 _vsprintf:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	; str at IX+4, fmt at IX+6, ap at IX+8
+	PUSH	BC
+	PUSH	DE
+
 	LD	L,(IX+4)
 	LD	H,(IX+5)
 	LD	(_sprintf_out),HL
+
+	LD	HL,(_printf_sink)
+	PUSH	HL
+	LD	HL,_sprintf_sink
+	LD	(_printf_sink),HL
+
 	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = format
+	LD	H,(IX+7)		; HL = format string
 	LD	E,(IX+8)
-	LD	D,(IX+9)	; DE = va_list
-	LD	(_vprintf_ap),DE
-	LD	BC,0		; Count
-	LD	(_sprintf_cnt),BC
-
-_vsprintf_loop:
-	LD	A,(HL)
-	OR	A
-	JP	Z,_vsprintf_done
-	CP	'%'
-	JP	Z,_vsprintf_fmt
-	; Regular char
-	CALL	_sprintf_putc
-	INC	HL
-	JP	_vsprintf_loop
-
-_vsprintf_fmt:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_vsprintf_done
-	CP	'%'
-	JR	NZ,_vsprintf_fmt2
-	LD	A,'%'
-	CALL	_sprintf_putc
-	INC	HL
-	JP	_vsprintf_loop
-
-_vsprintf_fmt2:
-	; Skip flags: -, +, space, #, 0
-	CP	'-'
-	JR	Z,_vsprintf_skip
-	CP	'+'
-	JR	Z,_vsprintf_skip
-	CP	' '
-	JR	Z,_vsprintf_skip
-	CP	'#'
-	JR	Z,_vsprintf_skip
-	CP	'0'
-	JR	Z,_vsprintf_skip
-	; Skip field width digits
-	CP	'1'
-	JR	C,_vsprintf_nodig
-	CP	'9'+1
-	JR	C,_vsprintf_skip
-_vsprintf_nodig:
-	; Skip precision
-	CP	'.'
-	JR	Z,_vsprintf_skip
-	; Skip length modifiers: l, h, z
-	CP	'l'
-	JR	Z,_vsprintf_skip
-	CP	'h'
-	JR	Z,_vsprintf_skip
-	CP	'z'
-	JR	Z,_vsprintf_skip
-	; Now check format specifiers
-	CP	's'
-	JP	Z,_vsprintf_str
-	CP	'd'
-	JP	Z,_vsprintf_dec
-	CP	'i'
-	JP	Z,_vsprintf_dec
-	CP	'u'
-	JP	Z,_vsprintf_dec
-	CP	'x'
-	JP	Z,_vsprintf_hex
-	CP	'X'
-	JP	Z,_vsprintf_hex
-	CP	'c'
-	JP	Z,_vsprintf_chr
-	; Unknown specifier - skip it
-	INC	HL
-	JP	_vsprintf_loop
-_vsprintf_skip:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_vsprintf_done
-	JP	_vsprintf_fmt2
-
-_vsprintf_str:
+	LD	D,(IX+9)		; DE = va_list
 	PUSH	HL
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	EX	DE,HL
-_vsprintf_str_lp:
-	LD	A,(HL)
-	OR	A
-	JR	Z,_vsprintf_str_dn
-	CALL	_sprintf_putc
-	INC	HL
-	JR	_vsprintf_str_lp
-_vsprintf_str_dn:
-	POP	HL
-	INC	HL
-	JP	_vsprintf_loop
-
-_vsprintf_dec:
-	PUSH	HL
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	EX	DE,HL
-	CALL	_sprintf_prt_dec
-	POP	HL
-	INC	HL
-	JP	_vsprintf_loop
-
-_vsprintf_chr:
-	PUSH	HL
-	LD	HL,(_vprintf_ap)
-	LD	A,(HL)
-	INC	HL
-	INC	HL
-	LD	(_vprintf_ap),HL
-	CALL	_sprintf_putc
-	POP	HL
-	INC	HL
-	JP	_vsprintf_loop
-
-_vsprintf_hex:
-	PUSH	HL
-	LD	HL,(_vprintf_ap)
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(_vprintf_ap),HL
-	EX	DE,HL
-	CALL	_sprintf_prt_hex
-	POP	HL
-	INC	HL
-	JP	_vsprintf_loop
-
-_vsprintf_done:
-	; Null terminate
-	XOR	A
-	CALL	_sprintf_putc
-	; Return count
-	LD	HL,(_sprintf_cnt)
-	DEC	HL		; Don't count null
+	PUSH	DE
 	POP	IX
+	POP	HL
+	LD	C,0
+	CALL	_printf_engine
+
+	POP	HL
+	LD	(_printf_sink),HL
+	LD	HL,(_sprintf_out)
+	LD	(HL),0			; NUL terminate
+	LD	HL,(_printf_count)
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; Sink: character in E, out through fputc so the stream's own buffering
+; and its text/binary handling stay in charge.  _printf_putc has already
+; saved the registers and counts the byte when we return.
+_fprintf_sink:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD	D,0			; DE = (int)ch, E already holds it
+	LD	HL,(_fprintf_stream)
+	PUSH	HL			; stream argument
+	PUSH	DE			; char argument
+	CALL	_fputc
+	POP	DE
+	POP	DE
+	POP	HL
+	POP	DE
+	POP	BC
 	RET
 
 	DSEG
 
-; fprintf/vfprintf working storage
-	PUBLIC	_fprintf_stream
 _fprintf_stream: DS	2
-_fprintf_count:	DS	2	; running byte count for fprintf/v*printf
-
-; vprintf/vfprintf/vsprintf shared working storage
-	PUBLIC	_vprintf_ap
-_vprintf_ap:	DS	2
 
 
 ; ============================================================
@@ -10642,7 +9804,8 @@ _printf_putc:
 	PUSH	BC
 	PUSH	DE
 	PUSH	HL
-	CALL	__conout	; the only console write in printf land
+	LD	HL,(_printf_sink)
+	CALL	_printf_sink_call
 	LD	HL,(_printf_count)
 	INC	HL
 	LD	(_printf_count),HL
@@ -10652,6 +9815,34 @@ _printf_putc:
 	POP	AF
 	RET
 
+; Call the sink through HL.  The Z80 has no CALL (HL); CALL here pushes
+; the return address and JP (HL) enters the sink, which RETs to us.
+_printf_sink_call:
+	JP	(HL)
+
+; ============================================================
+; _printf_engine: the format loop, shared by the whole printf family.
+;
+; Entry: IX = a frame whose varargs start at IX+C
+;        HL = format string
+;        C  = offset from IX to the first vararg
+;        _printf_sink = routine taking the character in E
+; Exit:  HL = bytes written.  Every printf-family entry point is this
+;        plus a prologue that sets those four things.
+;
+; sprintf, snprintf, fprintf, vprintf and friends each used to carry
+; their own CP/JR-Z conversion chain, so %e, %g and %F reached only
+; printf and the others silently emitted an empty field and left the
+; vararg offset alone, desyncing every later conversion in the call.
+; ============================================================
+	PUBLIC	_printf_engine
+_printf_engine:
+	PUSH	DE
+	LD	DE,0
+	LD	(_printf_count),DE
+	POP	DE
+	JR	_printf_loop
+
 _printf:
 	PUSH	IX
 	LD	IX,0
@@ -10659,14 +9850,19 @@ _printf:
 	PUSH	BC
 	PUSH	DE
 
-	; Reset byte counter for return value (C 7.21.6.3).
-	LD	HL,0
-	LD	(_printf_count),HL
+	LD	HL,__conout	; console sink: the only console write in printf land
+	LD	(_printf_sink),HL
 
 	; fmt is at IX+4, first vararg at IX+6
 	LD	L,(IX+4)
 	LD	H,(IX+5)	; HL = format string pointer
 	LD	C,6		; C = offset to next argument
+	CALL	_printf_engine
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
 
 _printf_loop:
 	LD	A,(HL)
@@ -10890,11 +10086,10 @@ _printf_pct:
 	INC	HL
 	JR	_printf_loop
 
+; The engine is a subroutine now, so it returns the count and leaves the
+; prologue's POP DE / POP BC / POP IX to whichever entry point ran it.
 _printf_done:
 	LD	HL,(_printf_count)	; Return count of bytes written
-	POP	DE
-	POP	BC
-	POP	IX
 	RET
 
 ; ============================================================
@@ -11386,6 +10581,8 @@ _prt_div16_dn:
 	DSEG
 
 _printf_count:	DS	2	; running byte count, returned by printf-family
+	PUBLIC	_printf_sink
+_printf_sink:	DW	__conout	; where _printf_putc sends each byte
 _printf_fmtstart:	DS	2	; first byte after '%', for _printf_unknown
 _printf_hexbuf:	DS	8	; 8 chars for %lx, lower 4 reused by 16-bit %x
 _printf_decbuf:	DS	6
@@ -15854,21 +15051,25 @@ _sinh_ep:	DS	4
 ; lc_snprintf.mac
 ; ============================================================
 	CSEG
-; lc_snprintf.mac - snprintf
-
-
+; lc_snprintf.mac - snprintf(): the shared printf engine, bounded buffer.
+;
+; Was a third copy of the formatter, and the most threadbare of them: it
+; knew no float conversion at all, so %f, %e, %g and %F each emitted an
+; empty field and left the vararg offset alone, which desynced every
+; later conversion in the same call.  See lc_sprintf.mac for why there is
+; only one formatter now.
 
 
 	CSEG
 
-; ============================================================
-; int snprintf(char *str, size_t size, const char *fmt, ...)
-; Format string into buffer with size limit
-; Supports %d, %s, %c, %x, %u, %p, %%
-; Returns: number of chars that would have been written (excl. null)
-; Stack: str(IX+4), size(IX+6), fmt(IX+8), args start at IX+10
-; ============================================================
 	PUBLIC	_snprintf
+
+; int snprintf(char *str, size_t size, const char *fmt, ...)
+;
+; C 7.21.6.5: write at most size-1 characters plus a terminating NUL, and
+; return the number that WOULD have been written had size been big
+; enough.  _printf_count counts everything the engine produced, whether
+; the sink stored it or dropped it, so it is that return value already.
 _snprintf:
 	PUSH	IX
 	LD	IX,0
@@ -15876,529 +15077,106 @@ _snprintf:
 	PUSH	BC
 	PUSH	DE
 
-	; str is at IX+4, size at IX+6, fmt at IX+8, first vararg at IX+10
+	; str at IX+4, size at IX+6, fmt at IX+8, first vararg at IX+10
 	LD	E,(IX+4)
-	LD	D,(IX+5)	; DE = output buffer pointer
+	LD	D,(IX+5)
 	LD	(_snprintf_out),DE
 	LD	E,(IX+6)
-	LD	D,(IX+7)	; DE = size
+	LD	D,(IX+7)
 	LD	(_snprintf_max),DE
+
+	LD	HL,(_printf_sink)
+	PUSH	HL
+	LD	HL,_snprintf_sink
+	LD	(_printf_sink),HL
+
 	LD	L,(IX+8)
-	LD	H,(IX+9)	; HL = format string pointer
-	LD	C,10		; C = offset to next argument
+	LD	H,(IX+9)		; HL = format string
+	LD	C,10			; first vararg at IX+10
+	CALL	_printf_engine
 
-	; Character counter and remaining counter
-	LD	DE,0
-	LD	(_snprintf_cnt),DE
-
-_snprintf_loop:
-	LD	A,(HL)
-	OR	A
-	JP	Z,_snprintf_done
-
-	CP	'%'
-	JR	Z,_snprintf_format
-
-	; Regular character - output it
-	CALL	_snprintf_putc
-	INC	HL
-	JR	_snprintf_loop
-
-_snprintf_format:
-	; Reset per-conversion flags so they don't leak between %-specifiers.
-	XOR	A
-	LD	(_snprintf_plus),A
-	LD	(_snprintf_space),A
-	LD	(_snprintf_width),A
-	LD	(_snprintf_zero),A
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_snprintf_done
-
-	CP	'%'
-	JR	Z,_snprintf_pct
-
-_snprintf_fmt2:
-	; Flags: '-', '+', ' ', '#', '0'.  Capture the ones we use, skip
-	; (but don't error on) the rest.
-	CP	'+'
-	JR	Z,_snprintf_set_plus
-	CP	' '
-	JR	Z,_snprintf_set_space
-	CP	'-'
-	JR	Z,_snprintf_fskip
-	CP	'#'
-	JR	Z,_snprintf_fskip
-	CP	'0'
-	JR	Z,_snprintf_set_zero
-	; Field width: capture digit into _snprintf_width.
-	; (zero-padding flag '0' was handled above; here '0' inside width
-	; just multiplies width by 10, i.e. width = width*10 + (A - '0').)
-	CP	'1'
-	JR	C,_snprintf_nodig
-	CP	'9'+1
-	JR	C,_snprintf_set_widthdig
-_snprintf_nodig:
-	; Skip precision
-	CP	'.'
-	JR	Z,_snprintf_fskip
-	; Skip length modifiers: h, l, z
-	CP	'h'
-	JR	Z,_snprintf_fskip
-	CP	'l'
-	JR	Z,_snprintf_fskip
-	CP	'z'
-	JR	Z,_snprintf_fskip
-	; Now check format specifiers
-	CP	's'
-	JR	Z,_snprintf_str
-
-	CP	'd'
-	JR	Z,_snprintf_dec
-
-	CP	'i'
-	JR	Z,_snprintf_dec
-
-	CP	'c'
-	JR	Z,_snprintf_chr
-
-	CP	'x'
-	JR	Z,_snprintf_hex_lc
-
-	CP	'X'
-	JR	Z,_snprintf_hex_uc
-
-	CP	'u'
-	JR	Z,_snprintf_uns
-
-	CP	'p'
-	JR	Z,_snprintf_hex_lc	; %p same as %x
-
-	; Unknown format - skip
-	INC	HL
-	JP	_snprintf_loop
-
-_snprintf_set_plus:
-	LD	A,1
-	LD	(_snprintf_plus),A
-	JR	_snprintf_fskip
-_snprintf_set_space:
-	LD	A,1
-	LD	(_snprintf_space),A
-	JR	_snprintf_fskip
-_snprintf_set_zero:
-	; '0' before any width digit = zero-pad flag; '0' after digits
-	; just keeps multiplying width by 10.
-	LD	A,(_snprintf_width)
-	OR	A
-	JR	NZ,_snprintf_widthdig_zero
-	LD	A,1
-	LD	(_snprintf_zero),A
-	JR	_snprintf_fskip
-_snprintf_widthdig_zero:
-	; width = width * 10 (digit is 0)
-	LD	A,(_snprintf_width)
-	LD	D,A
-	ADD	A,A		; *2
-	ADD	A,A		; *4
-	ADD	A,D		; *5
-	ADD	A,A		; *10
-	LD	(_snprintf_width),A
-	JR	_snprintf_fskip
-_snprintf_set_widthdig:
-	; width = width * 10 + (A - '0')
-	SUB	'0'
-	LD	D,A
-	LD	A,(_snprintf_width)
-	LD	E,A
-	ADD	A,A		; *2
-	ADD	A,A		; *4
-	ADD	A,E		; *5
-	ADD	A,A		; *10
-	ADD	A,D
-	LD	(_snprintf_width),A
-	JR	_snprintf_fskip
-_snprintf_fskip:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_snprintf_done
-	JR	_snprintf_fmt2
-
-_snprintf_pct:
-	LD	A,'%'
-	CALL	_snprintf_putc
-	INC	HL
-	JP	_snprintf_loop
-
-_snprintf_chr:
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	A,(HL)
-	CALL	_snprintf_putc
-	POP	BC
-	INC	C
-	INC	C
 	POP	HL
-	INC	HL
-	JP	_snprintf_loop
+	LD	(_printf_sink),HL
 
-_snprintf_str:
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = string pointer
-
-_snprintf_str_loop:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_snprintf_str_done
-	CALL	_snprintf_putc
-	INC	DE
-	JR	_snprintf_str_loop
-
-_snprintf_str_done:
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_snprintf_loop
-
-_snprintf_dec:
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EX	DE,HL		; HL = value
-
-	; Determine sign char (D = char, 0 = none)
-	LD	D,0
-	BIT	7,H
-	JR	Z,_snprintf_dec_pos
-	LD	D,'-'
-	; Negate
-	PUSH	DE
-	EX	DE,HL
-	LD	HL,0
-	OR	A
-	SBC	HL,DE
-	POP	DE
-	JR	_snprintf_dec_have_sign
-_snprintf_dec_pos:
-	LD	A,(_snprintf_plus)
-	OR	A
-	JR	Z,_snprintf_dec_chk_space2
-	LD	D,'+'
-	JR	_snprintf_dec_have_sign
-_snprintf_dec_chk_space2:
-	LD	A,(_snprintf_space)
-	OR	A
-	JR	Z,_snprintf_dec_have_sign
-	LD	D,' '
-_snprintf_dec_have_sign:
-	; HL = positive value, D = sign char (or 0)
-	; Count digits of HL (B = digit count, minimum 1).
-	PUSH	HL
-	PUSH	DE		; save sign in D
-	LD	B,1
-_snprintf_dec_count:
-	LD	DE,10
-	CALL	_sprintf_div16	; HL = HL/10, DE = remainder
-	LD	A,H
-	OR	L
-	JR	Z,_snprintf_dec_count_done
-	INC	B
-	JR	_snprintf_dec_count
-_snprintf_dec_count_done:
-	POP	DE		; restore sign
-	POP	HL		; restore value
-	; Emit padding: pad = width - digit_count - (sign != 0)
-	LD	A,(_snprintf_width)
-	OR	A
-	JR	Z,_snprintf_dec_skip_pad
-	; A = width.  Subtract digit count (B) and sign (1 if D!=0).
-	SUB	B
-	JR	Z,_snprintf_dec_skip_pad
-	JR	C,_snprintf_dec_skip_pad
-	LD	E,A		; E = remaining padding budget
-	LD	A,D
-	OR	A
-	JR	Z,_snprintf_dec_pad_loop1
-	; sign present: subtract 1 more
-	DEC	E
-	JR	Z,_snprintf_dec_skip_pad
-	JR	C,_snprintf_dec_skip_pad
-_snprintf_dec_pad_loop1:
-	; Decide pad char: '0' if zero-flag and no negative-sign-already-printed
-	LD	A,(_snprintf_zero)
-	OR	A
-	JR	NZ,_snprintf_dec_zpad
-	; Space-pad: emit sign AFTER padding
-	PUSH	DE		; preserve sign in D, count in E
-_snprintf_dec_spad_loop:
-	PUSH	DE
-	LD	A,' '
-	CALL	_snprintf_putc
-	POP	DE
-	DEC	E
-	JR	NZ,_snprintf_dec_spad_loop
-	POP	DE
-	JR	_snprintf_dec_emit_sign
-_snprintf_dec_zpad:
-	; Zero-pad: emit sign BEFORE padding
-	LD	A,D
-	OR	A
-	JR	Z,_snprintf_dec_zpad_loop
-	PUSH	DE
-	LD	A,D
-	CALL	_snprintf_putc
-	POP	DE
-	LD	D,0		; clear so emit_sign doesn't re-emit
-_snprintf_dec_zpad_loop:
-	PUSH	DE
-	LD	A,'0'
-	CALL	_snprintf_putc
-	POP	DE
-	DEC	E
-	JR	NZ,_snprintf_dec_zpad_loop
-_snprintf_dec_skip_pad:
-_snprintf_dec_emit_sign:
-	LD	A,D
-	OR	A
-	JR	Z,_snprintf_dec_emit
-	PUSH	HL
-	CALL	_snprintf_putc
-	POP	HL
-_snprintf_dec_emit:
-	CALL	_snprintf_prt_dec
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_snprintf_loop
-
-_snprintf_uns:
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EX	DE,HL
-	CALL	_snprintf_prt_dec
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_snprintf_loop
-
-_snprintf_hex_lc:
-	XOR	A
-	LD	(_snprintf_upper),A
-	JR	_snprintf_hex
-_snprintf_hex_uc:
-	LD	A,1
-	LD	(_snprintf_upper),A
-_snprintf_hex:
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EX	DE,HL
-	CALL	_snprintf_prt_hex
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_snprintf_loop
-
-_snprintf_done:
-	; Null terminate (if room)
+	; Terminate, unless the caller left no room at all.
 	LD	HL,(_snprintf_max)
 	LD	A,H
 	OR	L
-	JR	Z,_snprintf_ret	; size was 0, don't write null
+	JR	Z,_snp_noterm
 	LD	HL,(_snprintf_out)
 	LD	(HL),0
+_snp_noterm:
 
-_snprintf_ret:
-	; Return count (what would have been written)
-	LD	HL,(_snprintf_cnt)
+	LD	HL,(_printf_count)
 	POP	DE
 	POP	BC
 	POP	IX
 	RET
 
-; Internal: put character to buffer if room
-_snprintf_putc:
-	PUSH	HL
-	PUSH	DE
-
-	; Always increment count
-	LD	HL,(_snprintf_cnt)
-	INC	HL
-	LD	(_snprintf_cnt),HL
-
-	; Check if we have room (need 1 for char + 1 for null)
-	LD	HL,(_snprintf_max)
-	LD	DE,2
-	OR	A
-	SBC	HL,DE
-	JR	C,_snprintf_putc_skip	; No room
-
-	; Write character
-	LD	HL,(_snprintf_out)
-	LD	(HL),A
-	INC	HL
-	LD	(_snprintf_out),HL
-
-	; Decrement remaining size
-	LD	HL,(_snprintf_max)
-	DEC	HL
-	LD	(_snprintf_max),HL
-
-_snprintf_putc_skip:
-	POP	DE
-	POP	HL
-	RET
-
-; Internal: print HL as decimal to buffer
-_snprintf_prt_dec:
+; Sink: character in E, dropped once the buffer is full.  _printf_putc
+; counts it either way, which is what makes the return value right.
+_snprintf_sink:
+	PUSH	AF
 	PUSH	BC
 	PUSH	DE
-	LD	DE,10
-	LD	B,0
-_snprintf_dec_loop:
-	CALL	_sprintf_div16	; Reuse sprintf's div16
-	PUSH	DE
-	INC	B
+	PUSH	HL
+	LD	HL,(_snprintf_max)
 	LD	A,H
 	OR	L
-	JR	NZ,_snprintf_dec_loop
-_snprintf_dec_out:
-	POP	DE
-	LD	A,E
-	ADD	A,'0'
-	CALL	_snprintf_putc
-	DJNZ	_snprintf_dec_out
-	POP	DE
-	POP	BC
-	RET
-
-; Internal: print HL as 4-digit hex to buffer
-_snprintf_prt_hex:
-	PUSH	BC
-	LD	A,H
-	CALL	_snprintf_hex2
-	LD	A,L
-	CALL	_snprintf_hex2
-	POP	BC
-	RET
-
-_snprintf_hex2:
-	PUSH	AF
-	RRCA
-	RRCA
-	RRCA
-	RRCA
-	CALL	_snprintf_hex1
-	POP	AF
-_snprintf_hex1:
-	AND	0FH
-	ADD	A,'0'
-	CP	'9'+1
-	JR	C,_snprintf_hex_out
-	; Letter A-F: pick case from _snprintf_upper flag.
-	; Note: um80 does case-insensitive char literals, so 'a' == 'A'.
-	; Use explicit numeric constants to get the right offsets.
-	PUSH	AF
-	LD	A,(_snprintf_upper)
+	JR	Z,_snp_drop		; size 0: not even the NUL fits
+	LD	B,H
+	LD	C,L
+	DEC	BC			; keep one byte back for the NUL
+	LD	HL,(_printf_count)	; bytes produced so far
 	OR	A
-	JR	NZ,_snprintf_hex_uc1
+	SBC	HL,BC
+	JR	NC,_snp_drop		; already at the limit
+	LD	HL,(_snprintf_out)
+	LD	(HL),E
+	INC	HL
+	LD	(_snprintf_out),HL
+_snp_drop:
+	POP	HL
+	POP	DE
+	POP	BC
 	POP	AF
-	ADD	A,39		; 'a'-'9'-1 = 97-57-1 = 39 (lowercase a-f)
-	JR	_snprintf_hex_out
-_snprintf_hex_uc1:
-	POP	AF
-	ADD	A,7		; 'A'-'9'-1 = 65-57-1 = 7 (uppercase A-F)
-_snprintf_hex_out:
-	JP	_snprintf_putc
+	RET
 
 	DSEG
 
-; snprintf working storage
-_snprintf_out:	DS	2	; Current output pointer
-_snprintf_max:	DS	2	; Remaining space in buffer
-_snprintf_cnt:	DS	2	; Total character count
-_snprintf_upper: DS	1	; Hex case: 0 = lowercase, 1 = uppercase
-_snprintf_plus:	DS	1	; '+' flag: prepend + on non-negative %d
-_snprintf_space: DS	1	; ' ' flag: prepend ' ' on non-negative %d
-_snprintf_width: DS	1	; field width (0 = no width)
-_snprintf_zero:	DS	1	; '0' flag: zero-pad %d to width
+_snprintf_out:	DS	2
+_snprintf_max:	DS	2
 
 
 ; ============================================================
 ; lc_sprintf.mac
 ; ============================================================
 	CSEG
-; lc_sprintf.mac - sprintf
+; lc_sprintf.mac - sprintf(): the shared printf engine, writing to a buffer.
+;
+; This file used to carry a second, independent formatter: its own
+; CP/JR-Z chain over the conversion characters, its own width and
+; precision handling, its own integer and float printers.  It knew %d %u
+; %x %s %c %f and little else, so %e, %g and %F reached printf and no
+; other member of the family -- they emitted an empty field and, because
+; the miss path was `INC HL / JP _sprintf_loop`, did not advance the
+; vararg offset either, so every later conversion in the same call read
+; the wrong argument.  That is the bug uc80 set out to fix in printf, and
+; four of the five entry points still had it.
+;
+; There is one formatter now.  lc_printf_core's _printf_engine takes the
+; frame, the format string, the offset of the first vararg and a sink
+; routine; the entry points below are those four things and nothing else,
+; so a conversion added to the table is available to all of them at once.
 
-
-
-	EXTRN	__ftoi
-	EXTRN	__itof
-	EXTRN	__fmul
-	EXTRN	__fadd
-	EXTRN	__fsub
-	EXTRN	__tmp32
 
 	CSEG
 
-; ============================================================
-; int sprintf(char *str, const char *fmt, ...)
-; Format string into buffer
-; Supports %d, %s, %c, %x, %%
-; Returns: number of characters written (excluding null)
-; ============================================================
 	PUBLIC	_sprintf
+	PUBLIC	_sprintf_sink
 	PUBLIC	_sprintf_out
-	PUBLIC	_sprintf_cnt
-	PUBLIC	_sprintf_putc
-	PUBLIC	_sprintf_prt_dec
-	PUBLIC	_sprintf_prt_hex
-	PUBLIC	_sprintf_div16
+
+; int sprintf(char *str, const char *fmt, ...)
 _sprintf:
 	PUSH	IX
 	LD	IX,0
@@ -16406,1380 +15184,47 @@ _sprintf:
 	PUSH	BC
 	PUSH	DE
 
-	; str is at IX+4, fmt at IX+6, first vararg at IX+8
+	; str at IX+4, fmt at IX+6, first vararg at IX+8
 	LD	E,(IX+4)
-	LD	D,(IX+5)	; DE = output buffer pointer
+	LD	D,(IX+5)
 	LD	(_sprintf_out),DE
+
+	LD	HL,(_printf_sink)
+	PUSH	HL			; the caller's sink, restored below
+	LD	HL,_sprintf_sink
+	LD	(_printf_sink),HL
+
 	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = format string pointer
-	LD	C,8		; C = offset to next argument
+	LD	H,(IX+7)		; HL = format string
+	LD	C,8			; first vararg at IX+8
+	CALL	_printf_engine
 
-	; Character counter
-	LD	DE,0
-	LD	(_sprintf_cnt),DE
-
-_sprintf_loop:
-	LD	A,(HL)
-	OR	A
-	JP	Z,_sprintf_done
-
-	CP	'%'
-	JR	Z,_sprintf_format
-
-	; Regular character - output it
-	CALL	_sprintf_putc
-	INC	HL
-	JR	_sprintf_loop
-
-_sprintf_format:
-	; Reset all per-conversion flags so they don't leak between
-	; %-specifiers within the same format string.
-	XOR	A
-	LD	(_sprintf_width),A
-	LD	(_sprintf_zero),A
-	LD	(_sprintf_plus),A
-	LD	(_sprintf_space),A
-	LD	(_sprintf_left),A
-	LD	(_sprintf_prec),A
-	LD	(_sprintf_hasprec),A
-	LD	(_sprintf_long),A
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_sprintf_done
-
-	CP	'%'
-	JR	Z,_sprintf_pct
-
-_sprintf_fmt2:
-	; Check for zero-padding flag (only at start)
-	CP	'0'
-	JR	NZ,_sprintf_chk_dig
-	; Check if we haven't started parsing width yet
-	LD	A,(_sprintf_width)
-	OR	A
-	JR	NZ,_sprintf_is_digit	; Already have width, this is a digit
-	; This is the zero-padding flag
-	LD	A,1
-	LD	(_sprintf_zero),A
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_sprintf_done
-	JR	_sprintf_fmt2
-
-_sprintf_chk_dig:
-	; Check for digit (1-9 first, then 0-9)
-	CP	'1'
-	JR	C,_sprintf_nodig
-	CP	'9'+1
-	JR	NC,_sprintf_nodig
-_sprintf_is_digit:
-	; Parse width digit: width = width * 10 + digit
-	SUB	'0'
-	PUSH	BC
-	LD	B,A		; B = new digit
-	LD	A,(_sprintf_width)
-	; A = A * 10
-	LD	C,A
-	ADD	A,A		; A * 2
-	ADD	A,A		; A * 4
-	ADD	A,C		; A * 5
-	ADD	A,A		; A * 10
-	ADD	A,B		; A * 10 + digit
-	LD	(_sprintf_width),A
-	POP	BC
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_sprintf_done
-	; Continue parsing - might be another digit
-	CP	'0'
-	JR	C,_sprintf_nodig
-	CP	'9'+1
-	JR	C,_sprintf_is_digit
-
-_sprintf_nodig:
-	; Capture '+', ' ', '-' flags; skip '#' (alternate form not yet).
-	CP	'+'
-	JR	Z,_sprintf_set_plus
-	CP	' '
-	JR	Z,_sprintf_set_space
-	CP	'-'
-	JR	Z,_sprintf_set_left
-	CP	'#'
-	JR	Z,_sprintf_fskip
-	; Capture precision (".N"), skipping the '.' itself.
-	CP	'.'
-	JR	Z,_sprintf_set_hasprec
-	; Length modifier 'l' marks the next conversion as long (32-bit).
-	; 'h' and 'z' are accepted but treated as int (16-bit on Z80, or
-	; 32-bit if --int=32 — same as plain).
-	CP	'l'
-	JR	Z,_sprintf_set_long
-	CP	'h'
-	JR	Z,_sprintf_fskip
-	CP	'z'
-	JR	Z,_sprintf_fskip
-	; Now check format specifiers
-	CP	's'
-	JR	Z,_sprintf_str
-
-	CP	'd'
-	JR	Z,_sprintf_dec
-
-	CP	'i'
-	JR	Z,_sprintf_dec
-
-	CP	'c'
-	JR	Z,_sprintf_chr
-
-	CP	'x'
-	JR	Z,_sprintf_hex_lc
-
-	CP	'X'
-	JR	Z,_sprintf_hex_uc
-
-	CP	'u'
-	JR	Z,_sprintf_uns
-
-	CP	'o'
-	JR	Z,_sprintf_oct
-
-	CP	'p'
-	JR	Z,_sprintf_hex_lc	; %p is same as %x
-
-	CP	'f'
-	JP	Z,_sprintf_flt
-
-	; Unknown format - skip
-	INC	HL
-	JP	_sprintf_loop
-
-_sprintf_set_plus:
-	LD	A,1
-	LD	(_sprintf_plus),A
-	JR	_sprintf_fskip
-_sprintf_set_space:
-	LD	A,1
-	LD	(_sprintf_space),A
-	JR	_sprintf_fskip
-_sprintf_set_left:
-	LD	A,1
-	LD	(_sprintf_left),A
-	JR	_sprintf_fskip
-_sprintf_set_long:
-	LD	A,1
-	LD	(_sprintf_long),A
-	JR	_sprintf_fskip
-_sprintf_set_hasprec:
-	; Mark that a precision was specified (so prec=0 is meaningful)
-	; and parse the digits that follow into _sprintf_prec.
-	LD	A,1
-	LD	(_sprintf_hasprec),A
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_sprintf_done
-_sprintf_set_precdig:
-	CP	'0'
-	JR	C,_sprintf_fmt2	; non-digit ends precision
-	CP	'9'+1
-	JR	NC,_sprintf_fmt2
-	SUB	'0'
-	LD	D,A
-	LD	A,(_sprintf_prec)
-	LD	E,A
-	ADD	A,A		; *2
-	ADD	A,A		; *4
-	ADD	A,E		; *5
-	ADD	A,A		; *10
-	ADD	A,D
-	LD	(_sprintf_prec),A
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_sprintf_done
-	JR	_sprintf_set_precdig
-	; fall through
-_sprintf_fskip:
-	INC	HL
-	LD	A,(HL)
-	OR	A
-	JP	Z,_sprintf_done
-	JR	_sprintf_fmt2
-
-_sprintf_pct:
-	; Output literal %
-	LD	A,'%'
-	CALL	_sprintf_putc
-	INC	HL
-	JP	_sprintf_loop
-
-_sprintf_chr:
-	; Output character
-	PUSH	HL
-	; Get argument
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE		; HL = IX + offset
-	LD	A,(HL)		; Get character
-	CALL	_sprintf_putc
-	POP	BC
-	INC	C
-	INC	C		; Advance to next arg
 	POP	HL
-	INC	HL
-	JP	_sprintf_loop
+	LD	(_printf_sink),HL	; restore before anything can print
 
-_sprintf_str:
-	; Output string with width / precision / left-justify.
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE		; HL = IX + offset
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = string pointer
-
-	; Count effective string length (capped by precision if any).
-	; B = effective length (0..255).
-	PUSH	DE
-	LD	B,0
-_sprintf_str_count:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_sprintf_str_count_done
-	; If precision specified and we already emitted prec chars, stop.
-	LD	A,(_sprintf_hasprec)
-	OR	A
-	JR	Z,_sprintf_str_count_continue
-	LD	A,(_sprintf_prec)
-	CP	B
-	JR	Z,_sprintf_str_count_done
-_sprintf_str_count_continue:
-	INC	B
-	INC	DE
-	JR	NZ,_sprintf_str_count
-_sprintf_str_count_done:
-	POP	DE
-
-	; Compute pad budget (width - effective length) into C.
-	LD	C,0
-	LD	A,(_sprintf_width)
-	OR	A
-	JR	Z,_sprintf_str_emit
-	SUB	B
-	JR	Z,_sprintf_str_emit
-	JR	C,_sprintf_str_emit
-	LD	C,A
-
-	; Right-justify (default): emit padding first
-	LD	A,(_sprintf_left)
-	OR	A
-	JR	NZ,_sprintf_str_emit
-_sprintf_str_pad_left:
-	PUSH	BC
-	PUSH	DE
-	LD	A,' '
-	CALL	_sprintf_putc
-	POP	DE
-	POP	BC
-	DEC	C
-	JR	NZ,_sprintf_str_pad_left
-
-_sprintf_str_emit:
-	; Emit B bytes from DE
-	LD	A,B
-	OR	A
-	JR	Z,_sprintf_str_after_emit
-_sprintf_str_loop:
-	PUSH	BC
-	LD	A,(DE)
-	CALL	_sprintf_putc
-	POP	BC
-	INC	DE
-	DJNZ	_sprintf_str_loop
-
-_sprintf_str_after_emit:
-	; Left-justify trailing pad (if any).
-	LD	A,C
-	OR	A
-	JR	Z,_sprintf_str_done
-_sprintf_str_pad_right:
-	PUSH	BC
-	PUSH	DE
-	LD	A,' '
-	CALL	_sprintf_putc
-	POP	DE
-	POP	BC
-	DEC	C
-	JR	NZ,_sprintf_str_pad_right
-
-_sprintf_str_done:
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_sprintf_loop
-
-_sprintf_dec:
-	; Output signed decimal with width / zero-pad / +/space flag support
-	; If 'l' length modifier was seen, dispatch to the 32-bit path.
-	LD	A,(_sprintf_long)
-	OR	A
-	JP	NZ,_sprintf_dec32
-
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = value
-	EX	DE,HL		; HL = value
-
-	; Determine sign char (D = char, 0 = none)
-	LD	D,0
-	BIT	7,H
-	JR	Z,_sprintf_dec_npos
-	LD	D,'-'
-	; Negate
-	PUSH	DE
-	EX	DE,HL
-	LD	HL,0
-	OR	A
-	SBC	HL,DE
-	POP	DE
-	JR	_sprintf_dec_have_sign
-_sprintf_dec_npos:
-	LD	A,(_sprintf_plus)
-	OR	A
-	JR	Z,_sprintf_dec_chk_space
-	LD	D,'+'
-	JR	_sprintf_dec_have_sign
-_sprintf_dec_chk_space:
-	LD	A,(_sprintf_space)
-	OR	A
-	JR	Z,_sprintf_dec_have_sign
-	LD	D,' '
-_sprintf_dec_have_sign:
-	; HL = positive value, D = sign char (or 0).
-	; Count digits of HL (B = digit count, minimum 1).
-	PUSH	HL
-	PUSH	DE
-	LD	B,1
-_sprintf_dec_count:
-	LD	DE,10
-	CALL	_sprintf_div16
-	LD	A,H
-	OR	L
-	JR	Z,_sprintf_dec_count_done
-	INC	B
-	JR	_sprintf_dec_count
-_sprintf_dec_count_done:
-	POP	DE
-	POP	HL
-	; Compute total pad = width - digits - sign (clamped to 0).
-	; Stash trailing pad in (_sprintf_trail).
-	XOR	A
-	LD	(_sprintf_trail),A
-	LD	A,(_sprintf_width)
-	OR	A
-	JR	Z,_sprintf_dec_skip_pad
-	SUB	B
-	JR	Z,_sprintf_dec_skip_pad
-	JR	C,_sprintf_dec_skip_pad
-	LD	E,A
-	LD	A,D
-	OR	A
-	JR	Z,_sprintf_dec_have_budget
-	DEC	E
-	JR	Z,_sprintf_dec_skip_pad
-	JR	C,_sprintf_dec_skip_pad
-_sprintf_dec_have_budget:
-	; If left-justify: all pad is trailing, no leading pad.
-	LD	A,(_sprintf_left)
-	OR	A
-	JR	Z,_sprintf_dec_pad_check
-	LD	A,E
-	LD	(_sprintf_trail),A
-	JR	_sprintf_dec_skip_pad
-_sprintf_dec_pad_check:
-	; Right-justify: leading pad is space or zero per _sprintf_zero.
-	LD	A,(_sprintf_zero)
-	OR	A
-	JR	NZ,_sprintf_dec_zpad
-	; Space pad: emit sign AFTER padding
-_sprintf_dec_spad_loop:
-	PUSH	DE
-	LD	A,' '
-	CALL	_sprintf_putc
-	POP	DE
-	DEC	E
-	JR	NZ,_sprintf_dec_spad_loop
-	JR	_sprintf_dec_skip_pad
-_sprintf_dec_zpad:
-	; Zero pad: emit sign BEFORE padding
-	LD	A,D
-	OR	A
-	JR	Z,_sprintf_dec_zpad_loop
-	PUSH	DE
-	LD	A,D
-	CALL	_sprintf_putc
-	POP	DE
-	LD	D,0
-_sprintf_dec_zpad_loop:
-	PUSH	DE
-	LD	A,'0'
-	CALL	_sprintf_putc
-	POP	DE
-	DEC	E
-	JR	NZ,_sprintf_dec_zpad_loop
-_sprintf_dec_skip_pad:
-	; Emit sign if not already
-	LD	A,D
-	OR	A
-	JR	Z,_sprintf_dec_emit
-	PUSH	HL
-	CALL	_sprintf_putc
-	POP	HL
-_sprintf_dec_emit:
-	; _sprintf_prt_dec re-applies width itself.  We've already handled
-	; padding above, so zero the width so prt_dec just emits digits.
-	XOR	A
-	LD	(_sprintf_width),A
-	CALL	_sprintf_prt_dec
-	; Emit trailing pad (only set when left-justify is active)
-	LD	A,(_sprintf_trail)
-	OR	A
-	JR	Z,_sprintf_dec_done
-_sprintf_dec_trail_loop:
-	PUSH	AF
-	LD	A,' '
-	CALL	_sprintf_putc
-	POP	AF
-	DEC	A
-	JR	NZ,_sprintf_dec_trail_loop
-_sprintf_dec_done:
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_sprintf_loop
-
-_sprintf_uns:
-	; Output unsigned decimal.  If 'l' length, dispatch to 32-bit path.
-	LD	A,(_sprintf_long)
-	OR	A
-	JP	NZ,_sprintf_uns32
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EX	DE,HL		; HL = value
-	CALL	_sprintf_prt_dec
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_sprintf_loop
-
-_sprintf_uns32:
-	; %lu — same as %ld but never emits a sign character.  We share
-	; _sprintf_dec32's code by clearing the sign-detect bit: load
-	; the value into _prt32_val, then jump straight into the digit
-	; loop with sign char = 0 (or '+' / ' ' if those flags are set).
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(_prt32_val),DE
-	INC	HL
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(_prt32_val+2),DE
-	; No sign for unsigned (but +/space flags still apply).
-	LD	D,0
-	LD	A,(_sprintf_plus)
-	OR	A
-	JR	Z,_sprintf_uns32_chk_space
-	LD	D,'+'
-	JR	_sprintf_uns32_join
-_sprintf_uns32_chk_space:
-	LD	A,(_sprintf_space)
-	OR	A
-	JR	Z,_sprintf_uns32_join
-	LD	D,' '
-_sprintf_uns32_join:
-	JP	_sprintf_dec32_have_sign
-
-_sprintf_oct:
-	; Output unsigned octal.  'l' length → 32-bit path.
-	LD	A,(_sprintf_long)
-	OR	A
-	JP	NZ,_sprintf_oct32
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EX	DE,HL		; HL = value
-	CALL	_sprintf_prt_oct
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_sprintf_loop
-
-_sprintf_oct32:
-	; %lo — 32-bit unsigned octal, natural width (no padding yet).
-	; Max 11 octal digits (0o37777777777 = 0xFFFFFFFF).
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(_prt32_val),DE
-	INC	HL
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(_prt32_val+2),DE
-
-	; Divide by 8 repeatedly, pushing each remainder.  Stops when
-	; value is 0 (B has the digit count; at least 1).
-	LD	B,0
-_sprintf_oct32_lp:
-	; Low 3 bits of _prt32_val are the digit.
-	LD	A,(_prt32_val)
-	AND	7
-	PUSH	AF
-	INC	B
-	; Shift right by 3: SRL _prt32_val+3, RR _prt32_val+2, RR +1, RR +0.
-	; Three times.
-	LD	A,3
-_sprintf_oct32_shift:
-	PUSH	AF
-	LD	HL,_prt32_val+3
-	SRL	(HL)
-	DEC	HL
-	RR	(HL)
-	DEC	HL
-	RR	(HL)
-	DEC	HL
-	RR	(HL)
-	POP	AF
-	DEC	A
-	JR	NZ,_sprintf_oct32_shift
-	; Done if value is 0
-	LD	HL,(_prt32_val)
-	LD	A,H
-	OR	L
-	JR	NZ,_sprintf_oct32_lp
-	LD	HL,(_prt32_val+2)
-	LD	A,H
-	OR	L
-	JR	NZ,_sprintf_oct32_lp
-
-	; Emit B digits.
-_sprintf_oct32_out:
-	POP	AF
-	ADD	A,'0'
-	PUSH	BC
-	CALL	_sprintf_putc
-	POP	BC
-	DJNZ	_sprintf_oct32_out
-
-	POP	BC
-	INC	C
-	INC	C
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_sprintf_loop
-
-; %ld / %li handler — 32-bit signed decimal.
-; Reuses width / zero-pad / sign / left-justify state set by the
-; common parser.  Doesn't yet share the leading-pad code with the
-; 16-bit path; precision and other niceties go through the same
-; helpers.
-_sprintf_dec32:
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	; Read 4-byte arg into _prt32_val
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(_prt32_val),DE	; low word
-	INC	HL
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(_prt32_val+2),DE	; high word
-
-	; Determine sign.  Bit 7 of high byte = sign.
-	LD	A,(_prt32_val+3)
-	LD	D,0
-	BIT	7,A
-	JR	Z,_sprintf_dec32_npos
-	; Negate _prt32_val in place: 0 - val.  D gets clobbered, so set
-	; the sign char in D *after* the negation completes.
-	LD	HL,0
-	LD	DE,(_prt32_val)
-	OR	A
-	SBC	HL,DE
-	LD	(_prt32_val),HL
-	LD	HL,0
-	LD	DE,(_prt32_val+2)
-	SBC	HL,DE
-	LD	(_prt32_val+2),HL
-	LD	D,'-'
-	JR	_sprintf_dec32_have_sign
-_sprintf_dec32_npos:
-	LD	A,(_sprintf_plus)
-	OR	A
-	JR	Z,_sprintf_dec32_chk_space
-	LD	D,'+'
-	JR	_sprintf_dec32_have_sign
-_sprintf_dec32_chk_space:
-	LD	A,(_sprintf_space)
-	OR	A
-	JR	Z,_sprintf_dec32_have_sign
-	LD	D,' '
-_sprintf_dec32_have_sign:
-	; Save sign char in a static so it survives the digit loop's
-	; pushes (we'd lose it if it were on the stack underneath all
-	; the AFs we're about to push).
-	LD	A,D
-	LD	(_sprintf_signch),A
-
-	; Convert to decimal digits on stack via _div32_10.
-	; Counts digits in B (start at 0).  _prt32_val gets consumed.
-	LD	B,0
-_sprintf_dec32_cvt:
-	CALL	_div32_10
-	PUSH	AF		; push remainder digit
-	INC	B
-	LD	HL,(_prt32_val)
-	LD	A,H
-	OR	L
-	JR	NZ,_sprintf_dec32_cvt
-	LD	HL,(_prt32_val+2)
-	LD	A,H
-	OR	L
-	JR	NZ,_sprintf_dec32_cvt
-	; Restore sign char from static into D.
-	LD	A,(_sprintf_signch)
-	LD	D,A
-	; Stack now: B digits.  Compute pad and emit per flags.
-	XOR	A
-	LD	(_sprintf_trail),A
-	LD	A,(_sprintf_width)
-	OR	A
-	JR	Z,_sprintf_dec32_skip_pad
-	SUB	B
-	JR	Z,_sprintf_dec32_skip_pad
-	JR	C,_sprintf_dec32_skip_pad
-	LD	E,A
-	LD	A,D
-	OR	A
-	JR	Z,_sprintf_dec32_have_budget
-	DEC	E
-	JR	Z,_sprintf_dec32_skip_pad
-	JR	C,_sprintf_dec32_skip_pad
-_sprintf_dec32_have_budget:
-	LD	A,(_sprintf_left)
-	OR	A
-	JR	Z,_sprintf_dec32_pad_check
-	LD	A,E
-	LD	(_sprintf_trail),A
-	JR	_sprintf_dec32_skip_pad
-_sprintf_dec32_pad_check:
-	LD	A,(_sprintf_zero)
-	OR	A
-	JR	NZ,_sprintf_dec32_zpad
-_sprintf_dec32_spad_loop:
-	PUSH	BC
-	PUSH	DE
-	LD	A,' '
-	CALL	_sprintf_putc
-	POP	DE
-	POP	BC
-	DEC	E
-	JR	NZ,_sprintf_dec32_spad_loop
-	JR	_sprintf_dec32_skip_pad
-_sprintf_dec32_zpad:
-	LD	A,D
-	OR	A
-	JR	Z,_sprintf_dec32_zpad_loop
-	PUSH	BC
-	PUSH	DE
-	LD	A,D
-	CALL	_sprintf_putc
-	POP	DE
-	POP	BC
-	LD	D,0
-_sprintf_dec32_zpad_loop:
-	PUSH	BC
-	PUSH	DE
-	LD	A,'0'
-	CALL	_sprintf_putc
-	POP	DE
-	POP	BC
-	DEC	E
-	JR	NZ,_sprintf_dec32_zpad_loop
-_sprintf_dec32_skip_pad:
-	LD	A,D
-	OR	A
-	JR	Z,_sprintf_dec32_emit
-	PUSH	BC
-	CALL	_sprintf_putc
-	POP	BC
-_sprintf_dec32_emit:
-	; Pop and print B digits.
-_sprintf_dec32_out:
-	POP	AF
-	ADD	A,'0'
-	PUSH	BC
-	CALL	_sprintf_putc
-	POP	BC
-	DJNZ	_sprintf_dec32_out
-	; Trailing pad
-	LD	A,(_sprintf_trail)
-	OR	A
-	JR	Z,_sprintf_dec32_done
-_sprintf_dec32_trail:
-	PUSH	AF
-	LD	A,' '
-	CALL	_sprintf_putc
-	POP	AF
-	DEC	A
-	JR	NZ,_sprintf_dec32_trail
-_sprintf_dec32_done:
-	POP	BC
-	; Long arg consumes 4 stack bytes (advance C by 4).
-	INC	C
-	INC	C
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_sprintf_loop
-
-_sprintf_hex_lc:
-	; Output hex (lowercase, %x)
-	XOR	A
-	LD	(_sprintf_upper),A
-	JR	_sprintf_hex_common
-
-_sprintf_hex_uc:
-	; Output hex (uppercase, %X)
-	LD	A,1
-	LD	(_sprintf_upper),A
-_sprintf_hex_common:
-	; If 'l' length, dispatch to 32-bit hex (8 digits).
-	LD	A,(_sprintf_long)
-	OR	A
-	JP	NZ,_sprintf_hex32
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EX	DE,HL
-	CALL	_sprintf_prt_hex
-	POP	BC
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_sprintf_loop
-
-_sprintf_hex32:
-	; %lx / %lX — 32-bit hex with leading-zero suppression, width
-	; padding, and left-justify.  The value is emitted into an
-	; 8-char DSEG buffer first, then we skip leading zeros and
-	; pad / emit.
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	; Read 4 bytes into _prt32_val.
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(_prt32_val),DE
-	INC	HL
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(_prt32_val+2),DE
-
-	; Fill _sprintf_hexbuf with 8 hex digits, high to low.
-	LD	HL,_sprintf_hexbuf
-	LD	A,(_prt32_val+3)
-	CALL	_sprintf_hex_to_buf
-	LD	A,(_prt32_val+2)
-	CALL	_sprintf_hex_to_buf
-	LD	A,(_prt32_val+1)
-	CALL	_sprintf_hex_to_buf
-	LD	A,(_prt32_val)
-	CALL	_sprintf_hex_to_buf
-
-	; Find first non-zero digit.  If all zero, keep the last digit.
-	; We count "skipped leading zeros" in C (starts at 0), walking HL
-	; through the buffer up to 7 times.  On exit B = natural digit
-	; count = 8 - skipped.
-	LD	HL,_sprintf_hexbuf
-	LD	C,0		; skipped count
-	LD	B,7		; max skip
-_sprintf_hex32_strip:
-	LD	A,(HL)
-	CP	'0'
-	JR	NZ,_sprintf_hex32_got
-	INC	HL
-	INC	C
-	DJNZ	_sprintf_hex32_strip
-_sprintf_hex32_got:
-	LD	A,8
-	SUB	C
-	LD	B,A		; B = natural digit count
-
-	; Compute pad budget and trailing pad, applying flags.
-	XOR	A
-	LD	(_sprintf_trail),A
-	LD	A,(_sprintf_width)
-	OR	A
-	JR	Z,_sprintf_hex32_emit
-	SUB	B
-	JR	Z,_sprintf_hex32_emit
-	JR	C,_sprintf_hex32_emit
-	; A = pad count.  If left-justify, put it in _sprintf_trail.
-	LD	E,A
-	LD	A,(_sprintf_left)
-	OR	A
-	JR	Z,_sprintf_hex32_lead_pad
-	LD	A,E
-	LD	(_sprintf_trail),A
-	JR	_sprintf_hex32_emit
-_sprintf_hex32_lead_pad:
-	; Right-justify: emit leading pad.  Char is ' ' or '0'.
-	LD	A,(_sprintf_zero)
-	OR	A
-	LD	A,' '
-	JR	Z,_sprintf_hex32_pad_lp
-	LD	A,'0'
-_sprintf_hex32_pad_lp:
-	PUSH	BC
-	PUSH	DE
-	PUSH	HL
-	PUSH	AF
-	CALL	_sprintf_putc
-	POP	AF
-	POP	HL
-	POP	DE
-	POP	BC
-	DEC	E
-	JR	NZ,_sprintf_hex32_pad_lp
-
-_sprintf_hex32_emit:
-	; Emit B digits from HL
-	LD	A,(HL)
-	PUSH	BC
-	PUSH	HL
-	CALL	_sprintf_putc
-	POP	HL
-	POP	BC
-	INC	HL
-	DJNZ	_sprintf_hex32_emit
-
-	; Trailing pad for left-justify.
-	LD	A,(_sprintf_trail)
-	OR	A
-	JR	Z,_sprintf_hex32_done
-_sprintf_hex32_trail:
-	PUSH	AF
-	LD	A,' '
-	CALL	_sprintf_putc
-	POP	AF
-	DEC	A
-	JR	NZ,_sprintf_hex32_trail
-
-_sprintf_hex32_done:
-	POP	BC
-	; Long arg = 4 bytes.
-	INC	C
-	INC	C
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_sprintf_loop
-
-; Helper: split byte in A into two hex chars, write to (HL), HL+=2.
-_sprintf_hex_to_buf:
-	PUSH	AF
-	RRCA
-	RRCA
-	RRCA
-	RRCA
-	CALL	_sprintf_hexbuf1
-	POP	AF
-	; fall through
-_sprintf_hexbuf1:
-	PUSH	AF
-	AND	0FH
-	ADD	A,'0'
-	CP	'9'+1
-	JR	C,_sprintf_hexbuf_store
-	PUSH	AF
-	LD	A,(_sprintf_upper)
-	OR	A
-	JR	NZ,_sprintf_hexbuf_uc
-	POP	AF
-	ADD	A,39		; lowercase a..f
-	JR	_sprintf_hexbuf_store
-_sprintf_hexbuf_uc:
-	POP	AF
-	ADD	A,7		; uppercase A..F
-_sprintf_hexbuf_store:
-	LD	(HL),A
-	INC	HL
-	POP	AF
-	RET
-
-; %f handler — simple float-to-string.
-; Reads 4-byte float from stack into __ftmp.  Default precision 6.
-; Doesn't implement width / zero-pad for %f yet — just emits
-; [-]int.frac with `prec` fractional digits.  Enough for the test
-; cases we care about (SDCC snprintf_FLOAT: {1.0,"%f","1.000000"}
-; and {1.96,"%3.1f","2.0"}).
-_sprintf_flt:
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	BC
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	; Read 4-byte float into __ftmp.
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(__ftmp),DE
-	INC	HL
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(__ftmp+2),DE
-
-	; Determine precision: _sprintf_hasprec ? _sprintf_prec : 6.
-	LD	A,(_sprintf_hasprec)
-	OR	A
-	JR	NZ,_sprintf_flt_hp
-	LD	A,6
-	JR	_sprintf_flt_prec_ok
-_sprintf_flt_hp:
-	LD	A,(_sprintf_prec)
-_sprintf_flt_prec_ok:
-	LD	(_sprintf_flt_prec),A
-
-	; Check sign (bit 7 of byte __ftmp+3).
-	LD	A,(__ftmp+3)
-	BIT	7,A
-	JR	Z,_sprintf_flt_pos
-	; Emit '-' and clear sign bit.
-	LD	A,'-'
-	CALL	_sprintf_putc
-	LD	A,(__ftmp+3)
-	AND	7FH
-	LD	(__ftmp+3),A
-_sprintf_flt_pos:
-	; Pre-round: add 0.5 * 10^(-prec) to value.
-	; Start rounding constant at 0.5 (IEEE 754: 3F000000), then
-	; multiply by 0.1 (3DCCCCCD) prec times.
-	LD	HL,0
-	LD	DE,3F00H		; DE:HL = 0.5
-	LD	A,(_sprintf_flt_prec)
-	OR	A
-	JR	Z,_sprintf_flt_round_add
-	LD	B,A
-_sprintf_flt_round_lp:
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,0CCCDH
-	LD	DE,3DCCH		; 0.1
-	CALL	__fmul
-	DJNZ	_sprintf_flt_round_lp
-_sprintf_flt_round_add:
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__ftmp)
-	LD	DE,(__ftmp+2)
-	CALL	__fadd
-	LD	(__ftmp),HL
-	LD	(__ftmp+2),DE
-
-	; Integer part: int_part = (long)value.  __ftoi takes DEHL
-	; float, returns int32 in DEHL.
-	LD	HL,(__ftmp)
-	LD	DE,(__ftmp+2)
-	CALL	__ftoi
-	; Save int32 part in __tmp32 for both the dec print and the
-	; subtraction.
-	LD	(_sprintf_flt_int),HL
-	LD	(_sprintf_flt_int+2),DE
-
-	; Print integer part via _sprintf_prt_dec32.  It reads from
-	; _prt32_val, so copy int into _prt32_val.
-	LD	(_prt32_val),HL
-	LD	(_prt32_val+2),DE
-	CALL	_sprintf_prt_dec32_nowidth
-
-	; Emit '.'
-	LD	A,'.'
-	CALL	_sprintf_putc
-
-	; Compute frac = value - int_as_float.
-	; Re-convert int back to float to get the "integer value as float".
-	LD	HL,(_sprintf_flt_int)
-	LD	DE,(_sprintf_flt_int+2)
-	CALL	__itof		; DEHL = float
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__ftmp)
-	LD	DE,(__ftmp+2)
-	CALL	__fsub		; DEHL = value - int_as_float
-	LD	(__ftmp),HL
-	LD	(__ftmp+2),DE
-
-	; For each of prec digits: frac *= 10; digit = (int)frac; emit;
-	; frac -= digit.
-	LD	A,(_sprintf_flt_prec)
-	OR	A
-	JR	Z,_sprintf_flt_end
-	LD	B,A
-_sprintf_flt_frac_lp:
-	PUSH	BC
-	; frac *= 10.
-	LD	HL,(__ftmp)
-	LD	DE,(__ftmp+2)
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,0
-	LD	DE,4120H		; 10.0
-	CALL	__fmul
-	LD	(__ftmp),HL
-	LD	(__ftmp+2),DE
-	; digit = (int)frac
-	CALL	__ftoi
-	LD	A,L
-	PUSH	AF		; save digit
-	; Emit digit
-	ADD	A,'0'
-	CALL	_sprintf_putc
-	POP	AF		; restore digit
-	; frac -= digit (as float)
-	LD	L,A
-	LD	H,0
-	LD	DE,0
-	CALL	__itof
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__ftmp)
-	LD	DE,(__ftmp+2)
-	CALL	__fsub
-	LD	(__ftmp),HL
-	LD	(__ftmp+2),DE
-	POP	BC
-	DJNZ	_sprintf_flt_frac_lp
-
-_sprintf_flt_end:
-	POP	BC
-	; float arg consumes 4 bytes on stack
-	INC	C
-	INC	C
-	INC	C
-	INC	C
-	POP	HL
-	INC	HL
-	JP	_sprintf_loop
-
-; Print _prt32_val as decimal to buffer, no width padding.
-; Destroys DEHL, preserves BC.
-_sprintf_prt_dec32_nowidth:
-	PUSH	BC
-	LD	B,0
-_sprintf_dec32_nw_cvt:
-	CALL	_div32_10
-	PUSH	AF
-	INC	B
-	LD	HL,(_prt32_val)
-	LD	A,H
-	OR	L
-	JR	NZ,_sprintf_dec32_nw_cvt
-	LD	HL,(_prt32_val+2)
-	LD	A,H
-	OR	L
-	JR	NZ,_sprintf_dec32_nw_cvt
-_sprintf_dec32_nw_out:
-	POP	AF
-	ADD	A,'0'
-	PUSH	BC
-	CALL	_sprintf_putc
-	POP	BC
-	DJNZ	_sprintf_dec32_nw_out
-	POP	BC
-	RET
-
-_sprintf_done:
-	; Null terminate
 	LD	HL,(_sprintf_out)
-	LD	(HL),0
+	LD	(HL),0			; NUL terminate
 
-	; Return count
-	LD	HL,(_sprintf_cnt)
+	LD	HL,(_printf_count)	; C 7.21.6.6: bytes written, sans NUL
 	POP	DE
 	POP	BC
 	POP	IX
 	RET
 
-; Internal: put character to buffer
-_sprintf_putc:
+; Sink: the character is in E.  _printf_putc has already saved every
+; register and counts the byte itself once we return.
+_sprintf_sink:
 	PUSH	HL
 	LD	HL,(_sprintf_out)
-	LD	(HL),A
+	LD	(HL),E
 	INC	HL
 	LD	(_sprintf_out),HL
-	LD	HL,(_sprintf_cnt)
-	INC	HL
-	LD	(_sprintf_cnt),HL
 	POP	HL
 	RET
 
-; Internal: print HL as decimal to buffer with optional width padding
-_sprintf_prt_dec:
-	PUSH	BC
-	PUSH	DE
-
-	; Convert to decimal digits on stack
-	LD	DE,10
-	LD	B,0		; Digit counter
-
-_sprintf_dec_loop:
-	CALL	_sprintf_div16
-	PUSH	DE		; Push digit
-	INC	B
-	LD	A,H
-	OR	L
-	JR	NZ,_sprintf_dec_loop
-
-	; B = digit count, check if we need padding
-	LD	A,(_sprintf_width)
-	OR	A
-	JR	Z,_sprintf_dec_out	; No width specified
-
-	; Calculate padding needed: width - digit_count
-	SUB	B		; A = width - digit_count
-	JR	Z,_sprintf_dec_out	; No padding needed
-	JR	C,_sprintf_dec_out	; Digit count > width, no padding
-
-	; A = number of padding chars needed
-	PUSH	BC		; Save digit count
-	LD	B,A		; B = padding count
-	LD	A,(_sprintf_zero)
-	OR	A
-	LD	A,' '		; Default pad with space
-	JR	Z,_sprintf_pad_lp
-	LD	A,'0'		; Pad with zero
-
-_sprintf_pad_lp:
-	CALL	_sprintf_putc
-	DJNZ	_sprintf_pad_lp
-	POP	BC		; Restore digit count
-
-	; Pop and output digits
-_sprintf_dec_out:
-	POP	DE
-	LD	A,E
-	ADD	A,'0'
-	CALL	_sprintf_putc
-	DJNZ	_sprintf_dec_out
-
-	POP	DE
-	POP	BC
-	RET
-
-; Simple division: HL = HL / 10, DE = HL % 10
-_sprintf_div16:
-	PUSH	BC
-	LD	BC,0		; Result
-
-_sprintf_div_lp:
-	LD	A,H
-	OR	A
-	JR	NZ,_sprintf_div_sub
-	LD	A,L
-	CP	10
-	JR	C,_sprintf_div_dn
-
-_sprintf_div_sub:
-	LD	A,L
-	SUB	10
-	LD	L,A
-	LD	A,H
-	SBC	A,0
-	LD	H,A
-	INC	BC
-	JR	_sprintf_div_lp
-
-_sprintf_div_dn:
-	LD	E,L
-	LD	D,0
-	LD	H,B
-	LD	L,C
-	POP	BC
-	RET
-
-; Internal: print HL as unsigned octal to buffer.  Up to 6 octal digits
-; for a 16-bit value.  Counts and emits in reverse via the stack.
-_sprintf_prt_oct:
-	PUSH	BC
-	PUSH	DE
-	LD	B,0		; digit counter
-_sprintf_oct_lp:
-	LD	A,L
-	AND	7
-	PUSH	AF		; push digit (low 3 bits)
-	INC	B
-	; HL >>= 3
-	SRL	H
-	RR	L
-	SRL	H
-	RR	L
-	SRL	H
-	RR	L
-	LD	A,H
-	OR	L
-	JR	NZ,_sprintf_oct_lp
-_sprintf_oct_out:
-	POP	AF
-	ADD	A,'0'
-	CALL	_sprintf_putc
-	DJNZ	_sprintf_oct_out
-	POP	DE
-	POP	BC
-	RET
-
-; Internal: print HL as 4-digit hex to buffer
-_sprintf_prt_hex:
-	PUSH	BC
-	LD	A,H
-	CALL	_sprintf_hex2
-	LD	A,L
-	CALL	_sprintf_hex2
-	POP	BC
-	RET
-
-_sprintf_hex2:
-	PUSH	AF
-	RRCA
-	RRCA
-	RRCA
-	RRCA
-	CALL	_sprintf_hex1
-	POP	AF
-_sprintf_hex1:
-	AND	0FH
-	ADD	A,'0'
-	CP	'9'+1
-	JR	C,_sprintf_hex_out
-	; Letter A-F: pick case from _sprintf_upper flag.
-	; Note: um80 does case-insensitive char literals, so 'a' == 'A'.
-	; Use explicit numeric constants to get the right offsets.
-	PUSH	AF
-	LD	A,(_sprintf_upper)
-	OR	A
-	JR	NZ,_sprintf_hex_uc1
-	POP	AF
-	ADD	A,39		; 'a'-'9'-1 = 97-57-1 = 39 (lowercase a-f)
-	JR	_sprintf_hex_out
-_sprintf_hex_uc1:
-	POP	AF
-	ADD	A,7		; 'A'-'9'-1 = 65-57-1 = 7 (uppercase A-F)
-_sprintf_hex_out:
-	JP	_sprintf_putc
-
-
 	DSEG
-; sprintf working storage
-_sprintf_out:	DS	2	; Current output pointer
-_sprintf_cnt:	DS	2	; Character count
-_sprintf_width:	DS	1	; Field width (0 = no width)
-_sprintf_zero:	DS	1	; Zero-padding flag
-_sprintf_upper:	DS	1	; Hex case: 0 = lowercase, 1 = uppercase
-_sprintf_plus:	DS	1	; '+' flag for non-negative %d
-_sprintf_space:	DS	1	; ' ' flag for non-negative %d
-_sprintf_left:	DS	1	; '-' flag: left-justify
-_sprintf_prec:	DS	1	; precision count (max 255)
-_sprintf_hasprec: DS	1	; 1 if precision was specified
-_sprintf_trail:	DS	1	; trailing-pad count (left-justify)
-_sprintf_long:	DS	1	; 1 if 'l' length modifier was seen
-_sprintf_signch: DS	1	; saved sign char during 32-bit dec emit
-_sprintf_hexbuf: DS	8	; 8-digit hex scratch for %lx/%lX
-_sprintf_flt_prec: DS	1	; precision for %f (default 6)
-_sprintf_flt_int: DS	4	; int32 part for %f
+
+_sprintf_out:	DS	2	; next byte of the caller's buffer
 
 
 ; ============================================================

@@ -72,29 +72,55 @@ class TestChokePointInvariant:
             "console output must go through __conout; found direct BDOS 2 "
             "calls in %r" % offenders)
 
-    # A console module reaches __conout either directly or through
-    # _printf_putc, which is lc_printf_core's one-line wrapper around it
-    # (it calls __conout and bumps _printf_count so the printf family can
-    # return a byte count).  Both routes end at the same choke point, so
-    # CR LF translation applies either way; what must never happen is a
-    # module reaching BDOS by some third route, and
-    # test_only_lc_conout_writes_to_bdos_2 above is what forbids that.
+    # There are three ways a console module may reach the choke point, and
+    # all three end at __conout, which is where CR LF policy lives:
+    #
+    #   1. calling __conout itself;
+    #   2. calling _printf_putc, lc_printf_core's wrapper that sends the
+    #      byte to the current sink and bumps _printf_count;
+    #   3. pointing that sink at __conout, which is what the console
+    #      entry points of the printf family do.
+    #
+    # The printf family shares one formatter whose output goes wherever
+    # _printf_sink says, so a member that writes to a buffer or a stream
+    # sets its own sink and is not a console module at all.  What must
+    # never happen is a module reaching BDOS by some fourth route, and
+    # test_only_lc_conout_writes_to_bdos_2 above forbids that outright.
     _ROUTES = (("\tEXTRN\t__conout\n", "CALL\t__conout"),
-               ("\tEXTRN\t_printf_putc\n", "CALL\t_printf_putc"))
+               ("\tEXTRN\t_printf_putc\n", "CALL\t_printf_putc"),
+               ("__conout", "LD\t(_printf_sink),HL"))
 
     @pytest.mark.parametrize("module", CONSOLE_MODULES)
     def test_console_module_reaches_the_choke_point(self, module):
         src = (LC_DIR / module).read_text()
         assert any(extern in src and call in src
                    for extern, call in self._ROUTES), (
-            "%s writes to the console but neither calls __conout nor goes "
-            "through _printf_putc" % module)
+            "%s writes to the console but reaches neither __conout nor "
+            "_printf_putc nor sets the printf sink to __conout" % module)
 
-    def test_the_wrapper_itself_calls_the_choke_point(self):
-        """_printf_putc is only an acceptable route because it ends here."""
+    def test_the_wrapper_goes_through_the_sink(self):
+        """_printf_putc is an acceptable route because of where it ends."""
         src = (LC_DIR / "lc_printf_core.mac").read_text()
         putc = src.split("_printf_putc:", 1)[1].split("\tRET", 1)[0]
-        assert "CALL\t__conout" in putc
+        assert "LD\tHL,(_printf_sink)" in putc
+        assert "CALL\t_printf_sink_call" in putc
+
+    def test_the_sink_defaults_to_the_choke_point(self):
+        src = (LC_DIR / "lc_printf_core.mac").read_text()
+        assert "_printf_sink:\tDW\t__conout" in src
+
+    @pytest.mark.parametrize("entry", ["_printf:", "_vprintf:"])
+    def test_console_entry_points_select_the_choke_point(self, entry):
+        """printf and vprintf write to the console, so they must say so."""
+        for name in ("lc_printf_core.mac", "lc_fprintf.mac"):
+            src = (LC_DIR / name).read_text()
+            if "\n" + entry not in src:
+                continue
+            body = src.split("\n" + entry, 1)[1].split("\tRET", 1)[0]
+            assert "LD\tHL,__conout" in body, entry
+            assert "LD\t(_printf_sink),HL" in body, entry
+            return
+        pytest.fail("no module defines %s" % entry)
 
 
 class TestConoutModule:

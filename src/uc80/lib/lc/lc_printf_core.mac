@@ -65,7 +65,8 @@ _printf_putc:
 	PUSH	BC
 	PUSH	DE
 	PUSH	HL
-	CALL	__conout	; the only console write in printf land
+	LD	HL,(_printf_sink)
+	CALL	_printf_sink_call
 	LD	HL,(_printf_count)
 	INC	HL
 	LD	(_printf_count),HL
@@ -75,6 +76,34 @@ _printf_putc:
 	POP	AF
 	RET
 
+; Call the sink through HL.  The Z80 has no CALL (HL); CALL here pushes
+; the return address and JP (HL) enters the sink, which RETs to us.
+_printf_sink_call:
+	JP	(HL)
+
+; ============================================================
+; _printf_engine: the format loop, shared by the whole printf family.
+;
+; Entry: IX = a frame whose varargs start at IX+C
+;        HL = format string
+;        C  = offset from IX to the first vararg
+;        _printf_sink = routine taking the character in E
+; Exit:  HL = bytes written.  Every printf-family entry point is this
+;        plus a prologue that sets those four things.
+;
+; sprintf, snprintf, fprintf, vprintf and friends each used to carry
+; their own CP/JR-Z conversion chain, so %e, %g and %F reached only
+; printf and the others silently emitted an empty field and left the
+; vararg offset alone, desyncing every later conversion in the call.
+; ============================================================
+	PUBLIC	_printf_engine
+_printf_engine:
+	PUSH	DE
+	LD	DE,0
+	LD	(_printf_count),DE
+	POP	DE
+	JR	_printf_loop
+
 _printf:
 	PUSH	IX
 	LD	IX,0
@@ -82,14 +111,19 @@ _printf:
 	PUSH	BC
 	PUSH	DE
 
-	; Reset byte counter for return value (C 7.21.6.3).
-	LD	HL,0
-	LD	(_printf_count),HL
+	LD	HL,__conout	; console sink: the only console write in printf land
+	LD	(_printf_sink),HL
 
 	; fmt is at IX+4, first vararg at IX+6
 	LD	L,(IX+4)
 	LD	H,(IX+5)	; HL = format string pointer
 	LD	C,6		; C = offset to next argument
+	CALL	_printf_engine
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
 
 _printf_loop:
 	LD	A,(HL)
@@ -313,11 +347,10 @@ _printf_pct:
 	INC	HL
 	JR	_printf_loop
 
+; The engine is a subroutine now, so it returns the count and leaves the
+; prologue's POP DE / POP BC / POP IX to whichever entry point ran it.
 _printf_done:
 	LD	HL,(_printf_count)	; Return count of bytes written
-	POP	DE
-	POP	BC
-	POP	IX
 	RET
 
 ; ============================================================
@@ -810,6 +843,8 @@ _prt_div16_dn:
 	DSEG
 
 _printf_count:	DS	2	; running byte count, returned by printf-family
+	PUBLIC	_printf_sink
+_printf_sink:	DW	__conout	; where _printf_putc sends each byte
 _printf_fmtstart:	DS	2	; first byte after '%', for _printf_unknown
 _printf_hexbuf:	DS	8	; 8 chars for %lx, lower 4 reused by 16-bit %x
 _printf_decbuf:	DS	6
