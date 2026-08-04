@@ -19,7 +19,8 @@ from . import lib_dir, lib_file
 from .codegen import generate, CodeGenerator, CodegenError
 from .runtime import RuntimeLibrary, load_runtime_library
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
-from .asm_dce import is_asm_begin, is_asm_end
+from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
+                      is_asm_begin, is_asm_end)
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
@@ -952,8 +953,19 @@ def main() -> int:
                 asm_entry_labels.update(defined_labels)
                 # Start in CSEG: the splice point below is not guaranteed to be
                 # in any particular segment.
-                mac_block.extend(['', '; Included assembly file', '\tcseg'])
+                #
+                # Fence it exactly as inline asm() is fenced.  A .mac file is
+                # hand-written assembly and must reach the assembler byte for
+                # byte, but only asm() was bracketed, so the peephole ran over
+                # an appended file and rewrote it: `LD A,(HL)` followed by
+                # `LD C,A` fused to `LD C,(HL)` with A still live afterwards,
+                # which is a silent wrong answer, and when a label sat between
+                # the two fused instructions the label went with them and any
+                # jump to it failed to assemble.
+                mac_block.extend(['', '; Included assembly file',
+                                  ASM_BEGIN_FILE_MARKER, '\tcseg'])
                 mac_block.extend(filtered)
+                mac_block.append(ASM_END_MARKER)
 
             # Splice the assembly in *before* the COMMON (BSS) block - see
             # _tail_insert_index.  Appending it at the end of the module puts

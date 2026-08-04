@@ -202,7 +202,24 @@ class TestMacSegmentDirectives:
         lines = code.splitlines()
         banner = index_of(lines, lambda l: l.strip() == "; Included assembly file")
         assert banner >= 0
-        assert lines[banner + 1].strip().upper() == "CSEG"
+        # The optimizer fence sits between the banner and the directive.
+        rest = [l.strip().upper() for l in lines[banner + 1:] if l.strip()]
+        assert rest[0] == "; __UC80_ASM_BEGIN__ FILE-SCOPE"
+        assert rest[1] == "CSEG"
+
+    def test_mac_block_is_fenced_from_the_optimizers(self, tmp_path):
+        """Hand-written assembly is a barrier, exactly as inline asm() is.
+
+        Unfenced, the peephole rewrote an appended file: LD A,(HL) followed
+        by LD C,A fused to LD C,(HL) with A still live.
+        """
+        code = compile_with_mac(tmp_path, BSS_C, [HELPER_MAC], "--no-asm-dce")
+        lines = [l.strip() for l in code.splitlines()]
+        begin = index_of(lines, lambda l: l == "; __UC80_ASM_BEGIN__ FILE-SCOPE")
+        end = index_of(lines, lambda l: l == "; __UC80_ASM_END__")
+        assert 0 <= begin < end
+        body = lines[begin:end]
+        assert any("_KCONST" in l.upper() for l in body), body
 
 
 class TestMultipleMacFiles:
