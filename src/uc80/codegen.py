@@ -12595,6 +12595,15 @@ class CodeGenerator:
                 and all(isinstance(p, ast.StringLiteral) for p in init)):
             if len(init) == 1:
                 init = init[0]
+            else:
+                # Adjacent string literals are one string (C 6.4.5p5), and
+                # the auto-AST keeps the pieces in a list.  Nothing below
+                # matches a list, so `char s[] = "ab" "cd";` fell through
+                # every branch and emitted no bytes at all -- the object
+                # was correctly sized and entirely zero, which made the
+                # result look deliberate rather than dropped.
+                self._emit_joined_string(init, _to_legacy(elem_type))
+                return
         elem_type = _to_legacy(elem_type)
         # A typedef name in a type-name position (e.g. ``(empty_s){}``)
         # arrives here as ``lt.BasicType(name="<typedef>")``. Look it up
@@ -13257,12 +13266,22 @@ class CodeGenerator:
                 continue
 
             val = values[value_index]
-            # Auto-AST: a single-element list of StringLiteral is the
-            # wrapper for one source-level string literal.
+            # Auto-AST: a list of StringLiteral is one source-level
+            # string -- a single element for a plain literal, several for
+            # adjacent literals that C 6.4.5p5 concatenates.  Collapse the
+            # single case; flag the multi-piece one so the char-array
+            # branch below still sees a string and hands the whole group
+            # to _emit_initializer with this member's own type.  Left as a
+            # bare list it fell through to _emit_array_init_flat, which
+            # spread the pieces across the following members as though
+            # they were separate initialisers.
+            joined_string = False
             if (isinstance(val, list) and val
-                    and all(isinstance(p, ast.StringLiteral) for p in val)
-                    and len(val) == 1):
-                val = val[0]
+                    and all(isinstance(p, ast.StringLiteral) for p in val)):
+                if len(val) == 1:
+                    val = val[0]
+                else:
+                    joined_string = True
 
             # Handle DesignatedInit (without member name - e.g. array index designator)
             if isinstance(val, ast.DesignatedInit):
@@ -13271,9 +13290,10 @@ class CodeGenerator:
                 self._emit_initializer(val, member_type)
             elif isinstance(member_type, lt.ArrayType) and not isinstance(val, ast.InitializerList):
                 # Check for string literal initializing char array
-                if isinstance(val, ast.StringLiteral) and self._is_char_array(member_type):
+                if ((isinstance(val, ast.StringLiteral) or joined_string)
+                        and self._is_char_array(member_type)):
                     value_index += 1
-                    self._emit_string_for_array(val, member_type)
+                    self._emit_initializer(val, member_type)
                 else:
                     # Flat array init
                     consumed = self._emit_array_init_flat(values, value_index, member_type)
@@ -13520,7 +13540,37 @@ class CodeGenerator:
 
         return consumed
 
-    def _emit_string_for_array(self, string_lit, array_type) -> None:
+    @staticmethod
+    def _string_piece_text(piece) -> str:
+        """The bytes a single string-literal node stands for."""
+        if hasattr(piece.value, "text"):
+            return _decode_string_literal(piece.value.text)
+        return piece.value
+
+    def _emit_joined_string(self, pieces, elem_type) -> None:
+        """Emit adjacent string literals as the one string they are.
+
+        C 6.4.5p5 concatenates them in translation phase 6, so `"ab" "cd"`
+        is `"abcd"` before anything here sees it -- but the auto-AST keeps
+        the pieces as a list, and the single-literal emitters take a node.
+        The decoded text is passed down rather than re-escaped into a
+        synthetic literal, which would have to survive a round trip
+        through the escape rules to be correct.
+        """
+        decoded = "".join(self._string_piece_text(p) for p in pieces)
+        is_wide = any(hasattr(p.value, "text")
+                      and _string_is_wide(p.value.text) for p in pieces)
+        if isinstance(elem_type, lt.PointerType):
+            self.ctx.emit_instr(
+                "dw", self.ctx.add_string(decoded, is_wide=is_wide))
+        elif isinstance(elem_type, lt.ArrayType):
+            self._emit_string_for_array(pieces[0], elem_type,
+                                        decoded=decoded, is_wide=is_wide)
+        else:
+            self.ctx.emit_instr("db", f"'{self._escape_string(decoded)}',0")
+
+    def _emit_string_for_array(self, string_lit, array_type,
+                               decoded=None, is_wide=None) -> None:
         """Emit a string literal to fill a char array, with proper padding.
 
         Auto-AST: ``string_lit.value`` is a uplox Token; its ``.text`` is
@@ -13529,9 +13579,10 @@ class CodeGenerator:
         ``u"..."`` wide-string forms emit a sequence of ``dw`` (each
         wchar_t / char16_t is a 16-bit word on uc80).
         """
-        is_wide = False
-        if hasattr(string_lit.value, "text"):
-            is_wide = _string_is_wide(string_lit.value.text)
+        if is_wide is None:
+            is_wide = False
+            if hasattr(string_lit.value, "text"):
+                is_wide = _string_is_wide(string_lit.value.text)
 
         array_size = 1
         if array_type.size:
@@ -13542,10 +13593,11 @@ class CodeGenerator:
                 if sz is not None:
                     array_size = sz
 
-        if hasattr(string_lit.value, "text"):
-            decoded = _decode_string_literal(string_lit.value.text)
-        else:
-            decoded = string_lit.value
+        if decoded is None:
+            if hasattr(string_lit.value, "text"):
+                decoded = _decode_string_literal(string_lit.value.text)
+            else:
+                decoded = string_lit.value
 
         if is_wide:
             # Emit each wide character as a 16-bit dw, with a trailing
