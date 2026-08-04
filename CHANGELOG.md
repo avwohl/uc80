@@ -9,7 +9,7 @@ observable behaviour of a program uc80 compiles.
 A behaviour-changing release. Rebuild the libraries after upgrading:
 
 ```bash
-cd src/uc80/lib && python3 build_libs.py && um80 crt0.mac -o crt0.rel
+uc80 --build-libs
 ```
 
 ### Changed
@@ -50,6 +50,11 @@ cd src/uc80/lib && python3 build_libs.py && um80 crt0.mac -o crt0.rel
   misaligned, but the failure is now visible and is diagnosed at compile
   time when the format string is a literal.
 
+- The package no longer declares `py.typed`. It never shipped the file, so
+  the PEP 561 claim was false either way; uc80 carries inline annotations
+  but has never been type checked, so the claim is dropped rather than
+  made true.
+
 ### Added
 
 - Basic inline assembly: `asm("...")`, spelled `asm` or `__asm__`, with or
@@ -58,6 +63,24 @@ cd src/uc80/lib && python3 build_libs.py && um80 crt0.mac -o crt0.rel
   rejected with an error instead of being silently dropped.
 - The `%e`, `%E`, `%g` and `%G` printf conversions.
 - `--no-crlf`, and `extern char __crlf_mode` in `<stdio.h>`.
+- **Wheels now ship `libc.lib`, `runtime.lib` and `crt0.rel`.** `pip install
+  uc80` previously installed a compiler that could not link anything: those
+  three are assembler output, are gitignored, and were produced only by a
+  manual step, so a wheel built from a clean checkout never contained them.
+  They are assembled at wheel-build time, which adds `um80` to
+  `[build-system].requires` and about 45 KB and 40 s to a release build. They
+  are still not committed to git — `libc.lib` is not byte reproducible, so a
+  committed copy would churn on every rebuild and could drift out of step
+  with `lc/*.mac` unnoticed.
+- `uc80 --print-lib-dir` prints the library directory on one line and exits
+  0 without needing an input file, for `LIB=$(uc80 --print-lib-dir)`.
+- `uc80 --build-libs` assembles the three link artifacts on demand.
+- `uc80.lib_dir()` and `uc80.lib_file(name)` — the same answer from Python,
+  and the supported way for another tool to locate the libraries. Consumers
+  that guessed the path could land on a stale tree and link against it with
+  no diagnostic from anything.
+- `UC80_LIB_DIR` overrides the library directory, applied per file so a
+  partial override cannot shadow the compiler's own version-locked inputs.
 
 ### Fixed
 

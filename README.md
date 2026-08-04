@@ -23,10 +23,49 @@ pip install um80
 
 ```bash
 # Compile, assemble, and link a C program
+LIB=$(uc80 --print-lib-dir)
 uc80 hello.c -o hello.mac
 um80 hello.mac -o hello.rel
-ul80 hello.rel src/uc80/lib/libc.lib src/uc80/lib/runtime.lib -o hello.com
+ul80 hello.rel $LIB/libc.lib $LIB/runtime.lib -o hello.com
 ```
+
+## Finding the Libraries
+
+Linking needs `libc.lib`, `runtime.lib` and — for separate compilation —
+`crt0.rel`. Ask uc80 where they are instead of guessing:
+
+```bash
+LIB=$(uc80 --print-lib-dir)
+```
+
+It prints one line and exits 0, with no input file required. From Python:
+
+```python
+import uc80
+uc80.lib_dir()             # -> Path to the library directory
+uc80.lib_file("libc.lib")  # -> Path to one asset
+```
+
+Wheels ship the three link artifacts, so `pip install uc80` is enough. In a
+git checkout they are build output (`.gitignore` covers `*.lib` and `*.rel`),
+so build them once:
+
+```bash
+uc80 --build-libs          # assembles libc.lib, runtime.lib and crt0.rel (~40 s)
+```
+
+Re-run that after editing anything in `src/uc80/lib/lc/` or `src/uc80/lib/rt/`.
+
+Set `UC80_LIB_DIR` to use libraries built somewhere else, which is what makes
+uc80 usable when it is installed into a read-only `site-packages`. The
+override applies per file, so a directory holding nothing but the two rebuilt
+`.lib` files works and cannot shadow `crt0.mac`, `runtime.mac` or `include/` —
+those are version-locked to the compiler and always come from the package.
+Point it at a *complete* older library tree, though, and you get exactly the
+silently-stale-libc problem this flag exists to prevent.
+
+`src/uc80/lib/` is the only library directory. Nothing in uc80 looks anywhere
+else; do not create a top-level `lib/`.
 
 ## Best Optimization (Whole-Program)
 
@@ -38,7 +77,7 @@ compiling files separately:
 # Single-file (best optimization - all optimizations enabled by default)
 uc80 main.c utils.c -o program.mac
 um80 program.mac -o program.rel
-ul80 program.rel src/uc80/lib/libc.lib src/uc80/lib/runtime.lib -o program.com
+ul80 program.rel $LIB/libc.lib $LIB/runtime.lib -o program.com
 ```
 
 Default optimizations (all enabled unless disabled):
@@ -126,6 +165,14 @@ When compiling files separately for separate linking, use `--no-whole-program`:
 
 ```bash
 uc80 --no-whole-program module.c -o module.mac
+```
+
+Link those with `crt0.rel` first — the compiler only embeds crt0 in
+whole-program mode:
+
+```bash
+LIB=$(uc80 --print-lib-dir)
+ul80 $LIB/crt0.rel module.rel main.rel $LIB/libc.lib $LIB/runtime.lib -o prog.com
 ```
 
 ### Inline Assembly
@@ -226,6 +273,7 @@ Remaining non-passing tests are environmental, not codegen bugs:
 - Basic inline assembly (`asm("...")`), emitted verbatim and never optimized
 - CP/M console line endings (CR LF by default, `--no-crlf` for raw LF)
 - CP/M target with embedded crt0
+- Libraries ship in the wheel and are discoverable (`uc80 --print-lib-dir`, `uc80.lib_dir()`)
 
 ## Related Projects
 
