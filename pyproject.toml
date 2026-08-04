@@ -1,6 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+# um80 supplies the um80/ulib80 console scripts that _uc80_build.py uses to
+# assemble libc.lib, runtime.lib and crt0.rel into the wheel. Without it a
+# published wheel ships a compiler with nothing to link against.
+requires = ["setuptools>=64.0", "wheel", "um80>=0.3.43"]
+build-backend = "_uc80_build"
+backend-path = ["."]
 
 [project]
 name = "uc80"
@@ -49,12 +53,21 @@ uc80 = "uc80.main:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
+# No "py.typed": uc80 ships inline annotations but has never been type
+# checked (mypy reports 74 errors across codegen/asm_dce/runtime, including
+# arg-type and attr-defined), there is no type checker in the dev extra or
+# in CI, and PEP 561 is a support promise. The entry was declared here for a
+# file that does not exist; dropping the claim is what matches reality.
+#
+# The library globs are deliberately narrow. build_libs.py also produces
+# libc.rel, runtime.rel and ~92 per-module lc/*.rel and rt/*.rel that
+# nothing links against; a "lib/**/*.rel" glob would put ~105 KB of them in
+# every wheel. Only these three are link inputs.
 uc80 = [
-    "py.typed",
     "lib/**/*.mac",
-    "lib/**/*.lib",
-    "lib/**/*.rel",
     "lib/**/*.h",
+    "lib/*.lib",
+    "lib/crt0.rel",
 ]
 
 [project.optional-dependencies]

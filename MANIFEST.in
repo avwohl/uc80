@@ -1,0 +1,8 @@
+# _uc80_build.py is the PEP 517 backend named by pyproject.toml's
+# build-backend/backend-path. It sits at the repo root, so it is not part of
+# any package and setuptools would not include it on its own. It must be in
+# the sdist: `python -m build` (what .github/workflows/publish.yml runs)
+# builds the sdist first and then builds the wheel FROM it, and a missing
+# backend module makes that second step fail with "Cannot import
+# '_uc80_build'".
+include _uc80_build.py

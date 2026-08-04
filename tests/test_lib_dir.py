@@ -13,12 +13,16 @@ The fix has three parts, all covered here:
   * ``uc80 --print-lib-dir`` -- the same answer from the shell, which must
     work with no input file even though ``input`` is a required positional.
   * ``uc80 --build-libs`` -- produce the artifacts on demand.
+The wheel-build hook that ships the artifacts is covered by
+``TestPackaging``, which reads pyproject.toml rather than building a wheel
+(a wheel build needs an assembler and takes ~45 s).
 """
 
 import os
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -27,6 +31,7 @@ import uc80
 
 REPO = Path(__file__).resolve().parent.parent
 PKG_LIB = REPO / "src" / "uc80" / "lib"
+PYPROJECT = REPO / "pyproject.toml"
 
 
 def run_uc80(*args, env=None):
@@ -308,3 +313,70 @@ class TestSingleSourceOfTruth:
                            capture_output=True, text=True, cwd=str(REPO))
         tracked = r.stdout.split()
         assert not [f for f in tracked if f.endswith((".lib", ".rel"))]
+
+
+class TestPackaging:
+    """pyproject.toml must be able to ship the artifacts it promises."""
+
+    @staticmethod
+    def _cfg():
+        with open(PYPROJECT, "rb") as f:
+            return tomllib.load(f)
+
+    def test_build_backend_is_the_in_tree_shim(self):
+        bs = self._cfg()["build-system"]
+        assert bs["build-backend"] == "_uc80_build"
+        assert bs["backend-path"] == ["."]
+
+    def test_assembler_is_a_build_requirement(self):
+        """Without um80 at build time the hook cannot assemble anything."""
+        reqs = self._cfg()["build-system"]["requires"]
+        assert any(r.startswith("um80") for r in reqs), reqs
+
+    def test_backend_module_exists_and_builds_the_libs(self):
+        text = (REPO / "_uc80_build.py").read_text()
+        assert "def build_wheel(" in text
+        assert "build_libs.py" in text
+        assert "crt0.mac" in text
+
+    def test_backend_delegates_the_editable_hooks(self):
+        """A backend without build_editable makes pip reject -e installs."""
+        text = (REPO / "_uc80_build.py").read_text()
+        for hook in ("build_editable", "prepare_metadata_for_build_editable",
+                     "get_requires_for_build_editable", "build_sdist"):
+            assert f"{hook} = _orig.{hook}" in text, hook
+
+    def test_sdist_carries_the_backend_module(self):
+        """`python -m build` builds the wheel from the sdist.
+
+        _uc80_build.py lives at the repo root, so it belongs to no package
+        and setuptools would drop it; then the wheel step would fail with
+        "Cannot import '_uc80_build'".
+        """
+        assert "_uc80_build.py" in (REPO / "MANIFEST.in").read_text()
+
+    def test_package_data_ships_the_link_artifacts(self):
+        data = self._cfg()["tool"]["setuptools"]["package-data"]["uc80"]
+        assert "lib/*.lib" in data
+        assert "lib/crt0.rel" in data
+
+    def test_package_data_excludes_the_intermediate_rel_files(self):
+        """lib/**/*.rel would add ~105 KB of per-module objects nothing links."""
+        data = self._cfg()["tool"]["setuptools"]["package-data"]["uc80"]
+        assert "lib/**/*.rel" not in data
+
+    def test_no_false_py_typed_claim(self):
+        """Declared for a file that does not exist -- and still does not.
+
+        uc80 carries inline annotations but has never been type checked
+        (mypy reports 74 errors), has no type checker in the dev extra and
+        no CI type gate, so PEP 561 would be a promise nothing enforces.
+        If py.typed is ever shipped, create the file in the same commit.
+        """
+        data = self._cfg()["tool"]["setuptools"]["package-data"]["uc80"]
+        declared = "py.typed" in data
+        exists = (REPO / "src" / "uc80" / "py.typed").exists()
+        assert declared == exists, (
+            "pyproject declares py.typed but the file does not exist"
+            if declared else
+            "src/uc80/py.typed exists but pyproject does not ship it")
