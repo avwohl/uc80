@@ -18,6 +18,7 @@ from uc_core.type_config import TypeConfig, Z80_CPM
 from .codegen import generate, CodeGenerator, CodegenError
 from .runtime import RuntimeLibrary, load_runtime_library
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
+from .asm_dce import is_asm_begin, is_asm_end
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
@@ -129,6 +130,42 @@ def _filter_hand_written_asm(asm_text: str):
         if match:
             defined_labels.add(match.group(1))
     return lines, publics, defined_labels
+
+
+def _optimize_outside_asm(peephole, code: str) -> str:
+    """Run the peephole optimizer on everything except inline-asm regions.
+
+    Hand-written assembly must reach the assembler byte for byte, and no
+    peephole pattern may match across its boundary - inline asm is an
+    optimization barrier, exactly as it is in GCC.  A comment alone is not
+    a barrier: upeepz80's matcher skips comment lines while matching a
+    multi-line pattern (upeepz80/peephole.py:606-618), so a pattern would
+    happily fuse the instruction before an asm block with the one after
+    it.  Splitting the text at the markers and optimizing each non-asm run
+    on its own is what actually enforces the barrier, and it needs no
+    change to the external upeepz80 package.
+    """
+    lines = code.split("\n")
+    if not any(is_asm_begin(line) for line in lines):
+        return peephole.optimize(code)
+    out: list[str] = []
+    buf: list[str] = []
+    in_asm = False
+    for line in lines:
+        if not in_asm and is_asm_begin(line):
+            out.append(peephole.optimize("\n".join(buf)))
+            buf = []
+            in_asm = True
+            out.append(line)
+            continue
+        if in_asm:
+            out.append(line)
+            if is_asm_end(line):
+                in_asm = False
+            continue
+        buf.append(line)
+    out.append(peephole.optimize("\n".join(buf)))
+    return "\n".join(out)
 
 
 def _close_format_features(feats):
@@ -837,7 +874,9 @@ def main() -> int:
                 print(f"  Peephole optimization...")
 
             peephole = PeepholeOptimizer()
-            code = peephole.optimize(code)
+            # Not peephole.optimize(code): inline asm is an optimization
+            # barrier and its bytes are never rewritten.
+            code = _optimize_outside_asm(peephole, code)
 
             if args.verbose:
                 for pattern, count in peephole.stats.items():

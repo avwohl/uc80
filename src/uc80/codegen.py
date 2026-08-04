@@ -7,8 +7,14 @@ Uses IX as frame pointer, following the calling convention in implementation_pla
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, auto
+import re
 import struct
 from typing import Callable, Iterator, Optional
+# The inline-asm region markers live in asm_dce (the module with no
+# dependencies) so that codegen, main and asm_dce share one definition of
+# them; they are re-exported here because codegen is what writes them.
+from .asm_dce import (ASM_BEGIN_MARKER, ASM_BEGIN_FILE_MARKER,
+                      ASM_END_MARKER)
 from uc_core import ast
 # Codegen-internal synthetic resolved types — the parser doesn't
 # produce these (the auto-AST is declarator-shaped), but codegen
@@ -384,6 +390,68 @@ def _decode_string_literal(text: str) -> str:
         out.append(body[i])
         i += 1
     return "".join(out)
+
+
+# Z80 mnemonics plus the MACRO-80 directives that occupy the *opcode*
+# field.  Used only to decide whether a column-0 token in a hand-written
+# asm template needs indenting: um80 rejects `ld hl,0` in column 0
+# (it reads the mnemonic as a label) but equally rejects an indented
+# `BDOS equ 5` or `TBL dw 1,2` (a colon-less label MUST be in column 0).
+_ASM_OPCODES = frozenset("""
+adc add and bit call ccf cp cpd cpdr cpi cpir cpl daa dec di djnz ei ex exx
+halt im in inc ind indr ini inir jp jr ld ldd lddr ldi ldir neg nop or otdr
+otir out outd outi pop push res ret reti retn rl rla rlc rlca rld rr rra rrc
+rrca rrd rst sbc scf set sla sll sra srl sub xor
+db dw dd ds defb defw defs defm defl org end public extrn external global ext
+entry cseg dseg aseg common include maclib rept irp irpc endm exitm local name
+if ife ifb ifnb ifdef ifndef if1 if2 iff ift else endif cond endc title subttl
+page .z80 .8080 .radix .list .xlist .sall .lall .xall .phase .dephase .comment
+.printx .request .z8001 .z8002
+""".split())
+
+
+def _asm_template_text(node) -> str:
+    """Concatenate an AsmDeclaration's adjacent string-literal pieces.
+
+    `asm("a\\n" "b\\n")` parses to a template of two StringLiterals; they
+    are one template, so they must be joined before the text is split
+    into output lines.  Escapes are decoded here, which is what turns
+    the source `\\n`/`\\t` of `asm("ld hl,1\\n\\tnop")` into a real line
+    break and a real tab.
+    """
+    return "".join(_decode_string_literal(s.value.text) for s in (node.template or []))
+
+
+def _format_asm_block(text: str, file_scope: bool = False) -> list[str]:
+    """Turn a decoded basic-asm template into marker-bracketed output lines.
+
+    The only transformation applied to the user's text is indentation of
+    a column-0 line whose first token is a known opcode or directive —
+    without it um80 reads the mnemonic as a label.  A token ending in
+    ':' is a label and is left in column 0, as is anything else (so
+    `BDOS equ 5` and `TBL dw 1,2`, which MACRO-80 requires in column 0,
+    survive unchanged).
+
+    `file_scope` selects the opening marker; see asm_dce for why the two
+    kinds of region have to be told apart.
+    """
+    out = [ASM_BEGIN_FILE_MARKER if file_scope else ASM_BEGIN_MARKER]
+    for raw in text.split("\n"):
+        line = raw.rstrip("\r").rstrip()
+        if not line.strip():
+            out.append("")
+            continue
+        if line[0] in " \t" or line.lstrip().startswith(";"):
+            out.append(line)
+            continue
+        first = line.split(None, 1)[0]
+        if not first.endswith(":") and first.lower() in _ASM_OPCODES:
+            # Bare mnemonic in column 0 - MACRO-80 would read it as a label.
+            out.append("\t" + line)
+        else:
+            out.append(line)
+    out.append(ASM_END_MARKER)
+    return out
 
 
 def _string_is_wide(text: str) -> bool:
@@ -902,6 +970,15 @@ class CallGraphAnalyzer:
         for item in unit.items or []:
             self._analyze_global_init(item)
 
+        # Pass 4: file-scope asm may call or reference a C function; pin
+        # those functions live so dead-function elimination doesn't delete
+        # a callee the C code never mentions.
+        for item in unit.items or []:
+            if isinstance(item, ast.AsmDeclaration):
+                roots: set[str] = set()
+                self._analyze_asm(item, roots, roots)
+                self.address_taken |= (roots & self.has_body)
+
     def _analyze_global_init(self, decl) -> None:
         """Analyze global variable initializers for address-taken functions."""
         if not isinstance(decl, ast.Declaration):
@@ -1222,6 +1299,22 @@ class CallGraphAnalyzer:
         self.address_taken.update(address_taken)
         self.indirect_call_sigs[name] = indirect_sigs
 
+    def _analyze_asm(self, node, calls: set[str], address_taken: set[str]) -> None:
+        """Treat every `_name` in an asm template as a reference to the C
+        function `name`.
+
+        Basic asm is opaque text, so a `call _helper` in it is invisible to
+        the call graph; without this, dead-function elimination deletes
+        `helper` and the assembler fails with an undefined symbol.  The scan
+        can only ever add references, so the worst case is keeping a
+        function that is not really used.
+        """
+        text = _asm_template_text(node)
+        for tok in re.findall(r"(?<![A-Za-z0-9_])_([A-Za-z_][A-Za-z0-9_]*)", text):
+            if tok in self.call_graph or tok in self.has_body:
+                calls.add(tok)
+                address_taken.add(tok)
+
     def _analyze_stmt(self, stmt, calls: set[str],
                       address_taken: set[str], indirect_sigs: set[tuple]) -> None:
         """Recursively analyze a statement for calls and address-taken."""
@@ -1233,6 +1326,8 @@ class CallGraphAnalyzer:
                             self._analyze_expr(init_decl.init, calls, address_taken, indirect_sigs)
                 else:
                     self._analyze_stmt(item, calls, address_taken, indirect_sigs)
+        elif isinstance(stmt, ast.AsmDeclaration):
+            self._analyze_asm(stmt, calls, address_taken)
         elif isinstance(stmt, ast.ExpressionStmt) and stmt.expr:
             self._analyze_expr(stmt.expr, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.ReturnStmtValue):
@@ -3398,6 +3493,13 @@ class CodeGenerator:
         """Generate code for a top-level declaration (auto-AST)."""
         if isinstance(decl, ast.FunctionDef):
             self.gen_function(decl)
+            return
+        if isinstance(decl, ast.AsmDeclaration):
+            # File-scope `asm("...")`.  We are inside CSEG here (the header
+            # emits `cseg` before this loop and DSEG/COMMON only start after
+            # it), so the block lands in the code segment at its source
+            # position.
+            self.gen_asm(decl, file_scope=True)
             return
         if not isinstance(decl, ast.Declaration):
             return
@@ -6313,6 +6415,56 @@ class CodeGenerator:
             self.gen_label(stmt)
         elif isinstance(stmt, ast.GotoStmt):
             self.gen_goto(stmt)
+        elif isinstance(stmt, ast.AsmDeclaration):
+            # `asm("...")` is a block_item, not a stmt, in the C23 grammar,
+            # so it arrives here from gen_compound_stmt's else branch.
+            self.gen_asm(stmt)
+
+    def gen_asm(self, node, file_scope: bool = False) -> None:
+        """Emit a basic `asm("...")` block verbatim.
+
+        The template text reaches the assembler unchanged apart from the
+        column-0 indentation rule in `_format_asm_block`; the block is
+        bracketed with ASM_BEGIN_MARKER/ASM_END_MARKER so the peephole
+        optimizer (main.py) and the assembly DCE (asm_dce.py) leave it,
+        and anything straddling it, alone.
+
+        The contract for the asm author: IX is the frame pointer and must
+        be preserved, SP may be used but must be balanced, every other
+        register is free, and C objects are reached through their
+        assembler symbols (a global `x` is `_x`).
+        """
+        self._check_basic_asm(node)
+        # uc80 keeps every value in memory across a statement boundary, so
+        # there is nothing to spill here — but drop whatever the register
+        # allocator believes anyway: an asm block clobbers what it likes,
+        # and no cached register contents may be assumed to survive it.
+        self.ctx.regs.reset()
+        for line in _format_asm_block(_asm_template_text(node), file_scope):
+            self.ctx.emit(line)
+        self.ctx.regs.reset()
+
+    def _check_basic_asm(self, node) -> None:
+        """Reject the asm forms uc80 cannot lower, with a real diagnostic."""
+        for qual in node.quals or []:
+            if isinstance(qual, ast.AsmQualGoto):
+                raise CodegenError(
+                    "'asm goto' is not supported by uc80; use basic asm "
+                    "and a C goto/label instead", node)
+        if node.clauses:
+            raise CodegenError(
+                'extended asm with operand/clobber lists '
+                '(asm("..." : outputs : inputs : clobbers)) is not '
+                "supported by uc80; use basic asm and refer to C objects "
+                "by their assembler symbol (a global 'x' is '_x'), or pass "
+                "values through global variables", node)
+        text = _asm_template_text(node)
+        for marker in (ASM_BEGIN_MARKER, ASM_END_MARKER):
+            if marker in text:
+                raise CodegenError(
+                    f"the comment '{marker}' is reserved by uc80 to delimit "
+                    "inline assembly and cannot appear in an asm template",
+                    node)
 
     def gen_return(self, stmt) -> None:
         """Generate code for `return;` (ReturnStmt) or `return expr;`

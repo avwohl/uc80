@@ -7,6 +7,34 @@ from entry points (main and PUBLIC functions).
 import re
 from dataclasses import dataclass, field
 
+# Inline-assembly region markers.  They bracket every basic `asm("...")`
+# block in the emitted .mac and are load-bearing in three modules:
+# codegen writes them (it imports them from here), main.py splits the
+# peephole optimizer's input on them, and the DCE below treats what lies
+# between them as one opaque region that is never split, reordered or
+# dropped.  They are ordinary MACRO-80 comments, so um80 ignores them.
+#
+# File-scope asm gets its own opening marker because the DCE has to treat
+# it differently: it has no enclosing function to inherit reachability
+# from, so it becomes a synthetic block that is always live.  A block of
+# asm *inside* a function must NOT be pinned that way - it has to die with
+# the function, or a deleted function's asm would be left stranded between
+# two live functions where the previous one can fall into it.
+ASM_BEGIN_MARKER = "; __UC80_ASM_BEGIN__"
+ASM_BEGIN_FILE_MARKER = "; __UC80_ASM_BEGIN__ FILE-SCOPE"
+ASM_END_MARKER = "; __UC80_ASM_END__"
+
+
+def is_asm_begin(line: str) -> bool:
+    """True if `line` opens an inline-asm region (either kind)."""
+    stripped = line.strip()
+    return stripped in (ASM_BEGIN_MARKER, ASM_BEGIN_FILE_MARKER)
+
+
+def is_asm_end(line: str) -> bool:
+    """True if `line` closes an inline-asm region."""
+    return line.strip() == ASM_END_MARKER
+
 
 @dataclass
 class AsmBlock:
@@ -16,6 +44,8 @@ class AsmBlock:
     successors: set[str] = field(default_factory=set)  # Labels this block can jump to
     is_public: bool = False
     is_entry: bool = False  # main or address-taken
+    has_asm: bool = False  # contains a user inline-asm region
+    is_asm_region: bool = False  # synthetic block holding file-scope asm
 
 
 @dataclass
@@ -41,6 +71,7 @@ class AssemblyDCE:
         self.common_lines: list[str] = []  # COMMON segment lines (BSS)
         self.current_segment = "CSEG"
         self._explicit_entry = False  # True when caller provides entry points
+        self._asm_counter = 0  # Names the synthetic file-scope asm blocks
 
     def eliminate_dead_code(self, asm_text: str, entry_points: set[str] | None = None,
                             extra_entry_points: set[str] | None = None) -> str:
@@ -91,10 +122,52 @@ class AssemblyDCE:
         in_header = True
         in_dseg = False
         in_common = False
+        in_asm = False
 
         for line in lines:
             stripped = line.strip()
             upper = stripped.upper()
+
+            # User inline-asm region: opaque.  Checked before everything
+            # else so that nothing inside it is interpreted - a label does
+            # not split a block (and so cannot be dropped on its own), a
+            # PUBLIC/EXTRN is not hoisted into the header, and a segment
+            # directive is left where the author put it.
+            if not in_asm and is_asm_begin(line):
+                in_asm = True
+                in_header = False
+                if stripped == ASM_BEGIN_FILE_MARKER or current_block is None:
+                    # File-scope asm: no enclosing function to inherit
+                    # reachability from, so it becomes a synthetic block
+                    # that is always an entry point.
+                    if current_block is not None:
+                        self.blocks[current_block.label] = current_block
+                    self._asm_counter += 1
+                    label = f"??ASM{self._asm_counter}"
+                    current_block = AsmBlock(label=label, lines=[],
+                                             is_entry=True, is_asm_region=True,
+                                             has_asm=True)
+                    self.blocks[label] = current_block
+                current_block.has_asm = True
+                current_block.lines.append(line)
+                continue
+            if in_asm:
+                current_block.lines.append(line)
+                self._analyze_control_flow(stripped, current_block)
+                # uc80 cannot know how hand-written assembly reaches its
+                # targets (computed jumps, address-taken labels), so every
+                # identifier in it counts as a possible successor.  This can
+                # only keep too much code, never delete live code.
+                code_part = '' if stripped.startswith(';') else line.split(';')[0]
+                for token in re.findall(
+                        r'(?<![A-Za-z0-9_?@])(\@?\?*[A-Za-z_][A-Za-z0-9_]*)',
+                        code_part):
+                    current_block.successors.add(token)
+                if is_asm_end(line):
+                    in_asm = False
+                    if current_block.is_asm_region:
+                        current_block = None
+                continue
 
             # Track segment changes
             if upper == 'DSEG':
@@ -384,6 +457,10 @@ class AssemblyDCE:
         """Find all blocks reachable from entry points."""
         reachable: set[str] = set()
         worklist = list(entry_points)
+        # File-scope asm is always live: uc80 cannot tell whether it is
+        # reached, and dropping hand-written code is a silent miscompile.
+        worklist += [label for label, block in self.blocks.items()
+                     if block.is_asm_region]
 
         while worklist:
             label = worklist.pop()
@@ -400,8 +477,11 @@ class AssemblyDCE:
                 if succ not in reachable:
                     worklist.append(succ)
 
-            # Fall-through to next block (if no unconditional jump/ret at end)
-            if not self._block_ends_with_terminator(block):
+            # Fall-through to next block (if no unconditional jump/ret at
+            # end).  A file-scope asm region is pinned live on its own, so
+            # it must not drag the function that follows it in with it.
+            if (not block.is_asm_region
+                    and not self._block_ends_with_terminator(block)):
                 # Find next block in source order
                 next_label = self._find_next_block(label)
                 if next_label and next_label not in reachable:
@@ -411,6 +491,13 @@ class AssemblyDCE:
 
     def _block_ends_with_terminator(self, block: AsmBlock) -> bool:
         """Check if block ends with unconditional control transfer."""
+        if block.has_asm and not block.is_asm_region:
+            # A block holding hand-written asm: the asm may end in a
+            # computed jump (`jp (hl)`), which this scan reads as an
+            # unconditional terminator, and the code after it - including
+            # the function's own epilogue - would then be deleted.  Never
+            # claim a terminator for such a block.
+            return False
         for line in reversed(block.lines):
             stripped = line.strip()
             # Strip trailing comments
