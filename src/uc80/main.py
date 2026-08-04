@@ -131,6 +131,30 @@ def _filter_hand_written_asm(asm_text: str):
     return lines, publics, defined_labels
 
 
+def _close_format_features(feats):
+    """Close a --printf/--scanf feature set over the features it implies.
+
+    ``float``, ``long`` and ``llong`` all imply ``int``: the dispatch table
+    is one flat list, so leaving ``int`` out drops %d/%u/%s/%c entirely, and
+    a dropped conversion does not just print nothing -- only a handler
+    advances the vararg offset, so every later conversion in the same call
+    reads the wrong argument.  ``llong`` additionally implies ``long``
+    because %lld is reached by walking the 'l' entry into the long table.
+
+    The compiler's own auto-detector has always assumed this closure
+    (_extract_printf_specifiers adds 'int' alongside 'float'/'long'), so
+    without it the explicit path behaves differently from the implicit one.
+    """
+    f = set(feats)
+    if 'all' in f:
+        return f
+    if 'llong' in f:
+        f.add('long')
+    if f & {'float', 'long', 'llong'}:
+        f.add('int')
+    return f
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -247,14 +271,20 @@ def main() -> int:
         action="append",
         default=[],
         choices=["int", "long", "llong", "float", "all"],
-        help="Printf format support level (can specify multiple: int long float)"
+        help="Printf conversions to support; ADDITIVE, repeat the flag "
+             "(--printf int --printf float). float/long/llong imply int, and "
+             "llong implies long. A conversion outside the selected set is "
+             "echoed verbatim at run time and misaligns the rest of that call. "
+             "Omit the flag to let the compiler detect what the literal format "
+             "strings need."
     )
     parser.add_argument(
         "--scanf",
         action="append",
         default=[],
         choices=["int", "long", "llong", "float", "all"],
-        help="Scanf format support level (can specify multiple: int long float)"
+        help="Scanf format support level; ADDITIVE, same closure rules as "
+             "--printf (currently advisory: nothing consumes scanf features yet)"
     )
     parser.add_argument(
         "--int", dest="int_bits", type=int, choices=[16, 32],
@@ -434,6 +464,11 @@ def main() -> int:
             printf_features = set(args.printf)
         if args.scanf:
             scanf_features = set(args.scanf)
+        # ...and either way, close the set over its implied features.
+        if printf_features is not None:
+            printf_features = _close_format_features(printf_features)
+        if scanf_features is not None:
+            scanf_features = _close_format_features(scanf_features)
 
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                            enable_inlining, enable_const_propagation, whole_program,
@@ -442,6 +477,9 @@ def main() -> int:
                            scanf_features=scanf_features,
                            type_config=type_config)
         code = gen.generate(merged_ast)
+
+        for w in gen.warnings:
+            print(f"uc80: warning: {w}", file=sys.stderr)
 
         if args.verbose:
             if gen.inlined_calls > 0:
