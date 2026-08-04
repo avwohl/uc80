@@ -14,6 +14,10 @@
 	EXTRN	__printf_handle_p
 	EXTRN	__printf_handle_l
 	EXTRN	__printf_handle_f
+	EXTRN	__printf_handle_e
+	EXTRN	__printf_handle_eu
+	EXTRN	__printf_handle_g
+	EXTRN	__printf_handle_gu
 
 	EXTRN	__printf_handle_ld
 	EXTRN	__printf_handle_lu
@@ -50,6 +54,16 @@ __printf_format_table:
 	DW	__printf_handle_l
 	DB	'f'
 	DW	__printf_handle_f
+	DB	'F'
+	DW	__printf_handle_f	; %F same as %f
+	DB	'e'
+	DW	__printf_handle_e
+	DB	'E'
+	DW	__printf_handle_eu
+	DB	'g'
+	DW	__printf_handle_g
+	DB	'G'
+	DW	__printf_handle_gu
 	DB	0		; sentinel
 
 	PUBLIC	__printf_long_table
@@ -66,6 +80,14 @@ __printf_long_table:
 	DW	__printf_handle_lx
 	DB	'f'
 	DW	__printf_handle_f	; %lf same as %f
+	DB	'e'
+	DW	__printf_handle_e	; %le same as %e
+	DB	'E'
+	DW	__printf_handle_eu
+	DB	'g'
+	DW	__printf_handle_g	; %lg same as %g
+	DB	'G'
+	DW	__printf_handle_gu
 	DB	'l'
 	DW	__printf_ll_entry
 	DB	0		; sentinel

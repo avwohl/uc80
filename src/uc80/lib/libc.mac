@@ -10405,6 +10405,16 @@ __printf_format_table:
 	DW	__printf_handle_l
 	DB	'f'
 	DW	__printf_handle_f
+	DB	'F'
+	DW	__printf_handle_f	; %F same as %f
+	DB	'e'
+	DW	__printf_handle_e
+	DB	'E'
+	DW	__printf_handle_eu
+	DB	'g'
+	DW	__printf_handle_g
+	DB	'G'
+	DW	__printf_handle_gu
 	DB	0		; sentinel
 
 	PUBLIC	__printf_long_table
@@ -10421,6 +10431,14 @@ __printf_long_table:
 	DW	__printf_handle_lx
 	DB	'f'
 	DW	__printf_handle_f	; %lf same as %f
+	DB	'e'
+	DW	__printf_handle_e	; %le same as %e
+	DB	'E'
+	DW	__printf_handle_eu
+	DB	'g'
+	DW	__printf_handle_g	; %lg same as %g
+	DB	'G'
+	DW	__printf_handle_gu
 	DB	'l'
 	DW	__printf_ll_entry
 	DB	0		; sentinel
@@ -10523,6 +10541,7 @@ __printf_handle_c32:
 	PUBLIC	_printf_loop
 	PUBLIC	_printf_done
 	PUBLIC	_printf_format
+	PUBLIC	_printf_unk_echo
 	PUBLIC	_printf_prt_hex
 	PUBLIC	_printf_nib2a
 	PUBLIC	_printf_width
@@ -10606,6 +10625,9 @@ _printf_loop:
 
 _printf_format:
 	INC	HL
+	; Remember where the conversion specification starts (the first byte
+	; after the '%') so _printf_unknown can echo it verbatim.
+	LD	(_printf_fmtstart),HL
 	; Initialize format state
 	XOR	A
 	LD	(_printf_width),A
@@ -10709,11 +10731,51 @@ _printf_found:
 	RET			; Tail-call handler (JP DE)
 
 _printf_unknown:
-	; Unknown format char - skip it
-	POP	BC
-	POP	HL
+	POP	BC		; arg offset - deliberately NOT advanced
+	POP	HL		; HL -> the offending conversion char
 	INC	HL
-	JP	_printf_loop
+	; fall into _printf_unk_echo
+
+; ============================================================
+; _printf_unk_echo: echo the conversion specification verbatim.
+;
+; C23 7.23.6.1p9 makes an invalid conversion specification undefined
+; behaviour, so we may choose what to do.  Printing nothing is the worst
+; option available: it is invisible AND it silently truncates the output.
+; Echo the whole specification instead ("%q", "%.3q", "%ls", ...) so the
+; failure is VISIBLE.
+;
+; LIMITATION, on purpose: this does NOT resync the varargs.  Only a
+; handler advances C, and no handler ran, so every later conversion in
+; this same printf call still reads the wrong argument.  There is no
+; portable way to know an unknown conversion's argument size.  The
+; compiler warns about this at compile time whenever the format string is
+; a literal; the echo is the safety net for the non-literal case, which
+; the compiler cannot see.
+;
+; Entry: HL -> one byte PAST the offending conversion character
+;        _printf_fmtstart -> first byte after the '%'
+; Exit:  jumps to _printf_loop with HL unchanged.
+; ============================================================
+_printf_unk_echo:
+	LD	E,'%'
+	CALL	_printf_putc	; preserves AF, BC, DE, HL
+	LD	DE,(_printf_fmtstart)
+_printf_unk_lp:
+	LD	A,D		; done once DE has walked up to HL
+	CP	H
+	JR	NZ,_printf_unk_go
+	LD	A,E
+	CP	L
+	JP	Z,_printf_loop
+_printf_unk_go:
+	LD	A,(DE)
+	PUSH	DE
+	LD	E,A
+	CALL	_printf_putc
+	POP	DE
+	INC	DE
+	JR	_printf_unk_lp
 
 _printf_isdig:
 	; Parse digit into width or precision
@@ -11273,6 +11335,7 @@ _prt_div16_dn:
 	DSEG
 
 _printf_count:	DS	2	; running byte count, returned by printf-family
+_printf_fmtstart:	DS	2	; first byte after '%', for _printf_unknown
 _printf_hexbuf:	DS	8	; 8 chars for %lx, lower 4 reused by 16-bit %x
 _printf_decbuf:	DS	6
 _printf_neg:	DB	0
@@ -12622,9 +12685,12 @@ _phl_found:
 	RET			; Tail-call handler
 
 _phl_unknown:
+	; %l<something we have no handler for>, e.g. %ls.  Echo the whole
+	; specification instead of dropping it silently; HL already points
+	; one byte past the conversion char, which is what the echo wants.
 	POP	BC
 	POP	HL
-	JP	_printf_loop
+	JP	_printf_unk_echo
 
 _phl_ll:
 	; 'll' prefix - search __printf_ll_table
@@ -12656,9 +12722,10 @@ _phl_ll_found:
 	RET
 
 _phl_ll_unknown:
+	; %ll<no handler> - same treatment as _phl_unknown.
 	POP	BC
 	POP	HL
-	JP	_printf_loop
+	JP	_printf_unk_echo
 
 
 ; ============================================================

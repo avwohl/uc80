@@ -2,7 +2,7 @@
 ; Dispatches to __printf_long_table, or 'll' to __printf_ll_table
 	.Z80
 
-	EXTRN	_printf_loop
+	EXTRN	_printf_unk_echo
 	EXTRN	__printf_long_table
 
 	CSEG
@@ -44,9 +44,12 @@ _phl_found:
 	RET			; Tail-call handler
 
 _phl_unknown:
+	; %l<something we have no handler for>, e.g. %ls.  Echo the whole
+	; specification instead of dropping it silently; HL already points
+	; one byte past the conversion char, which is what the echo wants.
 	POP	BC
 	POP	HL
-	JP	_printf_loop
+	JP	_printf_unk_echo
 
 _phl_ll:
 	; 'll' prefix - search __printf_ll_table
@@ -79,8 +82,9 @@ _phl_ll_found:
 	RET
 
 _phl_ll_unknown:
+	; %ll<no handler> - same treatment as _phl_unknown.
 	POP	BC
 	POP	HL
-	JP	_printf_loop
+	JP	_printf_unk_echo
 
 	END
