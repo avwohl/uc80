@@ -1,0 +1,758 @@
+; lc_printf_e.mac - printf %e / %E handler (float, scientific notation)
+;
+; Style [-]d.ddde+dd per C17 7.21.6.1 p8.  The exponent always carries at
+; least two digits; binary32 tops out at |exponent| = 38, so exactly two is
+; always enough.
+;
+; Handler ABI (see lc_printf_core.mac): entered by a tail JP with HL = format
+; pointer past the specifier, C = vararg offset from IX, IX = printf's frame.
+; A handler never returns - it falls back into _printf_loop.
+;
+; ---------------------------------------------------------------------------
+; ACCURACY NOTE.  rt_float.mac TRUNCATES: __fpack, __fdiv_man and __fmul_man
+; keep 24 mantissa bits and discard the rest, so every operation is biased
+; low by up to one ulp.  That bias is one-sided, which is why a chain of
+; divisions drifts monotonically downward and can cross a decade boundary
+; (a naive "while val >= 10: val /= 10" scaler prints 1e20 as 9.999998e+19).
+;
+; This module therefore scales with exactly ONE division: it estimates the
+; decimal exponent from the binary one, confirms it with an exact comparison
+; against the same table constant it is about to divide by, and divides once.
+; Comparing and dividing by the same constant makes 1 <= val < 10 true by
+; construction, and makes an exact power of ten come out exactly 1.0.
+;
+; What remains is inherent to binary32: 24 bits carry about 7.2 decimal
+; digits, so the 7th significant digit -- the last one the default "%e"
+; prints -- can differ by one from a correctly-rounded conversion.  Very
+; little of that is left for better scaling to recover: replacing the
+; scaler with exact rational arithmetic and keeping this digit loop only
+; moves precision 6 from 84% to 87%.  Measured against glibc over 4000
+; random normals plus every binade edge: precision 0 to 4 exact except
+; for 2 results in 5854 (both exact ties), 5 about 98%, 6 about 84%, and
+; the result is never off by more than one in the last printed digit.
+; Precision above 8 is meaningless here.  Exact ties round away from
+; zero rather than to even, so "%.0e" of 2.5 is 3e+00 where glibc,
+; rounding to even, prints 2e+00.  A value within one ulp of a decade
+; boundary can round across it: "%e" of 9.9999995 gives 1.000000e+01
+; where glibc gives 9.999999e+00, which is the same one-digit error
+; seen from the other side.
+; ---------------------------------------------------------------------------
+
+	.Z80
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_putc
+	EXTRN	_printf_upper
+	EXTRN	_printf_hasprec
+	EXTRN	_printf_prec
+	EXTRN	_printf_alt
+	EXTRN	_prt_float_prec
+	EXTRN	__ftmp
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__fsub
+	EXTRN	__fadd
+	EXTRN	__fcmp
+	EXTRN	__itof
+	EXTRN	__ftoi
+	EXTRN	__tmp32
+
+	CSEG
+
+	PUBLIC	__printf_handle_e
+	PUBLIC	__printf_handle_eu
+	PUBLIC	_prt_float_e
+	PUBLIC	_prt_e_scale
+	PUBLIC	_prt_e_round
+	PUBLIC	_prt_e_digit
+	PUBLIC	_prt_e_d0
+	PUBLIC	_prt_e_dn
+	PUBLIC	_prt_e_expout
+	PUBLIC	_prt_e_ld10
+	PUBLIC	_prt_e_spec
+	PUBLIC	_prt_e_val
+	PUBLIC	_prt_e_dexp
+
+; ============================================================
+; %E - set the uppercase flag and fall into %e (same shape as
+; __printf_handle_xu in lc_printf_x.mac)
+; ============================================================
+__printf_handle_eu:
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_upper),A
+	POP	AF
+	JR	__printf_handle_e
+
+__printf_handle_e:
+	; Fetch the 4-byte float argument into __ftmp.  uc80's double IS
+	; binary32, so there is no default-argument promotion to undo.
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__ftmp),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__ftmp+2),DE
+	; precision: default 6
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_phe_def
+	LD	A,(_printf_prec)
+	JR	_phe_setp
+_phe_def:
+	LD	A,6
+_phe_setp:
+	LD	(_prt_float_prec),A
+	CALL	_prt_float_e
+	POP	BC
+	LD	A,C
+	ADD	A,4
+	LD	C,A
+	POP	HL
+	JP	_printf_loop
+
+; ============================================================
+; _prt_float_e - print __ftmp in %e style with _prt_float_prec
+; fraction digits.
+; ============================================================
+_prt_float_e:
+	PUSH	BC
+	PUSH	DE
+	PUSH	IX
+	XOR	A
+	LD	(_prt_e_dexp),A
+
+	CALL	_prt_e_spec		; infinity / NaN
+	JP	C,_pfe_done
+
+	LD	DE,(__ftmp)
+	LD	HL,(__ftmp+2)		; H = byte3 (sign+exponent)
+
+	; sign
+	BIT	7,H
+	JR	Z,_pfe_pos
+	PUSH	HL
+	PUSH	DE
+	LD	E,'-'
+	CALL	_printf_putc
+	POP	DE
+	POP	HL
+	RES	7,H
+_pfe_pos:
+	EX	DE,HL			; DEHL = |value|
+	LD	(_prt_e_val),HL
+	LD	(_prt_e_val+2),DE
+
+	; zero needs no scaling; _prt_e_dexp is already 0 and every digit
+	; the loop below produces is 0, which is exactly "0.000000e+00".
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_pfe_noscale
+	CALL	_prt_e_scale
+_pfe_noscale:
+	LD	A,(_prt_float_prec)
+	CALL	_prt_e_round
+
+	CALL	_prt_e_d0
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+
+	LD	A,(_prt_float_prec)
+	OR	A
+	JR	Z,_pfe_nodot
+	LD	E,'.'
+	CALL	_printf_putc
+	LD	A,(_prt_float_prec)
+	LD	B,A
+_pfe_flp:
+	PUSH	BC
+	CALL	_prt_e_digit
+	POP	BC
+	DJNZ	_pfe_flp
+	JR	_pfe_exp
+_pfe_nodot:
+	; "%#.0e" keeps the point even with no digits after it
+	LD	A,(_printf_alt)
+	OR	A
+	JR	Z,_pfe_exp
+	LD	E,'.'
+	CALL	_printf_putc
+_pfe_exp:
+	CALL	_prt_e_expout
+_pfe_done:
+	POP	IX
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; _prt_e_spec - if __ftmp is an infinity or a NaN, print it and return
+; with carry SET; otherwise print nothing and return with carry clear.
+; Shared with %g.  C17 7.21.6.1 p8 wants "inf"/"nan" for e and g, and
+; the uppercase spellings for E and G.
+; ============================================================
+_prt_e_spec:
+	LD	DE,(__ftmp)
+	LD	HL,(__ftmp+2)
+	LD	A,H
+	ADD	A,A
+	LD	B,A
+	LD	A,L
+	RLCA
+	AND	1
+	OR	B
+	CP	255
+	JR	Z,_psp_yes
+	OR	A			; clear carry: an ordinary number
+	RET
+_psp_yes:
+	LD	A,L			; mantissa bits 22..16
+	AND	7FH
+	OR	D
+	OR	E
+	LD	D,A			; D nonzero => NaN, zero => infinity
+	BIT	7,H
+	JR	Z,_psp_nosign
+	LD	E,'-'
+	CALL	_printf_putc
+_psp_nosign:
+	LD	A,D
+	OR	A
+	LD	HL,_psp_sinf
+	JR	Z,_psp_str
+	LD	HL,_psp_snan
+_psp_str:
+	LD	B,3
+_psp_lp:
+	LD	A,(HL)
+	PUSH	HL
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_upper)
+	OR	A
+	LD	A,B
+	JR	NZ,_psp_up
+	OR	20H			; lowercase unless %E / %G
+_psp_up:
+	LD	E,A
+	CALL	_printf_putc
+	POP	BC
+	POP	HL
+	INC	HL
+	DJNZ	_psp_lp
+	SCF
+	RET
+
+_psp_sinf:	DB	'INF'
+_psp_snan:	DB	'NAN'
+
+; ============================================================
+; _prt_e_expout - emit the exponent field: 'e'/'E', sign, two digits.
+; Shared with %g.
+; ============================================================
+_prt_e_expout:
+	LD	A,(_printf_upper)
+	OR	A
+	LD	E,'e'
+	JR	Z,_pee_c
+	LD	E,'E'
+_pee_c:
+	CALL	_printf_putc
+	LD	A,(_prt_e_dexp)
+	BIT	7,A
+	JR	Z,_pee_plus
+	NEG
+	PUSH	AF
+	LD	E,'-'
+	CALL	_printf_putc
+	POP	AF
+	JR	_pee_dig
+_pee_plus:
+	PUSH	AF
+	LD	E,'+'
+	CALL	_printf_putc
+	POP	AF
+_pee_dig:
+	LD	C,'0'
+_pee_tens:
+	CP	10
+	JR	C,_pee_tdone
+	SUB	10
+	INC	C
+	JR	_pee_tens
+_pee_tdone:
+	PUSH	AF
+	LD	E,C
+	CALL	_printf_putc
+	POP	AF
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+	RET
+
+; ============================================================
+; _prt_e_scale - scale _prt_e_val into [1,10) and leave the decimal
+; exponent in _prt_e_dexp.  Exactly one division; see the accuracy
+; note at the top of the file.
+; ============================================================
+_prt_e_scale:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	CALL	_pe_bexp
+	SUB	127			; A = unbiased binary exponent
+	CALL	_pe_est			; A = floor(A * log10 2)
+	LD	(_prt_e_dexp),A
+
+	; try exponent+1: val >= 10^(est+1) ?
+	CP	38
+	JR	Z,_pes_lower		; 10^39 is out of binary32 range
+	INC	A
+	CALL	_prt_e_ld10
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fcmp
+	JR	C,_pes_lower
+	LD	A,(_prt_e_dexp)
+	INC	A
+	LD	(_prt_e_dexp),A
+	JR	_pes_div
+
+_pes_lower:
+	; else try exponent-1: val < 10^est ?
+	LD	A,(_prt_e_dexp)
+	CP	0C2H			; -38: no smaller normal exists
+	JR	Z,_pes_div
+	CALL	_prt_e_ld10
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fcmp
+	JR	NC,_pes_div
+	LD	A,(_prt_e_dexp)
+	DEC	A
+	LD	(_prt_e_dexp),A
+
+_pes_div:
+	LD	A,(_prt_e_dexp)
+	CP	0C2H			; -38
+	JR	NZ,_pes_dodiv
+	; 10^-38 is denormal in binary32 (FLT_MIN is 1.1755e-38) and
+	; rt_float flushes denormals to zero, so a division by it would
+	; return infinity.  Scale that one decade by multiplying instead:
+	; every value with this exponent lies in [FLT_MIN, 1e-37), so
+	; v * 1e38 lands in [1.17, 10) as required.
+	LD	A,38
+	CALL	_prt_e_ld10
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fmul
+	JR	_pes_store
+_pes_dodiv:
+	CALL	_prt_e_ld10
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fdiv
+_pes_store:
+	LD	(_prt_e_val),HL
+	LD	(_prt_e_val+2),DE
+
+	; Guards.  Neither has ever been observed to fire, because the
+	; compare above used the very constant we just divided by: the
+	; quotient is >= 1 by construction and < 10 up to the table's own
+	; rounding.  Verified by simulating rt_float exactly over every
+	; binade edge, 4000 random normals and the whole 10^-38 decade
+	; (where the multiply above yields 1.175 to 9.999998).  They cost
+	; 30 bytes and make the [1,10) invariant unconditional.
+	CALL	_pe_ld10_1
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fcmp
+	JR	C,_pes_chklo
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fdiv			; __tmp32 still holds 10.0
+	LD	(_prt_e_val),HL
+	LD	(_prt_e_val+2),DE
+	LD	A,(_prt_e_dexp)
+	INC	A
+	LD	(_prt_e_dexp),A
+_pes_chklo:
+	LD	HL,0
+	LD	(__tmp32),HL
+	LD	HL,3F80H		; 1.0
+	LD	(__tmp32+2),HL
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fcmp
+	JR	NC,_pes_out
+	CALL	_pe_mul10
+	LD	A,(_prt_e_dexp)
+	DEC	A
+	LD	(_prt_e_dexp),A
+_pes_out:
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; _prt_e_round - add the rounding increment for A fraction digits:
+;   0.5 * 0.1^A  +  ulp(val)   [second term only while it is meaningful]
+; The second term un-does rt_float's one-sided truncation bias.  A full
+; ulp, not half of one, is the right correction: __fdiv_man loses one
+; ulp to plain truncation and a second one whenever the dividend
+; mantissa is smaller than the divisor's (@fdiv_norm then shifts a zero
+; bit in), so the expected shortfall is about one ulp.  Measured over
+; 4000 random normals at precision 6: none 71% exact, half an ulp 76%,
+; a full ulp 84%, one and a half 63%.
+; The correction is applied only while one ulp is finer than one unit
+; in the last printed digit.  Past that point the digit being corrected
+; is below what binary32 resolves, and adding the correction would just
+; print the correction: "%.9e" of 1.0 would come out 1.000000119e+00.
+; If the sum carries past 10.0 the value must have been all nines, so
+; the answer is exactly 1.0 with the exponent bumped.
+; ============================================================
+_prt_e_round:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD	HL,0
+	LD	DE,3F00H		; 0.5
+	OR	A
+	JR	Z,_per_hsave
+	LD	B,A
+_per_lp:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	DE,3DCCH
+	LD	HL,0CCCDH		; 0.1
+	CALL	__fmul
+	DJNZ	_per_lp
+_per_hsave:
+	LD	(_prt_e_half),HL
+	LD	(_prt_e_half+2),DE
+	; threshold = 2 * half = one unit in the last printed digit
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fadd
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; one ulp of the scaled value, built straight from its exponent
+	; field so it is exact
+	CALL	_pe_bexp
+	SUB	23
+	JR	C,_per_noulp
+	JR	Z,_per_noulp
+	LD	B,A
+	SRL	A
+	LD	D,A			; byte3 = exponent >> 1
+	LD	A,B
+	AND	1
+	RRCA				; byte2 bit 7 = exponent & 1
+	LD	E,A
+	LD	HL,0
+	CALL	__fcmp
+	JR	NC,_per_noulp		; one ulp is as coarse as the last
+					; printed digit, so that digit is
+					; below binary32's resolution and
+					; correcting it would only print
+					; the correction itself
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_prt_e_half)
+	LD	DE,(_prt_e_half+2)
+	CALL	__fadd			; DEHL = half + ulp
+	JR	_per_add
+_per_noulp:
+	LD	HL,(_prt_e_half)
+	LD	DE,(_prt_e_half+2)
+
+_per_add:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fadd
+	LD	(_prt_e_val),HL
+	LD	(_prt_e_val+2),DE
+
+	CALL	_pe_ld10_1
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fcmp
+	JR	C,_per_out
+	LD	HL,0
+	LD	(_prt_e_val),HL
+	LD	HL,3F80H		; 1.0
+	LD	(_prt_e_val+2),HL
+	LD	A,(_prt_e_dexp)
+	INC	A
+	LD	(_prt_e_dexp),A
+_per_out:
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; _prt_e_digit - next fraction digit, printed.
+; _prt_e_dn    - val *= 10, then the integer part in A, removed from val.
+; _prt_e_d0    - integer part of val in A, removed from val.
+; ============================================================
+_prt_e_digit:
+	CALL	_prt_e_dn
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+	RET
+
+_prt_e_dn:
+	CALL	_pe_mul10
+	; fall through
+
+_prt_e_d0:
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__ftoi
+	LD	A,L
+	PUSH	AF
+	LD	H,0
+	LD	L,A
+	LD	DE,0
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	CALL	__fsub
+	LD	(_prt_e_val),HL
+	LD	(_prt_e_val+2),DE
+	POP	AF
+	RET
+
+; ============================================================
+; Internal helpers
+; ============================================================
+
+; _pe_mul10: _prt_e_val *= 10.0
+_pe_mul10:
+	LD	HL,(_prt_e_val)
+	LD	DE,(_prt_e_val+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	DE,4120H		; 10.0
+	LD	HL,0
+	CALL	__fmul
+	LD	(_prt_e_val),HL
+	LD	(_prt_e_val+2),DE
+	RET
+
+; _pe_ld10_1: __tmp32 = 10.0
+_pe_ld10_1:
+	LD	HL,0
+	LD	(__tmp32),HL
+	LD	HL,4120H
+	LD	(__tmp32+2),HL
+	RET
+
+; _pe_bexp: A = biased binary exponent of _prt_e_val (0..255).
+; In DEHL form D holds bits 31..24 and E bits 23..16, so the exponent
+; is (D << 1) | (E >> 7).  The sign bit is already cleared.
+_pe_bexp:
+	PUSH	BC
+	PUSH	DE
+	LD	DE,(_prt_e_val+2)
+	LD	A,E
+	RLCA
+	AND	1
+	LD	B,A
+	LD	A,D
+	ADD	A,A
+	OR	B
+	POP	DE
+	POP	BC
+	RET
+
+; _pe_est: A = floor(A * log10 2) for a signed A, using 77/256 as the
+; multiplier (error 2.4e-4 per unit, at most 0.031 over the whole
+; exponent range).  The caller's +1/-1 refinement absorbs that.
+_pe_est:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD	C,0
+	BIT	7,A
+	JR	Z,_pes_epos
+	NEG
+	LD	C,1
+_pes_epos:
+	LD	L,A
+	LD	H,0
+	LD	D,H
+	LD	E,L			; DE = n
+	ADD	HL,HL			; 2n
+	ADD	HL,HL			; 4n
+	ADD	HL,DE			; 5n
+	ADD	HL,HL			; 10n
+	ADD	HL,HL			; 20n
+	ADD	HL,HL			; 40n
+	ADD	HL,HL			; 80n
+	OR	A
+	SBC	HL,DE			; 79n
+	OR	A
+	SBC	HL,DE			; 78n
+	OR	A
+	SBC	HL,DE			; 77n
+	LD	A,C
+	OR	A
+	LD	A,H			; floor for a positive argument
+	JR	Z,_pes_edone
+	LD	A,L			; negative: floor = -ceil(n*77/256)
+	OR	A
+	LD	A,H
+	JR	Z,_pes_eneg
+	INC	A
+_pes_eneg:
+	NEG
+_pes_edone:
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; _prt_e_ld10: __tmp32 = 10^A for a signed A in [-38,38].
+_prt_e_ld10:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	BIT	7,A
+	JR	NZ,_pel_neg
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	ADD	HL,HL
+	LD	DE,_p10pos
+	JR	_pel_go
+_pel_neg:
+	NEG
+	DEC	A
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	ADD	HL,HL
+	LD	DE,_p10neg
+_pel_go:
+	ADD	HL,DE
+	LD	DE,__tmp32
+	LD	BC,4
+	LDIR
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; 10^0 .. 10^38, indexed by k*4.  Every entry is a normal binary32.
+_p10pos:
+	DW	0000H,3F80H	; 1e0
+	DW	0000H,4120H	; 1e1
+	DW	0000H,42C8H	; 1e2
+	DW	0000H,447AH	; 1e3
+	DW	4000H,461CH	; 1e4
+	DW	5000H,47C3H	; 1e5
+	DW	2400H,4974H	; 1e6
+	DW	9680H,4B18H	; 1e7
+	DW	0BC20H,4CBEH	; 1e8
+	DW	6B28H,4E6EH	; 1e9
+	DW	02F9H,5015H	; 1e10
+	DW	43B7H,51BAH	; 1e11
+	DW	0D4A5H,5368H	; 1e12
+	DW	84E7H,5511H	; 1e13
+	DW	0E621H,56B5H	; 1e14
+	DW	5FA9H,5863H	; 1e15
+	DW	1BCAH,5A0EH	; 1e16
+	DW	0A2BCH,5BB1H	; 1e17
+	DW	0B6BH,5D5EH	; 1e18
+	DW	0C723H,5F0AH	; 1e19
+	DW	78ECH,60ADH	; 1e20
+	DW	0D727H,6258H	; 1e21
+	DW	8678H,6407H	; 1e22
+	DW	6816H,65A9H	; 1e23
+	DW	0C21CH,6753H	; 1e24
+	DW	5951H,6904H	; 1e25
+	DW	6FA6H,6AA5H	; 1e26
+	DW	0CB8FH,6C4EH	; 1e27
+	DW	3F39H,6E01H	; 1e28
+	DW	8F08H,6FA1H	; 1e29
+	DW	0F2CAH,7149H	; 1e30
+	DW	6F7CH,72FCH	; 1e31
+	DW	0C5AEH,749DH	; 1e32
+	DW	3719H,7645H	; 1e33
+	DW	84DFH,77F6H	; 1e34
+	DW	130CH,799AH	; 1e35
+	DW	97CEH,7B40H	; 1e36
+	DW	0BDC2H,7CF0H	; 1e37
+	DW	7699H,7E96H	; 1e38
+
+; 10^-1 .. 10^-37, indexed by (-k-1)*4.  The table stops at 10^-37
+; because 10^-38 is DENORMAL in binary32 (FLT_MIN is 1.1755e-38) and
+; rt_float.mac flushes denormals to zero -- dividing by it would give
+; infinity.  _pes_div scales that one decade by multiplying instead.
+_p10neg:
+	DW	0CCCDH,3DCCH	; 1e-1
+	DW	0D70AH,3C23H	; 1e-2
+	DW	126FH,3A83H	; 1e-3
+	DW	0B717H,38D1H	; 1e-4
+	DW	0C5ACH,3727H	; 1e-5
+	DW	37BDH,3586H	; 1e-6
+	DW	0BF95H,33D6H	; 1e-7
+	DW	0CC77H,322BH	; 1e-8
+	DW	705FH,3089H	; 1e-9
+	DW	0E6FFH,2EDBH	; 1e-10
+	DW	0EBFFH,2D2FH	; 1e-11
+	DW	0BCCCH,2B8CH	; 1e-12
+	DW	2E13H,29E1H	; 1e-13
+	DW	24DCH,2834H	; 1e-14
+	DW	1D7DH,2690H	; 1e-15
+	DW	9595H,24E6H	; 1e-16
+	DW	77AAH,2338H	; 1e-17
+	DW	92EFH,2193H	; 1e-18
+	DW	1E4AH,1FECH	; 1e-19
+	DW	0E508H,1E3CH	; 1e-20
+	DW	1DA0H,1C97H	; 1e-21
+	DW	0C901H,1AF1H	; 1e-22
+	DW	6D9AH,1941H	; 1e-23
+	DW	0BE15H,179AH	; 1e-24
+	DW	9688H,15F7H	; 1e-25
+	DW	1206H,1446H	; 1e-26
+	DW	74D2H,129EH	; 1e-27
+	DW	87B6H,10FDH	; 1e-28
+	DW	0D2F8H,0F4AH	; 1e-29
+	DW	4260H,0DA2H	; 1e-30
+	DW	0CEB3H,0C01H	; 1e-31
+	DW	0B11FH,0A4FH	; 1e-32
+	DW	274CH,08A6H	; 1e-33
+	DW	0EC3DH,0704H	; 1e-34
+	DW	0AD2EH,0554H	; 1e-35
+	DW	2425H,03AAH	; 1e-36
+	DW	1CEAH,0208H	; 1e-37
+
+	DSEG
+
+_prt_e_val:	DS	4
+_prt_e_half:	DS	4
+_prt_e_dexp:	DB	0
+
+	END

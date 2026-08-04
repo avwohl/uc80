@@ -1,0 +1,343 @@
+; lc_printf_g.mac - printf %g / %G handler
+;
+; C17 7.21.6.1 p8, implemented literally:
+;   P is the precision (6 if absent, 1 if given as zero) and X is the
+;   exponent of the value AFTER it has been rounded to P significant
+;   digits.  Style e is used when X < -4 or X >= P, style f otherwise.
+;   Trailing zeros are removed from the fractional portion unless the
+;   '#' flag is present, and the decimal point goes with them if no
+;   fractional digits survive.
+;
+; Every digit comes from the [1,10) mantissa produced by _prt_e_scale in
+; lc_printf_e.mac, never from lc_printf_core's _prt_dec.  That is
+; deliberate: %g routinely needs a six-digit integer part ("%g" of
+; 123456.0 is "123456") and _prt_dec is 16-bit only, which is why "%f"
+; of the same value prints garbage while "%g" does not.
+;
+; Trailing zeros are suppressed WITHOUT a digit buffer.  _g_putf holds
+; back zeros and a pending '.' and emits them only when a nonzero digit
+; turns up; anything still pending when the conversion ends simply never
+; gets written.  That is O(1) RAM instead of a 40-byte buffer.
+;
+; This module pulls lc_printf_e.mac in.  Keeping them together is
+; deliberate (see the note in build_libs.py's directory): splitting the
+; shared scaler into a third module would save about 500 bytes for a
+; program that uses %g but not %e, and mbasic links both anyway.
+
+	.Z80
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_putc
+	EXTRN	_printf_upper
+	EXTRN	_printf_hasprec
+	EXTRN	_printf_prec
+	EXTRN	_printf_alt
+	EXTRN	__ftmp
+	EXTRN	_prt_e_scale
+	EXTRN	_prt_e_round
+	EXTRN	_prt_e_expout
+	EXTRN	_prt_e_spec
+	EXTRN	_prt_e_val
+	EXTRN	_prt_e_dexp
+	EXTRN	_prt_e_d0
+	EXTRN	_prt_e_dn
+
+	CSEG
+
+	PUBLIC	__printf_handle_g
+	PUBLIC	__printf_handle_gu
+	PUBLIC	_prt_float_g
+
+; ============================================================
+; %G - set the uppercase flag and fall into %g
+; ============================================================
+__printf_handle_gu:
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_upper),A
+	POP	AF
+	JR	__printf_handle_g
+
+__printf_handle_g:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	BC
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__ftmp),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__ftmp+2),DE
+	; P = precision; absent means 6, an explicit 0 means 1
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_phg_def
+	LD	A,(_printf_prec)
+	OR	A
+	JR	NZ,_phg_setp
+	LD	A,1
+	JR	_phg_setp
+_phg_def:
+	LD	A,6
+_phg_setp:
+	LD	(_g_prec),A
+	CALL	_prt_float_g
+	POP	BC
+	LD	A,C
+	ADD	A,4
+	LD	C,A
+	POP	HL
+	JP	_printf_loop
+
+; ============================================================
+; _prt_float_g - print __ftmp in %g style with _g_prec significant
+; digits.
+; ============================================================
+_prt_float_g:
+	PUSH	BC
+	PUSH	DE
+	PUSH	IX
+	XOR	A
+	LD	(_g_pend),A
+	LD	(_g_dot),A
+	LD	(_prt_e_dexp),A
+
+	CALL	_prt_e_spec		; infinity / NaN
+	JP	C,_pfg_done
+
+	LD	DE,(__ftmp)
+	LD	HL,(__ftmp+2)
+
+	BIT	7,H
+	JR	Z,_pfg_pos
+	PUSH	HL
+	PUSH	DE
+	LD	E,'-'
+	CALL	_printf_putc
+	POP	DE
+	POP	HL
+	RES	7,H
+_pfg_pos:
+	EX	DE,HL			; DEHL = |value|
+	LD	(_prt_e_val),HL
+	LD	(_prt_e_val+2),DE
+
+	; Zero needs no scaling.  With X = 0 it takes the style-f path
+	; below and produces "0" - or "0.00000" under '#', which is what
+	; C requires and what a special-cased "print 0 and stop" would
+	; get wrong.
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,_pfg_noscale
+	CALL	_prt_e_scale
+_pfg_noscale:
+	; round to P significant digits, i.e. P-1 fraction digits of the
+	; scaled mantissa.  This happens BEFORE the style is chosen
+	; because p8 defines X as the exponent of the CONVERTED value.
+	LD	A,(_g_prec)
+	DEC	A
+	CALL	_prt_e_round
+
+	; style e if X < -4 or X >= P, else style f
+	LD	A,(_prt_e_dexp)
+	LD	B,A
+	ADD	A,4
+	JP	M,_pfg_style_e
+	LD	A,B
+	BIT	7,A
+	JR	NZ,_pfg_style_f		; -4 <= X < 0
+	LD	HL,_g_prec
+	CP	(HL)
+	JR	NC,_pfg_style_e
+
+; ---------------- style f ----------------
+_pfg_style_f:
+	LD	A,(_prt_e_dexp)
+	BIT	7,A
+	JR	NZ,_pfg_f_neg
+
+	; X >= 0: X+1 integer digits, emitted unfiltered
+	INC	A
+	LD	B,A
+	CALL	_prt_e_d0
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+	DEC	B
+	JR	Z,_pfg_f_frac
+_pfg_f_ilp:
+	PUSH	BC
+	CALL	_prt_e_dn
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+	POP	BC
+	DJNZ	_pfg_f_ilp
+_pfg_f_frac:
+	; P-1-X fraction digits, filtered
+	LD	A,(_g_prec)
+	DEC	A
+	LD	HL,_prt_e_dexp
+	SUB	(HL)
+	JR	Z,_pfg_end
+	LD	B,A
+	LD	A,1
+	LD	(_g_dot),A
+_pfg_f_flp:
+	PUSH	BC
+	CALL	_prt_e_dn
+	CALL	_g_putf
+	POP	BC
+	DJNZ	_pfg_f_flp
+	JR	_pfg_end
+
+_pfg_f_neg:
+	; -4 <= X <= -1: "0.", then -X-1 zeros, then P digits.  That is
+	; P-1-X fraction characters in total, as required.
+	LD	E,'0'
+	CALL	_printf_putc
+	LD	A,1
+	LD	(_g_dot),A
+	LD	A,(_prt_e_dexp)
+	NEG
+	DEC	A
+	JR	Z,_pfg_fn_sig
+	LD	B,A
+_pfg_fn_zlp:
+	PUSH	BC
+	XOR	A
+	CALL	_g_putf
+	POP	BC
+	DJNZ	_pfg_fn_zlp
+_pfg_fn_sig:
+	CALL	_prt_e_d0
+	CALL	_g_putf
+	LD	A,(_g_prec)
+	DEC	A
+	JR	Z,_pfg_end
+	LD	B,A
+_pfg_fn_lp:
+	PUSH	BC
+	CALL	_prt_e_dn
+	CALL	_g_putf
+	POP	BC
+	DJNZ	_pfg_fn_lp
+	JR	_pfg_end
+
+; ---------------- style e ----------------
+_pfg_style_e:
+	CALL	_prt_e_d0
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+	LD	A,(_g_prec)
+	DEC	A
+	JR	Z,_pfg_e_exp
+	LD	B,A
+	LD	A,1
+	LD	(_g_dot),A
+_pfg_e_lp:
+	PUSH	BC
+	CALL	_prt_e_dn
+	CALL	_g_putf
+	POP	BC
+	DJNZ	_pfg_e_lp
+_pfg_e_exp:
+	CALL	_g_alt_dot
+	CALL	_prt_e_expout
+	JR	_pfg_done
+
+_pfg_end:
+	CALL	_g_alt_dot
+_pfg_done:
+	POP	IX
+	POP	DE
+	POP	BC
+	RET
+
+; ============================================================
+; _g_putf - emit one fraction digit through the trailing-zero filter.
+; A zero is only counted; a nonzero digit first flushes the pending
+; '.' and the pending zeros.  Whatever is still pending when the
+; conversion ends is dropped, which is exactly "trailing zeros are
+; removed ... the decimal-point character is removed if there is no
+; fractional portion remaining".  Under '#' nothing is held back.
+; ============================================================
+_g_putf:
+	OR	A
+	JR	NZ,_gpf_nz
+	PUSH	AF
+	LD	A,(_printf_alt)
+	OR	A
+	JR	NZ,_gpf_keep
+	POP	AF
+	LD	A,(_g_pend)
+	INC	A
+	LD	(_g_pend),A
+	RET
+_gpf_keep:
+	POP	AF
+_gpf_nz:
+	PUSH	AF
+	LD	A,(_g_dot)
+	CP	1			; armed but not yet written?
+	JR	NZ,_gpf_nodot
+	LD	A,2
+	LD	(_g_dot),A
+	LD	E,'.'
+	CALL	_printf_putc
+_gpf_nodot:
+	LD	A,(_g_pend)
+	OR	A
+	JR	Z,_gpf_out
+	LD	B,A
+	XOR	A
+	LD	(_g_pend),A
+_gpf_zlp:
+	PUSH	BC
+	LD	E,'0'
+	CALL	_printf_putc
+	POP	BC
+	DJNZ	_gpf_zlp
+_gpf_out:
+	POP	AF
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+	RET
+
+; ============================================================
+; _g_alt_dot - under '#' the result always contains a decimal point,
+; even when no fraction digit was ever emitted ("%#g" of 100000.0 is
+; "100000." - the point is never armed there, so testing only the
+; "armed" state would miss it).
+; ============================================================
+_g_alt_dot:
+	LD	A,(_printf_alt)
+	OR	A
+	RET	Z
+	LD	A,(_g_dot)
+	CP	2			; already written?
+	RET	Z
+	LD	A,2
+	LD	(_g_dot),A
+	LD	E,'.'
+	CALL	_printf_putc
+	RET
+
+	DSEG
+
+_g_prec:	DB	6
+_g_pend:	DB	0
+_g_dot:		DB	0
+
+	END
