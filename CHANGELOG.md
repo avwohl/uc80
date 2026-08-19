@@ -97,6 +97,16 @@ reports rather than from the fixes. It found more than it confirmed.
   `__sret_buf` now has its own module, `rt_sret.mac`, which the linker pulls
   only when the symbol is genuinely unresolved.
 
+- **Returning a struct larger than 256 bytes wrote past `__sret_buf`.** The
+  return copy is an `ldir` of the struct's full size into a `DS 256` buffer
+  and nothing bounded it, so a 402-byte struct put 146 bytes over whatever
+  storage followed. It stayed quiet because the value still reads back
+  correctly -- the clobbered bytes are not the ones the caller looks at --
+  and how far it reached scaled with the struct. uc80 now rejects the return
+  and names both sizes; return through a pointer parameter instead. Lifting
+  the cap needs a caller-supplied hidden pointer rather than one shared
+  static buffer, which is an ABI change.
+
 ### Known limitations
 
 Recorded so they are not rediscovered; `todo.txt` has the full list.
@@ -107,9 +117,6 @@ Recorded so they are not rediscovered; `todo.txt` has the full list.
 - `%.*f` / `%*f`, and `%lf` / `%le` / `%lg` under auto-detection or
   `--printf float`, are not registered: the conversion is echoed verbatim and
   every later one in that call reads the wrong argument.
-- A struct return larger than 256 bytes overflows `__sret_buf`: the copy is
-  an `ldir` of the struct's full size into a `DS 256` buffer, and nothing
-  checks the type against it.
 
 ## 0.6.0
 

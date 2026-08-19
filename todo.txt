@@ -108,6 +108,8 @@ as superseded rather than merely improved on.
 	um80 CP A,5 drops the 5		fixed	um80 a38cc15
 	um80 .Z80 leaks across passes	fixed	um80 a38cc15
 	ul80 discarded its own errors	fixed	um80 54e9a20
+	__sret_buf defined twice	fixed	c81854a
+	struct return over 256 bytes	fixed	f9a5aa2
 
 printf("%f") was wrong for every |value| >= 65536 and often emitted bytes
 that were not digits - 1000000.0 printed as "3906.00///" and -123456.0
@@ -139,17 +141,6 @@ reproduced by the verification pass; repros are in the mbasic write-up.
 
   - _auto_detect_printf_features does not descend into a `default:` label or
     an initializer list, so a printf there is invisible to it.  SILENT.
-
-  - A struct return larger than 256 bytes overflows __sret_buf.  The buffer
-    is DS 256 and nothing checks the returned type against it: returning a
-    402-byte struct emits `ld BC,402` / `ldir` straight into it, writing 146
-    bytes past the end over whatever storage follows.  SILENT -- the value
-    still reads back correctly, because nothing has used the clobbered bytes
-    yet -- and it scales with the struct, so a big enough one reaches
-    anything.  Either bound the copy with a diagnostic or return via a
-    caller-supplied hidden pointer, which is what the size argues for.
-    (The duplicate __sret_buf definition that used to be recorded here is
-    fixed: it now has its own runtime.lib module, rt_sret.mac.)
 
   - _merge_array_size compares only the outermost element count.  Inner
     dimensions, element types and declarator shape are never checked, so
@@ -214,6 +205,12 @@ reproduced by the verification pass; repros are in the mbasic write-up.
 
 
 Not bugs, recorded so they are not re-reported:
+  - A struct larger than 256 bytes cannot be returned by value: __sret_buf
+    is that big and the return copy is unbounded, so uc80 rejects it rather
+    than writing past the buffer.  Returning through a pointer parameter is
+    the workaround the diagnostic points at.  Lifting the cap properly means
+    a caller-supplied hidden pointer instead of one shared static buffer,
+    which is an ABI change, not a bigger DS.
   - Last-digit float differences vs z88dk built with --math-mbf32.  uc80 is
     32-bit IEEE 754; same 24-bit mantissa, different rounding, so results can
     differ by one ULP (5.859874 vs 5.859875).  Working as designed.

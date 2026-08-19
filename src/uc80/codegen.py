@@ -27,6 +27,15 @@ from uc_core import ast_legacy as lt
 from uc_core._const import int_value, int_flags, float_value, make_int_lit
 from uc_core.type_config import TypeConfig, Z80_CPM
 
+# Size of __sret_buf, the buffer a function returning a struct by value
+# leaves its result in.  It is reserved by lib/rt/rt_sret.mac, which is the
+# authority; this constant only has to agree with it, and
+# tests/test_sret_buf_single_definition.py asserts that it does.  A return
+# copies the struct's full size into the buffer with LDIR, so a struct
+# bigger than this would run off the end -- gen_return rejects that rather
+# than emitting the overflow.
+SRET_BUF_SIZE = 256
+
 
 # ---- auto-AST helpers ------------------------------------------------------
 #
@@ -6660,6 +6669,17 @@ class CodeGenerator:
 
             if ret_kind == "struct" and self._type_size(ret_type) > 2:
                 struct_size = self._type_size(ret_type)
+                # Both paths below copy struct_size bytes into __sret_buf,
+                # which reserves SRET_BUF_SIZE.  Nothing bounds the copy at
+                # run time, so a larger struct silently writes over whatever
+                # storage follows the buffer; say so instead of emitting it.
+                if struct_size > SRET_BUF_SIZE:
+                    raise CodegenError(
+                        f"returning a {struct_size}-byte "
+                        f"{'union' if getattr(ret_type, 'is_union', False) else 'struct'} "
+                        f"by value overflows the {SRET_BUF_SIZE}-byte return "
+                        f"buffer __sret_buf; return it through a pointer "
+                        f"parameter instead", stmt)
                 self.ctx.runtime_used.add("__sret_buf")
                 # If the return expression is a compound literal whose
                 # initializer references runtime values, evaluating

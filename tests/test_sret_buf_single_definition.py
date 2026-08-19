@@ -25,14 +25,22 @@ ul80 exits 0 here -- L80 accepts this link and produces output -- so these
 tests read what the linker printed rather than its status, and they drive
 the ul80 command line, not the Linker API.  The API is what tests/ already
 covered when the duplicate shipped.
+
+TestOversizedStructReturn covers the buffer's other edge.  The return copy
+is an LDIR of the struct's full size into a DS 256 buffer and nothing bounds
+it at run time, so a struct larger than the buffer used to write over
+whatever storage followed and say nothing; gen_return now refuses it.
 """
 
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+from uc80.codegen import SRET_BUF_SIZE
 
 REPO = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO / "src" / "uc80" / "lib"
@@ -136,3 +144,63 @@ class TestDocumentedLinkLine:
                              timeout=60)
         out = run.stdout.decode("latin-1").replace("\r", "")
         assert EXPECTED in out, out
+
+
+def test_size_constant_matches_the_module():
+    """codegen bounds the return copy against SRET_BUF_SIZE, but rt_sret.mac
+    is what actually reserves the bytes.  If the two drift apart the check
+    stops matching the buffer it is protecting, in whichever direction."""
+    text = (RT_DIR / "rt_sret.mac").read_text()
+    m = re.search(r"^__sret_buf:\s*DS\s+(\d+)", text, re.MULTILINE)
+    assert m, text
+    assert int(m.group(1)) == SRET_BUF_SIZE
+
+
+@pytest.mark.skipif(not shutil.which("um80"), reason="um80 not available")
+class TestOversizedStructReturn:
+    def _compile(self, tmp_path, source, name="big"):
+        c_file = tmp_path / (name + ".c")
+        c_file.write_text(source)
+        return subprocess.run(
+            [sys.executable, "-m", "uc80.main", str(c_file),
+             "-o", str(tmp_path / (name + ".mac"))],
+            capture_output=True, text=True, cwd=str(REPO))
+
+    def _returning(self, nbytes, aggregate="struct"):
+        return ("%s s { char p[%d]; };\n"
+                "%s s mk(void) { %s s v; v.p[0] = 1; return v; }\n"
+                "int main(void) { return mk().p[0]; }\n"
+                % (aggregate, nbytes, aggregate, aggregate))
+
+    def test_exactly_the_buffer_is_accepted(self, tmp_path):
+        """The bound is the last size that fits, not the first that does
+        not -- an off-by-one here rejects a legal program."""
+        r = self._compile(tmp_path, self._returning(SRET_BUF_SIZE))
+        assert r.returncode == 0, r.stderr
+
+    def test_one_byte_over_is_rejected(self, tmp_path):
+        r = self._compile(tmp_path, self._returning(SRET_BUF_SIZE + 1))
+        assert r.returncode == 1, r.stdout + r.stderr
+        assert "overflows" in r.stderr and "__sret_buf" in r.stderr, r.stderr
+
+    def test_message_gives_both_sizes(self, tmp_path):
+        """The struct's size and the buffer's, so the reader can see how far
+        over it is without going to look the buffer up."""
+        r = self._compile(tmp_path, self._returning(400))
+        assert "400-byte struct" in r.stderr, r.stderr
+        assert f"{SRET_BUF_SIZE}-byte" in r.stderr, r.stderr
+
+    def test_union_is_named_a_union(self, tmp_path):
+        r = self._compile(tmp_path, self._returning(400, aggregate="union"))
+        assert "400-byte union" in r.stderr, r.stderr
+
+    def test_a_big_struct_is_fine_if_it_is_not_returned(self, tmp_path):
+        """Only the return path goes through the buffer.  Passing one by
+        pointer, which is what the diagnostic tells the user to do, has to
+        keep working at any size."""
+        r = self._compile(tmp_path, """
+struct s { char p[1000]; };
+void fill(struct s *v) { v->p[0] = 1; }
+int main(void) { struct s v; fill(&v); return v.p[0]; }
+""")
+        assert r.returncode == 0, r.stderr
