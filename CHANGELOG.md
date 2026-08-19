@@ -85,6 +85,18 @@ reports rather than from the fixes. It found more than it confirmed.
   `_prt_dec32` wrote straight to `__conout`, so `printf("[%ld]\n", 1234567L)`
   returned 3 for the ten bytes it produced.
 
+- **The documented link line defined `__sret_buf` twice.** The struct-return
+  buffer lived in the same runtime module as the 32-bit arithmetic helpers,
+  so it had two homes: the runtime the compiler embeds, and `rt_arith32` in
+  `runtime.lib`. A program that returned a struct embedded the buffer, and
+  any later pull of `rt_arith32` -- printing a `long`, say, which reaches the
+  32-bit helpers through libc rather than through the compiler -- brought a
+  second definition with it. L80 keeps the first and links on, so this was
+  silent until um80 0.3.46 started reporting a recorded error; the second
+  buffer was still allocated, costing 256 bytes of every affected binary.
+  `__sret_buf` now has its own module, `rt_sret.mac`, which the linker pulls
+  only when the symbol is genuinely unresolved.
+
 ### Known limitations
 
 Recorded so they are not rediscovered; `todo.txt` has the full list.
@@ -95,8 +107,9 @@ Recorded so they are not rediscovered; `todo.txt` has the full list.
 - `%.*f` / `%*f`, and `%lf` / `%le` / `%lg` under auto-detection or
   `--printf float`, are not registered: the conversion is echoed verbatim and
   every later one in that call reads the wrong argument.
-- `__sret_buf` is defined by both the embedded runtime and `runtime.lib`, so
-  the documented link line can define it twice; L80 keeps the first.
+- A struct return larger than 256 bytes overflows `__sret_buf`: the copy is
+  an `ldir` of the struct's full size into a `DS 256` buffer, and nothing
+  checks the type against it.
 
 ## 0.6.0
 

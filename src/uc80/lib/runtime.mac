@@ -1243,8 +1243,6 @@ __ffs32_zero:
 	PUBLIC	__tmp32
 __tmp32:
 	DW	0,0
-	PUBLIC	__sret_buf
-__sret_buf:	DS	256		; Struct return buffer
 __mul32_mcd:
 	DW	0,0
 __mul32_mpr:
@@ -4436,5 +4434,23 @@ _longjmp_valok:
 	LD	L,C
 	RET
 
+
+; ============================================================
+; rt_sret.mac
+; ============================================================
+	CSEG
+; rt_sret.mac - struct return buffer
+; Split out of rt_arith32.mac: __sret_buf is where a function returning a
+; struct by value leaves its result, so every translation unit that returns
+; a struct references it, and it has nothing to do with 32-bit arithmetic.
+; Sharing a module with the arith32 code gave it two homes -- the runtime
+; the compiler embeds and rt_arith32 in runtime.lib -- and a program that
+; embedded it and then pulled rt_arith32 for a 32-bit helper defined it
+; twice.  Alone in its own module it is pulled only when it is unresolved.
+
+
+	DSEG
+	PUBLIC	__sret_buf
+__sret_buf:	DS	256		; Struct return buffer
 
 	END

@@ -140,12 +140,16 @@ reproduced by the verification pass; repros are in the mbasic write-up.
   - _auto_detect_printf_features does not descend into a `default:` label or
     an initializer list, so a printf there is invisible to it.  SILENT.
 
-  - __sret_buf is defined by the embedded runtime AND by runtime.lib, so
-    uc80's own documented link line can define it twice.  L80 keeps the
-    first, and the two definitions are not even the same size (64 bytes in
-    the legacy libc.rel.mac, 256 in the runtime), so a struct return larger
-    than the surviving buffer would overflow it.  ul80 now reports the
-    duplicate; the fix belongs here.
+  - A struct return larger than 256 bytes overflows __sret_buf.  The buffer
+    is DS 256 and nothing checks the returned type against it: returning a
+    402-byte struct emits `ld BC,402` / `ldir` straight into it, writing 146
+    bytes past the end over whatever storage follows.  SILENT -- the value
+    still reads back correctly, because nothing has used the clobbered bytes
+    yet -- and it scales with the struct, so a big enough one reaches
+    anything.  Either bound the copy with a diagnostic or return via a
+    caller-supplied hidden pointer, which is what the size argues for.
+    (The duplicate __sret_buf definition that used to be recorded here is
+    fixed: it now has its own runtime.lib module, rt_sret.mac.)
 
   - _merge_array_size compares only the outermost element count.  Inner
     dimensions, element types and declarator shape are never checked, so
@@ -206,7 +210,7 @@ reproduced by the verification pass; repros are in the mbasic write-up.
   - ul80 reports a multiply-defined global but still exits 0, because L80
     keeps the first definition and produces output.  Whether the status
     should change is a policy question; it would reject link lines L80
-    accepts, including uc80's own (see __sret_buf above).
+    accepts.  uc80's own link line no longer trips it.
 
 
 Not bugs, recorded so they are not re-reported:
