@@ -109,7 +109,7 @@ as superseded rather than merely improved on.
 	um80 .Z80 leaks across passes	fixed	um80 a38cc15
 	ul80 discarded its own errors	fixed	um80 54e9a20
 	__sret_buf defined twice	fixed	c81854a
-	struct return over 256 bytes	fixed	f9a5aa2
+	struct return over 256 bytes	fixed	714d9b7
 
 printf("%f") was wrong for every |value| >= 65536 and often emitted bytes
 that were not digits - 1000000.0 printed as "3906.00///" and -123456.0
