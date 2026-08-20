@@ -5117,6 +5117,21 @@ class CodeGenerator:
 
         self.gen_compound_stmt(func.body)
 
+        # The prologue reserved locals_size before a line of the body was
+        # generated; the body then handed out the slots.  If it wanted more
+        # than was reserved, the extra locals sit below SP -- or on the
+        # return slots, or at (IX+0) on top of the saved IX -- and every
+        # symptom of that is silent.  Sizing and allocation disagreeing is
+        # a compiler bug, so say so rather than emit it.
+        if use_shared_storage:
+            handed_out = self._shared_local_offset
+        else:
+            handed_out = -self.ctx.local_offset
+        if handed_out > locals_size:
+            raise CodegenError(
+                f"internal error: {name} reserved {locals_size} bytes of "
+                f"automatic storage but its body used {handed_out}")
+
         epilogue_label = f"@{name}_ret"
         self.ctx.emit_label(epilogue_label)
 

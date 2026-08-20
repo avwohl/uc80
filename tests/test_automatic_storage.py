@@ -158,3 +158,45 @@ int main(void) { printf("%d\\n", f()); return 0; }
 def test_two_locals_a_frame_apart_do_not_alias(tmp_path):
     out = build_and_run(tmp_path, ALIASING_FRAME, ("--no-shared-storage",))
     assert "11022\n" in out, out
+
+
+ZERO_FRAME = """#include <stdio.h>
+int inner(int v) { struct T { int x; }; struct T s; s.x = v; return s.x; }
+int mid(int n) {
+    int acc[4]; int i;
+    for (i = 0; i < 4; i++) acc[i] = i;
+    if (n > 0) acc[0] += mid(n - 1);
+    acc[0] += inner(0);
+    return acc[0] + acc[1] + acc[2] + acc[3];
+}
+int main(void) { printf("%d\\n", mid(2)); printf("alive\\n"); return 0; }
+"""
+
+
+def test_a_function_whose_only_local_is_a_body_scoped_tag_gets_a_frame(tmp_path):
+    """Sizing said zero, so the function was denied shared storage, no
+    frame was reserved either, and the local resolved to (IX+0) -- the word
+    the prologue's `push IX` had just written.  The return address survived
+    but the caller's frame pointer did not."""
+    out = build_and_run(tmp_path, ZERO_FRAME, ("--printf", "int"))
+    assert "18\nalive\n" in out, out
+
+
+STMT_EXPR_ASSIGN = """#include <stdio.h>
+struct A { int a, b; };
+int calls = 0;
+struct A bar(void) { calls++; struct A r = {11, 22}; return r; }
+int main(void) {
+    struct A d;
+    d = ({ bar(); });
+    printf("%d %d %d\\n", d.a, d.b, calls);
+    return 0;
+}
+"""
+
+
+def test_assigning_a_statement_expression_still_evaluates_it(tmp_path):
+    """The whole expression was dropped -- the call was not emitted, so the
+    side effect went too, and the copy read from a stale HL."""
+    out = build_and_run(tmp_path, STMT_EXPR_ASSIGN, ("--printf", "int"))
+    assert "11 22 1\n" in out, out
