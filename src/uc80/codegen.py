@@ -12459,7 +12459,13 @@ class CodeGenerator:
 
         self.ctx.emit_label(end_label)
 
-    def _ix_reach(self, offset: int) -> int:
+    @staticmethod
+    def _ix_in_range(offset: int, span: int = 1) -> bool:
+        """True if every byte of a ``span``-byte access at ``offset`` is
+        within the signed-byte displacement."""
+        return -128 <= offset and offset + span - 1 <= 127
+
+    def _ix_reach(self, offset: int, span: int = 1) -> int:
         """Bring ``offset`` within reach of an (IX+d) displacement.
 
         d is a signed byte, so a frame deeper than 128 bytes cannot be
@@ -12468,7 +12474,7 @@ class CodeGenerator:
         ``_ix_release`` once its accesses are done.  Nothing is clobbered:
         BC is saved around the addition and IX is restored from the stack.
         """
-        if -128 <= offset <= 127:
+        if self._ix_in_range(offset, span):
             return offset
         self.ctx.emit_instr("push", "IX")
         self.ctx.emit_instr("push", "BC")
@@ -12477,9 +12483,9 @@ class CodeGenerator:
         self.ctx.emit_instr("pop", "BC")
         return 0
 
-    def _ix_release(self, offset: int) -> None:
-        """Undo ``_ix_reach`` for the same offset."""
-        if not -128 <= offset <= 127:
+    def _ix_release(self, offset: int, span: int = 1) -> None:
+        """Undo ``_ix_reach`` for the same offset and span."""
+        if not self._ix_in_range(offset, span):
             self.ctx.emit_instr("pop", "IX")
 
     def _load_local(self, sym: Symbol) -> None:
@@ -12487,10 +12493,10 @@ class CodeGenerator:
         if sym.uses_shared_storage:
             self.ctx.emit_instr("ld", f"HL,(??AUTO+{sym.shared_offset})")
         else:
-            base = self._ix_reach(sym.offset)
+            base = self._ix_reach(sym.offset, 2)
             self.ctx.emit_instr("ld", f"L,({ix_off(base)})")
             self.ctx.emit_instr("ld", f"H,({ix_off(base + 1)})")
-            self._ix_release(sym.offset)
+            self._ix_release(sym.offset, 2)
 
     def _store_local(self, sym: Symbol, size: int = 0) -> None:
         """Store HL into a local variable."""
@@ -12507,17 +12513,17 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", "L,A")
                 self.ctx.emit_instr("ld", "H,0")
             else:
-                base = self._ix_reach(sym.offset)
+                base = self._ix_reach(sym.offset, 1)
                 self.ctx.emit_instr("ld", f"({ix_off(base)}),L")
-                self._ix_release(sym.offset)
+                self._ix_release(sym.offset, 1)
         elif sym.uses_shared_storage:
             # Store to shared automatic storage
             self.ctx.emit_instr("ld", f"(??AUTO+{sym.shared_offset}),HL")
         else:
-            base = self._ix_reach(sym.offset)
+            base = self._ix_reach(sym.offset, 2)
             self.ctx.emit_instr("ld", f"({ix_off(base)}),L")
             self.ctx.emit_instr("ld", f"({ix_off(base + 1)}),H")
-            self._ix_release(sym.offset)
+            self._ix_release(sym.offset, 2)
 
     def _load_local_32(self, sym: Symbol) -> None:
         """Load a 32-bit local variable into DEHL (DE=high, HL=low)."""
@@ -12525,12 +12531,12 @@ class CodeGenerator:
             self.ctx.emit_instr("ld", f"HL,(??AUTO+{sym.shared_offset})")
             self.ctx.emit_instr("ld", f"DE,(??AUTO+{sym.shared_offset + 2})")
         else:
-            base = self._ix_reach(sym.offset)
+            base = self._ix_reach(sym.offset, 4)
             self.ctx.emit_instr("ld", f"L,({ix_off(base)})")
             self.ctx.emit_instr("ld", f"H,({ix_off(base + 1)})")
             self.ctx.emit_instr("ld", f"E,({ix_off(base + 2)})")
             self.ctx.emit_instr("ld", f"D,({ix_off(base + 3)})")
-            self._ix_release(sym.offset)
+            self._ix_release(sym.offset, 4)
 
     def _store_local_32(self, sym: Symbol) -> None:
         """Store DEHL (32-bit) into a local variable."""
@@ -12538,12 +12544,12 @@ class CodeGenerator:
             self.ctx.emit_instr("ld", f"(??AUTO+{sym.shared_offset}),HL")
             self.ctx.emit_instr("ld", f"(??AUTO+{sym.shared_offset + 2}),DE")
         else:
-            base = self._ix_reach(sym.offset)
+            base = self._ix_reach(sym.offset, 4)
             self.ctx.emit_instr("ld", f"({ix_off(base)}),L")
             self.ctx.emit_instr("ld", f"({ix_off(base + 1)}),H")
             self.ctx.emit_instr("ld", f"({ix_off(base + 2)}),E")
             self.ctx.emit_instr("ld", f"({ix_off(base + 3)}),D")
-            self._ix_release(sym.offset)
+            self._ix_release(sym.offset, 4)
 
     def _store_local_64(self, sym: Symbol) -> None:
         """Store __acc64 (64-bit) into a local variable."""
