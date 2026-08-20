@@ -86,9 +86,6 @@ Compiler
     uninitialized one is fine.  The proper fix is for every one of those
     sites to go through _ix_reach / _ix_release the way the scalar paths do.
 
-  - um80 assembles an out-of-range (IX+d) displacement, keeping the low
-    byte, rather than reporting it.  That is what made the above silent.
-
   - _merge_array_size compares only the outermost element count.  Inner
     dimensions, element type and declarator shape are never checked, so
     `extern int m[2][3];` followed by `int m[2][7];` is accepted and the
@@ -181,6 +178,10 @@ Assembler and linker (../um80_and_friends)
     blocks of the same name.  uc80 no longer depends on this -- separately
     compiled units put their uninitialized data in DSEG -- but hand-written
     assembly using named commons does.
+
+  - um80 assembles an out-of-range (IX+d) displacement, keeping the low
+    byte, rather than reporting it.  That is what made the compiler's own
+    over-range offsets silent.
 
   - um80 leaves a stale .rel/.prn from an earlier successful run in place
     when a later assembly fails, so a build script that checks for the file
