@@ -423,6 +423,15 @@ page .z80 .8080 .radix .list .xlist .sall .lall .xall .phase .dephase .comment
 """.split())
 
 
+# What a colon-less label is followed by.  `SET`, `AND`, `OUT`, `PAGE` and
+# friends are mnemonics *and* legal symbol names, so the token alone cannot
+# say which one a column-0 word is; what follows it can.  `SET equ 5` is a
+# label being defined and MACRO-80 requires it in column 0, where indenting
+# it turns it into the SET instruction.  `SET 1,(HL)` is the instruction.
+_ASM_LABEL_FOLLOWERS = frozenset(
+    "equ set defl db dw dd ds defb defw defs defm macro".split())
+
+
 def _asm_template_text(node) -> str:
     """Concatenate an AsmDeclaration's adjacent string-literal pieces.
 
@@ -457,8 +466,11 @@ def _format_asm_block(text: str, file_scope: bool = False) -> list[str]:
         if line[0] in " \t" or line.lstrip().startswith(";"):
             out.append(line)
             continue
-        first = line.split(None, 1)[0]
-        if not first.endswith(":") and first.lower() in _ASM_OPCODES:
+        parts = line.split(None, 2)
+        first = parts[0]
+        second = parts[1].lower() if len(parts) > 1 else ""
+        if (not first.endswith(":") and first.lower() in _ASM_OPCODES
+                and second not in _ASM_LABEL_FOLLOWERS):
             # Bare mnemonic in column 0 - MACRO-80 would read it as a label.
             out.append("\t" + line)
         else:
@@ -4128,6 +4140,18 @@ class CodeGenerator:
                                     if not f.startswith('spec:'))) or 'none'
         seen = set()
         for length, spec in self._printf_specs_used:
+            if length == '*':
+                text = '%*' + spec
+                if text in seen:
+                    continue
+                seen.add(text)
+                self.warnings.append(
+                    f"printf conversion '{text}' takes its width or precision "
+                    f"from an argument, which this libc does not implement; "
+                    f"the specification is echoed verbatim at run time, the "
+                    f"int argument is not consumed, and every later "
+                    f"conversion in that call reads the wrong argument")
+                continue
             if length in self._PRINTF_IGNORED_LENGTHS:
                 handled, exists = spec in base, spec in all_base
             elif length == 'l':
@@ -4490,16 +4514,19 @@ class CodeGenerator:
             # Skip flags: -, +, space, #, 0
             while i < len(fmt) and fmt[i] in '-+ #0':
                 i += 1
-            # Skip width (digits or *)
+            # Width (digits, or * for "take it from an argument")
+            star = False
             if i < len(fmt) and fmt[i] == '*':
+                star = True
                 i += 1
             else:
                 while i < len(fmt) and fmt[i].isdigit():
                     i += 1
-            # Skip precision
+            # Precision
             if i < len(fmt) and fmt[i] == '.':
                 i += 1
                 if i < len(fmt) and fmt[i] == '*':
+                    star = True
                     i += 1
                 else:
                     while i < len(fmt) and fmt[i].isdigit():
@@ -4517,6 +4544,13 @@ class CodeGenerator:
                 spec = fmt[i]
                 i += 1
                 if used is not None:
+                    if star:
+                        # Recorded so the diagnostic can see it.  The
+                        # runtime parser does not implement '*': it does
+                        # not read the int argument, so the conversion and
+                        # every one after it in the call takes the wrong
+                        # argument, silently.
+                        used.append(('*', spec))
                     used.append((length, spec))
                 if spec in 'dDiuUoOxXcCsSpn':
                     if length == 'll':

@@ -176,6 +176,37 @@ class TestFormatAsmBlock:
         ]
 
 
+
+class TestColonLessLabelNamedLikeAMnemonic:
+    """A MACRO-80 label written without a colon MUST be in column 0, and
+    nothing stops it being spelt SET, AND, OUT, PAGE or NAME.  Indenting it
+    turns the definition into an instruction; the README promises the text
+    goes through unchanged.  What follows the word is what tells them
+    apart."""
+
+    @pytest.mark.parametrize("line", [
+        "SET\tequ 5",
+        "AND\tequ 1",
+        "OUT\tdb 1",
+        "PAGE\tdw 2",
+        "NAME\tds 4",
+        "SUB\tdefl 3",
+        "IN\tmacro",
+    ])
+    def test_a_definition_stays_in_column_zero(self, line):
+        assert _format_asm_block(line)[1] == line
+
+    @pytest.mark.parametrize("line", [
+        "set 1,(hl)",
+        "and a",
+        "out (5),a",
+        "sub 3",
+        "in a,(0)",
+        "or b",
+    ])
+    def test_an_instruction_is_still_indented(self, line):
+        assert _format_asm_block(line)[1] == "\t" + line
+
 class TestAsmInFunction:
     """`asm("...")` inside a function body."""
 

@@ -65,6 +65,18 @@ class TestLibDir:
         monkeypatch.setenv("UC80_LIB_DIR", str(tmp_path))
         assert uc80.lib_dir() == tmp_path
 
+    def test_env_override_is_made_absolute(self, tmp_path, monkeypatch):
+        """A relative override used to come back verbatim, so
+        ``LIB=$(uc80 --print-lib-dir)`` captured in one directory named a
+        different tree when used from another -- or fell back to the
+        packaged one.  Either way, silently."""
+        (tmp_path / "mylib").mkdir()
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("UC80_LIB_DIR", "mylib")
+        got = uc80.lib_dir()
+        assert got.is_absolute(), got
+        assert got == (tmp_path / "mylib").resolve()
+
     def test_env_override_ignored_when_not_a_directory(self, monkeypatch):
         monkeypatch.setenv("UC80_LIB_DIR", "/no/such/directory/anywhere")
         assert uc80.lib_dir() == PKG_LIB

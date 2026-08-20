@@ -36,7 +36,9 @@ def lib_dir() -> Path:
     Set ``UC80_LIB_DIR`` to use a library tree built somewhere else, which is
     what makes uc80 usable when it is installed into a read-only
     site-packages.  The override is honoured only if it names an existing
-    directory, and :func:`lib_file` applies it per file, so a directory
+    directory - resolved to an absolute path, so a relative override means
+    the same tree wherever it is read - and :func:`lib_file` applies it per
+    file, so a directory
     holding nothing but the two built ``.lib`` files is a valid override and
     cannot hide ``crt0.mac`` or ``include/``.
 
@@ -47,7 +49,14 @@ def lib_dir() -> Path:
     """
     env = os.environ.get("UC80_LIB_DIR")
     if env:
-        p = Path(env)
+        # Absolute.  A relative override used to be returned as it was
+        # written, so ``LIB=$(uc80 --print-lib-dir)`` captured a path that
+        # meant a different directory -- or nothing -- as soon as it was
+        # used from anywhere else, and the link went to the wrong tree with
+        # nothing said.  (A relative override is still read against the
+        # current directory each time it is asked for; what it cannot do
+        # any more is hand out a path that only works from here.)
+        p = Path(env).resolve()
         if p.is_dir():
             return p
     return _PKG_LIB
