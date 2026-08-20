@@ -59,6 +59,18 @@ aggregate and went looking for what else was wrong nearby.
 
 ### Fixed
 
+- **A struct or union tag defined inside a function body was sized as
+  zero.** Frame sizing runs before the body is generated and the tag was
+  not registered yet, so `struct L { int p, q, r, s; }; struct L x;` gave
+  `x` no storage and the next local was laid on top of it. A typedef or tag
+  declared in one function also stayed registered for the next, which let
+  frame sizing and the shared-storage plan -- they run at different times --
+  size the same declaration two different ways.
+
+- **A call in a declaration inside a statement expression was invisible to
+  the call graph,** so `({ S q = f(4); q; })` as the only use of `f` had it
+  removed as dead and the link failed on the call still emitted for it.
+
 - **A name declared in a block stayed visible after the block closed.**
   C23 6.2.1p4 ends its scope at the brace; only the extern set was being
   restored. With a different type inside -- a block-local function pointer,

@@ -204,3 +204,12 @@ void fill(struct s *v) { v->p[0] = 1; }
 int main(void) { struct s v; fill(&v); return v.p[0]; }
 """)
         assert r.returncode == 0, r.stderr
+
+
+def test_the_libc_generator_does_not_define_it_either():
+    """split_libc.py writes lc_data.mac.  It carried its own 64-byte
+    __sret_buf, so regenerating the library reintroduced the duplicate --
+    at a quarter of the size codegen bounds the fallback copy against, and
+    L80 keeps whichever definition it links first."""
+    text = (LIB_DIR / "split_libc.py").read_text()
+    assert "__sret_buf:" not in text, "the generator defines the buffer again"

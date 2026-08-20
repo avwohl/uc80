@@ -64,3 +64,77 @@ EXPECTED = ("7 9 9 11\n"        # array elements from calls
 def test_an_aggregate_value_is_copied_wherever_it_appears(tmp_path, flags):
     out = build_and_run(tmp_path, SOURCE, flags + ("--printf", "int"))
     assert EXPECTED in out, out
+
+
+CHAINED = """#include <stdio.h>
+typedef struct { int a, b, c; } S;
+S f(int x) { S s; s.a=x; s.b=x+1; s.c=x+2; return s; }
+int main(void) {
+    S u = {1,2,3}, t = {9,9,9}, s = {8,8,8};
+    s = t = u;
+    printf("%d %d %d %d %d %d\\n", s.a, s.b, s.c, t.a, t.b, t.c);
+
+    S w = ({ S q = f(4); q; });
+    printf("%d %d %d\\n", w.a, w.b, w.c);
+
+    S z;
+    z = ({ S q = f(7); q; });
+    printf("%d %d %d\\n", z.a, z.b, z.c);
+    return 0;
+}
+"""
+
+
+def test_an_assignment_and_a_statement_expression_designate_their_value(tmp_path):
+    """Both are expressions whose value is a struct, and both were shapes
+    _gen_address had no case for -- so nothing was emitted and the copy
+    read through whatever HL held."""
+    out = build_and_run(tmp_path, CHAINED, ("--printf", "int"))
+    assert "1 2 3 1 2 3\n4 5 6\n7 8 9\n" in out, out
+
+
+BLOCK_SCOPE_TAG = """#include <stdio.h>
+void f(int n) {
+    struct L { int p, q, r, s; };
+    struct L x;
+    int keep;
+    x.p = 1; x.q = 2; x.r = 3; x.s = 4;
+    keep = 4242;
+    if (n) f(n - 1);
+    printf("%d %d %d\\n", x.p, x.s, keep);
+}
+int main(void) { f(1); return 0; }
+"""
+
+
+@pytest.mark.parametrize("flags", [(), ("--no-shared-storage",)])
+def test_a_tag_defined_in_the_body_is_sized_before_the_frame(tmp_path, flags):
+    """Frame sizing runs before the body is generated, and the tag was not
+    registered yet, so _type_size said 0 and the next local was laid on top
+    of the struct."""
+    out = build_and_run(tmp_path, BLOCK_SCOPE_TAG, flags + ("--printf", "int"))
+    assert out.count("1 4 4242\n") == 2, out
+
+
+TYPEDEF_LEAK = """#include <stdio.h>
+typedef struct { int a, b, c; } S;
+S mk(int v) { S s; s.a=v; s.b=v+1; s.c=v+2; return s; }
+void first(void) { typedef int W[8]; W q; q[0] = 1; printf("%d\\n", q[0]); }
+void second(void) {
+    int v[8]; int i; int keep; S r;
+    for (i = 0; i < 8; i++) v[i] = i;
+    keep = 4242;
+    r = mk(50);
+    printf("%d %d %d\\n", keep, r.a, v[7]);
+}
+int main(void) { first(); second(); return 0; }
+"""
+
+
+def test_a_typedef_does_not_leak_into_the_next_function(tmp_path):
+    """A name declared inside a function is not visible in the next one.
+    Leaving it registered let frame sizing and the shared-storage plan --
+    which run at different times -- size the same declaration two ways, so
+    a slot landed past the end of the region it was allocated in."""
+    out = build_and_run(tmp_path, TYPEDEF_LEAK, ("--printf", "int"))
+    assert "1\n4242 50 7\n" in out, out

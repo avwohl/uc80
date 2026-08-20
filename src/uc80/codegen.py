@@ -431,6 +431,11 @@ page .z80 .8080 .radix .list .xlist .sall .lall .xall .phase .dephase .comment
 _ASM_LABEL_FOLLOWERS = frozenset(
     "equ set defl db dw dd ds defb defw defs defm macro".split())
 
+# ...except after these, where the second token is the instruction's target
+# and can be any symbol, including one named after a directive: `jp set`
+# is a jump, not a definition of a label called `jp`.
+_ASM_TAKES_A_SYMBOL = frozenset("jp jr call djnz rst".split())
+
 
 def _asm_template_text(node) -> str:
     """Concatenate an AsmDeclaration's adjacent string-literal pieces.
@@ -470,7 +475,8 @@ def _format_asm_block(text: str, file_scope: bool = False) -> list[str]:
         first = parts[0]
         second = parts[1].lower() if len(parts) > 1 else ""
         if (not first.endswith(":") and first.lower() in _ASM_OPCODES
-                and second not in _ASM_LABEL_FOLLOWERS):
+                and (second not in _ASM_LABEL_FOLLOWERS
+                     or first.lower() in _ASM_TAKES_A_SYMBOL)):
             # Bare mnemonic in column 0 - MACRO-80 would read it as a label.
             out.append("\t" + line)
         else:
@@ -1490,6 +1496,13 @@ class CallGraphAnalyzer:
                     self._analyze_stmt(item, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.AsmDeclaration):
             self._analyze_asm(stmt, calls, address_taken)
+        elif isinstance(stmt, ast.Declaration):
+            # A declaration reached on its own rather than as an item of a
+            # compound statement -- the body of a statement expression, say.
+            for init_decl in stmt.declarators or []:
+                if isinstance(init_decl, ast.InitDeclaratorWithInit):
+                    self._analyze_expr(init_decl.init, calls, address_taken,
+                                       indirect_sigs)
         elif isinstance(stmt, ast.ExpressionStmt) and stmt.expr:
             self._analyze_expr(stmt.expr, calls, address_taken, indirect_sigs)
         elif isinstance(stmt, ast.ReturnStmtValue):
@@ -1585,11 +1598,16 @@ class CallGraphAnalyzer:
             self._analyze_expr(expr.init, calls, address_taken, indirect_sigs)
 
         elif isinstance(expr, ast.StmtExpr):
-            # Statement expression - analyze all items in the body
-            for item in expr.body.items:
+            # Statement expression -- every item, not only the expression
+            # statements.  A call in a declaration's initializer,
+            # ``({ S q = f(4); q; })``, was invisible here, so f looked
+            # unreferenced and dead-function elimination removed it: the
+            # link then failed on the call the code generator still emitted.
+            for item in expr.body.items or []:
                 if isinstance(item, ast.ExpressionStmt) and item.expr:
                     self._analyze_expr(item.expr, calls, address_taken, indirect_sigs)
-                # Other statement types are handled by _analyze_stmt
+                else:
+                    self._analyze_stmt(item, calls, address_taken, indirect_sigs)
 
         elif isinstance(expr, ast.GenericSelection):
             # Analyze controlling expression and all association expressions
@@ -3447,9 +3465,12 @@ class CodeGenerator:
                 nm = function_name(decl)
                 if nm is None:
                     continue
+                type_scope = self._type_scope_snapshot()
+                self._register_body_types(decl.body)
                 sret_total, _slots = self._plan_sret_slots(decl)
                 self.call_graph_analyzer.func_storage[nm] = (
                     self._calc_locals_size(decl.body) + sret_total)
+                self._type_scope_restore(type_scope)
             self.call_graph_analyzer.compute_active_together()
             self.call_graph_analyzer.allocate_shared_storage()
 
@@ -4816,6 +4837,41 @@ class CodeGenerator:
     # site, which is what makes the size unbounded and what keeps two
     # results alive at once from overwriting each other.
 
+    def _register_body_types(self, body) -> None:
+        """Register the struct, union and enum tags a function body defines.
+
+        Frame sizing runs before any of the body is generated, and it asks
+        _type_size how big each local is.  A tag defined inside the body --
+        ``struct L { int p, q; }; struct L x;`` -- was not registered yet,
+        so the answer was 0, the variable got no storage, and the next
+        local was laid on top of it.  Silently.
+        """
+        for decl in iter_body_declarations(body):
+            try:
+                self._register_decl_spec_enums(decl.decl_specs)
+            except Exception:
+                pass
+            try:
+                self._register_inline_types(
+                    _to_legacy(resolve_base_type(decl.decl_specs)))
+            except Exception:
+                pass
+
+    def _type_scope_snapshot(self) -> tuple:
+        """Everything a function body may add to the type namespace."""
+        return (dict(self.ctx.structs), dict(self.ctx.struct_sizes),
+                dict(self.ctx.typedefs), dict(self.ctx.enum_constants))
+
+    def _type_scope_restore(self, snap: tuple) -> None:
+        """A tag or typedef declared inside a function is not visible in the
+        next one (C23 6.2.1p4).  Leaving them registered let a later
+        function resolve a name it cannot see -- and, because frame sizing
+        and the shared-storage plan run at different times, size the same
+        declaration two different ways."""
+        (self.ctx.structs, self.ctx.struct_sizes,
+         self.ctx.typedefs, self.ctx.enum_constants) = (
+            dict(snap[0]), dict(snap[1]), dict(snap[2]), dict(snap[3]))
+
     def _struct_return_size(self, ret_type) -> "int | None":
         """Size of an aggregate returned through the hidden destination
         pointer, or None if this return type is not one.
@@ -4876,18 +4932,39 @@ class CodeGenerator:
             for p in function_params(func):
                 if not isinstance(p, ast.ParamDecl):
                     continue
-                p_name = declarator_ident(p.declarator)
-                if p_name is None:
+                try:
+                    p_name = declarator_ident(p.declarator)
+                    if p_name is None:
+                        continue
+                    _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
+                    scope[p_name] = Symbol(name=p_name,
+                                           sym_type=_to_legacy(p_type),
+                                           is_param=True)
+                except Exception:
                     continue
-                _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
-                scope[p_name] = Symbol(name=p_name, sym_type=_to_legacy(p_type),
-                                       is_param=True)
             for decl in iter_body_declarations(func.body):
-                if decl_storage_class(decl.decl_specs) == "typedef":
-                    continue
-                for nm, full, _init, _is_fn in iter_var_decls(decl):
-                    if nm is not None and nm not in scope:
+                try:
+                    if decl_storage_class(decl.decl_specs) == "typedef":
+                        continue
+                    for nm, full, _init, _is_fn in iter_var_decls(decl):
+                        # The scope is flat -- it has no idea which block a
+                        # declaration is in, or whether it comes before the
+                        # call.  A name that is also a function must not be
+                        # allowed to hide it, or the plan decides the call
+                        # returns an int, gives it no slot, and the call
+                        # falls back to the shared buffer: a hard error for
+                        # an aggregate over 256 bytes and, under that, a
+                        # quiet return to one buffer for the program.
+                        if nm is None or nm in scope:
+                            continue
+                        if nm in self.ctx.function_names:
+                            continue
+                        gsym = self.ctx.globals.get(nm)
+                        if gsym is not None and is_function_type(gsym.sym_type):
+                            continue
                         scope[nm] = Symbol(name=nm, sym_type=_to_legacy(full))
+                except Exception:
+                    continue
             self.ctx.locals = scope
 
             slots: dict[int, int] = {}
@@ -4933,6 +5010,8 @@ class CodeGenerator:
         self.ctx.locals.clear()
         self.ctx.local_offset = 0
         self.ctx.regs.reset()
+        type_scope = self._type_scope_snapshot()
+        self._register_body_types(func.body)
         self._current_sret_size = self._struct_return_size(return_type)
 
         # --no-shared-storage has to reach here too: can_use_shared_storage
@@ -5051,6 +5130,7 @@ class CodeGenerator:
         self._use_shared_storage = False
         self._current_sret_size = None
         self._sret_slot_addrs = {}
+        self._type_scope_restore(type_scope)
 
     def gen_compound_stmt(self, stmt: ast.CompoundStmt) -> None:
         """Generate code for a compound statement (block)."""
@@ -5635,17 +5715,21 @@ class CodeGenerator:
                     self._store_local(sym_local)
                 return
             # HL = address of struct return buffer, fall through to copy
-        else:
-            # Other complex expression - evaluate and use as address
+        elif size <= 2:
+            # Two bytes or fewer are the value itself.
             self.gen_expr(init)
-            if size <= 2:
-                sym_local = self.ctx.locals[decl.name]
-                if sym_local.uses_shared_storage:
-                    self.ctx.emit_instr("ld", f"(??AUTO+{sym_local.shared_offset}),HL")
-                else:
-                    self._store_local(sym_local)
-                return
-            # HL = address, fall through to copy
+            sym_local = self.ctx.locals[decl.name]
+            if sym_local.uses_shared_storage:
+                self.ctx.emit_instr("ld", f"(??AUTO+{sym_local.shared_offset}),HL")
+            else:
+                self._store_local(sym_local)
+            return
+        else:
+            # Anything else designating bytes -- a cast, a conditional, a
+            # statement expression, an index.  _gen_address knows the
+            # shapes; evaluating it and hoping HL is an address is what
+            # made ``S u = ({ S t = f(1); t; });`` copy from the value 1.
+            self._gen_address(init)
 
         # Now HL has source address, copy bytes to destination
         # Use DE as destination pointer, BC for temp storage
@@ -12004,6 +12088,27 @@ class CodeGenerator:
             self.gen_assignment(expr)
             self._gen_address(expr.left)
 
+        elif isinstance(expr, ast.StmtExpr):
+            # ``({ ...; obj; })`` designates its last expression, so run
+            # the statements and take that expression's address.  Without
+            # a case here the aggregate paths read the first word of the
+            # result and used it as an address.
+            items = expr.body.items or []
+            for item in items[:-1]:
+                if isinstance(item, ast.Declaration):
+                    self.gen_local_decl(item)
+                else:
+                    self.gen_statement(item)
+            if items and isinstance(items[-1], ast.ExpressionStmt) and items[-1].expr:
+                self._gen_address(items[-1].expr)
+            else:
+                if items:
+                    if isinstance(items[-1], ast.Declaration):
+                        self.gen_local_decl(items[-1])
+                    else:
+                        self.gen_statement(items[-1])
+                self.ctx.emit_instr("ld", "HL,0")
+
         elif isinstance(expr, ast.Compound):
             # Compound literal: materialize in DSEG, return address.
             # If the initializer references runtime values, emit per-
@@ -12027,6 +12132,15 @@ class CodeGenerator:
                     self._gen_compound_array_init_to_label(
                         label, tt, expr.init.values)
             self.ctx.emit_instr("ld", f"HL,{label}")
+
+        else:
+            # Emitting nothing here is never right: the caller goes on to
+            # read or copy through HL, so it reads through whatever the
+            # last instruction happened to leave there.  Say which shape
+            # was not understood instead.
+            raise CodegenError(
+                f"cannot take the address of a "
+                f"{type(expr).__name__} expression", expr)
 
     @staticmethod
     def _mul_shift_count(expr) -> int | None:

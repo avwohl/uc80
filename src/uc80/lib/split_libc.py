@@ -491,7 +491,7 @@ _cplx_res:\tDS\t8
 """)
 
 # =====================================================================
-# lc_data.mac: global data (stdin, stdout, stderr, errno, sret_buf)
+# lc_data.mac: global data (stdin, stdout, stderr, errno)
 # =====================================================================
 print("Creating lc_data.mac...")
 write_module("lc_data.mac", f"""; lc_data.mac - global data
@@ -520,9 +520,11 @@ _stderr:\tDW\t_stderr_data
 \tPUBLIC\t_errno
 _errno:\tDW\t0
 
-; Static return buffer for struct-by-value returns
-\tPUBLIC\t__sret_buf
-__sret_buf:\tDS\t64
+; __sret_buf is NOT here.  rt/rt_sret.mac defines it, alone in its own
+; module, and codegen bounds the fallback copy against that module's size.
+; A second definition at 64 bytes used to sit in this generated block: L80
+; keeps the first one it links, so whichever came first decided how many
+; bytes the copy had, silently.
 
 ; Float printing working storage (used by printf)
 \tPUBLIC\t__ftmp
