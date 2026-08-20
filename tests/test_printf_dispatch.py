@@ -70,10 +70,13 @@ class TestFloatConversionRegistration:
                    'int main(void){ printf("%G", 1.0); return 0; }')
         assert ('G', '__printf_handle_gu') in table_specs(code)
 
-    def test_uppercase_f_shares_the_f_handler(self):
+    def test_uppercase_f_uses_the_alias_entry_point(self):
+        """%F differs from %f: an infinity prints INF and a NaN NAN, so it
+        goes through the alias that sets the uppercase flag, the same way
+        %E and %G do."""
         code = gen('int printf(const char*,...);'
                    'int main(void){ printf("%F", 1.0); return 0; }')
-        assert ('F', '__printf_handle_f') in table_specs(code)
+        assert ('F', '__printf_handle_fu') in table_specs(code)
 
     def test_handlers_get_an_extrn(self):
         code = gen('int printf(const char*,...);'

@@ -25,9 +25,17 @@
 #define M_SQRT2    1.41421356237309504880
 #define M_SQRT1_2  0.70710678118654752440
 
-#define HUGE_VAL   ((double)0x7FFFFFFF)
-#define INFINITY   HUGE_VAL
-#define NAN        ((double)0)
+/* C23 7.12: HUGE_VAL is an infinity where the implementation has one,
+   INFINITY expands to a constant representing a positive infinity, and NAN
+   to a quiet NaN.  uc80 folds these builtins to the bit patterns, so all
+   three are constant expressions and may initialize static storage.  They
+   used to be 0x7FFFFFFF and 0 -- so isinf(INFINITY) was false, and NAN
+   compared equal to zero. */
+#define HUGE_VAL   (__builtin_huge_val())
+#define HUGE_VALF  (__builtin_huge_valf())
+#define HUGE_VALL  (__builtin_huge_vall())
+#define INFINITY   (__builtin_inff())
+#define NAN        (__builtin_nanf(""))
 
 /* Trigonometric functions */
 double sin(double x);

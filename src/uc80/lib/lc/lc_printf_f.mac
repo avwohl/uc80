@@ -2,6 +2,7 @@
 	.Z80
 
 	EXTRN	_printf_loop
+	EXTRN	_printf_upper
 	EXTRN	_printf_hasprec
 	EXTRN	_printf_prec
 	EXTRN	_prt_float_prec
@@ -11,6 +12,17 @@
 	CSEG
 
 	PUBLIC	__printf_handle_f
+	PUBLIC	__printf_handle_fu
+
+; %F - set the uppercase flag and fall into %f, so an infinity prints INF
+; and a NaN NAN (C17 7.21.6.1 p8).  Same shape as __printf_handle_eu.
+__printf_handle_fu:
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_upper),A
+	POP	AF
+	JR	__printf_handle_f
+
 __printf_handle_f:
 	; Float is 32 bits (4 bytes) on stack
 	PUSH	HL

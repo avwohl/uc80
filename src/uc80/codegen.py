@@ -553,8 +553,81 @@ def _make_synthetic_float_literal(value: float) -> "ast.FloatLiteral":
     FloatLiteral.value is a uplox Token whose .text needs to parse via
     float() — so emit a plain Python repr.
     """
-    tok = _make_synthetic_token("FLOAT_LIT", repr(value))
+    text = repr(value)
+    if value != value:
+        text = "nan"
+    elif value in (float("inf"), float("-inf")):
+        # repr gives "inf", whose trailing f reads as a float suffix and
+        # leaves float_value parsing "in".  A literal that overflows is
+        # spelt the way it survives the round trip.
+        text = "-1e999" if value < 0 else "1e999"
+    tok = _make_synthetic_token("FLOAT_LIT", text)
     return ast.FloatLiteral(value=tok, pos=ast._Pos())
+
+
+# GCC spellings for the floating constants a program cannot write down.
+# math.h reaches for these; folding them here makes INFINITY and NAN real
+# constant expressions, usable in a static initializer.
+_FLOAT_CONST_BUILTINS = {
+    "__builtin_inf": float("inf"),
+    "__builtin_inff": float("inf"),
+    "__builtin_infl": float("inf"),
+    "__builtin_huge_val": float("inf"),
+    "__builtin_huge_valf": float("inf"),
+    "__builtin_huge_vall": float("inf"),
+    "__builtin_nan": float("nan"),
+    "__builtin_nanf": float("nan"),
+    "__builtin_nanl": float("nan"),
+}
+
+
+def _fold_float_const_builtins(root) -> None:
+    """Replace every ``__builtin_inf()`` / ``__builtin_nan("")`` call under
+    ``root`` with the floating literal it denotes.
+
+    Doing it on the tree, before anything looks at the call, means the
+    constant folder, the static-initializer emitter and gen_expr all see an
+    ordinary literal and need no case of their own.
+    """
+    from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+
+    def folded(node):
+        if not isinstance(node, (ast.Call, ast.CallNoArgs)):
+            return None
+        fn = node.func
+        if not isinstance(fn, ast.Identifier):
+            return None
+        value = _FLOAT_CONST_BUILTINS.get(fn.name.text)
+        if value is None:
+            return None
+        return _make_synthetic_float_literal(value)
+
+    seen = set()
+
+    def walk(node):
+        if node is None or not _dc_is(node) or id(node) in seen:
+            return
+        seen.add(id(node))
+        for f in _dc_fields(node):
+            v = getattr(node, f.name, None)
+            if isinstance(v, list):
+                for i, item in enumerate(v):
+                    repl = folded(item)
+                    if repl is not None:
+                        v[i] = repl
+                    else:
+                        walk(item)
+                continue
+            repl = folded(v)
+            if repl is not None:
+                try:
+                    object.__setattr__(node, f.name, repl)
+                except Exception:
+                    walk(v)
+                continue
+            walk(v)
+
+    walk(root)
 
 
 def is_function_type(t) -> bool:
@@ -743,7 +816,14 @@ def float_to_ieee754(f: float) -> int:
     a static-init denormal against the runtime's zero would abort
     (torture pr23941). Sign of zero is preserved.
     """
-    packed = struct.pack('>f', f)  # Big-endian single precision
+    try:
+        packed = struct.pack('>f', f)  # Big-endian single precision
+    except OverflowError:
+        # C23 6.3.1.5p2: a value too large for the destination type
+        # converts to an infinity, which is also what the hardware does.
+        # struct.pack refuses instead, and the refusal used to surface as
+        # "uc80: internal error: float too large to pack with f format".
+        return 0xFF800000 if f < 0 else 0x7F800000
     val = struct.unpack('>I', packed)[0]
     # Denormal: exp == 0 and mantissa != 0. Flush to signed zero.
     if (val & 0x7F800000) == 0 and (val & 0x007FFFFF) != 0:
@@ -3235,6 +3315,9 @@ class CodeGenerator:
         # text silently picks the fallback branch (e.g. Count++ became
         # Count--, ``+`` arithmetic skipped, ...). Mutate once here.
         self._normalize_op_fields(unit)
+        # math.h's INFINITY and NAN are spelled as GCC builtins; turn them
+        # into literals before anything asks what they are.
+        _fold_float_const_builtins(unit)
         # Same one-pass treatment for designators: replace
         # FieldDesignator(field=Token) / IndexDesignator(index=...) with
         # the bare str / int that the legacy aggregate-init code expects.
@@ -3968,7 +4051,7 @@ class CodeGenerator:
     # _printf_upper and fall into the lowercase entry point, exactly like
     # %X -> __printf_handle_xu.
     _FLOAT_HANDLERS = [('f', '__printf_handle_f'),
-                       ('F', '__printf_handle_f'),
+                       ('F', '__printf_handle_fu'),
                        ('e', '__printf_handle_e'),
                        ('E', '__printf_handle_eu'),
                        ('g', '__printf_handle_g'),
@@ -4317,137 +4400,65 @@ class CodeGenerator:
         # pass over the same unit does not double-report.
         self._printf_specs_used = []
 
-        def scan_expr(expr: ast.Expression) -> bool:
-            """Scan expression for printf calls. Returns False if non-literal format found."""
-            nonlocal uses_printf
-            if isinstance(expr, (ast.Call, ast.CallNoArgs)):
-                # Check if this is a printf-family call
-                func_name = None
-                if isinstance(expr.func, ast.Identifier):
-                    func_name = expr.func.name.text
+        # The walk has to reach every printf in the unit.  It used to
+        # enumerate the statement and expression kinds it knew, so a
+        # printf under a ``default:`` label or inside an initializer list
+        # was invisible: the unit reported that it called no printf at all,
+        # the dispatch table collapsed to its sentinel, and the conversion
+        # came out verbatim at run time -- with no warning either, since
+        # the compile-time check reads the same scan.  Walking the
+        # dataclass fields reaches every form, including ones the AST
+        # grows later.
+        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+
+        literal_formats_only = True
+        seen: set[int] = set()
+
+        def decoded_format(arg):
+            """The format string's text, or None if it is not a literal."""
+            if isinstance(arg, ast.StringLiteral):
+                return _decode_string_literal(arg.value.text)
+            # Auto-AST: adjacent literals arrive as a list, and a single
+            # literal is wrapped in one too.
+            if (isinstance(arg, list) and arg
+                    and all(isinstance(p, ast.StringLiteral) for p in arg)):
+                return "".join(_decode_string_literal(p.value.text) for p in arg)
+            return None
+
+        def visit(node):
+            nonlocal uses_printf, literal_formats_only
+            if node is None:
+                return
+            if isinstance(node, (list, tuple)):
+                for item in node:
+                    visit(item)
+                return
+            if not _dc_is(node) or id(node) in seen:
+                return
+            seen.add(id(node))
+            if isinstance(node, (ast.Call, ast.CallNoArgs)):
+                func_name = (node.func.name.text
+                             if isinstance(node.func, ast.Identifier) else None)
                 if func_name in printf_funcs:
                     uses_printf = True
                     fmt_idx = printf_funcs[func_name]
-                    if fmt_idx < len(expr.args):
-                        fmt_arg = expr.args[fmt_idx]
-                        # Auto-AST: a literal format string parses as a
-                        # list of StringLiteral pieces (single-element
-                        # list for one literal). Concat decoded bodies.
-                        decoded = None
-                        if isinstance(fmt_arg, ast.StringLiteral):
-                            decoded = _decode_string_literal(fmt_arg.value.text)
-                        elif (isinstance(fmt_arg, list) and fmt_arg
-                              and all(isinstance(p, ast.StringLiteral) for p in fmt_arg)):
-                            decoded = "".join(
-                                _decode_string_literal(p.value.text) for p in fmt_arg
-                            )
-                        if decoded is not None:
+                    args = node.args
+                    if fmt_idx < len(args):
+                        decoded = decoded_format(args[fmt_idx])
+                        if decoded is None:
+                            literal_formats_only = False
+                        else:
                             self._extract_printf_specifiers(
                                 decoded, features, self._printf_specs_used)
-                        else:
-                            return False  # Non-literal format string
-                # Scan arguments too (could have nested printf calls)
-                for arg in expr.args:
-                    if not scan_expr(arg):
-                        return False
-            elif isinstance(expr, ast.BinaryOp):
-                if not scan_expr(expr.left) or not scan_expr(expr.right):
-                    return False
-            elif isinstance(expr, ast.UnaryOp):
-                if not scan_expr(expr.operand):
-                    return False
-            elif isinstance(expr, ast.TernaryOp):
-                if not scan_expr(expr.condition) or not scan_expr(expr.true_expr) or not scan_expr(expr.false_expr):
-                    return False
-            elif isinstance(expr, ast.Cast):
-                if not scan_expr(expr.expr):
-                    return False
-            elif isinstance(expr, ast.Compound):
-                if expr.init and not scan_expr(expr.init):
-                    return False
-            elif isinstance(expr, ast.SequenceExpr):
-                # Comma operator — scan both sides.
-                if not scan_expr(expr.left) or not scan_expr(expr.right):
-                    return False
-            elif isinstance(expr, ast.StmtExpr):
-                # ``({ ... })`` — scan body items.
-                if not scan_stmt(expr.body):
-                    return False
-            elif isinstance(expr, ast.Index):
-                if not scan_expr(expr.array) or not scan_expr(expr.index):
-                    return False
-            elif isinstance(expr, (ast.Member, ast.ArrowMember)):
-                if not scan_expr(expr.obj):
-                    return False
-            elif isinstance(expr, ast.PostfixOp):
-                if not scan_expr(expr.operand):
-                    return False
-            return True
-
-        def scan_stmt(stmt) -> bool:
-            """Scan statement for printf calls. Returns False if non-literal format found."""
-            if isinstance(stmt, ast.ExpressionStmt):
-                return scan_expr(stmt.expr)
-            elif isinstance(stmt, ast.CompoundStmt):
-                for s in stmt.items:
-                    if not scan_stmt(s):
-                        return False
-            elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
-                if not scan_expr(stmt.condition):
-                    return False
-                if not scan_stmt(stmt.then_branch):
-                    return False
-                if getattr(stmt, "else_branch", None) and not scan_stmt(stmt.else_branch):
-                    return False
-            elif isinstance(stmt, ast.WhileStmt):
-                if not scan_expr(stmt.condition):
-                    return False
-                if not scan_stmt(stmt.body):
-                    return False
-            elif isinstance(stmt, ast.DoWhileStmt):
-                if not scan_stmt(stmt.body):
-                    return False
-                if not scan_expr(stmt.condition):
-                    return False
-            elif isinstance(stmt, ast.ForStmt):
-                if isinstance(stmt.init, ast.Declaration):
-                    if not scan_stmt(stmt.init):
-                        return False
-                elif isinstance(stmt.init, ast.ExpressionStmt) and stmt.init.expr:
-                    if not scan_expr(stmt.init.expr):
-                        return False
-                if stmt.condition is not None and not scan_expr(stmt.condition):
-                    return False
-                if stmt.update is not None and not scan_expr(stmt.update):
-                    return False
-                if not scan_stmt(stmt.body):
-                    return False
-            elif isinstance(stmt, ast.ReturnStmtValue):
-                if not scan_expr(stmt.value):
-                    return False
-            elif isinstance(stmt, ast.SwitchStmt):
-                if not scan_expr(stmt.expr):
-                    return False
-                if not scan_stmt(stmt.body):
-                    return False
-            elif isinstance(stmt, ast.CaseStmt):
-                if not scan_stmt(stmt.stmt):
-                    return False
-            elif isinstance(stmt, ast.LabelStmt):
-                if not scan_stmt(stmt.stmt):
-                    return False
-            elif isinstance(stmt, ast.Declaration):
-                for d in stmt.declarators or []:
-                    if isinstance(d, ast.InitDeclaratorWithInit):
-                        if not scan_expr(d.init):
-                            return False
-            return True
+            for f in _dc_fields(node):
+                visit(getattr(node, f.name, None))
 
         for decl in unit.items:
             if isinstance(decl, ast.FunctionDef) and decl.body:
-                if not scan_stmt(decl.body):
-                    self._printf_calls_seen = uses_printf
-                    return None  # Non-literal format → fall back to all
+                visit(decl.body)
+        if not literal_formats_only:
+            self._printf_calls_seen = uses_printf
+            return None  # Non-literal format → fall back to all
 
         self._printf_calls_seen = uses_printf
         if not uses_printf:
@@ -14066,14 +14077,7 @@ class CodeGenerator:
         equal to the runtime computation that produced zero (torture
         pr23941).
         """
-        import struct
-        # Pack as little-endian 32-bit float
-        packed = struct.pack('<f', value)
-        # Unpack as little-endian 32-bit unsigned integer
-        ieee_val = struct.unpack('<I', packed)[0]
-        # Flush denormal: exp == 0 and mantissa != 0 → signed zero.
-        if (ieee_val & 0x7F800000) == 0 and (ieee_val & 0x007FFFFF) != 0:
-            ieee_val &= 0x80000000
+        ieee_val = float_to_ieee754(value)
         low = ieee_val & 0xFFFF
         high = (ieee_val >> 16) & 0xFFFF
         self.ctx.emit_instr("dw", str(low))

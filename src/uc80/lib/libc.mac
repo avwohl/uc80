@@ -10231,6 +10231,20 @@ _prt_float:
 	RES	7,H
 
 _prt_float_signdone:
+	; An all-ones exponent is an infinity or a NaN.  Test it here, on
+	; the value as it arrived: the rounding pass below runs the bits
+	; through __fadd, which does not preserve the mantissa that tells
+	; the two apart, so a NaN reaching that point printed as "inf".
+	LD	A,H
+	ADD	A,A
+	LD	B,A
+	LD	A,L
+	RLCA
+	LD	A,B
+	ADC	A,0
+	CP	255
+	JP	Z,_prt_float_inf
+
 	; Check for zero (the sign bit is already cleared)
 	LD	A,H
 	OR	L
@@ -10520,13 +10534,36 @@ _prt_float_z2:
 	DJNZ	_prt_float_z2
 	JR	_prt_float_done
 
+; HL holds the high word and DE the low word, sign already emitted.  A
+; zero mantissa is an infinity, anything else a NaN; C17 7.21.6.1 p8 wants
+; the uppercase spellings for %F.
 _prt_float_inf:
-	LD	E,'i'
+	LD	A,L
+	AND	7FH
+	OR	D
+	OR	E
+	LD	HL,_prt_float_sinf
+	JR	Z,_prt_float_spec
+	LD	HL,_prt_float_snan
+_prt_float_spec:
+	LD	B,3
+_prt_float_spec1:
+	LD	A,(HL)
+	PUSH	HL
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_upper)
+	OR	A
+	LD	A,B
+	JR	NZ,_prt_float_specu
+	OR	20H			; lowercase unless %F
+_prt_float_specu:
+	LD	E,A
 	CALL	_printf_putc
-	LD	E,'n'
-	CALL	_printf_putc
-	LD	E,'f'
-	CALL	_printf_putc
+	POP	BC
+	POP	HL
+	INC	HL
+	DJNZ	_prt_float_spec1
 
 _prt_float_done:
 	POP	IX
@@ -10610,6 +10647,9 @@ _printf_dcnt:	DB	0
 _printf_width:	DB	0
 _printf_zero:	DB	0
 _printf_upper:	DB	0
+_prt_float_sinf:	DB	'INF'
+_prt_float_snan:	DB	'NAN'
+
 _printf_prec:	DB	0
 _printf_hasprec:	DB	0
 _printf_alt:	DB	0	; '#' flag — alt form for o/x/X
@@ -11536,6 +11576,17 @@ _prt_e_dexp:	DB	0
 	CSEG
 
 	PUBLIC	__printf_handle_f
+	PUBLIC	__printf_handle_fu
+
+; %F - set the uppercase flag and fall into %f, so an infinity prints INF
+; and a NaN NAN (C17 7.21.6.1 p8).  Same shape as __printf_handle_eu.
+__printf_handle_fu:
+	PUSH	AF
+	LD	A,1
+	LD	(_printf_upper),A
+	POP	AF
+	JR	__printf_handle_f
+
 __printf_handle_f:
 	; Float is 32 bits (4 bytes) on stack
 	PUSH	HL
