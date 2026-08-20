@@ -4811,14 +4811,19 @@ class CodeGenerator:
         narrower comes back in HL instead and needs no pointer.
         """
         t = ret_type
-        for _ in range(8):          # typedef chains are shallow; bound it
-            if t is None:
-                return None
+        seen: set[str] = set()
+        while t is not None:
             if is_struct_type(t):
                 size = self._type_size(t)
                 return size if size > 2 else None
             name = getattr(t, "name", None)
-            if name and name in self.ctx.typedefs:
+            # A chain of aliases is followed to its end.  A fixed depth
+            # limit here would be an ABI split: gen_return and gen_call
+            # resolve the same name and would still treat the return as an
+            # aggregate while the prologue had given up and left the
+            # parameters at IX+4, on top of the hidden pointer.
+            if name and name not in seen and name in self.ctx.typedefs:
+                seen.add(name)
                 t = self.ctx.typedefs[name]
                 continue
             return None
@@ -7096,8 +7101,12 @@ class CodeGenerator:
             # function / struct / enum / typedef).
             ret_kind = getattr(ret_type, "kind", None) if ret_type else None
 
-            if ret_kind == "struct" and self._type_size(ret_type) > 2:
-                struct_size = self._type_size(ret_type)
+            # _current_sret_size is what gen_function decided when it laid
+            # out the parameters.  Asking it, rather than resolving the
+            # return type a second time here, is what keeps the two from
+            # disagreeing about whether IX+4 holds a hidden pointer.
+            if self._current_sret_size:
+                struct_size = self._current_sret_size
                 # The caller left the address to write to at IX+4 and
                 # expects it back in HL.  Nothing here is bounded by a
                 # buffer, so the aggregate can be any size.
@@ -11961,6 +11970,14 @@ class CodeGenerator:
             # A cast to an aggregate type -- which C does not have, but
             # this compiler accepts -- designates the operand's bytes.
             self._gen_address(expr.expr)
+
+        elif (isinstance(expr, ast.BinaryOp) and expr.op == "="):
+            # ``s = t = u`` -- an assignment designates its left operand,
+            # after it has been performed.  There was no case for this and
+            # no fallback, so nothing was emitted: the inner assignment did
+            # not happen and the copy read from whatever HL held.
+            self.gen_assignment(expr)
+            self._gen_address(expr.left)
 
         elif isinstance(expr, ast.Compound):
             # Compound literal: materialize in DSEG, return address.
