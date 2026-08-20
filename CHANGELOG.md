@@ -59,6 +59,19 @@ aggregate and went looking for what else was wrong nearby.
 
 ### Fixed
 
+- **A name declared in a block stayed visible after the block closed.**
+  C23 6.2.1p4 ends its scope at the brace; only the extern set was being
+  restored. With a different type inside -- a block-local function pointer,
+  say -- every later call through the outer name was emitted with the inner
+  one's calling sequence.
+
+- **A function reached only through a pointer shared storage with its
+  caller.** Which functions can be on the stack at once was answered from
+  the direct call graph alone, so an address-taken function looked
+  unrelated to whoever called it indirectly and was packed at overlapping
+  offsets in ??AUTO: two calls through the same pointer returned the second
+  result for both.
+
 - **A local further than 128 bytes from the frame pointer was addressed
   with the low byte of its offset.** `(IX+d)` holds a signed byte and um80
   assembles a larger operand without complaint, so the access landed in the

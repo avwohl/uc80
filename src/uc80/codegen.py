@@ -1638,6 +1638,20 @@ class CallGraphAnalyzer:
                 if func in reachable.get(other, set()):
                     self.can_be_active_together[func].add(other)
 
+        # A function whose address is taken can be entered from anywhere a
+        # call through a pointer is made, which the call graph does not
+        # record.  Its region must therefore not overlap any other, or its
+        # locals sit on top of the caller's: two calls through the same
+        # pointer returned the second result for both, silently.
+        if self.address_taken:
+            everyone = set(self.call_graph)
+            for func in self.address_taken:
+                if func not in self.can_be_active_together:
+                    continue
+                self.can_be_active_together[func].update(everyone)
+                for other in everyone:
+                    self.can_be_active_together.setdefault(other, {other}).add(func)
+
         # When not in whole_program mode, all PUBLIC functions can be active together
         # since external code could call any of them on the same stack
         if not self.whole_program:
@@ -5042,6 +5056,16 @@ class CodeGenerator:
         """Generate code for a compound statement (block)."""
         # Save block-scoped extern names for scope restoration
         saved_block_externs = getattr(self.ctx, 'block_externs', set()).copy()
+        # A name declared in a block is visible from its declarator to the
+        # end of that block (C23 6.2.1p4) and no further.  Only the extern
+        # set was being restored, so ``{ int p = 2; }`` went on shadowing a
+        # file-scope p for the rest of the function -- and with a different
+        # type, as with a block-local function pointer, the wrong calling
+        # sequence was emitted for every later call.  The storage is not
+        # reclaimed: frame sizing counts every declaration in the body, so
+        # the slots stay distinct, which is what an address taken inside
+        # the block needs.
+        saved_locals = dict(self.ctx.locals)
         for item in stmt.items:
             if isinstance(item, ast.Declaration):
                 self.gen_local_decl(item)
@@ -5049,6 +5073,7 @@ class CodeGenerator:
                 self.gen_statement(item)
         # Restore block_externs on scope exit
         self.ctx.block_externs = saved_block_externs
+        self.ctx.locals = saved_locals
 
     def gen_local_decl(self, decl) -> None:
         """Generate code for a local declaration (auto-AST ast.Declaration).
