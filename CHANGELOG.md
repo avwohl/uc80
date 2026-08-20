@@ -14,11 +14,107 @@ after upgrading:
 uc80 --build-libs
 ```
 
-Everything here came out of an independent verification pass over the seven
-bugs the mbasic project reported, carried out by verifiers working from the
-reports rather than from the fixes. It found more than it confirmed.
+Two passes are recorded here. The first was an independent verification of
+the seven bugs the mbasic project reported, carried out by verifiers working
+from the reports rather than from the fixes; it found more than it
+confirmed. The second started from the 256-byte limit on returning an
+aggregate and went looking for what else was wrong nearby.
+
+### Changed
+
+- **A function returning an aggregate writes it where the caller says.**
+  The result used to go into `__sret_buf`, one static buffer the whole
+  program shared, whose address came back in HL. That capped a returned
+  aggregate at 256 bytes -- uc80 refused anything larger, which is the entry
+  below about writing past the buffer -- and it meant only one result could
+  be in flight: `arr[g(1).a] = f(90);` computes the destination address after `f`
+  returns, so `g` overwrote `f`'s bytes on the way and the assignment stored
+  `g`'s result, silently.
+
+  The caller now passes the address to write to as a hidden first argument,
+  pushed last so it lands at `IX+4`, with the declared parameters starting
+  at `IX+6`. The callee copies its result there and still leaves that
+  address in HL, so nothing that reads a result changed. The destination is
+  a slot in the caller's own frame, one per call site, which is what removes
+  the size limit and separates one call's result from the next.
+
+  This is an ABI change: **recompile every translation unit of a program
+  together**, and rebuild the libraries. An aggregate of two bytes or fewer
+  still comes back in HL and is unaffected. `__sret_buf` remains only for a
+  call whose return type could not be resolved when the slots were laid out,
+  so an ordinary program no longer reserves its 256 bytes.
+
+- **Separately compiled units no longer share one another's storage.**
+  Uninitialized statics, and the `??AUTO` region holding a shared-storage
+  function's locals, went into the blank COMMON block. That is what a common
+  block is for -- L80 puts every module's blank COMMON at the same address --
+  so with two uc80 modules in a link, one unit's globals sat on top of the
+  other's and one unit's automatic storage sat on top of the other's live
+  locals. `--no-whole-program` now puts that storage in DSEG, which the
+  linker gives each module its own space for; the bytes cost their size in
+  the image, where they are already zero. Whole-program output is unchanged.
+
+- **`%F` prints `INF` and `NAN`** (C17 7.21.6.1p8), through its own alias
+  entry point rather than sharing `%f`'s.
 
 ### Fixed
+
+- **A local declared anywhere the frame sizer did not look got no storage.**
+  Sizing walked a hand-written list of statement kinds, so `label: { int
+  a[8]; }` and `default: { int b[8]; }` reserved nothing and the array sat
+  below SP, where the next `push` wrote over it. It also sized each
+  declarator from its declared type alone, so `char s[] = "hello world"`
+  counted as zero bytes. Both were silent, and a function eligible for
+  shared storage escaped the second half, so it showed only in recursive and
+  variadic functions.
+
+- **An unnamed parameter was skipped rather than stepped over,** so in
+  `int f(int, int x)` every parameter after the unnamed one read the
+  argument before it -- `x` returned the first argument. Abstract
+  declarators (`char *`) did the same.
+
+- **A local array ignored index designators:** `int a[] = {[9]=91, [0]=2}`
+  filled positionally, putting 91 in `a[0]`. The same declaration at file
+  scope was always right, so the two storage durations disagreed about one
+  initializer.
+
+- **`--no-shared-storage` produced unlinkable output.** The flag gated the
+  allocation pass but not the decision to use it, so functions addressed
+  `??AUTO+n` and the symbol was never defined.
+
+- **`INFINITY` was not an infinity and `NAN` was not a NaN.** math.h defined
+  them as `((double)0x7FFFFFFF)` and `((double)0)`, so `isinf(INFINITY)` was
+  false and `NAN` compared equal to zero. They are now folded from the GCC
+  builtins, which keeps them constant expressions usable in a static
+  initializer. Reaching them needed two more fixes: a literal too large for
+  binary32 stopped the compiler with "internal error: float too large to
+  pack with f format" where C23 6.3.1.5p2 says it becomes an infinity, and
+  `printf("%f")` decided "infinity" from the exponent alone, after a
+  rounding pass that does not preserve the mantissa telling an infinity from
+  a NaN -- so every NaN printed as `inf`.
+
+- **A printf under a `default:` label or inside an initializer list was
+  invisible to auto-detection,** so the unit reported that it called no
+  printf, its dispatch table collapsed to the sentinel, and the conversion
+  came out verbatim at run time. No warning either: the compile-time check
+  reads the same scan. The scan now walks the AST rather than a list of
+  statement kinds it knows.
+
+- **`%*d` and `%.*f` are diagnosed.** The runtime parser implements
+  neither: it echoes the specification and never consumes the int argument,
+  so every later conversion in the call reads the wrong one. The
+  compile-time scan skipped the star without recording it.
+
+- **A relative `UC80_LIB_DIR` came back as written,** so a captured
+  `LIB=$(uc80 --print-lib-dir)` named a different directory -- or nothing --
+  when used from anywhere else, and the link went to the packaged tree with
+  nothing said.
+
+- **Inline assembly kept a colon-less label named like a mnemonic.**
+  `_format_asm_block` indented any column-0 word that is a mnemonic, but
+  `SET`, `AND`, `OUT`, `PAGE` and `NAME` are legal symbol names and a
+  MACRO-80 label written without a colon must be in column 0, so `SET equ 5`
+  became a `SET` instruction. What follows the word decides now.
 
 - **`printf("%f")` was wrong for every `|value| >= 65536`,** and usually did
   not even emit digits: `1000000.0` printed as `3906.00///` and `-123456.0`
@@ -98,14 +194,13 @@ reports rather than from the fixes. It found more than it confirmed.
   only when the symbol is genuinely unresolved.
 
 - **Returning a struct larger than 256 bytes wrote past `__sret_buf`.** The
-  return copy is an `ldir` of the struct's full size into a `DS 256` buffer
-  and nothing bounded it, so a 402-byte struct put 146 bytes over whatever
+  return copy was an `ldir` of the struct's full size into a `DS 256` buffer
+  with nothing bounding it, so a 402-byte struct put 146 bytes over whatever
   storage followed. It stayed quiet because the value still reads back
   correctly -- the clobbered bytes are not the ones the caller looks at --
-  and how far it reached scaled with the struct. uc80 now rejects the return
-  and names both sizes; return through a pointer parameter instead. Lifting
-  the cap needs a caller-supplied hidden pointer rather than one shared
-  static buffer, which is an ABI change.
+  and how far it reached scaled with the struct. The first fix was to refuse
+  the return and name both sizes; the ABI change above then removed the
+  limit itself, so the diagnostic is gone with it.
 
 ### Known limitations
 
@@ -116,7 +211,11 @@ Recorded so they are not rediscovered; `todo.txt` has the full list.
   conversion, so they have never been implemented.
 - `%.*f` / `%*f`, and `%lf` / `%le` / `%lg` under auto-detection or
   `--printf float`, are not registered: the conversion is echoed verbatim and
-  every later one in that call reads the wrong argument.
+  every later one in that call reads the wrong argument. The `*` forms are
+  now diagnosed at compile time where the format string is a literal.
+- Float comparison does not implement NaN's unordered result, so `x == x` is
+  true for a NaN. No arithmetic in the runtime produces one; only the `NAN`
+  macro and a bit pattern read back as a float can.
 
 ## 0.6.0
 
@@ -212,4 +311,24 @@ uc80 --build-libs
 
 ## 0.5.0 and earlier
 
-Not recorded here; see `git log`.
+Only the 2026-04-30 sweep is recorded, from notes kept in `todo.txt` at the
+time; for anything else see `git log`.
+
+That sweep added `--int` / `--long` / `--long-long` switches so a test
+making an assumption about a type's width could be compiled under it, and
+then fixed what running the suites under every width uncovered:
+
+- 64-bit `++` / `--` updated only the low 16 bits.
+- A condition test on a `long long` expression ORed only the low 32 bits.
+- An implicitly declared external function got no `EXTRN`, which is what had
+  stuck many gcc-torture tests that call `abort()` / `exit()` without a
+  prototype.
+- `__builtin_memcpy` / `memset` / `abort` / `trap` / `unreachable` /
+  `malloc` and the rest now rewrite to their libc equivalents.
+- Source bytes that are not UTF-8 fall back to latin-1.
+- `__SIZE_TYPE__` / `__PTRDIFF_TYPE__` / `__WCHAR_TYPE__` are predefined
+  (they live in uc_core's `type_config` now).
+- A struct-array element initialized from a compound literal --
+  `struct Wrap arr[] = { (struct Wrap){fn}, fn };` -- stored the address of
+  the materialized literal in the first member instead of copying the bytes,
+  which showed as an infinite loop in c-testsuite 00216 under `--long=64`.

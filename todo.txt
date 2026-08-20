@@ -1,164 +1,98 @@
-We got this compiler to pass the test suites as much as possible.
-Some of the tests where listed as not passing due to the test assuming
-a given sizeof(int) or sizeof(long), or sizeof(long long).  We added
-compiler switches to specify each size so any code with assumptions
-could compile.  This uncovered various long math bugs.
+uc80 - what is left to do
+=========================
 
-A follow project is building a 386 c compiler, check ../uc386
-to see if they are using more test suites that we have and import the tests.
-  -> Checked 2026-04-30: uc386 references the same external suites
-     (c-testsuite, llvm gcc-c-torture, sdcc-regression, Fujitsu).
-     Nothing new to import.
-
-Loop fixing our tests to run how that we support all the int sizes until
-all the tests that should run do run.  Generally all the test
-for ANSI c should run exept the few that exceed address space size, like malloc(100000)
+Fixed work is not recorded here.  CHANGELOG.md carries it, in prose, with
+the reasoning; `git log` has the rest.  This file is for what is still
+wrong, what has not been tried, and what looks wrong but is not.
 
 
-Status after 2026-04-30 sweep
------------------------------
-c-testsuite (220 tests):
-  --int=16 --long=32 (default):  220 / 220
-  --int=32 --long=32:            219 / 220 — 00200 .com >62KB TPA
-                                              (the address-space-exceeded case)
-  --int=16 --long=64:            218 / 220 — 00104, 00204 use int32_t but the
-                                              config has no native 32-bit type,
-                                              so stdint.h correctly doesn't
-                                              define int32_t (per the C
-                                              standard)
-  --int=32 --long=64:            219 / 220 — 00200 .com >62KB TPA
+Test suites
+-----------
+The compiler is meant to pass the external suites as far as the target can.
+Tests that assumed a particular sizeof(int) / sizeof(long) / sizeof(long
+long) are compiled under a switch that matches the assumption (--int,
+--long, --long-long), which is what uncovered most of the long-arithmetic
+bugs.  Keep going until every test that should run does; the ones that
+should not are the few that need more address space than a CP/M TPA has,
+like malloc(100000).
 
-gcc-c-torture (sample of 500): 418 pass (84%); remaining are GCC-specific
-  features the Z80 port can't reasonably implement (alloca, &&label /
-  computed goto, __builtin_return_address, nested-function trampolines,
-  __complex__, packed attributes) plus a handful of `int32plus`-required
-  tests that we run under default --int=16.
+uc386, the sister 386 C compiler, was checked on 2026-04-30 and again on
+2026-08-20: it references the same four suites we do (c-testsuite, llvm
+gcc-c-torture, sdcc-regression, Fujitsu).  Nothing new to import.
 
-Codegen / driver fixes landed during this pass:
-  - 64-bit ++/-- for long_long (was only updating low 16 bits)
-  - condition-test for long_long expressions (was only ORing low 32 bits)
-  - emit EXTRN for implicit-external function symbols (un-stuck many
-    torture tests that called abort()/exit() without a prototype)
-  - rewrite __builtin_memcpy / memset / abort / trap / unreachable /
-    malloc / etc. to their libc equivalents
-  - latin-1 fallback for non-UTF-8 source bytes
-  - __SIZE_TYPE__ / __PTRDIFF_TYPE__ / __WCHAR_TYPE__ predefined macros
-  - struct-array element initialized from a compound literal:
-    `struct Wrap arr[] = { (struct Wrap){fn}, fn };` was storing the
-    *address* of the materialized literal in the first member instead
-    of doing a byte-copy.  Manifested as an infinite loop in
-    c-testsuite 00216 under --long=64.
+Not every suite is checked out on this machine.  ../external holds
+c-testsuite and llvm-test-suite; sdcc-regression, compiler-test-suite
+(Fujitsu) and z88dk are absent, so run_sdcc.py and run_fujitsu.py cannot
+run here at all.  run_fujitsu.py has never had a trial run.
 
 
-Bugs reported from mbasic, 2026-08-03 - ALL RESOLVED 2026-08-04
----------------------------------------------------------------
-Found while switching the mbasic BASIC compiler's Z80/CP/M backend over to
-uc80 + um80 + ul80 as its preferred toolchain (it was on z88dk).  The
-original write-up, with build commands, is in
-/home/wohl/src/mbasic/docs/dev/UC80_BUGS_TODO.md, which also carries the
-per-item status for mbasic's side.
+Status, 2026-08-20
+------------------
+c-testsuite (220 tests), default --int=16 --long=32:  218 / 220.
 
-Every item was re-verified end to end after being fixed - built, linked and
-run under cpmemu - by verifiers working from the reports alone rather than
-from the fixes.  That pass found considerably more than it confirmed; the
-new items are listed further down.
+  00129 fails to parse.  `typedef struct s s;` then `struct s s;` inside a
+        function: the parser sees TYPEDEF_NAME where a declarator name
+        belongs.  This is uc_core's C23 grammar, not codegen.
+  00204 output mismatch.  An AArch64 calling-convention test that prints
+        `long double` values and 64-bit hex; uc80's double is binary32, so
+        the reference output is not reachable.
 
-	1 asm("...") discarded		fixed		cfeed03, 44487a7
-	2 appended .mac in BSS		fixed		e422207, ee5ef8e
-	3 um80 operand handling		see below	um80 0d6bb2f, a38cc15
-	4 printf %e and %g		fixed		215b864 + ea8b824
-	5 extern array merge crash	fixed		f96c829, 744c3f2
-	6 console CR LF			fixed		96d866f
-	7 .lib packaging		fixed		bc0463e, 84ca138
+  Both predate the 2026-08 work -- verified by building at 25674b7 -- so the
+  "220 / 220" this file used to claim was already stale.
 
-Item 3 did not reproduce as reported and never could have: um80 rejects
-ADD HL,BC and ADD HL,SP identically, exits non-zero and writes no output.
-What the report describes is genuine MACRO-80 3.44 behaviour, not um80's.
-There was a real operand-dropping bug next door, and then two more found
-while checking it - see the um80 entries below.
+The other width configurations were last measured on 2026-04-30 and have
+not been re-run since:
 
-Item 4 was fixed in printf only.  sprintf, snprintf, fprintf, vprintf,
-vfprintf and vsprintf each carried their own conversion chain, so %e and %g
-still printed an empty field there, and fprintf/snprintf had no %f at all.
-ea8b824 gives the whole family one formatter, which also shrank a program
-using printf and sprintf from 7040 to 5248 bytes.
+  --int=32 --long=32:            219 / 220 -- 00200 .com exceeds the TPA
+  --int=16 --long=64:            218 / 220 -- 00104, 00204 use int32_t, and
+                                              with no native 32-bit type
+                                              stdint.h correctly does not
+                                              define it
+  --int=32 --long=64:            219 / 220 -- 00200 .com exceeds the TPA
 
-The FRE(A$) question, previously "not yet attributed", is answered: it was a
-uc80 miscompile.  The comma operator had no result type, so
-(gc(), (double)get_free_space()) was treated as int and only half the
-double reached printf.  Fixed by 68d4356, 8b9ce6e, 11cbd0d, ada0e32 - and
-see the two follow-on defects below, both of which that work introduced or
-left behind.
-
-
-Found by the verification pass, 2026-08-04
--------------------------------------------
-Two of these were regressions in 0.6.0, which is why 0.6.0 should be treated
-as superseded rather than merely improved on.
-
-	%f wrong above 65535		fixed	9306503
-	comma with a 64-bit literal	fixed	c000f4c   (0.6.0 regression)
-	printf table per unit		fixed	673ee5b, 1fb6474 (0.6.0 regression)
-	printf family divergence	fixed	ea8b824
-	enum array bound ignored	fixed	f90c57a
-	"ab" "cd" initialiser dropped	fixed	27e69d6
-	.mac rewritten by peephole	fixed	1563862
-	struct-valued comma		fixed	3c430d9
-	%f of -0.0, and %.0f		fixed	f708023
-	um80 CP A,5 drops the 5		fixed	um80 a38cc15
-	um80 .Z80 leaks across passes	fixed	um80 a38cc15
-	ul80 discarded its own errors	fixed	um80 54e9a20
-	__sret_buf defined twice	fixed	c81854a
-	struct return over 256 bytes	fixed	714d9b7
-
-printf("%f") was wrong for every |value| >= 65536 and often emitted bytes
-that were not digits - 1000000.0 printed as "3906.00///" and -123456.0
-emitted a raw backslash.  sprintf in the same libc had always been right,
-so one program could print one value two ways and get two answers.  Not a
-regression; it predates the %e/%g work.
+gcc-c-torture: 418 of the first 500 tests by name (84%), measured
+2026-04-30.  The number is stale twice over -- the runner has since gained
+an automatic --int=32 for tests tagged `int32plus`, and its per-test timeout
+went from 10 s to 20 s -- so it needs re-running before it means anything.
+What remains failing is GCC-specific: alloca, computed goto,
+__builtin_return_address, nested-function trampolines, __complex__, packed
+attributes.
 
 
 Still open
 ----------
-None of these is a silent wrong answer except where marked.  Each was
-reproduced by the verification pass; repros are in the mbasic write-up.
+Each was reproduced against the tree.  "SILENT" marks a wrong answer with no
+diagnostic.
 
-  - printf field width and the '-', '+' and ' ' flags do nothing on a float
-    conversion.  This is not float-specific: the format parser skips '-',
-    '+' and ' ' outright for every conversion, so they have never been
-    implemented at all.  %10.2f prints "1.50", not "      1.50".  Adding
-    them is a feature rather than a fix, which is why it was not rushed in
-    alongside the corrections above.
+Compiler
 
-  - %.*f and %*f are unsupported: the specification is echoed verbatim, the
-    int argument is not consumed, and every later conversion in that call
-    reads the wrong argument.  SILENT.  The compile-time diagnostic does not
-    catch it either, because _extract_printf_specifiers swallows the '*'.
-
-  - %lf, %le and %lg are not registered by auto-detection or by
-    --printf float, because _extract_printf_specifiers never adds the 'long'
-    feature for a float conversion.  SILENT.  mbasic's generated C emits %lg.
-
-  - _auto_detect_printf_features does not descend into a `default:` label or
-    an initializer list, so a printf there is invisible to it.  SILENT.
+  - printf field width and the '-', '+' and ' ' flags do nothing on %f, %e,
+    %g, %s or %c.  Width is parsed and works for the integer conversions;
+    the three flags are matched and discarded for every conversion, so they
+    have never been implemented at all.  %10.2f prints "1.50", %10s prints
+    "hi".  A feature rather than a fix.  %s and %c are the cheap half -- the
+    length is known before the first byte goes out.  %f/%e/%g need the
+    handler to capture into a buffer and pad on the way out, which
+    _printf_sink already makes possible.
 
   - _merge_array_size compares only the outermost element count.  Inner
-    dimensions, element types and declarator shape are never checked, so
-    incompatible redeclarations gcc rejects are accepted and the object size
-    depends on declaration order.  SILENT.
+    dimensions, element type and declarator shape are never checked, so
+    `extern int m[2][3];` followed by `int m[2][7];` is accepted and the
+    object's size depends on which declaration came first.  SILENT.
 
-  - A negative or zero array size is accepted; a floating-point one is not
-    diagnosed by uc80 and surfaces as a um80 parse error with no source line.
+  - A negative or zero array size is accepted -- `int a[-3]` emits `ds -6`
+    -- and a floating one is not diagnosed by uc80; it surfaces as a um80
+    parse error with no source line.
 
-  - Compound assignment to a 32-bit, 64-bit or float array element evaluates
-    the subscript twice, so a side-effecting subscript runs twice.  SILENT.
-    ada0e32's test covers only a 16-bit array.
+  - Compound assignment to a 32-bit, 64-bit or float array element
+    evaluates the subscript twice, so a side-effecting subscript runs
+    twice.  SILENT.  The 16-bit path takes the safe route and the >2-byte
+    path falls back to the rewrite that duplicates the target expression.
 
-  - uc80 --build-libs ignores UC80_LIB_DIR for its destination while
-    --print-lib-dir reports the override, so `uc80 --build-libs &&
-    LIB=$(uc80 --print-lib-dir)` links against libraries that were never
-    rebuilt.  SILENT.  lib_dir() also does not make a relative UC80_LIB_DIR
-    absolute, so the CLI and the Python API can disagree by cwd.
+  - No diagnostic for comma-operator constraint violations: `(a,b)=5`,
+    `&(a,b)` and `(a,b)++` are accepted, and file-scope `int g = (1,2);` is
+    silently initialised to 0 -- the comma operator is not allowed in a
+    constant expression at all (C23 6.6p3).
 
   - Extended asm and asm goto are not diagnosed when the enclosing function
     is eliminated as dead; the check lives in gen_asm, which never runs for
@@ -167,27 +101,72 @@ reproduced by the verification pass; repros are in the mbasic write-up.
     but contradicts the README's "the optimizers do not change, move or
     delete it".
 
-  - _format_asm_block's indentation heuristic rewrites a colon-less MACRO-80
-    label whose name happens to be a mnemonic or directive (SET, END, IN,
-    OUT, AND, OR, SUB, CP, RES, PAGE, NAME), which the README's "goes into
-    the output assembly unchanged" does not allow for.
+  - `label: }` is rejected: "internal error: unexpected token 'RBRACE'".
+    C17 required a statement after a label, but C23 -- which CLAUDE.md names
+    as the target -- lifted that (N2508 allows a label at the end of a
+    compound statement and before a declaration).  So this is a real gap,
+    not the "not a bug" it was filed as, and the message is a parser
+    fallthrough either way.  Lives in uc_core's grammar.
+
+  - uc80 --build-libs ignores UC80_LIB_DIR for its destination while
+    --print-lib-dir honours it, so `uc80 --build-libs && LIB=$(uc80
+    --print-lib-dir)` links against libraries that were never rebuilt.
+    SILENT.  build_libs.py reads and writes beside itself and has no
+    output-directory option; the cheap half is to refuse the combination
+    with a message naming both paths.
+
+Library
+
+  - %lf, %le and %lg are not registered by auto-detection or by
+    `--printf float`: _extract_printf_specifiers adds the float feature but
+    never the 'long' one, and the table emitter gates the 'l' base entry on
+    exactly that.  The conversion is echoed verbatim -- with a warning, so
+    not silent -- and mbasic's generated C emits %lg.
+
+  - %.*f and %*f are unsupported: the specification is echoed verbatim, the
+    int argument is not consumed, and every later conversion in that call
+    reads the wrong argument.  Now diagnosed at compile time wherever the
+    format string is a literal; the runtime parser still needs the feature,
+    which means reading the vararg whose width is int-size-dependent, so the
+    size has to come from the codegen-emitted table the way `int_c` does.
+
+  - Float comparison does not implement NaN's unordered result: `x == x` is
+    true for a NaN, and `<` / `>` on one are whatever the magnitude compare
+    happens to give.  No arithmetic in rt_float produces a NaN, so this is
+    only reachable through the NAN macro or a bit pattern read back as a
+    float.  Adding the test costs every float comparison in every program.
+
+  - Float arithmetic has no infinity or NaN handling either: `inf - inf` is
+    0.0 and `inf` compares as an ordinary large number.  Same trade.
+
+  - A float division plus the documented link line reports nine duplicate
+    globals (__FUNPACK, __FSGN1, __FEXP1, __FMAN1, __FNORM, __FPACK,
+    __ITOF, __NEG32, __SEXT32).  The embedded runtime supplies some float
+    routines, a libc module references others, the linker pulls
+    rt/rt_float.rel to satisfy those, and that module redefines the shared
+    cells.  Benign only because L80 keeps the first definition and exits 0.
+    The fix has a precedent: give the shared cells their own module, the way
+    __sret_buf got one.
 
   - The CR-suppression state tracks only bytes written through __conout, so
-    a console write that bypasses it - inline asm today, and BDOS-1 input
-    echo on real hardware - leaves it stale and the next '\n' loses its CR.
+    a console write that bypasses it -- inline asm today, and BDOS-1 input
+    echo on real hardware -- leaves it stale and the next '\n' loses its CR.
 
   - --no-crlf is silently ignored on a translation unit that does not define
-    main(), with no warning.
-
-  - No diagnostic for comma-operator constraint violations: (a,b)=5, &(a,b)
-    and (a,b)++ are accepted, and file-scope `int g = (1,2);` is silently
-    initialised to 0.
-
-  - %F of infinity prints "inf" rather than "INF"; %E and %G are correct.
+    main(), with no warning.  There is precedent for the warning a few lines
+    away: a unit that calls printf and defines no main() gets one.
 
   - %f ties at precision 0 round half away from zero, where IEEE and glibc
     round half to even (2.5 -> 3 against glibc's 2).  Consistent across
     %f/%e/%g.  Defensible, recorded so it is not re-reported as a surprise.
+
+Assembler and linker (../um80_and_friends)
+
+  - ul80 gives every COMMON block the same base address, so two named
+    common blocks in one link overlay each other.  Real L80 overlays only
+    blocks of the same name.  uc80 no longer depends on this -- separately
+    compiled units put their uninitialized data in DSEG -- but hand-written
+    assembly using named commons does.
 
   - um80 leaves a stale .rel/.prn from an earlier successful run in place
     when a later assembly fails, so a build script that checks for the file
@@ -201,21 +180,36 @@ reproduced by the verification pass; repros are in the mbasic write-up.
   - ul80 reports a multiply-defined global but still exits 0, because L80
     keeps the first definition and produces output.  Whether the status
     should change is a policy question; it would reject link lines L80
-    accepts.  uc80's own link line no longer trips it.
+    accepts.
 
 
-Not bugs, recorded so they are not re-reported:
-  - A struct larger than 256 bytes cannot be returned by value: __sret_buf
-    is that big and the return copy is unbounded, so uc80 rejects it rather
-    than writing past the buffer.  Returning through a pointer parameter is
-    the workaround the diagnostic points at.  Lifting the cap properly means
-    a caller-supplied hidden pointer instead of one shared static buffer,
-    which is an ABI change, not a bigger DS.
+Not bugs, recorded so they are not re-reported
+----------------------------------------------
   - Last-digit float differences vs z88dk built with --math-mbf32.  uc80 is
     32-bit IEEE 754; same 24-bit mantissa, different rounding, so results can
     differ by one ULP (5.859874 vs 5.859875).  Working as designed.
+
   - MKS$/CVS binary round-trips producing garbage.  Those depend on MBASIC's
     float bit patterns, which only MBF gives; not fixable short of adding MBF
     support.  Such programs stay on z88dk.
-  - `label: }` rejected - uc80 is right, C17 requires a statement after a
-    label.  mbasic was wrong and now emits `label: ;`.
+
+  - Compiling each unit of a program in whole-program mode (the default) and
+    linking the results does not work, and is not meant to: each unit embeds
+    crt0 and the runtime, so the link fails loudly on duplicate symbols.
+    Separate compilation means --no-whole-program, as the README says.
+
+
+Provenance note
+---------------
+This file used to carry two tables of fixed items with commit hashes.  They
+are gone; CHANGELOG.md covers the same ground.  Three of the hashes cited
+were wrong and are corrected here so the record survives:
+
+  um80 CP A,5 drops the 5           1065317 (not a38cc15)
+  um80 .Z80 leaks across passes     1065317 (not a38cc15)
+  ul80 discarded its own errors     a5bc256 (not 54e9a20), and it is a
+                                    change to ul80, not um80
+
+The mbasic write-up those items came from is cited in the old text as
+/home/wohl/src/mbasic/docs/dev/UC80_BUGS_TODO.md.  That path is on another
+host; the local sister project is ../mbasicc and has no docs directory.
