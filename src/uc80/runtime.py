@@ -219,20 +219,26 @@ class RuntimeLibrary:
             for dep in func.dependencies:
                 add_with_deps(dep)
 
-        for name in needed:
+        # Sorted, so the embedded runtime comes out in the same order every
+        # time.  Iterating the sets directly made the generated .mac differ
+        # between two compiles of the same source -- same functions, same
+        # binary, different file -- which defeats comparing output and any
+        # build system that hashes it.
+        for name in sorted(needed):
             add_with_deps(name)
 
         # Collect unique functions
         result: list[AsmFunction] = []
-        for name in required:
+        for name in sorted(required):
             func = self.functions[name]
             if id(func) not in seen_funcs:
                 seen_funcs.add(id(func))
                 result.append(func)
 
         # Sort by dependencies (simple topological sort)
-        # Functions with fewer dependencies come first
-        result.sort(key=lambda f: len(f.dependencies))
+        # Functions with fewer dependencies come first; the name breaks
+        # ties so the order is total.
+        result.sort(key=lambda f: (len(f.dependencies), f.name))
 
         return result
 

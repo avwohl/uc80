@@ -474,9 +474,15 @@ def _format_asm_block(text: str, file_scope: bool = False) -> list[str]:
         parts = line.split(None, 2)
         first = parts[0]
         second = parts[1].lower() if len(parts) > 1 else ""
+        # A definition names what follows: `FOO equ 3`, `BUF ds 10` -- three
+        # tokens.  An instruction whose operand happens to be spelt like a
+        # directive, `jp ds` or `inc ds`, has two.  `NAME macro` is the one
+        # definition with nothing after it.
+        defines_first = (second in _ASM_LABEL_FOLLOWERS
+                         and (len(parts) > 2 or second == "macro")
+                         and first.lower() not in _ASM_TAKES_A_SYMBOL)
         if (not first.endswith(":") and first.lower() in _ASM_OPCODES
-                and (second not in _ASM_LABEL_FOLLOWERS
-                     or first.lower() in _ASM_TAKES_A_SYMBOL)):
+                and not defines_first):
             # Bare mnemonic in column 0 - MACRO-80 would read it as a label.
             out.append("\t" + line)
         else:
@@ -4837,6 +4843,21 @@ class CodeGenerator:
     # site, which is what makes the size unbounded and what keeps two
     # results alive at once from overwriting each other.
 
+    # Largest finite binary32.  A constant above it is a constraint
+    # violation (C23 6.4.4p2), not a conversion, so it wants a diagnostic
+    # rather than the silent infinity the packer produces.
+    _MAX_FLOAT32 = 3.4028235677973366e38
+
+    def _float_bits(self, value: float, node=None) -> int:
+        """IEEE-754 binary32 bits for ``value``, warning if it does not fit."""
+        if (value == value and abs(value) != float("inf")
+                and abs(value) > self._MAX_FLOAT32):
+            text = f"floating constant {value!r} is outside the range a " \
+                   f"float can represent; it becomes an infinity"
+            if text not in self.warnings:
+                self.warnings.append(text)
+        return float_to_ieee754(value)
+
     def _register_body_types(self, body) -> None:
         """Register the struct, union and enum tags a function body defines.
 
@@ -7618,7 +7639,7 @@ class CodeGenerator:
                 val = float(text)
             except ValueError:
                 val = float.fromhex(text)
-            ieee_val = float_to_ieee754(val)
+            ieee_val = self._float_bits(val, expr)
             low = ieee_val & 0xFFFF
             high = (ieee_val >> 16) & 0xFFFF
             self.ctx.emit_instr("ld", f"HL,{low}")
@@ -14375,7 +14396,7 @@ class CodeGenerator:
         equal to the runtime computation that produced zero (torture
         pr23941).
         """
-        ieee_val = float_to_ieee754(value)
+        ieee_val = self._float_bits(value)
         low = ieee_val & 0xFFFF
         high = (ieee_val >> 16) & 0xFFFF
         self.ctx.emit_instr("dw", str(low))

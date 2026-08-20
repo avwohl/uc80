@@ -744,3 +744,21 @@ int main(void) { delay(); puts("done"); return 0; }
         assert "\tpush bc" in code
         assert "\tpop bc" in code
         assert "done" in self.build_and_run(tmp_path, source, name="delay2")
+
+
+class TestDeterministicOutput:
+    """Two compiles of the same source produced different .mac files: the
+    embedded runtime functions came out in set-iteration order, which
+    Python varies per process."""
+
+    def test_the_same_source_compiles_to_the_same_text(self, tmp_path):
+        src = tmp_path / "d.c"
+        src.write_text("long f(long a, long b){ return a * b + a / b; }\n"
+                       "int main(void){ return (int)f(6L, 3L); }\n")
+        outs = []
+        for i in range(4):
+            out = tmp_path / f"d{i}.mac"
+            r = run_compiler(str(src), "-o", str(out))
+            assert r.returncode == 0, r.stderr
+            outs.append(out.read_text())
+        assert len(set(outs)) == 1, "compiler output is not reproducible"

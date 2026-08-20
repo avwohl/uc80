@@ -248,6 +248,15 @@ aggregate and went looking for what else was wrong nearby.
   the return and name both sizes; the ABI change above then removed the
   limit itself, so the diagnostic is gone with it.
 
+- **Compiling the same source twice produced different assembly.** The
+  embedded runtime functions came out in set-iteration order, which Python
+  varies per process. Same functions, same binary, different file.
+
+- **An out-of-range floating constant is diagnosed rather than crashing.**
+  `1e39f` used to stop the compiler with "internal error: float too large
+  to pack"; C23 6.4.4p2 makes representability a constraint, so it now
+  warns and becomes an infinity.
+
 ### Known limitations
 
 Recorded so they are not rediscovered; `todo.txt` has the full list.

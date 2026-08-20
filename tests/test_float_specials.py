@@ -99,3 +99,33 @@ def test_a_printf_anywhere_registers_its_conversions(tmp_path):
     out = build_and_run(tmp_path, DETECTION)
     assert "[1.500000]\n" in out, out
     assert "[2.500000]\n" in out, out
+
+
+def test_a_constant_that_does_not_fit_a_float_is_diagnosed(tmp_path):
+    """C23 6.4.4p2 makes the value of a constant being representable a
+    constraint, so becoming an infinity needs saying.  It used to stop the
+    compiler with an internal error instead."""
+    import subprocess
+    import sys
+    from tests.test_struct_return_abi import REPO
+    src = tmp_path / "o.c"
+    src.write_text("static float g = 1e39f;\nint main(void){ return 0; }\n")
+    r = subprocess.run(
+        [sys.executable, "-m", "uc80.main", str(src), "-o", str(tmp_path / "o.mac")],
+        capture_output=True, text=True, cwd=str(REPO))
+    assert r.returncode == 0, r.stderr
+    assert "outside the range a float can represent" in r.stderr, r.stderr
+
+
+def test_infinity_itself_is_not_diagnosed(tmp_path):
+    import subprocess
+    import sys
+    from tests.test_struct_return_abi import REPO
+    src = tmp_path / "i.c"
+    src.write_text("#include <math.h>\nstatic double i = INFINITY;\n"
+                   "int main(void){ return isinf(i); }\n")
+    r = subprocess.run(
+        [sys.executable, "-m", "uc80.main", str(src), "-o", str(tmp_path / "i.mac")],
+        capture_output=True, text=True, cwd=str(REPO))
+    assert r.returncode == 0, r.stderr
+    assert "outside the range" not in r.stderr, r.stderr
