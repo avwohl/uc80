@@ -75,6 +75,20 @@ Compiler
     handler to capture into a buffer and pad on the way out, which
     _printf_sink already makes possible.
 
+  - A local past the reach of an (IX+d) displacement is only handled for
+    scalar loads and stores, which walk IX to the slot.  The aggregate
+    initializer paths -- _gen_local_array_init, _gen_store_member_value,
+    _gen_flat_array_init, _gen_array_init_values, _gen_bitfield_init_store,
+    _gen_zero_init_member, _gen_string_init, _gen_struct_copy -- still
+    format the offset directly, and now raise a CodegenError rather than
+    emitting an access that lands somewhere else.  So an *initialized*
+    aggregate more than 128 bytes down a stack frame is refused where an
+    uninitialized one is fine.  The proper fix is for every one of those
+    sites to go through _ix_reach / _ix_release the way the scalar paths do.
+
+  - um80 assembles an out-of-range (IX+d) displacement, keeping the low
+    byte, rather than reporting it.  That is what made the above silent.
+
   - _merge_array_size compares only the outermost element count.  Inner
     dimensions, element type and declarator shape are never checked, so
     `extern int m[2][3];` followed by `int m[2][7];` is accepted and the

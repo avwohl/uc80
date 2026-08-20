@@ -844,7 +844,23 @@ def float_to_ieee754(f: float) -> int:
 
 
 def ix_off(offset: int) -> str:
-    """Format an IX offset for assembly, always including the sign."""
+    """Format an IX offset for assembly, always including the sign.
+
+    The Z80's ``(IX+d)`` displacement is a signed byte, so anything outside
+    -128..127 cannot be encoded.  um80 assembles the operand anyway, keeping
+    the low byte, and the access then lands somewhere else entirely -- for a
+    frame over 256 bytes, on another local.  Say so instead: a frame that
+    big needs the address computed in a register pair, which the code
+    generator does not do yet, and a diagnostic is better than storage that
+    quietly moves.
+    """
+    if not -128 <= offset <= 127:
+        raise CodegenError(
+            f"frame offset {offset} is outside the -128..127 that a Z80 "
+            f"(IX+d) displacement can hold; this function's automatic "
+            f"storage is too large for the frame-pointer addressing uc80 "
+            f"emits.  Move the largest locals to file scope, or make them "
+            f"static, or split the function")
     if offset >= 0:
         return f"IX+{offset}"
     else:
@@ -12443,13 +12459,38 @@ class CodeGenerator:
 
         self.ctx.emit_label(end_label)
 
+    def _ix_reach(self, offset: int) -> int:
+        """Bring ``offset`` within reach of an (IX+d) displacement.
+
+        d is a signed byte, so a frame deeper than 128 bytes cannot be
+        addressed directly.  When it is out of range, walk IX to the slot
+        and return 0 as the offset to use; the caller must pair this with
+        ``_ix_release`` once its accesses are done.  Nothing is clobbered:
+        BC is saved around the addition and IX is restored from the stack.
+        """
+        if -128 <= offset <= 127:
+            return offset
+        self.ctx.emit_instr("push", "IX")
+        self.ctx.emit_instr("push", "BC")
+        self.ctx.emit_instr("ld", f"BC,{offset}")
+        self.ctx.emit_instr("add", "IX,BC")
+        self.ctx.emit_instr("pop", "BC")
+        return 0
+
+    def _ix_release(self, offset: int) -> None:
+        """Undo ``_ix_reach`` for the same offset."""
+        if not -128 <= offset <= 127:
+            self.ctx.emit_instr("pop", "IX")
+
     def _load_local(self, sym: Symbol) -> None:
         """Load a local variable into HL."""
         if sym.uses_shared_storage:
             self.ctx.emit_instr("ld", f"HL,(??AUTO+{sym.shared_offset})")
         else:
-            self.ctx.emit_instr("ld", f"L,({ix_off(sym.offset)})")
-            self.ctx.emit_instr("ld", f"H,({ix_off(sym.offset + 1)})")
+            base = self._ix_reach(sym.offset)
+            self.ctx.emit_instr("ld", f"L,({ix_off(base)})")
+            self.ctx.emit_instr("ld", f"H,({ix_off(base + 1)})")
+            self._ix_release(sym.offset)
 
     def _store_local(self, sym: Symbol, size: int = 0) -> None:
         """Store HL into a local variable."""
@@ -12466,13 +12507,17 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", "L,A")
                 self.ctx.emit_instr("ld", "H,0")
             else:
-                self.ctx.emit_instr("ld", f"({ix_off(sym.offset)}),L")
+                base = self._ix_reach(sym.offset)
+                self.ctx.emit_instr("ld", f"({ix_off(base)}),L")
+                self._ix_release(sym.offset)
         elif sym.uses_shared_storage:
             # Store to shared automatic storage
             self.ctx.emit_instr("ld", f"(??AUTO+{sym.shared_offset}),HL")
         else:
-            self.ctx.emit_instr("ld", f"({ix_off(sym.offset)}),L")
-            self.ctx.emit_instr("ld", f"({ix_off(sym.offset + 1)}),H")
+            base = self._ix_reach(sym.offset)
+            self.ctx.emit_instr("ld", f"({ix_off(base)}),L")
+            self.ctx.emit_instr("ld", f"({ix_off(base + 1)}),H")
+            self._ix_release(sym.offset)
 
     def _load_local_32(self, sym: Symbol) -> None:
         """Load a 32-bit local variable into DEHL (DE=high, HL=low)."""
@@ -12480,10 +12525,12 @@ class CodeGenerator:
             self.ctx.emit_instr("ld", f"HL,(??AUTO+{sym.shared_offset})")
             self.ctx.emit_instr("ld", f"DE,(??AUTO+{sym.shared_offset + 2})")
         else:
-            self.ctx.emit_instr("ld", f"L,({ix_off(sym.offset)})")
-            self.ctx.emit_instr("ld", f"H,({ix_off(sym.offset + 1)})")
-            self.ctx.emit_instr("ld", f"E,({ix_off(sym.offset + 2)})")
-            self.ctx.emit_instr("ld", f"D,({ix_off(sym.offset + 3)})")
+            base = self._ix_reach(sym.offset)
+            self.ctx.emit_instr("ld", f"L,({ix_off(base)})")
+            self.ctx.emit_instr("ld", f"H,({ix_off(base + 1)})")
+            self.ctx.emit_instr("ld", f"E,({ix_off(base + 2)})")
+            self.ctx.emit_instr("ld", f"D,({ix_off(base + 3)})")
+            self._ix_release(sym.offset)
 
     def _store_local_32(self, sym: Symbol) -> None:
         """Store DEHL (32-bit) into a local variable."""
@@ -12491,10 +12538,12 @@ class CodeGenerator:
             self.ctx.emit_instr("ld", f"(??AUTO+{sym.shared_offset}),HL")
             self.ctx.emit_instr("ld", f"(??AUTO+{sym.shared_offset + 2}),DE")
         else:
-            self.ctx.emit_instr("ld", f"({ix_off(sym.offset)}),L")
-            self.ctx.emit_instr("ld", f"({ix_off(sym.offset + 1)}),H")
-            self.ctx.emit_instr("ld", f"({ix_off(sym.offset + 2)}),E")
-            self.ctx.emit_instr("ld", f"({ix_off(sym.offset + 3)}),D")
+            base = self._ix_reach(sym.offset)
+            self.ctx.emit_instr("ld", f"({ix_off(base)}),L")
+            self.ctx.emit_instr("ld", f"({ix_off(base + 1)}),H")
+            self.ctx.emit_instr("ld", f"({ix_off(base + 2)}),E")
+            self.ctx.emit_instr("ld", f"({ix_off(base + 3)}),D")
+            self._ix_release(sym.offset)
 
     def _store_local_64(self, sym: Symbol) -> None:
         """Store __acc64 (64-bit) into a local variable."""

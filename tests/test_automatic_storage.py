@@ -113,3 +113,48 @@ def test_a_local_array_honours_index_designators(tmp_path):
     out = build_and_run(tmp_path, DESIGNATED)
     expected = "2,0,0,0,0,0,0,0,0,91,\n"
     assert out.count(expected) == 2, out
+
+
+DEEP_FRAME = """#include <stdio.h>
+int deep(int n) {
+    int pad[70];              /* 140 bytes, so what follows is past IX-128 */
+    int tail;
+    long wide;
+    int i;
+    tail = n * 100;
+    wide = n * 1000L;
+    for (i = 0; i < 70; i++) pad[i] = n;
+    if (n) deep(n - 1);
+    return tail + (int)wide + pad[0] + pad[69];
+}
+int main(void) { printf("%d %d\\n", deep(2), deep(0)); return 0; }
+"""
+
+
+def test_a_local_past_the_ix_displacement_is_still_reachable(tmp_path):
+    """(IX+d) holds a signed byte.  A local further than that from the frame
+    pointer used to be assembled with the low byte of the offset, so the
+    access landed in the caller's frame -- and for a frame over 256 bytes,
+    two locals aliased each other.  um80 assembles the operand without
+    complaint, so nothing said anything."""
+    out = build_and_run(tmp_path, DEEP_FRAME, ("--no-shared-storage",))
+    assert "2204 0\n" in out, out
+
+
+ALIASING_FRAME = """#include <stdio.h>
+int f(void) {
+    int first;
+    int pad[130];             /* 260 bytes: first and last alias mod 256 */
+    int last;
+    int i;
+    first = 11; last = 22;
+    for (i = 0; i < 130; i++) pad[i] = 0;
+    return first * 1000 + last;
+}
+int main(void) { printf("%d\\n", f()); return 0; }
+"""
+
+
+def test_two_locals_a_frame_apart_do_not_alias(tmp_path):
+    out = build_and_run(tmp_path, ALIASING_FRAME, ("--no-shared-storage",))
+    assert "11022\n" in out, out

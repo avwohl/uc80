@@ -59,6 +59,16 @@ aggregate and went looking for what else was wrong nearby.
 
 ### Fixed
 
+- **A local further than 128 bytes from the frame pointer was addressed
+  with the low byte of its offset.** `(IX+d)` holds a signed byte and um80
+  assembles a larger operand without complaint, so the access landed in the
+  caller's frame -- and once a frame passed 256 bytes, two locals aliased
+  each other. Only functions with a real stack frame were affected
+  (recursive, variadic, or built with `--no-shared-storage`); shared
+  automatic storage is addressed absolutely. Scalar loads and stores now
+  walk IX to the slot when the displacement cannot reach, and anywhere that
+  still cannot, the compiler says so instead of emitting the wrong access.
+
 - **An expression whose value is a struct was stored, not copied.** A call
   returning a struct, a member read, a cast, a conditional: each designates
   bytes, and evaluating one yields their address. Wherever an initializer or
