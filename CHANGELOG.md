@@ -4,15 +4,19 @@ All notable changes to uc80 are recorded here. Versions follow
 `major.minor.patch`: the minor number is raised when a release changes the
 observable behaviour of a program uc80 compiles.
 
-## Unreleased
+## 0.7.0
 
-A correctness release. Two of the fixes are for regressions in 0.6.0, so
-0.6.0 is superseded rather than merely improved on. Rebuild the libraries
-after upgrading:
+An ABI change, and a correctness release around it. A function returning a
+struct or union wider than HL now takes a hidden destination pointer from
+its caller, so **every translation unit of a program must be recompiled
+together**, and the libraries rebuilt:
 
 ```bash
 uc80 --build-libs
 ```
+
+Two of the fixes are for regressions in 0.6.0, so 0.6.0 is superseded
+rather than merely improved on.
 
 Two passes are recorded here. The first was an independent verification of
 the seven bugs the mbasic project reported, carried out by verifiers working
