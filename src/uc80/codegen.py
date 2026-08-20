@@ -1115,6 +1115,10 @@ def _iter_calls(body):
         if not _dc_is(node) or id(node) in seen:
             return
         seen.add(id(node))
+        # sizeof's operand is not evaluated (C23 6.5.3.4p1), so a call
+        # inside one is never made and needs no slot.
+        if isinstance(node, (ast.SizeofExpr, ast.SizeofType, ast.AlignofType)):
+            return
         if isinstance(node, (ast.Call, ast.CallNoArgs)):
             out.append(node)
         for f in _dc_fields(node):

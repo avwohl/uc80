@@ -77,9 +77,10 @@ Compiler
 
   - Each aggregate-returning call site gets its own slot in the caller's
     frame, and the slots are never reused.  Calls in different statements
-    cannot both be live, so they could share; measured over c-testsuite the
-    cost is +566 bytes of ??AUTO across 220 programs, so this is an
-    optimization rather than a problem.
+    cannot both be live, so a per-statement high-water mark would recover
+    most of it; measured over c-testsuite the cost is +566 bytes of ??AUTO
+    across 220 programs, so this is an optimization rather than a problem.
+    (An unevaluated operand no longer costs a slot.)
 
   - A local past the reach of an (IX+d) displacement is only handled for
     scalar loads and stores, which walk IX to the slot.  The aggregate
@@ -91,6 +92,20 @@ Compiler
     aggregate more than 128 bytes down a stack frame is refused where an
     uninitialized one is fine.  The proper fix is for every one of those
     sites to go through _ix_reach / _ix_release the way the scalar paths do.
+
+  - Two static functions with the same name in different files, compiled
+    together in whole-program mode, collide: one definition is emitted and
+    both call sites reach it.  SILENT.
+
+	a.c:  static int helper(void){ return 11; }
+	      int a_val(void){ return helper(); }
+	b.c:  static int helper(void){ return 22; }
+	      main(){ printf("%d %d\n", a_val(), helper()); }
+	      -> 22 22
+
+    A static name is local to its translation unit, so the label needs a
+    per-unit suffix.  The same collision presumably affects file-scope
+    static variables.
 
   - _merge_array_size compares only the outermost element count.  Inner
     dimensions, element type and declarator shape are never checked, so
