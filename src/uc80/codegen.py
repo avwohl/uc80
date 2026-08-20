@@ -969,6 +969,37 @@ def iter_body_declarations(body):
     return out
 
 
+def _iter_calls(body):
+    """Yield every call expression under ``body``, outermost first.
+
+    Used to lay out one return slot per aggregate-returning call site.
+    Order only has to be deterministic -- the slots do not overlap -- so
+    the natural field order of the walk is fine.
+    """
+    from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+
+    out = []
+    seen = set()
+
+    def walk(node):
+        if node is None:
+            return
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                walk(x)
+            return
+        if not _dc_is(node) or id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, (ast.Call, ast.CallNoArgs)):
+            out.append(node)
+        for f in _dc_fields(node):
+            walk(getattr(node, f.name, None))
+
+    walk(body)
+    return out
+
+
 @dataclass
 class CallGraphAnalyzer:
     """Analyzes call relationships between functions for shared storage optimization.
@@ -2857,6 +2888,16 @@ class CodeGenerator:
         # Switch statement context
         self._switch_cases: list[tuple[int, str]] = []
         self._switch_default: str | None = None
+        # Struct-return slot layout per function: name -> (total_bytes,
+        # {id(call_node): offset_within_region}).  Computed once, before
+        # shared storage is allocated, and read again by gen_function.
+        self._sret_plans: dict[str, tuple] = {}
+        # The current function's slots, as addresses rather than offsets:
+        # id(call_node) -> ("auto"|"ix", offset).
+        self._sret_slot_addrs: dict[int, tuple] = {}
+        # Size the current function returns through the hidden pointer at
+        # IX+4, or None when it returns in a register.
+        self._current_sret_size: int | None = None
 
     def _infer_array_size(self, var_type, init):
         """Infer array size from initializer for unsized arrays."""
@@ -3175,11 +3216,6 @@ class CodeGenerator:
                 self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
                 self.call_graph_analyzer.build_call_graph(unit)
 
-        # Shared storage allocation
-        if self.enable_shared_storage and self.call_graph_analyzer:
-            self.call_graph_analyzer.compute_active_together()
-            self.call_graph_analyzer.allocate_shared_storage()
-
         # Header
         self.ctx.emit(f"; C24 Compiler Output - {self.module_name}")
         self.ctx.emit("; Target: Z80")
@@ -3267,6 +3303,26 @@ class CodeGenerator:
             if count > 0:
                 sym.label_override = f"{name}_{count}"
             lower_seen[key] = count + 1
+
+        # Shared storage allocation.  It runs here, rather than straight
+        # after the call graph is built, because the region a function
+        # needs includes a slot per aggregate-returning call it makes, and
+        # working out which calls those are needs the file-scope typedefs
+        # and globals registered above.  func_storage is recomputed from
+        # the generator's own sizing so the ??AUTO region and the stack
+        # frame in gen_function agree byte for byte.
+        if self.enable_shared_storage and self.call_graph_analyzer:
+            for decl in unit.items:
+                if not isinstance(decl, ast.FunctionDef) or decl.body is None:
+                    continue
+                nm = function_name(decl)
+                if nm is None:
+                    continue
+                sret_total, _slots = self._plan_sret_slots(decl)
+                self.call_graph_analyzer.func_storage[nm] = (
+                    self._calc_locals_size(decl.body) + sret_total)
+            self.call_graph_analyzer.compute_active_together()
+            self.call_graph_analyzer.allocate_shared_storage()
 
         # Auto-detect printf features if not explicitly specified.
         # Run in both whole-program and separate-compilation modes so that the
@@ -4652,6 +4708,110 @@ class CodeGenerator:
         self.ctx.emit_instr("xor", "A")
         self.ctx.emit_instr("ld", "(___crlf_mode),A")
 
+    # ---- struct return by value ------------------------------------------
+    #
+    # A function returning an aggregate wider than HL takes a hidden first
+    # argument: the address the result is to be written to.  The caller
+    # pushes it last, so it sits at IX+4 and the declared parameters start
+    # at IX+6, and the callee still leaves that same address in HL so every
+    # consumer of the result can keep reading it through HL.
+    #
+    # The destination is a slot in the caller's own frame, one per call
+    # site, which is what makes the size unbounded and what keeps two
+    # results alive at once from overwriting each other.
+
+    def _struct_return_size(self, ret_type) -> "int | None":
+        """Size of an aggregate returned through the hidden destination
+        pointer, or None if this return type is not one.
+
+        Resolves typedef names, so ``typedef struct {...} T; T f(void);``
+        is recognised on both sides of the call.  Anything two bytes or
+        narrower comes back in HL instead and needs no pointer.
+        """
+        t = ret_type
+        for _ in range(8):          # typedef chains are shallow; bound it
+            if t is None:
+                return None
+            if is_struct_type(t):
+                size = self._type_size(t)
+                return size if size > 2 else None
+            name = getattr(t, "name", None)
+            if name and name in self.ctx.typedefs:
+                t = self.ctx.typedefs[name]
+                continue
+            return None
+        return None
+
+    def _plan_sret_slots(self, func) -> tuple:
+        """Give every aggregate-returning call in ``func`` its own slot.
+
+        Returns ``(total_bytes, {id(call_node): offset_within_region})``.
+        The offsets are relative to the start of the region; gen_function
+        turns them into IX-relative or ??AUTO-relative addresses once it
+        knows which kind of frame the function has.
+
+        A slot per call site rather than one buffer per program is what
+        stops ``arr[g().i] = f();`` from landing g's result in arr: the
+        destination address is computed after f returns, and with a shared
+        buffer g overwrote f's bytes on the way.
+
+        Calls returning two bytes or less get a slot too.  They return in
+        HL, but ``_gen_address`` has to be able to hand out an address for
+        ``f().m``, and that address has to be private to the call site for
+        the same reason.
+        """
+        name = function_name(func)
+        cached = self._sret_plans.get(name)
+        if cached is not None:
+            return cached
+
+        # Resolve types the way codegen will: a call through a function
+        # pointer needs the pointer's declared type, so put the parameters
+        # and every declaration in the body into scope first.  Offsets are
+        # irrelevant here -- only sym_type is read.
+        saved_locals = self.ctx.locals
+        scope = {}
+        try:
+            for p in function_params(func):
+                if not isinstance(p, ast.ParamDecl):
+                    continue
+                p_name = declarator_ident(p.declarator)
+                if p_name is None:
+                    continue
+                _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
+                scope[p_name] = Symbol(name=p_name, sym_type=_to_legacy(p_type),
+                                       is_param=True)
+            for decl in iter_body_declarations(func.body):
+                if decl_storage_class(decl.decl_specs) == "typedef":
+                    continue
+                for nm, full, _init, _is_fn in iter_var_decls(decl):
+                    if nm is not None and nm not in scope:
+                        scope[nm] = Symbol(name=nm, sym_type=_to_legacy(full))
+            self.ctx.locals = scope
+
+            slots: dict[int, int] = {}
+            total = 0
+            for call in _iter_calls(func.body):
+                if id(call) in slots:
+                    continue
+                try:
+                    ret_type = self._get_expr_type(call)
+                except Exception:
+                    continue
+                if not is_struct_type(ret_type):
+                    continue
+                size = self._type_size(ret_type)
+                if size <= 0:
+                    continue
+                slot = max(2, (size + 1) & ~1)
+                slots[id(call)] = (total, slot)
+                total += slot
+        finally:
+            self.ctx.locals = saved_locals
+
+        self._sret_plans[name] = (total, slots)
+        return total, slots
+
     def gen_function(self, func) -> None:
         """Generate code for a function definition (auto-AST FunctionDef)."""
         name = function_name(func)
@@ -4672,8 +4832,15 @@ class CodeGenerator:
         self.ctx.locals.clear()
         self.ctx.local_offset = 0
         self.ctx.regs.reset()
+        self._current_sret_size = self._struct_return_size(return_type)
 
+        # --no-shared-storage has to reach here too: can_use_shared_storage
+        # answers "is this function eligible", not "is the optimization on",
+        # and ??AUTO is only reserved when allocate_shared_storage ran.
+        # Without the flag in the condition the function addressed
+        # ??AUTO+n and the assembler had never heard of ??AUTO.
         use_shared_storage = (
+            self.enable_shared_storage and
             self.call_graph_analyzer is not None and
             self.call_graph_analyzer.can_use_shared_storage(name)
         )
@@ -4699,37 +4866,70 @@ class CodeGenerator:
         self.ctx.emit_instr("ld", "IX,0")
         self.ctx.emit_instr("add", "IX,SP")
 
+        # Return slots for the calls this function makes sit past its
+        # locals, in the same frame -- on the stack, or in ??AUTO when the
+        # function shares automatic storage.  Either way they live as long
+        # as the activation, so the result stays readable for as long as
+        # the expression that produced it is being evaluated.
+        locals_size = self._calc_locals_size(func.body)
+        sret_total, sret_slots = self._plan_sret_slots(func)
+        self._sret_slot_addrs = {}
+        if use_shared_storage:
+            base = shared_base_offset + locals_size
+            for node_id, (off, size) in sret_slots.items():
+                self._sret_slot_addrs[node_id] = ("auto", base + off, size)
+        else:
+            # Locals grow down from IX, so a slot's address is the far end
+            # of the bytes it owns.
+            for node_id, (off, size) in sret_slots.items():
+                self._sret_slot_addrs[node_id] = ("ix", -(locals_size + off + size),
+                                                  size)
+
         if not use_shared_storage:
-            local_size = self._calc_locals_size(func.body)
-            if local_size > 0:
-                self.ctx.emit_instr("ld", f"HL,-{local_size}")
+            frame_size = locals_size + sret_total
+            if frame_size > 0:
+                self.ctx.emit_instr("ld", f"HL,-{frame_size}")
                 self.ctx.emit_instr("add", "HL,SP")
                 self.ctx.emit_instr("ld", "SP,HL")
 
         # Set up parameters from the auto-AST FnDeclarator.params list.
-        param_offset = 4
+        # A hidden destination pointer for an aggregate return occupies
+        # IX+4, so the declared parameters start two bytes further in.
+        param_offset = 6 if self._current_sret_size else 4
         for p in function_params(func):
+            # A parameter with no name -- ``int f(int, int x)``, or an
+            # abstract declarator like ``char *`` -- still occupies its
+            # slot.  Skipping it outright left every later parameter
+            # reading the argument before it: ``x`` above returned the
+            # first argument, silently.
+            if not isinstance(p, (ast.ParamDecl, ast.ParamDeclAbstract,
+                                  ast.ParamDeclTypeOnly)):
+                continue
+            p_name = None
             if isinstance(p, ast.ParamDecl):
                 p_name = declarator_ident(p.declarator)
-                if p_name is None:
-                    continue
-                _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
-                p_type = _to_legacy(p_type)
-                # C99 6.7.6.3p7: parameter declared as ``T x[]`` (or with
-                # any other array shape) is adjusted to ``T *x``. Without
-                # this, indexing the param accesses the stack frame at
-                # the param's slot rather than through the pointer value
-                # the caller pushed.
-                if isinstance(p_type, lt.ArrayType):
-                    p_type = lt.PointerType(base_type=p_type.base_type)
-                size = self._type_size(p_type)
+            try:
+                _, p_type = resolve_type_from_decl(
+                    p.decl_specs, getattr(p, "declarator", None))
+            except Exception:
+                continue
+            p_type = _to_legacy(p_type)
+            # C99 6.7.6.3p7: parameter declared as ``T x[]`` (or with
+            # any other array shape) is adjusted to ``T *x``. Without
+            # this, indexing the param accesses the stack frame at
+            # the param's slot rather than through the pointer value
+            # the caller pushed.
+            if isinstance(p_type, lt.ArrayType):
+                p_type = lt.PointerType(base_type=p_type.base_type)
+            size = self._type_size(p_type)
+            if p_name is not None:
                 self.ctx.locals[p_name] = Symbol(
                     name=p_name,
                     sym_type=p_type,
                     offset=param_offset,
                     is_param=True,
                 )
-                param_offset += (size + 1) & ~1
+            param_offset += (size + 1) & ~1
 
         # Must come after the prologue and before anything main() can print.
         if name == "main" and not self.crlf_console:
@@ -4748,6 +4948,8 @@ class CodeGenerator:
         self.ctx.current_function = None
         self.ctx.current_return_type = None
         self._use_shared_storage = False
+        self._current_sret_size = None
+        self._sret_slot_addrs = {}
 
     def gen_compound_stmt(self, stmt: ast.CompoundStmt) -> None:
         """Generate code for a compound statement (block)."""
@@ -5152,6 +5354,20 @@ class CodeGenerator:
         is_float = self._is_float_type(elem_type)
         is_32bit = is_long or is_float
 
+        # An index designator says which element the value belongs to, so
+        # the positional loop below cannot be used: it stored ``{[9]=91,
+        # [0]=2}`` into a[0] and a[1] and left the rest of the array
+        # holding whatever the frame had.  _gen_array_init_values zero
+        # fills and then places each value at its own index.  A file-scope
+        # array with the same initializer was always right, so the two
+        # storage durations disagreed on the same declaration.
+        if any(isinstance(v, ast.DesignatedInit) and v.designators
+               and not isinstance(v.designators[0], str)
+               for v in init_list.values or []):
+            self._gen_array_init_values(sym, decl.var_type,
+                                        init_list.values, 0)
+            return
+
         # Detect flat/mixed init for arrays of aggregates (sub-arrays or structs)
         # e.g., float y[4][3] = { 1, 3, 5, 2, 4, 6, 3, 5, 7 }
         if isinstance(elem_type, (lt.StructType, lt.ArrayType)) and init_list.values:
@@ -5524,20 +5740,105 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", f"({label}+{off + 2}),DE")
             # 8-byte / exotic sizes: skip until needed.
 
+    def _emit_sret_dest_address(self, call, size: int) -> None:
+        """HL = where the result of ``call`` is to be written.
+
+        Normally the slot this call site was given in the current
+        function's frame.  A call whose return type could not be resolved
+        when the slots were laid out has none; it falls back to the shared
+        __sret_buf, which is what every struct return used before the
+        destination became the caller's business, and keeps that buffer's
+        size limit.
+        """
+        slot = self._sret_slot_addrs.get(id(call))
+        if slot is not None and slot[2] < size:
+            # The slot was laid out from a return type that resolved
+            # differently then -- a shadowed name, say.  Writing the real
+            # size into it would run into the next slot, so take the
+            # buffer instead and let its own bound apply.
+            slot = None
+        if slot is None:
+            if size > SRET_BUF_SIZE:
+                raise CodegenError(
+                    f"returning a {size}-byte aggregate from a call whose "
+                    f"type could not be resolved needs the shared "
+                    f"{SRET_BUF_SIZE}-byte buffer __sret_buf", call)
+            self.ctx.runtime_used.add("__sret_buf")
+            self.ctx.emit_instr("ld", "HL,__sret_buf")
+            return
+        kind, off, _slot_size = slot
+        if kind == "auto":
+            self.ctx.emit_instr("ld", f"HL,??AUTO+{off}")
+        else:
+            self.ctx.emit_instr("push", "IX")
+            self.ctx.emit_instr("pop", "HL")
+            if off:
+                self.ctx.emit_instr("ld", f"DE,{off}")
+                self.ctx.emit_instr("add", "HL,DE")
+
+    def _emit_small_struct_result_address(self, call, size: int) -> None:
+        """Store an aggregate that came back in HL into this call site's
+        slot and leave the slot's address in HL.
+
+        ``f().m`` needs an address to read the member from.  The slot is
+        per call site rather than one buffer for the program, so a second
+        call made while this result is still needed cannot overwrite it.
+        """
+        slot = self._sret_slot_addrs.get(id(call))
+        if slot is None:
+            self.ctx.runtime_used.add("__sret_buf")
+            self.ctx.emit_instr("ld", "(__sret_buf),HL")
+            self.ctx.emit_instr("ld", "HL,__sret_buf")
+            return
+        self.ctx.emit_instr("ex", "DE,HL")
+        kind, off, _slot_size = slot
+        if kind == "auto":
+            self.ctx.emit_instr("ld", f"HL,??AUTO+{off}")
+        else:
+            self.ctx.emit_instr("push", "IX")
+            self.ctx.emit_instr("pop", "HL")
+            if off:
+                self.ctx.emit_instr("ld", "BC," + str(off))
+                self.ctx.emit_instr("add", "HL,BC")
+        self.ctx.emit_instr("ld", "(HL),E")
+        if size > 1:
+            self.ctx.emit_instr("inc", "HL")
+            self.ctx.emit_instr("ld", "(HL),D")
+            self.ctx.emit_instr("dec", "HL")
+
+    def _emit_load_sret_dest(self) -> None:
+        """HL = the destination the caller passed for an aggregate return."""
+        self.ctx.emit_instr("ld", "L,(IX+4)")
+        self.ctx.emit_instr("ld", "H,(IX+5)")
+
+    def _emit_sret_copy(self, struct_size: int) -> None:
+        """Copy ``struct_size`` bytes from HL into the caller's slot."""
+        self.ctx.emit_instr("ld", "E,(IX+4)")
+        self.ctx.emit_instr("ld", "D,(IX+5)")
+        self.ctx.emit_instr("ld", f"BC,{struct_size}")
+        self.ctx.emit_instr("ldir")
+
     def _gen_compound_to_sret(self, struct_type, values: list) -> None:
-        """Evaluate each member of an InitializerList at runtime and
-        store the resulting bytes at ``__sret_buf + offset``. Used by
-        gen_return when the function is returning a compound literal
-        whose initializer expressions aren't compile-time constants."""
+        """Evaluate each member of an InitializerList at runtime and store
+        the resulting bytes into the caller's return slot, whose address
+        is at IX+4.  Used by gen_return when the function returns a
+        compound literal whose initializer expressions are not
+        compile-time constants."""
         members = self._get_struct_members(struct_type)
         if not members:
             return
         struct_size = self._type_size(struct_type)
-        # Zero the whole sret_buf first so members not in ``values``
-        # (and the .dummy padding fields) end up at 0.
-        for byte_off in range(struct_size):
-            self.ctx.emit_instr("xor", "A")
-            self.ctx.emit_instr("ld", f"(__sret_buf+{byte_off}),A")
+        # Zero the slot first so members not in ``values`` (and any
+        # padding) read as 0.  One LDIR rather than a store per byte --
+        # the aggregate is no longer bounded by a 256-byte buffer.
+        self._emit_load_sret_dest()
+        self.ctx.emit_instr("ld", "(HL),0")
+        if struct_size > 1:
+            self.ctx.emit_instr("ld", "D,H")
+            self.ctx.emit_instr("ld", "E,L")
+            self.ctx.emit_instr("inc", "DE")
+            self.ctx.emit_instr("ld", f"BC,{struct_size - 1}")
+            self.ctx.emit_instr("ldir")
         for i, (mname, mtype, moff) in enumerate(members):
             if i >= len(values) or not mname:
                 continue
@@ -5549,10 +5850,15 @@ class CodeGenerator:
             if msize == 1:
                 self.gen_expr(val)
                 self.ctx.emit_instr("ld", "A,L")
-                self.ctx.emit_instr("ld", f"(__sret_buf+{moff}),A")
+                self._emit_sret_member_address(moff)
+                self.ctx.emit_instr("ld", "(HL),A")
             elif msize == 2:
                 self.gen_expr(val)
-                self.ctx.emit_instr("ld", f"(__sret_buf+{moff}),HL")
+                self.ctx.emit_instr("ex", "DE,HL")
+                self._emit_sret_member_address(moff)
+                self.ctx.emit_instr("ld", "(HL),E")
+                self.ctx.emit_instr("inc", "HL")
+                self.ctx.emit_instr("ld", "(HL),D")
             elif msize == 4:
                 if self._is_float_type(mt):
                     self.gen_expr(val)
@@ -5561,10 +5867,27 @@ class CodeGenerator:
                     if not self._is_long_expr(val):
                         is_signed = not self._is_unsigned_expr(val)
                         self._extend_hl_to_dehl(is_signed)
-                self.ctx.emit_instr("ld", f"(__sret_buf+{moff}),HL")
-                self.ctx.emit_instr("ld", f"(__sret_buf+{moff + 2}),DE")
+                self.ctx.emit_instr("push", "DE")     # high word
+                self.ctx.emit_instr("push", "HL")     # low word
+                self._emit_sret_member_address(moff)
+                for _ in range(2):
+                    self.ctx.emit_instr("pop", "DE")
+                    self.ctx.emit_instr("ld", "(HL),E")
+                    self.ctx.emit_instr("inc", "HL")
+                    self.ctx.emit_instr("ld", "(HL),D")
+                    self.ctx.emit_instr("inc", "HL")
             # Skip 8-byte and exotic sizes for now (rare in compound
             # literals).
+
+    def _emit_sret_member_address(self, moff: int) -> None:
+        """HL = the caller's return slot plus ``moff``.  Clobbers nothing
+        else, so the value being stored can stay in A / DE / the stack."""
+        self._emit_load_sret_dest()
+        if moff:
+            self.ctx.emit_instr("push", "BC")
+            self.ctx.emit_instr("ld", f"BC,{moff}")
+            self.ctx.emit_instr("add", "HL,BC")
+            self.ctx.emit_instr("pop", "BC")
 
     def _compound_has_nonconst(self, node) -> bool:
         """True if any initializer expression inside an InitializerList
@@ -6679,27 +7002,17 @@ class CodeGenerator:
 
             if ret_kind == "struct" and self._type_size(ret_type) > 2:
                 struct_size = self._type_size(ret_type)
-                # Both paths below copy struct_size bytes into __sret_buf,
-                # which reserves SRET_BUF_SIZE.  Nothing bounds the copy at
-                # run time, so a larger struct silently writes over whatever
-                # storage follows the buffer; say so instead of emitting it.
-                if struct_size > SRET_BUF_SIZE:
-                    raise CodegenError(
-                        f"returning a {struct_size}-byte "
-                        f"{'union' if getattr(ret_type, 'is_union', False) else 'struct'} "
-                        f"by value overflows the {SRET_BUF_SIZE}-byte return "
-                        f"buffer __sret_buf; return it through a pointer "
-                        f"parameter instead", stmt)
-                self.ctx.runtime_used.add("__sret_buf")
-                # If the return expression is a compound literal whose
-                # initializer references runtime values, evaluating
-                # ``_gen_address`` would yield the DSEG-materialized
-                # @CL label — which holds uninit ``ds N`` slots for the
-                # non-const positions. Emit per-field stores directly
-                # to __sret_buf instead.
+                # The caller left the address to write to at IX+4 and
+                # expects it back in HL.  Nothing here is bounded by a
+                # buffer, so the aggregate can be any size.
                 if (isinstance(value, ast.Compound)
                         and isinstance(value.init, ast.InitializerList)
                         and self._compound_has_nonconst(value.init)):
+                    # A compound literal with runtime values in it has no
+                    # usable address: ``_gen_address`` would hand back the
+                    # DSEG-materialised @CL label, whose non-const positions
+                    # are uninitialised ``ds N``.  Store the fields into the
+                    # caller's slot directly instead.
                     target_type = value.target_type
                     if (isinstance(target_type, lt.BasicType)
                             and target_type.name in self.ctx.typedefs):
@@ -6707,20 +7020,13 @@ class CodeGenerator:
                     if isinstance(target_type, lt.StructType):
                         self._gen_compound_to_sret(target_type,
                                                     value.init.values)
-                        self.ctx.emit_instr("ld", "HL,__sret_buf")
                     else:
-                        # Fallback: original path
                         self._gen_address(value)
-                        self.ctx.emit_instr("ld", "DE,__sret_buf")
-                        self.ctx.emit_instr("ld", f"BC,{struct_size}")
-                        self.ctx.emit_instr("ldir")
-                        self.ctx.emit_instr("ld", "HL,__sret_buf")
+                        self._emit_sret_copy(struct_size)
                 else:
                     self._gen_address(value)
-                    self.ctx.emit_instr("ld", "DE,__sret_buf")
-                    self.ctx.emit_instr("ld", f"BC,{struct_size}")
-                    self.ctx.emit_instr("ldir")
-                    self.ctx.emit_instr("ld", "HL,__sret_buf")
+                    self._emit_sret_copy(struct_size)
+                self._emit_load_sret_dest()
             elif self._is_long_long_type(ret_type):
                 self._gen_64bit_operand(value, to_tmp=False)
             else:
@@ -9834,6 +10140,15 @@ class CodeGenerator:
                             self.ctx.emit_instr("push", "HL")
                             stack_size += 2
 
+        # An aggregate wider than HL comes back through a destination the
+        # caller supplies.  Push it last so it lands at IX+4, ahead of the
+        # declared parameters.
+        sret_size = self._struct_return_size(self._get_expr_type(expr))
+        if sret_size:
+            self._emit_sret_dest_address(expr, sret_size)
+            self.ctx.emit_instr("push", "HL")
+            stack_size += 2
+
         # Call the function
         if isinstance(expr.func, ast.Identifier):
             # Check if this is a direct function call or a call through a function pointer variable
@@ -11489,14 +11804,15 @@ class CodeGenerator:
             self.gen_expr(expr.operand)
 
         elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
-            # Function call returning struct: HL = address of __sret_buf
+            # A call returning an aggregate wider than HL already leaves
+            # the address of the result in HL.
             self.gen_expr(expr)
-            # For small structs (≤2 bytes), value is returned in HL, not address
+            # A narrow one returns the bytes themselves, so give them an
+            # address by parking them in this call site's slot.
             ret_type = self._get_expr_type(expr)
             if isinstance(ret_type, lt.StructType) and self._type_size(ret_type) <= 2:
-                self.ctx.runtime_used.add("__sret_buf")
-                self.ctx.emit_instr("ld", "(__sret_buf),HL")
-                self.ctx.emit_instr("ld", "HL,__sret_buf")
+                self._emit_small_struct_result_address(expr,
+                                                       self._type_size(ret_type))
 
         elif isinstance(expr, (ast.Member, ast.ArrowMember)):
             is_arrow = isinstance(expr, ast.ArrowMember)
@@ -11508,9 +11824,8 @@ class CodeGenerator:
                 # For small structs (≤2 bytes), value is in HL not address
                 ret_type = self._get_expr_type(expr.obj)
                 if isinstance(ret_type, lt.StructType) and self._type_size(ret_type) <= 2:
-                    self.ctx.runtime_used.add("__sret_buf")
-                    self.ctx.emit_instr("ld", "(__sret_buf),HL")
-                    self.ctx.emit_instr("ld", "HL,__sret_buf")
+                    self._emit_small_struct_result_address(
+                        expr.obj, self._type_size(ret_type))
             else:
                 self._gen_address(expr.obj)  # s.member: address of s
 

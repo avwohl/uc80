@@ -26,10 +26,12 @@ tests read what the linker printed rather than its status, and they drive
 the ul80 command line, not the Linker API.  The API is what tests/ already
 covered when the duplicate shipped.
 
-TestOversizedStructReturn covers the buffer's other edge.  The return copy
-is an LDIR of the struct's full size into a DS 256 buffer and nothing bounds
-it at run time, so a struct larger than the buffer used to write over
-whatever storage followed and say nothing; gen_return now refuses it.
+The buffer used to be where every struct return landed, and the return copy
+was an LDIR of the struct's full size into a DS 256 buffer with nothing
+bounding it at run time.  The destination is now a slot in the caller's own
+frame, so the size limit is gone and __sret_buf is only reached by a call
+whose return type could not be resolved when the slots were laid out --
+which is why it still has to be defined exactly once.
 """
 
 import re
@@ -157,7 +159,11 @@ def test_size_constant_matches_the_module():
 
 
 @pytest.mark.skipif(not shutil.which("um80"), reason="um80 not available")
-class TestOversizedStructReturn:
+class TestAnySizeStructReturn:
+    """The destination is the caller's business now, so an aggregate return
+    is not bounded by __sret_buf.  These used to be the tests for the
+    diagnostic that refused anything over 256 bytes."""
+
     def _compile(self, tmp_path, source, name="big"):
         c_file = tmp_path / (name + ".c")
         c_file.write_text(source)
@@ -172,32 +178,26 @@ class TestOversizedStructReturn:
                 "int main(void) { return mk().p[0]; }\n"
                 % (aggregate, nbytes, aggregate, aggregate))
 
-    def test_exactly_the_buffer_is_accepted(self, tmp_path):
-        """The bound is the last size that fits, not the first that does
-        not -- an off-by-one here rejects a legal program."""
-        r = self._compile(tmp_path, self._returning(SRET_BUF_SIZE))
+    @pytest.mark.parametrize("nbytes", [2, 3, SRET_BUF_SIZE,
+                                        SRET_BUF_SIZE + 1, 1000])
+    def test_every_size_compiles(self, tmp_path, nbytes):
+        r = self._compile(tmp_path, self._returning(nbytes))
         assert r.returncode == 0, r.stderr
 
-    def test_one_byte_over_is_rejected(self, tmp_path):
-        r = self._compile(tmp_path, self._returning(SRET_BUF_SIZE + 1))
-        assert r.returncode == 1, r.stdout + r.stderr
-        assert "overflows" in r.stderr and "__sret_buf" in r.stderr, r.stderr
+    def test_a_union_is_no_different(self, tmp_path):
+        r = self._compile(tmp_path, self._returning(1000, aggregate="union"))
+        assert r.returncode == 0, r.stderr
 
-    def test_message_gives_both_sizes(self, tmp_path):
-        """The struct's size and the buffer's, so the reader can see how far
-        over it is without going to look the buffer up."""
-        r = self._compile(tmp_path, self._returning(400))
-        assert "400-byte struct" in r.stderr, r.stderr
-        assert f"{SRET_BUF_SIZE}-byte" in r.stderr, r.stderr
-
-    def test_union_is_named_a_union(self, tmp_path):
-        r = self._compile(tmp_path, self._returning(400, aggregate="union"))
-        assert "400-byte union" in r.stderr, r.stderr
+    def test_nothing_references_the_buffer(self, tmp_path):
+        """A plain struct return used to be the one thing that pulled
+        __sret_buf into a program.  It no longer needs it, so the 256 bytes
+        stop being reserved."""
+        self._compile(tmp_path, self._returning(20))
+        assert "__sret_buf" not in (tmp_path / "big.mac").read_text()
 
     def test_a_big_struct_is_fine_if_it_is_not_returned(self, tmp_path):
-        """Only the return path goes through the buffer.  Passing one by
-        pointer, which is what the diagnostic tells the user to do, has to
-        keep working at any size."""
+        """Passing one by pointer, which is what the old diagnostic told
+        the user to do, still works at any size."""
         r = self._compile(tmp_path, """
 struct s { char p[1000]; };
 void fill(struct s *v) { v->p[0] = 1; }
