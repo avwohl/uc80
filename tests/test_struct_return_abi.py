@@ -228,21 +228,14 @@ Vec mkvec(int base);
 def test_the_two_sides_agree_across_translation_units(tmp_path):
     """Caller and callee work the layout out independently, from the same
     prototype.  A typedef'd aggregate exercises the name resolution both
-    of them have to do.
-
-    --no-shared-storage is not incidental: ??AUTO goes in the blank COMMON
-    block, which L80 overlays across modules, so two separately compiled
-    units share one automatic-storage region and corrupt each other.  That
-    is a separate defect, recorded in todo.txt; this test is about the
-    return ABI, so it takes the stack-frame path.
-    """
+    of them have to do."""
     (tmp_path / "sep.h").write_text(SEPARATE_HEADER)
     (tmp_path / "a.c").write_text(SEPARATE_CALLEE)
     (tmp_path / "b.c").write_text(SEPARATE_CALLER)
     for unit in ("a", "b"):
         r = subprocess.run(
             [sys.executable, "-m", "uc80.main", str(tmp_path / (unit + ".c")),
-             "--no-whole-program", "--no-shared-storage", "--printf", "int",
+             "--no-whole-program", "--printf", "int",
              "-I", str(tmp_path), "-o", str(tmp_path / (unit + ".mac"))],
             capture_output=True, text=True, cwd=str(REPO))
         assert r.returncode == 0, r.stderr

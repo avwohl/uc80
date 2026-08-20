@@ -36,6 +36,10 @@ from uc_core.type_config import TypeConfig, Z80_CPM
 # than emitting the overflow.
 SRET_BUF_SIZE = 256
 
+# First line of the comment that introduces the uninitialized-data block,
+# in either spelling.  main.py splices appended assembly in front of it.
+BSS_BANNER_PREFIX = "; BSS - uninitialized static storage"
+
 
 # ---- auto-AST helpers ------------------------------------------------------
 #
@@ -3549,14 +3553,31 @@ class CodeGenerator:
                 else:
                     self.ctx.emit_instr("ds", str(size))
 
-        # === COMMON: uninitialized data (BSS - zeroed by crt0, not in binary) ===
+        # === Uninitialized data (BSS) ===
+        #
+        # Whole-program output is one module, so the blank COMMON block is
+        # its alone: crt0 zeroes the region and the bytes stay out of the
+        # .com image.  Separate compilation cannot use it.  L80 overlays
+        # every module's blank COMMON at the same address -- that is what a
+        # common block is for -- so two units' uninitialized globals, and
+        # two units' ??AUTO regions, would land on top of each other and
+        # corrupt each other with nothing said.  There the storage goes in
+        # DSEG, which the linker gives each module its own space for.  It
+        # costs those bytes in the image, where they are already zero, so
+        # crt0 has nothing to do for them.
         has_bss = uninit_globals or uninit_statics or (
             self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0)
 
         if has_bss:
             self.ctx.emit()
-            self.ctx.emit("; BSS - uninitialized static storage (zeroed by crt0)")
-            self.ctx.emit("\tcommon\t//")
+            if self.whole_program:
+                self.ctx.emit(f"{BSS_BANNER_PREFIX} (zeroed by crt0)")
+                self.ctx.emit("\tcommon\t//")
+            else:
+                self.ctx.emit(f"{BSS_BANNER_PREFIX} -- DSEG, not COMMON, because")
+                self.ctx.emit("; the linker overlays every module's blank COMMON"
+                              " block")
+                self.ctx.emit("\tdseg")
 
         if uninit_globals:
             for name, decl in uninit_globals:

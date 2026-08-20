@@ -113,9 +113,16 @@ def index_of(lines, predicate):
 
 
 def common_index(code):
-    """Index of the `common //` (BSS) directive, or -1 if the module has none."""
+    """Index of the uninitialized-data block, or -1 if the module has none.
+
+    Whole-program output opens it with `common //`; a separately compiled
+    module opens it with `dseg`, because the linker overlays every module's
+    blank COMMON.  The banner comment is what both have in common."""
     lines = code.splitlines()
-    return index_of(lines, lambda l: l.strip().upper().startswith("COMMON"))
+    return index_of(
+        lines,
+        lambda l: (l.strip().upper().startswith("COMMON")
+                   or l.strip().startswith("; BSS - uninitialized")))
 
 
 def label_index(code, label):

@@ -16,7 +16,7 @@ from uc_core.ast_optimizer import ASTOptimizer
 from uc_core.type_config import TypeConfig, Z80_CPM
 
 from . import lib_dir, lib_file
-from .codegen import generate, CodeGenerator, CodegenError
+from .codegen import generate, CodeGenerator, CodegenError, BSS_BANNER_PREFIX
 from .runtime import RuntimeLibrary, load_runtime_library
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
 from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
@@ -91,6 +91,11 @@ def _tail_insert_index(lines: list[str]) -> int:
     directive when it does not, and len(lines) when it has neither.
     """
     for i, line in enumerate(lines):
+        # The banner introduces the block in both spellings -- COMMON for a
+        # whole-program module, DSEG for a separately compiled one, where
+        # the linker would overlay every module's blank COMMON.
+        if line.strip().startswith(BSS_BANNER_PREFIX):
+            return i
         if re.match(r'\s*COMMON\b', line, re.IGNORECASE):
             # Keep the "; BSS - ..." banner attached to its directive.
             while i > 0 and lines[i - 1].strip().startswith(';'):
