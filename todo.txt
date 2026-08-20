@@ -75,6 +75,12 @@ Compiler
     handler to capture into a buffer and pad on the way out, which
     _printf_sink already makes possible.
 
+  - Each aggregate-returning call site gets its own slot in the caller's
+    frame, and the slots are never reused.  Calls in different statements
+    cannot both be live, so they could share; measured over c-testsuite the
+    cost is +566 bytes of ??AUTO across 220 programs, so this is an
+    optimization rather than a problem.
+
   - A local past the reach of an (IX+d) displacement is only handled for
     scalar loads and stores, which walk IX to the slot.  The aggregate
     initializer paths -- _gen_local_array_init, _gen_store_member_value,
@@ -141,6 +147,12 @@ Library
     which means reading the vararg whose width is int-size-dependent, so the
     size has to come from the codegen-emitted table the way `int_c` does.
 
+  - pow() is exp(y * log(x)) at binary32 precision, so an exact result is
+    not exact: pow(2,10) gives 1023.994812, pow(2,3) 7.999959, pow(10,2)
+    99.999938.  An integer-exponent fast path -- repeated multiplication
+    when y is a whole number in range -- would fix the common cases.
+    sqrt() is exact.
+
   - Float comparison does not implement NaN's unordered result: `x == x` is
     true for a NaN, and `<` / `>` on one are whatever the magnitude compare
     happens to give.  No arithmetic in rt_float produces a NaN, so this is
@@ -178,6 +190,11 @@ Assembler and linker (../um80_and_friends)
     blocks of the same name.  uc80 no longer depends on this -- separately
     compiled units put their uninitialized data in DSEG -- but hand-written
     assembly using named commons does.
+
+  - ul80 --no-ds-zeros is unsafe for a separately compiled unit: its
+    uninitialized data is in DSEG now, and it arrives zeroed only because
+    the linker materializes `ds` as zeros.  crt0 zeroes the COMMON region,
+    which such a unit no longer uses.
 
   - um80 assembles an out-of-range (IX+d) displacement, keeping the low
     byte, rather than reporting it.  That is what made the compiler's own
