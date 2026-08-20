@@ -59,6 +59,17 @@ aggregate and went looking for what else was wrong nearby.
 
 ### Fixed
 
+- **An expression whose value is a struct was stored, not copied.** A call
+  returning a struct, a member read, a cast, a conditional: each designates
+  bytes, and evaluating one yields their address. Wherever an initializer or
+  an assignment expected a scalar it stored that address into the first
+  field and left the rest zero, so `struct S a[] = { mk(7), mk(9) };` filled
+  the array with two pointers. The same shape reached a struct member
+  (`struct O o = { mk(3), 5 };`), a union's first member, a designated
+  element, and the right-hand side of an assignment. A conditional was
+  worse: taking an address had no case for one and no fallback, so nothing
+  at all was emitted and `(c ? q : r).b` read through whatever HL held.
+
 - **A local declared anywhere the frame sizer did not look got no storage.**
   Sizing walked a hand-written list of statement kinds, so `label: { int
   a[8]; }` and `default: { int b[8]; }` reserved nothing and the array sat

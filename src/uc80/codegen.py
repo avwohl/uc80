@@ -6034,17 +6034,17 @@ class CodeGenerator:
                     self._gen_compound_array_init_to_label(
                         label, target_type, right.init.values)
             self.ctx.emit_instr("ld", f"HL,{label}")
-        elif isinstance(right, ast.Call):
-            # Function call returning struct - returns address in HL
-            self.gen_expr(right)
-        elif isinstance(right, ast.Identifier):
-            self._gen_address(right)
         elif isinstance(right, ast.UnaryOp) and right.op == "*":
             self.gen_expr(right.operand)
-        elif isinstance(right, (ast.Member, ast.ArrowMember)):
-            self._gen_address(right)
         else:
-            self.gen_expr(right)
+            # Everything else designates bytes somewhere: a variable, a
+            # member, an element, a call's result, a cast, a conditional.
+            # _gen_address knows them all, including a call returning two
+            # bytes or fewer, whose value has to be parked before it has an
+            # address at all.  The old list of shapes here left a cast and
+            # a conditional to the generic arm, which produced the first
+            # word rather than an address and then LDIR'd from it.
+            self._gen_address(right)
 
         self.ctx.emit_instr("push", "HL")  # Save source address
 
@@ -6089,6 +6089,11 @@ class CodeGenerator:
                     else:
                         return self._gen_flat_array_init(sym, member_type, values, 0, base_offset + member_offset)
                 elif isinstance(member_type, lt.StructType) and not isinstance(val, (ast.InitializerList, ast.Compound)):
+                    if is_struct_type(self._get_expr_type(val)):
+                        self._gen_struct_copy_from_addr_expr(
+                            sym, base_offset + member_offset, val,
+                            self._type_size(member_type))
+                        return 1
                     return self._gen_struct_init_values(sym, member_type, values, base_offset + member_offset)
                 else:
                     self._gen_store_member_value(sym, member_type, base_offset + member_offset, val)
@@ -6175,11 +6180,16 @@ class CodeGenerator:
                     member_size = self._type_size(member_type)
                     self._gen_struct_copy_from_addr_expr(sym, base_offset + member_offset, val, member_size)
                     continue
-                # Check for cast of addressable expression (e.g., (struct S)w->t.s)
-                if isinstance(val, ast.Cast) and isinstance(val.expr, (ast.Member, ast.ArrowMember, ast.UnaryOp, ast.Identifier)):
+                # Anything else already of the member's aggregate type --
+                # a cast, a call returning a struct, an index -- fills this
+                # one member and is copied into it.  Falling through to the
+                # flat path treated it as the first of a run of scalars and
+                # put its address in the member's first field.
+                if is_struct_type(self._get_expr_type(val)):
                     value_index += 1
                     member_size = self._type_size(member_type)
-                    self._gen_struct_copy_from_addr_expr(sym, base_offset + member_offset, val.expr, member_size)
+                    self._gen_struct_copy_from_addr_expr(
+                        sym, base_offset + member_offset, val, member_size)
                     continue
                 # Flat initialization for nested struct - consume multiple values
                 consumed = self._gen_struct_init_values(sym, member_type, values[value_index:], base_offset + member_offset)
@@ -6486,12 +6496,13 @@ class CodeGenerator:
                         self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                         consumed += 1
                         continue
-                # Compound literal `(struct S){...}` as an array element:
-                # copy from the materialized compound into this slot.
-                # Otherwise we'd treat the compound as a flat list of field
-                # values, which mangles the layout (the compound's address
-                # would land in the first field).
-                if isinstance(val, ast.Compound):
+                # A value that is itself of the element's aggregate type --
+                # a compound literal, a call returning a struct, a member
+                # read, a cast -- fills this one element and must be copied
+                # into the slot.  Treating it as a flat list of field values
+                # put its address in the first field instead:
+                # ``struct S a[] = { mk(7), mk(9) };`` stored two pointers.
+                if is_struct_type(self._get_expr_type(val)):
                     self._gen_struct_copy_from_addr_expr(sym, offset, val, elem_size)
                     consumed += 1
                     continue
@@ -6679,12 +6690,13 @@ class CodeGenerator:
             self._gen_struct_copy_from_addr_expr(sym, offset, val, member_size)
             return
 
-        # Handle struct copy from cast of addressable expression (e.g., (struct S)w->t.s)
-        if isinstance(member_type, lt.StructType) and isinstance(val, ast.Cast):
-            inner = val.expr
-            if isinstance(inner, (ast.Member, ast.ArrowMember, ast.UnaryOp, ast.Identifier)):
-                self._gen_struct_copy_from_addr_expr(sym, offset, inner, member_size)
-                return
+        # Any other aggregate-valued expression: a cast, a call returning a
+        # struct, an index.  Its bytes have to be copied into the member's
+        # slot -- gen_expr yields the address, and storing that would leave
+        # a pointer in the member's first word.
+        if isinstance(member_type, lt.StructType):
+            self._gen_struct_copy_from_addr_expr(sym, offset, val, member_size)
+            return
 
         # Generate the value expression
         self.gen_expr(val, force_long=is_32bit)
@@ -6867,11 +6879,13 @@ class CodeGenerator:
                     self._gen_struct_copy(sym, offset, src_sym, 0, elem_size)
                     continue
 
-            # Handle struct copy from compound literal: arr[] = { (struct S){...}, ... }
-            # gen_expr on a struct compound returns its address; we need an
-            # actual byte copy into the array slot, not the address stored
-            # into the first member.
-            if isinstance(elem_type, lt.StructType) and isinstance(val, ast.Compound):
+            # Any other aggregate-valued expression -- a compound literal,
+            # a call returning a struct, a member read, a cast.  gen_expr
+            # on one of these yields its address, and storing that would
+            # put a pointer in the element's first member; the bytes have
+            # to be copied into the slot.  ``struct S a[] = { mk(7) };``
+            # used to store the address.
+            if isinstance(elem_type, lt.StructType):
                 self._gen_struct_copy_from_addr_expr(sym, offset, val, elem_size)
                 continue
 
@@ -11907,6 +11921,30 @@ class CodeGenerator:
                 if offset > 0:
                     self.ctx.emit_instr("ld", f"DE,{offset}")
                     self.ctx.emit_instr("add", "HL,DE")
+
+        elif isinstance(expr, ast.TernaryOp):
+            # ``(c ? a : b).m`` designates one of the two operands, so the
+            # address is whichever the condition picks.  There was no case
+            # for this, and _gen_address has no fallback, so nothing was
+            # emitted at all and the member was read from whatever HL held.
+            else_label = self.ctx.new_label("TERNA_E")
+            end_label = self.ctx.new_label("TERNA_END")
+            self._gen_condition_value(expr.condition)
+            self._emit_condition_test(expr.condition)
+            self.ctx.emit_instr("jp", f"Z,{else_label}")
+            self._gen_address(expr.true_expr)
+            self.ctx.emit_instr("jp", end_label)
+            self.ctx.emit_label(else_label)
+            self._gen_address(expr.false_expr)
+            self.ctx.emit_label(end_label)
+
+        elif (isinstance(expr, ast.Cast)
+              and is_struct_type(self._resolve_typename(expr.target_type)
+                                 if not is_struct_type(expr.target_type)
+                                 else expr.target_type)):
+            # A cast to an aggregate type -- which C does not have, but
+            # this compiler accepts -- designates the operand's bytes.
+            self._gen_address(expr.expr)
 
         elif isinstance(expr, ast.Compound):
             # Compound literal: materialize in DSEG, return address.
