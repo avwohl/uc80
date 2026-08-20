@@ -929,6 +929,46 @@ class Symbol:
         return f"_{self.label_override or self.name}"
 
 
+def iter_body_declarations(body):
+    """Yield every ``ast.Declaration`` inside a function body, in the order
+    the walk reaches them.
+
+    Frame sizing used to enumerate the statement kinds it knew how to look
+    inside -- compound, for, if/else, while, do, switch, case.  A
+    declaration anywhere else reserved no space, and the variable then sat
+    below SP where the next PUSH wrote over it.  ``label: { int a[8]; }``
+    and ``default: { int b[8]; }`` were both silently wrong.  Walking the
+    dataclass fields reaches every statement form instead, including ones
+    the AST grows later.
+
+    Over-counting is safe here (a slightly larger frame), under-counting is
+    not, so the walk deliberately descends into initializers too: a GNU
+    statement expression can declare its own locals.
+    """
+    from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+
+    out = []
+    seen = set()
+
+    def walk(node):
+        if node is None:
+            return
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                walk(x)
+            return
+        if not _dc_is(node) or id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, ast.Declaration):
+            out.append(node)
+        for f in _dc_fields(node):
+            walk(getattr(node, f.name, None))
+
+    walk(body)
+    return out
+
+
 @dataclass
 class CallGraphAnalyzer:
     """Analyzes call relationships between functions for shared storage optimization.
@@ -1175,44 +1215,14 @@ class CallGraphAnalyzer:
     def _calc_locals_size(self, body: ast.CompoundStmt) -> int:
         """Calculate total size needed for local variables."""
         size = 0
-        for item in body.items or []:
-            if isinstance(item, ast.Declaration):
-                storage = decl_storage_class(item.decl_specs)
-                if storage == "static" or storage == "typedef":
+        for decl in iter_body_declarations(body):
+            storage = decl_storage_class(decl.decl_specs)
+            if storage in ("static", "extern", "typedef"):
+                continue
+            for _name, full, init, is_fn in iter_var_decls(decl):
+                if is_fn:
                     continue
-                for _name, full, init, is_fn in iter_var_decls(item):
-                    if is_fn:
-                        continue
-                    size += self._var_size_with_init_r(full, init)
-            elif isinstance(item, ast.CompoundStmt):
-                size += self._calc_locals_size(item)
-            elif isinstance(item, ast.ForStmt):
-                if isinstance(item.init, ast.Declaration):
-                    storage = decl_storage_class(item.init.decl_specs)
-                    if storage != "static" and storage != "typedef":
-                        for _name, full, init, is_fn in iter_var_decls(item.init):
-                            if not is_fn:
-                                size += self._var_size_with_init_r(full, init)
-                if isinstance(item.body, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.body)
-            elif isinstance(item, (ast.IfStmt, ast.IfStmtElse)):
-                if isinstance(item.then_branch, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.then_branch)
-                else_b = getattr(item, "else_branch", None)
-                if isinstance(else_b, ast.CompoundStmt):
-                    size += self._calc_locals_size(else_b)
-            elif isinstance(item, (ast.WhileStmt, ast.DoWhileStmt)):
-                if isinstance(item.body, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.body)
-            elif isinstance(item, ast.SwitchStmt):
-                if isinstance(item.body, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.body)
-            elif isinstance(item, ast.CaseStmt):
-                if isinstance(item.stmt, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.stmt)
-                elif isinstance(item.stmt, ast.CaseStmt):
-                    fake = ast.CompoundStmt(items=[item.stmt])
-                    size += self._calc_locals_size(fake)
+                size += self._var_size_with_init_r(full, init)
         return size
 
     def _var_size_with_init_r(self, t: ResolvedType, init) -> int:
@@ -12277,65 +12287,34 @@ class CodeGenerator:
         return 2
 
     def _calc_locals_size(self, body) -> int:
-        """Calculate total size needed for local variables.
+        """Bytes of automatic storage the function's body needs.
 
-        Auto-AST: file-scope and block-scope variable declarations are
-        ``ast.Declaration`` (not legacy ``VarDecl``/``DeclarationList``).
-        Each Declaration may carry multiple init_declarators; iterate via
-        ``iter_var_decls`` and sum the resolved types' widths. Skip
-        function-typed declarators (prototypes inside function bodies).
+        This is what the prologue reserves below IX, and -- via
+        CallGraphAnalyzer.func_storage -- what a shared-storage function
+        gets in ??AUTO, so it has to agree with what ``_gen_one_var_decl``
+        actually hands out.  It reaches every declaration through
+        ``iter_body_declarations`` and sizes each one exactly the way the
+        declaration's codegen does, unsized arrays included: ``char s[] =
+        "hello"`` is 6 bytes of frame, not the 0 that the declared type
+        alone reports.
         """
         size = 0
-        if body is None:
-            return 0
-        items = getattr(body, "items", None)
-        if items is None:
-            return 0
-        for item in items:
-            if isinstance(item, ast.Declaration):
-                storage = decl_storage_class(item.decl_specs)
-                if storage in ("static", "extern", "typedef"):
+        for decl in iter_body_declarations(body):
+            storage = decl_storage_class(decl.decl_specs)
+            if storage in ("static", "extern", "typedef"):
+                continue
+            for _nm, full, init, is_fn in iter_var_decls(decl):
+                if is_fn:
                     continue
-                for _nm, full, _init, is_fn in iter_var_decls(item):
-                    if is_fn:
-                        continue
-                    size += self._type_size(_to_legacy(full))
-            elif isinstance(item, ast.CompoundStmt):
-                size += self._calc_locals_size(item)
-            elif isinstance(item, ast.ForStmt):
-                if isinstance(item.init, ast.Declaration):
-                    storage = decl_storage_class(item.init.decl_specs)
-                    if storage not in ("static", "extern", "typedef"):
-                        for _nm, full, _init, is_fn in iter_var_decls(item.init):
-                            if is_fn:
-                                continue
-                            size += self._type_size(_to_legacy(full))
-                if isinstance(item.body, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.body)
-            elif isinstance(item, (ast.IfStmt, ast.IfStmtElse)):
-                if isinstance(item.then_branch, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.then_branch)
-                else_b = getattr(item, "else_branch", None)
-                if isinstance(else_b, ast.CompoundStmt):
-                    size += self._calc_locals_size(else_b)
-                elif isinstance(else_b, (ast.IfStmt, ast.IfStmtElse)):
-                    fake = ast.CompoundStmt(items=[else_b], pos=getattr(else_b, "pos", ast._Pos()))
-                    size += self._calc_locals_size(fake)
-            elif isinstance(item, (ast.WhileStmt, ast.DoWhileStmt)):
-                if isinstance(item.body, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.body)
-            elif isinstance(item, ast.SwitchStmt):
-                if isinstance(item.body, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.body)
-            elif isinstance(item, ast.CaseStmt):
-                # Case/default labels in switch body - recurse into their statement
-                if isinstance(item.stmt, ast.CompoundStmt):
-                    size += self._calc_locals_size(item.stmt)
-                elif isinstance(item.stmt, ast.CaseStmt):
-                    # Nested case: case X: case Y: stmt
-                    fake = ast.CompoundStmt(items=[item.stmt])
-                    size += self._calc_locals_size(fake)
+                size += self._decl_storage_size(full, init)
         return size
+
+    def _decl_storage_size(self, var_type, init) -> int:
+        """Bytes ``_gen_one_var_decl`` will allocate for this declarator."""
+        t = _to_legacy(var_type)
+        if isinstance(t, lt.ArrayType) and t.size is None and init is not None:
+            t = self._infer_array_size(t, init)
+        return self._type_size(t)
 
     def _type_size(self, t) -> int:
         """Return the size of a type in bytes."""
