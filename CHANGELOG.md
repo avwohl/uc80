@@ -9,11 +9,14 @@ observable behaviour of a program uc80 compiles.
 An ABI change, and a correctness release around it. A function returning a
 struct or union wider than HL now takes a hidden destination pointer from
 its caller, so **every translation unit of a program must be recompiled
-together**, and the libraries rebuilt:
+together**, and the libraries rebuilt -- in a git checkout, that is:
 
 ```bash
 uc80 --build-libs
 ```
+
+A wheel ships `libc.lib`, `runtime.lib` and `crt0.rel` already built, so
+`pip install --upgrade uc80` is the whole of it there.
 
 Two of the fixes are for regressions in 0.6.0, so 0.6.0 is superseded
 rather than merely improved on.
@@ -61,6 +64,25 @@ aggregate and went looking for what else was wrong nearby.
 - **`%F` prints `INF` and `NAN`** (C17 7.21.6.1p8), through its own alias
   entry point rather than sharing `%f`'s.
 
+- **A frame that does not match its body stops the compile.** The prologue
+  reserves automatic storage before a line of the body is generated, and
+  the body then hands out the slots. When the two disagree the extra locals
+  sit below SP, or on the return slots, or -- with nothing reserved at all
+  -- at `(IX+0)`, on top of the frame pointer the prologue had just pushed,
+  which hangs the program. Every symptom of that is silent, so
+  `gen_function` now compares what the body took against what it reserved
+  and refuses to emit the function. Both known causes are fixed below: a
+  tag defined in the body, and a typedef that leaked out of the function
+  that declared it.
+
+- **Dependency floors move.** uc80 requires `uc_core >= 0.4.1` (was 0.4.0)
+  and `uplox >= 3.3.0` (was 3.2.0); `pip install --upgrade uc80` pulls
+  both. Building a wheel from source needs `um80 >= 0.3.46` (was 0.3.43,
+  added in 0.6.0) and `setuptools >= 64.0`, because the wheel assembles the
+  CP/M libraries with um80. 0.3.46 is also the ul80 that reports an error
+  recorded during a link that still succeeded, which is what makes a
+  duplicate definition such as the `__sret_buf` below visible at all.
+
 ### Fixed
 
 - **A struct or union tag defined inside a function body was sized as
@@ -107,7 +129,11 @@ aggregate and went looking for what else was wrong nearby.
   (`struct O o = { mk(3), 5 };`), a union's first member, a designated
   element, and the right-hand side of an assignment. A conditional was
   worse: taking an address had no case for one and no fallback, so nothing
-  at all was emitted and `(c ? q : r).b` read through whatever HL held.
+  at all was emitted and `(c ? q : r).b` read through whatever HL held. A
+  chained assignment (`a = b = c;`) and a statement expression
+  (`s = ({ ...; obj; });`) emitted nothing for the same reason, which lost
+  the inner assignment and the statements' side effects outright. A shape
+  that still has no case is now a compile error rather than silence.
 
 - **A local declared anywhere the frame sizer did not look got no storage.**
   Sizing walked a hand-written list of statement kinds, so `label: { int
@@ -134,14 +160,18 @@ aggregate and went looking for what else was wrong nearby.
 
 - **`INFINITY` was not an infinity and `NAN` was not a NaN.** math.h defined
   them as `((double)0x7FFFFFFF)` and `((double)0)`, so `isinf(INFINITY)` was
-  false and `NAN` compared equal to zero. They are now folded from the GCC
-  builtins, which keeps them constant expressions usable in a static
-  initializer. Reaching them needed two more fixes: a literal too large for
-  binary32 stopped the compiler with "internal error: float too large to
-  pack with f format" where C23 6.3.1.5p2 says it becomes an infinity, and
-  `printf("%f")` decided "infinity" from the exponent alone, after a
-  rounding pass that does not preserve the mantissa telling an infinity from
-  a NaN -- so every NaN printed as `inf`.
+  false and `NAN` compared equal to zero. `HUGE_VAL` -- what the math
+  functions return on overflow -- was that same `0x7FFFFFFF`, a finite
+  value of about 2.1e9 that an ordinary result can exceed. All three are
+  now folded from the GCC builtins, which keeps them constant expressions
+  usable in a static initializer, and `HUGE_VALF` and `HUGE_VALL` are
+  defined alongside them. Reaching them needed two more fixes: a literal
+  too large for binary32 stopped the compiler with "internal error: float
+  too large to pack with f format", and C23 6.4.4p2 makes a constant's
+  representability a constraint, so `1e39f` warns and becomes an infinity
+  now rather than crashing; and `printf("%f")` decided "infinity" from the
+  exponent alone, after a rounding pass that does not preserve the mantissa
+  telling an infinity from a NaN -- so every NaN printed as `inf`.
 
 - **A printf under a `default:` label or inside an initializer list was
   invisible to auto-detection,** so the unit reported that it called no
@@ -204,7 +234,12 @@ aggregate and went looking for what else was wrong nearby.
   linking it first disabled every conversion in the program. The table is now
   emitted by the unit defining `main()` -- exactly one per link -- and a unit
   that prints conversions that unit does not is told to pass an explicit
-  `--printf`. Whole-program mode is byte-identical.
+  `--printf`. Auto-detection cannot be trusted across a separate build
+  either, since a unit sees only its own format strings: a `main()`
+  compiled under `--no-whole-program` without an explicit `--printf` now
+  registers every handler and says so, so such a build links a larger
+  binary than it did until it passes the flag. Whole-program mode is
+  byte-identical.
 
 - **An array bound spelled with an enum constant was ignored** when
   compositing `extern int a[N];` with `int a[];`, giving a zero-byte object
@@ -227,9 +262,13 @@ aggregate and went looking for what else was wrong nearby.
   `2.`**, a trailing point with no digits after it. `%e` and `%g` already got
   both right.
 
-- The printf family returns the number of bytes it actually wrote.
-  `_prt_dec32` wrote straight to `__conout`, so `printf("[%ld]\n", 1234567L)`
-  returned 3 for the ten bytes it produced.
+- `%ld` and `%lu` count the bytes they write. `_prt_dec32` wrote straight to
+  `__conout`, so `printf("[%ld]\n", 1234567L)` returned 3 for the ten bytes
+  it produced; it goes through `_printf_putc` now, the same choke point as
+  the rest of printf land, so the count is right and CR LF translation is
+  unchanged. `_prt_dec64` and `_prt_hex` still write to `__conout`, so
+  `%lld`, `%llu` and `%llx` remain uncounted -- recorded under Known
+  limitations below.
 
 - **The documented link line defined `__sret_buf` twice.** The struct-return
   buffer lived in the same runtime module as the 32-bit arithmetic helpers,
@@ -238,7 +277,7 @@ aggregate and went looking for what else was wrong nearby.
   any later pull of `rt_arith32` -- printing a `long`, say, which reaches the
   32-bit helpers through libc rather than through the compiler -- brought a
   second definition with it. L80 keeps the first and links on, so this was
-  silent until um80 0.3.46 started reporting a recorded error; the second
+  silent until ul80 0.3.46 started reporting a recorded error; the second
   buffer was still allocated, costing 256 bytes of every affected binary.
   `__sret_buf` now has its own module, `rt_sret.mac`, which the linker pulls
   only when the symbol is genuinely unresolved.
@@ -250,16 +289,14 @@ aggregate and went looking for what else was wrong nearby.
   correctly -- the clobbered bytes are not the ones the caller looks at --
   and how far it reached scaled with the struct. The first fix was to refuse
   the return and name both sizes; the ABI change above then removed the
-  limit itself, so the diagnostic is gone with it.
+  limit itself, so ordinary code is no longer refused. The refusal survives
+  only on the `__sret_buf` fallback path -- a call whose return type could
+  not be resolved when the slots were laid out -- where the 256 bytes still
+  bound the copy.
 
 - **Compiling the same source twice produced different assembly.** The
   embedded runtime functions came out in set-iteration order, which Python
   varies per process. Same functions, same binary, different file.
-
-- **An out-of-range floating constant is diagnosed rather than crashing.**
-  `1e39f` used to stop the compiler with "internal error: float too large
-  to pack"; C23 6.4.4p2 makes representability a constraint, so it now
-  warns and becomes an infinity.
 
 ### Known limitations
 
@@ -272,6 +309,15 @@ Recorded so they are not rediscovered; `todo.txt` has the full list.
   `--printf float`, are not registered: the conversion is echoed verbatim and
   every later one in that call reads the wrong argument. The `*` forms are
   now diagnosed at compile time where the format string is a literal.
+- `%lld`, `%llu` and `%llx` write their digits through `__conout` rather
+  than through the sink the shared formatter hands each entry point, so
+  `sprintf`, `snprintf` and `vsprintf` print those digits on the console and
+  leave the buffer holding the surrounding text alone -- `sprintf(b,
+  "<%lld>", 42LL)` puts `<>` in `b` and `42` on the screen -- and `printf`
+  does not count them in its return value. Against 0.5.0 this is a
+  regression for the buffer-writing calls, whose separate formatter wrote
+  the digits into the buffer; `%ld` is the way round it until `_prt_dec64`
+  and `_prt_hex` go through `_printf_putc`.
 - Float comparison does not implement NaN's unordered result, so `x == x` is
   true for a NaN. No arithmetic in the runtime produces one; only the `NAN`
   macro and a bit pattern read back as a float can.
@@ -333,7 +379,8 @@ uc80 --build-libs
   without `volatile`, at file scope and in a function body. The block is a
   barrier that no optimizer crosses. Extended asm and `asm goto` are
   rejected with an error instead of being silently dropped.
-- The `%e`, `%E`, `%g` and `%G` printf conversions.
+- The `%e`, `%E`, `%g` and `%G` printf conversions, and `%F`, which
+  0.5.0 dropped along with every other conversion it had no handler for.
 - `--no-crlf`, and `extern char __crlf_mode` in `<stdio.h>`.
 - **Wheels now ship `libc.lib`, `runtime.lib` and `crt0.rel`.** `pip install
   uc80` previously installed a compiler that could not link anything: those

@@ -2,7 +2,7 @@
 # um80 supplies the um80/ulib80 console scripts that _uc80_build.py uses to
 # assemble libc.lib, runtime.lib and crt0.rel into the wheel. Without it a
 # published wheel ships a compiler with nothing to link against.
-requires = ["setuptools>=64.0", "wheel", "um80>=0.3.43"]
+requires = ["setuptools>=64.0", "wheel", "um80>=0.3.46"]
 build-backend = "_uc80_build"
 backend-path = ["."]
 
@@ -15,8 +15,8 @@ license = "GPL-3.0-or-later"
 requires-python = ">=3.10"
 dependencies = [
     "upeepz80>=0.2.3",
-    "uc_core>=0.4.0",
-    "uplox>=3.2.0",
+    "uc_core>=0.4.1",
+    "uplox>=3.3.0",
 ]
 authors = [
     {name = "uc80 developers"}
