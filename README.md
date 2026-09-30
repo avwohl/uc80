@@ -30,11 +30,11 @@ ul80 hello.rel $LIB/libc.lib $LIB/runtime.lib -o hello.com
 ```
 
 `uc80 --print-lib-dir` prints the library directory. In a git checkout, run
-`uc80 --build-libs` once first. Details are in [docs/libraries.md](docs/libraries.md).
+`uc80 --build-libs` once first. Details are in [docs/libraries.md](https://github.com/avwohl/uc80/blob/main/docs/libraries.md).
 
 For the smallest binaries, compile all `.c` files in one invocation, so uc80
 can optimize the whole program. Separate compilation needs `--no-whole-program`
-and `crt0.rel`; see [docs/compiler_options.md](docs/compiler_options.md).
+and `crt0.rel`; see [docs/compiler_options.md](https://github.com/avwohl/uc80/blob/main/docs/compiler_options.md).
 
 ## Features
 
@@ -56,17 +56,17 @@ and `crt0.rel`; see [docs/compiler_options.md](docs/compiler_options.md).
 uc80 produces the smallest known binaries for Z80/CP/M among current compilers.
 On the Fujitsu compiler-test-suite, uc80 output is less than half the size of
 z88dk output. uc80 passes all 220 c-testsuite tests. Numbers are in
-[docs/benchmarks.md](docs/benchmarks.md).
+[docs/benchmarks.md](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md).
 
 ## Documentation
 
-- [Finding the libraries](docs/libraries.md) - `--print-lib-dir`, `--build-libs`, `UC80_LIB_DIR`
-- [Compiler options](docs/compiler_options.md) - whole-program optimization, `--printf`, CR LF line endings, `--int`/`--long`, separate compilation
-- [Inline assembly](docs/inline_assembly.md) - `asm("...")` rules and limits
-- [Binary size and test results](docs/benchmarks.md) - comparison with z88dk and external test suite pass rates
-- [C standard compliance](docs/ANSI_C_COMPLIANCE.md) - implemented and missing C features
-- [Float status](docs/FLOAT_STATUS.md) - IEEE 754 single-precision support
-- [CHANGELOG](CHANGELOG.md) - release history
+- [Finding the libraries](https://github.com/avwohl/uc80/blob/main/docs/libraries.md) - `--print-lib-dir`, `--build-libs`, `UC80_LIB_DIR`
+- [Compiler options](https://github.com/avwohl/uc80/blob/main/docs/compiler_options.md) - whole-program optimization, `--printf`, CR LF line endings, `--int`/`--long`, separate compilation
+- [Inline assembly](https://github.com/avwohl/uc80/blob/main/docs/inline_assembly.md) - `asm("...")` rules and limits
+- [Binary size and test results](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md) - comparison with z88dk and external test suite pass rates
+- [C standard compliance](https://github.com/avwohl/uc80/blob/main/docs/ANSI_C_COMPLIANCE.md) - implemented and missing C features
+- [Float status](https://github.com/avwohl/uc80/blob/main/docs/FLOAT_STATUS.md) - IEEE 754 single-precision support
+- [CHANGELOG](https://github.com/avwohl/uc80/blob/main/CHANGELOG.md) - release history
 
 ## Related Projects
 
@@ -94,4 +94,4 @@ z88dk output. uc80 passes all 220 c-testsuite tests. Numbers are in
 
 ## License
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+GPL-3.0-or-later. See [LICENSE](https://github.com/avwohl/uc80/blob/main/LICENSE).
