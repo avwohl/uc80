@@ -21,7 +21,7 @@ CRT0 = LIB_DIR / "crt0.rel"
 # hardcoded __printf_format_table, which can't be overridden by the
 # compiler-emitted table under --int=32 / --long=64.  With .lib the linker
 # only pulls modules that satisfy unresolved symbols, so the user's table
-# wins.  This matches the workflow documented in README.
+# wins.  This matches the workflow documented in docs/compiler_options.md.
 LIBC = LIB_DIR / "libc.lib"
 RUNTIME = LIB_DIR / "runtime.lib"
 CPMEMU = Path("../cpmemu/src/cpmemu")

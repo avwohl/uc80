@@ -4264,7 +4264,7 @@ class CodeGenerator:
         An explicit ``--printf``/``#pragma`` is the user stating the
         whole-program answer, so it is honoured as given.  Passing *different*
         explicit sets to different units is still order-dependent and is not
-        something codegen can see; the README documents it.
+        something codegen can see; docs/compiler_options.md documents it.
         """
         features = self.printf_features
         if features is None:
@@ -4825,7 +4825,7 @@ class CodeGenerator:
         skipped).  A four-byte store at the top of main() works identically
         in both modes.
 
-        Consequences, documented in README: the flag only takes effect on
+        Consequences, documented in docs/compiler_options.md: the flag only takes effect on
         the translation unit that defines main(), and referencing
         ___crlf_mode is what pulls lc_conout into a program that would
         otherwise do no I/O at all.

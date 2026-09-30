@@ -118,7 +118,7 @@ class TestDocumentedLinkLine:
 
     def test_embedded_runtime_link_reports_nothing(self, tmp_path):
         """The reported case: the default whole-program build, linked the way
-        the README documents."""
+        the README Quick Start documents."""
         link, _ = self._build(tmp_path, "embedded")
         assert "Multiply defined" not in link.stdout + link.stderr, \
             link.stdout + link.stderr

@@ -28,3 +28,6 @@ All of the above are in github on this accounts.
 External test suites are located at:
 - ../external/*test* (various test files)
 - ../external/z88dk (z88dk test suite)
+
+## README stays short
+README.md is at most 150 lines. New detail goes in docs/<topic>.md with a one-line link from the README; never add sections to the README.

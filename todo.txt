@@ -130,7 +130,7 @@ Compiler
     is eliminated as dead; the check lives in gen_asm, which never runs for
     code that is not generated.  The AST optimizer also deletes an asm block
     that is unreachable or in a constant-false branch, which matches gcc -O0
-    but contradicts the README's "the optimizers do not change, move or
+    but contradicts docs/inline_assembly.md's "the optimizers do not change, move or
     delete it".
 
   - `label: }` is rejected: "internal error: unexpected token 'RBRACE'".
@@ -243,7 +243,7 @@ Not bugs, recorded so they are not re-reported
   - Compiling each unit of a program in whole-program mode (the default) and
     linking the results does not work, and is not meant to: each unit embeds
     crt0 and the runtime, so the link fails loudly on duplicate symbols.
-    Separate compilation means --no-whole-program, as the README says.
+    Separate compilation means --no-whole-program, as docs/compiler_options.md says.
 
 
 Provenance note

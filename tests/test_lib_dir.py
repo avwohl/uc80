@@ -280,7 +280,7 @@ class TestBuiltArtifacts:
     @pytest.mark.skipif(not (PKG_LIB / "libc.lib").exists(),
                         reason="libraries not built (run: uc80 --build-libs)")
     def test_print_lib_dir_points_at_a_directory_holding_libc_lib(self):
-        """The consumer contract, exactly as documented in the README."""
+        """The consumer contract, exactly as documented in docs/libraries.md."""
         r = run_uc80("--print-lib-dir")
         assert (Path(r.stdout.strip()) / "libc.lib").is_file()
 

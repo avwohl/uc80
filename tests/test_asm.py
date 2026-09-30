@@ -180,7 +180,7 @@ class TestFormatAsmBlock:
 class TestColonLessLabelNamedLikeAMnemonic:
     """A MACRO-80 label written without a colon MUST be in column 0, and
     nothing stops it being spelt SET, AND, OUT, PAGE or NAME.  Indenting it
-    turns the definition into an instruction; the README promises the text
+    turns the definition into an instruction; docs/inline_assembly.md promises the text
     goes through unchanged.  What follows the word is what tells them
     apart."""
 

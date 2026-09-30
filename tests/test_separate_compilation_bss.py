@@ -9,7 +9,7 @@ were silent.
 
 Whole-program output is a single module, where the blank COMMON is its
 alone, so this only ever showed in the separate-compilation workflow the
-README documents.  --no-whole-program now puts that storage in DSEG, which
+docs/compiler_options.md documents.  --no-whole-program now puts that storage in DSEG, which
 the linker gives each module its own space for.
 """
 
