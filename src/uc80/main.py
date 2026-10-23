@@ -12,7 +12,6 @@ from pathlib import Path
 from uc_core.frontend import parse as _frontend_parse
 from uc_core import ast as ast_module
 from uc_core.preprocessor import Preprocessor, PreprocessorError, Macro
-from uc_core.ast_optimizer import ASTOptimizer
 from uc_core.type_config import TypeConfig, Z80_CPM
 
 from . import lib_dir, lib_file
@@ -25,6 +24,8 @@ from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
+
+from .ast_opt import Uc80ASTOptimizer
 
 # Target-specific predefined macros supplied to the shared uc_core preprocessor.
 # __UC80_VERSION__ tracks uc80 (the driver), not uc_core.
@@ -607,7 +608,7 @@ def main() -> int:
         # AST-level expression optimization
         if not args.no_ast_optimize:
             opt_level = 3
-            ast_opt = ASTOptimizer(opt_level, type_config=type_config)
+            ast_opt = Uc80ASTOptimizer(opt_level, type_config=type_config)
             merged_ast = ast_opt.optimize(merged_ast)
             if args.verbose and ast_opt.stats:
                 print(f"  AST optimizations:")
