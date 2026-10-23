@@ -54,38 +54,57 @@ class TestExpressionGeneration:
         code = gen("int main(void) { return 123; }")
         assert "ld\tHL,123" in code
 
+    # These tests used constant operands (1 + 2, 5 - 3, 0xFF & 0x0F,
+    # 1 == 1, ...).  Constant operands are now folded or use immediate
+    # forms (see test_immediate_ops.py), so the operands are parameters,
+    # which still take the general 16-bit code.
+
+    @staticmethod
+    def _binop(op: str) -> str:
+        source = (f"int foo(int a, int b) {{ return a {op} b; }} "
+                  "int main(void) { return foo(3, 4); }")
+        return generate(parse(source), enable_inlining=False,
+                        enable_const_propagation=False)
+
     def test_addition(self):
         """Addition uses ADD HL,DE."""
-        code = gen("int main(void) { return 1 + 2; }")
+        code = self._binop("+")
         assert "add\tHL,DE" in code
 
     def test_subtraction(self):
         """Subtraction uses SBC HL,DE."""
-        code = gen("int main(void) { return 5 - 3; }")
+        code = self._binop("-")
         assert "sbc\tHL,DE" in code
 
     def test_bitwise_and(self):
         """Bitwise AND."""
-        code = gen("int main(void) { return 0xFF & 0x0F; }")
+        code = self._binop("&")
         assert "and\tD" in code
         assert "and\tE" in code
 
     def test_bitwise_or(self):
         """Bitwise OR."""
-        code = gen("int main(void) { return 0xF0 | 0x0F; }")
+        code = self._binop("|")
         assert "or\tD" in code
         assert "or\tE" in code
 
     def test_comparison_equal(self):
         """Equality comparison."""
-        code = gen("int main(void) { return 1 == 1; }")
+        code = self._binop("==")
         assert "sbc\tHL,DE" in code
         assert "jp\tZ" in code
 
     def test_comparison_not_equal(self):
         """Inequality comparison."""
-        code = gen("int main(void) { return 1 != 2; }")
+        code = self._binop("!=")
         assert "jp\tNZ" in code
+
+    def test_constant_operands_fold(self):
+        """1 + 2 and 0xF0 | 0x0F (no AST optimizer here) fold to a
+        constant."""
+        assert "ld\tHL,3\n" in gen("int main(void) { return 1 + 2; }")
+        assert "ld\tHL,255\n" in gen(
+            "int main(void) { return 0xF0 | 0x0F; }")
 
     def test_multiplication_calls_runtime(self):
         """Multiplication calls runtime library."""
@@ -1073,8 +1092,9 @@ class TestInlineExpansion:
         code = generate(parse(source), enable_inlining=True, enable_dead_elimination=True)
         # add should be eliminated after inlining
         assert "public\t_add" not in code
-        # The addition should happen inline
-        assert "add\tHL,DE" in code
+        # The addition happens inline; with both operands constant it
+        # folds to 3 (it was add HL,DE before constants were folded).
+        assert "ld\tHL,3\n" in code
 
     def test_inline_preserves_behavior(self):
         """Inlining produces correct results."""
@@ -1083,8 +1103,9 @@ class TestInlineExpansion:
             int main(void) { return double_it(5); }
         """
         code = generate(parse(source), enable_inlining=True)
-        # Should inline x + x with x = 5
-        assert "ld\tHL,5" in code
+        # Should inline x + x with x = 5, which folds to 10 (this
+        # checked for ld HL,5 before constants were folded).
+        assert "ld\tHL,10\n" in code
 
     def test_no_inline_recursive(self):
         """Recursive functions are not inlined."""
