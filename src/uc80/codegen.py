@@ -5203,9 +5203,11 @@ class CodeGenerator:
             self.ctx.emit(f"; Function {name}")
         self.ctx.emit_label(func_label)
 
+        frame_start = len(self.ctx.lines)
         self.ctx.emit_instr("push", "IX")
         self.ctx.emit_instr("ld", "IX,0")
         self.ctx.emit_instr("add", "IX,SP")
+        self._stmt_expr_seen = False
 
         # Return slots for the calls this function makes sit past its
         # locals, in the same frame -- on the stack, or in ??AUTO when the
@@ -5226,6 +5228,7 @@ class CodeGenerator:
                 self._sret_slot_addrs[node_id] = ("ix", -(locals_size + off + size),
                                                   size)
 
+        frame_size = 0
         if not use_shared_storage:
             frame_size = locals_size + sret_total
             if frame_size > 0:
@@ -5296,8 +5299,14 @@ class CodeGenerator:
         epilogue_label = f"@{name}_ret"
         self.ctx.emit_label(epilogue_label)
 
-        self.ctx.emit_instr("ld", "SP,IX")
-        self.ctx.emit_instr("pop", "IX")
+        if self._frame_is_unused(frame_start, frame_size):
+            # Nothing in the body names IX, so the frame pointer is dead:
+            # drop "push IX / ld IX,0 / add IX,SP" (44 T-states) and the
+            # "ld SP,IX / pop IX" that undoes them (24 T-states).
+            del self.ctx.lines[frame_start:frame_start + 3]
+        else:
+            self.ctx.emit_instr("ld", "SP,IX")
+            self.ctx.emit_instr("pop", "IX")
         self.ctx.emit_instr("ret")
         self.ctx.emit()
 
@@ -5307,6 +5316,27 @@ class CodeGenerator:
         self._current_sret_size = None
         self._sret_slot_addrs = {}
         self._type_scope_restore(type_scope)
+
+    _IX_USE = re.compile(r"(?<![A-Za-z0-9_@$.?])ix(?![A-Za-z0-9_@$.?])",
+                         re.IGNORECASE)
+
+    def _frame_is_unused(self, frame_start: int, frame_size: int) -> bool:
+        """True when the function just generated never reads IX.
+
+        The body is already in ``ctx.lines`` after the three prologue
+        lines at ``frame_start``.  With no stack locals, no stack slots
+        and no instruction or inline asm text that mentions IX, nothing
+        reads the frame pointer, so the prologue and the epilogue can go.
+        A statement expression keeps the frame: a return inside one can
+        leave pushed temporaries that only ``ld SP,IX`` drops.
+        """
+        if frame_size > 0 or self._stmt_expr_seen:
+            return False
+        # lines[frame_start:frame_start+3] is the prologue itself.
+        for line in self.ctx.lines[frame_start + 3:]:
+            if self._IX_USE.search(line):
+                return False
+        return True
 
     def gen_compound_stmt(self, stmt: ast.CompoundStmt) -> None:
         """Generate code for a compound statement (block)."""
@@ -7634,15 +7664,15 @@ class CodeGenerator:
 
         collect_cases(stmt.body)
 
-        # Evaluate switch expression
-        self.gen_expr(stmt.expr)
-
-        # Decide: jump table vs comparison chain
+        # Evaluate switch expression and dispatch
         fall_label = default_label if default_label else end_label
-        if self._should_use_jump_table(cases):
-            self._gen_switch_jump_table(cases, fall_label)
-        else:
-            self._gen_switch_compare_chain(cases, fall_label)
+        if not self._gen_switch_dispatch_bytes(stmt.expr, cases, fall_label):
+            self.gen_expr(stmt.expr)
+            # Decide: jump table vs comparison chain
+            if self._should_use_jump_table(cases):
+                self._gen_switch_jump_table(cases, fall_label)
+            else:
+                self._gen_switch_compare_chain(cases, fall_label)
 
         # Save previous switch context (for nested switches)
         saved_cases = list(getattr(self, '_switch_cases', []))
@@ -7668,6 +7698,108 @@ class CodeGenerator:
         self._switch_cases = saved_cases
         self._switch_default = saved_default
 
+    # Forms whose value is exactly the char they are declared as.  A
+    # BinaryOp, a ternary or a unary minus is an int by C promotion even
+    # when _get_expr_type says char, so those never take the byte path.
+    _SWITCH_CHAR_FORMS = (ast.Identifier, ast.Index, ast.Member,
+                          ast.ArrowMember, ast.Cast, ast.Call)
+
+    def _gen_switch_dispatch_bytes(self, expr, cases: list[tuple[int, str]],
+                                   fall_label: str) -> bool:
+        """Dispatch a switch on one byte when that is exact.
+
+        Returns False, with nothing emitted, when the plain 16-bit
+        dispatch has to be used.  Two cases qualify:
+
+        * the controlling expression is a char (promoted to int, so its
+          value is the sign or zero extension of one byte).  Case values
+          outside the char's range can never match and are dropped, and
+          the rest compare as bytes in A.
+        * the expression is a 16-bit int and every case value has the
+          same high byte.  One ``cp`` of H sends everything else to the
+          default, then the low bytes compare in A.
+
+        The byte tests cost 11 T-states a case against 35 for the 16-bit
+        ``ld DE,v / or A / sbc HL,DE / add HL,DE / jp Z``, and a jump
+        table indexes with an 8-bit range check."""
+        if not cases:
+            return False
+        if (self._is_long_expr(expr) or self._is_long_long_expr(expr)
+                or self._is_float_expr(expr) or self._is_complex_expr(expr)):
+            return False
+        try:
+            t = self._get_expr_type(expr)
+        except Exception:
+            return False
+        signed = self._char_type_signed(t)
+        hi_byte: int | None = None
+        if (signed is not None and isinstance(expr, self._SWITCH_CHAR_FORMS)
+                and self._type_size(_to_legacy(t)) == 1):
+            lo, hi = (-128, 127) if signed else (0, 255)
+            keys = [(v, lbl) for v, lbl in cases if lo <= v <= hi]
+            self._gen_expr_a(expr)
+        else:
+            if not self._int_scalar_expr(expr):
+                return False
+            if self._type_size(_to_legacy(t)) != 2 and not isinstance(
+                    _to_legacy(t), lt.EnumType):
+                return False
+            if self.type_config.int_size != 2:
+                return False
+            highs = {(v & 0xFFFF) >> 8 for v, _ in cases}
+            if len(highs) != 1:
+                return False
+            hi_byte = highs.pop()
+            keys = [(v & 0xFF, lbl) for v, lbl in cases]
+            self.gen_expr(expr)
+            e = self.ctx.emit_instr
+            e("ld", "A,H")
+            e("cp", str(hi_byte))
+            e("jp", f"NZ,{fall_label}")
+            e("ld", "A,L")
+        e = self.ctx.emit_instr
+        if not keys:
+            e("jp", fall_label)
+            return True
+        if self._should_use_jump_table(keys):
+            self._gen_switch_byte_table(keys, fall_label)
+        else:
+            for k, lbl in keys:
+                e("cp", str(k & 0xFF))
+                e("jp", f"Z,{lbl}")
+            e("jp", fall_label)
+        return True
+
+    def _gen_switch_byte_table(self, cases: list[tuple[int, str]],
+                               fall_label: str) -> None:
+        """Jump table indexed by A (the key, as a byte)."""
+        e = self.ctx.emit_instr
+        min_val = min(v for v, _ in cases)
+        max_val = max(v for v, _ in cases)
+        span = max_val - min_val + 1
+        table_label = self.ctx.new_label("SWTAB")
+        if min_val & 0xFF:
+            e("sub", str(min_val & 0xFF))
+        if span < 256:
+            e("cp", str(span))
+            e("jp", f"NC,{fall_label}")
+        e("ld", "L,A")
+        e("ld", "H,0")
+        e("add", "HL,HL")
+        e("ld", f"DE,{table_label}")
+        e("add", "HL,DE")
+        e("ld", "E,(HL)")
+        e("inc", "HL")
+        e("ld", "D,(HL)")
+        e("ex", "DE,HL")
+        e("jp", "(HL)")
+        case_map: dict[int, str] = {}
+        for v, lbl in cases:
+            case_map.setdefault(v, lbl)
+        self.ctx.emit_label(table_label)
+        for i in range(span):
+            e("dw", case_map.get(min_val + i, fall_label))
+
     def _should_use_jump_table(self, cases: list[tuple[int, str]]) -> bool:
         """Decide whether to use a jump table for this switch."""
         if len(cases) < 4:
@@ -7683,14 +7815,25 @@ class CodeGenerator:
         return density >= 0.5
 
     def _gen_switch_compare_chain(self, cases: list[tuple[int, str]], fall_label: str) -> None:
-        """Generate sequential compare-and-branch for sparse switch."""
-        for value, label in cases:
-            self.ctx.emit_instr("ld", f"DE,{value}")
-            self.ctx.emit_instr("or", "A")
-            self.ctx.emit_instr("sbc", "HL,DE")
-            self.ctx.emit_instr("add", "HL,DE")
-            self.ctx.emit_instr("jp", f"Z,{label}")
-        self.ctx.emit_instr("jp", fall_label)
+        """Generate sequential compare-and-branch for sparse switch.
+
+        The low byte is the first test (``cp`` 7 T-states, a ``jr`` past
+        the case 12 when it differs); only a match goes on to the high
+        byte.  That is 19 T-states for a case that misses, against 50
+        for ``ld DE,v / or A / sbc HL,DE / add HL,DE / jp Z``."""
+        e = self.ctx.emit_instr
+        e("ld", "A,L")
+        for i, (value, label) in enumerate(cases):
+            value &= 0xFFFF
+            nxt = self.ctx.new_label("SWNEXT")
+            e("cp", str(value & 0xFF))
+            e("jr", f"NZ,{nxt}")
+            e("ld", "A,H")
+            e("cp", str(value >> 8))
+            e("jp", f"Z,{label}")
+            e("ld", "A,L")
+            self.ctx.emit_label(nxt)
+        e("jp", fall_label)
 
     def _gen_switch_jump_table(self, cases: list[tuple[int, str]], fall_label: str) -> None:
         """Generate a jump table dispatch for dense switch."""
@@ -7951,6 +8094,7 @@ class CodeGenerator:
             self.gen_expr(expr.right, force_long)
 
     def gen_stmt_expr(self, expr: ast.StmtExpr) -> None:
+        self._stmt_expr_seen = True
         """Generate code for statement expression ({ ... })."""
         # Statement expressions are like compound statements - use gen_compound_stmt
         # for the body, and extract the value of the last expression
@@ -11195,7 +11339,18 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", "DE,0")
 
         if stack_size > 0:
-            if return_is_64bit:
+            if return_is_64bit and stack_size <= 4:
+                # Registers are free: one or two pops (10 T-states each)
+                # beat the 27 T-states of ld HL,n / add HL,SP / ld SP,HL.
+                for _ in range(stack_size // 2):
+                    self.ctx.emit_instr("pop", "DE")
+            elif return_is_32bit and stack_size <= 10 and stack_size % 2 == 0:
+                # DEHL holds the result and BC is dead after a call, so
+                # pop into BC: 10 T-states a word against 55 for saving
+                # DEHL around an SP adjustment.
+                for _ in range(stack_size // 2):
+                    self.ctx.emit_instr("pop", "BC")
+            elif return_is_64bit:
                 # Return value in __acc64 - registers are free, just clean stack
                 self.ctx.emit_instr("ld", f"HL,{stack_size}")
                 self.ctx.emit_instr("add", "HL,SP")

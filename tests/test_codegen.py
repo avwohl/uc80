@@ -21,17 +21,38 @@ class TestFunctionGeneration:
     """Test function code generation."""
 
     def test_empty_function(self):
-        """Empty function generates prologue/epilogue."""
+        """Empty function that never reads IX has no frame."""
         # Call foo from main so it's not eliminated as dead
         code = gen("void foo(void) {} int main(void) { foo(); return 0; }")
         assert "public\t_foo" in code
         assert "_foo:" in code
-        assert "push\tIX" in code
-        assert "ld\tIX,0" in code
-        assert "add\tIX,SP" in code
-        assert "ld\tSP,IX" in code
-        assert "pop\tIX" in code
-        assert "ret" in code
+        assert "push\tIX" not in code
+        assert "ld\tIX,0" not in code
+        assert "pop\tIX" not in code
+        foo = code[code.index("_foo:"):code.index("_main:")]
+        assert foo.split("@foo_ret:")[1].split()[0] == "ret"
+
+    def test_function_reading_a_parameter_keeps_the_frame(self):
+        """A parameter is read through IX, so the prologue stays."""
+        code = gen("int g(void); int id(int a) { return a; } "
+                   "int main(void) { return id(g()) + id(g()); }")
+        body = code[code.index("_id:"):code.index("_main:")]
+        for text in ("push\tIX", "ld\tIX,0", "add\tIX,SP", "ld\tSP,IX",
+                     "pop\tIX", "(IX+4)"):
+            assert text in body
+
+    def test_frameless_function_that_calls_keeps_no_frame(self):
+        """A call preserves IX, so a caller that never reads IX needs none."""
+        code = gen("void g(void); void f(void) { g(); g(); } "
+                   "int main(void) { f(); return 0; }")
+        body = code[code.index("_f:"):code.index("_main:")]
+        assert "IX" not in body and "call\t_g" in body
+
+    def test_inline_asm_naming_ix_keeps_the_frame(self):
+        code = gen('void f(void) { __asm__("push ix\\n\\tpop hl"); } '
+                   "int main(void) { f(); return 0; }")
+        body = code[code.index("_f:"):code.index("_main:")]
+        assert "push\tIX" in body and "pop\tIX" in body
 
     def test_function_with_return(self):
         """Function with return value."""

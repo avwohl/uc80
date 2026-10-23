@@ -220,8 +220,15 @@ class TestCodegenFlag:
         assert "ld\t(___crlf_mode),A" in code
 
     def test_store_is_inside_main_after_the_prologue(self):
+        # main reads no IX here, so it has no frame; the store still
+        # follows the label (and the prologue when there is one).
         code = _gen("int main(void) { return 0; }", crlf_console=False)
         assert code.index("_main:") < code.index("ld\t(___crlf_mode),A")
+        code = _gen("int g(void); int main(void) { return g() + g(); }",
+                    crlf_console=False)
+        assert "add\tIX,SP" not in code
+        code = _gen("int main(int argc, char **argv) { return argc; }",
+                    crlf_console=False)
         assert code.index("add\tIX,SP") < code.index("ld\t(___crlf_mode),A")
 
     def test_store_runs_before_the_body(self):
