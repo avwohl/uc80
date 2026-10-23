@@ -16,7 +16,8 @@ from uc_core.ast_optimizer import ASTOptimizer
 from uc_core.type_config import TypeConfig, Z80_CPM
 
 from . import lib_dir, lib_file
-from .codegen import generate, CodeGenerator, CodegenError, BSS_BANNER_PREFIX
+from .codegen import (generate, CodeGenerator, CodegenError, BSS_BANNER_PREFIX,
+                      drop_unreferenced_externs)
 from .runtime import RuntimeLibrary, load_runtime_library
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
 from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
@@ -1026,6 +1027,11 @@ def main() -> int:
                     if count > 0:
                         print(f"    {pattern}: {count} applied")
                 print(f"  Optimized to {len(code.splitlines())} lines of assembly")
+
+        # Drop EXTRNs nothing uses: ul80 links the library module for each
+        # one.  Done last, so appended .mac files count as uses and names
+        # whose last use asm DCE or the peephole pass deleted go too.
+        code = drop_unreferenced_externs(code)
 
         # Write output
         output_path.write_text(code)

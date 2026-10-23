@@ -4,6 +4,27 @@ All notable changes to uc80 are recorded here. Versions follow
 `major.minor.patch`: the minor number is raised when a release changes the
 observable behaviour of a program uc80 compiles.
 
+## Unreleased
+
+### Fixed
+
+- **Every program linked about 9 KB of libc it never called.** uc80
+  declares each prototype in each included header as `EXTRN`. Since um80
+  0.3.50, um80 keeps an unreferenced `EXTRN`, as MACRO-80 does, and ul80
+  then links the library module that defines the name. `puts("hello")`
+  linked to 9,088 bytes instead of 256, and c-testsuite as a whole to
+  752,000 bytes instead of 450,176. The compiler now drops every `EXTRN`
+  that nothing in the module uses, as its last step, so a name used only
+  by an appended `.mac` file keeps its `EXTRN`. When hand-written assembly
+  uses `include`, a macro or `&`, nothing is dropped, because the names it
+  uses cannot be seen.
+- **`malloc` memory overwrote globals.** The heap started at a word in
+  `lc_malloc`'s own data segment, below the program's later data and BSS,
+  so `malloc(1000)` followed by `memset` cleared global and static
+  variables. The heap now starts at `__END__`, the first free byte after
+  the whole program. The smaller links above made the old bug hit with
+  much smaller blocks. Rebuild the libraries (`uc80 --build-libs`).
+
 ## 0.7.0
 
 An ABI change, and a correctness release around it. A function returning a

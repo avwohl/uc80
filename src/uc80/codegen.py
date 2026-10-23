@@ -14,7 +14,7 @@ from typing import Callable, Iterator, Optional
 # dependencies) so that codegen, main and asm_dce share one definition of
 # them; they are re-exported here because codegen is what writes them.
 from .asm_dce import (ASM_BEGIN_MARKER, ASM_BEGIN_FILE_MARKER,
-                      ASM_END_MARKER)
+                      ASM_END_MARKER, is_asm_begin, is_asm_end)
 from uc_core import ast
 # Codegen-internal synthetic resolved types — the parser doesn't
 # produce these (the auto-AST is declarator-shaped), but codegen
@@ -39,6 +39,81 @@ SRET_BUF_SIZE = 256
 # First line of the comment that introduces the uninitialized-data block,
 # in either spelling.  main.py splices appended assembly in front of it.
 BSS_BANNER_PREFIX = "; BSS - uninitialized static storage"
+
+
+_EXTRN_LINE_RE = re.compile(r'\s*(?:EXTRN|EXTERNAL|EXT)\s+(.+)', re.IGNORECASE)
+_ASM_SYMBOL_RE = re.compile(r'[A-Za-z_?@$.][\w?@$.]*')
+# Hand-written assembly that can name a symbol the token scan never sees:
+# an included file, or a macro that builds the name with & concatenation.
+_ASM_OPAQUE_RE = re.compile(r'\b(?:\*?INCLUDE|MACLIB|MACRO|REPT|IRPC?)\b|&',
+                            re.IGNORECASE)
+
+
+def _strip_asm_comment(line: str) -> str:
+    """`line` up to its `;` comment, ignoring a `;` inside quotes."""
+    quote = None
+    for i, ch in enumerate(line):
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch == ';':
+            return line[:i]
+    return line
+
+
+def drop_unreferenced_externs(code: str) -> str:
+    """Remove EXTRN names that nothing else in the module mentions.
+
+    Every prototype in every included header becomes an EXTRN, so a
+    one-line puts() program declares most of libc.  MACRO-80 writes an
+    unreferenced EXTRN as an empty chain and LINK-80 still searches the
+    libraries for it, and um80 does the same since 0.3.50 - so each of
+    those names pulled its libc module into the .com (hello world grew
+    from 256 to 9,088 bytes).  An EXTRN nobody references has no other
+    effect, so dropping it is always safe.
+
+    A name counts as referenced if it appears anywhere outside an EXTRN
+    line and a comment, including inside quoted strings and inline asm;
+    that errs on the side of keeping it.  M80 folds case, so the match
+    does too.  Hand-written asm regions are left exactly as written, and
+    if one includes a file or uses a macro or &, nothing is pruned: the
+    names it uses cannot be seen from here.
+    """
+    lines = code.split("\n")
+    referenced: set[str] = set()
+    in_asm = False
+    for line in lines:
+        if not in_asm and is_asm_begin(line):
+            in_asm = True
+        elif in_asm and is_asm_end(line):
+            in_asm = False
+        body = _strip_asm_comment(line)
+        if in_asm and _ASM_OPAQUE_RE.search(body):
+            return code
+        if not in_asm and _EXTRN_LINE_RE.match(body):
+            continue
+        referenced.update(t.upper() for t in _ASM_SYMBOL_RE.findall(body))
+
+    out: list[str] = []
+    in_asm = False
+    for line in lines:
+        if not in_asm and is_asm_begin(line):
+            in_asm = True
+        elif in_asm and is_asm_end(line):
+            in_asm = False
+        match = None if in_asm else _EXTRN_LINE_RE.match(_strip_asm_comment(line))
+        if match is None:
+            out.append(line)
+            continue
+        names = [n.strip() for n in match.group(1).split(',') if n.strip()]
+        kept = [n for n in names if n.upper() in referenced]
+        if kept == names:
+            out.append(line)
+        elif kept:
+            out.append(f"\textrn\t{','.join(kept)}")
+    return "\n".join(out)
 
 
 # ---- auto-AST helpers ------------------------------------------------------
@@ -3760,6 +3835,9 @@ class CodeGenerator:
         self.ctx.emit()
         self.ctx.emit("\tend")
 
+        # Unused EXTRNs are pruned later, by main.py once any .mac input
+        # has been appended (its references keep their EXTRNs), or by the
+        # module-level generate() for callers that use the text as is.
         return "\n".join(self.ctx.lines)
 
     def gen_declaration(self, decl) -> None:
@@ -14626,4 +14704,4 @@ def generate(unit: ast.TranslationUnit, module_name: str = "main",
     gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                        enable_inlining, enable_const_propagation, whole_program, embed_runtime,
                        crlf_console=crlf_console)
-    return gen.generate(unit)
+    return drop_unreferenced_externs(gen.generate(unit))

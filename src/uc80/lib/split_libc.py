@@ -176,7 +176,6 @@ write_module("lc_malloc.mac", f"""; lc_malloc.mac - dynamic memory allocation
 
 \tDSEG
 _heap_ptr:\tDW\t0
-_heap_start:\tDW\t0
 
 \tEND
 """)

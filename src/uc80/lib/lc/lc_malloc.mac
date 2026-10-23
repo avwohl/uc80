@@ -10,6 +10,7 @@ PRTSTR	EQU	9
 	CSEG
 
 ; ============================================================
+	EXTRN	__END__
 	PUBLIC	_malloc
 _malloc:
 	PUSH	IX
@@ -27,8 +28,11 @@ _malloc:
 	LD	A,H
 	OR	L
 	JR	NZ,_malloc_have_heap
-	; Initialize heap to start after our data
-	LD	HL,_heap_start
+	; Initialize heap to start at the first free byte after the whole
+	; program, BSS included (ul80 defines __END__).  _heap_start, a word
+	; in this module's own DSEG, put the heap on top of the program's
+	; later data and BSS, so malloc'd memory overwrote globals.
+	LD	HL,__END__
 	LD	(_heap_ptr),HL
 
 _malloc_have_heap:
@@ -228,6 +232,5 @@ _realloc_done:
 
 	DSEG
 _heap_ptr:	DW	0
-_heap_start:	DW	0
 
 	END

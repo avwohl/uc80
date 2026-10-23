@@ -256,9 +256,59 @@ class TestExternDeclarations:
     """Test external declarations."""
 
     def test_function_declaration_extrn(self):
-        """Function declaration without body generates EXTRN."""
-        code = gen("void foo(void);")
+        """A called function declared without a body generates EXTRN."""
+        code = gen("void foo(void);\nint main(void) { foo(); return 0; }")
         assert "extrn\t_foo" in code
+
+    def test_unused_declaration_has_no_extrn(self):
+        """A prototype nothing uses emits no EXTRN.
+
+        um80 >= 0.3.50 keeps an unreferenced EXTRN, as MACRO-80 does, and
+        ul80 then links the library module that defines it - which made
+        a puts("hello") program 9,088 bytes instead of 256.
+        """
+        code = gen("void foo(void);\nvoid bar(void);\n"
+                   "int main(void) { bar(); return 0; }")
+        assert "_foo" not in code
+        assert "extrn\t_bar" in code
+
+    def test_unused_data_extern_has_no_extrn(self):
+        """An extern object nothing uses emits no EXTRN either."""
+        code = gen("extern int unused_x;\nextern int used_y;\n"
+                   "int main(void) { return used_y; }")
+        assert "_unused_x" not in code
+        assert "extrn\t_used_y" in code
+
+    def test_extrn_kept_for_name_used_only_in_asm(self):
+        """A name that only inline asm mentions keeps its EXTRN."""
+        code = gen('void helper(void);\n'
+                   'int main(void) { asm("call _helper"); return 0; }')
+        assert "extrn\t_helper" in code
+
+
+class TestDropUnreferencedExterns:
+    """drop_unreferenced_externs on hand-made assembly text."""
+
+    def test_comment_mention_is_not_a_reference(self):
+        from uc80.codegen import drop_unreferenced_externs
+        out = drop_unreferenced_externs(
+            "\textrn\t_a,_b\n\tcall\t_a\t; not _b\n\tend")
+        assert "\textrn\t_a\n" in out
+        assert "_b\n" not in out.split("; not")[0]
+
+    def test_case_folded_reference(self):
+        from uc80.codegen import drop_unreferenced_externs
+        out = drop_unreferenced_externs("\textrn\t_foo\n\tCALL\t_FOO\n\tend")
+        assert "extrn\t_foo" in out
+
+    def test_hand_written_region_untouched(self):
+        from uc80.codegen import (drop_unreferenced_externs,
+                                  ASM_BEGIN_FILE_MARKER, ASM_END_MARKER)
+        text = (f"{ASM_BEGIN_FILE_MARKER}\n\tEXTRN\tforcelink\n"
+                f"{ASM_END_MARKER}\n\textrn\t_gone\n\tend")
+        out = drop_unreferenced_externs(text)
+        assert "\tEXTRN\tforcelink" in out
+        assert "_gone" not in out
 
 
 class TestArrayRedeclaration:
