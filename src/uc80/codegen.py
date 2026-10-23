@@ -5511,6 +5511,16 @@ class CodeGenerator:
                 elif isinstance(decl.var_type, lt.StructType):
                     # Struct copy from expression (e.g., *ptr, or struct variable)
                     self._gen_struct_copy_from_expr(decl)
+                elif (self._char_type_signed(decl.var_type) is not None
+                      and not isinstance(decl.init, (list,
+                                                     ast.InitializerList,
+                                                     ast.Compound))
+                      and not self._is_float_expr(decl.init)):
+                    # A char: the store of an assignment whose value is
+                    # not used (no re-extension into HL afterwards).
+                    self.gen_expr_discard(ast.BinaryOp(
+                        op="=", left=make_identifier(decl.name),
+                        right=decl.init))
                 else:
                     is_long = self._is_long_type(decl.var_type)
                     is_long_long = self._is_long_long_type(decl.var_type)
@@ -7468,21 +7478,15 @@ class CodeGenerator:
         else_label = self.ctx.new_label("ELSE")
         end_label = self.ctx.new_label("ENDIF")
 
-        # Evaluate condition - use force_long for float/long conditions
-        self._gen_condition_value(stmt.condition)
-
-        # Test if result is zero
-        self._emit_condition_test(stmt.condition)
-
         if getattr(stmt, "else_branch", None):
-            self.ctx.emit_instr("jp", f"Z,{else_label}")
+            self._gen_cond_false_jump(stmt.condition, else_label)
             self.gen_statement(stmt.then_branch)
             self.ctx.emit_instr("jp", end_label)
             self.ctx.emit_label(else_label)
             self.gen_statement(getattr(stmt, "else_branch", None))
             self.ctx.emit_label(end_label)
         else:
-            self.ctx.emit_instr("jp", f"Z,{end_label}")
+            self._gen_cond_false_jump(stmt.condition, end_label)
             self.gen_statement(stmt.then_branch)
             self.ctx.emit_label(end_label)
 
@@ -7495,9 +7499,7 @@ class CodeGenerator:
         self.ctx.continue_labels.append(start_label)
 
         self.ctx.emit_label(start_label)
-        self._gen_condition_value(stmt.condition)
-        self._emit_condition_test(stmt.condition)
-        self.ctx.emit_instr("jp", f"Z,{end_label}")
+        self._gen_cond_false_jump(stmt.condition, end_label)
 
         self.gen_statement(stmt.body)
         self.ctx.emit_instr("jp", start_label)
@@ -7519,9 +7521,12 @@ class CodeGenerator:
         self.gen_statement(stmt.body)
 
         self.ctx.emit_label(cond_label)
-        self._gen_condition_value(stmt.condition)
-        self._emit_condition_test(stmt.condition)
-        self.ctx.emit_instr("jp", f"NZ,{start_label}")
+        if self._const_int_operand(stmt.condition) is None:
+            self._gen_branch(stmt.condition, start_label, True)
+        else:
+            self._gen_condition_value(stmt.condition)
+            self._emit_condition_test(stmt.condition)
+            self.ctx.emit_instr("jp", f"NZ,{start_label}")
         self.ctx.emit_label(end_label)
 
         self.ctx.break_labels.pop()
@@ -7550,9 +7555,7 @@ class CodeGenerator:
 
         # Condition
         if stmt.condition:
-            self._gen_condition_value(stmt.condition)
-            self._emit_condition_test(stmt.condition)
-            self.ctx.emit_instr("jp", f"Z,{end_label}")
+            self._gen_cond_false_jump(stmt.condition, end_label)
 
         # Body
         self.gen_statement(stmt.body)
@@ -8246,6 +8249,13 @@ class CodeGenerator:
             self.ctx.regs.release_reg('de', self._emit_reg)
             self.ctx.regs.mark_free('hl')
             return
+        if op in self._SWAP_CMP:
+            cc = self._gen_cmp16_flags(expr, op)
+            if cc is not None:
+                self._emit_cc_value(cc)
+                self.ctx.regs.release_reg('de', self._emit_reg)
+                self.ctx.regs.mark_free('hl')
+                return
         # Pointer arithmetic: scale integer operand by sizeof(*ptr)
         ptr_elem_size = 0
         ptr_sub = False  # True if this is ptr - ptr (result needs division)
@@ -8273,8 +8283,8 @@ class CodeGenerator:
             if op in ("==", "!=", "<", ">", "<=", ">="):
                 self.gen_expr_to_de(expr.right)
                 self._gen_comparison(
-                    op, self._is_promoted_unsigned(expr.left)
-                    or self._is_promoted_unsigned(expr.right), hl_left=True)
+                    op, self._cmp16_unsigned(expr.left, expr.right),
+                    hl_left=True)
                 self.ctx.regs.release_reg('de', self._emit_reg)
                 self.ctx.regs.mark_free('hl')
                 return
@@ -8482,9 +8492,9 @@ class CodeGenerator:
                 else:
                     self._call_runtime("__sar16")
         elif op in ("==", "!=", "<", ">", "<=", ">="):
-            # Check if either operand is unsigned for proper comparison
-            is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
-            self._gen_comparison(op, is_unsigned)
+            # Unsigned when either operand is unsigned or a pointer.
+            self._gen_comparison(
+                op, self._cmp16_unsigned(expr.left, expr.right))
         elif op == ",":
             # Comma operator: result is right operand (already in HL)
             pass
@@ -8493,8 +8503,13 @@ class CodeGenerator:
         self.ctx.regs.release_reg('de', self._emit_reg)
         self.ctx.regs.mark_free('hl')
 
-    def _gen_binary_op_32(self, expr: ast.BinaryOp, op: str) -> None:
-        """Generate 32-bit binary operation. Result in DEHL."""
+    def _gen_binary_op_32(self, expr: ast.BinaryOp, op: str,
+                          branch: tuple[str, bool] | None = None) -> None:
+        """Generate 32-bit binary operation. Result in DEHL.
+
+        For a comparison, ``branch`` = (label, jump_if) jumps to label
+        when the truth of the comparison is jump_if, with no 0/1 value
+        (_gen_branch)."""
         if (op in ("*", "/", "%", "<<", ">>")
                 and self._gen_const_op_32(expr, op)):
             return
@@ -8637,7 +8652,15 @@ class CodeGenerator:
                 is_unsigned = right_u
             else:
                 is_unsigned = left_u or right_u
-            self._gen_comparison_32(op, is_unsigned)
+            if branch is not None:
+                label, jump_if = branch
+                if not jump_if:
+                    op = self._NEG_CMP[op]
+                fall = self.ctx.new_label("CMP_F")
+                self._emit_cmp32_jumps(op, is_unsigned, label, fall)
+                self.ctx.emit_label(fall)
+            else:
+                self._gen_comparison_32(op, is_unsigned)
         elif op == ",":
             pass  # Result is already in DEHL
 
@@ -8647,6 +8670,23 @@ class CodeGenerator:
         false_label = self.ctx.new_label("CMP_F")
         end_label = self.ctx.new_label("CMP_E")
 
+        self._emit_cmp32_jumps(op, is_unsigned, true_label, false_label)
+
+        # Fall through to false
+        self.ctx.emit_label(false_label)
+        self.ctx.emit_instr("ld", "HL,0")
+        self.ctx.emit_instr("jp", end_label)
+        self.ctx.emit_label(true_label)
+        self.ctx.emit_instr("ld", "HL,1")
+        self.ctx.emit_label(end_label)
+        # Clear DE for 16-bit result
+        self.ctx.emit_instr("ld", "DE,0")
+
+    def _emit_cmp32_jumps(self, op: str, is_unsigned: bool,
+                          true_label: str, false_label: str) -> None:
+        """Compare DEHL (left) with __tmp32 (right): jump to true_label
+        when ``left op right`` holds; when it does not, jump to
+        false_label or fall through."""
         if op == "==" or op == "!=":
             # Equality doesn't care about sign
             self._call_runtime("__cmp32")
@@ -8708,16 +8748,6 @@ class CodeGenerator:
             elif op == "<=":
                 self.ctx.emit_instr("jp", f"Z,{true_label}")
                 self.ctx.emit_instr("jp", f"C,{true_label}")
-
-        # Fall through to false
-        self.ctx.emit_label(false_label)
-        self.ctx.emit_instr("ld", "HL,0")
-        self.ctx.emit_instr("jp", end_label)
-        self.ctx.emit_label(true_label)
-        self.ctx.emit_instr("ld", "HL,1")
-        self.ctx.emit_label(end_label)
-        # Clear DE for 16-bit result
-        self.ctx.emit_instr("ld", "DE,0")
 
     def _gen_binary_op_64(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate 64-bit binary operation. Result in __acc64."""
@@ -9259,6 +9289,15 @@ class CodeGenerator:
                 self._gen_struct_assignment(expr, struct_size)
                 return
 
+        # A 16-bit *p, a[i] or s.m = constant or variable: address
+        # first, then the value straight into memory or DE.
+        if (not target_is_32bit
+                and self._gen_store16_simple(expr, target_type)):
+            return
+        if (target_is_32bit and not target_is_float
+                and self._gen_store32_const(expr, target_type)):
+            return
+
         # Check if source is float/double
         source_is_float = self._is_float_expr(expr.right)
 
@@ -9329,6 +9368,7 @@ class CodeGenerator:
                 self._emit_char_to_hl(self._is_signed_type(t))
 
         # Store to the target
+        value_used = expr is not self._discard_expr
         if isinstance(expr.left, ast.Identifier):
             sym = self.ctx.lookup(expr.left.name)
             if sym:
@@ -9353,7 +9393,8 @@ class CodeGenerator:
                         else:
                             self.ctx.emit_instr("ld", f"({sym.label()}),HL")
                     else:
-                        self._store_local(sym, size=target_size)
+                        self._store_local(sym, size=target_size,
+                                          keep_value=value_used)
                         if target_size == 1 and not (
                                 sym.uses_shared_storage
                                 and not self._is_signed_type(target_type)):
@@ -9364,8 +9405,9 @@ class CodeGenerator:
             target_size = self._type_size(target_type) if target_type else 2
             if target_is_32bit:
                 # Save value twice: one for storing, one to restore result
-                self.ctx.emit_instr("push", "DE")  # Result high word
-                self.ctx.emit_instr("push", "HL")  # Result low word
+                if value_used:
+                    self.ctx.emit_instr("push", "DE")  # Result high word
+                    self.ctx.emit_instr("push", "HL")  # Result low word
                 self.ctx.emit_instr("push", "DE")  # Store high word
                 self.ctx.emit_instr("push", "HL")  # Store low word
                 self.gen_expr(expr.left.operand)   # Get address in HL
@@ -9381,29 +9423,31 @@ class CodeGenerator:
                 self.ctx.emit_instr("inc", "HL")
                 self.ctx.emit_instr("ld", "(HL),D")
                 # Restore DEHL for chained assignments
-                self.ctx.emit_instr("pop", "HL")   # Result low word
-                self.ctx.emit_instr("pop", "DE")   # Result high word
+                if value_used:
+                    self.ctx.emit_instr("pop", "HL")   # Result low word
+                    self.ctx.emit_instr("pop", "DE")   # Result high word
             elif target_size == 1:
-                self.ctx.emit_instr("push", "HL")  # Save value
-                self.gen_expr(expr.left.operand)   # Get address in HL
-                self.ctx.emit_instr("pop", "DE")   # Value in DE
+                self._value_to_de_addr_to_hl(
+                    expr.left, lambda: self.gen_expr(expr.left.operand))
                 self.ctx.emit_instr("ld", "(HL),E")  # Store only 1 byte
-                self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
+                if value_used:
+                    self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
                 _char_result(target_type)
             else:
-                self.ctx.emit_instr("push", "HL")  # Save value
-                self.gen_expr(expr.left.operand)   # Get address in HL
-                self.ctx.emit_instr("pop", "DE")   # Value in DE
+                self._value_to_de_addr_to_hl(
+                    expr.left, lambda: self.gen_expr(expr.left.operand))
                 self.ctx.emit_instr("ld", "(HL),E")
                 self.ctx.emit_instr("inc", "HL")
                 self.ctx.emit_instr("ld", "(HL),D")
-                self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
+                if value_used:
+                    self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
         elif isinstance(expr.left, ast.Index):
             # Array element assignment
             if target_is_32bit:
                 # Save value twice: one for storing, one to restore result
-                self.ctx.emit_instr("push", "DE")  # Result high word
-                self.ctx.emit_instr("push", "HL")  # Result low word
+                if value_used:
+                    self.ctx.emit_instr("push", "DE")  # Result high word
+                    self.ctx.emit_instr("push", "HL")  # Result low word
                 self.ctx.emit_instr("push", "DE")  # Store high word
                 self.ctx.emit_instr("push", "HL")  # Store low word
                 self._gen_address(expr.left)       # Get address in HL
@@ -9419,23 +9463,24 @@ class CodeGenerator:
                 self.ctx.emit_instr("inc", "HL")
                 self.ctx.emit_instr("ld", "(HL),D")
                 # Restore DEHL for chained assignments
-                self.ctx.emit_instr("pop", "HL")   # Result low word
-                self.ctx.emit_instr("pop", "DE")   # Result high word
+                if value_used:
+                    self.ctx.emit_instr("pop", "HL")   # Result low word
+                    self.ctx.emit_instr("pop", "DE")   # Result high word
             elif target_type and self._type_size(target_type) == 1:
-                self.ctx.emit_instr("push", "HL")  # Save value
-                self._gen_address(expr.left)       # Get address in HL
-                self.ctx.emit_instr("pop", "DE")   # Value in DE
+                self._value_to_de_addr_to_hl(
+                    expr.left, lambda: self._gen_address(expr.left))
                 self.ctx.emit_instr("ld", "(HL),E")  # Store only 1 byte
-                self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
+                if value_used:
+                    self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
                 _char_result(target_type)
             else:
-                self.ctx.emit_instr("push", "HL")  # Save value
-                self._gen_address(expr.left)       # Get address in HL
-                self.ctx.emit_instr("pop", "DE")   # Value in DE
+                self._value_to_de_addr_to_hl(
+                    expr.left, lambda: self._gen_address(expr.left))
                 self.ctx.emit_instr("ld", "(HL),E")
                 self.ctx.emit_instr("inc", "HL")
                 self.ctx.emit_instr("ld", "(HL),D")
-                self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
+                if value_used:
+                    self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
         elif isinstance(expr.left, (ast.Member, ast.ArrowMember)):
             # Check for bitfield assignment
             bf = self._get_bitfield_info(expr.left)
@@ -9450,8 +9495,9 @@ class CodeGenerator:
 
             if member_is_32bit:
                 # 32-bit member: save DEHL twice, store, restore result
-                self.ctx.emit_instr("push", "DE")  # Result high word
-                self.ctx.emit_instr("push", "HL")  # Result low word
+                if value_used:
+                    self.ctx.emit_instr("push", "DE")  # Result high word
+                    self.ctx.emit_instr("push", "HL")  # Result low word
                 self.ctx.emit_instr("push", "DE")  # Store high word
                 self.ctx.emit_instr("push", "HL")  # Store low word
                 self._gen_address(expr.left)       # Get member address in HL
@@ -9467,19 +9513,20 @@ class CodeGenerator:
                 self.ctx.emit_instr("inc", "HL")
                 self.ctx.emit_instr("ld", "(HL),D")
                 # Restore DEHL for chained assignments
-                self.ctx.emit_instr("pop", "HL")   # Result low word
-                self.ctx.emit_instr("pop", "DE")   # Result high word
+                if value_used:
+                    self.ctx.emit_instr("pop", "HL")   # Result low word
+                    self.ctx.emit_instr("pop", "DE")   # Result high word
             else:
-                self.ctx.emit_instr("push", "HL")  # Save value
-                self._gen_address(expr.left)       # Get member address in HL
-                self.ctx.emit_instr("pop", "DE")   # Value in DE
+                self._value_to_de_addr_to_hl(
+                    expr.left, lambda: self._gen_address(expr.left))
                 if member_size == 1:
                     self.ctx.emit_instr("ld", "(HL),E")
                 else:
                     self.ctx.emit_instr("ld", "(HL),E")
                     self.ctx.emit_instr("inc", "HL")
                     self.ctx.emit_instr("ld", "(HL),D")
-                self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
+                if value_used:
+                    self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
                 if member_size == 1:
                     _char_result(member_type)
 
@@ -9523,6 +9570,10 @@ class CodeGenerator:
         # If LHS has side effects (function calls, inc/dec), evaluate address once
         if self._expr_has_side_effects(expr.left):
             self._gen_compound_assignment_safe(expr, op)
+            return
+        # A 16-bit *p, a[i] or s.m with a constant or simple right side:
+        # address once, update in HL, store through DE.
+        if self._gen_compound16_inplace(expr, op):
             return
         # A char element, member or *p: address once, then
         # ld A,(HL) / op / ld (HL),A.
@@ -9668,6 +9719,8 @@ class CodeGenerator:
         if (target_size == 1 and not is_bitfield
                 and self._gen_char_compound_once_a(expr, op, t)):
             return
+        if not is_bitfield and self._gen_compound16_inplace(expr, op):
+            return
         if (isinstance(t, (lt.BasicType, lt.PointerType, lt.EnumType))
                 and target_size in (1, 2, 4) and not is_bitfield):
             self._gen_compound_assignment_once(expr, op, t, target_size)
@@ -9772,13 +9825,8 @@ class CodeGenerator:
         false_label = self.ctx.new_label("AND_F")
         end_label = self.ctx.new_label("AND_E")
 
-        self._gen_condition_value(expr.left)
-        self._emit_condition_test(expr.left)
-        self.ctx.emit_instr("jp", f"Z,{false_label}")
-
-        self._gen_condition_value(expr.right)
-        self._emit_condition_test(expr.right)
-        self.ctx.emit_instr("jp", f"Z,{false_label}")
+        self._gen_branch(expr.left, false_label, False)
+        self._gen_branch(expr.right, false_label, False)
 
         self.ctx.emit_instr("ld", "HL,1")
         self.ctx.emit_instr("jp", end_label)
@@ -9793,13 +9841,8 @@ class CodeGenerator:
         true_label = self.ctx.new_label("OR_T")
         end_label = self.ctx.new_label("OR_E")
 
-        self._gen_condition_value(expr.left)
-        self._emit_condition_test(expr.left)
-        self.ctx.emit_instr("jp", f"NZ,{true_label}")
-
-        self._gen_condition_value(expr.right)
-        self._emit_condition_test(expr.right)
-        self.ctx.emit_instr("jp", f"NZ,{true_label}")
+        self._gen_branch(expr.left, true_label, True)
+        self._gen_branch(expr.right, true_label, True)
 
         self.ctx.emit_instr("ld", "HL,0")
         self.ctx.emit_instr("jp", end_label)
@@ -9959,13 +10002,218 @@ class CodeGenerator:
         elif op == "++" or op == "--":
             self._gen_inc_dec(expr)
 
+    def _gen_incdec_var_fast(self, expr, sym, is_inc: bool) -> bool:
+        """++/-- on a variable done in place: ``inc (HL)`` or
+        ``inc (IX+d)`` for a char, ``inc (IX+d)`` with a carry into the
+        high byte for an unused 16-bit IX local, and a word-wise carry
+        chain for a long in memory.  Returns False (nothing emitted)
+        when the general code is used instead."""
+        e = self.ctx.emit_instr
+        t = _to_legacy(sym.sym_type)
+        if not isinstance(t, (lt.BasicType, lt.EnumType, lt.PointerType)):
+            return False
+        if self._is_float_type(t) or self._is_long_long_type(t):
+            return False
+        discard = expr is self._discard_expr
+        prefix = expr.is_prefix
+        inc = "inc" if is_inc else "dec"
+        size = self._type_size(t)
+        ix = not (sym.is_global or sym.uses_shared_storage)
+        if sym.is_global:
+            mem = sym.label()
+        else:
+            mem = f"??AUTO+{sym.shared_offset}"
+
+        if self._is_long_type(t):
+            if size != 4 or not (discard or prefix):
+                return False
+            if ix and not (is_inc and discard):
+                return False
+            done = self.ctx.new_label("INC")
+            if ix:
+                base = self._ix_reach(sym.offset, 4)
+                for i in range(4):
+                    e("inc", f"({ix_off(base + i)})")
+                    if i < 3:
+                        e("jr", f"NZ,{done}")
+                self.ctx.emit_label(done)
+                self._ix_release(sym.offset, 4)
+                return True
+            if is_inc:
+                e("ld", f"HL,({mem})")
+                e("inc", "HL")
+                e("ld", f"({mem}),HL")
+                e("ld", "A,H")
+                e("or", "L")
+            else:
+                e("ld", f"HL,({mem})")
+                e("ld", "A,H")
+                e("or", "L")
+                e("dec", "HL")
+                e("ld", f"({mem}),HL")
+            e("jr", f"NZ,{done}")
+            e("ld", f"HL,({mem}+2)")
+            e(inc, "HL")
+            e("ld", f"({mem}+2),HL")
+            self.ctx.emit_label(done)
+            if not discard:
+                e("ld", f"HL,({mem})")
+                e("ld", f"DE,({mem}+2)")
+            return True
+
+        if size == 1:
+            if self._is_bool_type(t):
+                return False
+            signed = self._is_signed_type(t)
+            if ix:
+                base = self._ix_reach(sym.offset, 1)
+                op = f"({ix_off(base)})"
+                if discard:
+                    e(inc, op)
+                elif prefix:
+                    e(inc, op)
+                    e("ld", f"L,{op}")
+                else:
+                    e("ld", f"L,{op}")
+                    e(inc, op)
+                self._ix_release(sym.offset, 1)
+                if not discard:
+                    self._emit_char_to_hl(signed)
+                return True
+            if discard:
+                e("ld", f"HL,{mem}")
+                e(inc, "(HL)")
+                return True
+            e("ld", f"A,({mem})")
+            if not prefix:
+                e("ld", "L,A")
+            e(inc, "A")
+            e("ld", f"({mem}),A")
+            if prefix:
+                e("ld", "L,A")
+            self._emit_char_to_hl(signed)
+            return True
+
+        if (size == 2 and ix and discard and not self._is_bool_type(t)
+                and not (isinstance(t, lt.PointerType)
+                         and self._type_size(t.base_type) > 1)
+                and not getattr(t, "is_volatile", False)):
+            done = self.ctx.new_label("INC")
+            base = self._ix_reach(sym.offset, 2)
+            if is_inc:
+                e("inc", f"({ix_off(base)})")
+                e("jr", f"NZ,{done}")
+            else:
+                e("ld", f"A,({ix_off(base)})")
+                e("sub", "1")
+                e("ld", f"({ix_off(base)}),A")
+                e("jr", f"NC,{done}")
+            e(inc, f"({ix_off(base + 1)})")
+            self.ctx.emit_label(done)
+            self._ix_release(sym.offset, 2)
+            return True
+        return False
+
+    def _gen_incdec_wide_lvalue(self, expr, is_inc: bool, t) -> None:
+        """++/-- on a long, float or long long ``*p``, ``a[i]``, ``s.m``
+        or ``p->m``.  Prefix, or a value that is not used, is ``x += 1``
+        (``-= 1``).  A used postfix value is ``(x += 1) - 1`` for a long;
+        for a float or a long long the old value is kept on the stack."""
+        op = "+" if is_inc else "-"
+        one = make_int_lit(1)
+        cexpr = ast.BinaryOp(op=op + "=", left=expr.operand, right=one)
+        if expr is self._discard_expr or expr.is_prefix:
+            if expr is self._discard_expr:
+                self._discard_expr = cexpr
+            self.gen_compound_assignment(cexpr, op)
+            return
+        e = self.ctx.emit_instr
+        if self._is_long_long_type(t):
+            # The Identifier code's sequence, through a saved address.
+            self.ctx.runtime_used.add("__acc64")
+            self.ctx.runtime_used.add("__tmp64")
+            self._gen_lvalue_address(expr.operand)
+            e("push", "HL")
+            self._call_runtime("__load64")
+            for off in (6, 4, 2, 0):
+                e("ld", f"HL,(__acc64+{off})" if off else "HL,(__acc64)")
+                e("push", "HL")
+            e("ld", "HL,1")
+            e("ld", "(__tmp64),HL")
+            e("ld", "HL,0")
+            e("ld", "(__tmp64+2),HL")
+            e("ld", "(__tmp64+4),HL")
+            e("ld", "(__tmp64+6),HL")
+            self._call_runtime("__add64" if is_inc else "__sub64")
+            e("ld", "HL,8")
+            e("add", "HL,SP")
+            e("ld", "A,(HL)")
+            e("inc", "HL")
+            e("ld", "H,(HL)")
+            e("ld", "L,A")
+            self._call_runtime("__store64")
+            for off in (0, 2, 4, 6):
+                e("pop", "HL")
+                e("ld", f"(__acc64+{off}),HL" if off else "(__acc64),HL")
+            e("pop", "BC")               # drop the address
+            e("ld", "HL,(__acc64)")
+            e("ld", "DE,(__acc64+2)")
+            return
+        if not self._is_float_type(t):
+            self.gen_expr(ast.BinaryOp(op="-" if is_inc else "+",
+                                       left=cexpr, right=one))
+            return
+        self._gen_lvalue_address(expr.operand)
+        e("push", "HL")                  # address
+        e("ld", "C,(HL)")
+        e("inc", "HL")
+        e("ld", "B,(HL)")
+        e("inc", "HL")
+        e("ld", "E,(HL)")
+        e("inc", "HL")
+        e("ld", "D,(HL)")
+        e("push", "DE")                  # the old value: the result
+        e("push", "BC")
+        self.ctx.runtime_used.add("__tmp32")
+        e("ld", "HL,0")                  # __tmp32 = 1.0
+        e("ld", "(__tmp32),HL")
+        e("ld", "HL,16256")
+        e("ld", "(__tmp32+2),HL")
+        e("ld", "L,C")
+        e("ld", "H,B")
+        self._call_runtime("__fadd" if is_inc else "__fsub")
+        e("ld", "B,H")
+        e("ld", "C,L")
+        e("ld", "HL,4")
+        e("add", "HL,SP")
+        e("ld", "A,(HL)")
+        e("inc", "HL")
+        e("ld", "H,(HL)")
+        e("ld", "L,A")                   # HL = address
+        e("ld", "(HL),C")
+        e("inc", "HL")
+        e("ld", "(HL),B")
+        e("inc", "HL")
+        e("ld", "(HL),E")
+        e("inc", "HL")
+        e("ld", "(HL),D")
+        e("pop", "HL")
+        e("pop", "DE")
+        e("pop", "BC")                   # drop the address
+
     def _gen_inc_dec(self, expr: ast.UnaryOp) -> None:
         """Generate code for increment/decrement."""
         op_text = expr.op.text if hasattr(expr.op, "text") else expr.op
         is_inc = op_text == "++"
+        if expr is self._discard_expr and not expr.is_prefix:
+            # The value is not used, so x++ is ++x: no copy of the old
+            # value.  (gen_unary_op sets is_prefix again on every visit.)
+            object.__setattr__(expr, "is_prefix", True)
 
         if isinstance(expr.operand, ast.Identifier):
             sym = self.ctx.lookup(expr.operand.name.text)
+            if sym and self._gen_incdec_var_fast(expr, sym, is_inc):
+                return
             if sym:
                 is_float = self._is_float_type(sym.sym_type)
                 is_long = self._is_long_type(sym.sym_type)
@@ -10178,6 +10426,8 @@ class CodeGenerator:
                     inner = ast.BinaryOp(op="+" if is_inc else "-",
                                          left=expr.operand, right=one)
                     assign = ast.BinaryOp(op="=", left=expr.operand, right=inner)
+                    if expr is self._discard_expr:
+                        self._discard_expr = assign
                     if not expr.is_prefix:
                         # Postfix: save old value first
                         self.gen_member(expr.operand)
@@ -10214,6 +10464,14 @@ class CodeGenerator:
                 step = self._type_size(pointee) if pointee is not None else 1
                 if step == 0:
                     step = 1
+
+            if self._gen_incdec_lvalue_fast(expr, is_inc, elem_size,
+                                            elem_type, step):
+                return
+            if elem_size > 2 or (elem_type_legacy is not None
+                                 and self._is_float_type(elem_type_legacy)):
+                self._gen_incdec_wide_lvalue(expr, is_inc, elem_type_legacy)
+                return
 
             # Calculate address and save it
             self._gen_address(expr.operand)
@@ -11074,9 +11332,7 @@ class CodeGenerator:
         false_is_long = self._is_long_expr(expr.false_expr) or self._is_float_expr(expr.false_expr)
         need_long = true_is_long or false_is_long
 
-        self._gen_condition_value(expr.condition)
-        self._emit_condition_test(expr.condition)
-        self.ctx.emit_instr("jp", f"Z,{else_label}")
+        self._gen_cond_false_jump(expr.condition, else_label)
 
         # A float result converts an integer branch (C 6.5.15p5); just
         # widening it would leave integer bits in DEHL.
@@ -12740,9 +12996,7 @@ class CodeGenerator:
             # emitted at all and the member was read from whatever HL held.
             else_label = self.ctx.new_label("TERNA_E")
             end_label = self.ctx.new_label("TERNA_END")
-            self._gen_condition_value(expr.condition)
-            self._emit_condition_test(expr.condition)
-            self.ctx.emit_instr("jp", f"Z,{else_label}")
+            self._gen_cond_false_jump(expr.condition, else_label)
             self._gen_address(expr.true_expr)
             self.ctx.emit_instr("jp", end_label)
             self.ctx.emit_label(else_label)
@@ -13853,7 +14107,7 @@ class CodeGenerator:
             return True
         k = self._const_int_operand(self._peel_int_casts(rhs))
         if k is not None:
-            self._gen_address(lhs)
+            self._gen_lvalue_address(lhs)
             e("ld", f"(HL),{k & 0xFF}")
             if used:
                 v = k & 0xFF
@@ -13863,7 +14117,12 @@ class CodeGenerator:
             return True
         self._gen_expr_a(rhs)
         if self._addr_keeps_a(lhs):
-            self._gen_address(lhs)
+            # (_gen_address_keep_de leaves A alone for these shapes too.)
+            self._gen_lvalue_address(lhs)
+        elif self._addr_keep_de_ok(lhs):
+            e("ld", "E,A")
+            self._gen_address_keep_de(lhs)
+            e("ld", "A,E")
         else:
             e("push", "AF")
             self._gen_address(lhs)
@@ -13913,7 +14172,7 @@ class CodeGenerator:
                 or not self._int_scalar_expr(expr.right)):
             return False
         e = self.ctx.emit_instr
-        self._gen_address(expr.left)
+        self._gen_lvalue_address(expr.left)
         k = self._const_int_operand(self._peel_int_casts(expr.right))
         if k is not None:
             e("ld", "A,(HL)")
@@ -13928,6 +14187,446 @@ class CodeGenerator:
         e("ld", "(HL),A")
         if expr is not self._discard_expr:
             self._emit_a_to_hl(signed)
+        return True
+
+    # ------------------------------------------------------------------
+    # In-place updates: ++/--, op= and stores through *p, a[i] and s.m,
+    # with the lvalue's address computed once and no push/pop.
+    # ------------------------------------------------------------------
+
+    def _ptr_sym2(self, expr):
+        """A _simple_sym of 2 bytes (a pointer or a 16-bit integer)."""
+        sym = self._simple_sym(expr)
+        if sym is not None and self._type_size(_to_legacy(sym.sym_type)) == 2:
+            return sym
+        return None
+
+    def _emit_sym_to_bc(self, sym) -> None:
+        """BC = the 16-bit variable ``sym``; HL, DE and A are untouched."""
+        e = self.ctx.emit_instr
+        if sym.is_global:
+            e("ld", f"BC,({sym.label()})")
+        elif sym.uses_shared_storage:
+            e("ld", f"BC,(??AUTO+{sym.shared_offset})")
+        else:
+            base = self._ix_reach(sym.offset, 2)
+            e("ld", f"C,({ix_off(base)})")
+            e("ld", f"B,({ix_off(base + 1)})")
+            self._ix_release(sym.offset, 2)
+
+    def _gen_simple_to_bc(self, expr) -> None:
+        """BC = a simple operand (_is_simple_operand) with the value
+        gen_expr would put in HL.  HL and DE are untouched; A and the
+        flags are clobbered."""
+        e = self.ctx.emit_instr
+        k = self._const_int_operand(expr)
+        if k is not None:
+            e("ld", f"BC,{k & 0xFFFF}")
+            return
+        sym = self._simple_sym(expr)
+        if self._type_size(_to_legacy(sym.sym_type)) == 2:
+            self._emit_sym_to_bc(sym)
+            return
+        if sym.is_global:
+            e("ld", f"A,({sym.label()})")
+        elif sym.uses_shared_storage:
+            e("ld", f"A,(??AUTO+{sym.shared_offset})")
+        else:
+            base = self._ix_reach(sym.offset, 1)
+            e("ld", f"A,({ix_off(base)})")
+            self._ix_release(sym.offset, 1)
+        e("ld", "C,A")
+        if self._is_signed_type(sym.sym_type):
+            e("rlca")
+            e("sbc", "A,A")
+            e("ld", "B,A")
+        else:
+            e("ld", "B,0")
+
+    @staticmethod
+    def _label_plus(label: str, off: int) -> str:
+        if off > 0:
+            return f"{label}+{off}"
+        if off < 0:
+            return f"{label}-{-off}"
+        return label
+
+    def _emit_add_hl_small(self, off: int) -> None:
+        """HL += off (mod 2**16) using BC; DE is untouched."""
+        e = self.ctx.emit_instr
+        off &= 0xFFFF
+        if off == 0:
+            return
+        if off <= 3:
+            for _ in range(off):
+                e("inc", "HL")
+        elif off >= 0xFFFD:
+            for _ in range(0x10000 - off):
+                e("dec", "HL")
+        else:
+            e("ld", f"BC,{off}")
+            e("add", "HL,BC")
+
+    def _gen_address_keep_de(self, lhs) -> bool:
+        """HL = the address of ``lhs`` with DE untouched (A, BC and the
+        flags may be clobbered), for ``*p``, ``p->m``, ``s.m``, ``a[K]``
+        and ``a[i]`` / ``p[i]`` where p, s, a and i are variables.
+        Returns False (nothing emitted) for any other shape."""
+        e = self.ctx.emit_instr
+        if isinstance(lhs, ast.UnaryOp):
+            op = lhs.op.text if hasattr(lhs.op, "text") else lhs.op
+            if op != "*" or self._ptr_sym2(lhs.operand) is None:
+                return False
+            self.gen_expr(lhs.operand)
+            return True
+        if isinstance(lhs, (ast.Member, ast.ArrowMember)):
+            if self._get_bitfield_info(lhs) is not None:
+                return False
+            st = self._get_expr_type(lhs.obj)
+            if isinstance(lhs, ast.ArrowMember):
+                if self._ptr_sym2(lhs.obj) is None:
+                    return False
+                st = _to_legacy(st)
+                if not isinstance(st, lt.PointerType):
+                    return False
+                st = st.base_type
+                if not is_struct_type(st):
+                    return False
+                off = self._resolve_member_offset(st, lhs.member)
+                self.gen_expr(lhs.obj)
+                self._emit_add_hl_small(off)
+                return True
+            if not isinstance(lhs.obj, ast.Identifier):
+                return False
+            sym = self.ctx.lookup(lhs.obj.name.text)
+            if sym is None or not is_struct_type(st):
+                return False
+            off = self._resolve_member_offset(st, lhs.member)
+            if sym.is_global:
+                e("ld", f"HL,{self._label_plus(sym.label(), off)}")
+            elif sym.uses_shared_storage:
+                e("ld", f"HL,??AUTO+{sym.shared_offset + off}")
+            else:
+                e("push", "IX")
+                e("pop", "HL")
+                self._emit_add_hl_small(sym.offset + off)
+            return True
+        if isinstance(lhs, ast.Index):
+            arr = lhs.array
+            if not isinstance(arr, ast.Identifier):
+                return False
+            sym = self.ctx.lookup(arr.name.text)
+            if sym is None:
+                return False
+            at = _to_legacy(sym.sym_type)
+            is_ptr = isinstance(at, lt.PointerType)
+            if is_ptr:
+                if self._ptr_sym2(arr) is None:
+                    return False
+            elif not (isinstance(at, lt.ArrayType) and not sym.is_param
+                      and (sym.is_global or sym.uses_shared_storage)):
+                return False
+            size = self._get_index_elem_size(arr)
+            if size <= 0 or size & (size - 1) or size > 0x4000:
+                return False
+            k = self._const_int_operand(lhs.index)
+            if k is None and self._simple_sym(lhs.index) is None:
+                return False
+            if is_ptr:
+                base = None
+            elif sym.is_global:
+                base = sym.label()
+            else:
+                base = f"??AUTO+{sym.shared_offset}"
+            if base is not None and k is not None:
+                e("ld", f"HL,{self._label_plus(base, k * size)}")
+                return True
+            if k is not None:
+                e("ld", f"HL,{(k * size) & 0xFFFF}")
+            else:
+                self.gen_expr(lhs.index)
+                self._emit_shl16_const(size.bit_length() - 1)
+            if is_ptr:
+                self._emit_sym_to_bc(sym)
+            else:
+                e("ld", f"BC,{base}")
+            e("add", "HL,BC")
+            return True
+        return False
+
+    def _addr_keep_de_ok(self, lhs) -> bool:
+        """_gen_address_keep_de(lhs) would succeed.  (A dry run: the
+        emitted lines are taken back.)"""
+        n = len(self.ctx.lines)
+        ok = self._gen_address_keep_de(lhs)
+        del self.ctx.lines[n:]
+        return ok
+
+    def _value_to_de_addr_to_hl(self, lhs, gen_addr) -> None:
+        """The value in HL goes to DE and the address of ``lhs`` to HL:
+        ``ex DE,HL`` and _gen_address_keep_de when it can, else
+        ``push HL / gen_addr() / pop DE``."""
+        if self._addr_keep_de_ok(lhs):
+            self.ctx.emit_instr("ex", "DE,HL")
+            self._gen_address_keep_de(lhs)
+        else:
+            self.ctx.emit_instr("push", "HL")
+            gen_addr()
+            self.ctx.emit_instr("pop", "DE")
+
+    def _gen_lvalue_address(self, lhs) -> None:
+        """HL = the address of ``lhs``: _gen_address_keep_de when the
+        shape allows (it avoids a push/pop), else _gen_address."""
+        if not self._gen_address_keep_de(lhs):
+            self._gen_address(lhs)
+
+    def _scalar16_type(self, t) -> bool:
+        """``t`` is a 2-byte integer, enum or pointer type (not _Bool,
+        not a float)."""
+        t = _to_legacy(t)
+        return (isinstance(t, (lt.BasicType, lt.EnumType, lt.PointerType))
+                and self._type_size(t) == 2
+                and not self._is_float_type(t)
+                and not self._is_bool_type(t))
+
+    def _is_volatile_type(self, t) -> bool:
+        return bool(getattr(_to_legacy(t), "is_volatile", False))
+
+    def _gen_compound16_inplace(self, expr: ast.BinaryOp, op: str) -> bool:
+        """``lvalue op= rhs`` for a 16-bit ``*p``, ``a[i]``, ``s.m`` or
+        ``p->m`` with a constant or simple-variable rhs: the address is
+        computed once and kept in DE while HL is updated, then stored
+        with ``ex DE,HL / ld (HL),D / dec HL / ld (HL),E``.  op is one of
+        + - & | ^ << >> (shifts by a constant 0..15).  Returns False
+        (nothing emitted) for any other shape."""
+        lhs, rhs = expr.left, expr.right
+        if op not in ("+", "-", "&", "|", "^", "<<", ">>"):
+            return False
+        if isinstance(lhs, ast.Identifier):
+            return False
+        if isinstance(lhs, ast.UnaryOp):
+            uop = lhs.op.text if hasattr(lhs.op, "text") else lhs.op
+            if uop != "*":
+                return False
+        elif isinstance(lhs, (ast.Member, ast.ArrowMember)):
+            if self._get_bitfield_info(lhs) is not None:
+                return False
+        elif not isinstance(lhs, ast.Index):
+            return False
+        t = _to_legacy(self._get_expr_type(lhs))
+        if not self._scalar16_type(t):
+            return False
+        if self._is_float_expr(rhs):
+            return False
+        k = self._const_int_operand(rhs)
+        if k is None and self._simple_sym(rhs) is None:
+            return False
+        scale = self._ptr_scale(t) or 1
+        if isinstance(t, lt.PointerType):
+            if op not in "+-":
+                return False
+            if k is None and scale not in (1, 2, 4):
+                return False
+        if op in ("<<", ">>") and (k is None or not 0 <= k <= 15):
+            return False
+        e = self.ctx.emit_instr
+        self._gen_lvalue_address(lhs)
+        e("ld", "E,(HL)")
+        e("inc", "HL")
+        e("ld", "D,(HL)")
+        e("ex", "DE,HL")                 # HL = value, DE = address + 1
+        if k is not None:
+            kv = k & 0xFFFF
+            if op in "+-":
+                self._emit_add_hl_small((kv * scale) if op == "+"
+                                        else -(kv * scale))
+            elif op in "&|^":
+                self._emit_logic8_const(op, "L", kv & 0xFF)
+                self._emit_logic8_const(op, "H", kv >> 8)
+            elif op == "<<":
+                self._emit_shl16_const(k)
+            else:
+                self._emit_shr16_const(
+                    k, not self._is_promoted_unsigned(lhs))
+        else:
+            self._gen_simple_to_bc(rhs)
+            if op == "+":
+                for _ in range(scale):
+                    e("add", "HL,BC")
+            elif op == "-":
+                for _ in range(scale):
+                    e("or", "A")
+                    e("sbc", "HL,BC")
+            else:
+                alu = self._A_ALU[op]
+                e("ld", "A,L")
+                e(alu, "C")
+                e("ld", "L,A")
+                e("ld", "A,H")
+                e(alu, "B")
+                e("ld", "H,A")
+        e("ex", "DE,HL")
+        self._emit_store_de_below_hl(self._is_volatile_type(t))
+        if expr is not self._discard_expr:
+            e("ex", "DE,HL")
+        return True
+
+    def _emit_store_de_below_hl(self, volatile: bool) -> None:
+        """Store DE at HL-1 (HL is the address of the high byte).  A
+        volatile object gets its low byte first, as a plain store does."""
+        e = self.ctx.emit_instr
+        if volatile:
+            e("dec", "HL")
+            e("ld", "(HL),E")
+            e("inc", "HL")
+            e("ld", "(HL),D")
+        else:
+            e("ld", "(HL),D")
+            e("dec", "HL")
+            e("ld", "(HL),E")
+
+    def _gen_store16_simple(self, expr: ast.BinaryOp, target_type) -> bool:
+        """``*p = v``, ``a[i] = v``, ``s.m = v`` for a 2-byte
+        integer or pointer target and a constant or simple-variable v:
+        the address first, then ``ld (HL),K`` or v loaded into DE, with
+        no push/pop.  Returns False (nothing emitted) otherwise."""
+        lhs, rhs = expr.left, expr.right
+        if isinstance(lhs, ast.Identifier):
+            return False
+        if isinstance(lhs, ast.UnaryOp):
+            uop = lhs.op.text if hasattr(lhs.op, "text") else lhs.op
+            if uop != "*":
+                return False
+        elif isinstance(lhs, (ast.Member, ast.ArrowMember)):
+            if self._get_bitfield_info(lhs) is not None:
+                return False
+        elif not isinstance(lhs, ast.Index):
+            return False
+        t = _to_legacy(target_type)
+        if not self._scalar16_type(t) or self._is_float_expr(rhs):
+            return False
+        k = self._const_int_operand(rhs)
+        if k is None and self._simple_sym(rhs) is None:
+            return False
+        e = self.ctx.emit_instr
+        used = expr is not self._discard_expr
+        self._gen_lvalue_address(lhs)
+        if k is not None:
+            kv = k & 0xFFFF
+            e("ld", f"(HL),{kv & 0xFF}")
+            e("inc", "HL")
+            e("ld", f"(HL),{kv >> 8}")
+            if used:
+                e("ld", f"HL,{kv}")
+            return True
+        self.gen_expr_to_de(rhs)
+        e("ld", "(HL),E")
+        e("inc", "HL")
+        e("ld", "(HL),D")
+        if used:
+            e("ex", "DE,HL")
+        return True
+
+    def _gen_store32_const(self, expr: ast.BinaryOp, target_type) -> bool:
+        """``*p = K``, ``a[i] = K``, ``s.m = K`` for a long target: the
+        address, then ``ld (HL),b`` for each byte.  Returns False (nothing
+        emitted) otherwise."""
+        lhs = expr.left
+        if isinstance(lhs, ast.UnaryOp):
+            uop = lhs.op.text if hasattr(lhs.op, "text") else lhs.op
+            if uop != "*":
+                return False
+        elif isinstance(lhs, (ast.Member, ast.ArrowMember)):
+            if self._get_bitfield_info(lhs) is not None:
+                return False
+        elif not isinstance(lhs, ast.Index):
+            return False
+        t = _to_legacy(target_type)
+        if (not isinstance(t, (lt.BasicType, lt.EnumType))
+                or self._type_size(t) != 4 or self._is_float_type(t)
+                or self._is_float_expr(expr.right)):
+            return False
+        k = self._const_int_operand(expr.right)
+        if k is None:
+            return False
+        k &= 0xFFFFFFFF
+        e = self.ctx.emit_instr
+        self._gen_lvalue_address(lhs)
+        for i in range(4):
+            if i:
+                e("inc", "HL")
+            e("ld", f"(HL),{(k >> (8 * i)) & 0xFF}")
+        if expr is not self._discard_expr:
+            e("ld", f"HL,{k & 0xFFFF}")
+            e("ld", f"DE,{k >> 16}")
+        return True
+
+    def _gen_incdec_lvalue_fast(self, expr, is_inc: bool, elem_size: int,
+                                elem_type, step: int) -> bool:
+        """++/-- on a 1- or 2-byte ``*p``, ``a[i]``, ``s.m`` or ``p->m``
+        (not _Bool, not a bit-field) with the address computed once and
+        no push/pop: ``inc (HL)`` for a char, the word through DE for a
+        16-bit object.  Returns False (nothing emitted) otherwise."""
+        lt_elem = _to_legacy(elem_type)
+        if elem_type is None or self._is_bool_type(lt_elem):
+            return False
+        if elem_size == 1:
+            if not isinstance(lt_elem, (lt.BasicType, lt.EnumType)):
+                return False
+        elif elem_size != 2 or not self._scalar16_type(lt_elem):
+            return False
+        e = self.ctx.emit_instr
+        discard = expr is self._discard_expr
+        prefix = expr.is_prefix
+        self._gen_lvalue_address(expr.operand)
+        if elem_size == 1:
+            # step is 1: a char object is not a pointer
+            inc = "inc" if is_inc else "dec"
+            signed = self._is_signed_type(lt_elem)
+            if discard:
+                e(inc, "(HL)")
+            elif prefix:
+                e(inc, "(HL)")
+                e("ld", "L,(HL)")
+                self._emit_char_to_hl(signed)
+            else:
+                e("ld", "A,(HL)")
+                e(inc, "(HL)")
+                e("ld", "L,A")
+                self._emit_char_to_hl(signed)
+            return True
+        if (discard and is_inc and step == 1
+                and not self._is_volatile_type(lt_elem)):
+            done = self.ctx.new_label("INC")
+            e("inc", "(HL)")
+            e("jr", f"NZ,{done}")
+            e("inc", "HL")
+            e("inc", "(HL)")
+            self.ctx.emit_label(done)
+            return True
+        e("ld", "E,(HL)")
+        e("inc", "HL")
+        e("ld", "D,(HL)")
+        if step <= 4:
+            for _ in range(step):
+                e("inc" if is_inc else "dec", "DE")
+        else:
+            e("ex", "DE,HL")
+            e("ld", f"BC,{(step if is_inc else -step) & 0xFFFF}")
+            e("add", "HL,BC")
+            e("ex", "DE,HL")
+        self._emit_store_de_below_hl(self._is_volatile_type(lt_elem))
+        if discard:
+            return True
+        e("ex", "DE,HL")
+        if not prefix:
+            # The old value: the new one minus the step.
+            if step <= 4:
+                for _ in range(step):
+                    e("dec" if is_inc else "inc", "HL")
+            else:
+                e("or", "A")
+                e("sbc", "HL,BC")
         return True
 
     _SWAP_CMP = {"<": ">", ">": "<", "<=": ">=", ">=": "<=",
@@ -14686,8 +15385,10 @@ class CodeGenerator:
             self._ix_release(sym.offset, 1)
         self._emit_char_to_hl(self._is_signed_type(sym.sym_type))
 
-    def _store_local(self, sym: Symbol, size: int = 0) -> None:
-        """Store HL into a local variable."""
+    def _store_local(self, sym: Symbol, size: int = 0,
+                     keep_value: bool = True) -> None:
+        """Store HL into a local variable.  ``keep_value`` False says the
+        caller does not use HL afterwards (no re-extension of a char)."""
         if size == 0:
             # Auto-detect size from symbol type
             size = self._type_size(sym.sym_type) if sym.sym_type else 2
@@ -14697,9 +15398,11 @@ class CodeGenerator:
             if sym.uses_shared_storage:
                 self.ctx.emit_instr("ld", "A,L")
                 self.ctx.emit_instr("ld", f"(??AUTO+{sym.shared_offset}),A")
-                # Restore HL from A for peephole safety (chained assignments)
-                self.ctx.emit_instr("ld", "L,A")
-                self.ctx.emit_instr("ld", "H,0")
+                if keep_value:
+                    # Restore HL from A for peephole safety (chained
+                    # assignments)
+                    self.ctx.emit_instr("ld", "L,A")
+                    self.ctx.emit_instr("ld", "H,0")
             else:
                 base = self._ix_reach(sym.offset, 1)
                 self.ctx.emit_instr("ld", f"({ix_off(base)}),L")
@@ -14762,6 +15465,454 @@ class CodeGenerator:
         self.ctx.runtime_used.add("__tmp32")
         self.ctx.emit_instr("ld", "(__tmp32),HL")
         self.ctx.emit_instr("ld", "(__tmp32+2),DE")
+
+    # ------------------------------------------------------------------
+    # Conditions as branches on the flags: if, while, do, for, ?:, && and
+    # || jump on the flags of the test itself, and build no 0/1 value.
+    # ------------------------------------------------------------------
+
+    _NEG_CMP = {"==": "!=", "!=": "==", "<": ">=", ">=": "<",
+                ">": "<=", "<=": ">"}
+    # A flag condition, and the two pseudo conditions for a test whose
+    # result is known at compile time (the operands are still evaluated).
+    _NOT_CC = {"Z": "NZ", "NZ": "Z", "C": "NC", "NC": "C", "M": "P",
+               "P": "M", "ALWAYS": "NEVER", "NEVER": "ALWAYS"}
+
+    @staticmethod
+    def _op_of(expr) -> str:
+        return expr.op.text if hasattr(expr.op, "text") else expr.op
+
+    def _gen_branch(self, cond, label: str, jump_if: bool) -> None:
+        """Jump to ``label`` when the truth of ``cond`` is ``jump_if``;
+        else fall through.  Registers and flags are undefined after."""
+        if isinstance(cond, ast.UnaryOp) and self._op_of(cond) == "!":
+            self._gen_branch(cond.operand, label, not jump_if)
+            return
+        if isinstance(cond, ast.BinaryOp):
+            op = self._op_of(cond)
+            if op in ("&&", "||"):
+                if (op == "&&") != jump_if:
+                    # && to the false label, || to the true label: either
+                    # operand decides on its own.
+                    self._gen_branch(cond.left, label, jump_if)
+                    self._gen_branch(cond.right, label, jump_if)
+                else:
+                    skip = self.ctx.new_label("AND_S" if op == "&&"
+                                              else "OR_S")
+                    self._gen_branch(cond.left, skip, not jump_if)
+                    self._gen_branch(cond.right, label, jump_if)
+                    self.ctx.emit_label(skip)
+                return
+            if op == ",":
+                self.gen_expr_discard(cond.left)
+                self._gen_branch(cond.right, label, jump_if)
+                return
+            if op in ("==", "!="):
+                # x == 0 is !x, x != 0 is x (for an integer or pointer x).
+                other = None
+                if self._is_zero_operand(cond.right):
+                    other = cond.left
+                elif self._is_zero_operand(cond.left):
+                    other = cond.right
+                if (other is not None and not self._is_float_expr(other)
+                        and not self._is_complex_expr(other)):
+                    self._gen_branch(other, label,
+                                     jump_if if op == "!=" else not jump_if)
+                    return
+            if op in self._SWAP_CMP:
+                if self._cmp32_operands(cond):
+                    self._gen_binary_op_32(cond, op, branch=(label, jump_if))
+                    return
+                cc = self._gen_cmp16_flags(cond, op)
+                if cc is not None:
+                    self._emit_cc_jump(cc, label, jump_if)
+                    return
+            if op == "&":
+                cc = self._gen_and_flags(cond)
+                if cc is not None:
+                    self._emit_cc_jump(cc, label, jump_if)
+                    return
+        self._emit_cc_jump(self._gen_truth_flags(cond), label, jump_if)
+
+    def _gen_cond_false_jump(self, cond, label: str) -> None:
+        """Jump to label when ``cond`` is false.  A constant condition
+        keeps the plain value test (the peephole folds it)."""
+        if self._const_int_operand(cond) is not None:
+            self._gen_condition_value(cond)
+            self._emit_condition_test(cond)
+            self.ctx.emit_instr("jp", f"Z,{label}")
+        else:
+            self._gen_branch(cond, label, False)
+
+    def _emit_cc_jump(self, cc: str, label: str, jump_if: bool) -> None:
+        """Jump to label when ``cc`` (true when the condition holds) has
+        the value jump_if."""
+        if not jump_if:
+            cc = self._NOT_CC[cc]
+        if cc == "ALWAYS":
+            self.ctx.emit_instr("jp", label)
+        elif cc != "NEVER":
+            self.ctx.emit_instr("jp", f"{cc},{label}")
+
+    def _emit_cc_value(self, cc: str) -> None:
+        """HL = 1 when ``cc`` holds, else 0."""
+        e = self.ctx.emit_instr
+        if cc in ("ALWAYS", "NEVER"):
+            e("ld", f"HL,{1 if cc == 'ALWAYS' else 0}")
+        elif cc == "C":
+            e("sbc", "A,A")
+            e("and", "1")
+            e("ld", "L,A")
+            e("ld", "H,0")
+        else:
+            done = self.ctx.new_label("CMP_E")
+            e("ld", "HL,1")              # leaves the flags alone
+            e("jp", f"{cc},{done}")
+            e("dec", "L")
+            self.ctx.emit_label(done)
+
+    def _is_zero_operand(self, expr) -> bool:
+        """An integer constant 0, or a null pointer constant like
+        ``(void *)0``."""
+        while isinstance(expr, ast.Cast):
+            t = _to_legacy(expr.target_type)
+            if not isinstance(t, lt.PointerType):
+                break
+            expr = expr.expr
+        return self._const_int_operand(expr) == 0
+
+    def _cmp16_operand(self, expr) -> bool:
+        """``expr`` takes the 16-bit comparison path (as gen_binary_op
+        dispatches it): not float, complex, long or long long."""
+        return not (self._is_float_expr(expr) or self._is_complex_expr(expr)
+                    or self._is_long_expr(expr)
+                    or self._is_long_long_expr(expr))
+
+    def _cmp32_operands(self, expr) -> bool:
+        """A comparison that gen_binary_op sends to _gen_binary_op_32."""
+        l, r = expr.left, expr.right
+        if any(self._is_float_expr(x) or self._is_complex_expr(x)
+               or self._is_long_long_expr(x) for x in (l, r)):
+            return False
+        return self._is_long_expr(l) or self._is_long_expr(r)
+
+    def _is_ptr_expr(self, expr) -> bool:
+        return isinstance(_to_legacy(self._get_expr_type(expr)),
+                          (lt.PointerType, lt.ArrayType))
+
+    def _cmp16_unsigned(self, left, right) -> bool:
+        """A 16-bit comparison is unsigned when either operand is
+        unsigned after promotion, or a pointer (an address is unsigned;
+        0x7000 < 0x9000)."""
+        return (self._is_promoted_unsigned(left)
+                or self._is_promoted_unsigned(right)
+                or self._is_ptr_expr(left) or self._is_ptr_expr(right))
+
+    def _cmp_const(self, expr) -> int | None:
+        """The value of a constant comparison operand (an integer
+        constant, or one cast to a pointer)."""
+        while isinstance(expr, ast.Cast):
+            t = _to_legacy(expr.target_type)
+            if not isinstance(t, lt.PointerType):
+                break
+            expr = expr.expr
+        return self._const_int_operand(expr)
+
+    def _gen_cmp16_flags(self, expr, op: str) -> str | None:
+        """Evaluate a 16-bit comparison into the flags and return the
+        condition that holds when it is true (see _NOT_CC).  None, with
+        nothing emitted, when an operand is not 16-bit."""
+        left, right = expr.left, expr.right
+        if not (self._cmp16_operand(left) and self._cmp16_operand(right)):
+            return None
+        unsigned = self._cmp16_unsigned(left, right)
+        cc = self._gen_byte_cmp_flags(left, right, op, unsigned)
+        if cc is not None:
+            return cc
+        k = self._cmp_const(right)
+        if k is None and self._cmp_const(left) is not None:
+            left, right, op = right, left, self._SWAP_CMP[op]
+            k = self._cmp_const(right)
+        if k is not None:
+            self.gen_expr(left)
+            return self._emit_cmp16_const(op, k, unsigned)
+        if self._is_simple_operand(right):
+            self.gen_expr(left)
+            self.gen_expr_to_de(right)
+        elif (self._is_simple_operand(left)
+              and not self._expr_has_side_effects(right)):
+            self.gen_expr(right)
+            self.gen_expr_to_de(left)
+            op = self._SWAP_CMP[op]
+        else:
+            self._gen_binary_operands_16(expr, 0, False)
+            op = self._SWAP_CMP[op]
+        return self._emit_cmp16_hl_de(op, unsigned)
+
+    def _emit_cmp16_const(self, op: str, k: int, unsigned: bool) -> str:
+        """Flags for ``HL op k``."""
+        e = self.ctx.emit_instr
+        k &= 0xFFFF
+        lo, hi = k & 0xFF, k >> 8
+        if op in ("==", "!="):
+            if k == 0:
+                e("ld", "A,H")
+                e("or", "L")
+            elif hi == 0:
+                e("ld", "A,L")
+                e("xor", str(lo))
+                e("or", "H")
+            elif lo == 0:
+                e("ld", "A,H")
+                e("xor", str(hi))
+                e("or", "L")
+            elif k == 0xFFFF:
+                e("ld", "A,H")
+                e("and", "L")
+                e("inc", "A")
+            else:
+                e("ld", f"DE,{k}")
+                e("or", "A")
+                e("sbc", "HL,DE")
+            return "Z" if op == "==" else "NZ"
+        if unsigned:
+            kv, kmin, kmax = k, 0, 0xFFFF
+        else:
+            kv, kmin, kmax = (k - 0x10000 if k & 0x8000 else k), -0x8000, 0x7FFF
+        if op in (">", "<="):
+            # x > k is x >= k+1; x <= k is x < k+1.
+            if kv == kmax:
+                return "NEVER" if op == ">" else "ALWAYS"
+            kv += 1
+            op = ">=" if op == ">" else "<"
+        if kv == kmin:
+            return "NEVER" if op == "<" else "ALWAYS"
+        if unsigned and kv == 1:         # x < 1 is x == 0
+            e("ld", "A,H")
+            e("or", "L")
+            return "Z" if op == "<" else "NZ"
+        if not unsigned and kv == 0:     # the sign bit
+            e("bit", "7,H")
+            return "NZ" if op == "<" else "Z"
+        kk = kv & 0xFFFF
+        if not unsigned:
+            kk ^= 0x8000                 # signed order as unsigned order
+        lo, hi = kk & 0xFF, kk >> 8
+        if lo == 0:
+            e("ld", "A,H")
+            if not unsigned:
+                e("xor", "128")
+            e("cp", str(hi))
+        elif unsigned:
+            e("ld", "A,L")
+            e("sub", str(lo))
+            e("ld", "A,H")
+            e("sbc", f"A,{hi}")
+        else:
+            # xor would clear the borrow, so flip H first.
+            e("ld", "A,H")
+            e("xor", "128")
+            e("ld", "D,A")
+            e("ld", "A,L")
+            e("sub", str(lo))
+            e("ld", "A,D")
+            e("sbc", f"A,{hi}")
+        return "C" if op == "<" else "NC"
+
+    def _emit_cmp16_hl_de(self, op: str, unsigned: bool) -> str:
+        """Flags for ``HL op DE``."""
+        e = self.ctx.emit_instr
+        if op in ("==", "!="):
+            e("or", "A")
+            e("sbc", "HL,DE")
+            return "Z" if op == "==" else "NZ"
+        a, b = ("L", "H"), ("E", "D")
+        if op in (">", "<="):
+            # HL > DE is DE < HL.
+            a, b = b, a
+            op = "<" if op == ">" else ">="
+        e("ld", f"A,{a[0]}")
+        e("sub", b[0])
+        e("ld", f"A,{a[1]}")
+        e("sbc", f"A,{b[1]}")
+        if unsigned:
+            return "C" if op == "<" else "NC"
+        # Signed: less when sign XOR overflow.
+        nv = self.ctx.new_label("CMP_NV")
+        e("jp", f"PO,{nv}")
+        e("xor", "128")
+        self.ctx.emit_label(nv)
+        return "M" if op == "<" else "P"
+
+    def _gen_byte_cmp_flags(self, left, right, op: str,
+                            unsigned16: bool) -> str | None:
+        """Flags for a comparison whose operands are both 0..255, or both
+        -128..127 (_byte_kind), done on one byte in A (_gen_expr_a).
+        None, with nothing emitted, when the operands do not fit."""
+        if not (self._int_scalar_expr(left) and self._int_scalar_expr(right)):
+            return None
+        common = self._byte_kind(left) & self._byte_kind(right)
+        if unsigned16:
+            # An unsigned comparison makes a negative operand large.
+            common = common & {"u"}
+        if not common:
+            return None
+        e = self.ctx.emit_instr
+        k = self._const_int_operand(right)
+        if k is None and self._const_int_operand(left) is not None:
+            left, right, op = right, left, self._SWAP_CMP[op]
+            k = self._const_int_operand(right)
+        rel = op not in ("==", "!=")
+        flip = 0x80 if rel and "u" not in common else 0
+        self._gen_expr_a(left)
+        if k is not None:
+            b = (k & 0xFF) ^ flip
+            if not rel:
+                if b == 0:
+                    e("or", "A")
+                else:
+                    e("cp", str(b))
+                return "Z" if op == "==" else "NZ"
+            if op in (">", "<="):
+                if b == 0xFF:
+                    return "NEVER" if op == ">" else "ALWAYS"
+                b += 1
+                op = ">=" if op == ">" else "<"
+            if b == 0:
+                return "NEVER" if op == "<" else "ALWAYS"
+            if flip:
+                e("xor", "128")
+            e("cp", str(b))
+            return "C" if op == "<" else "NC"
+        if flip:
+            e("xor", "128")
+            if self._a_mem_ok(right):
+                e("ld", "D,A")
+                e("ld", f"A,{self._a_sym_operand(self._a_simple_sym(right))}")
+                e("xor", "128")
+                e("ld", "E,A")
+                e("ld", "A,D")
+            else:
+                e("push", "AF")
+                self._gen_expr_a(right)
+                e("xor", "128")
+                e("ld", "E,A")
+                e("pop", "AF")
+            operand = "E"
+        elif self._a_mem_ok(right):
+            operand = self._a_sym_operand(self._a_simple_sym(right))
+        else:
+            e("push", "AF")
+            self._gen_expr_a(right)
+            e("ld", "E,A")
+            e("pop", "AF")
+            operand = "E"
+        if op in ("==", "!="):
+            e("cp", operand)
+            return "Z" if op == "==" else "NZ"
+        if op in (">", "<="):
+            # left > right is right < left.
+            e("ld", "D,A")
+            e("ld", f"A,{operand}")
+            e("cp", "D")
+            return "C" if op == ">" else "NC"
+        e("cp", operand)
+        return "C" if op == "<" else "NC"
+
+    def _gen_and_flags(self, expr) -> str | None:
+        """Flags for the truth of ``x & K`` (16-bit, K a constant): only
+        the bytes of x that K selects are tested, a single bit with
+        ``bit n``.  None, with nothing emitted, when the shape does not
+        fit."""
+        left, right = expr.left, expr.right
+        if not (self._int_scalar_expr(left) and self._int_scalar_expr(right)
+                and self._cmp16_operand(left) and self._cmp16_operand(right)):
+            return None
+        k = self._const_int_operand(right)
+        if k is None:
+            k = self._const_int_operand(left)
+            left = right
+        if k is None or not k & 0xFFFF:
+            return None
+        e = self.ctx.emit_instr
+        k &= 0xFFFF
+        lo, hi = k & 0xFF, k >> 8
+        if hi == 0:
+            bit = lo.bit_length() - 1 if lo & (lo - 1) == 0 else None
+            x = self._peel_int_casts(left)
+            sym = self._a_simple_sym(x)
+            if (bit is not None and sym is not None and not sym.is_global
+                    and not sym.uses_shared_storage
+                    and self._ix_in_range(sym.offset)):
+                e("bit", f"{bit},({ix_off(sym.offset)})")
+            elif self._a_profitable(left):
+                self._gen_expr_a(left)
+                if lo == 0xFF:
+                    e("or", "A")
+                else:
+                    e("and", str(lo))
+            else:
+                self.gen_expr(left)
+                if bit is not None:
+                    e("bit", f"{bit},L")
+                else:
+                    e("ld", "A,L")
+                    e("and", str(lo))
+            return "NZ"
+        if lo == 0:
+            bit = hi.bit_length() - 1 if hi & (hi - 1) == 0 else None
+            # The high byte straight from memory: only for a 16-bit
+            # variable itself (a cast to char would change it).
+            sym = self._a_simple_sym(left)
+            if sym is not None and self._type_size(
+                    _to_legacy(sym.sym_type)) == 2:
+                if sym.is_global:
+                    e("ld", f"A,({sym.label()}+1)")
+                elif sym.uses_shared_storage:
+                    e("ld", f"A,(??AUTO+{sym.shared_offset + 1})")
+                elif self._ix_in_range(sym.offset + 1):
+                    if bit is not None:
+                        e("bit", f"{bit},({ix_off(sym.offset + 1)})")
+                        return "NZ"
+                    e("ld", f"A,({ix_off(sym.offset + 1)})")
+                else:
+                    sym = None
+                if sym is not None:
+                    e("and", str(hi))
+                    return "NZ"
+            self.gen_expr(left)
+            if bit is not None:
+                e("bit", f"{bit},H")
+            else:
+                e("ld", "A,H")
+                e("and", str(hi))
+            return "NZ"
+        self.gen_expr(left)
+        e("ld", "A,H")
+        e("and", str(hi))
+        if lo == 0xFF:
+            e("or", "L")
+        else:
+            e("ld", "E,A")
+            e("ld", "A,L")
+            e("and", str(lo))
+            e("or", "E")
+        return "NZ"
+
+    def _gen_truth_flags(self, cond) -> str:
+        """Evaluate a scalar and set the flags for its truth (NZ when it
+        is not zero).  A value known to fit in a byte is tested in A."""
+        if (self._const_int_operand(cond) is None
+                and self._cmp16_operand(cond)
+                and self._int_scalar_expr(cond)
+                and self._byte_kind(cond)
+                and self._a_profitable(cond)):
+            self._gen_expr_a(cond)
+            self.ctx.emit_instr("or", "A")
+            return "NZ"
+        self._gen_condition_value(cond)
+        self._emit_condition_test(cond)
+        return "NZ"
 
     def _gen_condition_value(self, condition: ast.Expression) -> None:
         """Evaluate a condition where _emit_condition_test will look for it.

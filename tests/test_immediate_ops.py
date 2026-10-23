@@ -83,6 +83,11 @@ def ret(expr: str, rtype: str = "int", params: str = "void") -> list[str]:
     return fn(f"return {expr};", rtype, params)
 
 
+def _wide_compare(o: list[str]) -> bool:
+    """A 16-bit comparison: the high bytes are subtracted with borrow."""
+    return any(i.startswith("sbc\tA,") and i != "sbc\tA,A" for i in o)
+
+
 class TestImmediate16:
     def test_add_1_is_inc(self):
         assert ret("x + 1") == ["ld\tHL,(_x)", "inc\tHL"]
@@ -157,8 +162,11 @@ class TestSimpleOperand:
     def test_compare_without_push(self):
         o = ret("a < x", params="int a")
         assert "push\tHL" not in o
-        assert o[:5] == ["ld\tL,(IX+4)", "ld\tH,(IX+5)", "ld\tDE,(_x)",
-                         "or\tA", "sbc\tHL,DE"]
+        # (The signed compare is on the bytes with an overflow fix-up,
+        # see test_conditions.py; it was or A / sbc HL,DE and a jump
+        # ladder.)
+        assert o[:7] == ["ld\tL,(IX+4)", "ld\tH,(IX+5)", "ld\tDE,(_x)",
+                         "ld\tA,L", "sub\tE", "ld\tA,H", "sbc\tA,D"]
 
     def test_divide_by_variable_keeps_contract(self):
         # DE = left, HL = right for the helper.
@@ -200,7 +208,8 @@ class TestCharInA:
 
     def test_element_xor_assign_address_once(self):
         o = fn("buf[i] ^= 1;", "void", "int i")
-        assert o.count("ld\tHL,_buf") == 1
+        # The base is loaded once (into BC, with no push/pop).
+        assert sum("_buf" in i for i in o) == 1
         assert o[-3:] == ["ld\tA,(HL)", "xor\t1", "ld\t(HL),A"]
 
     def test_char_return(self):
@@ -254,17 +263,21 @@ class TestByteCompare:
     def test_signed_flips_sign(self):
         assert ret("sc < 5")[:3] == ["ld\tA,(_sc)", "xor\t128", "cp\t133"]
 
+    # A 16-bit comparison was ``or A / sbc HL,DE``; it is now a byte
+    # pair ``sub lo / sbc A,hi`` (see test_conditions.py), so these tests
+    # look for the high-byte ``sbc A,..`` that the one-byte form lacks.
+
     def test_out_of_range_constant_keeps_16_bit(self):
-        assert "sbc\tHL,DE" in ret("uc < 300")
-        assert "sbc\tHL,DE" in ret("sc > -129")
+        assert _wide_compare(ret("uc < 300"))
+        assert _wide_compare(ret("sc > -129"))
 
     def test_negative_char_against_unsigned_keeps_16_bit(self):
         # (signed char)x >= 16u is an unsigned comparison: -12 is 65524.
-        assert "sbc\tHL,DE" in ret("(signed char)x >= 16u")
-        assert "sbc\tHL,DE" in ret("sc <= 7u")
+        assert _wide_compare(ret("(signed char)x >= 16u"))
+        assert _wide_compare(ret("sc <= 7u"))
 
     def test_mixed_signedness_keeps_16_bit(self):
-        assert "sbc\tHL,DE" in ret("uc <= sc")
+        assert _wide_compare(ret("uc <= sc"))
 
     def test_two_chars(self):
         o = ret("uc == c", params="unsigned char c")
