@@ -1,0 +1,2 @@
+written 2820, skipped 16456
+ymreg: 5640 writes, 16918 polls, log CRC 26571

@@ -1,0 +1,365 @@
+# Published integer benchmark sets (bench/programs.d/published_int.toml).
+#
+# 1. The Stanford integer benchmarks (Hennessy), as kept in the LLVM
+#    test-suite, SingleSource/Benchmarks/Stanford.  License: the test-suite
+#    LICENSE.TXT, Apache-2.0 WITH LLVM-exception plus the legacy NCSA
+#    license (the Stanford files are not in its third-party list).
+#    The files assume 32-bit int.  The edits below are the 16-bit port; they
+#    apply to every compiler:
+#    - every file declares the globals of all Stanford programs (~60 KB with
+#      16-bit int, more than a CP/M TPA once the code is added).  Each
+#      program drops the big arrays that it does not use.
+#    - Rand() returns 0..65535, so it returns unsigned int.
+#    - the sort values are -50000..15535, so sortlist is long.
+#    - Treesort: free each tree after the check (the original leaks 100
+#      trees), and 2000 instead of 5000 elements so that one tree fits.  The
+#      printed values are sortlist[2..101], so the output does not change.
+#    - Perm prints the unsigned pctr with %u.
+#    - "#define Rand Rnd16" (Intmm, Quicksort, Bubblesort, Treesort) and
+#      "#define Remove Unfit" (Puzzle): dcc 3.6.0 links with 6 monocase
+#      characters (L80), so Rand and Remove clash with the libc rand and
+#      remove and the dcc link fails.  The macro renames the function for
+#      every compiler.  (It also hides a uc80 bug: uc80 calls the libc
+#      function when a user function differs from it only in case.)
+#    - the timer labels are in two small functions (bench_timer_start,
+#      bench_timer_stop) defined before the macros: the files define a
+#      macro d (Puzzle), and z88dk's intrinsic_label() macro expands to
+#      __preserves_regs(a,b,c,d,e,h,l).  ("#undef d" before main() is not
+#      used, because dcc 3.6.0 applies an #undef to earlier lines.)
+#    - fewer passes of the LLVM main() loop (the LLVM files repeat each
+#      program 100 times, Intmm 10 times; the original Stanford suite ran
+#      each program once).  At 100 passes Puzzle takes 21.7G T-states and
+#      Quicksort 8.0G even with SDCC, so each pass count below keeps a uc80
+#      run under about 2G T-states.  The work per pass does not change.
+#    - the golden files equal the first lines of the LLVM .reference_output
+#      files (one line per pass; the "exit 0" line removed).
+#    FloatMM, RealMM and Oscar (float) are not included.
+#
+# 2. davidly's CP/M benchmark programs.  E, SIEVE, TTT and MM come from
+#    davidly/cpm_compilers (CC0-1.0): E.C, SIEVE.C and TTT.C from the
+#    HI-TECH C 3.09 directory, MM.C from BDS C 1.60 (the only MM.C).  The
+#    K&R function definitions in TTT.C and MM.C become prototype
+#    definitions (C23 has no K&R definitions).  TM and TPI come from
+#    davidly/dcc tests/ (MIT): the cpm_compilers TM.C is K&R and calls
+#    calloc without <stdlib.h>, and the only TPI.C there uses unsigned
+#    instead of long, so its digits are wrong.  Other edits, for every
+#    compiler:
+#    - TM: 50 blocks instead of 66 (see the comment in the edit; under
+#      z88dk-ticks the stack starts at 0C9FEh, so 66 blocks do not fit), and
+#      C89 declarations instead of "for (size_t i = ...", for HI-TECH C.
+#    - TPI: "%.4d" with a long value becomes "%04ld" (same text for
+#      0..9999; uc80, SDCC 4.6 and the z88dk classic printf ignore the
+#      precision, see z88dk_int.toml).
+#    - MM: the timer label functions, as in Stanford (MM defines a macro l),
+#      and the sum is printed with %ld.%06ld instead of %f (SDCC's printf
+#      has no float conversions; same text for the exact sum 465880).
+#    - TTT: "typedef ttype pfunc_t();" + "pfunc_t *" becomes a pointer
+#      typedef (same meaning; dcc 3.6.0 rejects a function typedef), and
+#      the argument parse (never run: no argument) uses atoi, not sscanf
+#      (SDCC and the llvm-z80 library have no sscanf).
+#    - TPI: fflush(stdout) after each digit group removed (SDCC has no
+#      fflush; output is the same).
+#    - TM: "void exit(int status);" for SDCC only, whose stdlib.h does not
+#      declare exit() (as in z88dk_int.toml, binary-trees).
+#    - TM: logging = 0 instead of ( argc > 1 ).  The bench passes no
+#      arguments, but the standalone SDCC and llvm-z80 start-up code calls
+#      main() with argc undefined, which turned logging (printf in the
+#      timed loop) on for those two compilers only.
+#    Iteration counts are the upstream ones.
+#    Each cpm_compilers file has its own [repo] entry, because the upstream
+#    names are upper case (E.C) and contain spaces; the "raw" URL names the
+#    file and "path" gives the local name.
+#
+# Treesort and TM call malloc.  z88dk classic needs a heap for malloc (the
+# link fails with "_heap" undefined), so these two files get the
+# "#pragma output CRT_HEAP_AMALLOC = 1" that the z88dk readmes pass, inside
+# "#ifdef __Z88DK".  The standalone SDCC build uses the 1023-byte heap of
+# SDCC's heap.s, which is too small for both programs.
+#
+# The timed region is marked with intrinsic_label(TIMER_START/STOP).  In
+# the TIMER build each per-iteration printf becomes a store to the volatile
+# bench_sink, so printing is outside the timed work.
+
+[repo.llvm-test-suite]
+commit = "b93f949ca6c38da7cf2eea708b5a86a4a5c9f30b"
+raw = "https://raw.githubusercontent.com/llvm/llvm-test-suite/{commit}/{path}"
+license = "Apache-2.0 WITH LLVM-exception, plus legacy NCSA"
+
+[repo.dcc]
+commit = "1d4dff6e140b795899d5f4b7045636daf1c6ac72"
+raw = "https://raw.githubusercontent.com/davidly/dcc/{commit}/{path}"
+license = "MIT"
+
+[repo.cpm_compilers-e]
+commit = "817fcd6fc1aa61eb611e113826925ea65df0dda0"
+raw = "https://raw.githubusercontent.com/davidly/cpm_compilers/{commit}/hisoft%20hi-tech%20c%20v3.09/E.C"
+license = "CC0-1.0"
+
+[repo.cpm_compilers-sieve]
+commit = "817fcd6fc1aa61eb611e113826925ea65df0dda0"
+raw = "https://raw.githubusercontent.com/davidly/cpm_compilers/{commit}/hisoft%20hi-tech%20c%20v3.09/SIEVE.C"
+license = "CC0-1.0"
+
+[repo.cpm_compilers-ttt]
+commit = "817fcd6fc1aa61eb611e113826925ea65df0dda0"
+raw = "https://raw.githubusercontent.com/davidly/cpm_compilers/{commit}/hisoft%20hi-tech%20c%20v3.09/TTT.C"
+license = "CC0-1.0"
+
+[repo.cpm_compilers-mm]
+commit = "817fcd6fc1aa61eb611e113826925ea65df0dda0"
+raw = "https://raw.githubusercontent.com/davidly/cpm_compilers/{commit}/BDS%20C%20v160/MM.C"
+license = "CC0-1.0"
+
+[[program]]
+name = "stanford-perm"
+tier = 1
+about = "Stanford Perm: recursive permutations, 43300 calls per pass, 10 passes (LLVM: 100) [Apache-2.0 WITH LLVM-exception + NCSA]"
+files = [{ repo = "llvm-test-suite", path = "SingleSource/Benchmarks/Stanford/Perm.c", sha256 = "52dc86aabafb74f8b4d868ae9a5d126ac54b4bc7dfd17777805fba785cd567b0", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "Perm.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it,\n   so printf stays out of the timed region and the work cannot be removed. */\nvolatile long bench_sink;\n/* bench port: the timer labels sit in two small functions that come before\n   the program's own macros (d, l): z88dk's intrinsic_label() macro\n   expands to __preserves_regs(a,b,c,d,e,h,l). */\nstatic void bench_timer_start(void) { intrinsic_label(TIMER_START); }\nstatic void bench_timer_stop(void) { intrinsic_label(TIMER_STOP); }\n" },
+  { file = "Perm.c", old = "int   ima[rowsize+1][rowsize+1], imb[rowsize+1][rowsize+1], imr[rowsize+1][rowsize+1];\n", new = "/* bench port: unused arrays removed (all Stanford arrays together need ~60 KB) */\n" },
+  { file = "Perm.c", old = "float rma[rowsize+1][rowsize+1], rmb[rowsize+1][rowsize+1], rmr[rowsize+1][rowsize+1];\n", new = "" },
+  { file = "Perm.c", old = "int\tpuzzl[size+1], p[typemax+1][size+1], n, kount;\n", new = "" },
+  { file = "Perm.c", old = "int sortlist[sortelements+1], biggest, littlest, top;\n", new = "" },
+  { file = "Perm.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
+  { file = "Perm.c", old = "\tprintf(\"%d\\n\", pctr);", new = "#ifdef TIMER\n\tbench_sink = pctr;\n#else\n\tprintf(\"%u\\n\", pctr);  /* bench port: pctr is unsigned */\n#endif" },
+  { file = "Perm.c", old = "\tfor (i = 0; i < 100; i++) Perm();", new = "\tbench_timer_start();\n\tfor (i = 0; i < 10; i++) Perm();  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+]
+
+[[program]]
+name = "stanford-towers"
+tier = 1
+about = "Stanford Towers: Towers of Hanoi, 14 discs, linked cell stacks, 10 passes (LLVM: 100) [Apache-2.0 WITH LLVM-exception + NCSA]"
+files = [{ repo = "llvm-test-suite", path = "SingleSource/Benchmarks/Stanford/Towers.c", sha256 = "f8ea8a42da9f28ffd2bd56d3b92dfdac4de4cf531da2b4b913aca94477176354", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "Towers.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it,\n   so printf stays out of the timed region and the work cannot be removed. */\nvolatile long bench_sink;\n/* bench port: the timer labels sit in two small functions that come before\n   the program's own macros (d, l): z88dk's intrinsic_label() macro\n   expands to __preserves_regs(a,b,c,d,e,h,l). */\nstatic void bench_timer_start(void) { intrinsic_label(TIMER_START); }\nstatic void bench_timer_stop(void) { intrinsic_label(TIMER_STOP); }\n" },
+  { file = "Towers.c", old = "int   ima[rowsize+1][rowsize+1], imb[rowsize+1][rowsize+1], imr[rowsize+1][rowsize+1];\n", new = "/* bench port: unused arrays removed (all Stanford arrays together need ~60 KB) */\n" },
+  { file = "Towers.c", old = "float rma[rowsize+1][rowsize+1], rmb[rowsize+1][rowsize+1], rmr[rowsize+1][rowsize+1];\n", new = "" },
+  { file = "Towers.c", old = "int\tpuzzl[size+1], p[typemax+1][size+1], n, kount;\n", new = "" },
+  { file = "Towers.c", old = "int sortlist[sortelements+1], biggest, littlest, top;\n", new = "" },
+  { file = "Towers.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
+  { file = "Towers.c", old = "\t printf(\"%d\\n\", movesdone);", new = "#ifdef TIMER\n\t bench_sink = movesdone;\n#else\n\t printf(\"%d\\n\", movesdone);\n#endif" },
+  { file = "Towers.c", old = "\tfor (i = 0; i < 100; i++) Towers();", new = "\tbench_timer_start();\n\tfor (i = 0; i < 10; i++) Towers();  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+]
+
+[[program]]
+name = "stanford-queens"
+tier = 1
+about = "Stanford Queens: eight queens, solved 50 times per pass, 10 passes (LLVM: 100) [Apache-2.0 WITH LLVM-exception + NCSA]"
+files = [{ repo = "llvm-test-suite", path = "SingleSource/Benchmarks/Stanford/Queens.c", sha256 = "415ad489300ed93e0c43bcc0e0ccd79a6e1a4f7dafff4a0a631b2b44eba661d3", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "Queens.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it,\n   so printf stays out of the timed region and the work cannot be removed. */\nvolatile long bench_sink;\n/* bench port: the timer labels sit in two small functions that come before\n   the program's own macros (d, l): z88dk's intrinsic_label() macro\n   expands to __preserves_regs(a,b,c,d,e,h,l). */\nstatic void bench_timer_start(void) { intrinsic_label(TIMER_START); }\nstatic void bench_timer_stop(void) { intrinsic_label(TIMER_STOP); }\n" },
+  { file = "Queens.c", old = "int   ima[rowsize+1][rowsize+1], imb[rowsize+1][rowsize+1], imr[rowsize+1][rowsize+1];\n", new = "/* bench port: unused arrays removed (all Stanford arrays together need ~60 KB) */\n" },
+  { file = "Queens.c", old = "float rma[rowsize+1][rowsize+1], rmb[rowsize+1][rowsize+1], rmr[rowsize+1][rowsize+1];\n", new = "" },
+  { file = "Queens.c", old = "int\tpuzzl[size+1], p[typemax+1][size+1], n, kount;\n", new = "" },
+  { file = "Queens.c", old = "int sortlist[sortelements+1], biggest, littlest, top;\n", new = "" },
+  { file = "Queens.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
+  { file = "Queens.c", old = "\t printf(\"%d\\n\", run + 1);", new = "#ifdef TIMER\n\t bench_sink = run + 1;\n#else\n\t printf(\"%d\\n\", run + 1);\n#endif" },
+  { file = "Queens.c", old = "\tfor (i = 0; i < 100; i++) Queens(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 10; i++) Queens(i);  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+]
+
+[[program]]
+name = "stanford-intmm"
+tier = 1
+about = "Stanford Intmm: 40x40 int matrix multiply (16-bit products and sums), 5 passes (LLVM: 10) [Apache-2.0 WITH LLVM-exception + NCSA]"
+files = [{ repo = "llvm-test-suite", path = "SingleSource/Benchmarks/Stanford/IntMM.c", sha256 = "34ef4e1fbb267e520f6d1ab81ad806d335debc662310ec655506e7a8b3b34ce8", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "IntMM.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it,\n   so printf stays out of the timed region and the work cannot be removed. */\nvolatile long bench_sink;\n/* bench port: the timer labels sit in two small functions that come before\n   the program's own macros (d, l): z88dk's intrinsic_label() macro\n   expands to __preserves_regs(a,b,c,d,e,h,l). */\nstatic void bench_timer_start(void) { intrinsic_label(TIMER_START); }\nstatic void bench_timer_stop(void) { intrinsic_label(TIMER_STOP); }\n/* bench port: dcc 3.6.0 links with 6 monocase characters (L80), so Rand\n   clashes with the libc rand; the macro renames it for every compiler. */\n#define Rand Rnd16\n" },
+  { file = "IntMM.c", old = "float rma[rowsize+1][rowsize+1], rmb[rowsize+1][rowsize+1], rmr[rowsize+1][rowsize+1];\n", new = "/* bench port: unused arrays removed (all Stanford arrays together need ~60 KB) */\n" },
+  { file = "IntMM.c", old = "int\tpuzzl[size+1], p[typemax+1][size+1], n, kount;\n", new = "" },
+  { file = "IntMM.c", old = "int sortlist[sortelements+1], biggest, littlest, top;\n", new = "" },
+  { file = "IntMM.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
+  { file = "IntMM.c", old = "int Rand () {", new = "unsigned int Rand () {" },
+  { file = "IntMM.c", old = "    return( (int)seed );     /* typecast back to int WR*/", new = "    return( (unsigned int)seed );  /* bench port: 0..65535 needs unsigned with 16-bit int */" },
+  { file = "IntMM.c", old = "\tint temp, i, j;\n\tfor ( i = 1; i <= rowsize; i++ )\n\t    for ( j = 1; j <= rowsize; j++ ) {\n\t    temp = Rand();", new = "\tunsigned int temp;  /* bench port: Rand() is 0..65535 */\n\tint i, j;\n\tfor ( i = 1; i <= rowsize; i++ )\n\t    for ( j = 1; j <= rowsize; j++ ) {\n\t    temp = Rand();" },
+  { file = "IntMM.c", old = "\t\tm[i][j] = temp - (temp/120)*120 - 60;", new = "\t\tm[i][j] = (int)(temp - (temp/120)*120) - 60;" },
+  { file = "IntMM.c", old = "\tprintf(\"%d\\n\", imr[run + 1][run + 1]);", new = "#ifdef TIMER\n\tbench_sink = imr[run + 1][run + 1];\n#else\n\tprintf(\"%d\\n\", imr[run + 1][run + 1]);\n#endif" },
+  { file = "IntMM.c", old = "\tfor (i = 0; i < 10; i++) Intmm(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 5; i++) Intmm(i);  /* bench port: LLVM runs 10 passes */\n\tbench_timer_stop();" },
+]
+
+[[program]]
+name = "stanford-puzzle"
+tier = 1
+about = "Stanford Puzzle: Baskett's packing puzzle, 2005 trials per pass, 2 passes (LLVM: 100) [Apache-2.0 WITH LLVM-exception + NCSA]"
+files = [{ repo = "llvm-test-suite", path = "SingleSource/Benchmarks/Stanford/Puzzle.c", sha256 = "e46ba97a24462ef109c357b7614a9b3ac9fc157b71b02801601ab0dce648f95e", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "Puzzle.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it,\n   so printf stays out of the timed region and the work cannot be removed. */\nvolatile long bench_sink;\n/* bench port: the timer labels sit in two small functions that come before\n   the program's own macros (d, l): z88dk's intrinsic_label() macro\n   expands to __preserves_regs(a,b,c,d,e,h,l). */\nstatic void bench_timer_start(void) { intrinsic_label(TIMER_START); }\nstatic void bench_timer_stop(void) { intrinsic_label(TIMER_STOP); }\n/* bench port: dcc 3.6.0 links with 6 monocase characters (L80), so Remove\n   clashes with the libc remove; the macro renames it for every compiler. */\n#define Remove Unfit\n" },
+  { file = "Puzzle.c", old = "int   ima[rowsize+1][rowsize+1], imb[rowsize+1][rowsize+1], imr[rowsize+1][rowsize+1];\n", new = "/* bench port: unused arrays removed (all Stanford arrays together need ~60 KB) */\n" },
+  { file = "Puzzle.c", old = "float rma[rowsize+1][rowsize+1], rmb[rowsize+1][rowsize+1], rmr[rowsize+1][rowsize+1];\n", new = "" },
+  { file = "Puzzle.c", old = "int sortlist[sortelements+1], biggest, littlest, top;\n", new = "" },
+  { file = "Puzzle.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
+  { file = "Puzzle.c", old = "\t printf(\"%d\\n\", n);\n\t printf(\"%d\\n\", kount);", new = "#ifdef TIMER\n\t bench_sink = n + kount;\n#else\n\t printf(\"%d\\n\", n);\n\t printf(\"%d\\n\", kount);\n#endif" },
+  { file = "Puzzle.c", old = "\tfor (i = 0; i < 100; i++) Puzzle();", new = "\tbench_timer_start();\n\tfor (i = 0; i < 2; i++) Puzzle();  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+]
+
+[[program]]
+name = "stanford-quick"
+tier = 1
+about = "Stanford Quicksort: 5000 long values, 5 passes (LLVM: 100) [Apache-2.0 WITH LLVM-exception + NCSA]"
+files = [{ repo = "llvm-test-suite", path = "SingleSource/Benchmarks/Stanford/Quicksort.c", sha256 = "0bf1ebccd0f343f3cb1966b232a3b8c41308aac846239b6359a38f0bca9ad558", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "Quicksort.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it,\n   so printf stays out of the timed region and the work cannot be removed. */\nvolatile long bench_sink;\n/* bench port: the timer labels sit in two small functions that come before\n   the program's own macros (d, l): z88dk's intrinsic_label() macro\n   expands to __preserves_regs(a,b,c,d,e,h,l). */\nstatic void bench_timer_start(void) { intrinsic_label(TIMER_START); }\nstatic void bench_timer_stop(void) { intrinsic_label(TIMER_STOP); }\n/* bench port: dcc 3.6.0 links with 6 monocase characters (L80), so Rand\n   clashes with the libc rand; the macro renames it for every compiler. */\n#define Rand Rnd16\n" },
+  { file = "Quicksort.c", old = "int   ima[rowsize+1][rowsize+1], imb[rowsize+1][rowsize+1], imr[rowsize+1][rowsize+1];\n", new = "/* bench port: unused arrays removed (all Stanford arrays together need ~60 KB) */\n" },
+  { file = "Quicksort.c", old = "float rma[rowsize+1][rowsize+1], rmb[rowsize+1][rowsize+1], rmr[rowsize+1][rowsize+1];\n", new = "" },
+  { file = "Quicksort.c", old = "int\tpuzzl[size+1], p[typemax+1][size+1], n, kount;\n", new = "" },
+  { file = "Quicksort.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
+  { file = "Quicksort.c", old = "int Rand () {", new = "unsigned int Rand () {" },
+  { file = "Quicksort.c", old = "    return( (int)seed );     /* typecast back to int WR*/", new = "    return( (unsigned int)seed );  /* bench port: 0..65535 needs unsigned with 16-bit int */" },
+  { file = "Quicksort.c", old = "int sortlist[sortelements+1], biggest, littlest, top;\n", new = "/* bench port: values are -50000..15535, so long */\nlong sortlist[sortelements+1], biggest, littlest;\nint top;\n" },
+  { file = "Quicksort.c", old = "sortlist[i] = (int)(temp - (temp/100000L)*100000L - 50000L);", new = "sortlist[i] = temp - (temp/100000L)*100000L - 50000L;" },
+  { file = "Quicksort.c", old = "void Quicksort( int a[], int l, int r) {", new = "void Quicksort( long a[], int l, int r) {" },
+  { file = "Quicksort.c", old = "\tint i,j,x,w;", new = "\tint i,j;\n\tlong x,w;" },
+  { file = "Quicksort.c", old = "\t  printf(\"%d\\n\", sortlist[run + 1]);", new = "#ifdef TIMER\n\t  bench_sink = sortlist[run + 1];\n#else\n\t  printf(\"%ld\\n\", sortlist[run + 1]);\n#endif" },
+  { file = "Quicksort.c", old = "\tfor (i = 0; i < 100; i++) Quick(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 5; i++) Quick(i);  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+]
+
+[[program]]
+name = "stanford-bubble"
+tier = 1
+about = "Stanford Bubblesort: 500 long values, 5 passes (LLVM: 100) [Apache-2.0 WITH LLVM-exception + NCSA]"
+files = [{ repo = "llvm-test-suite", path = "SingleSource/Benchmarks/Stanford/Bubblesort.c", sha256 = "0f06d602d19e7c256c3ed393cbbc91a42d5523db94f092f3f848471ecaba64ca", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "Bubblesort.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it,\n   so printf stays out of the timed region and the work cannot be removed. */\nvolatile long bench_sink;\n/* bench port: the timer labels sit in two small functions that come before\n   the program's own macros (d, l): z88dk's intrinsic_label() macro\n   expands to __preserves_regs(a,b,c,d,e,h,l). */\nstatic void bench_timer_start(void) { intrinsic_label(TIMER_START); }\nstatic void bench_timer_stop(void) { intrinsic_label(TIMER_STOP); }\n/* bench port: dcc 3.6.0 links with 6 monocase characters (L80), so Rand\n   clashes with the libc rand; the macro renames it for every compiler. */\n#define Rand Rnd16\n" },
+  { file = "Bubblesort.c", old = "int   ima[rowsize+1][rowsize+1], imb[rowsize+1][rowsize+1], imr[rowsize+1][rowsize+1];\n", new = "/* bench port: unused arrays removed (all Stanford arrays together need ~60 KB) */\n" },
+  { file = "Bubblesort.c", old = "float rma[rowsize+1][rowsize+1], rmb[rowsize+1][rowsize+1], rmr[rowsize+1][rowsize+1];\n", new = "" },
+  { file = "Bubblesort.c", old = "int\tpuzzl[size+1], p[typemax+1][size+1], n, kount;\n", new = "" },
+  { file = "Bubblesort.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
+  { file = "Bubblesort.c", old = "int Rand () {", new = "unsigned int Rand () {" },
+  { file = "Bubblesort.c", old = "    return( (int)seed );     /* typecast back to int WR*/", new = "    return( (unsigned int)seed );  /* bench port: 0..65535 needs unsigned with 16-bit int */" },
+  { file = "Bubblesort.c", old = "int sortlist[sortelements+1], biggest, littlest, top;\n", new = "/* bench port: values are -50000..15535, so long */\nlong sortlist[sortelements+1], biggest, littlest;\nint top;\n" },
+  { file = "Bubblesort.c", old = "sortlist[i] = (int)(temp - (temp/100000L)*100000L - 50000L);", new = "sortlist[i] = temp - (temp/100000L)*100000L - 50000L;" },
+  { file = "Bubblesort.c", old = "void Bubble(int run) {\n\tint i, j;", new = "void Bubble(int run) {\n\tint i;\n\tlong j;" },
+  { file = "Bubblesort.c", old = "\tprintf(\"%d\\n\", sortlist[run + 1]);", new = "#ifdef TIMER\n\tbench_sink = sortlist[run + 1];\n#else\n\tprintf(\"%ld\\n\", sortlist[run + 1]);\n#endif" },
+  { file = "Bubblesort.c", old = "\tfor (i = 0; i < 100; i++) Bubble(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 5; i++) Bubble(i);  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+]
+
+[[program]]
+name = "stanford-tree"
+tier = 1
+about = "Stanford Treesort: binary tree of 2000 long values, malloc/free, 10 passes (LLVM: 100) [Apache-2.0 WITH LLVM-exception + NCSA]"
+files = [{ repo = "llvm-test-suite", path = "SingleSource/Benchmarks/Stanford/Treesort.c", sha256 = "b9fe441e595d9eee4ca07326eb3aa8f86ed1a8aa69e683b473b0a2511b142d57", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "Treesort.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it,\n   so printf stays out of the timed region and the work cannot be removed. */\nvolatile long bench_sink;\n/* bench port: the timer labels sit in two small functions that come before\n   the program's own macros (d, l): z88dk's intrinsic_label() macro\n   expands to __preserves_regs(a,b,c,d,e,h,l). */\nstatic void bench_timer_start(void) { intrinsic_label(TIMER_START); }\nstatic void bench_timer_stop(void) { intrinsic_label(TIMER_STOP); }\n#ifdef __Z88DK\n/* bench port: z88dk classic malloc needs a heap; the z88dk readmes pass\n   -pragma-define:CRT_HEAP_AMALLOC=1 */\n#pragma output CRT_HEAP_AMALLOC = 1\n#endif\n/* bench port: dcc 3.6.0 links with 6 monocase characters (L80), so Rand\n   clashes with the libc rand; the macro renames it for every compiler. */\n#define Rand Rnd16\n" },
+  { file = "Treesort.c", old = "int   ima[rowsize+1][rowsize+1], imb[rowsize+1][rowsize+1], imr[rowsize+1][rowsize+1];\n", new = "/* bench port: unused arrays removed (all Stanford arrays together need ~60 KB) */\n" },
+  { file = "Treesort.c", old = "float rma[rowsize+1][rowsize+1], rmb[rowsize+1][rowsize+1], rmr[rowsize+1][rowsize+1];\n", new = "" },
+  { file = "Treesort.c", old = "int\tpuzzl[size+1], p[typemax+1][size+1], n, kount;\n", new = "" },
+  { file = "Treesort.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
+  { file = "Treesort.c", old = "int Rand () {", new = "unsigned int Rand () {" },
+  { file = "Treesort.c", old = "    return( (int)seed );     /* typecast back to int WR*/", new = "    return( (unsigned int)seed );  /* bench port: 0..65535 needs unsigned with 16-bit int */" },
+  { file = "Treesort.c", old = "int sortlist[sortelements+1], biggest, littlest, top;\n", new = "/* bench port: values are -50000..15535, so long */\nlong sortlist[sortelements+1], biggest, littlest;\nint top;\n" },
+  { file = "Treesort.c", old = "#define sortelements 5000", new = "#define sortelements 2000  /* bench port: 5000 nodes do not fit in 64 KB */" },
+  { file = "Treesort.c", old = "\tint val;", new = "\tlong val;" },
+  { file = "Treesort.c", old = "sortlist[i] = (int)(temp - (temp/100000L)*100000L - 50000L);", new = "sortlist[i] = temp - (temp/100000L)*100000L - 50000L;" },
+  { file = "Treesort.c", old = "void CreateNode (struct node **t, int n) {", new = "void CreateNode (struct node **t, long n) {" },
+  { file = "Treesort.c", old = "void Insert(int n, struct node *t) {", new = "void Insert(long n, struct node *t) {" },
+  { file = "Treesort.c", old = "void Trees(int run) {", new = "/* bench port: free each tree, so that 100 passes fit in 64 KB */\nvoid FreeTree(struct node *t) {\n\tif ( t->left != nil ) FreeTree(t->left);\n\tif ( t->right != nil ) FreeTree(t->right);\n\tfree(t);\n}\n\nvoid Trees(int run) {" },
+  { file = "Treesort.c", old = "\tprintf(\"%d\\n\", sortlist[2 + run]);", new = "#ifdef TIMER\n\tbench_sink = sortlist[2 + run];\n#else\n\tprintf(\"%ld\\n\", sortlist[2 + run]);\n#endif" },
+  { file = "Treesort.c", old = "    if ( ! Checktree(tree) ) printf ( \" Error in Tree.\\n\");", new = "    if ( ! Checktree(tree) ) printf ( \" Error in Tree.\\n\");\n    FreeTree(tree);" },
+  { file = "Treesort.c", old = "\tfor (i = 0; i < 100; i++) Trees(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 10; i++) Trees(i);  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+]
+
+[[program]]
+name = "davidly-e"
+tier = 1
+about = "davidly E: 192 digits of e, 16-bit int % and / [CC0-1.0]"
+files = [{ repo = "cpm_compilers-e", path = "e.c", sha256 = "dc6d487a001545a1e85ea42d109d91c9facf18941f27f4c60d066699914f4550", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "e.c", old = "#include <stdio.h>\n", new = "#include <stdio.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it. */\nvolatile long bench_sink;\n" },
+  { file = "e.c", old = "  for (n = N - 1; n > 0; --n) {", new = "  intrinsic_label(TIMER_START);\n  for (n = N - 1; n > 0; --n) {" },
+  { file = "e.c", old = "      printf(\"%d\", x);", new = "#ifdef TIMER\n      bench_sink = x;\n#else\n      printf(\"%d\", x);\n#endif" },
+  { file = "e.c", old = "  printf( \"\\ndone\\n\" );", new = "  intrinsic_label(TIMER_STOP);\n  printf( \"\\ndone\\n\" );" },
+]
+
+[[program]]
+name = "davidly-sieve"
+tier = 1
+about = "davidly SIEVE: BYTE sieve, 8190 odd-only flags, 10 passes (1899 primes) [CC0-1.0]"
+files = [{ repo = "cpm_compilers-sieve", path = "sieve.c", sha256 = "bf532942ccda53d77474ede689ec619e9eddc741f51c39207655332820dfa0ed", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "sieve.c", old = "        for (iter = 1; iter <= 10; iter++) {", new = "        intrinsic_label(TIMER_START);\n        for (iter = 1; iter <= 10; iter++) {" },
+  { file = "sieve.c", old = "        printf(\"%d primes.\\n\",count);", new = "        intrinsic_label(TIMER_STOP);\n        printf(\"%d primes.\\n\",count);" },
+]
+
+[[program]]
+name = "davidly-ttt"
+tier = 1
+about = "davidly TTT: tic-tac-toe minimax with alpha-beta, function-pointer winner check, 3 openings, 1 iteration (6493 moves) [CC0-1.0]"
+files = [{ repo = "cpm_compilers-ttt", path = "ttt.c", sha256 = "4b55d52540d93d8596ebc6450d910f1a9c2245044e57a28c72976e4494447140", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "ttt.c", old = "ttype MinMax( alpha, beta, depth, move ) ttype alpha; ttype beta; ttype depth; ttype move;", new = "ttype MinMax( ttype alpha, ttype beta, ttype depth, ttype move )  /* bench port: was a K&R definition */" },
+  { file = "ttt.c", old = "#include <stdio.h>\n", new = "#include <stdio.h>\n#include <stdlib.h>  /* bench port: for atoi */\n" },
+  { file = "ttt.c", old = "        sscanf( argv[ 1 ], \"%d\", &g_Iterations ); /* no atoi in MS C 1.0 */", new = "        g_Iterations = atoi( argv[ 1 ] );  /* bench port: was sscanf (\"no atoi in MS C 1.0\"); SDCC has no sscanf */" },
+  { file = "ttt.c", old = "typedef ttype pfunc_t();\n\npfunc_t * winner_functions[9] =", new = "typedef ttype (*pfunc_t)();  /* bench port: pointer typedef, for dcc */\n\npfunc_t winner_functions[9] =" },
+  { file = "ttt.c", old = "int FindSolution( position ) ttype position;", new = "int FindSolution( ttype position )  /* bench port: was a K&R definition */" },
+  { file = "ttt.c", old = "int main( argc, argv ) int argc; char * argv[];", new = "int main( int argc, char * argv[] )  /* bench port: was a K&R definition */" },
+  { file = "ttt.c", old = "    FindSolution( 0 );", new = "    intrinsic_label(TIMER_START);\n    FindSolution( 0 );" },
+  { file = "ttt.c", old = "    FindSolution( 4 );", new = "    FindSolution( 4 );\n    intrinsic_label(TIMER_STOP);" },
+]
+
+[[program]]
+name = "davidly-tm"
+tier = 1
+about = "davidly TM: malloc, calloc, free and memset, 50 blocks (upstream 66), 10 passes [MIT]"
+files = [{ repo = "dcc", path = "tests/tm.c", sha256 = "f84d25ae5bfb0734972e4d7223a4331d793fef146d1f991468cb573aa992ce17", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "tm.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n#ifdef __Z88DK\n/* bench port: z88dk classic malloc needs a heap; the z88dk readmes pass\n   -pragma-define:CRT_HEAP_AMALLOC=1 */\n#pragma output CRT_HEAP_AMALLOC = 1\n#endif\n#if defined(__SDCC) && !defined(__Z88DK)\nvoid exit(int status);  /* bench port: SDCC's stdlib.h does not declare exit() */\n#endif\n" },
+  { file = "tm.c", old = "#define allocs 66 /* dcc runs with 73 and fails at 74 */", new = "/* bench port: 50 instead of 66.  The test needs about 2 x the sum of the\n   block sizes (freed blocks are never big enough for the next request):\n   ~44 KB for 66 blocks.  Under z88dk-ticks the stack starts at 0C9FEh,\n   so 66 blocks do not fit.  The cpm_compilers TM.C uses 50 for Power C. */\n#define allocs 50 /* upstream: 66; dcc runs with 73 and fails at 74 */" },
+  { file = "tm.c", old = "    unsigned char val = (unsigned char) ( v & 0xff );\n", new = "    unsigned char val = (unsigned char) ( v & 0xff );\n    size_t i;  /* bench port: C89 declarations, for HI-TECH C */\n" },
+  { file = "tm.c", old = "    for ( size_t i = 0; i < c; i++ )", new = "    for ( i = 0; i < c; i++ )" },
+  { file = "tm.c", old = "    size_t i, cb, c_cb;", new = "    size_t i, j, cb, c_cb;" },
+  { file = "tm.c", old = "    logging = ( argc > 1 );", new = "    logging = 0;  /* bench port: was ( argc > 1 ); the bench runs with no arguments, and the SDCC and llvm-z80 start-up code leaves argc undefined */" },
+  { file = "tm.c", old = "    for ( size_t j = 0; j < 10; j++ )", new = "    intrinsic_label(TIMER_START);\n    for ( j = 0; j < 10; j++ )" },
+  { file = "tm.c", old = "    printf( \"success\\n\" );", new = "    intrinsic_label(TIMER_STOP);\n    printf( \"success\\n\" );" },
+]
+
+[[program]]
+name = "davidly-mm"
+tier = 1
+about = "davidly MM: 20x20 float matrix multiply (BYTE 1982), sum 465880 [CC0-1.0]"
+files = [{ repo = "cpm_compilers-mm", path = "mm.c", sha256 = "105fe31bd6d5ca709fe1f19a0b34f60a2cb7042dead0239565b477ec05296d5f", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "mm.c", old = "#include <stdio.h>\n", new = "#include <stdio.h>\n\n/* bench port: the timer labels sit in two small functions that come before\n   the program's own macros (d, l): z88dk's intrinsic_label() macro\n   expands to __preserves_regs(a,b,c,d,e,h,l). */\nstatic void bench_timer_start(void) { intrinsic_label(TIMER_START); }\nstatic void bench_timer_stop(void) { intrinsic_label(TIMER_STOP); }\n" },
+  { file = "mm.c", old = "int main( argc, argv ) int argc; char * argv[];", new = "int main( int argc, char * argv[] )  /* bench port: was a K&R definition */" },
+  { file = "mm.c", old = "    Summ = 0;\n", new = "    bench_timer_start();\n    Summ = 0;\n" },
+  { file = "mm.c", old = "    printf( \"summ is : %f\\n\", Summ );", new = "    bench_timer_stop();\n    /* bench port: SDCC's printf has no %f, so print the sum with integer\n       conversions (same text as %f: the exact sum is 465880). */\n    printf( \"summ is : %ld.%06ld\\n\", (long) Summ,\n            (long) ( ( Summ - (ftype) (long) Summ ) * 1000000.0 ) );" },
+]
+
+[[program]]
+name = "davidly-tpi"
+tier = 1
+about = "davidly TPI: pi spigot, 144 digits, 32-bit long * / % [MIT]"
+files = [{ repo = "dcc", path = "tests/tpi.c", sha256 = "ae222da4097df38e9c9ef4e3a0e751b93328ed94074c518afe8c46560971706b", main = true }]
+check_defines = []
+time_defines = ["TIMER"]
+edit = [
+  { file = "tpi.c", old = "#include <stdio.h>\n", new = "#include <stdio.h>\n\n/* bench port: the TIMER build stores each result here instead of printing it. */\nvolatile long bench_sink;\n" },
+  { file = "tpi.c", old = "    for (k = SIZE; k > 0; k -= 14) {", new = "    intrinsic_label(TIMER_START);\n    for (k = SIZE; k > 0; k -= 14) {" },
+  { file = "tpi.c", old = "        printf(\"%.4d\", c + d / 10000);\n        fflush(stdout);", new = "#ifdef TIMER\n        bench_sink = c + d / 10000;\n#else\n        printf(\"%04ld\", c + d / 10000);  /* bench port: long value; %04 prints the same as %.4 for 0..9999 */\n        /* bench port: fflush(stdout) removed (not in the SDCC library) */\n#endif" },
+  { file = "tpi.c", old = "    printf(\"\\n\");\n    return 0;", new = "    intrinsic_label(TIMER_STOP);\n    printf(\"\\n\");\n    return 0;" },
+]

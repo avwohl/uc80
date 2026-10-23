@@ -1,0 +1,5 @@
+starting
+runtime in ms:   0
+move count:      6493
+iteration count: 1
+method:          function pointers

@@ -1,0 +1,2 @@
+8 queens: 92 solutions
+runs: 5, total: 460, checksum: 14096

@@ -1,6 +1,6 @@
 # Binary Size and Test Results
 
-Back to the [README](../README.md). The worst-case size comparison against z88dk is analyzed in [size_analysis_0053_0456.md](size_analysis_0053_0456.md). The plan to add speed numbers, more compilers and more programs is in [benchmark_proposal.md](benchmark_proposal.md).
+Back to the [README](../README.md). The worst-case size comparison against z88dk is analyzed in [size_analysis_0053_0456.md](size_analysis_0053_0456.md). The plan to add speed numbers, more compilers and more programs is in [benchmark_proposal.md](benchmark_proposal.md). The benchmark harness in `bench/` is described in [bench_harness.md](bench_harness.md).
 
 ## Binary Size
 

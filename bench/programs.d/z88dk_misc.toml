@@ -1,0 +1,181 @@
+# z88dk support/benchmarks: library qsort and other misc programs.
+# Upstream z88dk files: see [repo.z88dk] in programs.toml (commit 94be67e8).
+#
+# sorting/sort.c: no license header in the file; z88dk is the Clarified
+# Artistic License.  g_rand() in the file is from the SDCC library (GPLv2
+# per its comment).  Fetched, not vendored.
+#
+# The test cases are separate programs, not variants, because each case
+# prints different numbers, and a variant shares the golden file of its base.
+#
+# The one edit masks t << 9 to 32 bits in g_rand().  The host cc that makes
+# the golden file has a 64-bit unsigned long, so without the mask the
+# host sequence differs from the 32-bit sequence.  On every Z80 compiler
+# the mask has no effect on the result, and g_rand() runs outside the timed
+# region (only the qsort() call is timed).
+#
+# The second edit makes perform_sort() static.  clang (llvm-z80) inlines
+# perform_sort() into main() and also keeps the external copy, so the
+# TIMER_START/TIMER_STOP labels inside it appear twice and sdasz80 fails.
+# The work does not change.
+
+[[program]]
+name = "sort-ran-20"
+tier = 1
+about = "library qsort() of 20 ints, random order (z88dk sorting; license: Clarified Artistic, unverified for this file)"
+files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
+check_defines = ["PRINTF", "NUM=20", "STYLE=0"]
+time_defines = ["TIMER", "NUM=20", "STYLE=0"]
+edit = [
+  { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
+  { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+]
+
+[[program]]
+name = "sort-ord-20"
+tier = 1
+about = "library qsort() of 20 ints, already sorted (z88dk sorting; license: Clarified Artistic, unverified for this file)"
+files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
+check_defines = ["PRINTF", "NUM=20", "STYLE=1"]
+time_defines = ["TIMER", "NUM=20", "STYLE=1"]
+edit = [
+  { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
+  { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+]
+
+[[program]]
+name = "sort-rev-20"
+tier = 1
+about = "library qsort() of 20 ints, reverse order (z88dk sorting; license: Clarified Artistic, unverified for this file)"
+files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
+check_defines = ["PRINTF", "NUM=20", "STYLE=2"]
+time_defines = ["TIMER", "NUM=20", "STYLE=2"]
+edit = [
+  { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
+  { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+]
+
+[[program]]
+name = "sort-equ-20"
+tier = 1
+about = "library qsort() of 20 ints, all equal (z88dk sorting; license: Clarified Artistic, unverified for this file)"
+files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
+check_defines = ["PRINTF", "NUM=20", "STYLE=3"]
+time_defines = ["TIMER", "NUM=20", "STYLE=3"]
+edit = [
+  { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
+  { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+]
+
+[[program]]
+name = "sort-ran-5000"
+tier = 1
+about = "library qsort() of 5000 ints, random order (z88dk sorting; license: Clarified Artistic, unverified for this file)"
+files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
+check_defines = ["PRINTF", "NUM=5000", "STYLE=0"]
+time_defines = ["TIMER", "NUM=5000", "STYLE=0"]
+edit = [
+  { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
+  { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+]
+timeout = 3600
+
+[[program]]
+name = "sort-ord-5000"
+tier = 1
+about = "library qsort() of 5000 ints, already sorted (z88dk sorting; license: Clarified Artistic, unverified for this file)"
+files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
+check_defines = ["PRINTF", "NUM=5000", "STYLE=1"]
+time_defines = ["TIMER", "NUM=5000", "STYLE=1"]
+edit = [
+  { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
+  { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+]
+timeout = 3600
+
+[[program]]
+name = "sort-rev-5000"
+tier = 1
+about = "library qsort() of 5000 ints, reverse order (z88dk sorting; license: Clarified Artistic, unverified for this file)"
+files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
+check_defines = ["PRINTF", "NUM=5000", "STYLE=2"]
+time_defines = ["TIMER", "NUM=5000", "STYLE=2"]
+edit = [
+  { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
+  { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+]
+timeout = 3600
+
+[[program]]
+name = "sort-equ-5000"
+tier = 1
+about = "library qsort() of 5000 ints, all equal (z88dk sorting; license: Clarified Artistic, unverified for this file)"
+files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
+check_defines = ["PRINTF", "NUM=5000", "STYLE=3"]
+time_defines = ["TIMER", "NUM=5000", "STYLE=3"]
+edit = [
+  { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
+  { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+]
+timeout = 3600
+
+# CoreMark 1.0, fetched from eembc/coremark (Apache-2.0 plus the CoreMark
+# Acceptable Use Agreement, see LICENSE.md in that repo).  Only the porting
+# layer (core_portme.c/.h, in bench/programs/coremark-unofficial/, Apache-2.0 with the
+# EEMBC header kept) is ours; the five core files are fetched and never
+# edited.  bench.h is prepended to core_portme.c, not to core_main.c.
+# 2K performance run (TOTAL_DATA_SIZE 2000, seeds 0,0,0x66), no float,
+# static memory.  The timed region is start_time() to stop_time() in
+# core_main.c, measured with z88dk-ticks.  The CoreMark run rules require
+# at least 10 seconds and the official timer, so this is an UNOFFICIAL run
+# and NOT a valid CoreMark score; agreement clause 1.2 forbids the
+# trademark on modified software, so never publish the cycles as a
+# "CoreMark" score.
+# Known results (2026-10-23): z88dk-sccz80 cannot compile core_state.c
+# (a cast string literal in a static initializer, line 115);
+# z88dk-zsdcc -SO3 gets crcu8() wrong (crcu8(0x66, 0) gives 0x0880, not
+# 0x2a80), so its seedcrc and CRCs are wrong.  Standalone SDCC 4.6 is right.
+[repo.coremark]
+commit = "1f483d5b8316753a742cbf5590caf5bd0a4e4777"
+raw = "https://raw.githubusercontent.com/eembc/coremark/{commit}/{path}"
+license = "Apache-2.0 plus the CoreMark Acceptable Use Agreement"
+
+[[program]]
+# The report shows the label "coremark (unofficial)"; the program name has
+# no space or parentheses because zcc splits the work path on spaces.
+name = "coremark-unofficial"
+label = "coremark (unofficial)"
+tier = 2
+about = "CoreMark 1.0 list/matrix/state/CRC, 2K performance run, ITERATIONS=1; unofficial, not a valid CoreMark score (Apache-2.0 + CoreMark AUA)"
+files = [
+  { repo = "coremark", path = "coremark.h", sha256 = "42642b9a06c7ed2b3bd9eda971b7c3868c4f5d27bf7ef6c4bba11291a0c2598a" },
+  { repo = "coremark", path = "core_main.c", sha256 = "17884c93c5b94378eb0ff02b4df3725756cf2addb9b8cbcaa6200a4649ff5ca7" },
+  { repo = "coremark", path = "core_list_join.c", sha256 = "ca00e4e010ece47d7f040cb92aa50a95345a00d3171b59d088f6b243be06ce7b" },
+  { repo = "coremark", path = "core_matrix.c", sha256 = "ecdff717b5a5c4907d221a606760e25499899cbf617582c05d40db71c91351e4" },
+  { repo = "coremark", path = "core_state.c", sha256 = "f4b84bb0a3452c45a4daa664ab502bfdccbd31cb57d93e9ac490c60937717a4e" },
+  { repo = "coremark", path = "core_util.c", sha256 = "a3fbfcb9bb943b638624b8ece01c5836dd56a96d7bcde2697b248d077447327f" },
+  { path = "core_portme.h" },
+  { path = "core_portme.c", main = true },
+]
+check_defines = ["ITERATIONS=1"]
+time_defines = ["ITERATIONS=1"]
+# One iteration is about 30 million T-states with SDCC 4.6, under 1 s in
+# z88dk-ticks, so 120 s finds a hang without an hour-long wait.
+timeout = 120
+
+# z88dk support/benchmarks/sprintf, sscanf, gamer_benchmark and coremark10
+# hold only a readme at commit 94be67e8 (outlines added in 2017, never
+# filled in), so there is no upstream source to fetch.  sprintf below is
+# our own program that follows the z88dk readme.  coremark10 is replaced
+# by the fetched eembc CoreMark above.  sscanf is not in the suite: there
+# is no upstream source, and SDCC 4.6 has no sscanf() in its library, so a
+# row would only show that the library lacks the function.
+# gamer_benchmark is not in the suite: the readme only says "replicate some
+# of the time sensitive code commonly found in games", so any program
+# under that name would be our invention, not the z88dk benchmark.
+[[program]]
+name = "sprintf"
+tier = 1
+about = "library sprintf() of int/unsigned/long/string formats with width and flags, 4 x 80 calls (own code, GPL-3.0-or-later; z88dk has only a readme)"
+files = [{ path = "sprintf.c", main = true }]
+time_defines = ["TIMER"]

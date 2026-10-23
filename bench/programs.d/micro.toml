@@ -1,0 +1,44 @@
+# Our own micro benchmarks (GPL-3.0-or-later, the uc80 license), in
+# bench/programs/<name>/.  Each program prints with putchar only, reads
+# its problem size from volatile variables and is 16-bit int clean.
+
+[[program]]
+name = "micro"
+tier = 1
+about = "8/16/32-bit arithmetic, loop counters, struct copy, switch, calls, bitfields, volatile (uc80 suite, GPL-3.0-or-later)"
+files = [{ path = "micro.c", main = true }]
+time_defines = ["TIMER"]
+# Each variant times one group (-DTSEC=n moves the TIMER labels); the
+# check build is the same for all, so time_only = true skips it.
+variants = [
+    { name = "a8", about = "micro, 8-bit group: add, multiply, divide, shift, compare", defines = ["TSEC=1"], time_only = true },
+    { name = "a16", about = "micro, 16-bit group: add, multiply, divide, shift, compare", defines = ["TSEC=2"], time_only = true },
+    { name = "a32", about = "micro, 32-bit group: add, multiply, divide, shift, compare", defines = ["TSEC=3"], time_only = true },
+    { name = "loop", about = "micro, loop group: unsigned/signed char and int counters, count down", defines = ["TSEC=4"], time_only = true },
+    { name = "copy", about = "micro, struct copy group: 4, 16 and 64 bytes", defines = ["TSEC=5"], time_only = true },
+    { name = "switch", about = "micro, switch group: dense and sparse case values", defines = ["TSEC=6"], time_only = true },
+    { name = "call", about = "micro, call group: calls with arguments", defines = ["TSEC=7"], time_only = true },
+    { name = "bits", about = "micro, bitfield group: bitfield reads and writes", defines = ["TSEC=8"], time_only = true },
+    { name = "volatile", about = "micro, volatile group: volatile loads and stores", defines = ["TSEC=9"], time_only = true },
+]
+
+[[program]]
+name = "crc"
+tier = 1
+about = "CRC-16/CCITT-FALSE and CRC-32, bitwise and table driven, 1 KB buffer (uc80 suite, GPL-3.0-or-later)"
+files = [{ path = "crc.c", main = true }]
+time_defines = ["TIMER"]
+
+[[program]]
+name = "tak"
+tier = 1
+about = "Recursion: tak(18,12,6), ack(2,40), ack(3,5), fib(20) (uc80 suite, GPL-3.0-or-later)"
+files = [{ path = "tak.c", main = true }]
+time_defines = ["TIMER"]
+
+[[program]]
+name = "queens"
+tier = 1
+about = "8-queens, all 92 solutions, 5 runs (uc80 suite, GPL-3.0-or-later)"
+files = [{ path = "queens.c", main = true }]
+time_defines = ["TIMER"]

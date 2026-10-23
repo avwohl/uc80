@@ -1,0 +1,39 @@
+# Benchmark programs.  Upstream files are fetched at a pinned commit and
+# checked by sha256 (bench/_cache, not committed); our own programs live in
+# bench/programs/<name>/.  "edit" entries are applied for every compiler,
+# so every compiler compiles the same text.  There are no per-compiler
+# defines: "defines.host" (optional) adds defines to the host golden build
+# only (run.py --golden), and every compiler gets the same check and time
+# defines.
+#
+# docs/bench_harness.md lists every key (label, shared, time_only, variant
+# about, timeout, stdin, ...).  Pitfalls, in short:
+#   - End the program output with a newline.  z88dk-ticks prints its cycle
+#     count straight after the last output character, so output that ends
+#     in a digit runs into the count (run.py can split the two again only
+#     by matching the golden text).
+#   - No spaces in a program name (zcc splits the work path on spaces);
+#     put the display name in "label".
+#   - CP/M compilers (hitech, dcc) get the files flat in the work
+#     directory: give includes 8.3-safe names, as in embench/embmain.h.
+
+[repo.z88dk]
+commit = "94be67e81db7f27be2f83b3d8d80d0781eab3669"
+raw = "https://raw.githubusercontent.com/z88dk/z88dk/{commit}/{path}"
+license = "per file; z88dk itself is the Clarified Artistic License"
+
+[[program]]
+name = "sieve"
+tier = 1
+about = "Sieve of Eratosthenes, primes in 2..7999 (z88dk)"
+files = [{ repo = "z88dk", path = "support/benchmarks/sieve/sieve.c", sha256 = "67910eefb4ac4cf26dbcccb98b570bbc8478aada2693cfa06609ffb8f749ceea", main = true }]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+variants = [{ name = "static", defines = ["STATIC"] }]
+edit = [{ file = "sieve.c", old = "\nmain()", new = "\nint main(void)" }]
+
+[[program]]
+name = "empty"
+tier = 0
+about = "int main(void) { return 0; } - startup and library baseline"
+files = [{ path = "empty.c", main = true }]

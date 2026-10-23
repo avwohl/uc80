@@ -1,0 +1,389 @@
+# Float benchmarks from z88dk support/benchmarks (repo z88dk, pinned in
+# programs.toml).  The upstream files are fetched, not vendored.
+#
+# Float libraries (the rows compare these more than code generators):
+#   uc80          double = 4-byte IEEE single, uc80 libc (lib/lc) soft float
+#   sdcc          double = 4-byte IEEE single, SDCC z80.lib soft float (C)
+#   z88dk-sccz80  double = 6-byte genmath (math48), classic +cpm -lm
+#   z88dk-zsdcc   double = 4-byte IEEE in the ABI, computed by math48
+#                 (classic +cpm -lmath48)
+# The z88dk rows need the math library on the link line; see the harness
+# request that adds -lm / -lmath48 to the z88dk adapter.
+#
+# Fair check (edits applied to every compiler):
+#   * %f and %e output differs between C libraries (SDCC's stock printf
+#     has no float conversions at all; z88dk classic prints "3.1416e0"
+#     where the host prints "3.1416e+00").  The check builds therefore
+#     print each float result with bench_print(), which rounds to a fixed
+#     number of decimals and prints it with integer printf and putchar
+#     only.  The number of decimals is chosen so that every 32-bit float
+#     library must get it right (see each program's comment).
+#   * The time builds keep the upstream code: no printing in the timed
+#     region, same problem sizes.
+
+[[program]]
+name = "mandelbrot"
+tier = 1
+about = "Mandelbrot 60x60, 50 iterations, float + - * (z88dk; Benchmarks Game, BSD-3-Clause). Float: uc80/sdcc IEEE single, z88dk genmath 48-bit"
+files = [{ repo = "z88dk", path = "support/benchmarks/mandelbrot/mandelbrot.c", sha256 = "337edeed6ea7d1707a320f26b556298640e36357b18a59934180b712d671e359", main = true }]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+variants = [{ name = "static", defines = ["STATIC"] }]
+# 1. Upstream leaves bit_num and byte_acc uninitialized when STATIC is
+#    not defined (the Benchmarks Game original sets both to 0).  The
+#    edit sets both to 0 before the timed region (2 bad pixels on sdcc
+#    and sccz80 without it).  z88dk-zsdcc (math48) still writes an
+#    empty bitmap without STATIC even with the fix; +static passes.
+#    That is a zsdcc problem, not a source problem.
+# 2. Upstream writes the bitmap to absolute address 0xc000 (or putc()s raw
+#    P4 bytes with PRINTF).  Both builds now write into a static buffer
+#    with the same "*output++ = a" store, so the timed loop is unchanged
+#    and nothing depends on the memory map.
+# 3. After TIMER_STOP the check build compares the bitmap with a reference
+#    bitmap (from the host build; IEEE double and IEEE single give the
+#    same 3600 pixels) and prints one line.  Pixels on the set boundary
+#    depend on float rounding, so up to 2 pixels may differ.  Measured:
+#    SDCC (truncating add) and z88dk-sccz80 genmath differ in 0 pixels.
+#    Outside the tolerance the program also prints the count and the
+#    bitmap as text.
+edit = [
+  { file = "mandelbrot.c", old = "   #define PUTC(a,b)         putc(a,b)", new = "   #define PUTC(a,b)         (*output++ = a)" },
+  { file = "mandelbrot.c", old = '    PRINTF3("P4\n%d %d\n",w,h);', new = '''    bit_num = 0;      /* bench: uninitialized upstream */
+    byte_acc = 0;
+    PRINTF3("P4\n%d %d\n",w,h);''' },
+  { file = "mandelbrot.c", old = "unsigned char *output = (unsigned char *)0xc000;", new = '''
+/* bench: static buffer instead of absolute address 0xc000 */
+unsigned char bench_out[480];
+unsigned char *output = bench_out;
+
+#ifdef PRINTF
+/* bench: the 60x60 bitmap of a host build.  Boundary pixels depend on
+   float rounding, so up to BENCH_TOLERANCE pixels may differ. */
+#define BENCH_TOLERANCE 2
+static const unsigned char bench_ref[480] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xe0, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x03, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x03, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xf8, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x01, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x08, 0xf1, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2f, 0xfd, 0x40, 0x00,
+    0x00, 0x00, 0x00, 0x06, 0x3f, 0xff, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x0f,
+    0xff, 0xff, 0xe7, 0x00, 0x00, 0x00, 0x00, 0x07, 0xff, 0xff, 0xff, 0x00,
+    0x00, 0x00, 0x00, 0x07, 0xff, 0xff, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x0f,
+    0xff, 0xff, 0xfc, 0x00, 0x00, 0x00, 0x00, 0x3f, 0xff, 0xff, 0xfe, 0x00,
+    0x00, 0x00, 0x00, 0x1f, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xbf,
+    0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xc0,
+    0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x11, 0x00, 0x7f,
+    0xff, 0xff, 0xff, 0x80, 0x00, 0x37, 0xd0, 0xff, 0xff, 0xff, 0xff, 0xc0,
+    0x00, 0x1f, 0xf8, 0xff, 0xff, 0xff, 0xff, 0x80, 0x00, 0x3f, 0xfd, 0xff,
+    0xff, 0xff, 0xff, 0x80, 0x00, 0x7f, 0xfd, 0xff, 0xff, 0xff, 0xff, 0x80,
+    0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xff, 0x00, 0x07, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe, 0x00,
+    0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xf8, 0x00, 0x07, 0xff, 0xff, 0xff,
+    0xff, 0xff, 0xfe, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00,
+    0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x7f, 0xfd, 0xff,
+    0xff, 0xff, 0xff, 0x80, 0x00, 0x3f, 0xfd, 0xff, 0xff, 0xff, 0xff, 0x80,
+    0x00, 0x1f, 0xf8, 0xff, 0xff, 0xff, 0xff, 0x80, 0x00, 0x37, 0xd0, 0xff,
+    0xff, 0xff, 0xff, 0xc0, 0x00, 0x11, 0x00, 0x7f, 0xff, 0xff, 0xff, 0x80,
+    0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f,
+    0xff, 0xff, 0xff, 0xc0, 0x00, 0x00, 0x00, 0xbf, 0xff, 0xff, 0xff, 0x00,
+    0x00, 0x00, 0x00, 0x1f, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x3f,
+    0xff, 0xff, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xff, 0xff, 0xfc, 0x00,
+    0x00, 0x00, 0x00, 0x07, 0xff, 0xff, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x07,
+    0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x0f, 0xff, 0xff, 0xe7, 0x00,
+    0x00, 0x00, 0x00, 0x06, 0x3f, 0xff, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x2f, 0xfd, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0xf1, 0x40, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x01, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x01, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0xf8, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x03, 0xf8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0xe0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
+static void bench_check(int w, int h)
+{
+    int i, b, r, c, n = 0;
+    unsigned char x;
+    unsigned char *p = bench_out;
+    for (i = 0; i < 480; i++) {
+        x = bench_out[i] ^ bench_ref[i];
+        for (b = 0; b < 8; b++) { n += x & 1; x >>= 1; }
+    }
+    if (n <= BENCH_TOLERANCE) {
+        printf("bitmap matches the reference within %d pixels\n",
+               BENCH_TOLERANCE);
+        return;
+    }
+    printf("bitmap differs from the reference in %d pixels\n", n);
+    for (r = 0; r < h; r++) {
+        for (c = 0; c < w; c++)
+            putchar((p[c >> 3] & (0x80 >> (c & 7))) ? '#' : '.');
+        putchar('\n');
+        p += (w + 7) >> 3;
+    }
+}
+#endif''' },
+  { file = "mandelbrot.c", old = "TIMER_STOP();", new = '''TIMER_STOP();
+
+#ifdef PRINTF
+    bench_check(w, h);
+#endif
+    return 0;''' },
+]
+
+[[program]]
+name = "n-body"
+tier = 1
+about = "n-body, 5 planets, 1000 steps, float + - * / sqrt (z88dk; Benchmarks Game, BSD-3-Clause). Float: uc80/sdcc IEEE single, z88dk genmath 48-bit"
+files = [{ repo = "z88dk", path = "support/benchmarks/n-body/n-body.c", sha256 = "36c16383db72f4ed7fd217646de92b5a40b2c96737e42bc6bccbed313604a3a6", main = true }]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+variants = [{ name = "static", defines = ["STATIC"] }]
+# Upstream prints the energy before and after with %.9f (double:
+# -0.169075164 and -0.169087605).  With 4-byte floats the error of 1000
+# steps grows: SDCC gives -0.1691296, z88dk-zsdcc -0.1691582.  So
+# bench_print rounds to 3 decimals (-0.169 for both lines); 4 decimals
+# would fail z88dk-zsdcc.  The energy is still computed and printed
+# inside the timed region of the check build only; the time build has no
+# energy() call, as upstream.
+edit = [
+  { file = "n-body.c", old = "   #define PRINTF2(a,b)      printf(a,b)", new = "   #define PRINTF2(a,b)      bench_print(b)" },
+  { file = "n-body.c", old = "#define pi 3.141592653589793", new = '''
+#ifdef PRINTF
+/* bench: print v rounded to BENCH_DECIMALS decimals with putchar only.
+   %f and %e output differ between C libraries, and the upstream
+   CLIB_OPT_PRINTF pragmas limit z88dk printf to the upstream formats.
+   Digits come from compare and subtract, not long / and %, which
+   z88dk-sccz80 -O3 gets wrong in a digit loop.  The n-- step
+   undoes a float to long conversion that rounds instead of
+   truncating (HI-TECH C 3.09); it does nothing elsewhere. */
+#ifndef BENCH_DECIMALS
+#define BENCH_DECIMALS 3
+#endif
+static const long bench_p10[9] = { 100000000L, 10000000L, 1000000L,
+    100000L, 10000L, 1000L, 100L, 10L, 1L };
+static void bench_print(double v)
+{
+    double scale = 1.0;
+    long n;
+    int d, i, started = 0;
+    for (d = 0; d < BENCH_DECIMALS; d++) scale *= 10.0;
+    if (v < 0) { putchar('-'); v = -v; }
+    v = v * scale + 0.5;
+    n = (long)v;
+    if ((double)n > v) n--;  /* HI-TECH C 3.09 rounds here */
+    for (i = 0; i < 9; i++) {
+        d = 0;
+        while (n >= bench_p10[i]) { n -= bench_p10[i]; d++; }
+        if (i == 8 - BENCH_DECIMALS) {
+            putchar('0' + d);
+            putchar('.');
+            started = 1;
+        } else if (d || started) {
+            putchar('0' + d);
+            started = 1;
+        }
+    }
+    putchar('\n');
+}
+#endif
+
+
+#if defined(__SDCC) && !defined(__Z88DK)
+/* bench: SDCC's math.h declares only sqrtf; SDCC double is float, so
+   sqrtf is the function sqrt would be (z88dk-zsdcc has sqrt) */
+#define sqrt sqrtf
+#endif
+
+#define pi 3.141592653589793''' },
+]
+
+[[program]]
+name = "spectral-norm"
+tier = 1
+about = "spectral-norm N=100, float + * / sqrt (z88dk; Benchmarks Game, BSD-3-Clause). Float: uc80/sdcc IEEE single, z88dk genmath 48-bit"
+files = [{ repo = "z88dk", path = "support/benchmarks/spectral-norm/spectral-norm.c", sha256 = "03120564163999920687a9dc2734895e44fc9765c2ab9e5d13d0d57599068db9", main = true }]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+variants = [{ name = "static", defines = ["STATIC"] }]
+# Upstream prints 1.274219991 with %0.9f.  bench_print rounds to 4
+# decimals (1.2742).  Measured: host IEEE single 1.2742201, SDCC
+# 1.2742147 (truncating add), z88dk-zsdcc 1.2742148, so 5 decimals
+# would fail a correct 32-bit library.
+edit = [
+  { file = "spectral-norm.c", old = "   #define PRINTF2(a,b)      printf(a,b)", new = "   #define PRINTF2(a,b)      bench_print(b)" },
+  { file = "spectral-norm.c", old = "#define NUM 100", new = '''
+#ifdef PRINTF
+/* bench: print v rounded to BENCH_DECIMALS decimals with putchar only.
+   %f and %e output differ between C libraries, and the upstream
+   CLIB_OPT_PRINTF pragmas limit z88dk printf to the upstream formats.
+   Digits come from compare and subtract, not long / and %, which
+   z88dk-sccz80 -O3 gets wrong in a digit loop.  The n-- step
+   undoes a float to long conversion that rounds instead of
+   truncating (HI-TECH C 3.09); it does nothing elsewhere. */
+#ifndef BENCH_DECIMALS
+#define BENCH_DECIMALS 4
+#endif
+static const long bench_p10[9] = { 100000000L, 10000000L, 1000000L,
+    100000L, 10000L, 1000L, 100L, 10L, 1L };
+static void bench_print(double v)
+{
+    double scale = 1.0;
+    long n;
+    int d, i, started = 0;
+    for (d = 0; d < BENCH_DECIMALS; d++) scale *= 10.0;
+    if (v < 0) { putchar('-'); v = -v; }
+    v = v * scale + 0.5;
+    n = (long)v;
+    if ((double)n > v) n--;  /* HI-TECH C 3.09 rounds here */
+    for (i = 0; i < 9; i++) {
+        d = 0;
+        while (n >= bench_p10[i]) { n -= bench_p10[i]; d++; }
+        if (i == 8 - BENCH_DECIMALS) {
+            putchar('0' + d);
+            putchar('.');
+            started = 1;
+        } else if (d || started) {
+            putchar('0' + d);
+            started = 1;
+        }
+    }
+    putchar('\n');
+}
+#endif
+
+
+#if defined(__SDCC) && !defined(__Z88DK)
+/* bench: SDCC's math.h declares only sqrtf; SDCC double is float, so
+   sqrtf is the function sqrt would be (z88dk-zsdcc has sqrt) */
+#define sqrt sqrtf
+#endif
+
+#define NUM 100''' },
+]
+
+[[program]]
+name = "fasta"
+tier = 1
+about = "fasta N=1000: LCG with long, float compare, malloc, strings (z88dk; Benchmarks Game, BSD-3-Clause). Float: uc80/sdcc IEEE single, z88dk genmath 48-bit"
+files = [{ repo = "z88dk", path = "support/benchmarks/fasta/fasta.c", sha256 = "284a694064e69a99a6c0bcbc15bd7368fa9cb1dcfb8fa08b06487ed76ae82160", main = true }]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+variants = [{ name = "static", defines = ["STATIC"] }]
+# The check output is the 171-line FASTA text; the golden file equals
+# upstream fasta/fasta-output.txt.  The check build prints inside the
+# timed region (upstream design); the time build prints nothing.
+# One edit: z88dk classic needs a heap for malloc.  The upstream z88dk
+# readme passes -pragma-define:CRT_HEAP_AMALLOC=1; the edit puts the same
+# "#pragma output" in the source's own "#ifdef __Z88DK" block, so the
+# other compilers see no change.
+# Second edit: the alu string uses backslash-newline line splices between
+# adjacent string literals.  HI-TECH C 3.09's preprocessor does not splice
+# lines outside directives ("illegal character (0134)").  Without the
+# backslashes the literals still concatenate to the same string, so the
+# program is unchanged for every compiler.
+edit = [
+  { file = "fasta.c", old = "   #include <intrinsic.h>", new = '''   #include <intrinsic.h>
+   // bench: z88dk classic malloc needs a heap (upstream readme switch)
+   #pragma output CRT_HEAP_AMALLOC = 1''' },
+  { file = "fasta.c", old = '''   "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG" \
+   "GAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA" \
+   "CCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAAT" \
+   "ACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCA" \
+   "GCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG" \
+   "AGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC" \
+''', new = '''   "GGCCGGGCGCGGTGGCTCACGCCTGTAATCCCAGCACTTTGG"
+   "GAGGCCGAGGCGGGCGGATCACCTGAGGTCAGGAGTTCGAGA"
+   "CCAGCCTGGCCAACATGGTGAAACCCCGTCTCTACTAAAAAT"
+   "ACAAAAATTAGCCGGGCGTGGTGGCGCGCGCCTGTAATCCCA"
+   "GCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG"
+   "AGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC"
+''' },
+]
+
+[[program]]
+name = "whetstone"
+tier = 1
+about = "Whetstone 1.2, LOOP=10: float, sin cos atan exp log sqrt (z88dk; Painter Engineering 1998, permission notice, no SPDX id). Float: uc80/sdcc IEEE single, z88dk genmath 48-bit"
+files = [{ repo = "z88dk", path = "support/benchmarks/whetstone/whetstone.c", sha256 = "7ad6fa7a6c42073758f5101b06543a4e048307f86e190dcb51d2026d5a9966d4", main = true }]
+check_defines = ["PRINTOUT"]
+time_defines = ["TIMER"]
+variants = [{ name = "static", defines = ["STATIC"] }]
+# 1. The source uses C99 double_t, which the uc80 and SDCC math.h do not
+#    define.  "#define double_t double" after the includes (a -D switch
+#    would break the host and z88dk headers, which have the typedef).
+# 2. SDCC's math.h has only sinf, cosf, ...; for standalone SDCC only the
+#    double names map to them (same functions, SDCC double is float).
+# 3. POUT prints with %12.4e.  It now prints N, J, K as before (%7ld)
+#    and the four floats with bench_print, rounded to 3 decimals.
+#    Measured at 6 decimals: the last result is 0.834662 (SDCC),
+#    0.834635 (z88dk-zsdcc), 0.834666 (z88dk-sccz80); the host double
+#    gives 8.3467e-01.  4 decimals would fail z88dk-zsdcc.
+edit = [
+  { file = "whetstone.c", old = "#include <math.h>\n", new = '''#include <math.h>
+
+/* bench: C99 double_t is missing from several compilers' math.h */
+#define double_t double
+
+#if defined(__SDCC) && !defined(__Z88DK)
+/* bench: SDCC's math.h declares only the float functions (sinf, ...);
+   SDCC double is float, so these are the functions the double names
+   would be (z88dk-zsdcc has the double names) */
+#define sin sinf
+#define cos cosf
+#define atan atanf
+#define log logf
+#define exp expf
+#define sqrt sqrtf
+#endif
+''' },
+  { file = "whetstone.c", old = '''   printf("N=%7ld J=%7ld K=%7ld\nX1=%12.4e X2=%12.4e\nX3=%12.4e X4=%12.4e\n\n",
+                  N, J, K, X1, X2, X3, X4);''', new = '''   printf("N=%7ld J=%7ld K=%7ld\n", N, J, K);
+   printf("X1="); bench_print(X1);
+   printf(" X2="); bench_print(X2);
+   printf("\nX3="); bench_print(X3);
+   printf(" X4="); bench_print(X4);
+   printf("\n\n");''' },
+  { file = "whetstone.c", old = "void PA(double_t E[]);", new = '''void PA(double_t E[]);
+
+#ifdef PRINTOUT
+/* bench: print v rounded to BENCH_DECIMALS decimals with putchar only.
+   %f and %e output differ between C libraries, and the upstream
+   CLIB_OPT_PRINTF pragmas limit z88dk printf to the upstream formats.
+   Digits come from compare and subtract, not long / and %, which
+   z88dk-sccz80 -O3 gets wrong in a digit loop.  The n-- step
+   undoes a float to long conversion that rounds instead of
+   truncating (HI-TECH C 3.09); it does nothing elsewhere. */
+#ifndef BENCH_DECIMALS
+#define BENCH_DECIMALS 3
+#endif
+static const long bench_p10[9] = { 100000000L, 10000000L, 1000000L,
+    100000L, 10000L, 1000L, 100L, 10L, 1L };
+static void bench_print(double v)
+{
+    double scale = 1.0;
+    long n;
+    int d, i, started = 0;
+    for (d = 0; d < BENCH_DECIMALS; d++) scale *= 10.0;
+    if (v < 0) { putchar('-'); v = -v; }
+    v = v * scale + 0.5;
+    n = (long)v;
+    if ((double)n > v) n--;  /* HI-TECH C 3.09 rounds here */
+    for (i = 0; i < 9; i++) {
+        d = 0;
+        while (n >= bench_p10[i]) { n -= bench_p10[i]; d++; }
+        if (i == 8 - BENCH_DECIMALS) {
+            putchar('0' + d);
+            putchar('.');
+            started = 1;
+        } else if (d || started) {
+            putchar('0' + d);
+            started = 1;
+        }
+    }
+}
+#endif''' },
+]

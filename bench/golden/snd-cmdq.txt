@@ -1,0 +1,2 @@
+drops 274, head 9, tail 4
+cmdq: 16145 writes, 0 polls, log CRC 17781

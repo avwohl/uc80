@@ -1,0 +1,3 @@
+P4
+60 60
+bitmap matches the reference within 2 pixels

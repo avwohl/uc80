@@ -1,0 +1,10 @@
+crc16 check bit 29b1
+crc16 check tab 29b1
+crc32 check bit cbf43926
+crc32 check tab cbf43926
+crc16 buffer bit c1f1
+crc16 buffer tab c1f1
+crc32 buffer bit 6f66b7e0
+crc32 buffer tab 6f66b7e0
+crc16 table[255] 1ef0
+crc32 table[255] 2d02ef8d

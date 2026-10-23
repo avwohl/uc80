@@ -1,0 +1,5 @@
+_cache/
+_work/
+results/*.lock
+results/*.tmp
+__pycache__/

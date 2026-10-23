@@ -1,0 +1,147 @@
+# z88dk support/benchmarks integer programs (repo z88dk, declared in
+# programs.toml).  Problem sizes follow each benchmark's readme, so the
+# cycle counts can be set next to the z88dk wiki numbers (Appendix A of
+# docs/benchmark_proposal.md).  Every edit below applies to every
+# compiler.
+
+# Dhrystone 2.1, Reinhold P. Weicker (1988).  License: none stated
+# (unverified); fetched, not vendored.  20000 runs, as in the readme.
+[[program]]
+name = "dhrystone21"
+tier = 1
+about = "Dhrystone 2.1, 20000 runs: integer, struct copy, strings, calls (z88dk; license unverified)"
+files = [
+  { repo = "z88dk", path = "support/benchmarks/dhrystone21/dhry_1.c", sha256 = "41f2f1ea06dfbe2af9da13590d8f214d0c6e650215e7a5e5bfb6dd58008750db", main = true },
+  { repo = "z88dk", path = "support/benchmarks/dhrystone21/dhry_2.c", sha256 = "e6c782b98127ca4faebe113bd2dd49a9eb48a2884f354e3200497bd7305a76a9" },
+  { repo = "z88dk", path = "support/benchmarks/dhrystone21/dhry.h", sha256 = "48bb504fc52df650673862c14eef31cd3ea0105a419e51bed783929b400ab853" },
+]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+# The slowest OK build runs about 0.55G cycles, a few seconds under
+# z88dk-ticks; the default 600 s limit keeps a hung build (sccz80) short.
+# NOSTRUCTASSIGN is the SDCC and 80cc readme switch, STATIC the HI-TECH one.
+variants = [
+  { name = "nostructassign", defines = ["NOSTRUCTASSIGN"] },
+  { name = "static", defines = ["STATIC"] },
+]
+edit = [
+  # SDCC has no scanf (the z88dk sdcc readme makes the same change).
+  # Use the readme's timed run count, so the check build does the same
+  # work as the timed build.
+  { file = "dhry_1.c", old = 'scanf ("%d", &Number_Of_Runs);', new = "Number_Of_Runs = 20000;" },
+  # double_t is C99 <math.h>, absent from the SDCC headers.  Only the
+  # TIMEFUNC code (never built) uses these two variables.
+  { file = "dhry_1.c", old = "double_t        Microseconds,", new = "float           Microseconds," },
+  # All variants share golden/dhrystone21.txt, so the banner must not
+  # depend on -DSTATIC or -DREGISTER.  The variant name records the switch.
+  { file = "dhry_1.c", old = '"Program compiled with " REGSTRING " attribute\n"', new = "\"Program compiled without 'register' or 'static' attribute\\n\"" },
+  # Pointer values differ between compilers and the host; print a
+  # comparison so the golden file is the same for every compiler.
+  { file = "dhry_1.c", old = "(int) Ptr_Glob->Ptr_Comp);", new = "Ptr_Glob->Ptr_Comp == Next_Ptr_Glob);" },
+  { file = "dhry_1.c", old = "(int) Next_Ptr_Glob->Ptr_Comp);", new = "Next_Ptr_Glob->Ptr_Comp == Ptr_Glob->Ptr_Comp);" },
+  # z88dk only, check build only (the pragma is inside #ifdef PRINTF):
+  # bit 0x04000000 adds %f to the classic printf, which pulls in a float
+  # library that zcc +cpm does not link by default (undefined
+  # init_floatpack, __dtoa_digits).  Only the TIMEFUNC code (never built)
+  # prints %f, so drop that bit and keep %d %s %c and the flags.
+  { file = "dhry.h", old = "CLIB_OPT_PRINTF = 0x44000601", new = "CLIB_OPT_PRINTF = 0x40000601" },
+]
+
+# fannkuch-redux, The Computer Language Benchmarks Game.  License:
+# BSD-3-Clause (support/benchmarks/fannkuch/license).  N = 7.
+[[program]]
+name = "fannkuch"
+tier = 1
+about = "fannkuch-redux N=7: permutations, array shuffle (z88dk; BSD-3-Clause)"
+files = [{ repo = "z88dk", path = "support/benchmarks/fannkuch/fannkuch.c", sha256 = "be09a44a947a2ed53d5de984e2b87c73b002acac554997b1d78176897d41a743", main = true }]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+variants = [
+  { name = "inline", defines = ["INLINE"] },
+  { name = "static", defines = ["STATIC"] },
+  { name = "static-inline", defines = ["STATIC", "INLINE"] },
+]
+
+# pi to 800 digits (Stanford spigot), 32-bit multiply/divide/modulo.
+# License: none stated (unverified); fetched, not vendored.
+[[program]]
+name = "pi"
+tier = 1
+about = "pi to 800 digits without ldiv: 32-bit multiply, divide, modulo (z88dk; license unverified)"
+files = [{ repo = "z88dk", path = "support/benchmarks/pi/pi.c", sha256 = "ca19a28c1e876f84eaf290baff744dd146681cd3defb85f47538139ef4b64c4e", main = true }]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+timeout = 3600
+edit = [
+  # HI-TECH C 3.09 rejects the UL suffix (the z88dk htcv309 readme makes
+  # the same change).  The other operand is uint32_t in all three places,
+  # so the usual conversions give the same unsigned long operation.
+  { file = "pi.c", old = "(uint32_t)(r[i]) * 10000UL;", new = "(uint32_t)(r[i]) * 10000;" },
+  { file = "pi.c", old = "(uint16_t)(d / 10000UL)", new = "(uint16_t)(d / 10000)" },
+  { file = "pi.c", old = "c = d % 10000UL;", new = "c = d % 10000;" },
+  # uc80, SDCC 4.6 and the z88dk classic default printf all ignore or
+  # reject the precision in "%.4d" (z88dk prints ".4d").  "%04d" prints
+  # the same text for these values (0..9999).  The timed build does not
+  # print.
+  { file = "pi.c", old = '"%.4d"', new = '"%04d"' },
+  # The z88dk pragma below cuts the classic printf down to bare %d, which
+  # prints "%04d" as "04d".  Drop it, so z88dk uses its default printf
+  # (check build only; the pragma is inside #ifdef PRINTF).
+  { file = "pi.c", old = "#pragma output CLIB_OPT_PRINTF = 0x01", new = "/* CLIB_OPT_PRINTF pragma removed by bench: see z88dk_int.toml */" },
+  # The output has no final newline, so z88dk-ticks prints its cycle
+  # count on the same line and run.py cannot split the two.  Print a
+  # newline after the timed region (check build only).
+  { file = "pi.c", old = "TIMER_STOP();", new = "TIMER_STOP();\n#ifdef PRINTF\n   printf(\"\\n\");\n#endif" },
+]
+variants = [{ name = "static", defines = ["STATIC"] }]
+
+[[program]]
+name = "pi_ldiv"
+tier = 1
+about = "pi to 800 digits with ldiv() (z88dk; license unverified)"
+files = [{ repo = "z88dk", path = "support/benchmarks/pi/pi_ldiv.c", sha256 = "f2445497ba17976a1841bbf17db1c9c1f707d7821d22c0074cedb2dc015beb64", main = true }]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+timeout = 3600
+edit = [
+  # uc80, SDCC 4.6 and the z88dk classic default printf all ignore or
+  # reject the precision in "%.4d" (z88dk prints ".4d").  "%04d" prints
+  # the same text for these values (0..9999).  The timed build does not
+  # print.
+  { file = "pi_ldiv.c", old = '"%.4d"', new = '"%04d"' },
+  # The z88dk pragma below cuts the classic printf down to bare %d, which
+  # prints "%04d" as "04d".  Drop it, so z88dk uses its default printf
+  # (check build only; the pragma is inside #ifdef PRINTF).
+  { file = "pi_ldiv.c", old = "#pragma output CLIB_OPT_PRINTF = 0x01", new = "/* CLIB_OPT_PRINTF pragma removed by bench: see z88dk_int.toml */" },
+  # The output has no final newline, so z88dk-ticks prints its cycle
+  # count on the same line and run.py cannot split the two.  Print a
+  # newline after the timed region (check build only).
+  { file = "pi_ldiv.c", old = "TIMER_STOP();", new = "TIMER_STOP();\n#ifdef PRINTF\n   printf(\"\\n\");\n#endif" },
+]
+variants = [{ name = "static", defines = ["STATIC"] }]
+
+# binary-trees, The Computer Language Benchmarks Game.  License:
+# BSD-3-Clause (support/benchmarks/binary-trees/license).  N = 8.
+[[program]]
+name = "binary-trees"
+tier = 1
+about = "binary-trees N=8: malloc/free, recursion with long (z88dk; BSD-3-Clause)"
+files = [{ repo = "z88dk", path = "support/benchmarks/binary-trees/binary-trees.c", sha256 = "406097d7ed57fa4d51c2fe3d406ffe26393cc5deaed7c58ec2745850a856e1c2", main = true }]
+check_defines = ["PRINTF"]
+time_defines = ["TIMER"]
+timeout = 1800
+variants = [{ name = "static", defines = ["STATIC"] }]
+edit = [
+  # The z88dk readmes link with -pragma-define:CRT_HEAP_AMALLOC=1; without
+  # a heap the classic malloc does not link (_heap undefined).  The
+  # pragma goes in the source's own __Z88DK block, so only z88dk sees it.
+  { file = "binary-trees.c", old = "   #include <intrinsic.h>\n", new = "   #include <intrinsic.h>\n   #pragma output CRT_HEAP_AMALLOC = 1\n" },
+  # SDCC has no pow() and no exit() declaration (the z88dk sdcc readme
+  # makes the same pow change).  SDCC double is float, so powf is the
+  # same work.  The guard is false for every other compiler.
+  { file = "binary-trees.c", old = "#include <math.h>\n", new = "#include <math.h>\n#if defined(__SDCC) && !defined(__Z88DK)\n#define pow(a,b) powf(a,b)\nvoid exit(int status);\n#endif\n" },
+  # A 32-bit float pow(2, n) can return 2^n - tiny, and the assignment to
+  # long truncates (z88dk --math32 gives 510 trees, not 512).  The z88dk
+  # sdcc readme adds the same rounding.
+  { file = "binary-trees.c", old = "iterations = pow(2, maxDepth - depth + minDepth);", new = "iterations = pow(2, maxDepth - depth + minDepth) + 0.5;" },
+]

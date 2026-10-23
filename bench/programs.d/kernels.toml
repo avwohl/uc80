@@ -1,0 +1,333 @@
+# Tier 2: real-world kernels.
+#
+# - zx0, lz4: decompressors on an embedded blob, output checked by CRC.
+# - embench-*: Embench-IoT members that fit in 64 KB with a 16-bit int.
+#   Each one prints PASS or FAIL from its own verify_benchmark ().
+#   LOCAL_SCALE_FACTOR is lowered so that one run is a few million to a
+#   few hundred million T-states.  Edits that port 32-bit-int code apply
+#   to every compiler (they are portable C).  bench/programs/embench/
+#   holds our support.h (stand-in for the upstream one) and embmain.h
+#   (main ()); each embench-* directory has a main.c that includes
+#   embmain.h, and lists the shared files as ../embench/<file>.
+# - snd-*: sound-driver-shaped kernels (our own code), as CP/M programs.
+
+[repo.embench]
+commit = "09c2ed8c3b7008c95d08b038de4a3f6dc103ed70"
+raw = "https://raw.githubusercontent.com/embench/embench-iot/{commit}/{path}"
+license = "GPL-3.0-or-later, except md5.c and tarfind.c: MIT (SPDX headers in each file)"
+
+[repo.zx0]
+commit = "ecde3a2ae05061fe06469ed46df81a33b7de7d86"
+raw = "https://raw.githubusercontent.com/einar-saukas/ZX0/{commit}/{path}"
+license = "BSD-3-Clause (repository LICENSE; dzx0.c has no license header)"
+
+# ---------------------------------------------------------------- Embench
+
+[[program]]
+name = "embench-crc32"
+tier = 2
+about = "Embench-IoT crc32: table CRC-32 of 1024 rand_beebs() bytes (GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/crc32/crc_32.c", sha256 = "98966b59550ceed67bef64f0e8968113535bdc5aee95e06432fa5b171438cc41" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "crc_32.c", old = "#define LOCAL_SCALE_FACTOR 170", new = "#define LOCAL_SCALE_FACTOR 1" },
+]
+
+[[program]]
+name = "embench-matmult-int"
+tier = 2
+about = "Embench-IoT matmult-int: 20x20 long matrix multiply (GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/matmult-int/matmult-int.c", sha256 = "a52a60dfc82e5d919f5c4507543e48232d6621a16e95e7c04f642a5f909b28ae" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "matmult-int.c", old = "#define LOCAL_SCALE_FACTOR 39", new = "#define LOCAL_SCALE_FACTOR 1" },
+  # Seed * 133 overflows a 16-bit int; do it in long (the 32-bit-int result).
+  { file = "matmult-int.c", old = "Seed = ((Seed * 133) + 81) % MOD_SIZE;", new = "Seed = (int) (((Seed * 133L) + 81) % MOD_SIZE);" },
+  # sccz80 cannot parse sizeof (ArrayA[0][0]) ("Expected ';'"); the
+  # element type is long, so sizeof (long) is the same value.
+  { file = "matmult-int.c", old = "memcpy (ArrayA, ArrayA_ref,\n\t\tUPPERLIMIT * UPPERLIMIT * sizeof (ArrayA[0][0]));", new = "memcpy (ArrayA, ArrayA_ref,\n\t\tUPPERLIMIT * UPPERLIMIT * sizeof (long));" },
+  { file = "matmult-int.c", old = "memcpy (ArrayB, ArrayB_ref,\n\t\tUPPERLIMIT * UPPERLIMIT * sizeof (ArrayA[0][0]));", new = "memcpy (ArrayB, ArrayB_ref,\n\t\tUPPERLIMIT * UPPERLIMIT * sizeof (long));" },
+  { file = "matmult-int.c", old = "UPPERLIMIT * UPPERLIMIT * sizeof (exp[0][0])", new = "UPPERLIMIT * UPPERLIMIT * sizeof (long)" },
+]
+
+[[program]]
+name = "embench-md5sum"
+tier = 2
+about = "Embench-IoT md5sum: MD5 of a 1000-byte message (md5.c MIT; beebsc and glue GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/md5sum/md5.c", sha256 = "59c2d7bb48faae3cf16dbd3330800dc544e86c1562ec3bebbcb177a6e761c3cf" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "md5.c", old = "#define LOCAL_SCALE_FACTOR 66", new = "#define LOCAL_SCALE_FACTOR 1" },
+  # benchmark () returns h0^h1^h2^h3 as an int; with a 16-bit int only
+  # the low 16 bits of RESULT can match.
+  { file = "md5.c", old = "return r == RESULT;", new = "return r == (int) RESULT;" },
+]
+
+[[program]]
+name = "embench-nettle-sha256"
+tier = 2
+about = "Embench-IoT nettle-sha256: SHA-256 of a 56-byte message (GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/nettle-sha256/nettle-sha256.c", sha256 = "afe00fb383d29260d82d4bede97d895d2f7bd9070644aa9eecf73feac780980b" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "nettle-sha256.c", old = "#define LOCAL_SCALE_FACTOR 562", new = "#define LOCAL_SCALE_FACTOR 8" },
+  # sccz80 cannot parse sizeof((ctx)->block); the block is
+  # uint8_t[SHA256_BLOCK_SIZE], so the size is (size_t) SHA256_BLOCK_SIZE.
+  { file = "nettle-sha256.c", old = "unsigned __md_left = sizeof((ctx)->block) - (ctx)->index;", new = "unsigned __md_left = ((size_t) SHA256_BLOCK_SIZE) - (ctx)->index;" },
+  { file = "nettle-sha256.c", old = "while ((length) >= sizeof((ctx)->block))", new = "while ((length) >= ((size_t) SHA256_BLOCK_SIZE))" },
+  { file = "nettle-sha256.c", old = "(data) += sizeof((ctx)->block);", new = "(data) += ((size_t) SHA256_BLOCK_SIZE);" },
+  { file = "nettle-sha256.c", old = "(length) -= sizeof((ctx)->block);", new = "(length) -= ((size_t) SHA256_BLOCK_SIZE);" },
+  { file = "nettle-sha256.c", old = "assert_beebs(__md_i < sizeof((ctx)->block));", new = "assert_beebs(__md_i < ((size_t) SHA256_BLOCK_SIZE));" },
+  { file = "nettle-sha256.c", old = "if (__md_i > (sizeof((ctx)->block) - (size)))", new = "if (__md_i > (((size_t) SHA256_BLOCK_SIZE) - (size)))" },
+  { file = "nettle-sha256.c", old = "memset((ctx)->block + __md_i, 0, sizeof((ctx)->block) - __md_i);", new = "memset((ctx)->block + __md_i, 0, ((size_t) SHA256_BLOCK_SIZE) - __md_i);" },
+  { file = "nettle-sha256.c", old = "sizeof((ctx)->block) - (size) - __md_i);", new = "((size_t) SHA256_BLOCK_SIZE) - (size) - __md_i);" },
+]
+
+[[program]]
+name = "embench-edn"
+tier = 2
+about = "Embench-IoT edn: DSP kernels (FIR, IIR, DCT, codebook) on short data (GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/edn/libedn.c", sha256 = "2604a80fbe70e2b6bc4276649bfb5974d02e18f70b84fc804c7d52bf47f6a20e" },
+]
+# The code assumes a 32-bit int: short * short and short + short must not
+# wrap, and e must hold -441886230.  Each edit gives the 32-bit-int result.
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "libedn.c", old = "#define LOCAL_SCALE_FACTOR 81", new = "#define LOCAL_SCALE_FACTOR 1" },
+  { file = "libedn.c", old = "y[i] += ((scaler * x[i]) >> 15);", new = "y[i] += (((long) scaler * x[i]) >> 15);" },
+  { file = "libedn.c", old = "dotp += b[i] * a[i];", new = "dotp += (long) b[i] * a[i];" },
+  { file = "libedn.c", old = "sqr += b[i] * b[i];", new = "sqr += (long) b[i] * b[i];" },
+  { file = "libedn.c", old = "sum += array1[i + j] * coeff[j];", new = "sum += (long) array1[i + j] * coeff[j];" },
+  { file = "libedn.c", old = "sum0 += x0 * h0;", new = "sum0 += (long) x0 * h0;" },
+  { file = "libedn.c", old = "sum1 += x1 * h0;", new = "sum1 += (long) x1 * h0;" },
+  { file = "libedn.c", old = "sum0 += x1 * h1;", new = "sum0 += (long) x1 * h1;" },
+  { file = "libedn.c", old = "sum1 += x0 * h1;", new = "sum1 += (long) x0 * h1;" },
+  { file = "libedn.c", old = "f -= b[n - 1] * k[n - 1];", new = "f -= (long) b[n - 1] * k[n - 1];" },
+  { file = "libedn.c", old = "f -= b[i] * k[i];", new = "f -= (long) b[i] * k[i];" },
+  { file = "libedn.c", old = "t[j] = d[k * j] + d[k * (7 - j)];", new = "t[j] = (long) d[k * j] + d[k * (7 - j)];" },
+  { file = "libedn.c", old = "t[7 - j] = d[k * j] - d[k * (7 - j)];", new = "t[7 - j] = (long) d[k * j] - d[k * (7 - j)];" },
+  { file = "libedn.c", old = "t[8] = (short) (t[11] + t[9]) * r[10];", new = "t[8] = (long) (short) (t[11] + t[9]) * r[10];" },
+  { file = "libedn.c", old = "t[0] = (short) (t[4] + t[7]) * r[2];", new = "t[0] = (long) (short) (t[4] + t[7]) * r[2];" },
+  { file = "libedn.c", old = "t[1] = (short) (t[5] + t[6]) * r[0];", new = "t[1] = (long) (short) (t[5] + t[6]) * r[0];" },
+  { file = "libedn.c", old = "t[8] = (short) (t[2] + t[3]) * r[8];", new = "t[8] = (long) (short) (t[2] + t[3]) * r[8];" },
+  { file = "libedn.c", old = "t[2] = (short) t[2] * r[1] + t[8];", new = "t[2] = (long) (short) t[2] * r[1] + t[8];" },
+  { file = "libedn.c", old = "t[3] = (short) t[3] * r[3] + t[8];", new = "t[3] = (long) (short) t[3] * r[3] + t[8];" },
+  { file = "libedn.c", old = "static int e;", new = "static long int e;" },
+  # sccz80 does not take the type name "short unsigned int".
+  { file = "libedn.c", old = "short unsigned int in_a[200]", new = "unsigned short in_a[200]" },
+  { file = "libedn.c", old = "short unsigned int in_b[200]", new = "unsigned short in_b[200]" },
+]
+
+[[program]]
+name = "embench-huffbench"
+tier = 2
+about = "Embench-IoT huffbench: Huffman compress and expand 500 bytes (GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/huffbench/libhuffbench.c", sha256 = "db93b8ea3c68b178348834e738ba0628c8dbf28c338d4320aebab145683d8162" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "libhuffbench.c", old = "#define LOCAL_SCALE_FACTOR 11", new = "#define LOCAL_SCALE_FACTOR 1" },
+]
+
+[[program]]
+name = "embench-ud"
+tier = 2
+about = "Embench-IoT ud: LU decomposition of a 6x6 long matrix (GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/ud/libud.c", sha256 = "eb9cb63f7a5d081229c3de201ec83f24ed535cb95414804ef355c3b1e4626f2b" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "libud.c", old = "#define LOCAL_SCALE_FACTOR 1785", new = "#define LOCAL_SCALE_FACTOR 10" },
+]
+
+[[program]]
+name = "embench-slre"
+tier = 2
+about = "Embench-IoT slre: 4 regex matches over a 45-char string (GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/slre/libslre.c", sha256 = "ff918566aa585c665433fecfa1c56ca0136f819df0a5654f2ae98cc696d96056" },
+  { repo = "embench", path = "src/slre/slre.h", sha256 = "87bdc34b18e269c46c13c3e221f2618fa2aac2b4299fe59561810522880e3264" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "libslre.c", old = "#define LOCAL_SCALE_FACTOR 116", new = "#define LOCAL_SCALE_FACTOR 2" },
+  # sccz80 cannot parse sizeof((expr)[0]); every argument is a plain name.
+  { file = "libslre.c", old = "#define ARRAY_SIZE(ar) (int) (sizeof(ar) / sizeof((ar)[0]))", new = "#define ARRAY_SIZE(ar) (int) (sizeof(ar) / sizeof(ar[0]))" },
+]
+
+[[program]]
+name = "embench-tarfind"
+tier = 2
+about = "Embench-IoT tarfind: build 35 tar headers, find 5 names by strcmp (tarfind.c MIT; beebsc and glue GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/tarfind/tarfind.c", sha256 = "169eceee1116a517dd39403aeab4b48335e7d8577ea65fdfdb17bec1f56e6547" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "tarfind.c", old = "#define LOCAL_SCALE_FACTOR 46", new = "#define LOCAL_SCALE_FACTOR 1" },
+  # sccz80 has no C11 _Alignas/_Alignof.  The Z80 has no alignment rules,
+  # so the plain array is the same program.
+  { file = "tarfind.c", old = "static char _Alignas(_Alignof(tar_header_t)) heap[HEAP_SIZE];", new = "static char heap[HEAP_SIZE];" },
+]
+
+[[program]]
+name = "embench-statemate"
+tier = 2
+about = "Embench-IoT statemate: generated statechart code, car window lift (GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/statemate/libstatemate.c", sha256 = "389c4bae5caba79a6f9139e02bf5e61c92921a756ec01200d2d2f16dc1c4ccf5" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "libstatemate.c", old = "#define LOCAL_SCALE_FACTOR 3330", new = "#define LOCAL_SCALE_FACTOR 400" },
+  # sccz80 stops ("Unknown symbol: ist") when a function-like macro
+  # name and its "(" are on different lines.  Join the 5 calls of
+  # SYS_bit_get that are split; only white space changes.
+  { file = "libstatemate.c", old = "  if ((SYS_bit_get\n       (Bitlist, entered_EINSCHALTSTROM_MESSEN_BLOCK_ERKENNUNG_CTRL_IDX)", new = "  if ((SYS_bit_get (Bitlist, entered_EINSCHALTSTROM_MESSEN_BLOCK_ERKENNUNG_CTRL_IDX)" },
+  { file = "libstatemate.c", old = "\t\t\t  case 1:  /** state REVERSIEREN2 in chart FH_TUERMODUL_CTRL **/\n\t\t\t    {\n\t\t\t      SYS_bit_clr (Bitlist,\n\t\t\t\t\t   FH_TUERMODUL_CTRL__END_REVERS_copy_IDX);\n\t\t\t      if (SYS_bit_get\n\t\t\t\t  (Bitlist,\n\t\t\t\t   FH_TUERMODUL_CTRL__END_REVERS_IDX)", new = "\t\t\t  case 1:  /** state REVERSIEREN2 in chart FH_TUERMODUL_CTRL **/\n\t\t\t    {\n\t\t\t      SYS_bit_clr (Bitlist,\n\t\t\t\t\t   FH_TUERMODUL_CTRL__END_REVERS_copy_IDX);\n\t\t\t      if (SYS_bit_get (Bitlist, FH_TUERMODUL_CTRL__END_REVERS_IDX)" },
+  { file = "libstatemate.c", old = "\t\t\t  case 2:  /** state TIPP_SCHLIESSEN1 in chart FH_TUERMODUL_CTRL **/\n\t\t\t    {\n\t\t\t      if (SYS_bit_get\n\t\t\t\t  (Bitlist, FH_TUERMODUL__EINKLEMMUNG_IDX)", new = "\t\t\t  case 2:  /** state TIPP_SCHLIESSEN1 in chart FH_TUERMODUL_CTRL **/\n\t\t\t    {\n\t\t\t      if (SYS_bit_get (Bitlist, FH_TUERMODUL__EINKLEMMUNG_IDX)" },
+  { file = "libstatemate.c", old = "\t\t\t  case 1:  /** state REVERSIEREN1 in chart FH_TUERMODUL_CTRL **/\n\t\t\t    {\n\t\t\t      SYS_bit_clr (Bitlist,\n\t\t\t\t\t   FH_TUERMODUL_CTRL__END_REVERS_copy_IDX);\n\t\t\t      if (SYS_bit_get\n\t\t\t\t  (Bitlist,\n\t\t\t\t   FH_TUERMODUL_CTRL__END_REVERS_IDX)", new = "\t\t\t  case 1:  /** state REVERSIEREN1 in chart FH_TUERMODUL_CTRL **/\n\t\t\t    {\n\t\t\t      SYS_bit_clr (Bitlist,\n\t\t\t\t\t   FH_TUERMODUL_CTRL__END_REVERS_copy_IDX);\n\t\t\t      if (SYS_bit_get (Bitlist, FH_TUERMODUL_CTRL__END_REVERS_IDX)" },
+  { file = "libstatemate.c", old = "\t\t\t  case 2:  /** state MAN_SCHLIESSEN in chart FH_TUERMODUL_CTRL **/\n\t\t\t    {\n\t\t\t      if (SYS_bit_get\n\t\t\t\t  (Bitlist, FH_TUERMODUL__EINKLEMMUNG_IDX)", new = "\t\t\t  case 2:  /** state MAN_SCHLIESSEN in chart FH_TUERMODUL_CTRL **/\n\t\t\t    {\n\t\t\t      if (SYS_bit_get (Bitlist, FH_TUERMODUL__EINKLEMMUNG_IDX)" },
+]
+
+[[program]]
+name = "embench-nsichneu"
+tier = 2
+about = "Embench-IoT nsichneu: generated Petri-net simulation, 4,600 lines of if-statements (GPL-3.0-or-later)"
+files = [
+  { path = "main.c", main = true },
+  { path = "../embench/support.h" },
+  { path = "../embench/embmain.h" },
+  { repo = "embench", path = "support/beebsc.c", sha256 = "b066ac5ff79fdd591da69264919183d03376f5b78985b0eb310cf629dcf8b42c" },
+  { repo = "embench", path = "support/beebsc.h", sha256 = "e584f3ef1e39238e44e7242e21fdfa2e77589f4e03f4632476e9f01cb212fb07" },
+  { repo = "embench", path = "src/nsichneu/libnsichneu.c", sha256 = "7d15a238b045f23d5206406fe0d5a15bd4050cf0ccd7e4c3dc49fb71429e2081" },
+]
+edit = [
+  { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
+  { file = "libnsichneu.c", old = "#define LOCAL_SCALE_FACTOR 1232", new = "#define LOCAL_SCALE_FACTOR 20" },
+]
+
+# ---------------------------------------------------------- Decompressors
+
+[[program]]
+name = "zx0"
+tier = 2
+about = "ZX0 v2 decompressor (dzx0.c, BSD-3-Clause; glue GPL-3.0-or-later), 4507-byte blob to 8000 bytes"
+files = [
+  { repo = "zx0", path = "src/dzx0.c", sha256 = "9785525e56a77c63ffe8a1e179f63680cd82e0fa60be5d6f57ce15e993f966c3", main = true },
+  { path = "zx0bench.h" },
+  { path = "zx0blob.h" },
+]
+# Read the input from the embedded blob and write the output to a RAM
+# buffer instead of files; leave out the upstream main ().  decompress ()
+# is unchanged.  SDCC has no FILE, so the FILE globals go.
+edit = [
+  { file = "dzx0.c", old = "#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n", new = "#include \"zx0bench.h\"\n" },
+  { file = "dzx0.c", old = "#define BUFFER_SIZE 65536", new = "#define BUFFER_SIZE ZX0_BUFFER_SIZE" },
+  { file = "dzx0.c", old = "FILE *ifp;\nFILE *ofp;\n", new = "" },
+  { file = "dzx0.c", old = "partial_counter = fread(input_data, sizeof(char), BUFFER_SIZE, ifp);", new = "partial_counter = input_size ? 0 : sizeof(zx0_blob);" },
+  { file = "dzx0.c", old = "if (fwrite(output_data, sizeof(char), output_index, ofp) != output_index) {", new = "if (zx0_sink(output_data, output_index) != output_index) {" },
+  { file = "dzx0.c", old = "input_data = (unsigned char *)malloc(BUFFER_SIZE);", new = "input_data = (unsigned char *)zx0_blob;" },
+  { file = "dzx0.c", old = "output_data = (unsigned char *)malloc(BUFFER_SIZE);", new = "output_data = zx0_out;" },
+  { file = "dzx0.c", old = "int main(int argc, char *argv[]) {", new = "#if 0 /* the upstream main () reads and writes files */\nint main(int argc, char *argv[]) {" },
+  { file = "dzx0.c", old = "    return 0;\n}\n", new = "    return 0;\n}\n#endif\n" },
+]
+
+[[program]]
+name = "lz4"
+tier = 2
+about = "LZ4 block decoder (our own, GPL-3.0-or-later), 5368-byte block to 8000 bytes, 4 runs"
+files = [
+  { path = "lz4dec.c", main = true },
+  { path = "lz4blob.h" },
+]
+
+# ------------------------------------------------- Sound-driver kernels
+# Our own code (GPL-3.0-or-later), as CP/M programs.  Port writes go
+# through out (port, value) into a RAM log; see bench/programs/snd/snd.h.
+# Freestanding ROM builds of the same kernels are a later phase.
+
+[[program]]
+name = "snd-cmdq"
+tier = 2
+about = "Sound driver: 16-entry ring-buffer command queue and switch dispatch, 2000 frames (GPL-3.0-or-later)"
+files = [{ path = "cmdq.c", main = true }, { path = "../snd/snd.h" }]
+
+[[program]]
+name = "snd-ymreg"
+tier = 2
+about = "Sound driver: YM2610 64-entry register table, shadow compare, busy-wait, 300 frames (GPL-3.0-or-later)"
+files = [{ path = "ymreg.c", main = true }, { path = "../snd/snd.h" }]
+
+[[program]]
+name = "snd-seq"
+tier = 2
+about = "Sound driver: sequencer tick, 4 FM + 3 SSG, dense switch, sine vibrato, 500 ticks (GPL-3.0-or-later)"
+files = [{ path = "seq.c", main = true }, { path = "../snd/snd.h" }]
+
+[[program]]
+name = "snd-fnum"
+tier = 2
+about = "Sound driver: note to F-number/block and SSG period, table + shift + bend, 25x96 notes (GPL-3.0-or-later)"
+files = [{ path = "fnum.c", main = true }, { path = "../snd/snd.h" }]
