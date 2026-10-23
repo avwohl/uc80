@@ -746,10 +746,21 @@ class TestCommaOperatorEvaluation:
         assert cg._expr_has_side_effects(seq)
 
     def test_comma_left_operand_tmp32_is_saved(self):
-        """(g(), x/y) - z: the comma clobbers __tmp32, which holds z."""
+        """(g(), x/y) / (z*w): the comma clobbers __tmp32, which would hold
+        the right operand: it waits on the stack (F7: pushed as DE, HL
+        and popped through BC, no longer copied word by word)."""
+        code = gen("void g(void); long x,y,z,w,r;"
+                   "int main(void){ r = (g(), x/y) / (z*w); return 0; }")
+        assert "push\tDE\n\tpush\tHL" in code
+        assert ("pop\tBC\n\tld\t(__tmp32),BC\n\tpop\tBC\n"
+                "\tld\t(__tmp32+2),BC") in code
+
+    def test_comma_left_operand_with_simple_right_needs_no_save(self):
+        """(g(), x/y) - z: z is read after the left side, from memory."""
         code = gen("void g(void); long x,y,z,r;"
                    "int main(void){ r = (g(), x/y) - z; return 0; }")
-        assert "ld\tHL,(__tmp32)\n\tpush\tHL" in code
+        assert "push\tDE" not in code
+        assert "ld\tBC,(_z)" in code
 
     def test_comma_left_operand_tmp64_is_saved(self):
         """Same hazard on the 64-bit path uses the runtime save/restore."""

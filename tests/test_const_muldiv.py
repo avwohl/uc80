@@ -264,8 +264,9 @@ class TestOps32:
         assert o[2:] == ["ld\tD,E", "ld\tE,H", "ld\tH,L", "ld\tL,0"]
 
     def test_shr_12_moves_then_helper_with_a(self):
+        # 12 = a byte move and 4 single shifts, inline since F7.
         o = fn("ul >> 12", "unsigned long")
-        assert "ld\tA,4" in o and "call\t__shr32" in o
+        assert no_helper(o) and o.count("srl\tD") == 4
         assert "ld\t(__tmp32),HL" not in o
 
     def test_sar_24(self):

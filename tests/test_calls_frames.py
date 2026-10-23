@@ -166,10 +166,13 @@ class TestSwitchShapes:
         assert "SWTAB" in text and "cp\t5" in text
         assert "sbc\tHL,DE" not in text
 
-    def test_long_switch_value_keeps_the_16_bit_chain(self):
+    def test_long_switch_value_tests_all_four_bytes(self):
+        # F7: the 16-bit chain compared HL alone, so case 65536 matched 0.
         code = gen("long x; int f(void) { switch (x) { case 1: return 1; "
                    "case 2: return 2; } return 0; }")
-        assert "cp\t" in body(code, "f")  # new chain, still on HL
+        text = body(code, "f")
+        assert "cp\t1" in text and "cp\t2" in text
+        assert "ld\tA,D" in text and "ld\tA,E" in text
 
 
 # ------------------------------------------------------------ end to end

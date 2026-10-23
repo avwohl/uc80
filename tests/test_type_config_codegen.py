@@ -30,13 +30,15 @@ class TestByteWidthDispatch:
         assert "__add32" not in code, "16-bit int should not use __add32"
 
     def test_int32_override_routes_int_add_to_add32(self):
-        """With int_size=4, int + int must generate __add32."""
+        """With int_size=4, int + int must generate the 32-bit add (the
+        inline carry chain on DEHL; it was a call to __add32)."""
         tc32 = TypeConfig(int_size=4, long_size=4, ptr_size=2)
         code = _compile(
             "int main(void) { int x = 100; int y = x + 1; return y; }",
             tc32,
         )
-        assert "__add32" in code, "int32 override should use __add32"
+        assert "add\tHL,BC" in code and "inc\tDE" in code, \
+            "int32 override should use the 32-bit add"
 
     def test_int32_sizeof_int_is_four(self):
         """sizeof(int) folds to 4 at the optimizer, reaches codegen as an

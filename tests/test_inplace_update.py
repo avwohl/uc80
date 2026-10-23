@@ -186,7 +186,8 @@ class TestLvalueIncDec:
 
     def test_long_member_is_32_bit(self):
         o = fn("s.c++;")
-        assert any("__add32" in i for i in o) or "adc\tHL,BC" in o
+        assert (any("__add32" in i for i in o) or "adc\tHL,BC" in o
+                or ("add\tHL,BC" in o and "inc\tDE" in o))
 
 
 class TestCompoundInPlace:

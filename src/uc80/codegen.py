@@ -3119,6 +3119,19 @@ class _SavedAddrValue:
         self.ctype = ctype
 
 
+class _Src32:
+    """A simple 32-bit operand (CodeGenerator._src32): an integer
+    constant (``const``, as a 32-bit pattern), or a variable ``sym`` of
+    ``size`` 1, 2 or 4 bytes, extended by ``signed``."""
+    __slots__ = ("const", "sym", "size", "signed")
+
+    def __init__(self, const=None, sym=None, size=4, signed=False):
+        self.const = const
+        self.sym = sym
+        self.size = size
+        self.signed = signed
+
+
 class CodeGenerator:
     """Z80 code generator."""
 
@@ -7666,7 +7679,23 @@ class CodeGenerator:
 
         # Evaluate switch expression and dispatch
         fall_label = default_label if default_label else end_label
-        if not self._gen_switch_dispatch_bytes(stmt.expr, cases, fall_label):
+        if self._is_long_expr(stmt.expr) and not self._is_float_expr(stmt.expr):
+            # A 32-bit controlling expression: all four bytes of each case
+            # value take part (the 16-bit chains compare HL alone).
+            e = self.ctx.emit_instr
+            self._gen_long_operand(stmt.expr)
+            for value, label in cases:
+                nxt = self.ctx.new_label("SWNEXT")
+                for i, r in enumerate(("L", "H", "E", "D")):
+                    e("ld", f"A,{r}")
+                    e("cp", str((value >> (8 * i)) & 0xFF))
+                    if i < 3:
+                        e("jr", f"NZ,{nxt}")
+                    else:
+                        e("jp", f"Z,{label}")
+                self.ctx.emit_label(nxt)
+            e("jp", fall_label)
+        elif not self._gen_switch_dispatch_bytes(stmt.expr, cases, fall_label):
             self.gen_expr(stmt.expr)
             # Decide: jump table vs comparison chain
             if self._should_use_jump_table(cases):
@@ -8657,68 +8686,101 @@ class CodeGenerator:
         if (op in ("*", "/", "%", "<<", ">>")
                 and self._gen_const_op_32(expr, op)):
             return
+        if op in ("+", "-", "&", "|", "^") and self._gen_alu32(expr, op):
+            return
+        if op in self._SWAP_CMP:
+            cc = self._gen_cmp32_flags(expr, op)
+            if cc is not None:
+                if branch is not None:
+                    self._emit_cc_jump(cc, branch[0], branch[1])
+                else:
+                    self._emit_cc_value(cc)
+                    self.ctx.emit_instr("ld", "DE,0")   # a 16-bit result
+                return
         # For 32-bit: right operand goes to __tmp32, left in DEHL, call runtime
 
-        # Generate right operand first
         left_is_long = self._is_long_expr(expr.left)
         right_is_long = self._is_long_expr(expr.right)
         right_is_long_long = self._is_long_long_expr(expr.right)
-
-        # Generate right operand, extend to 32-bit if needed
-        self.gen_expr(expr.right, force_long=True)
-        if (not right_is_long and not right_is_long_long
-                and not self._gen_expr_produces_dehl(expr.right)):
-            # Need to extend 16-bit to 32-bit
-            # (long long already produces 32-bit in DEHL via __load64;
-            #  IntLiteral/FloatLiteral with force_long=True already
-            #  emit both HL and DE — a second extend would clobber DE.)
-            is_signed = not self._is_unsigned_expr(expr.right)
-            self._extend_hl_to_dehl(is_signed)
-
-        # Store right operand to __tmp32
-        self._store_tmp32()
-
-        # Check if left operand might clobber __tmp32
-        left_is_complex = self._uses_tmp32(expr.left)
-        if left_is_complex:
-            # Save __tmp32 on stack before generating left operand
-            self.ctx.emit_instr("ld", "HL,(__tmp32)")
-            self.ctx.emit_instr("push", "HL")
-            self.ctx.emit_instr("ld", "HL,(__tmp32+2)")
-            self.ctx.emit_instr("push", "HL")
-
-        # Generate left operand, extend to 32-bit if needed
         left_is_long_long = self._is_long_long_expr(expr.left)
-        self.gen_expr(expr.left, force_long=True)
-        if (not left_is_long and not left_is_long_long
-                and not self._gen_expr_produces_dehl(expr.left)):
-            is_signed = not self._is_unsigned_expr(expr.left)
-            self._extend_hl_to_dehl(is_signed)
 
-        if left_is_complex:
-            # Restore __tmp32 from stack (need to save DEHL first)
-            self.ctx.emit_instr("push", "DE")
+        shift_in_a = False
+        rs = self._src32(expr.right)
+        if rs is not None:
+            # A constant or a variable: evaluate the left side first and
+            # copy the right one into __tmp32 afterwards (BC, not DEHL),
+            # so no stack shuffle is needed.
+            self._gen_long_operand(expr.left)
+            if op in ("<<", ">>") and rs.const is None:
+                self._src32_a(rs, 0)         # only the count is used
+                shift_in_a = True
+            else:
+                self._stage_src32(rs)
+        elif op in ("<<", ">>") and not isinstance(expr.left, _SavedAddrValue):
+            # A computed shift count: only its low byte matters, so it
+            # waits on the stack as one word and comes back through A.
+            self.gen_expr(expr.right)
             self.ctx.emit_instr("push", "HL")
-            self.ctx.emit_instr("ld", "HL,4")
-            self.ctx.emit_instr("add", "HL,SP")
-            # Stack now: [saved HL][saved DE][high tmp][low tmp]...
-            self.ctx.emit_instr("ld", "E,(HL)")
-            self.ctx.emit_instr("inc", "HL")
-            self.ctx.emit_instr("ld", "D,(HL)")
-            self.ctx.emit_instr("inc", "HL")
-            self.ctx.emit_instr("ld", "(__tmp32+2),DE")
-            self.ctx.emit_instr("ld", "E,(HL)")
-            self.ctx.emit_instr("inc", "HL")
-            self.ctx.emit_instr("ld", "D,(HL)")
-            self.ctx.emit_instr("ld", "(__tmp32),DE")
-            # Restore DEHL
-            self.ctx.emit_instr("pop", "HL")
-            self.ctx.emit_instr("pop", "DE")
-            # Clean up saved __tmp32 from stack
-            self.ctx.emit_instr("inc", "SP")
-            self.ctx.emit_instr("inc", "SP")
-            self.ctx.emit_instr("inc", "SP")
-            self.ctx.emit_instr("inc", "SP")
+            self.gen_expr(expr.left, force_long=True)
+            if (not left_is_long and not left_is_long_long
+                    and not self._gen_expr_produces_dehl(expr.left)):
+                self._extend_hl_to_dehl(not self._is_unsigned_expr(expr.left))
+            self.ctx.emit_instr("pop", "BC")
+            self.ctx.emit_instr("ld", "A,C")
+            shift_in_a = True
+        else:
+            # Generate right operand, extend to 32-bit if needed
+            self.gen_expr(expr.right, force_long=True)
+            if (not right_is_long and not right_is_long_long
+                    and not self._gen_expr_produces_dehl(expr.right)):
+                # Need to extend 16-bit to 32-bit
+                # (long long already produces 32-bit in DEHL via __load64;
+                #  IntLiteral/FloatLiteral with force_long=True already
+                #  emit both HL and DE — a second extend would clobber DE.)
+                is_signed = not self._is_unsigned_expr(expr.right)
+                self._extend_hl_to_dehl(is_signed)
+
+            # + - & | ^ and the comparisons are finished inline with the
+            # right value popped from the stack.
+            # (Not with a _SavedAddrValue on the left: it reads the address
+            # on top of the stack, so nothing may be pushed before it.)
+            inline_stack = ((op in ("+", "-", "&", "|", "^")
+                             or op in self._SWAP_CMP)
+                            and not isinstance(expr.left, _SavedAddrValue))
+            # A left operand that might use __tmp32 must not see the right
+            # one there: keep the right value on the stack meanwhile.
+            left_is_complex = inline_stack or self._uses_tmp32(expr.left)
+            if left_is_complex:
+                self.ctx.emit_instr("push", "DE")
+                self.ctx.emit_instr("push", "HL")
+            else:
+                self._store_tmp32()
+
+            # Generate left operand, extend to 32-bit if needed
+            self.gen_expr(expr.left, force_long=True)
+            if (not left_is_long and not left_is_long_long
+                    and not self._gen_expr_produces_dehl(expr.left)):
+                is_signed = not self._is_unsigned_expr(expr.left)
+                self._extend_hl_to_dehl(is_signed)
+
+            if inline_stack:
+                if op in self._SWAP_CMP:
+                    cc = self._emit_cmp32_stack(op, self._cmp32_unsigned(expr))
+                    if branch is not None:
+                        self._emit_cc_jump(cc, branch[0], branch[1])
+                    else:
+                        self._emit_cc_value(cc)
+                        self.ctx.emit_instr("ld", "DE,0")   # a 16-bit result
+                else:
+                    self._emit_alu32_stack(op)
+                return
+            if left_is_complex:
+                # __tmp32 = the saved right value; DEHL is kept.
+                self.ctx.runtime_used.add("__tmp32")
+                self.ctx.emit_instr("pop", "BC")
+                self.ctx.emit_instr("ld", "(__tmp32),BC")
+                self.ctx.emit_instr("pop", "BC")
+                self.ctx.emit_instr("ld", "(__tmp32+2),BC")
 
         # Now: left in DEHL, right in __tmp32
         if op == "+":
@@ -8768,11 +8830,12 @@ class CodeGenerator:
             self._call_runtime("__xor32")
         elif op == "<<":
             # Shift amount should be in A
-            # For now, get low byte of __tmp32 into A
-            self.ctx.emit_instr("ld", "A,(__tmp32)")
+            if not shift_in_a:
+                self.ctx.emit_instr("ld", "A,(__tmp32)")
             self._call_runtime("__shl32")
         elif op == ">>":
-            self.ctx.emit_instr("ld", "A,(__tmp32)")
+            if not shift_in_a:
+                self.ctx.emit_instr("ld", "A,(__tmp32)")
             is_unsigned = self._is_promoted_unsigned(expr.left)
             if is_unsigned:
                 self._call_runtime("__shr32")
@@ -9390,6 +9453,16 @@ class CodeGenerator:
 
     def gen_assignment(self, expr: ast.BinaryOp) -> None:
         """Generate code for assignment."""
+        # A statement ``x = x op K`` on a long variable is ``x op= K``.
+        rhs = expr.right
+        if (expr is self._discard_expr and isinstance(expr.left, ast.Identifier)
+                and isinstance(rhs, ast.BinaryOp)
+                and self._op_of(rhs) in ("+", "-", "&", "|", "^")
+                and isinstance(rhs.left, ast.Identifier)
+                and rhs.left.name.text == expr.left.name.text
+                and self._gen_compound32_inplace(rhs, self._op_of(rhs),
+                                                 expr.left)):
+            return
         # Check if target is 64-bit, 32-bit, or float using type inference
         target_is_64bit = False
         target_is_32bit = False
@@ -9488,8 +9561,12 @@ class CodeGenerator:
         # (Don't extend for 64-bit sources - already extracted from __acc64)
         # (Don't extend for long long sources - DEHL already has low 32 bits)
         elif target_is_32bit and not target_is_float and not self._is_long_expr(expr.right) and not source_is_64bit_assign and not source_is_float and not self._is_long_long_expr(expr.right):
-            is_signed = not self._is_unsigned_expr(expr.right)
-            self._extend_hl_to_dehl(is_signed)
+            # (gen_identifier already extended a 1- or 2-byte variable,
+            # and a literal came with both its words.)
+            if not (isinstance(expr.right, (ast.Identifier, ast.IntLiteral))
+                    and self._gen_expr_produces_dehl(expr.right)):
+                is_signed = not self._is_unsigned_expr(expr.right)
+                self._extend_hl_to_dehl(is_signed)
         # If target is float but source is integer, convert to float
         elif target_is_float and not source_is_float:
             # First extend integer to 32-bit if needed
@@ -9725,6 +9802,9 @@ class CodeGenerator:
         # A 16-bit *p, a[i] or s.m with a constant or simple right side:
         # address once, update in HL, store through DE.
         if self._gen_compound16_inplace(expr, op):
+            return
+        # A statement x op= K or x op= v on a long variable: in place.
+        if expr is self._discard_expr and self._gen_compound32_inplace(expr, op):
             return
         # A char element, member or *p: address once, then
         # ld A,(HL) / op / ld (HL),A.
@@ -10070,8 +10150,11 @@ class CodeGenerator:
                 # 64-bit bitwise NOT using runtime
                 self._call_runtime("__not64")
             elif self._is_long_expr(expr.operand):
-                # 32-bit bitwise NOT using runtime
-                self._call_runtime("__not32")
+                # 32-bit bitwise NOT: complement each register inline
+                for r in ("L", "H", "E", "D"):
+                    self.ctx.emit_instr("ld", f"A,{r}")
+                    self.ctx.emit_instr("cpl")
+                    self.ctx.emit_instr("ld", f"{r},A")
             else:
                 # 16-bit bitwise NOT
                 self.ctx.emit_instr("ld", "A,H")
@@ -12982,10 +13065,20 @@ class CodeGenerator:
             # when both operands were `long`.
             def _is_named_ll(t):
                 return isinstance(t, lt.BasicType) and t.name == "long long"
+            # The result is unsigned only when an unsigned operand is as
+            # wide as the winning type: a 16-bit ``unsigned`` joined with
+            # a ``long`` converts to (signed) long, which holds every
+            # value of the unsigned operand (C 6.3.1.8).
+            def _unsigned_as_wide(t, name):
+                return (isinstance(t, lt.BasicType) and t.is_signed == False
+                        and self._type_size(t)
+                        >= self._type_size(lt.BasicType(name=name)))
             if _is_named_ll(left_type) or _is_named_ll(right_type):
-                left_unsigned = isinstance(left_type, lt.BasicType) and left_type.is_signed == False
-                right_unsigned = isinstance(right_type, lt.BasicType) and right_type.is_signed == False
-                return lt.BasicType(name="long long", is_signed=not (left_unsigned or right_unsigned))
+                return lt.BasicType(
+                    name="long long",
+                    is_signed=not (_unsigned_as_wide(left_type, "long long")
+                                   or _unsigned_as_wide(right_type,
+                                                        "long long")))
 
             # "long wins over int" — but only when an operand is actually
             # named "long" (or short/long long via earlier branches).  Don't
@@ -12996,9 +13089,10 @@ class CodeGenerator:
             def _is_named_long(t):
                 return isinstance(t, lt.BasicType) and t.name == "long"
             if _is_named_long(left_type) or _is_named_long(right_type):
-                left_unsigned = isinstance(left_type, lt.BasicType) and left_type.is_signed == False
-                right_unsigned = isinstance(right_type, lt.BasicType) and right_type.is_signed == False
-                return lt.BasicType(name="long", is_signed=not (left_unsigned or right_unsigned))
+                return lt.BasicType(
+                    name="long",
+                    is_signed=not (_unsigned_as_wide(left_type, "long")
+                                   or _unsigned_as_wide(right_type, "long")))
 
             # Integer promotions (C 6.3.1.1), then the usual arithmetic
             # conversions (C 6.3.1.8).  Each operand is promoted on its
@@ -13379,16 +13473,25 @@ class CodeGenerator:
             # array[index]: base + index * element_size
             elem_size = self._get_index_elem_size(expr.array)
 
-            self.gen_expr(expr.index)
+            ix = self._src32(expr.index)
+            if ix is not None and ix.const is None and ix.size == 4:
+                # A long index: only its low word is the offset.
+                self._mem_word_hl(ix, 0, False)
+            else:
+                self.gen_expr(expr.index)
 
             # Scale index by element size (shift-and-add, or a byte
             # move for a row of 256 bytes or more)
             self._gen_mul_const(elem_size)
 
-            self.ctx.emit_instr("push", "HL")
-            self.gen_expr(expr.array)  # Get base address
-            self.ctx.emit_instr("pop", "DE")
-            self.ctx.emit_instr("add", "HL,DE")
+            if self._emit_index_base_bc(expr.array):
+                # A variable base goes straight into BC.
+                self.ctx.emit_instr("add", "HL,BC")
+            else:
+                self.ctx.emit_instr("push", "HL")
+                self.gen_expr(expr.array)  # Get base address
+                self.ctx.emit_instr("pop", "DE")
+                self.ctx.emit_instr("add", "HL,DE")
 
         elif isinstance(expr, ast.UnaryOp) and expr.op == "*":
             # Address of *p is p
@@ -14683,6 +14786,31 @@ class CodeGenerator:
             e("ld", f"B,({ix_off(base + 1)})")
             self._ix_release(sym.offset, 2)
 
+    def _emit_index_base_bc(self, arr) -> bool:
+        """BC = the base address of ``arr`` for ``arr[i]``, when ``arr``
+        is a static or shared-storage array, or a pointer variable; HL is
+        untouched.  False (nothing emitted) for any other shape."""
+        if not isinstance(arr, ast.Identifier):
+            return False
+        sym = self.ctx.lookup(arr.name.text)
+        if sym is None:
+            return False
+        at = _to_legacy(sym.sym_type)
+        if isinstance(at, lt.PointerType):
+            if self._ptr_sym2(arr) is None:
+                return False
+            self._emit_sym_to_bc(sym)
+            return True
+        if (isinstance(at, lt.ArrayType) and not sym.is_param
+                and arr.name.text not in self.ctx.function_names):
+            if sym.is_global:
+                self.ctx.emit_instr("ld", f"BC,{sym.label()}")
+                return True
+            if sym.uses_shared_storage:
+                self.ctx.emit_instr("ld", f"BC,??AUTO+{sym.shared_offset}")
+                return True
+        return False
+
     def _gen_simple_to_bc(self, expr) -> None:
         """BC = a simple operand (_is_simple_operand) with the value
         gen_expr would put in HL.  HL and DE are untouched; A and the
@@ -15202,14 +15330,24 @@ class CodeGenerator:
             n -= 8
         if n == 0:
             return
-        if n <= 3:
+        if n <= 4:
             for _ in range(n):
                 e("add", "HL,HL")
                 e("rl", "E")
                 e("rl", "D")
         else:
-            e("ld", f"A,{n}")
-            self._call_runtime("__shl32")
+            # 5..7: right by 8-n into a fifth byte (A), then a byte move.
+            e("xor", "A")
+            for _ in range(8 - n):
+                e("srl", "D")
+                e("rr", "E")
+                e("rr", "H")
+                e("rr", "L")
+                e("rra")
+            e("ld", "D,E")
+            e("ld", "E,H")
+            e("ld", "H,L")
+            e("ld", "L,A")
 
     def _emit_shr32_const(self, n: int, signed: bool) -> None:
         """DEHL >>= n for 0 <= n <= 31, arithmetic when ``signed``."""
@@ -15255,15 +15393,28 @@ class CodeGenerator:
             n -= 8
         if n == 0:
             return
-        if n <= 2:
+        if n <= 4:
             for _ in range(n):
                 e("sra" if signed else "srl", "D")
                 e("rr", "E")
                 e("rr", "H")
                 e("rr", "L")
         else:
-            e("ld", f"A,{n}")
-            self._call_runtime("__sar32" if signed else "__shr32")
+            # 5..7: left by 8-n into a fifth byte (A), then a byte move;
+            # for a signed value A starts as the sign fill.
+            if signed:
+                sign_to_a("D")
+            else:
+                e("xor", "A")
+            for _ in range(8 - n):
+                e("add", "HL,HL")
+                e("rl", "E")
+                e("rl", "D")
+                e("rla")
+            e("ld", "L,H")
+            e("ld", "H,E")
+            e("ld", "E,D")
+            e("ld", "D,A")
 
     def _emit_addsub32_tmp(self, sign: int) -> None:
         """DEHL += __tmp32 (sign > 0) or DEHL -= __tmp32.  Clobbers BC."""
@@ -15278,6 +15429,697 @@ class CodeGenerator:
         e("ld", "BC,(__tmp32+2)")
         e("adc" if sign > 0 else "sbc", "HL,BC")
         e("ex", "DE,HL")
+
+    # ------------------------------------------------------------------
+    # 32-bit + - & | ^ and comparisons with a constant or a variable.
+    # The operand is read straight from its constant or its memory (BC,
+    # A), so it is never staged in __tmp32 and no helper is called.
+    # ------------------------------------------------------------------
+
+    def _src32(self, expr) -> _Src32 | None:
+        """Describe ``expr`` as a simple 32-bit operand: an integer
+        constant (_const_int_operand), or a scalar integer variable of 1,
+        2 or 4 bytes that gen_identifier loads without a helper.  A 1- or
+        2-byte variable is extended to 32 bits by its own signedness.
+        None for anything else."""
+        k = self._const_int_operand(expr)
+        if k is not None:
+            return _Src32(const=k & 0xFFFFFFFF)
+        if isinstance(expr, ast.Cast):
+            # A cast of a variable to an integer type: the low bytes,
+            # extended by the type they now have.
+            t = _to_legacy(expr.target_type)
+            if (not isinstance(t, (lt.BasicType, lt.EnumType))
+                    or self._is_float_type(t) or self._is_bool_type(t)
+                    or self._is_long_long_type(t)):
+                return None
+            ts = self._type_size(t)
+            inner = self._src32(expr.expr)
+            if (ts not in (1, 2, 4) or inner is None
+                    or inner.const is not None):
+                return None
+            if ts <= inner.size:
+                return _Src32(sym=inner.sym, size=ts,
+                              signed=self._is_signed_type(t))
+            if ts == 4 or self._is_signed_type(t) == inner.signed:
+                return inner
+            return None
+        if not isinstance(expr, ast.Identifier):
+            return None
+        name = expr.name.text
+        if (name in self.ctx.enum_constants
+                or name in ("__func__", "__FUNCTION__")):
+            return None
+        sym = self.ctx.lookup(name)
+        if sym is None:
+            return None
+        t = _to_legacy(sym.sym_type)
+        if not isinstance(t, (lt.BasicType, lt.EnumType)):
+            return None
+        if sym.is_global and name in self.ctx.function_names:
+            return None
+        if self._is_float_type(t) or self._is_long_long_type(t):
+            return None
+        size = self._type_size(t)
+        if size not in (1, 2, 4):
+            return None
+        if (not sym.is_global and not sym.uses_shared_storage
+                and not self._ix_in_range(sym.offset, size)):
+            return None
+        return _Src32(sym=sym, size=size, signed=self._is_signed_type(t))
+
+    @staticmethod
+    def _src32_ext_signed(src: _Src32) -> bool:
+        """The upper bytes of ``src`` are a sign extension (they are
+        computed, not read from memory or from the constant)."""
+        return src.const is None and src.size < 4 and src.signed
+
+    def _src32_mem(self, src: _Src32, i: int) -> str:
+        """The memory operand text for byte ``i`` of a variable."""
+        sym = src.sym
+        if sym.is_global:
+            lab = sym.label()
+            return f"({lab}+{i})" if i else f"({lab})"
+        if sym.uses_shared_storage:
+            return f"(??AUTO+{sym.shared_offset + i})"
+        return f"({ix_off(sym.offset + i)})"
+
+    def _src32_a(self, src: _Src32, i: int) -> None:
+        """A = byte ``i`` of the operand (a zero or constant byte too);
+        no flags change.  Not for the sign-extended bytes of a signed
+        1- or 2-byte variable (_src32_ext_signed)."""
+        e = self.ctx.emit_instr
+        if src.const is not None:
+            e("ld", f"A,{(src.const >> (8 * i)) & 0xFF}")
+        elif i < src.size:
+            e("ld", f"A,{self._src32_mem(src, i)}")
+        else:
+            e("ld", "A,0")
+
+    def _src32_bc(self, src: _Src32, w: int) -> None:
+        """BC = word ``w`` (0 low, 1 high) of the operand.  A sign
+        extension is made from A, so A is clobbered for a signed 1- or
+        2-byte variable; for a signed 1-byte variable and w = 0 it
+        leaves A = the extension byte."""
+        e = self.ctx.emit_instr
+        if src.const is not None:
+            e("ld", f"BC,{(src.const >> (16 * w)) & 0xFFFF}")
+            return
+        sym = src.sym
+        lo = 2 * w
+        if lo + 1 < src.size:
+            if sym.is_global or sym.uses_shared_storage:
+                e("ld", f"BC,{self._src32_mem(src, lo)}")
+            else:
+                e("ld", f"C,{self._src32_mem(src, lo)}")
+                e("ld", f"B,{self._src32_mem(src, lo + 1)}")
+        elif lo < src.size:                  # a 1-byte variable, w = 0
+            e("ld", f"A,{self._src32_mem(src, 0)}")
+            e("ld", "C,A")
+            if src.signed:
+                e("rlca")
+                e("sbc", "A,A")
+                e("ld", "B,A")
+            else:
+                e("ld", "B,0")
+        elif src.signed:                     # the extension word
+            e("ld", f"A,{self._src32_mem(src, src.size - 1)}")
+            e("rlca")
+            e("sbc", "A,A")
+            e("ld", "C,A")
+            e("ld", "B,A")
+        else:
+            e("ld", "BC,0")
+
+    def _stage_src32(self, src: _Src32) -> None:
+        """__tmp32 = the operand; DEHL and HL are not touched (BC and A
+        are)."""
+        e = self.ctx.emit_instr
+        self.ctx.runtime_used.add("__tmp32")
+        prev = None
+        for w in (0, 1):
+            if src.const is not None:
+                v = (src.const >> (16 * w)) & 0xFFFF
+                if v != prev:
+                    e("ld", f"BC,{v}")
+                prev = v
+            else:
+                self._src32_bc(src, w)
+            e("ld", "(__tmp32+2),BC" if w else "(__tmp32),BC")
+
+    def _alu32_ok(self, op: str, src: _Src32) -> bool:
+        """_emit_alu32 handles ``op`` with this operand."""
+        if self._src32_ext_signed(src):
+            return op in ("+", "-")
+        return True
+
+    def _emit_alu32(self, op: str, src: _Src32) -> None:
+        """DEHL = DEHL op operand for op in + - & | ^ (BC and A are
+        clobbered)."""
+        if op in ("+", "-"):
+            self._emit_addsub32_src(op, src)
+        else:
+            self._emit_bitwise32_src(op, src)
+
+    def _emit_addsub32_src(self, op: str, src: _Src32) -> None:
+        e = self.ctx.emit_instr
+        if src.const is not None:
+            kv = src.const if op == "+" else (-src.const) & 0xFFFFFFFF
+            lo, hi = kv & 0xFFFF, kv >> 16
+            if kv == 0:
+                return
+            if lo == 0:
+                if hi in (1, 2):
+                    for _ in range(hi):
+                        e("inc", "DE")
+                elif hi in (0xFFFF, 0xFFFE):
+                    for _ in range(0x10000 - hi):
+                        e("dec", "DE")
+                else:
+                    e("ex", "DE,HL")
+                    e("ld", f"BC,{hi}")
+                    e("add", "HL,BC")
+                    e("ex", "DE,HL")
+                return
+            e("ld", f"BC,{lo}")
+            e("add", "HL,BC")
+            if hi in (0, 0xFFFF):
+                skip = self.ctx.new_label("AD")
+                e("jr", f"{'NC' if hi == 0 else 'C'},{skip}")
+                e("inc" if hi == 0 else "dec", "DE")
+                self.ctx.emit_label(skip)
+            else:
+                e("ex", "DE,HL")
+                e("ld", f"BC,{hi}")
+                e("adc", "HL,BC")
+                e("ex", "DE,HL")
+            return
+        add = op == "+"
+        if src.signed and src.size == 2:
+            # The extension byte first: the loads below leave A alone.
+            e("ld", f"A,{self._src32_mem(src, 1)}")
+            e("rlca")
+            e("sbc", "A,A")
+        self._src32_bc(src, 0)
+        if add:
+            e("add", "HL,BC")
+        else:
+            e("or", "A")
+            e("sbc", "HL,BC")
+        if src.size == 4:
+            e("ex", "DE,HL")
+            self._src32_bc(src, 1)
+            e("adc" if add else "sbc", "HL,BC")
+            e("ex", "DE,HL")
+        elif src.signed:
+            e("ex", "DE,HL")
+            e("ld", "C,A")
+            e("ld", "B,A")
+            e("adc" if add else "sbc", "HL,BC")
+            e("ex", "DE,HL")
+        else:
+            skip = self.ctx.new_label("AD")
+            e("jr", f"NC,{skip}")
+            e("inc" if add else "dec", "DE")
+            self.ctx.emit_label(skip)
+
+    def _emit_bitwise32_src(self, op: str, src: _Src32) -> None:
+        e = self.ctx.emit_instr
+        insn = {"&": "and", "|": "or", "^": "xor"}[op]
+        regs = ("L", "H", "E", "D")
+        if src.const is not None:
+            kv = src.const
+            ident = 0xFF if op == "&" else 0
+            for w, (r0, r1) in enumerate((("L", "H"), ("E", "D"))):
+                b0 = (kv >> (16 * w)) & 0xFF
+                b1 = (kv >> (16 * w + 8)) & 0xFF
+                pair = "HL" if w == 0 else "DE"
+                if b0 == b1 == ident:
+                    continue
+                if op == "&" and b0 == b1 == 0:
+                    e("ld", f"{pair},0")
+                    continue
+                if op == "|" and b0 == b1 == 0xFF:
+                    e("ld", f"{pair},65535")
+                    continue
+                for r, b in ((r0, b0), (r1, b1)):
+                    if b == ident:
+                        continue
+                    if op == "&" and b == 0:
+                        e("ld", f"{r},0")
+                    elif op == "|" and b == 0xFF:
+                        e("ld", f"{r},255")
+                    elif op == "^" and b == 0xFF:
+                        e("ld", f"A,{r}")
+                        e("cpl")
+                        e("ld", f"{r},A")
+                    else:
+                        e("ld", f"A,{r}")
+                        e(insn, str(b))
+                        e("ld", f"{r},A")
+            return
+        for i, r in enumerate(regs):
+            if i >= src.size:                # a zero byte
+                if op == "&":
+                    e("ld", f"{r},0")
+                continue
+            e("ld", f"A,{self._src32_mem(src, i)}")
+            e(insn, r)
+            e("ld", f"{r},A")
+
+    def _emit_alu32_stack(self, op: str) -> None:
+        """DEHL = DEHL op (the value pushed as DE, HL: the low word is on
+        top of the stack) for op in + - & | ^; the two words are popped."""
+        e = self.ctx.emit_instr
+        if op in ("+", "-"):
+            e("pop", "BC")
+            if op == "+":
+                e("add", "HL,BC")
+            else:
+                e("or", "A")
+                e("sbc", "HL,BC")
+            e("ex", "DE,HL")
+            e("pop", "BC")
+            e("adc" if op == "+" else "sbc", "HL,BC")
+            e("ex", "DE,HL")
+            return
+        insn = {"&": "and", "|": "or", "^": "xor"}[op]
+        for lo, hi in (("L", "H"), ("E", "D")):
+            e("pop", "BC")
+            e("ld", "A,C")
+            e(insn, lo)
+            e("ld", f"{lo},A")
+            e("ld", "A,B")
+            e(insn, hi)
+            e("ld", f"{hi},A")
+
+    def _emit_cmp32_stack(self, op: str, unsigned: bool) -> str:
+        """Flags for ``DEHL op (the value pushed as DE, HL)``; the two
+        words are popped.  The condition is returned as _emit_cmp32_src
+        does."""
+        e = self.ctx.emit_instr
+        if op in ("==", "!="):
+            e("pop", "BC")
+            e("or", "A")
+            e("sbc", "HL,BC")
+            e("ld", "A,H")
+            e("or", "L")
+            e("ex", "DE,HL")
+            e("pop", "BC")
+            e("sbc", "HL,BC")
+            e("ld", "C,A")
+            e("ld", "A,H")
+            e("or", "L")
+            e("or", "C")
+            return "Z" if op == "==" else "NZ"
+        if op in ("<", ">="):
+            e("pop", "BC")
+            e("or", "A")
+            e("sbc", "HL,BC")
+            e("ex", "DE,HL")
+            e("pop", "BC")
+            e("sbc", "HL,BC")
+            if unsigned:
+                return "C" if op == "<" else "NC"
+            e("ld", "A,H")
+        else:
+            # x > s is s < x: s - x on the bytes (pop keeps the flags).
+            e("pop", "BC")
+            e("ld", "A,C")
+            e("sub", "L")
+            e("ld", "A,B")
+            e("sbc", "A,H")
+            e("pop", "BC")
+            e("ld", "A,C")
+            e("sbc", "A,E")
+            e("ld", "A,B")
+            e("sbc", "A,D")
+            if unsigned:
+                return "C" if op == ">" else "NC"
+        nv = self.ctx.new_label("CMP_NV")
+        e("jp", f"PO,{nv}")
+        e("xor", "128")
+        self.ctx.emit_label(nv)
+        return "M" if op in ("<", ">") else "P"
+
+    def _cmp32_unsigned(self, expr) -> bool:
+        """A 32-bit comparison is unsigned by the usual arithmetic
+        conversions (C 6.3.1.8): follow the 32-bit operand's type; when
+        both are 32-bit, either being unsigned makes it unsigned."""
+        left_long = (self._is_long_expr(expr.left)
+                     or self._is_long_long_expr(expr.left))
+        right_long = (self._is_long_expr(expr.right)
+                      or self._is_long_long_expr(expr.right))
+        left_u = self._is_promoted_unsigned(expr.left)
+        right_u = self._is_promoted_unsigned(expr.right)
+        if left_long and right_long:
+            return left_u or right_u
+        if left_long:
+            return left_u
+        if right_long:
+            return right_u
+        return left_u or right_u
+
+    def _gen_and_flags32(self, expr) -> str | None:
+        """Flags for the truth of ``x & K`` at 32 bits (K a constant):
+        only the bytes of x that K selects are tested, a single bit with
+        ``bit n``.  None, with nothing emitted, when the shape does not
+        fit."""
+        if not self._cmp32_operands(expr):
+            return None
+        k = self._const_int_operand(expr.right)
+        x = expr.left
+        if k is None:
+            k = self._const_int_operand(expr.left)
+            x = expr.right
+        if k is None:
+            return None
+        k &= 0xFFFFFFFF
+        if k == 0:
+            return None
+        e = self.ctx.emit_instr
+        sel = [(i, (k >> (8 * i)) & 0xFF) for i in range(4)
+               if (k >> (8 * i)) & 0xFF]
+        xs = self._src32(x)
+        mem = (xs is not None and xs.const is None
+               and not self._src32_ext_signed(xs))
+        if mem:
+            sel = [(i, b) for i, b in sel if i < xs.size]
+            if not sel:
+                return "NEVER"               # only extension bytes selected
+        else:
+            self._gen_long_operand(x)
+        regs = ("L", "H", "E", "D")
+        if len(sel) == 1 and sel[0][1] & (sel[0][1] - 1) == 0:
+            i, b = sel[0]
+            bit = b.bit_length() - 1
+            if not mem:
+                e("bit", f"{bit},{regs[i]}")
+                return "NZ"
+            if not xs.sym.is_global and not xs.sym.uses_shared_storage:
+                e("bit", f"{bit},{self._src32_mem(xs, i)}")
+                return "NZ"
+        for n, (i, b) in enumerate(sel):
+            if n:
+                e("ld", "B,A")
+            if mem:
+                e("ld", f"A,{self._src32_mem(xs, i)}")
+                e("and", str(b))
+            else:
+                e("ld", f"A,{regs[i]}")
+                e("and", str(b))
+            if n:
+                e("or", "B")
+        return "NZ"
+
+    def _mem_word_hl(self, src: _Src32, w: int, store: bool) -> None:
+        """HL = word ``w`` of the variable, or the reverse when ``store``;
+        no flags change."""
+        e = self.ctx.emit_instr
+        lo = 2 * w
+        if src.sym.is_global or src.sym.uses_shared_storage:
+            m = self._src32_mem(src, lo)
+            e("ld", f"{m},HL" if store else f"HL,{m}")
+        elif store:
+            e("ld", f"{self._src32_mem(src, lo)},L")
+            e("ld", f"{self._src32_mem(src, lo + 1)},H")
+        else:
+            e("ld", f"L,{self._src32_mem(src, lo)}")
+            e("ld", f"H,{self._src32_mem(src, lo + 1)}")
+
+    def _gen_compound32_inplace(self, expr: ast.BinaryOp, op: str,
+                                lhs=None) -> bool:
+        """``x op= K`` and ``x op= v`` (op one of + - & | ^) as a
+        statement, x a 4-byte variable: the bytes or words are updated
+        where they are, with no DEHL round trip.  False (nothing emitted)
+        for any other shape."""
+        if op not in ("+", "-", "&", "|", "^"):
+            return False
+        lhs = lhs if lhs is not None else expr.left
+        if not isinstance(lhs, ast.Identifier):
+            return False
+        ls = self._src32(lhs)
+        if ls is None or ls.const is not None or ls.size != 4:
+            return False
+        if self._is_long_long_expr(expr.right) or self._is_float_expr(expr.right):
+            return False
+        rs = self._src32(expr.right)
+        if rs is None or self._src32_ext_signed(rs):
+            return False
+        if rs.const is None and op in ("&", "|", "^"):
+            return False
+        e = self.ctx.emit_instr
+        in_ix = not ls.sym.is_global and not ls.sym.uses_shared_storage
+        if op in ("&", "|", "^"):
+            k = rs.const
+            ident = 0xFF if op == "&" else 0
+            a_val = None                     # what A holds, when known
+            for i in range(4):
+                b = (k >> (8 * i)) & 0xFF
+                if b == ident:
+                    continue
+                mem = self._src32_mem(ls, i)
+                fill = (op == "&" and b == 0) or (op == "|" and b == 0xFF)
+                if fill and in_ix:
+                    e("ld", f"{mem},{b}")
+                elif fill:
+                    if a_val != b:
+                        e("xor", "A") if b == 0 else e("ld", "A,255")
+                        a_val = b
+                    e("ld", f"{mem},A")
+                else:
+                    e("ld", f"A,{mem}")
+                    if op == "^" and b == 0xFF:
+                        e("cpl")
+                    else:
+                        e({"&": "and", "|": "or", "^": "xor"}[op], str(b))
+                    e("ld", f"{mem},A")
+                    a_val = None
+            return True
+        add = op == "+"
+        if rs.const is not None:
+            kv = rs.const if add else (-rs.const) & 0xFFFFFFFF
+            lo, hi = kv & 0xFFFF, kv >> 16
+            if kv == 0:
+                return True
+            if lo == 0:
+                self._mem_word_hl(ls, 1, False)
+                if hi in (1, 2):
+                    for _ in range(hi):
+                        e("inc", "HL")
+                elif hi in (0xFFFF, 0xFFFE):
+                    for _ in range(0x10000 - hi):
+                        e("dec", "HL")
+                else:
+                    e("ld", f"BC,{hi}")
+                    e("add", "HL,BC")
+                self._mem_word_hl(ls, 1, True)
+                return True
+            self._mem_word_hl(ls, 0, False)
+            e("ld", f"BC,{lo}")
+            e("add", "HL,BC")
+            self._mem_word_hl(ls, 0, True)
+            if hi in (0, 0xFFFF):
+                skip = self.ctx.new_label("AD")
+                e("jr", f"{'NC' if hi == 0 else 'C'},{skip}")
+                self._mem_word_hl(ls, 1, False)
+                e("inc" if hi == 0 else "dec", "HL")
+                self._mem_word_hl(ls, 1, True)
+                self.ctx.emit_label(skip)
+            else:
+                self._mem_word_hl(ls, 1, False)
+                e("ld", f"BC,{hi}")
+                e("adc", "HL,BC")
+                self._mem_word_hl(ls, 1, True)
+            return True
+        self._mem_word_hl(ls, 0, False)
+        self._src32_bc(rs, 0)
+        if add:
+            e("add", "HL,BC")
+        else:
+            e("or", "A")
+            e("sbc", "HL,BC")
+        self._mem_word_hl(ls, 0, True)
+        if rs.size == 4:
+            self._mem_word_hl(ls, 1, False)
+            self._src32_bc(rs, 1)
+            e("adc" if add else "sbc", "HL,BC")
+            self._mem_word_hl(ls, 1, True)
+        else:
+            skip = self.ctx.new_label("AD")
+            e("jr", f"NC,{skip}")
+            self._mem_word_hl(ls, 1, False)
+            e("inc" if add else "dec", "HL")
+            self._mem_word_hl(ls, 1, True)
+            self.ctx.emit_label(skip)
+        return True
+
+    def _gen_alu32(self, expr: ast.BinaryOp, op: str) -> bool:
+        """``x op y`` for op in + - & | ^ with a constant or variable
+        operand, inline.  False (nothing emitted) when neither side is a
+        simple operand.  The left side may be evaluated after the right
+        for the commutative operators, as the general code does."""
+        rs = self._src32(expr.right)
+        if rs is not None and self._alu32_ok(op, rs):
+            self._gen_long_operand(expr.left)
+            self._emit_alu32(op, rs)
+            return True
+        ls = self._src32(expr.left)
+        if ls is not None and self._alu32_ok(op, ls):
+            if op != "-":
+                self._gen_long_operand(expr.right)
+                self._emit_alu32(op, ls)
+                return True
+            if not self._src32_ext_signed(ls):
+                # K - x and v - x: the bytes of the left operand minus
+                # the registers.
+                self._gen_long_operand(expr.right)
+                e = self.ctx.emit_instr
+                for i, r in enumerate(("L", "H", "E", "D")):
+                    self._src32_a(ls, i)
+                    e("sub" if i == 0 else "sbc", r if i == 0 else f"A,{r}")
+                    e("ld", f"{r},A")
+                return True
+        return False
+
+    def _gen_cmp32_flags(self, expr: ast.BinaryOp, op: str) -> str | None:
+        """Evaluate a 32-bit comparison into the flags and return the
+        condition that holds when it is true (see _NOT_CC); DEHL is
+        destroyed.  None, with nothing emitted, when neither side is a
+        simple operand."""
+        unsigned = self._cmp32_unsigned(expr)
+        left, right = expr.left, expr.right
+        rs = self._src32(right)
+        if rs is None or self._src32_ext_signed(rs):
+            # The other side as the operand (the sign-extended small
+            # variable is then the value in DEHL).
+            ls = self._src32(left)
+            if ls is None or self._src32_ext_signed(ls):
+                return None
+            left, right, op, rs = right, left, self._SWAP_CMP[op], ls
+        self._gen_long_operand(left)
+        if rs.const is not None:
+            return self._emit_cmp32_const(op, rs.const, unsigned)
+        return self._emit_cmp32_src(op, rs, unsigned)
+
+    def _emit_cmp32_const(self, op: str, kk: int, unsigned: bool) -> str:
+        """Flags for ``DEHL op kk`` (kk a 32-bit pattern)."""
+        e = self.ctx.emit_instr
+        regs = ("L", "H", "E", "D")
+        kk &= 0xFFFFFFFF
+        if op in ("==", "!="):
+            pairs = [(r, (kk >> (8 * i)) & 0xFF) for i, r in enumerate(regs)]
+            zs = [r for r, k in pairs if k == 0]
+            nz = [(r, k) for r, k in pairs if k != 0]
+            acc = False
+            if zs:
+                e("ld", f"A,{zs[0]}")
+                for r in zs[1:]:
+                    e("or", r)
+                acc = True
+            for r, k in nz:
+                if acc:
+                    e("ld", "B,A")
+                    e("ld", f"A,{r}")
+                    e("xor", str(k))
+                    e("or", "B")
+                else:
+                    e("ld", f"A,{r}")
+                    e("xor", str(k))
+                    acc = True
+            return "Z" if op == "==" else "NZ"
+        if unsigned:
+            kv, kmin, kmax = kk, 0, 0xFFFFFFFF
+        else:
+            kv = kk - (1 << 32) if kk & 0x80000000 else kk
+            kmin, kmax = -0x80000000, 0x7FFFFFFF
+        if op in (">", "<="):
+            if kv == kmax:
+                return "NEVER" if op == ">" else "ALWAYS"
+            kv += 1
+            op = ">=" if op == ">" else "<"
+        if kv == kmin:
+            return "NEVER" if op == "<" else "ALWAYS"
+        if unsigned and kv == 1:             # x < 1 is x == 0
+            e("ld", "A,H")
+            e("or", "L")
+            e("or", "E")
+            e("or", "D")
+            return "Z" if op == "<" else "NZ"
+        if not unsigned and kv == 0:         # the sign bit
+            e("bit", "7,D")
+            return "NZ" if op == "<" else "Z"
+        k2 = kv & 0xFFFFFFFF
+        if not unsigned:
+            k2 ^= 0x80000000                 # signed order as unsigned order
+        b = [(k2 >> (8 * i)) & 0xFF for i in range(4)]
+        first = next((i for i in range(3) if b[i]), None)
+        top = "D"
+        if first is None:
+            e("ld", "A,D")
+            if not unsigned:
+                e("xor", "128")
+            e("cp", str(b[3]))
+        else:
+            if not unsigned:
+                # xor would clear the borrow, so flip D first.
+                e("ld", "A,D")
+                e("xor", "128")
+                e("ld", "B,A")
+                top = "B"
+            for i in range(first, 3):
+                e("ld", f"A,{regs[i]}")
+                e("sub" if i == first else "sbc", str(b[i]) if i == first
+                  else f"A,{b[i]}")
+            e("ld", f"A,{top}")
+            e("sbc", f"A,{b[3]}")
+        return "C" if op == "<" else "NC"
+
+    def _emit_cmp32_src(self, op: str, src: _Src32, unsigned: bool) -> str:
+        """Flags for ``DEHL op operand`` (a variable or constant, not a
+        sign-extended 1- or 2-byte variable)."""
+        e = self.ctx.emit_instr
+        if op in ("==", "!="):
+            self._src32_bc(src, 0)
+            e("or", "A")
+            e("sbc", "HL,BC")
+            e("ld", "A,H")
+            e("or", "L")
+            if src.size == 4:
+                e("ex", "DE,HL")
+                self._src32_bc(src, 1)
+                e("sbc", "HL,BC")
+                e("ld", "C,A")
+                e("ld", "A,H")
+                e("or", "L")
+                e("or", "C")
+            else:                            # the high word must be 0
+                e("or", "D")
+                e("or", "E")
+            return "Z" if op == "==" else "NZ"
+        if op in ("<", ">="):
+            self._src32_bc(src, 0)
+            e("or", "A")
+            e("sbc", "HL,BC")
+            e("ex", "DE,HL")
+            self._src32_bc(src, 1)
+            e("sbc", "HL,BC")
+            if unsigned:
+                return "C" if op == "<" else "NC"
+            e("ld", "A,H")
+        else:
+            # x > s is s < x: s - x on the bytes, s from memory.
+            for i, r in enumerate(("L", "H", "E", "D")):
+                self._src32_a(src, i)
+                e("sub" if i == 0 else "sbc", r if i == 0 else f"A,{r}")
+            if unsigned:
+                return "C" if op == ">" else "NC"
+        # Signed: less when sign XOR overflow.
+        nv = self.ctx.new_label("CMP_NV")
+        e("jp", f"PO,{nv}")
+        e("xor", "128")
+        self.ctx.emit_label(nv)
+        return "M" if op in ("<", ">") else "P"
 
     def _gen_const_op_32(self, expr: ast.BinaryOp, op: str) -> bool:
         """The 32-bit forms of _gen_const_op_16: a constant right operand
@@ -15377,7 +16219,8 @@ class CodeGenerator:
 
     def _is_unsigned_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has unsigned type."""
-        expr_type = self._get_expr_type(expr)
+        # (an integer literal's type is a ResolvedType)
+        expr_type = _to_legacy(self._get_expr_type(expr))
         if isinstance(expr_type, lt.BasicType):
             # is_signed=False means unsigned, is_signed=None means default (signed)
             return expr_type.is_signed == False
@@ -16002,6 +16845,8 @@ class CodeGenerator:
                     return
             if op == "&":
                 cc = self._gen_and_flags(cond)
+                if cc is None:
+                    cc = self._gen_and_flags32(cond)
                 if cc is not None:
                     self._emit_cc_jump(cc, label, jump_if)
                     return
@@ -16452,11 +17297,27 @@ class CodeGenerator:
         return isinstance(t, lt.BasicType) and t.name in ('bool', '_Bool')
 
     def _extend_hl_to_dehl(self, is_signed: bool = True) -> None:
-        """Sign or zero extend HL to DEHL."""
+        """Sign or zero extend HL to DEHL (inline: A and DE change)."""
+        e = self.ctx.emit_instr
+        # An extension straight before this one (gen_expr with force_long
+        # makes one, the caller asks for another) is overwritten: drop it.
+        lines = self.ctx.lines
+        sext = ["\tld\tA,H", "\trlca", "\tsbc\tA,A", "\tld\tE,A",
+                "\tld\tD,A"]
+        if (lines[-5:] == sext
+                and not (len(lines) > 5 and "$" in lines[-6])):
+            del lines[-5:]
+        elif (lines and lines[-1] == "\tld\tDE,0"
+                and not (len(lines) > 1 and "$" in lines[-2])):
+            del lines[-1]
         if is_signed:
-            self._call_runtime("__sext32")
+            e("ld", "A,H")
+            e("rlca")
+            e("sbc", "A,A")
+            e("ld", "E,A")
+            e("ld", "D,A")
         else:
-            self._call_runtime("__zext32")
+            e("ld", "DE,0")
 
     def _gen_expr_produces_dehl(self, expr) -> bool:
         """True if ``gen_expr(expr, force_long=True)`` already loads
@@ -16465,6 +17326,9 @@ class CodeGenerator:
         literals with native ``force_long`` handling — IntLiteral,
         FloatLiteral, NullptrLiteral.
         """
+        if isinstance(expr, ast.Identifier):
+            # gen_identifier extends a 1- or 2-byte variable itself.
+            return self._simple_sym(expr) is not None
         return isinstance(expr, (ast.IntLiteral, ast.FloatLiteral,
                                   ast.NullptrLiteral))
 
