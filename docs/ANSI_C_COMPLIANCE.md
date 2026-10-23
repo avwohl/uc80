@@ -166,7 +166,10 @@ Printf links only needed format handlers via `#pragma printf int|long|llong|floa
 - [ ] `getenv()` - stub (CP/M has no environment)
 - [ ] `system()` - stub (CP/M limited)
 - [x] `bsearch()` - binary search
-- [x] `qsort()` - quicksort with median-of-3 pivot
+- [x] `qsort()` - quicksort with median-of-3 pivot, no recursion, and an
+  insertion sort for parts of 8 elements or fewer.  Sorted and reverse-sorted
+  input takes nmemb-1 comparisons.  A comparator can call `qsort()`.  Do not
+  call `qsort()` from an interrupt handler.  Details: `src/uc80/lib/lc/lc_qsort.mac`.
 - [ ] `mblen()`, `mbtowc()`, `wctomb()`, `mbstowcs()`, `wcstombs()` - stubs
 
 ### `<setjmp.h>` - Implemented

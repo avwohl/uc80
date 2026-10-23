@@ -3,92 +3,139 @@
 
 	.Z80
 
+	EXTRN	__mul8x16
+	EXTRN	__dv8n
+	EXTRN	__dv8w
+
+
 	CSEG
 
 ; ============================================================
-; 16-bit unsigned multiplication: HL = DE * HL
+; 16-bit multiplication: HL = DE * HL (low 16 bits; signed and
+; unsigned give the same bits)
+; Preserves BC, IX, IY.  Clobbers A, DE, flags.
+; When either operand fits in 8 bits it is the multiplier of one
+; __mul8x16.  An operand in -255..-1 is negated to 1..255 and the
+; product negated back.  Otherwise
+;   DE*HL mod 2^16 = DE*L + ((E*H) mod 256)<<8.
 ; ============================================================
 	PUBLIC	__mul16
 __mul16:
-	; Multiply DE by HL, result in HL
-	; Uses shift-and-add algorithm
-	PUSH	BC
-	LD	B,H
-	LD	C,L		; BC = multiplier (right operand)
-	LD	HL,0		; HL = result accumulator
-	LD	A,16		; 16 bits to process
+	LD	A,H
+	OR	A
+	JR	NZ,__mul16_h
+	OR	L		; A = L
+	JP	__mul8x16	; HL = DE * L
+__mul16_h:
+	LD	A,D
+	OR	A
+	JR	NZ,__mul16_n
+	LD	A,E
+	EX	DE,HL
+	JP	__mul8x16	; HL = HL * E
+__mul16_n:
+	LD	A,H
+	INC	A
+	JR	NZ,__mul16_n2	; H <> 0FFH
+	SUB	L		; A = -L (A was 0)
+	JP	NZ,__mul16ng	; HL = -(DE * -HL)
+__mul16_n2:
+	LD	A,D
+	INC	A
+	JP	NZ,__mul16w	; D <> 0FFH
+	SUB	E		; A = -E
+	JP	Z,__mul16w	; DE = -256
+	EX	DE,HL
+	JP	__mul16ng	; HL = -(HL * -DE)
 
-__mul16_loop:
-	SRL	B
-	RR	C		; Shift BC right, carry = LSB
-	JR	NC,__mul16_noadd
-	ADD	HL,DE		; Add multiplicand if bit was set
+; ============================================================
+; __mul16ng - HL = -(DE * A), A = 1..255.  Part of __mul16.
+; __mul16w  - HL = DE * HL when neither operand fits in 8 bits:
+;   DE*L + ((E*H) mod 256)<<8.  Part of __mul16.
+; Kept apart from __mul16 so that the common 8-bit cases are one
+; short routine.  Same registers as __mul16.
+; ============================================================
+	PUBLIC	__mul16ng
+__mul16ng:
+	CALL	__mul8x16
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+	RET
 
-__mul16_noadd:
-	SLA	E
-	RL	D		; Shift DE left (multiplicand)
-	DEC	A
-	JR	NZ,__mul16_loop
-
-	POP	BC
+	PUBLIC	__mul16w
+__mul16w:
+	PUSH	HL
+	LD	A,L
+	CALL	__mul8x16	; HL = DE * L
+	EX	(SP),HL		; HL = right operand, stack = partial
+	LD	A,H
+	LD	D,0		; DE = E
+	CALL	__mul8x16	; L = (H * E) & 0FFH
+	LD	A,L
+	POP	HL
+	ADD	A,H
+	LD	H,A
 	RET
 
 ; ============================================================
 ; 16-bit unsigned division: HL = DE / HL
-; Also sets __divrem to remainder (DE % HL)
+; Also sets __divrem to remainder (DE % HL), and returns the
+; remainder in DE.  Division by zero: HL = 0, remainder 0.
+; Preserves BC, IX, IY.  Clobbers A, flags.
 ; ============================================================
 	PUBLIC	__div16
 	PUBLIC	__divrem
 __div16:
-	; Divide DE by HL
-	; Returns quotient in HL, remainder in __divrem
-	PUSH	BC
 	EX	DE,HL		; HL = dividend, DE = divisor
 	LD	A,D
 	OR	E
-	JR	Z,__div16_zero	; Check for divide by zero
-
-	LD	BC,0		; BC = quotient
-	LD	A,16		; 16 bits
-
-__div16_loop:
-	ADD	HL,HL		; Shift dividend left
-	RL	C
-	RL	B		; Shift quotient left with dividend overflow
-
-	; Check if BC >= DE (can subtract divisor)
-	PUSH	HL
-	LD	H,B
-	LD	L,C
-	OR	A		; Clear carry
-	SBC	HL,DE		; HL = BC - DE
-	JR	C,__div16_nosub	; If BC < DE, skip subtraction
-
-	; BC >= DE, so subtract and set quotient bit
-	LD	B,H
-	LD	C,L		; BC = BC - DE
-	POP	HL
-	INC	HL		; Set LSB of dividend (quotient bit)
-	DEC	A
-	JR	NZ,__div16_loop
+	JR	Z,__div16_zero
+	PUSH	BC
+	LD	A,D
+	OR	A
+	JR	NZ,__div16_w
+	LD	C,E		; divisor < 256
+	LD	A,H
+	CP	C
+	JR	C,__div16_lo	; H < divisor: quotient < 256
+	LD	E,H
+	XOR	A
+	CALL	__dv8n		; E = quotient high byte, A = remainder
+	LD	H,E
+	LD	E,L
+	CALL	__dv8n		; E = quotient low byte
+	LD	L,E
+	JR	__div16_n
+__div16_lo:
+	LD	E,L		; A = H is the remainder so far
+	CALL	__dv8n
+	LD	L,E
+	LD	H,0
+__div16_n:
+	LD	E,A
+	LD	D,0
 	JR	__div16_done
-
-__div16_nosub:
-	POP	HL
-	DEC	A
-	JR	NZ,__div16_loop
-
+__div16_w:
+	LD	A,L		; divisor >= 256: quotient < 256
+	LD	L,H
+	LD	H,0
+	CALL	__dv8w		; A = quotient, HL = remainder
+	EX	DE,HL
+	LD	L,A
+	LD	H,0
 __div16_done:
-	; HL = quotient, BC = remainder
-	LD	(__divrem),BC
+	LD	(__divrem),DE
 	POP	BC
 	RET
-
 __div16_zero:
-	; Division by zero - return 0 (or could trap)
 	LD	HL,0
 	LD	(__divrem),HL
-	POP	BC
+	LD	D,H
+	LD	E,L
 	RET
 
 	DSEG
@@ -102,60 +149,46 @@ __divrem:
 ; ============================================================
 	PUBLIC	__mod16
 __mod16:
-	CALL	__div16
-	LD	HL,(__divrem)
+	CALL	__div16		; remainder in DE
+	EX	DE,HL
 	RET
 
 ; ============================================================
 ; 16-bit signed division: HL = DE / HL (signed)
+; Truncates toward zero.  Sets __divrem to |DE| % |HL|.
 ; ============================================================
 	PUBLIC	__sdiv16
 __sdiv16:
-	; Check signs of both operands
 	LD	A,D
-	XOR	H		; A bit 7 = 1 if signs differ
-	PUSH	AF		; Save sign for result
-
-	; Make DE positive
+	XOR	H
+	PUSH	AF		; S flag = sign of the quotient
 	BIT	7,D
-	JR	Z,__sdiv16_de_pos
-	LD	A,E
-	CPL
+	JR	Z,__sdiv16_1
+	XOR	A		; DE = -DE
+	SUB	E
 	LD	E,A
-	LD	A,D
-	CPL
+	SBC	A,A
+	SUB	D
 	LD	D,A
-	INC	DE		; DE = -DE
-
-__sdiv16_de_pos:
-	; Make HL positive
+__sdiv16_1:
 	BIT	7,H
-	JR	Z,__sdiv16_hl_pos
-	LD	A,L
-	CPL
+	JR	Z,__sdiv16_2
+	XOR	A		; HL = -HL
+	SUB	L
 	LD	L,A
-	LD	A,H
-	CPL
+	SBC	A,A
+	SUB	H
 	LD	H,A
-	INC	HL		; HL = -HL
-
-__sdiv16_hl_pos:
-	; Do unsigned division
+__sdiv16_2:
 	CALL	__div16
-
-	; Check if we need to negate result
 	POP	AF
-	BIT	7,A
-	RET	Z		; Same signs, result positive
-
-	; Negate result
-	LD	A,L
-	CPL
+	RET	P
+	XOR	A		; HL = -HL
+	SUB	L
 	LD	L,A
-	LD	A,H
-	CPL
+	SBC	A,A
+	SUB	H
 	LD	H,A
-	INC	HL
 	RET
 
 ; ============================================================
@@ -164,125 +197,139 @@ __sdiv16_hl_pos:
 ; ============================================================
 	PUBLIC	__smod16
 __smod16:
-	; Save sign of dividend
 	LD	A,D
-	PUSH	AF
-
-	; Make DE positive
-	BIT	7,D
-	JR	Z,__smod16_de_pos
-	LD	A,E
-	CPL
+	OR	A
+	PUSH	AF		; S flag = sign of the dividend
+	JP	P,__smod16_1
+	XOR	A		; DE = -DE
+	SUB	E
 	LD	E,A
-	LD	A,D
-	CPL
+	SBC	A,A
+	SUB	D
 	LD	D,A
-	INC	DE
-
-__smod16_de_pos:
-	; Make HL positive
+__smod16_1:
 	BIT	7,H
-	JR	Z,__smod16_hl_pos
-	LD	A,L
-	CPL
+	JR	Z,__smod16_2
+	XOR	A		; HL = -HL
+	SUB	L
 	LD	L,A
-	LD	A,H
-	CPL
+	SBC	A,A
+	SUB	H
 	LD	H,A
-	INC	HL
-
-__smod16_hl_pos:
-	; Do unsigned division (remainder in __divrem)
+__smod16_2:
 	CALL	__div16
-	LD	HL,(__divrem)
-
-	; Check if we need to negate remainder
+	EX	DE,HL		; HL = remainder
 	POP	AF
-	BIT	7,A
-	RET	Z		; Dividend was positive
-
-	; Negate remainder
-	LD	A,L
-	CPL
+	RET	P
+	XOR	A		; HL = -HL
+	SUB	L
 	LD	L,A
-	LD	A,H
-	CPL
+	SBC	A,A
+	SUB	H
 	LD	H,A
-	INC	HL
 	RET
 
 ; ============================================================
-; 16-bit arithmetic left shift: HL = DE << HL
+; 16-bit left shift: HL = DE << L  (L >= 16 gives 0; H ignored)
 ; ============================================================
 	PUBLIC	__shl16
 __shl16:
-	; Shift DE left by HL positions
-	LD	A,L		; Only use low byte
-	CP	16		; Shift >= 16?
-	JR	C,__shl16_ok
-	LD	HL,0		; Result is 0 for shift >= 16
-	RET
-__shl16_ok:
-	EX	DE,HL		; HL = value to shift
+	LD	A,L
+	EX	DE,HL
+	CP	8
+	JR	NC,__shl16_8
+__shl16_s:
 	OR	A
-	RET	Z		; No shift needed
-
-__shl16_loop:
-	ADD	HL,HL		; Shift left
+	RET	Z
+__shl16_lp:
+	ADD	HL,HL
 	DEC	A
-	JR	NZ,__shl16_loop
+	JR	NZ,__shl16_lp
+	RET
+__shl16_8:
+	CP	16
+	JR	NC,__shl16_z
+	LD	H,L		; shift by 8 is a byte move
+	LD	L,0
+	SUB	8
+	JR	__shl16_s
+__shl16_z:
+	LD	HL,0
 	RET
 
 ; ============================================================
-; 16-bit arithmetic right shift: HL = DE >> HL (unsigned)
+; 16-bit logical right shift: HL = DE >> L (unsigned)
 ; ============================================================
 	PUBLIC	__shr16
 __shr16:
-	; Shift DE right by HL positions (logical/unsigned)
 	LD	A,L
-	CP	16		; Shift >= 16?
-	JR	C,__shr16_ok
-	LD	HL,0		; Result is 0 for shift >= 16
-	RET
-__shr16_ok:
 	EX	DE,HL
+	CP	8
+	JR	NC,__shr16_8
 	OR	A
 	RET	Z
-
-__shr16_loop:
+__shr16_lp:
 	SRL	H
-	RR	L		; Logical shift right
+	RR	L
 	DEC	A
-	JR	NZ,__shr16_loop
+	JR	NZ,__shr16_lp
+	RET
+__shr16_8:
+	CP	16
+	JR	NC,__shr16_z
+	LD	L,H		; shift by 8 is a byte move
+	LD	H,0
+	SUB	8
+	RET	Z
+__shr16_b:
+	SRL	L
+	DEC	A
+	JR	NZ,__shr16_b
+	RET
+__shr16_z:
+	LD	HL,0
 	RET
 
 ; ============================================================
-; 16-bit signed arithmetic right shift: HL = DE >> HL (signed)
+; 16-bit arithmetic right shift: HL = DE >> L (signed)
 ; ============================================================
 	PUBLIC	__sar16
 __sar16:
-	; Shift DE right by HL positions (arithmetic/signed)
 	LD	A,L
-	CP	16		; Shift >= 16?
-	JR	C,__sar16_ok
 	EX	DE,HL
-	BIT	7,H		; Check sign
-	JR	NZ,__sar16_neg
-	LD	HL,0		; Positive: result is 0
-	RET
-__sar16_neg:
-	LD	HL,0FFFFH	; Negative: result is -1
-	RET
-__sar16_ok:
-	EX	DE,HL
+	CP	8
+	JR	NC,__sar16_8
 	OR	A
 	RET	Z
-
-__sar16_loop:
+__sar16_lp:
 	SRA	H
-	RR	L		; Arithmetic shift right (preserves sign)
+	RR	L
 	DEC	A
-	JR	NZ,__sar16_loop
+	JR	NZ,__sar16_lp
+	RET
+__sar16_8:
+	CP	16
+	JR	NC,__sar16_f
+	SUB	8		; shift by 8 is a byte move and a
+	LD	L,H		; sign fill
+	LD	H,0
+	BIT	7,L
+	JR	Z,__sar16_p
+	DEC	H
+__sar16_p:
+	OR	A
+	RET	Z
+__sar16_b:
+	SRA	L
+	DEC	A
+	JR	NZ,__sar16_b
+	RET
+__sar16_f:
+	LD	A,H		; shift >= 16: 0 or -1 by the sign
+	RLA
+	SBC	A,A
+	LD	H,A
+	LD	L,A
 	RET
 
 ; ============================================================

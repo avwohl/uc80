@@ -8989,29 +8989,21 @@ _math_getarg2:
 ; ============================================================
 	PUBLIC	_memcpy
 _memcpy:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+	POP	AF		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	POP	BC		; BC = n
 	PUSH	BC
-
-	LD	E,(IX+4)	; DE = dest
-	LD	D,(IX+5)
-	LD	L,(IX+6)	; HL = src
-	LD	H,(IX+7)
-	LD	C,(IX+8)	; BC = n
-	LD	B,(IX+9)
-
-	LD	A,B		; Check if n == 0
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF
+	PUSH	DE		; return value
+	LD	A,B
 	OR	C
 	JR	Z,_memcpy_done
-
-	LDIR			; Block copy
-
+	LDIR
 _memcpy_done:
-	LD	L,(IX+4)	; Return dest
-	LD	H,(IX+5)
-	POP	BC
-	POP	IX
+	POP	HL
 	RET
 
 ; ============================================================
@@ -9021,31 +9013,20 @@ _memcpy_done:
 ; ============================================================
 	PUBLIC	_mempcpy
 _mempcpy:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+	POP	AF		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	POP	BC		; BC = n
 	PUSH	BC
-
-	LD	E,(IX+4)	; DE = dest
-	LD	D,(IX+5)
-	LD	L,(IX+6)	; HL = src
-	LD	H,(IX+7)
-	LD	C,(IX+8)	; BC = n
-	LD	B,(IX+9)
-
-	LD	A,B		; Check if n == 0
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF
+	LD	A,B
 	OR	C
 	JR	Z,_mempcpy_done
-
-	LDIR			; Block copy — DE is incremented past dest+n
-
+	LDIR			; DE ends at dest + n
 _mempcpy_done:
-	; Return dest+n. After LDIR, DE = original_dest + n (or
-	; unchanged if n was 0). For the n=0 path we still want
-	; dest+0 = dest, which is what DE holds.
 	EX	DE,HL
-	POP	BC
-	POP	IX
 	RET
 
 ; ============================================================
@@ -9055,43 +9036,29 @@ _mempcpy_done:
 ; ============================================================
 	PUBLIC	_memset
 _memset:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+	POP	AF		; return address
+	POP	HL		; HL = s
+	POP	DE		; E = fill byte
+	POP	BC		; BC = n
 	PUSH	BC
-
-	LD	L,(IX+4)	; HL = dest
-	LD	H,(IX+5)
-	LD	A,(IX+6)	; A = fill byte
-	LD	C,(IX+8)	; BC = n
-	LD	B,(IX+9)
-
-	PUSH	HL		; Save dest for return
-
-	PUSH	AF		; Save fill byte
-	LD	A,B		; Check if n == 0
+	PUSH	DE
+	PUSH	HL
+	PUSH	AF
+	LD	A,B
 	OR	C
-	JR	Z,_memset_done_pop
-
-	POP	AF		; Restore fill byte
-	LD	(HL),A		; Store first byte
-	LD	D,H		; DE = HL + 1
-	LD	E,L
-	INC	DE
-	DEC	BC		; n - 1
+	RET	Z		; HL = s
+	PUSH	HL		; return value
+	LD	(HL),E
+	DEC	BC
 	LD	A,B
 	OR	C
 	JR	Z,_memset_done
-	LDIR			; Copy first byte to rest
-	JR	_memset_done
-
-_memset_done_pop:
-	POP	AF		; Discard saved fill byte
-
+	LD	D,H
+	LD	E,L
+	INC	DE
+	LDIR			; copy the first byte along
 _memset_done:
-	POP	HL		; Return dest
-	POP	BC
-	POP	IX
+	POP	HL
 	RET
 
 ; ============================================================
@@ -9101,48 +9068,33 @@ _memset_done:
 ; ============================================================
 	PUBLIC	_memcmp
 _memcmp:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+	POP	AF		; return address
+	POP	DE		; DE = s1
+	POP	HL		; HL = s2
+	POP	BC		; BC = n
 	PUSH	BC
-
-	LD	E,(IX+4)	; DE = s1
-	LD	D,(IX+5)
-	LD	L,(IX+6)	; HL = s2
-	LD	H,(IX+7)
-	LD	C,(IX+8)	; BC = n
-	LD	B,(IX+9)
-
-_memcmp_loop:
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF
 	LD	A,B
 	OR	C
-	JR	Z,_memcmp_equal	; n == 0, equal
-
+	JR	Z,_memcmp_equal
+_memcmp_loop:
 	LD	A,(DE)
-	PUSH	HL
-	LD	H,(HL)
-	SUB	H
-	POP	HL
-	JR	NZ,_memcmp_diff
-
-	DEC	BC
 	INC	DE
-	INC	HL
-	JR	_memcmp_loop
-
+	CPI			; compare with (HL), HL++, BC--
+	JR	NZ,_memcmp_diff
+	JP	PE,_memcmp_loop	; BC != 0
 _memcmp_equal:
 	LD	HL,0
-	POP	BC
-	POP	IX
 	RET
-
 _memcmp_diff:
+	; Return s1[i] - s2[i] as unsigned chars (-255..255)
+	DEC	HL
+	SUB	(HL)
 	LD	L,A
-	RLA
 	SBC	A,A
 	LD	H,A
-	POP	BC
-	POP	IX
 	RET
 
 ; ============================================================
@@ -9159,69 +9111,36 @@ _memcmp_diff:
 ; ============================================================
 	PUBLIC	_memmove
 _memmove:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+	POP	AF		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	POP	BC		; BC = n
 	PUSH	BC
-
-	LD	E,(IX+4)	; DE = dest
-	LD	D,(IX+5)
-	LD	L,(IX+6)	; HL = src
-	LD	H,(IX+7)
-	LD	C,(IX+8)	; BC = n
-	LD	B,(IX+9)
-
-	; Check if n == 0
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF
+	PUSH	DE		; return value
 	LD	A,B
 	OR	C
 	JR	Z,_memmove_done
-
-	; Check if we need to copy backwards
-	; If dest > src and dest < src + n, copy backwards
-	PUSH	HL
+	; src >= dest: copy forward.  src < dest: copy backward from the
+	; ends, which is right whether or not the regions overlap.
 	OR	A
-	SBC	HL,DE		; HL = src - dest
-	POP	HL
-	JR	NC,_memmove_fwd	; src >= dest, copy forward
-
-	; dest > src, check if overlapping
-	PUSH	HL
-	ADD	HL,BC		; HL = src + n
-	OR	A
-	SBC	HL,DE		; If src + n > dest, overlapping
-	POP	HL
-	JR	C,_memmove_fwd	; No overlap, forward is fine
-	JR	Z,_memmove_fwd
-
-	; Copy backwards
-	; Move pointers to end
+	SBC	HL,DE
+	ADD	HL,DE
+	JR	NC,_memmove_fwd
 	ADD	HL,BC
 	DEC	HL		; HL = src + n - 1
 	EX	DE,HL
 	ADD	HL,BC
 	DEC	HL		; HL = dest + n - 1
-	EX	DE,HL		; HL = src end, DE = dest end
-
-_memmove_bwd:
-	LD	A,B
-	OR	C
-	JR	Z,_memmove_done
-	LD	A,(HL)
-	LD	(DE),A
-	DEC	HL
-	DEC	DE
-	DEC	BC
-	JR	_memmove_bwd
-
+	EX	DE,HL
+	LDDR
+	JR	_memmove_done
 _memmove_fwd:
-	; Copy forward using LDIR
 	LDIR
-
 _memmove_done:
-	LD	L,(IX+4)	; Return dest
-	LD	H,(IX+5)
-	POP	BC
-	POP	IX
+	POP	HL
 	RET
 
 ; ============================================================
@@ -9231,39 +9150,24 @@ _memmove_done:
 ; ============================================================
 	PUBLIC	_memchr
 _memchr:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+	POP	AF		; return address
+	POP	HL		; HL = s
+	POP	DE		; E = char to find
+	POP	BC		; BC = n
 	PUSH	BC
-
-	LD	L,(IX+4)	; HL = s
-	LD	H,(IX+5)
-	LD	E,(IX+6)	; E = char to find
-	LD	C,(IX+8)	; BC = n
-	LD	B,(IX+9)
-
-_memchr_loop:
+	PUSH	DE
+	PUSH	HL
+	PUSH	AF
 	LD	A,B
 	OR	C
 	JR	Z,_memchr_notfound
-
-	LD	A,(HL)
-	CP	E
-	JR	Z,_memchr_found
-
-	INC	HL
-	DEC	BC
-	JR	_memchr_loop
-
-_memchr_found:
-	POP	BC
-	POP	IX
-	RET			; HL already points to match
-
+	LD	A,E
+	CPIR			; stops after the match, or with BC = 0
+	JR	NZ,_memchr_notfound
+	DEC	HL
+	RET
 _memchr_notfound:
 	LD	HL,0
-	POP	BC
-	POP	IX
 	RET
 
 ; ============================================================
@@ -13443,184 +13347,588 @@ _cputs_done:
 ; lc_qsort.mac - qsort, bsearch
 
 
-
-	EXTRN	__callhl
-	EXTRN	__mul16
-
 	CSEG
 
 ; ============================================================
 ; void qsort(void *base, size_t nmemb, size_t size,
 ;            int (*compar)(const void *, const void *))
-; Sort array using selection sort (simpler for Z80)
-; Stack: base(IX+4), nmemb(IX+6), size(IX+8), compar(IX+10)
+;
+; Calling convention (uc80): arguments are pushed right to left, so the
+; FIRST argument is the LAST one pushed and sits nearest the return
+; address; the result comes back in HL.  To call compar(a, b):
+;	PUSH b / PUSH a / CALL compar / POP / POP
+; The comparator may clobber every register except IX and SP, and it may
+; also change its own argument slots (C parameters are writable), so a
+; value that must survive the call is pushed separately, under the
+; arguments, and popped after them.
+;
+; Algorithm:
+;  - nmemb <= QS_THR: insertion sort only.
+;  - Otherwise first check for one run: if the array is already in
+;    order (non-decreasing), return; if it is in reverse order
+;    (non-increasing), reverse it and return.  This costs nmemb-1
+;    comparisons at most, and on random input it stops after two or three.
+;  - Then a non-recursive quicksort: parts of more than QS_THR elements
+;    are split with a Hoare partition around a median-of-three pivot.
+;    The pivot stays in the array (QS_MID follows it when it is swapped).
+;    Both scans stop on keys equal to the pivot, so all-equal input splits
+;    in the middle and stays O(n log n).
+;  - The larger part is pushed on the machine stack as (lo, hi) and the
+;    loop continues with the smaller part, so the stack holds at most
+;    log2(nmemb) entries (4 bytes each, at most 64 bytes).
+;  - Parts of QS_THR elements or fewer are left alone; one final
+;    insertion sort over the whole array finishes them (each element is
+;    then less than QS_THR places from its final position).
+;  - Elements are addressed with byte pointers stepped by size.  There is
+;    no multiplication or division in the loops: part lengths are kept in
+;    bytes, and the middle element is lo + ((hi-lo) - (k odd ? size : 0))/2
+;    where k = (hi-lo)/size; k is odd when (hi-lo) AND (size AND -size)
+;    is not zero.
+;
+; Reentrancy: the working variables live in static storage (fast 16-bit
+; absolute loads), but qsort copies them to its stack frame on entry and
+; copies them back on exit.  So a comparator that itself calls qsort (or
+; calls a function that calls qsort) works.  An interrupt handler that
+; calls qsort while another qsort runs is NOT supported (the static copy
+; is live between the save and the restore).
+;
+; Stack on entry (after PUSH IX): base(IX+4), nmemb(IX+6), size(IX+8),
+; compar(IX+10).  Preserves BC and IX.
 ; ============================================================
+QS_THR	EQU	8		; parts of <= QS_THR elements go to insertion sort
+
 	PUBLIC	_qsort
 _qsort:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
 	PUSH	BC
-	PUSH	DE
 
-	; Check if nmemb <= 1, nothing to sort
+	; Save the static working area on the stack (for nested calls).
+	LD	HL,-QS_NV
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL			; DE = save area
+	LD	HL,QS_VARS
+	LD	BC,QS_NV
+	LDIR
+
+	; size == 0 or nmemb < 2: nothing to do
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	A,H
+	OR	L
+	JP	Z,qs_exit
+	LD	(QS_SIZE),HL
 	LD	L,(IX+6)
 	LD	H,(IX+7)
-	LD	A,H
-	OR	A
-	JR	NZ,_qsort_start
-	LD	A,L
-	CP	2
-	JP	C,_qsort_done	; nmemb < 2
-
-_qsort_start:
-	; Outer loop: i = 0 to nmemb-2
-	LD	HL,0
-	LD	(_qsort_i),HL
-
-_qsort_outer:
-	; Check if i >= nmemb - 1
-	LD	HL,(_qsort_i)
-	INC	HL		; i + 1
-	LD	E,(IX+6)	; nmemb (low word only, assume < 65536)
-	LD	D,(IX+7)
+	LD	DE,2
 	OR	A
 	SBC	HL,DE
-	JP	NC,_qsort_done	; i + 1 >= nmemb, done
+	JP	C,qs_exit
 
-	; min_idx = i
-	LD	HL,(_qsort_i)
-	LD	(_qsort_min),HL
-
-	; Inner loop: j = i + 1 to nmemb - 1
-	LD	HL,(_qsort_i)
-	INC	HL
-	LD	(_qsort_j),HL
-
-_qsort_inner:
-	; Check if j >= nmemb
-	LD	HL,(_qsort_j)
-	LD	E,(IX+6)
-	LD	D,(IX+7)
-	OR	A
-	SBC	HL,DE
-	JP	NC,_qsort_swap	; j >= nmemb, do swap
-
-	; Compare base[j] with base[min_idx]
-	; Calculate address of base[j]
-	LD	HL,(_qsort_j)
-	CALL	_qsort_addr	; HL = base + j*size
-	PUSH	HL		; First arg to compare
-
-	; Calculate address of base[min_idx]
-	LD	HL,(_qsort_min)
-	CALL	_qsort_addr	; HL = base + min_idx*size
-	PUSH	HL		; Second arg
-
-	; Call compare function
+	; Trampolines: QS_TRAMP: JP compar; QS_SWJ: JP qs_sw2 or qs_swg
+	LD	A,0C3H
+	LD	(QS_TRAMP),A
+	LD	(QS_SWJ),A
 	LD	L,(IX+10)
 	LD	H,(IX+11)
-	CALL	__callhl
-	POP	DE		; Clean up args
-	POP	DE
+	LD	(QS_TRAMP+1),HL
+	LD	HL,(QS_SIZE)
+	LD	DE,qs_swg
+	DEC	H
+	INC	H
+	JR	NZ,qs_e1
+	LD	A,L
+	CP	2
+	JR	NZ,qs_e1
+	LD	DE,qs_sw2
+qs_e1:
+	LD	(QS_SWJ+1),DE
 
-	; If result < 0, update min_idx
-	BIT	7,H
-	JR	Z,_qsort_inner_next
-	; arr[j] < arr[min_idx], update min_idx
-	LD	HL,(_qsort_j)
-	LD	(_qsort_min),HL
+	; QS_MASK = size AND -size (lowest set bit of size)
+	LD	HL,(QS_SIZE)
+	XOR	A
+	SUB	L
+	LD	E,A
+	LD	A,0
+	SBC	A,H
+	LD	D,A			; DE = -size
+	LD	A,E
+	AND	L
+	LD	E,A
+	LD	A,D
+	AND	H
+	LD	D,A
+	LD	(QS_MASK),DE
 
-_qsort_inner_next:
-	LD	HL,(_qsort_j)
-	INC	HL
-	LD	(_qsort_j),HL
-	JR	_qsort_inner
+	; QS_THB = QS_THR*size, 0FFFFH if that overflows
+	LD	DE,(QS_SIZE)
+	LD	HL,0
+	LD	B,QS_THR
+qs_e2:
+	ADD	HL,DE
+	JR	C,qs_e3
+	DJNZ	qs_e2
+	JR	qs_e4
+qs_e3:
+	LD	HL,0FFFFH
+qs_e4:
+	LD	(QS_THB),HL
 
-_qsort_swap:
-	; Swap base[i] with base[min_idx] if min_idx != i
-	LD	HL,(_qsort_i)
-	LD	DE,(_qsort_min)
+	; lo = base, hi = base + (nmemb-1)*size
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	DEC	HL
+	CALL	qs_mul
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(QS_LO),DE
+	LD	(QS_BASE),DE
+	ADD	HL,DE
+	LD	(QS_HI),HL
+	LD	(QS_LAST),HL
+	LD	HL,0
+	ADD	HL,SP
+	LD	(QS_SP0),HL		; SP with an empty partition stack
+
+	; Small array: straight to insertion sort.
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	DE,QS_THR+1
 	OR	A
 	SBC	HL,DE
-	JR	Z,_qsort_outer_next	; Same, no swap needed
+	JP	C,qs_ins
 
-	; Get addresses
-	LD	HL,(_qsort_i)
-	CALL	_qsort_addr
-	LD	(_qsort_ptr1),HL
+; ---- run check: already sorted, or reverse sorted? ----
+	LD	HL,(QS_LO)
+	CALL	qs_cnext		; compar(p, p+size), p = lo
+	BIT	7,H
+	JR	NZ,qs_asc1		; < 0: ascending so far
+	LD	A,H
+	OR	L
+	JR	NZ,qs_desc		; > 0: try descending
+qs_asc1:
+	; ascending: check compar(p, p+size) <= 0 for all p < hi
+	LD	HL,(QS_LO)
+qs_asc:
+	LD	DE,(QS_SIZE)
+	ADD	HL,DE			; p += size
+	EX	DE,HL
+	LD	HL,(QS_HI)
+	OR	A
+	SBC	HL,DE
+	JP	Z,qs_exit		; p == hi: all in order
+	EX	DE,HL			; HL = p
+	PUSH	HL
+	CALL	qs_cnext
+	POP	DE			; DE = p
+	BIT	7,H
+	EX	DE,HL
+	JR	NZ,qs_asc		; < 0
+	LD	A,D
+	OR	E
+	JR	Z,qs_asc		; == 0
+	JR	qs_part			; > 0: not sorted
+qs_desc:
+	; descending: check compar(p, p+size) >= 0 for all p < hi
+	LD	HL,(QS_LO)
+qs_dsc:
+	LD	DE,(QS_SIZE)
+	ADD	HL,DE			; p += size
+	EX	DE,HL
+	LD	HL,(QS_HI)
+	OR	A
+	SBC	HL,DE
+	JR	Z,qs_rev		; p == hi: all in reverse order
+	EX	DE,HL			; HL = p
+	PUSH	HL
+	CALL	qs_cnext
+	POP	DE			; DE = p
+	BIT	7,H
+	EX	DE,HL
+	JR	Z,qs_dsc		; >= 0
+	JR	qs_part			; < 0: not in reverse order
+qs_rev:
+	; reverse the array: swap lo and hi, step inward
+	LD	HL,(QS_LO)
+	LD	DE,(QS_HI)
+qs_rev1:
+	PUSH	HL
+	PUSH	DE
+	CALL	QS_SWJ
+	POP	HL
+	LD	DE,(QS_SIZE)
+	OR	A
+	SBC	HL,DE			; hi -= size
+	EX	(SP),HL			; HL = lo
+	ADD	HL,DE			; lo += size
+	POP	DE			; DE = hi
+	PUSH	HL
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	JR	C,qs_rev1		; while lo < hi
+	JP	qs_exit
 
-	LD	HL,(_qsort_min)
-	CALL	_qsort_addr
-	LD	(_qsort_ptr2),HL
+; ---- partition [QS_LO..QS_HI], more than QS_THR elements ----
+qs_part:
+	; mid = lo + (d - (k odd ? size : 0)) / 2, d = hi - lo = k*size
+	LD	HL,(QS_HI)
+	LD	DE,(QS_LO)
+	OR	A
+	SBC	HL,DE
+	LD	A,(QS_MASK)
+	AND	L
+	LD	B,A
+	LD	A,(QS_MASK+1)
+	AND	H
+	OR	B
+	JR	Z,qs_p1
+	LD	BC,(QS_SIZE)
+	SBC	HL,BC			; CY is clear after OR B
+qs_p1:
+	SRL	H
+	RR	L
+	ADD	HL,DE
+	LD	(QS_MID),HL
 
-	; Swap size bytes
-	LD	L,(IX+8)
-	LD	H,(IX+9)	; HL = size
-	LD	B,H
-	LD	C,L		; BC = size counter
+	; Median of three: order *lo <= *mid <= *hi.
+	CALL	qs_ord			; mid < lo: swap
+	LD	HL,(QS_HI)
+	LD	DE,(QS_MID)
+	CALL	qs_ord			; hi < mid: swap
+	JR	Z,qs_m3
+	LD	HL,(QS_MID)
+	LD	DE,(QS_LO)
+	CALL	qs_ord			; mid < lo: swap
+qs_m3:
+	; l = lo + size, r = hi - size
+	LD	DE,(QS_SIZE)
+	LD	HL,(QS_LO)
+	ADD	HL,DE
+	LD	(QS_L),HL
+	LD	HL,(QS_HI)
+	OR	A
+	SBC	HL,DE
+	LD	(QS_R),HL
 
-_qsort_swap_loop:
-	LD	A,B
-	OR	C
-	JR	Z,_qsort_outer_next
-
-	LD	HL,(_qsort_ptr1)
-	LD	D,(HL)		; D = byte from ptr1
-	LD	HL,(_qsort_ptr2)
-	LD	E,(HL)		; E = byte from ptr2
-	LD	(HL),D		; Store D at ptr2
-	LD	HL,(_qsort_ptr1)
-	LD	(HL),E		; Store E at ptr1
-
-	; Advance pointers
-	LD	HL,(_qsort_ptr1)
-	INC	HL
-	LD	(_qsort_ptr1),HL
-	LD	HL,(_qsort_ptr2)
-	INC	HL
-	LD	(_qsort_ptr2),HL
-
-	DEC	BC
-	JR	_qsort_swap_loop
-
-_qsort_outer_next:
-	LD	HL,(_qsort_i)
-	INC	HL
-	LD	(_qsort_i),HL
-	JP	_qsort_outer
-
-_qsort_done:
+qs_scan:
+	; while (compar(l, mid) < 0) l += size;
+	LD	HL,(QS_L)
+qs_sl:
+	PUSH	HL			; keep l
+	LD	DE,(QS_MID)
+	PUSH	DE			; b = mid
+	PUSH	HL			; a = l
+	CALL	QS_TRAMP
 	POP	DE
+	POP	DE
+	BIT	7,H
+	POP	DE			; DE = l
+	JR	Z,qs_sl9
+	LD	HL,(QS_SIZE)
+	ADD	HL,DE
+	JP	qs_sl
+qs_sl9:
+	LD	(QS_L),DE
+
+	; while (compar(mid, r) < 0) r -= size;
+	LD	HL,(QS_R)
+qs_sr:
+	PUSH	HL			; keep r
+	PUSH	HL			; b = r
+	LD	HL,(QS_MID)
+	PUSH	HL			; a = mid
+	CALL	QS_TRAMP
+	POP	DE
+	POP	DE
+	BIT	7,H
+	POP	HL			; HL = r
+	JR	Z,qs_sr9
+	LD	DE,(QS_SIZE)
+	OR	A
+	SBC	HL,DE
+	JP	qs_sr
+qs_sr9:
+	LD	(QS_R),HL
+	EX	DE,HL			; DE = r
+	LD	HL,(QS_L)
+	OR	A
+	SBC	HL,DE
+	JR	Z,qs_eq			; l == r: step both and stop
+	JR	NC,qs_split		; l > r: done
+	; l < r: swap, keep QS_MID on the pivot
+	ADD	HL,DE			; HL = l, DE = r
+	CALL	QS_SWJ
+	LD	HL,(QS_MID)
+	LD	DE,(QS_L)
+	OR	A
+	SBC	HL,DE
+	JR	NZ,qs_pv1
+	LD	HL,(QS_R)
+	LD	(QS_MID),HL
+	JR	qs_adv
+qs_pv1:
+	LD	HL,(QS_MID)
+	LD	DE,(QS_R)
+	OR	A
+	SBC	HL,DE
+	JR	NZ,qs_adv
+	LD	HL,(QS_L)
+	LD	(QS_MID),HL
+qs_adv:
+	CALL	qs_step
+	; loop while l <= r  (qs_step leaves DE = l, HL = r)
+	OR	A
+	SBC	HL,DE
+	JP	NC,qs_scan
+	JR	qs_split
+
+qs_eq:
+	CALL	qs_step
+
+qs_split:
+	; Parts: [lo..r] and [l..hi]; byte lengths ld = r-lo, rd = hi-l
+	; (a part has QS_THR elements or fewer when its length < QS_THB).
+	LD	HL,(QS_R)
+	LD	DE,(QS_LO)
+	OR	A
+	SBC	HL,DE
+	LD	(QS_LD),HL
+	LD	HL,(QS_HI)
+	LD	DE,(QS_L)
+	OR	A
+	SBC	HL,DE
+	LD	(QS_RD),HL
+	LD	DE,(QS_THB)
+	OR	A
+	SBC	HL,DE
+	JR	NC,qs_rbig
+	; right part small: if the left part is small too, pop
+	LD	HL,(QS_LD)
+	OR	A
+	SBC	HL,DE
+	JR	C,qs_pop
+qs_goleft:
+	LD	HL,(QS_R)
+	LD	(QS_HI),HL
+	JP	qs_part
+qs_rbig:
+	; right part big.  Left part small: continue with the right part.
+	LD	HL,(QS_LD)
+	OR	A
+	SBC	HL,DE
+	JR	C,qs_goright
+	; both big: push the larger, continue with the smaller
+	LD	HL,(QS_LD)
+	LD	DE,(QS_RD)
+	OR	A
+	SBC	HL,DE
+	JR	C,qs_pushr		; ld < rd: push right
+	; push left (lo, r), continue with the right part
+	LD	HL,(QS_R)
+	PUSH	HL
+	LD	HL,(QS_LO)
+	PUSH	HL
+qs_goright:
+	LD	HL,(QS_L)
+	LD	(QS_LO),HL
+	JP	qs_part
+qs_pushr:
+	; push right (l, hi), continue with the left part
+	LD	HL,(QS_HI)
+	PUSH	HL
+	LD	HL,(QS_L)
+	PUSH	HL
+	JR	qs_goleft
+
+qs_pop:
+	LD	HL,(QS_SP0)
+	OR	A
+	SBC	HL,SP
+	JR	Z,qs_ins0
+	POP	HL
+	LD	(QS_LO),HL
+	POP	HL
+	LD	(QS_HI),HL
+	JP	qs_part
+
+; ---- final insertion sort over the whole array ----
+qs_ins0:
+	; lo = base, hi = last element
+	LD	HL,(QS_BASE)
+	LD	(QS_LO),HL
+	LD	HL,(QS_LAST)
+	LD	(QS_HI),HL
+qs_ins:
+	LD	HL,(QS_LO)
+	LD	(QS_L),HL		; p = lo
+qs_iouter:
+	LD	HL,(QS_L)
+	LD	DE,(QS_SIZE)
+	ADD	HL,DE			; p += size
+	LD	(QS_L),HL
+	EX	DE,HL
+	LD	HL,(QS_HI)
+	OR	A
+	SBC	HL,DE
+	JR	C,qs_exit		; p > hi: done
+	EX	DE,HL			; HL = q = p
+qs_iinner:
+	; while (q > lo && compar(q - size, q) > 0) { swap; q -= size; }
+	LD	DE,(QS_LO)
+	OR	A
+	SBC	HL,DE
+	JR	Z,qs_iouter		; q == lo
+	ADD	HL,DE
+	PUSH	HL			; keep q
+	PUSH	HL			; b = q
+	LD	DE,(QS_SIZE)
+	OR	A
+	SBC	HL,DE
+	PUSH	HL			; a = q - size
+	CALL	QS_TRAMP
+	POP	DE
+	POP	DE
+	BIT	7,H
+	JR	NZ,qs_ino		; < 0: in place
+	LD	A,H
+	OR	L
+	JR	Z,qs_ino		; == 0: in place
+	POP	DE			; DE = q
+	LD	HL,(QS_SIZE)
+	EX	DE,HL			; HL = q, DE = size
+	OR	A
+	SBC	HL,DE			; HL = q - size
+	PUSH	HL			; new q
+	ADD	HL,DE
+	EX	DE,HL			; DE = q
+	POP	HL			; HL = q - size
+	PUSH	HL
+	CALL	QS_SWJ
+	POP	HL			; HL = new q
+	JR	qs_iinner
+qs_ino:
+	POP	DE
+	JP	qs_iouter
+
+qs_exit:
+	; Restore the static working area and return.
+	PUSH	IX
+	POP	HL
+	LD	DE,-(QS_NV+2)
+	ADD	HL,DE
+	LD	SP,HL			; SP = save area
+	LD	DE,QS_VARS
+	LD	BC,QS_NV
+	LDIR
+	LD	HL,QS_NV
+	ADD	HL,SP
+	LD	SP,HL
 	POP	BC
 	POP	IX
 	RET
 
-; Internal: calculate base + index*size
-; Input: HL = index
-; Output: HL = address
-; Uses: size from IX+8
-_qsort_addr:
+; If compar(HL, DE) < 0, swap the elements at HL and DE.
+; Returns NZ if it swapped, Z if not.  Clobbers A, BC, DE, HL.
+qs_ord:
+	PUSH	HL
 	PUSH	DE
-	PUSH	BC
-	; Multiply HL by size
-	LD	E,(IX+8)
-	LD	D,(IX+9)	; DE = size
-	CALL	__mul16		; HL = index * size
-	; Add base
-	LD	E,(IX+4)
-	LD	D,(IX+5)
-	ADD	HL,DE
-	POP	BC
+	PUSH	DE			; b
+	PUSH	HL			; a
+	CALL	QS_TRAMP
 	POP	DE
+	POP	DE
+	BIT	7,H
+	POP	DE
+	POP	HL
+	RET	Z
+	CALL	QS_SWJ
+	OR	1			; NZ: swapped
+	RET
+
+; HL = compar(HL, HL + size)
+qs_cnext:
+	EX	DE,HL
+	LD	HL,(QS_SIZE)
+	ADD	HL,DE
+	PUSH	HL			; b = p + size
+	PUSH	DE			; a = p
+	CALL	QS_TRAMP
+	POP	DE
+	POP	DE
+	RET
+
+; l += size; r -= size.  Returns DE = l, HL = r.
+qs_step:
+	LD	DE,(QS_SIZE)
+	LD	HL,(QS_L)
+	ADD	HL,DE
+	LD	(QS_L),HL
+	LD	HL,(QS_R)
+	OR	A
+	SBC	HL,DE
+	LD	(QS_R),HL
+	LD	DE,(QS_L)
+	RET
+
+; HL = HL * QS_SIZE  (clobbers A, BC, DE)
+qs_mul:
+	EX	DE,HL
+	LD	BC,(QS_SIZE)
+	LD	HL,0
+qs_mul1:
+	SRL	B
+	RR	C
+	JR	NC,qs_mul2
+	ADD	HL,DE
+qs_mul2:
+	LD	A,B
+	OR	C
+	RET	Z
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	JR	qs_mul1
+
+; Swap the elements at HL and DE (reached through QS_SWJ).
+; Clobbers A, BC, DE, HL.
+qs_sw2:
+	; size 2
+	LD	C,(HL)
+	LD	A,(DE)
+	LD	(HL),A
+	LD	A,C
+	LD	(DE),A
+	INC	HL
+	INC	DE
+	LD	C,(HL)
+	LD	A,(DE)
+	LD	(HL),A
+	LD	A,C
+	LD	(DE),A
+	RET
+qs_swg:
+	; any size
+	LD	BC,(QS_SIZE)
+qs_swg1:
+	LD	A,(DE)
+	LDI				; (DE) <- (HL), DE++, HL++, BC--
+	DEC	HL
+	LD	(HL),A
+	INC	HL
+	JP	PE,qs_swg1		; P/V set while BC != 0
 	RET
 
 ; ============================================================
 ; void *bsearch(const void *key, const void *base, size_t nmemb,
 ;               size_t size, int (*compar)(const void *, const void *))
-; Binary search in sorted array
+; Binary search in a sorted array.  Calls compar(key, element).
 ; Stack: key(IX+4), base(IX+6), nmemb(IX+8), size(IX+10), compar(IX+12)
-; Returns: pointer to found element, or NULL
+; Locals: low(IX-4), high(IX-6), mid(IX-8) -- on the stack, so bsearch
+; is reentrant (a comparator can call bsearch or qsort).
+; Returns: pointer to a matching element, or NULL.  Preserves BC and IX.
 ; ============================================================
 	PUBLIC	_bsearch
 _bsearch:
@@ -13628,101 +13936,119 @@ _bsearch:
 	LD	IX,0
 	ADD	IX,SP
 	PUSH	BC
-	PUSH	DE
-
-	; low = 0
 	LD	HL,0
-	LD	(_bsearch_low),HL
-
-	; high = nmemb
+	PUSH	HL			; low = 0      (IX-4)
 	LD	L,(IX+8)
 	LD	H,(IX+9)
-	LD	(_bsearch_high),HL
+	PUSH	HL			; high = nmemb (IX-6)
+	PUSH	HL			; mid          (IX-8)
 
-_bsearch_loop:
-	; Check if low >= high
-	LD	HL,(_bsearch_low)
-	LD	DE,(_bsearch_high)
+bs_loop:
+	; if (low >= high) not found
+	LD	L,(IX-4)
+	LD	H,(IX-3)
+	LD	E,(IX-6)
+	LD	D,(IX-5)
 	OR	A
 	SBC	HL,DE
-	JP	NC,_bsearch_notfound	; low >= high
-
-	; mid = (low + high) / 2
-	LD	HL,(_bsearch_low)
-	LD	DE,(_bsearch_high)
+	JR	NC,bs_nf
+	; mid = (low + high) / 2, with the 17th bit kept
+	ADD	HL,DE			; HL = low again
+	ADD	HL,DE			; CY:HL = low + high
+	RR	H
+	RR	L
+	LD	(IX-8),L
+	LD	(IX-7),H
+	; HL = base + mid*size
+	EX	DE,HL			; DE = mid
+	LD	C,(IX+10)
+	LD	B,(IX+11)		; BC = size
+	LD	HL,0
+bs_mul:
+	SRL	B
+	RR	C
+	JR	NC,bs_mul2
 	ADD	HL,DE
-	SRL	H
-	RR	L		; HL = (low + high) / 2
-	LD	(_bsearch_mid),HL
-
-	; Calculate address of base[mid]
-	LD	E,(IX+10)
-	LD	D,(IX+11)	; DE = size
-	CALL	__mul16		; HL = mid * size
+bs_mul2:
+	LD	A,B
+	OR	C
+	JR	Z,bs_mul3
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	JR	bs_mul
+bs_mul3:
 	LD	E,(IX+6)
 	LD	D,(IX+7)
-	ADD	HL,DE		; HL = base + mid*size
-	PUSH	HL		; Save mid address
-
-	; Call compare(key, &base[mid])
-	PUSH	HL		; Second arg: &base[mid]
+	ADD	HL,DE			; HL = &base[mid]
+	PUSH	HL			; keep element address
+	PUSH	HL			; b = element
 	LD	L,(IX+4)
 	LD	H,(IX+5)
-	PUSH	HL		; First arg: key
+	PUSH	HL			; a = key
 	LD	L,(IX+12)
 	LD	H,(IX+13)
-	CALL	__callhl
-	POP	DE		; Clean up first arg
-	POP	DE		; Clean up second arg
-
-	POP	DE		; Restore mid address into DE
-
-	; Check result
+	CALL	bs_jphl
+	POP	DE
+	POP	DE
+	POP	DE			; DE = element address
 	LD	A,H
 	OR	L
-	JR	Z,_bsearch_found	; cmp == 0, found!
-
+	JR	Z,bs_found
 	BIT	7,H
-	JR	NZ,_bsearch_left	; cmp < 0, search left
-
-	; cmp > 0, search right: low = mid + 1
-	LD	HL,(_bsearch_mid)
+	JR	NZ,bs_left
+	; key > element: low = mid + 1
+	LD	L,(IX-8)
+	LD	H,(IX-7)
 	INC	HL
-	LD	(_bsearch_low),HL
-	JR	_bsearch_loop
+	LD	(IX-4),L
+	LD	(IX-3),H
+	JR	bs_loop
+bs_left:
+	; key < element: high = mid
+	LD	L,(IX-8)
+	LD	H,(IX-7)
+	LD	(IX-6),L
+	LD	(IX-5),H
+	JR	bs_loop
 
-_bsearch_left:
-	; cmp < 0, search left: high = mid
-	LD	HL,(_bsearch_mid)
-	LD	(_bsearch_high),HL
-	JR	_bsearch_loop
-
-_bsearch_found:
-	; Return mid address (saved in DE)
+bs_found:
 	EX	DE,HL
-	JR	_bsearch_ret
-
-_bsearch_notfound:
-	LD	HL,0		; Return NULL
-
-_bsearch_ret:
-	POP	DE
+	JR	bs_ret
+bs_nf:
+	LD	HL,0
+bs_ret:
+	LD	SP,IX
+	DEC	SP
+	DEC	SP
 	POP	BC
 	POP	IX
 	RET
 
+bs_jphl:
+	JP	(HL)
 
 	DSEG
-; qsort working storage
-_qsort_i:	DS	2
-_qsort_j:	DS	2
-_qsort_min:	DS	2
-_qsort_ptr1:	DS	2
-_qsort_ptr2:	DS	2
-; bsearch working storage
-_bsearch_low:	DS	2
-_bsearch_high:	DS	2
-_bsearch_mid:	DS	2
+; qsort working storage.  qsort saves these QS_NV bytes on its stack on
+; entry and restores them on exit (see "Reentrancy" above).
+QS_VARS:
+QS_TRAMP:	DS	3	; JP compar
+QS_SWJ:		DS	3	; JP qs_sw2 or qs_swg
+QS_SIZE:	DS	2	; element size
+QS_MASK:	DS	2	; lowest set bit of the element size
+QS_THB:		DS	2	; QS_THR * size (bytes), 0FFFFH on overflow
+QS_LO:		DS	2	; current part: first element
+QS_HI:		DS	2	; current part: last element
+QS_MID:		DS	2	; pivot element
+QS_L:		DS	2	; left scan pointer (insertion sort: p)
+QS_R:		DS	2	; right scan pointer
+QS_LD:		DS	2	; left part length - size, in bytes
+QS_RD:		DS	2	; right part length - size, in bytes
+QS_SP0:		DS	2	; SP with an empty partition stack
+QS_BASE:	DS	2	; first element of the array
+QS_LAST:	DS	2	; last element of the array
+QS_END:
+QS_NV	EQU	QS_END-QS_VARS
 
 
 ; ============================================================
@@ -15772,26 +16098,16 @@ _rand_seed:	DW	1	; Default seed = 1
 ; ============================================================
 	PUBLIC	_strlen
 _strlen:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = string pointer
-	LD	BC,0		; Counter
-
-_strlen_loop:
-	LD	A,(HL)
-	OR	A
-	JR	Z,_strlen_done
-	INC	HL
-	INC	BC
-	JR	_strlen_loop
-
-_strlen_done:
-	LD	H,B
-	LD	L,C
-	POP	IX
+	POP	DE		; return address
+	POP	HL		; HL = s
+	PUSH	HL
+	PUSH	DE
+	XOR	A
+	LD	B,A
+	LD	C,A
+	CPIR			; BC = -(length + 1)
+	LD	HL,-1
+	SBC	HL,BC		; carry is 0 (XOR A; CPIR keeps it)
 	RET
 
 
@@ -15802,28 +16118,19 @@ _strlen_done:
 ; ============================================================
 	PUBLIC	_strcpy
 _strcpy:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	E,(IX+4)	; DE = dest
-	LD	D,(IX+5)
-	LD	L,(IX+6)	; HL = src
-	LD	H,(IX+7)
-
+	POP	BC		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	PUSH	HL
+	PUSH	DE
+	PUSH	BC
+	PUSH	DE		; return value
+	XOR	A
 _strcpy_loop:
-	LD	A,(HL)		; Get source char
-	LD	(DE),A		; Store to dest
-	OR	A
-	JR	Z,_strcpy_done	; Done if null
-	INC	HL
-	INC	DE
-	JR	_strcpy_loop
-
-_strcpy_done:
-	LD	L,(IX+4)	; Return dest
-	LD	H,(IX+5)
-	POP	IX
+	CP	(HL)		; Z at the terminator; LDI keeps Z
+	LDI
+	JR	NZ,_strcpy_loop
+	POP	HL
 	RET
 
 ; ============================================================
@@ -15884,42 +16191,29 @@ _strncpy_done:
 ; ============================================================
 	PUBLIC	_strcmp
 _strcmp:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	E,(IX+4)	; DE = s1
-	LD	D,(IX+5)
-	LD	L,(IX+6)	; HL = s2
-	LD	H,(IX+7)
-
+	POP	BC		; return address
+	POP	DE		; DE = s1
+	POP	HL		; HL = s2
+	PUSH	HL
+	PUSH	DE
+	PUSH	BC
 _strcmp_loop:
-	LD	A,(DE)		; Get s1 char
-	LD	B,(HL)		; Get s2 char
-	SUB	B		; Compare
-	JR	NZ,_strcmp_diff	; Different
-
-	LD	A,(DE)		; Check if null
-	OR	A
-	JR	Z,_strcmp_equal	; Both null, equal
-
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,_strcmp_diff
 	INC	DE
 	INC	HL
-	JR	_strcmp_loop
-
-_strcmp_equal:
-	LD	HL,0
-	POP	IX
-	RET
-
-_strcmp_diff:
-	; A contains s1[i] - s2[i]
-	; Sign-extend to HL
+	OR	A
+	JR	NZ,_strcmp_loop
+	LD	H,A		; equal: 0
 	LD	L,A
-	RLA			; Sign to carry
-	SBC	A,A		; A = 0xFF if neg, 0 if pos
+	RET
+_strcmp_diff:
+	; Return s1[i] - s2[i] as unsigned chars (-255..255)
+	SUB	(HL)
+	LD	L,A
+	SBC	A,A		; borrow: s1[i] < s2[i]
 	LD	H,A
-	POP	IX
 	RET
 
 ; ============================================================
@@ -15968,9 +16262,11 @@ _strncmp_equal:
 	RET
 
 _strncmp_diff:
+	; A = s1[i] - s2[i] (mod 256), CY set if s1[i] < s2[i] as unsigned
+	; char.  HL = CY:A sign-extended = (unsigned char)s1[i] -
+	; (unsigned char)s2[i], -255..255, as C requires.
 	LD	L,A
-	RLA
-	SBC	A,A
+	SBC	A,A		; 0FFH if CY, else 0
 	LD	H,A
 	POP	BC
 	POP	IX
@@ -15983,38 +16279,25 @@ _strncmp_diff:
 ; ============================================================
 	PUBLIC	_strcat
 _strcat:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	E,(IX+4)	; DE = dest
-	LD	D,(IX+5)
-
-	; Find end of dest
-_strcat_find:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_strcat_copy
-	INC	DE
-	JR	_strcat_find
-
-_strcat_copy:
-	LD	L,(IX+6)	; HL = src
-	LD	H,(IX+7)
-
+	POP	BC		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	PUSH	HL
+	PUSH	DE
+	PUSH	BC
+	PUSH	DE		; return value
+	EX	DE,HL		; HL = dest, DE = src
+	XOR	A
+	LD	B,A
+	LD	C,A
+	CPIR			; HL = one past the terminator of dest
+	DEC	HL
+	EX	DE,HL		; DE = end of dest, HL = src
 _strcat_loop:
-	LD	A,(HL)
-	LD	(DE),A
-	OR	A
-	JR	Z,_strcat_done
-	INC	HL
-	INC	DE
-	JR	_strcat_loop
-
-_strcat_done:
-	LD	L,(IX+4)	; Return dest
-	LD	H,(IX+5)
-	POP	IX
+	CP	(HL)		; A = 0
+	LDI
+	JR	NZ,_strcat_loop
+	POP	HL
 	RET
 
 ; ============================================================
@@ -16024,30 +16307,21 @@ _strcat_done:
 ; ============================================================
 	PUBLIC	_strchr
 _strchr:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)	; HL = s
-	LD	H,(IX+5)
-	LD	C,(IX+6)	; C = char to find
-
+	POP	BC		; return address
+	POP	HL		; HL = s
+	POP	DE		; E = char to find
+	PUSH	DE
+	PUSH	HL
+	PUSH	BC
 _strchr_loop:
 	LD	A,(HL)
-	CP	C
-	JR	Z,_strchr_found	; Found it
-	OR	A
-	JR	Z,_strchr_notfound	; End of string
+	CP	E
+	RET	Z		; HL points to the char
 	INC	HL
-	JR	_strchr_loop
-
-_strchr_found:
-	POP	IX
-	RET			; HL already points to char
-
-_strchr_notfound:
-	LD	HL,0		; Return NULL
-	POP	IX
+	OR	A
+	JR	NZ,_strchr_loop
+	LD	H,A		; end of string: NULL
+	LD	L,A
 	RET
 
 ; ============================================================

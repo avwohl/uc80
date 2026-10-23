@@ -1,0 +1,28 @@
+; rt_neg32.mac - 32-bit negate
+; A module of its own: rt_float (linked from the library for printf)
+; needs it, and it should not bring in the rest of rt_arith32.
+
+	.Z80
+
+	CSEG
+
+; ============================================================
+; 32-bit negate: DEHL = -DEHL
+; ============================================================
+	PUBLIC	__neg32
+__neg32:
+	XOR	A
+	SUB	L
+	LD	L,A
+	LD	A,0
+	SBC	A,H
+	LD	H,A
+	LD	A,0
+	SBC	A,E
+	LD	E,A
+	LD	A,0
+	SBC	A,D
+	LD	D,A
+	RET
+
+	END

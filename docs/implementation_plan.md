@@ -128,7 +128,15 @@ long double	32 bits	same as float for Z80
 - rt_arith32.mac - 32-bit arithmetic (mul, div, mod, shifts)
 - rt_arith64.mac - 64-bit arithmetic (all operations via __acc64/__tmp64)
 - rt_float.mac - IEEE 754 float (add, sub, mul, div, compare, conversions)
+- rt_mul.mac - multiply cores __mul8x16 and __mul16_32 (rt_arith16, rt_arith32 and rt_float use them)
+- rt_div8.mac - division steps __dv8n and __dv8w, one quotient byte each (rt_arith16 and rt_arith32 use them)
+- rt_neg32.mac - __neg32
+- rt_tmp32.mac - __tmp32, the right operand of the 32-bit helpers
 - rt_setjmp.mac - setjmp/longjmp
+
+The small modules keep library links small.  For example, printf links
+rt_float, and rt_float then needs only rt_mul, rt_neg32 and rt_tmp32,
+not all of rt_arith16 and rt_arith32.
 
 ### Libc (lib/lc/)
 44+ modules, each a separate .mac file. Key modules:

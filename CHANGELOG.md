@@ -6,6 +6,21 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Changed
+
+- **Faster `qsort`.** `qsort` was a selection sort (n² comparisons, 37
+  billion T-states for 5,000 equal ints) and sorted in descending order.
+  It is now a non-recursive quicksort with a median-of-three pivot, a
+  partition that stops on equal keys, insertion sort for parts of 8 or
+  fewer elements, and a check for sorted or reversed input. 5,000 equal
+  ints now take 2.6 million T-states. A comparator can call `qsort()`.
+- **Faster runtime helpers.** 16-bit multiply is 3 to 5 times faster,
+  16-bit divide and modulo about 3 times, 32-bit multiply and divide
+  about 10 times, and long shifts up to 8 times. `strlen`, `strcpy`,
+  `strcmp`, `memcpy` and `memset` are faster too. The new modules
+  `rt_mul`, `rt_div8`, `rt_neg32` and `rt_tmp32` hold shared pieces, so
+  a program links only the pieces it uses.
+
 ### Fixed
 
 - **Every program linked about 9 KB of libc it never called.** uc80

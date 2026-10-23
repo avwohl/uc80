@@ -5,6 +5,7 @@
 
 	EXTRN	__tmp32
 	EXTRN	__neg32
+	EXTRN	__mul16_32
 
 	CSEG
 
@@ -536,54 +537,7 @@ __fmul_man_no_overflow:
 	LD	(__fman1+2),DE
 	RET
 
-; Helper: 16-bit × 16-bit = 32-bit multiplication
-; Input: BC = multiplicand, DE = multiplier
-; Output: DEHL = 32-bit product (DE=high, HL=low)
-; Uses __mul_mcand for 32-bit multiplicand storage
-__mul16_32:
-	PUSH	BC		; Save original BC
-	PUSH	IX
-	; Store multiplicand in memory for 32-bit tracking
-	LD	(__mul_mcand),BC	; Low word
-	LD	BC,0
-	LD	(__mul_mcand+2),BC	; High word = 0
-	LD	IX,0		; Result high word
-	LD	HL,0		; Result low word
-	LD	A,16		; Loop counter
-__mul16_32_loop:
-	; Shift multiplier right, check LSB
-	SRL	D
-	RR	E
-	JR	NC,__mul16_32_noadd
-	; Add 32-bit multiplicand to 32-bit result (IX:HL)
-	LD	BC,(__mul_mcand)
-	ADD	HL,BC
-	LD	BC,(__mul_mcand+2)
-	PUSH	HL		; Save low result
-	PUSH	IX
-	POP	HL		; HL = result high
-	ADC	HL,BC		; Add multiplicand high with carry
-	PUSH	HL
-	POP	IX		; IX = new result high
-	POP	HL		; Restore low result
-__mul16_32_noadd:
-	; Shift 32-bit multiplicand left
-	LD	BC,(__mul_mcand)
-	SLA	C
-	RL	B
-	LD	(__mul_mcand),BC
-	LD	BC,(__mul_mcand+2)
-	RL	C		; Carry from low word
-	RL	B
-	LD	(__mul_mcand+2),BC
-	DEC	A
-	JR	NZ,__mul16_32_loop
-	; Move high word from IX to DE
-	PUSH	IX
-	POP	DE
-	POP	IX
-	POP	BC
-	RET
+; __mul16_32 (DEHL = BC * DE) lives in rt_mul.mac.
 
 ; ============================================================
 ; Float Division: DEHL = DEHL / (__tmp32)
@@ -1413,9 +1367,6 @@ __fman2:
 __fdiv_rem:
 	DW	0,0
 
-; Multiplication work area
-__mul_mcand:
-	DW	0,0
 
 ; Temporary storage for partial products in float multiplication
 __fmul_hh:

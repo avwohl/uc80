@@ -1,0 +1,12 @@
+; rt_tmp32.mac - __tmp32, the right operand of the 32-bit helpers
+; A data module of its own: many libc modules use __tmp32, and
+; linking one of them should not bring in rt_arith32.
+
+	.Z80
+
+	DSEG
+	PUBLIC	__tmp32
+__tmp32:
+	DW	0,0
+
+	END
