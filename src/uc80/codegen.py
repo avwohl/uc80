@@ -9266,6 +9266,13 @@ class CodeGenerator:
                 and self._gen_char_assign_a(expr)):
             return
 
+        # A bit-field inside one byte: read-modify-write of that byte.
+        if isinstance(expr.left, (ast.Member, ast.ArrowMember)):
+            fast = self._bf_fast_pos(expr.left)
+            if (fast is not None
+                    and self._gen_bitfield_assign_byte(expr, fast[0], fast[1])):
+                return
+
         # 64-bit assignment path
         if target_is_64bit:
             self._gen_assignment_64(expr)
@@ -10428,12 +10435,14 @@ class CodeGenerator:
                     assign = ast.BinaryOp(op="=", left=expr.operand, right=inner)
                     if expr is self._discard_expr:
                         self._discard_expr = assign
-                    if not expr.is_prefix:
+                    keep_old = (not expr.is_prefix
+                                and assign is not self._discard_expr)
+                    if keep_old:
                         # Postfix: save old value first
                         self.gen_member(expr.operand)
                         self.ctx.emit_instr("push", "HL")
                     self.gen_assignment(assign)
-                    if not expr.is_prefix:
+                    if keep_old:
                         self.ctx.emit_instr("pop", "HL")
                     return
 
@@ -11615,6 +11624,12 @@ class CodeGenerator:
                 self.gen_expr(val, force_long)
                 return
 
+        # A bit-field inside one byte: load that byte, extract in A.
+        pos = self._bf_fast_pos(expr)
+        if pos is not None:
+            self._gen_bf_value(expr, pos[0], pos[1])
+            return
+
         # Generate address of the member
         self._gen_address(expr)
 
@@ -11697,6 +11712,280 @@ class CodeGenerator:
                             anon_name, struct_type.members, struct_type.is_union)
                         return self.ctx.bitfield_info.get(key)
         return None
+
+    # ---- bit-fields inside one byte -------------------------------------
+    #
+    # A field that lies within one byte of its storage unit (the layout is
+    # little-endian: bit n of the unit is bit n%8 of byte n//8) is read and
+    # written as that byte alone: no 16-bit word, no shift loop.
+
+    def _bf_fast_pos(self, m):
+        """For a member ``m`` that is a bit-field lying within one byte of
+        a 1- or 2-byte storage unit (and not the whole unit): the tuple
+        (bitfield info, (byte index, bit position in the byte)).  Else
+        None."""
+        if not isinstance(m, (ast.Member, ast.ArrowMember)):
+            return None
+        if isinstance(m.obj, (ast.Compound, ast.Call, ast.CallNoArgs)):
+            return None
+        bf = self._get_bitfield_info(m)
+        if bf is None or bf.storage_size not in (1, 2):
+            return None
+        if bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8:
+            return None
+        k = bf.bit_offset & 7
+        if k + bf.bit_width > 8:
+            return None
+        return bf, (bf.bit_offset >> 3, k)
+
+    def _bf_direct(self, m, idx: int):
+        """The byte ``idx`` of the storage unit of ``m`` when ``m`` is a
+        member of a named struct object: ('label', 'sym+off') for a global
+        or shared-storage object, ('ix', frame offset) for a local.  Else
+        None."""
+        if not (isinstance(m, ast.Member) and isinstance(m.obj, ast.Identifier)):
+            return None
+        sym = self.ctx.lookup(m.obj.name.text)
+        st = self._get_expr_type(m.obj)
+        if sym is None or not is_struct_type(st):
+            return None
+        off = self._resolve_member_offset(st, m.member) + idx
+        if sym.is_global:
+            return ("label", self._label_plus(sym.label(), off))
+        if sym.uses_shared_storage:
+            return ("label", f"??AUTO+{sym.shared_offset + off}")
+        return ("ix", sym.offset + off)
+
+    def _gen_bf_addr(self, m, idx: int, keep_de: bool = False) -> bool:
+        """HL = the address of byte ``idx`` of the storage unit of ``m``.
+        With keep_de, DE must survive: False (nothing emitted) when no
+        such shape exists."""
+        if self._gen_address_keep_de(m, extra=idx, allow_bf=True):
+            return True
+        if keep_de:
+            return False
+        self._gen_address(m)
+        for _ in range(idx):
+            self.ctx.emit_instr("inc", "HL")
+        return True
+
+    def _bf_addr_keep_de_ok(self, m, idx: int) -> bool:
+        n = len(self.ctx.lines)
+        ok = self._gen_address_keep_de(m, extra=idx, allow_bf=True)
+        del self.ctx.lines[n:]
+        return ok
+
+    def _gen_bf_load_a(self, m, idx: int) -> None:
+        """A = byte ``idx`` of the storage unit of ``m``.  Clobbers HL
+        (and BC for a far local)."""
+        e = self.ctx.emit_instr
+        d = self._bf_direct(m, idx)
+        if d is not None and d[0] == "label":
+            e("ld", f"A,({d[1]})")
+        elif d is not None:
+            base = self._ix_reach(d[1], 1)
+            e("ld", f"A,({ix_off(base)})")
+            self._ix_release(d[1], 1)
+        else:
+            self._gen_bf_addr(m, idx)
+            e("ld", "A,(HL)")
+
+    def _emit_a_rot_right(self, n: int) -> None:
+        """Rotate A right by n bits (any n), the short way round."""
+        n &= 7
+        if n <= 4:
+            for _ in range(n):
+                self.ctx.emit_instr("rrca")
+        else:
+            for _ in range(8 - n):
+                self.ctx.emit_instr("rlca")
+
+    @staticmethod
+    def _rot_cost(n: int) -> int:
+        n &= 7
+        return min(n, 8 - n)
+
+    def _emit_bf_extract_a(self, k: int, w: int, signed: bool) -> None:
+        """A = the field of w bits at bit k of the byte in A, zero- or
+        sign-extended to 8 bits.  Rotates by constant counts, no loops."""
+        e = self.ctx.emit_instr
+        if w == 8:
+            return
+        mask = (1 << w) - 1
+        if not signed:
+            if k == 1 and w == 7:
+                e("srl", "A")
+                return
+            self._emit_a_rot_right(k)
+            e("and", str(mask))
+            return
+        sign = 1 << (w - 1)
+        cost_a = self._rot_cost(k) * 4 + 21
+        cost_b = self._rot_cost(k + w) * 4 + 8 * (8 - w)
+        cost_c = self._rot_cost(k) * 4 + 15 if w == 1 else 1 << 30
+        best = min(cost_a, cost_b, cost_c)
+        if best == cost_c:
+            self._emit_a_rot_right(k)
+            e("and", "1")
+            e("neg")
+        elif best == cost_b:
+            # Field to the top of A, then arithmetic shifts bring it back
+            # down with the sign.
+            self._emit_a_rot_right(k + w)
+            for _ in range(8 - w):
+                e("sra", "A")
+        else:
+            self._emit_a_rot_right(k)
+            e("and", str(mask))
+            e("xor", str(sign))
+            e("sub", str(sign))
+
+    def _gen_bf_value(self, m, bf: BitfieldInfo, pos) -> None:
+        """HL = the value of the in-byte bit-field ``m``."""
+        idx, k = pos
+        self._gen_bf_load_a(m, idx)
+        self._emit_bf_extract_a(k, bf.bit_width, bf.is_signed)
+        self._emit_a_to_hl(bf.is_signed)
+
+    def _gen_bf_value_a(self, m, bf: BitfieldInfo, pos) -> None:
+        """A = the value of the in-byte bit-field ``m`` (8-bit, zero- or
+        sign-extended)."""
+        idx, k = pos
+        self._gen_bf_load_a(m, idx)
+        self._emit_bf_extract_a(k, bf.bit_width, bf.is_signed)
+
+    def _gen_bf_truth(self, m, bf: BitfieldInfo, pos) -> str:
+        """Flags for the truth of the in-byte bit-field ``m``: a 1-bit
+        field with ``bit n,(HL)`` (or ``(IX+d)``), else the byte ANDed
+        with the field's mask.  Returns the condition code, NZ."""
+        e = self.ctx.emit_instr
+        idx, k = pos
+        fmask = ((1 << bf.bit_width) - 1) << k
+        if bf.bit_width == 1:
+            d = self._bf_direct(m, idx)
+            if d is not None and d[0] == "ix":
+                base = self._ix_reach(d[1], 1)
+                e("bit", f"{k},({ix_off(base)})")
+                self._ix_release(d[1], 1)
+            else:
+                self._gen_bf_addr(m, idx)
+                e("bit", f"{k},(HL)")
+            return "NZ"
+        self._gen_bf_load_a(m, idx)
+        e("and", str(fmask))
+        return "NZ"
+
+    def _gen_bitfield_assign_byte(self, expr: ast.BinaryOp, bf: BitfieldInfo,
+                                  pos) -> bool:
+        """``m = rhs`` for an in-byte bit-field m.  A constant rhs is
+        folded into one AND and/or one OR with a precomputed mask (or one
+        set/res for a 1-bit field); any other integer rhs is computed in
+        A, rotated into place, masked and merged into the byte.  False,
+        with nothing emitted, for a rhs that is not an integer (float,
+        long long) or a _Bool field."""
+        e = self.ctx.emit_instr
+        m, rhs = expr.left, expr.right
+        idx, k = pos
+        w = bf.bit_width
+        mask = (1 << w) - 1
+        fmask = (mask << k) & 0xFF
+        clr = ~fmask & 0xFF
+        used = expr is not self._discard_expr
+        if self._is_bool_type(_to_legacy(self._get_expr_type(m))):
+            return False
+        kc = self._const_int_operand(rhs)
+        if kc is None and not (self._int_scalar_expr(rhs)
+                               and self._type_size(
+                                   _to_legacy(self._get_expr_type(rhs))) <= 4):
+            return False
+
+        def result_hl(v: int) -> int:
+            v &= mask
+            if bf.is_signed and v >> (w - 1):
+                v -= 1 << w
+            return v & 0xFFFF
+
+        d = self._bf_direct(m, idx)
+        if kc is not None:
+            v = kc & mask
+            if d is not None and d[0] == "ix":
+                base = self._ix_reach(d[1], 1)
+                tgt = f"({ix_off(base)})"
+            else:
+                self._gen_bf_addr(m, idx)
+                tgt = "(HL)"
+            if fmask == 0xFF:
+                e("ld", f"{tgt},{v}")
+            elif w == 1:
+                e("set" if v else "res", f"{k},{tgt}")
+            else:
+                e("ld", f"A,{tgt}")
+                if v != mask:
+                    e("and", str(clr))
+                if v:
+                    e("or", str(v << k))
+                e("ld", f"{tgt},A")
+            if d is not None and d[0] == "ix":
+                self._ix_release(d[1], 1)
+            if used:
+                e("ld", f"HL,{result_hl(v)}")
+            return True
+
+        # rhs in A, rotated into place and masked to the field
+        self._gen_expr_a(rhs)
+        # A trailing ``and K`` with K inside the field already masks.
+        last = self.ctx.lines[-1] if self.ctx.lines else ""
+        inside = False
+        if last.startswith("\tand\t"):
+            try:
+                inside = int(last.split("\t")[2]) & ~mask == 0
+            except ValueError:
+                pass
+        px = self._peel_int_casts(rhs)
+        if isinstance(px, ast.UnaryOp) and self._op_of(px) == "!":
+            inside = True                # 0 or 1 fits any field
+        if k:
+            self._emit_a_rot_right(-k)
+        if fmask != 0xFF and not inside:
+            e("and", str(fmask))
+        if d is not None and d[0] == "ix":
+            reg = "E"
+            e("ld", "E,A")
+            base = self._ix_reach(d[1], 1)
+            tgt = f"({ix_off(base)})"
+            if fmask == 0xFF:
+                e("ld", f"{tgt},E")
+            else:
+                e("ld", f"A,{tgt}")
+                e("and", str(clr))
+                e("or", "E")
+                e("ld", f"{tgt},A")
+            self._ix_release(d[1], 1)
+        else:
+            if self._bf_addr_keep_de_ok(m, idx):
+                reg = "E"
+                e("ld", "E,A")
+                self._gen_bf_addr(m, idx, keep_de=True)
+            else:
+                reg = "D"
+                e("push", "AF")
+                self._gen_bf_addr(m, idx)
+                e("pop", "DE")
+            if fmask == 0xFF:
+                e("ld", f"(HL),{reg}")
+            else:
+                e("ld", "A,(HL)")
+                e("and", str(clr))
+                e("or", reg)
+                e("ld", "(HL),A")
+        if used:
+            # The value of the assignment is the field as stored.  A holds
+            # the stored byte, except for a whole-byte field.
+            if fmask == 0xFF:
+                e("ld", f"A,{reg}")
+            self._emit_bf_extract_a(k, w, bf.is_signed)
+            self._emit_a_to_hl(bf.is_signed)
+        return True
 
     def _gen_bitfield_read(self, bf: BitfieldInfo) -> None:
         """Generate code to read a bitfield value. HL = address of storage unit."""
@@ -13818,6 +14107,12 @@ class CodeGenerator:
         s = self._char_ext_operand(expr)
         if s is not None:
             return frozenset("s" if s else "u")
+        fast = self._bf_fast_pos(expr)
+        if fast is not None:
+            bf = fast[0]
+            if bf.is_signed:
+                return frozenset("s")
+            return frozenset("us" if bf.bit_width <= 7 else "u")
         r = none
         if isinstance(expr, ast.Cast):
             t = _to_legacy(expr.target_type)
@@ -13826,6 +14121,11 @@ class CodeGenerator:
             cs = self._char_type_signed(t)
             if cs is not None:
                 return frozenset("s" if cs else "u")
+            return none
+        if isinstance(expr, ast.UnaryOp):
+            op = expr.op.text if hasattr(expr.op, "text") else expr.op
+            if op == "!" and self._cmp16_operand(expr.operand):
+                return frozenset("us")
             return none
         if isinstance(expr, ast.BinaryOp):
             op = expr.op.text if hasattr(expr.op, "text") else expr.op
@@ -13895,6 +14195,11 @@ class CodeGenerator:
             return True
         if isinstance(expr, ast.UnaryOp):
             op = expr.op.text if hasattr(expr.op, "text") else expr.op
+            if op == "!":
+                # !x for a byte value x: 0 or 1 from A alone.
+                return (self._int_scalar_expr(expr.operand)
+                        and self._cmp16_operand(expr.operand)
+                        and bool(self._byte_kind(expr.operand)))
             return (op in ("~", "-", "+")
                     and self._int_scalar_expr(expr.operand))
         return False
@@ -13914,6 +14219,7 @@ class CodeGenerator:
         return (self._const_int_operand(x) is not None
                 or self._a_simple_sym(x) is not None
                 or self._a_char_load(x)
+                or self._bf_fast_pos(x) is not None
                 or self._a_structural(x))
 
     def _emit_a_imm(self, op: str, b: int) -> None:
@@ -13978,6 +14284,10 @@ class CodeGenerator:
             self._gen_address(expr)
             e("ld", "A,(HL)")
             return
+        fast = self._bf_fast_pos(expr)
+        if fast is not None:
+            self._gen_bf_value_a(expr, fast[0], fast[1])
+            return
         if not self._a_structural(expr):
             self.gen_expr(expr)
             e("ld", "A,L")
@@ -13989,6 +14299,10 @@ class CodeGenerator:
                 e("cpl")
             elif op == "-":
                 e("neg")
+            elif op == "!":
+                e("neg")                 # carry set when x was not 0
+                e("sbc", "A,A")          # -1 when it was not 0
+                e("inc", "A")            # 0 when it was not 0, else 1
             return
         op = expr.op.text if hasattr(expr.op, "text") else expr.op
         left, right = expr.left, expr.right
@@ -14267,11 +14581,15 @@ class CodeGenerator:
             e("ld", f"BC,{off}")
             e("add", "HL,BC")
 
-    def _gen_address_keep_de(self, lhs) -> bool:
+    def _gen_address_keep_de(self, lhs, extra: int = 0,
+                             allow_bf: bool = False) -> bool:
         """HL = the address of ``lhs`` with DE untouched (A, BC and the
         flags may be clobbered), for ``*p``, ``p->m``, ``s.m``, ``a[K]``
         and ``a[i]`` / ``p[i]`` where p, s, a and i are variables.
-        Returns False (nothing emitted) for any other shape."""
+        Returns False (nothing emitted) for any other shape.  A member
+        shape takes ``extra`` more bytes of offset, and a bit-field only
+        when ``allow_bf`` (then the address is that of its storage unit
+        plus ``extra``)."""
         e = self.ctx.emit_instr
         if isinstance(lhs, ast.UnaryOp):
             op = lhs.op.text if hasattr(lhs.op, "text") else lhs.op
@@ -14280,7 +14598,7 @@ class CodeGenerator:
             self.gen_expr(lhs.operand)
             return True
         if isinstance(lhs, (ast.Member, ast.ArrowMember)):
-            if self._get_bitfield_info(lhs) is not None:
+            if not allow_bf and self._get_bitfield_info(lhs) is not None:
                 return False
             st = self._get_expr_type(lhs.obj)
             if isinstance(lhs, ast.ArrowMember):
@@ -14292,7 +14610,7 @@ class CodeGenerator:
                 st = st.base_type
                 if not is_struct_type(st):
                     return False
-                off = self._resolve_member_offset(st, lhs.member)
+                off = self._resolve_member_offset(st, lhs.member) + extra
                 self.gen_expr(lhs.obj)
                 self._emit_add_hl_small(off)
                 return True
@@ -14301,7 +14619,7 @@ class CodeGenerator:
             sym = self.ctx.lookup(lhs.obj.name.text)
             if sym is None or not is_struct_type(st):
                 return False
-            off = self._resolve_member_offset(st, lhs.member)
+            off = self._resolve_member_offset(st, lhs.member) + extra
             if sym.is_global:
                 e("ld", f"HL,{self._label_plus(sym.label(), off)}")
             elif sym.uses_shared_storage:
@@ -15902,6 +16220,9 @@ class CodeGenerator:
     def _gen_truth_flags(self, cond) -> str:
         """Evaluate a scalar and set the flags for its truth (NZ when it
         is not zero).  A value known to fit in a byte is tested in A."""
+        fast = self._bf_fast_pos(cond)
+        if fast is not None:
+            return self._gen_bf_truth(cond, fast[0], fast[1])
         if (self._const_int_operand(cond) is None
                 and self._cmp16_operand(cond)
                 and self._int_scalar_expr(cond)
