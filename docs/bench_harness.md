@@ -22,6 +22,7 @@ that file.
 | `bench/crt/sdcc/` | CP/M start-up code and console I/O for sdcc, sdcc-4.4 and llvm-z80 |
 | `bench/crt/llvm-z80/include/` | Header wrappers that let clang read the SDCC headers |
 | `bench/report.py` | Makes `docs/benchmarks_speed.md` from `results.csv` |
+| `bench/difftest.py` | The differential tester: random C programs, uc80 against SDCC (see [The differential tester](#the-differential-tester)) |
 
 The runner writes temporary files to `bench/_work/` and keeps the
 downloaded upstream files in `bench/_cache/`. Git ignores both
@@ -226,6 +227,125 @@ also compares the output of the time build with the golden file.
 The region run has a shorter time limit: five times the time of the full
 run, and not less than 60 seconds. A program that does not get to
 `TIMER_STOP` thus fails fast.
+
+## The differential tester
+
+`bench/difftest.py` makes random C programs. It compiles each program
+with uc80 and with SDCC 4.6.0, runs the two `.com` files under
+`z88dk-ticks`, and compares the output.
+
+### What a program contains
+
+Each program has globals and locals of the types `char`,
+`signed char`, `unsigned char`, `int`, `unsigned int`, `long` and
+`unsigned long`. It also has arrays, structs with bit-fields, pointers,
+and small helper functions. Some calls go through tables of function
+pointers. The statements use all C integer operators, casts, compound
+assignment, `++` and `--`, `if`, loops and `switch`. After each
+assignment, a checksum gets the new value. After each top-level
+statement of `main`, the program prints the checksum.
+
+The programs have no undefined behavior. The generator puts a guard
+on each operation that can overflow or divide by zero. A Python model
+of the C language with a 16-bit `int` also runs each program. The
+model stops at undefined behavior: a signed overflow, a shift by a bad
+count, a division by zero, `INT_MIN / -1`, or an index out of range.
+The generator then makes the program again with the next attempt
+number.
+
+uc80 has a signed plain `char`. Thus SDCC gets `--fsigned-char`.
+SDCC also gets `--nogenconstprop`, because the generalized constant
+propagation of SDCC 4.6.0 has bugs. Use `--sdcc-flags` to change
+these flags.
+
+### Results
+
+The model gives a third output. Thus each result tells which compiler
+is wrong:
+
+| Status | Meaning |
+|---|---|
+| PASS | uc80, SDCC and the model give the same output. |
+| UC80-WRONG | SDCC and the model agree. uc80 is wrong. |
+| SDCC-WRONG | uc80 and the model agree. SDCC is wrong. |
+| MODEL-DIFF | uc80 and SDCC agree, and the model does not. The generator has a bug, or the two compilers have the same bug. Examine each one. |
+| ALL-DIFF | The three outputs are all different. |
+| UC80-BUILD-FAIL, SDCC-BUILD-FAIL | The compiler, assembler or linker failed. |
+| UC80-HANG, SDCC-HANG | The program did not stop before `--timeout`. |
+| SDCC-BUILD-TIMEOUT | SDCC did not compile the program before `--build-timeout`. |
+
+The `line` value of a result is the first output line that is
+different. Line *n* is the checksum after statement *n* of `main`.
+
+### Running the tester
+
+Run the commands from the uc80 checkout.
+
+1. To test 500 programs, run `python3 bench/difftest.py --count 500`.
+   Each program takes the next focus area.
+2. To test some focus areas only, give `--focus` and a comma list.
+3. To keep each failed program, give `--keep-failures DIR`. The tester
+   writes `prog.c`, the three outputs and the build logs to
+   `DIR/s<seed>-<focus>/`.
+4. To reduce each kept failure after the run, also give
+   `--reduce-failures`. The tester reduces only the failures that
+   involve uc80, because a reduction takes some minutes.
+
+```bash
+python3 bench/difftest.py --count 500 -j 8 --keep-failures /tmp/df --reduce-failures
+python3 bench/difftest.py --count 300 --focus shifts,mul-div-const --seed 5000
+python3 bench/difftest.py --print 17 --focus calls
+```
+
+The focus areas are `all`, `char-arith`, `const-ops`, `conditions`,
+`assign`, `bitfields`, `shifts`, `mul-div-const`, `long`, `switch`,
+`calls`, `incdec` and `memory`. A focus area changes the weights of
+the types, operators and statements. Program *i* of a run has the seed
+`--seed` + *i*. The same seed, focus area and tester version always
+give the same program.
+
+| Option | Meaning |
+|---|---|
+| `--seed N` | The first seed. The default is 1. |
+| `--count N` | The number of programs. |
+| `--focus LIST` | A comma list of focus areas, or `rotate` (the default). |
+| `-j N` | The number of programs that build at the same time. |
+| `--keep-failures DIR` | Keep each failed program in `DIR`. |
+| `--reduce-failures` | After the run, reduce each kept failure that involves uc80. |
+| `--reduce FILE...` | Reduce these files, then stop. |
+| `--reduce-strict` | While the reducer works on a uc80 failure, also compile each candidate with SDCC. |
+| `--reduce-budget N` | The maximum number of test builds for one reduction. The default is 800. |
+| `--print SEED` | Print the program of `SEED` and `--focus`, then stop. Add `--model` to print the model output. |
+| `--work DIR` | The work directory. The default is `bench/_work/difftest`. |
+| `--timeout S`, `--build-timeout S` | The time limits for one run and for one SDCC compile. |
+| `--reduce-timeout S` | The time limit for one run while the reducer works. The default is 10. |
+| `--sdcc-flags`, `--sdcc-allocs`, `--sdcc-mode` | The SDCC options. |
+
+The exit status is 1 when a result names uc80 as wrong.
+
+### Reducing a failure
+
+`--reduce DIR/prog.c` writes the reduced program to
+`DIR/prog.reduced.c`, and the three outputs to `DIR/prog.reduced.txt`.
+
+The reducer keeps the failure. For a uc80 failure, the reducer
+compares uc80 with the model only, because the model is the
+reference. SDCC then compiles the reduced program one time, for the
+`.reduced.txt` file. With `--reduce-strict`, SDCC also compiles each
+candidate, and the status must stay the same. For example, a
+UC80-WRONG program then stays UC80-WRONG.
+
+The first line of a generated file holds its seed, focus area and
+attempt number. With this line, the reducer makes the syntax tree
+again. It then deletes statements, replaces compound statements with
+their bodies, replaces expressions with smaller expressions, and
+removes unused declarations. The model checks each candidate, so a
+reduced program also has no undefined behavior.
+
+A file without this line, or a file that you changed, gets the line
+reducer. The line reducer deletes lines and blocks while the uc80 and
+SDCC outputs stay different. The line reducer has no model. Thus,
+make sure that the reduced program has no undefined behavior.
 
 ## Known problems
 

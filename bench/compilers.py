@@ -173,10 +173,17 @@ class Sdcc(Compiler):
     """
     name = "sdcc"
 
-    def __init__(self, exe: str = "sdcc", label: str | None = None):
+    def __init__(self, exe: str = "sdcc", label: str | None = None,
+                 extra_flags: tuple[str, ...] = (), allocs: int = 200000,
+                 timeout: int = 1800):
         self.exe = exe
         if label:
             self.name = label
+        # bench/difftest.py gives --fsigned-char (uc80 has a signed plain
+        # char) and fewer allocs, so that random programs build fast.
+        self.extra_flags = list(extra_flags)
+        self.allocs = allocs
+        self.timeout = timeout
 
     def available(self) -> bool:
         return shutil.which(self.exe) is not None
@@ -198,13 +205,14 @@ class Sdcc(Compiler):
             if rc != 0:
                 return Build(False, log=out)
         opt = ["--opt-code-size"] if mode == "size" else ["--opt-code-speed"]
-        flags = (["-mz80"] + opt + ["--max-allocs-per-node", "200000"]
-                 + [f"-I{i}" for i in includes] + [f"-D{d}" for d in defines])
+        flags = (["-mz80"] + opt + ["--max-allocs-per-node", str(self.allocs)]
+                 + self.extra_flags + [f"-I{i}" for i in includes]
+                 + [f"-D{d}" for d in defines])
         rels = []
         for src in sources:
             rel = f"{Path(src).stem}.rel"
             rc, out = _run([self.exe, "-c"] + flags + [str(src), "-o", rel],
-                           work)
+                           work, timeout=self.timeout)
             log.append(out)
             if rc != 0:
                 return Build(False, log="\n".join(log),
