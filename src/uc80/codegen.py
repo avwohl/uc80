@@ -8231,6 +8231,11 @@ class CodeGenerator:
 
     def _gen_binary_op_16(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate 16-bit binary operation."""
+        if (op in ("*", "/", "%", "<<", ">>")
+                and self._gen_const_op_16(expr, op)):
+            self.ctx.regs.release_reg('de', self._emit_reg)
+            self.ctx.regs.mark_free('hl')
+            return
         # Pointer arithmetic: scale integer operand by sizeof(*ptr)
         ptr_elem_size = 0
         ptr_sub = False  # True if this is ptr - ptr (result needs division)
@@ -8266,13 +8271,14 @@ class CodeGenerator:
             # Actually left was pushed, right is in HL. If left is int, we need to
             # scale left instead. But we already pushed it. Let's handle this:
             else:
-                # Left is the integer (on stack), right is the pointer (in HL)
-                # Pop left, scale it, push back
-                self.ctx.emit_instr("ex", "DE,HL")  # Save pointer in DE
-                self.ctx.emit_instr("pop", "HL")     # Get integer
+                # Left is the integer (on stack), right is the pointer
+                # (in HL).  Swap them and scale the integer; the pop
+                # below then gives DE = pointer, HL = scaled integer
+                # (only '+' takes an integer on the left).
+                # _gen_mul_const clobbers DE, so the pointer waits on
+                # the stack.
+                self.ctx.emit_instr("ex", "(SP),HL")
                 self._gen_mul_const(ptr_elem_size)
-                self.ctx.emit_instr("push", "HL")    # Push scaled integer
-                self.ctx.emit_instr("ex", "DE,HL")   # Restore pointer to HL
 
         # Restore left operand to DE
         self.ctx.emit_instr("pop", "DE")
@@ -8416,6 +8422,9 @@ class CodeGenerator:
 
     def _gen_binary_op_32(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate 32-bit binary operation. Result in DEHL."""
+        if (op in ("*", "/", "%", "<<", ">>")
+                and self._gen_const_op_32(expr, op)):
+            return
         # For 32-bit: right operand goes to __tmp32, left in DEHL, call runtime
 
         # Generate right operand first
@@ -12573,22 +12582,9 @@ class CodeGenerator:
 
             self.gen_expr(expr.index)
 
-            # Scale index by element size
-            if elem_size == 1:
-                pass  # No scaling needed
-            elif elem_size == 2:
-                self.ctx.emit_instr("add", "HL,HL")  # index * 2
-            elif elem_size == 4:
-                self.ctx.emit_instr("add", "HL,HL")  # index * 2
-                self.ctx.emit_instr("add", "HL,HL")  # index * 4
-            elif elem_size == 8:
-                self.ctx.emit_instr("add", "HL,HL")  # * 2
-                self.ctx.emit_instr("add", "HL,HL")  # * 4
-                self.ctx.emit_instr("add", "HL,HL")  # * 8
-            else:
-                # Arbitrary size - use multiplication
-                self.ctx.emit_instr("ld", f"DE,{elem_size}")
-                self._call_runtime("__mul16")  # HL = HL * DE
+            # Scale index by element size (shift-and-add, or a byte
+            # move for a row of 256 bytes or more)
+            self._gen_mul_const(elem_size)
 
             self.ctx.emit_instr("push", "HL")
             self.gen_expr(expr.array)  # Get base address
@@ -12733,43 +12729,694 @@ class CodeGenerator:
                 return v.bit_length() - 1
         return None
 
+    # Largest inline multiply chain, in bytes, before _gen_mul_const
+    # calls __mul16 instead (``ld DE,n / call __mul16`` is 6 bytes).
+    _MUL16_INLINE_BYTES = 24
+
+    @staticmethod
+    def _mul_digit_forms(n: int, bits: int) -> list:
+        """Signed-digit forms of ``n`` modulo ``2**bits``.
+
+        Each form is a list of (bit position, +1 or -1), highest first,
+        with sum(sign << pos) == n (mod 2**bits).  The forms are the
+        plain binary digits and the non-adjacent form (NAF), which
+        replaces a run of ones by one add and one subtract.  NAF digits
+        at ``bits`` or above are dropped: they are 0 modulo 2**bits.
+        """
+        n &= (1 << bits) - 1
+        binary = [(i, 1) for i in reversed(range(bits)) if n >> i & 1]
+        naf = []
+        k, i = n, 0
+        while k:
+            if k & 1:
+                d = 2 - (k & 3)          # +1 or -1
+                k -= d
+                if i < bits:
+                    naf.append((i, d))
+            k >>= 1
+            i += 1
+        naf.reverse()
+        return [binary, naf]
+
+    @staticmethod
+    def _mul16_chain_cost(digits: list) -> tuple[int, int]:
+        """(T-states, bytes) of the HL chain _emit_mul16_chain makes."""
+        t = b = 0
+        if len(digits) > 1:
+            t, b = 8, 2                  # ld D,H / ld E,L
+        if digits[0][1] < 0:
+            t, b = t + 24, b + 6         # negate HL
+        prev = digits[0][0]
+        for pos, sign in digits[1:]:
+            t, b = t + 11 * (prev - pos), b + (prev - pos)
+            t, b = (t + 11, b + 1) if sign > 0 else (t + 19, b + 3)
+            prev = pos
+        return t + 11 * prev, b + prev
+
+    def _emit_neg_hl(self) -> None:
+        """HL = -HL.  Clobbers A and flags."""
+        e = self.ctx.emit_instr
+        e("xor", "A")
+        e("sub", "L")
+        e("ld", "L,A")
+        e("sbc", "A,A")
+        e("sub", "H")
+        e("ld", "H,A")
+
+    def _emit_mul16_chain(self, digits: list) -> None:
+        """HL = HL * sum(sign << pos) with shifts and adds of a copy in DE."""
+        e = self.ctx.emit_instr
+        if len(digits) > 1:
+            e("ld", "D,H")
+            e("ld", "E,L")
+        if digits[0][1] < 0:
+            self._emit_neg_hl()
+        prev = digits[0][0]
+        for pos, sign in digits[1:]:
+            for _ in range(prev - pos):
+                e("add", "HL,HL")
+            if sign > 0:
+                e("add", "HL,DE")
+            else:
+                e("or", "A")
+                e("sbc", "HL,DE")
+            prev = pos
+        for _ in range(prev):
+            e("add", "HL,HL")
+
+    def _emit_mul8_to_h(self, m: int) -> None:
+        """HL = (L * m mod 256) << 8: a multiply by m*256.
+
+        Only the low byte of the multiplicand reaches the result, so the
+        work is done in A with 4-T-state adds.  Clobbers A, E and flags.
+        """
+        e = self.ctx.emit_instr
+        m &= 0xFF
+        if m == 1:
+            e("ld", "H,L")
+            e("ld", "L,0")
+            return
+
+        def cost(d):
+            t = 4 if len(d) > 1 else 0
+            t += 8 if d[0][1] < 0 else 4
+            prev = d[0][0]
+            for pos, _ in d[1:]:
+                t += 4 * (prev - pos) + 4
+                prev = pos
+            return t + 4 * prev
+
+        digits = min(self._mul_digit_forms(m, 8), key=cost)
+        if len(digits) > 1:
+            e("ld", "E,L")
+        if digits[0][1] < 0:
+            e("xor", "A")
+            e("sub", "L")
+        else:
+            e("ld", "A,L")
+        prev = digits[0][0]
+        for pos, sign in digits[1:]:
+            for _ in range(prev - pos):
+                e("add", "A,A")
+            e("add" if sign > 0 else "sub", "A,E" if sign > 0 else "E")
+            prev = pos
+        for _ in range(prev):
+            e("add", "A,A")
+        e("ld", "H,A")
+        e("ld", "L,0")
+
     def _gen_mul_const(self, n: int) -> None:
-        """Multiply HL by constant n. Result in HL."""
+        """Multiply HL by constant n (modulo 2**16).  Result in HL.
+
+        Clobbers A, DE and flags.  A power of two is a run of add HL,HL
+        (a byte move from 256 up); other constants are a shift-and-add
+        chain (binary or NAF, whichever is faster); a multiplier with 8
+        or more low zero bits works on L alone in A.  Only a chain
+        longer than _MUL16_INLINE_BYTES calls __mul16.
+        """
+        e = self.ctx.emit_instr
+        n &= 0xFFFF
+        if n == 0:
+            e("ld", "HL,0")
+            return
         if n == 1:
             return
-        if n == 2:
-            self.ctx.emit_instr("add", "HL,HL")
-        elif n == 4:
-            self.ctx.emit_instr("add", "HL,HL")
-            self.ctx.emit_instr("add", "HL,HL")
-        elif n == 8:
-            self.ctx.emit_instr("add", "HL,HL")
-            self.ctx.emit_instr("add", "HL,HL")
-            self.ctx.emit_instr("add", "HL,HL")
-        elif n > 1 and (n & (n - 1)) == 0:
-            # Power of 2
-            shift = n.bit_length() - 1
-            for _ in range(shift):
-                self.ctx.emit_instr("add", "HL,HL")
-        else:
-            # General case: use DE * HL multiply
-            self.ctx.emit_instr("ld", f"DE,{n}")
+        tz = (n & -n).bit_length() - 1
+        if tz >= 8:
+            self._emit_mul8_to_h(n >> 8)
+            return
+        if n == 1 << tz:
+            for _ in range(tz):
+                e("add", "HL,HL")
+            return
+        digits = min(self._mul_digit_forms(n, 16),
+                     key=self._mul16_chain_cost)
+        if self._mul16_chain_cost(digits)[1] > self._MUL16_INLINE_BYTES:
+            e("ld", f"DE,{n}")
             self._call_runtime("__mul16")
+            return
+        self._emit_mul16_chain(digits)
 
     def _gen_div_const(self, n: int) -> None:
-        """Divide HL by constant n (signed). Result in HL."""
+        """Divide HL by constant n (signed) when the division is EXACT.
+
+        Used for pointer differences, where HL is always a multiple of
+        n: shift out the power of two, then multiply by the inverse of
+        the odd part modulo 2**16.  Not valid for general division (an
+        arithmetic shift rounds toward minus infinity).
+        """
         if n == 1:
             return
-        if n > 1 and (n & (n - 1)) == 0:
-            # Power of 2 - use arithmetic right shift
-            shift = n.bit_length() - 1
-            for _ in range(shift):
-                self.ctx.emit_instr("sra", "H")
-                self.ctx.emit_instr("rr", "L")
+        if n > 1:
+            tz = (n & -n).bit_length() - 1
+            self._emit_shr16_const(tz, True)
+            odd = n >> tz
+            if odd != 1:
+                self._gen_mul_const(pow(odd, -1, 0x10000))
         else:
             self.ctx.emit_instr("ld", f"DE,{n}")
             self.ctx.emit_instr("ex", "DE,HL")
             self._call_runtime("__sdiv16")
+
+    # ------------------------------------------------------------------
+    # Multiply, divide, modulo and shift by a compile-time constant.
+    # ------------------------------------------------------------------
+
+    def _const_int_operand(self, expr) -> int | None:
+        """The value of ``expr`` when it is an integer constant with no
+        side effects: a literal, an enum constant, sizeof, a cast to an
+        integer type, unary - + ~, and + - * & | ^ of those.  Else None.
+
+        Casts are evaluated the way gen_cast converts (_type_size and
+        _is_signed_type), not with _eval_const_expr, which does not
+        narrow a cast to a typedef name such as uint8_t.  The result of
+        each unary and binary operator is reduced to that operator's own
+        C type (_get_expr_type), so ``(long)(65535u + 1u)`` is 0 and
+        ``(_Bool)(256u * 256u)`` is 0, as the general code computes them.
+        """
+        def reduce(e, v):
+            t = _to_legacy(self._get_expr_type(e))
+            if (not isinstance(t, (lt.BasicType, lt.EnumType))
+                    or self._is_float_type(t)):
+                return None
+            size = self._type_size(t)
+            if size not in (2, 4):
+                return None
+            bits = size * 8
+            v &= (1 << bits) - 1
+            if self._is_signed_type(t) and v >> (bits - 1):
+                v -= 1 << bits
+            return v
+
+        def val(e):
+            if isinstance(e, ast.IntLiteral):
+                return int_value(e)
+            if isinstance(e, ast.CharLiteral):
+                v = self._eval_const_expr(e)
+                return v if isinstance(v, int) and 0 <= v < 0x80 else None
+            if isinstance(e, ast.Identifier):
+                return self.ctx.enum_constants.get(e.name.text)
+            if isinstance(e, ast.SizeofType):
+                return self._type_size(self._resolve_typename(e.target_type))
+            if isinstance(e, ast.SizeofExpr):
+                if isinstance(e.operand, ast.StringLiteral):
+                    return None
+                t = self._get_expr_type(e.operand)
+                return self._type_size(t) if t else None
+            if isinstance(e, ast.UnaryOp):
+                if e.op not in ("-", "+", "~"):
+                    return None
+                v = val(e.operand)
+                if v is None:
+                    return None
+                return reduce(e, -v if e.op == "-"
+                              else (~v if e.op == "~" else v))
+            if isinstance(e, ast.Cast):
+                t = _to_legacy(e.target_type)
+                if (not isinstance(t, (lt.BasicType, lt.EnumType))
+                        or self._is_float_type(t)):
+                    return None
+                v = val(e.expr)
+                if v is None:
+                    return None
+                if self._is_bool_type(t):
+                    return 1 if v else 0
+                size = self._type_size(t)
+                if size not in (1, 2, 4):
+                    return None
+                bits = size * 8
+                v &= (1 << bits) - 1
+                if self._is_signed_type(t) and v >> (bits - 1):
+                    v -= 1 << bits
+                return v
+            if isinstance(e, ast.BinaryOp):
+                op = e.op.text if hasattr(e.op, "text") else e.op
+                if op not in ("+", "-", "*", "&", "|", "^"):
+                    return None
+                a, b = val(e.left), val(e.right)
+                if a is None or b is None:
+                    return None
+                return reduce(e, {"+": a + b, "-": a - b, "*": a * b,
+                                  "&": a & b, "|": a | b, "^": a ^ b}[op])
+            return None
+        try:
+            v = val(expr)
+        except Exception:
+            return None
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    def _char_ext_operand(self, expr) -> bool | None:
+        """For a plain char object load (a char variable, element, member
+        or *p), gen_expr leaves the byte in L and its zero or sign
+        extension in H.  Return the char's signedness then, else None."""
+        if isinstance(expr, ast.UnaryOp):
+            if expr.op != "*":
+                return None
+        elif isinstance(expr, ast.Identifier):
+            if expr.name.text in self.ctx.enum_constants:
+                return None
+        elif isinstance(expr, (ast.Member, ast.ArrowMember)):
+            # A compound literal member is its initializer's value, not
+            # a load.
+            if (self._get_bitfield_info(expr) is not None
+                    or isinstance(expr.obj, ast.Compound)):
+                return None
+        elif not isinstance(expr, ast.Index):
+            return None
+        t = _to_legacy(self._get_expr_type(expr))
+        if (isinstance(t, lt.BasicType)
+                and t.name in ("char", "signed char", "unsigned char")
+                and self._type_size(t) == 1):
+            return self._is_signed_type(t)
+        return None
+
+    def _emit_shl16_const(self, n: int) -> None:
+        """HL <<= n for 0 <= n <= 15."""
+        e = self.ctx.emit_instr
+        if n >= 8:
+            if n == 8:
+                e("ld", "H,L")
+            else:
+                e("ld", "A,L")
+                for _ in range(n - 8):
+                    e("add", "A,A")
+                e("ld", "H,A")
+            e("ld", "L,0")
+        elif n == 7:
+            # Right by one into a spare byte, then move a byte up.
+            e("xor", "A")
+            e("srl", "H")
+            e("rr", "L")
+            e("rra")
+            e("ld", "H,L")
+            e("ld", "L,A")
+        else:
+            for _ in range(n):
+                e("add", "HL,HL")
+
+    def _emit_shr16_const(self, n: int, signed: bool) -> None:
+        """HL >>= n for 0 <= n <= 15, arithmetic when ``signed``."""
+        e = self.ctx.emit_instr
+        if n == 0:
+            return
+        if n == 15:
+            e("ld", "A,H")
+            e("rlca")
+            if signed:
+                e("sbc", "A,A")
+                e("ld", "L,A")
+                e("ld", "H,A")
+            else:
+                e("and", "1")
+                e("ld", "L,A")
+                e("ld", "H,0")
+        elif n >= 8:
+            # A byte move, then the rest on L.
+            e("ld", "L,H")
+            if signed:
+                e("ld", "A,H")
+                e("rlca")
+                e("sbc", "A,A")
+                e("ld", "H,A")
+            else:
+                e("ld", "H,0")
+            for _ in range(n - 8):
+                e("sra" if signed else "srl", "L")
+        elif n >= 5:
+            # Left by 8-n into a third byte A, then move a byte down.
+            if signed:
+                e("ld", "A,H")
+                e("rlca")
+                e("sbc", "A,A")
+            else:
+                e("xor", "A")
+            for _ in range(8 - n):
+                e("add", "HL,HL")
+                e("rla")
+            e("ld", "L,H")
+            e("ld", "H,A")
+        else:
+            for _ in range(n):
+                e("sra" if signed else "srl", "H")
+                e("rr", "L")
+
+    def _emit_sdiv16_pow2(self, n: int) -> None:
+        """HL = HL / 2**n, signed, rounded toward zero (C 6.5.5p6)."""
+        e = self.ctx.emit_instr
+        if n == 0:
+            return
+        pos = self.ctx.new_label("SDP")
+        e("bit", "7,H")
+        e("jr", f"Z,{pos}")
+        if n == 1:
+            e("inc", "HL")
+        else:
+            e("ld", f"DE,{(1 << n) - 1}")
+            e("add", "HL,DE")
+        self.ctx.emit_label(pos)
+        self._emit_shr16_const(n, True)
+
+    def _emit_and16_const(self, mask: int, h_zero: bool = False) -> None:
+        """HL &= mask; ``h_zero`` says H is already 0."""
+        e = self.ctx.emit_instr
+        lo, hi = mask & 0xFF, (mask >> 8) & 0xFF
+        if lo == 0:
+            e("ld", "L,0")
+        elif lo != 0xFF:
+            e("ld", "A,L")
+            e("and", str(lo))
+            e("ld", "L,A")
+        if hi == 0:
+            if not h_zero:
+                e("ld", "H,0")
+        elif hi != 0xFF:
+            e("ld", "A,H")
+            e("and", str(hi))
+            e("ld", "H,A")
+
+    def _emit_smod16_pow2(self, n: int) -> None:
+        """HL = HL % 2**n, signed (the sign of the dividend), 1 <= n <= 15."""
+        e = self.ctx.emit_instr
+        m = (1 << n) - 1
+        pos = self.ctx.new_label("SMP")
+        done = self.ctx.new_label("SMD")
+        if n <= 8:
+            e("ld", "A,L")
+            e("bit", "7,H")
+            e("ld", "H,0")
+            e("jr", f"Z,{pos}")
+            e("and", str(m))
+            e("jr", f"Z,{done}")         # remainder 0
+            if m != 0xFF:
+                e("or", str(~m & 0xFF))
+            e("dec", "H")                # H = 0FFh
+            e("jr", done)
+            self.ctx.emit_label(pos)
+            e("and", str(m))
+            self.ctx.emit_label(done)
+            e("ld", "L,A")
+        else:
+            hm = m >> 8
+            e("ld", "A,H")
+            e("bit", "7,H")
+            e("jr", f"Z,{pos}")
+            e("and", str(hm))
+            e("ld", "H,A")
+            e("or", "L")
+            e("jr", f"Z,{done}")         # remainder 0: H = L = 0
+            e("ld", "A,H")
+            e("or", str(~hm & 0xFF))
+            e("ld", "H,A")
+            e("jr", done)
+            self.ctx.emit_label(pos)
+            e("and", str(hm))
+            e("ld", "H,A")
+            self.ctx.emit_label(done)
+
+    def _gen_const_op_16(self, expr: ast.BinaryOp, op: str) -> bool:
+        """``x * K``, ``K * x``, ``x / K``, ``x % K``, ``x << K`` and
+        ``x >> K`` at 16 bits with a constant K, done inline.
+
+        Returns False (nothing emitted) when the shape is not handled;
+        the caller then uses the general push/pop code and the helpers.
+        """
+        k = self._const_int_operand(expr.right)
+        operand = expr.left
+        if k is None:
+            if op != "*":
+                return False
+            k = self._const_int_operand(expr.left)
+            if k is None:
+                return False
+            operand = expr.right
+        e = self.ctx.emit_instr
+
+        if op == "*":
+            self.gen_expr(operand)
+            self._gen_mul_const(k)
+            return True
+
+        char_signed = self._char_ext_operand(expr.left)
+        if op in ("<<", ">>"):
+            if not 0 <= k <= 15:
+                return False             # undefined; keep the helper
+            self.gen_expr(expr.left)
+            if op == "<<":
+                self._emit_shl16_const(k)
+            elif char_signed is not None and k <= 7:
+                # H is the extension of L, so only L needs shifting.
+                for _ in range(k):
+                    e("sra" if char_signed else "srl", "L")
+            elif char_signed is not None:
+                e("ld", "L,H")           # 0 or the sign
+            else:
+                self._emit_shr16_const(
+                    k, not self._is_promoted_unsigned(expr.left))
+            return True
+
+        # '/' and '%'
+        is_unsigned = (self._is_promoted_unsigned(expr.left)
+                       or self._is_promoted_unsigned(expr.right))
+        kv = k & 0xFFFF
+        if not is_unsigned and kv & 0x8000:
+            kv -= 0x10000
+        if kv <= 0 or kv & (kv - 1):
+            return False
+        n = kv.bit_length() - 1
+        # An unsigned char operand is never negative.
+        nonneg = is_unsigned or char_signed is False
+        self.gen_expr(expr.left)
+        if op == "/":
+            if nonneg:
+                self._emit_shr16_const(n, False)
+            else:
+                self._emit_sdiv16_pow2(n)
+        elif n == 0:
+            e("ld", "HL,0")
+        elif nonneg:
+            self._emit_and16_const((1 << n) - 1,
+                                   h_zero=char_signed is False)
+        else:
+            self._emit_smod16_pow2(n)
+        return True
+
+    def _gen_long_operand(self, operand) -> None:
+        """Evaluate ``operand`` into DEHL, widening a 16-bit value."""
+        self.gen_expr(operand, force_long=True)
+        if (not self._is_long_expr(operand)
+                and not self._is_long_long_expr(operand)
+                and not self._gen_expr_produces_dehl(operand)):
+            self._extend_hl_to_dehl(not self._is_unsigned_expr(operand))
+
+    def _emit_shl32_const(self, n: int) -> None:
+        """DEHL <<= n for 0 <= n <= 31."""
+        e = self.ctx.emit_instr
+        if n >= 16:
+            for _ in range(n - 16):
+                e("add", "HL,HL")
+            e("ex", "DE,HL")
+            e("ld", "HL,0")
+            return
+        if n >= 8:
+            e("ld", "D,E")
+            e("ld", "E,H")
+            e("ld", "H,L")
+            e("ld", "L,0")
+            n -= 8
+        if n == 0:
+            return
+        if n <= 3:
+            for _ in range(n):
+                e("add", "HL,HL")
+                e("rl", "E")
+                e("rl", "D")
+        else:
+            e("ld", f"A,{n}")
+            self._call_runtime("__shl32")
+
+    def _emit_shr32_const(self, n: int, signed: bool) -> None:
+        """DEHL >>= n for 0 <= n <= 31, arithmetic when ``signed``."""
+        e = self.ctx.emit_instr
+
+        def sign_to_a(reg):
+            e("ld", f"A,{reg}")
+            e("rlca")
+            e("sbc", "A,A")
+
+        if n >= 24:
+            e("ld", "L,D")
+            if signed:
+                sign_to_a("D")
+                e("ld", "H,A")
+                e("ld", "E,A")
+                e("ld", "D,A")
+            else:
+                e("ld", "H,0")
+                e("ld", "DE,0")
+            for _ in range(n - 24):
+                e("sra" if signed else "srl", "L")
+            return
+        if n >= 16:
+            e("ex", "DE,HL")
+            if signed:
+                sign_to_a("H")
+                e("ld", "E,A")
+                e("ld", "D,A")
+            else:
+                e("ld", "DE,0")
+            self._emit_shr16_const(n - 16, signed)
+            return
+        if n >= 8:
+            e("ld", "L,H")
+            e("ld", "H,E")
+            e("ld", "E,D")
+            if signed:
+                sign_to_a("D")
+                e("ld", "D,A")
+            else:
+                e("ld", "D,0")
+            n -= 8
+        if n == 0:
+            return
+        if n <= 2:
+            for _ in range(n):
+                e("sra" if signed else "srl", "D")
+                e("rr", "E")
+                e("rr", "H")
+                e("rr", "L")
+        else:
+            e("ld", f"A,{n}")
+            self._call_runtime("__sar32" if signed else "__shr32")
+
+    def _emit_addsub32_tmp(self, sign: int) -> None:
+        """DEHL += __tmp32 (sign > 0) or DEHL -= __tmp32.  Clobbers BC."""
+        e = self.ctx.emit_instr
+        e("ld", "BC,(__tmp32)")
+        if sign > 0:
+            e("add", "HL,BC")
+        else:
+            e("or", "A")
+            e("sbc", "HL,BC")
+        e("ex", "DE,HL")
+        e("ld", "BC,(__tmp32+2)")
+        e("adc" if sign > 0 else "sbc", "HL,BC")
+        e("ex", "DE,HL")
+
+    def _gen_const_op_32(self, expr: ast.BinaryOp, op: str) -> bool:
+        """The 32-bit forms of _gen_const_op_16: a constant right operand
+        (or left, for '*') is never staged in __tmp32; shifts by 8, 16
+        and 24 are byte moves, a multiply with at most 4 binary or NAF
+        digits is shift-and-add, an unsigned / or % by 2**n is a shift
+        or an AND, and a signed / by 2**n adds the rounding bias first.
+        Returns False (nothing emitted) for any other shape."""
+        k = self._const_int_operand(expr.right)
+        operand = expr.left
+        if k is None:
+            if op != "*":
+                return False
+            k = self._const_int_operand(expr.left)
+            if k is None:
+                return False
+            operand = expr.right
+        e = self.ctx.emit_instr
+
+        if op in ("<<", ">>"):
+            if not 0 <= k <= 31:
+                return False
+            self._gen_long_operand(expr.left)
+            if op == "<<":
+                self._emit_shl32_const(k)
+            else:
+                self._emit_shr32_const(
+                    k, not self._is_promoted_unsigned(expr.left))
+            return True
+
+        kv = k & 0xFFFFFFFF
+        if op == "*":
+            if kv == 0 or kv & (kv - 1) == 0:
+                digits = None
+            else:
+                forms = [f for f in self._mul_digit_forms(kv, 32)
+                         if f[0][1] > 0]
+                digits = min(forms, key=len)
+                if len(digits) > 4:
+                    return False
+            self._gen_long_operand(operand)
+            if kv == 0:
+                e("ld", "HL,0")
+                e("ld", "DE,0")
+            elif digits is None:
+                self._emit_shl32_const(kv.bit_length() - 1)
+            else:
+                self._store_tmp32()
+                prev = digits[0][0]
+                for pos, sign in digits[1:]:
+                    self._emit_shl32_const(prev - pos)
+                    self._emit_addsub32_tmp(sign)
+                    prev = pos
+                self._emit_shl32_const(prev)
+            return True
+
+        is_unsigned = self._binop_is_unsigned(expr)
+        if not is_unsigned and kv & 0x80000000:
+            kv -= 1 << 32
+        if kv <= 0 or kv & (kv - 1):
+            return False
+        n = kv.bit_length() - 1
+        if op == "%" and not is_unsigned and n > 0:
+            return False                 # keep __smod32
+        self._gen_long_operand(expr.left)
+        if op == "/":
+            if is_unsigned or n == 0:
+                self._emit_shr32_const(n, False)
+            else:
+                pos = self.ctx.new_label("SDP")
+                bias = (1 << n) - 1
+                e("bit", "7,D")
+                e("jr", f"Z,{pos}")
+                e("ld", f"BC,{bias & 0xFFFF}")
+                e("add", "HL,BC")
+                e("ex", "DE,HL")
+                e("ld", f"BC,{bias >> 16}")
+                e("adc", "HL,BC")
+                e("ex", "DE,HL")
+                self.ctx.emit_label(pos)
+                self._emit_shr32_const(n, True)
+        else:
+            mask = (1 << n) - 1
+            self._emit_and16_const(mask & 0xFFFF)
+            hi = mask >> 16
+            if hi == 0:
+                e("ld", "DE,0")
+            else:
+                for reg, b in (("E", hi & 0xFF), ("D", hi >> 8)):
+                    if b == 0:
+                        e("ld", f"{reg},0")
+                    elif b != 0xFF:
+                        e("ld", f"A,{reg}")
+                        e("and", str(b))
+                        e("ld", f"{reg},A")
+        return True
 
     def _is_unsigned_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has unsigned type."""
