@@ -127,6 +127,8 @@ NETBSD_PROGS = {
             ("houses.c", "abs(result[0] - result[1]) > 1)\n\t\tgoto err;", "abs(result[0] - result[1]) > 1)\n\t\tgoto err_l;"),
             ("houses.c", "temp[1] - temp[2]) > 1)) {\nerr:", "temp[1] - temp[2]) > 1)) {\nerr_l:"),
             ("houses.c", "abs(temp[0] - temp[1]) > 1)\n\t\tgoto err;", "abs(temp[0] - temp[1]) > 1)\n\t\tgoto err_l;"),
+            ("spec.c", "get_card(&CC_D);", "get_card(&deck[0]);"),
+            ("spec.c", "get_card(&CH_D);", "get_card(&deck[1]);"),
             ("cards.c", "\t\tdp = &CC_D;", "\t\tdp = &deck[0];"),
             # uc80 whole-program mode joins file-scope statics of the same name
             ("houses.c", '#include "bgstub.h"', '#include "bgstub.h"\n#define names hs_names'),
@@ -181,6 +183,11 @@ ROGUE_EDITS = [
      "prname(char *who, int upper)\n"),
     ("init.c", "#define NCOLORS (sizeof rainbow / sizeof (char *))",
      "#define NCOLORS (sizeof(rainbow) / sizeof(char *))"),
+    # SDCC reads "void (*f)()" as "(void)" (C23) and rejects a call with an argument
+    ("daemon.c", "(*dev->d_func)(dev->d_arg);", "((void (*)(int))dev->d_func)(dev->d_arg);"),
+    ("daemon.c", "(*wire->d_func)(wire->d_arg);", "((void (*)(int))wire->d_func)(wire->d_arg);"),
+    ("options.c", "void\t(*o_putfunc)();", "void\t(*o_putfunc)(void *);"),
+    ("options.c", "int\t\t(*o_getfunc)();", "int\t\t(*o_getfunc)(void *, WINDOW *);"),
     ("main.c", "\nmain(argc, argv, envp)\nchar **argv;\nchar **envp;\n",
      "\nint\nmain(int argc, char **argv, char **envp)\n"),
 ]

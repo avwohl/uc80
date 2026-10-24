@@ -331,6 +331,9 @@ These rules make the run the same on every compiler:
 - **The end of the output.** Make the program end its output with a
   newline. `tinycurses` writes a newline in `endwin()`.
 
+The six big real games (Rogue 3.6, trek, adventure, battlestar, monop,
+mojozork) are size-only programs: see [bench_big_games.md](bench_big_games.md).
+
 The proof programs are our own. `game-guess` is a stdio game with a
 scripted input. `curses-demo` is a tinycurses program with a status
 window. `curses-demo-size` has the sources of `curses-demo` as a

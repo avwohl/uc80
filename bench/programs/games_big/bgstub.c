@@ -289,3 +289,34 @@ void bg_lj(jmp_buf e, int v)
     e[0] = v;
     exit(v);
 }
+
+int bg_sf(const char *fmt, ...) PX_VA
+{
+    return 0;
+}
+
+int bg_ss(const char *str, const char *fmt, ...) PX_VA
+{
+    return 0;
+}
+
+long bg_ft(BG_FILE *f)
+{
+    return -1L;
+}
+
+int bg_vp(BG_FILE *f, const char *fmt, va_list ap)
+{
+    char buf[128];
+    int i, n;
+
+    n = px_vf(buf, sizeof(buf), fmt, ap);
+    for (i = 0; i < n; i++)
+        bg_put(f, buf[i]);
+    return n;
+}
+
+/* The classic z88dk malloc() needs the C variable "heap" (4 bytes). */
+#ifdef __Z88DK
+long heap;
+#endif

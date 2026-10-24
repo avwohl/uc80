@@ -94,6 +94,8 @@ edit = [
   { file = "houses.c", old = "abs(result[0] - result[1]) > 1)\n\t\tgoto err;", new = "abs(result[0] - result[1]) > 1)\n\t\tgoto err_l;" },
   { file = "houses.c", old = "temp[1] - temp[2]) > 1)) {\nerr:", new = "temp[1] - temp[2]) > 1)) {\nerr_l:" },
   { file = "houses.c", old = "abs(temp[0] - temp[1]) > 1)\n\t\tgoto err;", new = "abs(temp[0] - temp[1]) > 1)\n\t\tgoto err_l;" },
+  { file = "spec.c", old = "get_card(&CC_D);", new = "get_card(&deck[0]);" },
+  { file = "spec.c", old = "get_card(&CH_D);", new = "get_card(&deck[1]);" },
   { file = "cards.c", old = "\t\tdp = &CC_D;", new = "\t\tdp = &deck[0];" },
   { file = "houses.c", old = "#include \"bgstub.h\"", new = "#include \"bgstub.h\"\n#define names hs_names" },
   { file = "execute.c", old = "#include \"bgstub.h\"", new = "#include \"bgstub.h\"\n#define buf ex_buf" },
@@ -423,6 +425,10 @@ edit = [
   { file = "save.c", old = "    extern char **environ;\n", new = "" },
   { file = "fight.c", old = "prname(who, upper)\nchar *who;\nint upper;\n", new = "prname(char *who, int upper)\n" },
   { file = "init.c", old = "#define NCOLORS (sizeof rainbow / sizeof (char *))", new = "#define NCOLORS (sizeof(rainbow) / sizeof(char *))" },
+  { file = "daemon.c", old = "(*dev->d_func)(dev->d_arg);", new = "((void (*)(int))dev->d_func)(dev->d_arg);" },
+  { file = "daemon.c", old = "(*wire->d_func)(wire->d_arg);", new = "((void (*)(int))wire->d_func)(wire->d_arg);" },
+  { file = "options.c", old = "void\t(*o_putfunc)();", new = "void\t(*o_putfunc)(void *);" },
+  { file = "options.c", old = "int\t\t(*o_getfunc)();", new = "int\t\t(*o_getfunc)(void *, WINDOW *);" },
   { file = "main.c", old = "\nmain(argc, argv, envp)\nchar **argv;\nchar **envp;\n", new = "\nint\nmain(int argc, char **argv, char **envp)\n" },
 ]
 

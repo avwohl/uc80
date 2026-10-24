@@ -334,6 +334,25 @@ void bg_lj(jmp_buf e, int v);
 #define setjmp(e) bg_sj(e)
 #define longjmp(e, v) bg_lj(e, v)
 
+/* scanf(), sscanf(): the SDCC library has neither.  The stand-ins read
+ * nothing and return 0. */
+int bg_sf(const char *fmt, ...) PX_VA;
+int bg_ss(const char *str, const char *fmt, ...) PX_VA;
+#undef scanf
+#undef sscanf
+#define scanf bg_sf
+#define sscanf bg_ss
+
+/* ftell(), vfprintf(), abort() */
+long bg_ft(BG_FILE *f);
+int bg_vp(BG_FILE *f, const char *fmt, va_list ap);
+#undef ftell
+#undef vfprintf
+#undef abort
+#define ftell(f) bg_ft(f)
+#define vfprintf(f, fmt, ap) bg_vp(f, fmt, ap)
+#define abort() exit(134)
+
 /* clock_gettime(): a constant. */
 struct timespec {
     long tv_sec;
