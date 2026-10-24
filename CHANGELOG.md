@@ -23,6 +23,13 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- **Float multiply is correctly rounded.** `__fmul` lost one of two
+  carries when it added the partial products, so a product could be
+  wrong by up to 513 units in the last place, and it truncated instead
+  of rounding. It now rounds to nearest even. 300,000 random products
+  match Python's `float32` rounding. A product that would be subnormal
+  is still flushed to zero. The c-testsuite output of test 00174 changed
+  to the correctly rounded digits.
 - **Every program linked about 9 KB of libc it never called.** uc80
   declares each prototype in each included header as `EXTRN`. Since um80
   0.3.50, um80 keeps an unreferenced `EXTRN`, as MACRO-80 does, and ul80

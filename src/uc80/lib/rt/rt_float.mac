@@ -365,6 +365,8 @@ __fmul:
 	OR	A
 	JR	NZ,__fmul_inf
 	LD	A,L
+	OR	A
+	JR	Z,__fmul_zero	; exponent 0: a subnormal result, flushed to zero
 	CP	255
 	JR	NC,__fmul_inf
 
@@ -472,20 +474,34 @@ __fmul_man:
 	; word1 [31:16]  = LL.hi + HL.lo + LH.lo
 	; word2 [47:32]  = HL.hi + LH.hi + HH.lo + carry_from_word1
 
-	; Compute word1 = LL.hi + HL.lo + LH.lo
+	; Compute word1 = LL.hi + HL.lo + LH.lo.  The sum of three 16-bit
+	; words carries 0, 1 or 2 into word2, so count the carries in B (the
+	; old code chained them through ADC, which lost the second one and
+	; made the product wrong by hundreds of units in the last place).
+	LD	B,0
 	LD	HL,(__fmul_ll+2)	; LL.hi
 	LD	DE,(__fmul_hl)		; HL.lo
 	ADD	HL,DE
+	JR	NC,__fmul_nc1
+	INC	B
+__fmul_nc1:
 	LD	DE,(__fmul_lh)		; LH.lo
-	ADC	HL,DE
+	ADD	HL,DE
+	JR	NC,__fmul_nc2
+	INC	B
+__fmul_nc2:
 	PUSH	HL			; Save word1
 
-	; Compute word2 = HL.hi + LH.hi + HH.lo + carry
+	; Compute word2 = HL.hi + LH.hi + HH.lo + carries (the 48-bit
+	; product fits, so no carry out of word2)
 	LD	HL,(__fmul_hl+2)	; HL.hi
 	LD	DE,(__fmul_lh+2)	; LH.hi
-	ADC	HL,DE			; Add with carry from word1
+	ADD	HL,DE
 	LD	DE,(__fmul_hh)		; HH.lo
-	ADC	HL,DE
+	ADD	HL,DE
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE
 	; HL = word2 (bits 47-32)
 	EX	DE,HL			; Move to DE
 
@@ -501,40 +517,67 @@ __fmul_man:
 	BIT	7,D
 	JR	Z,__fmul_man_no_overflow
 
-	; Overflow case: product >= 2.0, take bits [47:24], increment exponent
-	; Rearrange D.E.H -> E.H.L format
-	PUSH	BC
-	LD	C,H		; C = bits [31:24]
-	LD	H,E		; H = bits [39:32]
-	LD	L,C		; L = bits [31:24]
-	LD	E,D		; E = bits [47:40]
-	LD	D,0		; D = 0
-	POP	BC
-	LD	(__fman1),HL
-	LD	(__fman1+2),DE
-
-	; Increment exponent for overflow
-	LD	HL,(__fexp1)
-	INC	HL
-	LD	(__fexp1),HL
-	RET
+	; Product >= 2.0: the mantissa is bits [47:24] = D:E:H and the
+	; rounding byte is bits [23:16] = L.  Exponent + 1.
+	LD	B,L		; B = rounding byte
+	LD	L,H
+	LD	H,E
+	LD	E,D
+	LD	D,0		; E:H:L = mantissa
+	CALL	__fmul_expinc
+	JR	__fmul_man_round
 
 __fmul_man_no_overflow:
-	; No overflow: product < 2.0, take bits [46:23] (shift DEHL left by 1)
+	; Product < 2.0: shift DEHL left by 1; the mantissa is then
+	; D:E:H and the rounding byte is L (bit 7 = product bit 22).
 	SLA	L
 	RL	H
 	RL	E
 	RL	D
-	; Now rearrange D.E.H -> E.H.L format
-	PUSH	BC
-	LD	C,H
+	LD	B,L		; B = rounding byte
+	LD	L,H
 	LD	H,E
-	LD	L,C
 	LD	E,D
-	LD	D,0
-	POP	BC
+	LD	D,0		; E:H:L = mantissa
+
+__fmul_man_round:
+	; Round to nearest, ties to even.  B = the 8 product bits just below
+	; the mantissa (bit 7 is the guard bit); the 16 bits below those are
+	; the low word of the 48-bit product, saved in __fmul_ll.
+	LD	A,(__fmul_ll)
+	LD	C,A
+	LD	A,(__fmul_ll+1)
+	OR	C
+	LD	C,A		; C = nonzero if any of the lowest 16 bits is set
+	LD	A,B
+	ADD	A,A		; carry = guard bit, A = the bits below it
+	JR	NC,__fmul_man_store	; guard clear: truncate
+	OR	C
+	JR	NZ,__fmul_rup	; guard set and something below: round up
+	LD	A,L
+	AND	1
+	JR	Z,__fmul_man_store	; exact tie and the mantissa is even
+__fmul_rup:
+	INC	L
+	JR	NZ,__fmul_man_store
+	INC	H
+	JR	NZ,__fmul_man_store
+	INC	E
+	JR	NZ,__fmul_man_store
+	LD	E,80H		; mantissa wrapped to 2.0 = 1.0 * 2^(e+1)
+	CALL	__fmul_expinc
+__fmul_man_store:
 	LD	(__fman1),HL
 	LD	(__fman1+2),DE
+	RET
+
+; __fexp1 = __fexp1 + 1, no register changed
+__fmul_expinc:
+	PUSH	HL
+	LD	HL,(__fexp1)
+	INC	HL
+	LD	(__fexp1),HL
+	POP	HL
 	RET
 
 ; __mul16_32 (DEHL = BC * DE) lives in rt_mul.mac.
