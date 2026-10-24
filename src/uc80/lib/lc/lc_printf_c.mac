@@ -1,12 +1,11 @@
 ; lc_printf_c.mac - printf %c handler
 	.Z80
 
-
 	EXTRN	_printf_putc
-BDOS	EQU	5
-CONOUT	EQU	2
-
 	EXTRN	_printf_loop
+	EXTRN	_printf_width
+	EXTRN	_printf_left
+	EXTRN	_printf_padn
 
 	CSEG
 
@@ -21,14 +20,14 @@ __printf_handle_c:
 	POP	DE
 	ADD	HL,DE
 	LD	E,(HL)
-	CALL	_printf_putc
+	CALL	_phc_out
 	POP	BC
 	INC	C
 	INC	C
 	POP	HL
 	JP	_printf_loop
 
-; Same as __printf_handle_c but advances C by 4 — for callers compiled
+; Same as __printf_handle_c but advances C by 4 - for callers compiled
 ; with --int=32 where char args occupy a full 32-bit stack slot.
 __printf_handle_c32:
 	PUSH	HL
@@ -39,7 +38,7 @@ __printf_handle_c32:
 	POP	DE
 	ADD	HL,DE
 	LD	E,(HL)
-	CALL	_printf_putc
+	CALL	_phc_out
 	POP	BC
 	INC	C
 	INC	C
@@ -47,5 +46,26 @@ __printf_handle_c32:
 	INC	C
 	POP	HL
 	JP	_printf_loop
+
+; Print the character E in a field of _printf_width characters.
+_phc_out:
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_phc_plain
+	DEC	A
+	LD	B,A		; padding = width - 1
+	LD	A,(_printf_left)
+	OR	A
+	JR	NZ,_phc_left
+	PUSH	DE
+	LD	E,' '
+	CALL	_printf_padn
+	POP	DE
+_phc_plain:
+	JP	_printf_putc
+_phc_left:
+	CALL	_printf_putc
+	LD	E,' '
+	JP	_printf_padn
 
 	END

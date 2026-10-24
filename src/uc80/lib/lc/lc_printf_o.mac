@@ -1,18 +1,12 @@
 ; lc_printf_o.mac - printf %o handler (unsigned int octal)
 	.Z80
 
-
-	EXTRN	_printf_putc
-BDOS	EQU	5
-CONOUT	EQU	2
-
 	EXTRN	_printf_loop
-	EXTRN	_printf_width
-	EXTRN	_printf_zero
 	EXTRN	_printf_alt
 	EXTRN	_printf_decbuf
 	EXTRN	_printf_dstart
 	EXTRN	_printf_dcnt
+	EXTRN	_printf_numout
 
 	CSEG
 
@@ -32,7 +26,7 @@ __printf_handle_o:
 	PUSH	IX
 	PUSH	BC
 	LD	B,0
-	LD	IX,_printf_decbuf+5
+	LD	IX,_printf_decbuf+24
 _pho_cvt:
 	LD	A,L
 	AND	07h		; remainder = value & 7
@@ -50,66 +44,24 @@ _pho_cvt:
 	LD	A,H
 	OR	L
 	JR	NZ,_pho_cvt
+	; Alternative form (# flag): C 7.21.6.1 para 6 says force the first
+	; digit to be '0'.  Value 0 already gives "0".
+	LD	A,(_printf_alt)
+	OR	A
+	JR	Z,_pho_set
+	LD	A,(IX+0)
+	CP	'0'
+	JR	Z,_pho_set
+	DEC	IX
+	LD	(IX+0),'0'
+	INC	B
+_pho_set:
 	LD	(_printf_dstart),IX
 	LD	A,B
 	LD	(_printf_dcnt),A
 	POP	BC
-	; Width padding
-	LD	A,(_printf_width)
-	OR	A
-	JR	Z,_pho_nopad
-	LD	B,A
-	LD	A,(_printf_dcnt)
-	LD	C,A
-	LD	A,B
-	SUB	C
-	JR	Z,_pho_nopad
-	JR	C,_pho_nopad
-	PUSH	BC
-	LD	B,A
-	LD	A,(_printf_zero)
-	OR	A
-	LD	A,' '
-	JR	Z,_pho_plp
-	LD	A,'0'
-_pho_plp:
-	LD	E,A
-	PUSH	AF
-	PUSH	BC
-	CALL	_printf_putc
-	POP	BC
-	POP	AF
-	DJNZ	_pho_plp
-	POP	BC
-_pho_nopad:
-	; Alternative form (# flag): C 7.21.6.1¶6 says force the first
-	; digit to be '0'. Value 0 already gives "0" — only emit the
-	; prefix when the first digit isn't already '0'.
-	LD	A,(_printf_alt)
-	OR	A
-	JR	Z,_pho_no_alt
-	LD	HL,(_printf_dstart)
-	LD	A,(HL)
-	CP	'0'
-	JR	Z,_pho_no_alt
-	PUSH	BC
-	LD	E,'0'
-	CALL	_printf_putc
-	POP	BC
-_pho_no_alt:
-	LD	HL,(_printf_dstart)
-	LD	A,(_printf_dcnt)
-	LD	B,A
-_pho_digs:
-	LD	E,(HL)
-	PUSH	BC
-	PUSH	HL
-	CALL	_printf_putc
-	POP	HL
-	POP	BC
-	INC	HL
-	DJNZ	_pho_digs
 	POP	IX
+	CALL	_printf_numout
 	POP	BC
 	INC	C
 	INC	C

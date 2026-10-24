@@ -2,7 +2,8 @@
 	.Z80
 
 	EXTRN	_printf_loop
-	EXTRN	_prt_dec64
+	EXTRN	_printf_numout
+	EXTRN	_printf_dec64
 	EXTRN	_prt64_val
 
 	CSEG
@@ -37,7 +38,8 @@ __printf_handle_llu:
 	LD	D,(HL)
 	LD	(_prt64_val+6),DE
 
-	CALL	_prt_dec64
+	CALL	_printf_dec64
+	CALL	_printf_numout
 	POP	BC
 	LD	A,C
 	ADD	A,8		; Long long is 8 bytes

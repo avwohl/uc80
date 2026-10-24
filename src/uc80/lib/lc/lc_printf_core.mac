@@ -37,10 +37,17 @@ CONOUT	EQU	2
 	PUBLIC	_printf_prec
 	PUBLIC	_printf_hasprec
 	PUBLIC	_printf_alt
+	PUBLIC	_printf_left
+	PUBLIC	_printf_plus
+	PUBLIC	_printf_space
+	PUBLIC	_printf_pfxlen
+	PUBLIC	_printf_numout
+	PUBLIC	_printf_hexfin
+	PUBLIC	_printf_hexword
+	PUBLIC	_printf_padn
 	PUBLIC	_printf_neg
 	PUBLIC	_printf_hexbuf
 	PUBLIC	_printf_decbuf
-	PUBLIC	_printf_dptr
 	PUBLIC	_printf_dstart
 	PUBLIC	_printf_dcnt
 	PUBLIC	_printf_ll_w0
@@ -148,14 +155,16 @@ _printf_format:
 	; Remember where the conversion specification starts (the first byte
 	; after the '%') so _printf_unknown can echo it verbatim.
 	LD	(_printf_fmtstart),HL
-	; Initialize format state
+	; Initialize format state: clear the whole _printf_state block
+	PUSH	BC
+	LD	DE,_printf_state
+	LD	B,11		; length of the _printf_state block
 	XOR	A
-	LD	(_printf_width),A
-	LD	(_printf_zero),A
-	LD	(_printf_upper),A
-	LD	(_printf_prec),A
-	LD	(_printf_hasprec),A
-	LD	(_printf_alt),A
+_printf_clr:
+	LD	(DE),A
+	INC	DE
+	DJNZ	_printf_clr
+	POP	BC
 	LD	A,(HL)
 	OR	A
 	JP	Z,_printf_done
@@ -194,21 +203,26 @@ _printf_not0:
 	JR	_printf_skip
 
 _printf_notdot:
-	; Skip other flags: -, +, space, #
+	; Flags: - + space #
+	LD	DE,_printf_left
 	CP	'-'
-	JR	Z,_printf_skip
+	JR	Z,_printf_setf
+	LD	DE,_printf_plus
 	CP	'+'
-	JR	Z,_printf_skip
+	JR	Z,_printf_setf
+	LD	DE,_printf_space
 	CP	' '
-	JR	Z,_printf_skip
+	JR	Z,_printf_setf
+	LD	DE,_printf_alt
 	CP	'#'
 	JR	NZ,_printf_not_alt
-	PUSH	AF
+_printf_setf:
 	LD	A,1
-	LD	(_printf_alt),A
-	POP	AF
+	LD	(DE),A
 	JR	_printf_skip
 _printf_not_alt:
+	CP	'*'
+	JR	Z,_printf_star
 	; Check for digits (1-9)
 	CP	'1'
 	JR	C,_printf_nodig
@@ -297,6 +311,57 @@ _printf_unk_go:
 	INC	DE
 	JR	_printf_unk_lp
 
+; '*' width or precision: the value is the next int vararg.
+_printf_star:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = the int
+	INC	C
+	INC	C
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	NZ,_printf_star_p
+	BIT	7,D
+	JR	Z,_printf_star_w
+	LD	A,1		; negative width: '-' flag and the magnitude
+	LD	(_printf_left),A
+	LD	HL,0
+	OR	A
+	SBC	HL,DE
+	EX	DE,HL
+_printf_star_w:
+	CALL	_printf_clamp8
+	LD	(_printf_width),A
+	POP	HL
+	JR	_printf_skip
+_printf_star_p:
+	BIT	7,D
+	JR	Z,_printf_star_pp
+	XOR	A		; negative precision: as if none was given
+	LD	(_printf_hasprec),A
+	POP	HL
+	JR	_printf_skip
+_printf_star_pp:
+	CALL	_printf_clamp8
+	LD	(_printf_prec),A
+	POP	HL
+	JR	_printf_skip
+
+; A = DE limited to 255
+_printf_clamp8:
+	LD	A,D
+	OR	A
+	LD	A,E
+	RET	Z
+	LD	A,255
+	RET
+
 _printf_isdig:
 	; Parse digit into width or precision
 	SUB	'0'
@@ -354,84 +419,221 @@ _printf_done:
 	RET
 
 ; ============================================================
-; Printf hex with width/zero-padding/uppercase support
-; Input: HL = value to print
+; Printf hex.  _printf_prt_hex prints HL (16 bit); the long handlers
+; fill _printf_hexbuf themselves (_printf_hexword) and call _printf_hexfin.
 ; ============================================================
 _printf_prt_hex:
 	PUSH	BC
-	; Convert 4 hex nibbles to ASCII in buffer
 	LD	DE,_printf_hexbuf
-	LD	A,H
-	RRCA
-	RRCA
-	RRCA
-	RRCA
-	AND	0FH
-	CALL	_printf_nib2a
-	LD	A,H
-	AND	0FH
-	CALL	_printf_nib2a
-	LD	A,L
-	RRCA
-	RRCA
-	RRCA
-	RRCA
-	AND	0FH
-	CALL	_printf_nib2a
-	LD	A,L
-	AND	0FH
-	CALL	_printf_nib2a
-	; Buffer has 4 ASCII hex chars
-	; Find first significant digit (skip leading '0' but keep last)
-	LD	HL,_printf_hexbuf
+	CALL	_printf_hexword
 	LD	B,4
-_printf_hx_lz:
+	CALL	_printf_hexfin
+	POP	BC
+	RET
+
+; HL = 16-bit value, DE = buffer pointer: append 4 hex characters
+_printf_hexword:
+	LD	A,H
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,H
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,L
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	CALL	_printf_nib2a
+	LD	A,L
+	AND	0FH
+	JR	_printf_nib2a
+
+; B = number of hex characters in _printf_hexbuf.  Drop leading zeros
+; (keep one), then print through _printf_numout.
+_printf_hexfin:
+	LD	HL,_printf_hexbuf
+_printf_hf_lz:
 	LD	A,B
 	CP	1
-	JR	Z,_printf_hx_pad
+	JR	Z,_printf_hf_set
 	LD	A,(HL)
 	CP	'0'
-	JR	NZ,_printf_hx_pad
+	JR	NZ,_printf_hf_set
 	INC	HL
 	DEC	B
-	JR	_printf_hx_lz
-_printf_hx_pad:
-	; B = significant digits, HL = pointer to first
-	LD	A,(_printf_width)
+	JR	_printf_hf_lz
+_printf_hf_set:
+	LD	(_printf_dstart),HL
+	LD	A,B
+	LD	(_printf_dcnt),A
+	; '#' flag: prefix 0x/0X when the value is not zero
+	LD	A,(_printf_alt)
 	OR	A
-	JR	Z,_printf_hx_out
-	SUB	B
-	JR	Z,_printf_hx_out
-	JR	C,_printf_hx_out
-	PUSH	HL
+	JR	Z,_printf_numout
+	LD	A,(HL)
+	CP	'0'
+	JR	Z,_printf_numout
+	LD	A,2
+	LD	(_printf_pfxlen),A
+	; fall into _printf_numout
+
+; ============================================================
+; _printf_numout: print one integer conversion.  Shared by every
+; integer handler, so flags, width and precision work the same for
+; %d %u %o %x %X and the l and ll forms.
+;
+; Entry: _printf_dstart -> the digits, _printf_dcnt = how many
+;        _printf_neg: 0 unsigned, 1 negative, 2 signed and not negative
+;        _printf_pfxlen: 2 to print 0x (0X when _printf_upper), else 0
+;        _printf_width/_zero/_left/_plus/_space/_prec/_hasprec
+; Exit:  BC preserved.
+; ============================================================
+_printf_numout:
 	PUSH	BC
+	LD	A,(_printf_neg)
+	OR	A
+	JR	Z,_pn_nosign
+	LD	B,'-'
+	CP	1
+	JR	Z,_pn_sgn
+	LD	B,'+'
+	LD	A,(_printf_plus)
+	OR	A
+	JR	NZ,_pn_sgn
+	LD	B,' '
+	LD	A,(_printf_space)
+	OR	A
+	JR	NZ,_pn_sgn
+_pn_nosign:
+	LD	B,0
+_pn_sgn:
+	LD	A,B
+	LD	(_pn_sign),A
+	; B = digit count, C = extra leading zeros from the precision
+	LD	A,(_printf_dcnt)
 	LD	B,A
+	LD	C,0
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_pn_cnt
+	XOR	A		; a precision cancels the '0' flag
+	LD	(_printf_zero),A
+	LD	A,(_printf_prec)
+	OR	A
+	JR	NZ,_pn_pz
+	LD	A,B		; precision 0 and value 0: no digits at all
+	DEC	A
+	JR	NZ,_pn_cnt
+	LD	HL,(_printf_dstart)
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_pn_cnt
+	LD	B,0
+	JR	_pn_cnt
+_pn_pz:
+	SUB	B
+	JR	C,_pn_cnt
+	LD	C,A
+_pn_cnt:
+	LD	A,B
+	LD	(_pn_n),A
+	LD	A,C
+	LD	(_pn_zeros),A
+	ADD	A,B		; B = characters before any padding
+	LD	B,A
+	LD	A,(_pn_sign)
+	OR	A
+	JR	Z,_pn_ns
+	INC	B
+_pn_ns:
+	LD	A,(_printf_pfxlen)
+	ADD	A,B
+	LD	B,A
+	LD	A,(_printf_width)
+	SUB	B
+	JR	NC,_pn_pad
+	XOR	A
+_pn_pad:
+	LD	(_pn_padn),A
+	LD	B,A
+	LD	A,(_printf_left)
+	OR	A
+	JR	NZ,_pn_body
 	LD	A,(_printf_zero)
 	OR	A
-	LD	A,' '
-	JR	Z,_printf_hx_plp
-	LD	A,'0'
-_printf_hx_plp:
-	LD	E,A
-	PUSH	AF
-	PUSH	BC
+	JR	NZ,_pn_zp
+	LD	E,' '
+	CALL	_printf_padn
+	JR	_pn_body
+_pn_zp:
+	CALL	_pn_sp
+	LD	E,'0'
+	CALL	_printf_padn
+	JR	_pn_dig
+_pn_body:
+	CALL	_pn_sp
+_pn_dig:
+	LD	A,(_pn_zeros)
+	LD	B,A
+	LD	E,'0'
+	CALL	_printf_padn
+	LD	A,(_pn_n)
+	OR	A
+	JR	Z,_pn_tail
+	LD	B,A
+	LD	HL,(_printf_dstart)
+_pn_dl:
+	LD	E,(HL)
 	CALL	_printf_putc
-	POP	BC
-	POP	AF
-	DJNZ	_printf_hx_plp
-	POP	BC
-	POP	HL
-_printf_hx_out:
-	LD	A,(HL)
-	LD	E,A
-	PUSH	BC
-	PUSH	HL
-	CALL	_printf_putc
-	POP	HL
-	POP	BC
 	INC	HL
-	DJNZ	_printf_hx_out
+	DJNZ	_pn_dl
+_pn_tail:
+	LD	A,(_printf_left)
+	OR	A
+	JR	Z,_pn_done
+	LD	A,(_pn_padn)
+	LD	B,A
+	LD	E,' '
+	CALL	_printf_padn
+_pn_done:
 	POP	BC
+	RET
+
+; sign character and 0x prefix
+_pn_sp:
+	LD	A,(_pn_sign)
+	OR	A
+	JR	Z,_pn_sp1
+	LD	E,A
+	CALL	_printf_putc
+_pn_sp1:
+	LD	A,(_printf_pfxlen)
+	OR	A
+	RET	Z
+	LD	E,'0'
+	CALL	_printf_putc
+	LD	A,(_printf_upper)
+	LD	E,'x'
+	OR	A
+	JR	Z,_pn_sp2
+	LD	E,'X'
+_pn_sp2:
+	JP	_printf_putc
+
+; Output the character E, B times (B may be 0).  Clobbers AF, B.
+_printf_padn:
+	LD	A,B
+	OR	A
+	RET	Z
+_printf_padn1:
+	CALL	_printf_putc
+	DJNZ	_printf_padn1
 	RET
 
 ; Convert nibble (0-15) in A to ASCII hex char, store at (DE), advance DE
@@ -900,21 +1102,33 @@ _printf_count:	DS	2	; running byte count, returned by printf-family
 	PUBLIC	_printf_sink
 _printf_sink:	DW	__conout	; where _printf_putc sends each byte
 _printf_fmtstart:	DS	2	; first byte after '%', for _printf_unknown
-_printf_hexbuf:	DS	8	; 8 chars for %lx, lower 4 reused by 16-bit %x
-_printf_decbuf:	DS	6
-_printf_neg:	DB	0
-_printf_dptr:	DS	2
+; One buffer for the digits of an integer conversion.  Hex handlers fill it
+; from the start (up to 16 digits for %llx), the 32/64-bit decimal handlers
+; too; the 16-bit decimal and octal handlers fill it backwards from +24.
+_printf_hexbuf:
+_printf_decbuf:	DS	24
 _printf_dstart:	DS	2
 _printf_dcnt:	DB	0
+_pn_sign:	DB	0
+_pn_n:		DB	0
+_pn_zeros:	DB	0
+_pn_padn:	DB	0
+; Per-conversion state, cleared at every '%' (keep it contiguous, 11 bytes)
+_printf_state:
 _printf_width:	DB	0
 _printf_zero:	DB	0
 _printf_upper:	DB	0
+_printf_prec:	DB	0
+_printf_hasprec:	DB	0
+_printf_alt:	DB	0	; '#' flag - alt form for o/x/X
+_printf_left:	DB	0	; '-' flag
+_printf_plus:	DB	0	; '+' flag
+_printf_space:	DB	0	; ' ' flag
+_printf_neg:	DB	0	; 0 unsigned, 1 negative, 2 signed non-negative
+_printf_pfxlen:	DB	0	; 2 = print 0x
 _prt_float_sinf:	DB	'INF'
 _prt_float_snan:	DB	'NAN'
 
-_printf_prec:	DB	0
-_printf_hasprec:	DB	0
-_printf_alt:	DB	0	; '#' flag — alt form for o/x/X
 _printf_ll_w0:	DS	2
 _printf_ll_w1:	DS	2
 _printf_ll_w2:	DS	2

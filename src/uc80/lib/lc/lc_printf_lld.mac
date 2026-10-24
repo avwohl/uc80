@@ -2,12 +2,10 @@
 	.Z80
 
 
-	EXTRN	_printf_putc
-BDOS	EQU	5
-CONOUT	EQU	2
-
+	EXTRN	_printf_neg
+	EXTRN	_printf_numout
 	EXTRN	_printf_loop
-	EXTRN	_prt_dec64
+	EXTRN	_printf_dec64
 	EXTRN	_prt64_val
 
 	CSEG
@@ -43,15 +41,14 @@ __printf_handle_lld:
 	LD	(_prt64_val+6),DE
 
 	; Check sign (bit 7 of highest byte)
+	LD	A,2		; signed, not negative
+	LD	(_printf_neg),A
 	LD	A,D
 	AND	80H
 	JR	Z,_phlld_pos
 
-	; Negative - print minus sign
-	PUSH	BC
-	LD	E,'-'
-	CALL	_printf_putc
-	POP	BC
+	LD	A,1		; negative: remember, then negate below
+	LD	(_printf_neg),A
 
 	; Negate 64-bit value (0 - _prt64_val)
 	XOR	A		; Clear carry
@@ -73,7 +70,8 @@ __printf_handle_lld:
 	LD	(_prt64_val+6),HL
 
 _phlld_pos:
-	CALL	_prt_dec64
+	CALL	_printf_dec64
+	CALL	_printf_numout
 	POP	BC
 	LD	A,C
 	ADD	A,8		; Long long is 8 bytes

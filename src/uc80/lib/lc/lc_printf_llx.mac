@@ -9,8 +9,9 @@ CONOUT	EQU	2
 	EXTRN	_printf_ll_w1
 	EXTRN	_printf_ll_w2
 	EXTRN	_printf_ll_w3
-	EXTRN	_prt_hex
-	EXTRN	_prt_hex4
+	EXTRN	_printf_hexbuf
+	EXTRN	_printf_hexword
+	EXTRN	_printf_hexfin
 
 	CSEG
 
@@ -43,43 +44,18 @@ __printf_handle_llx:
 	INC	HL
 	LD	D,(HL)
 	LD	(_printf_ll_w3),DE
-	; Print from highest word to lowest, skip leading zeros
+	; 16 nibbles, high word first, into _printf_hexbuf
+	LD	DE,_printf_hexbuf
 	LD	HL,(_printf_ll_w3)
-	LD	A,H
-	OR	L
-	JR	Z,_phllx_w2
-	CALL	_prt_hex
+	CALL	_printf_hexword
 	LD	HL,(_printf_ll_w2)
-	CALL	_prt_hex4
+	CALL	_printf_hexword
 	LD	HL,(_printf_ll_w1)
-	CALL	_prt_hex4
+	CALL	_printf_hexword
 	LD	HL,(_printf_ll_w0)
-	CALL	_prt_hex4
-	JR	_phllx_done
-_phllx_w2:
-	LD	HL,(_printf_ll_w2)
-	LD	A,H
-	OR	L
-	JR	Z,_phllx_w1
-	CALL	_prt_hex
-	LD	HL,(_printf_ll_w1)
-	CALL	_prt_hex4
-	LD	HL,(_printf_ll_w0)
-	CALL	_prt_hex4
-	JR	_phllx_done
-_phllx_w1:
-	LD	HL,(_printf_ll_w1)
-	LD	A,H
-	OR	L
-	JR	Z,_phllx_w0
-	CALL	_prt_hex
-	LD	HL,(_printf_ll_w0)
-	CALL	_prt_hex4
-	JR	_phllx_done
-_phllx_w0:
-	LD	HL,(_printf_ll_w0)
-	CALL	_prt_hex
-_phllx_done:
+	CALL	_printf_hexword
+	LD	B,16
+	CALL	_printf_hexfin
 	POP	BC
 	LD	A,C
 	ADD	A,8

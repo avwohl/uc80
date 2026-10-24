@@ -4,13 +4,15 @@
 BDOS	EQU	5
 CONOUT	EQU	2
 
-	EXTRN	__conout
-
 	CSEG
 
-	PUBLIC	_prt_dec64
-; Input: 8-byte value already stored in _prt64_val
-_prt_dec64:
+	PUBLIC	_printf_dec64
+	EXTRN	_printf_decbuf
+	EXTRN	_printf_dstart
+	EXTRN	_printf_dcnt
+; Input: 8-byte value already stored in _prt64_val.
+; Output: decimal digits in _printf_decbuf (_printf_dstart/_printf_dcnt).
+_printf_dec64:
 	PUSH	BC
 	PUSH	IX
 
@@ -39,14 +41,15 @@ _prt64_loop:
 	OR	L
 	JR	NZ,_prt64_loop
 
-	; Pop and print digits
+	LD	HL,_printf_decbuf
+	LD	(_printf_dstart),HL
+	LD	A,B
+	LD	(_printf_dcnt),A
 _prt64_out:
 	POP	AF
 	ADD	A,'0'
-	LD	E,A
-	PUSH	BC
-	CALL	__conout
-	POP	BC
+	LD	(HL),A
+	INC	HL
 	DJNZ	_prt64_out
 
 	POP	IX

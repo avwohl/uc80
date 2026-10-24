@@ -1,14 +1,13 @@
 ; lc_printf_s.mac - printf %s handler
 	.Z80
 
-
 	EXTRN	_printf_putc
-BDOS	EQU	5
-CONOUT	EQU	2
-
 	EXTRN	_printf_loop
 	EXTRN	_printf_hasprec
 	EXTRN	_printf_prec
+	EXTRN	_printf_width
+	EXTRN	_printf_left
+	EXTRN	_printf_padn
 
 	CSEG
 
@@ -25,7 +24,51 @@ __printf_handle_s:
 	INC	HL
 	LD	D,(HL)		; DE = string pointer
 
-	; Load precision limit into B (0 = unlimited)
+	XOR	A
+	LD	(_phs_pad),A
+	LD	A,(_printf_width)
+	OR	A
+	JR	Z,_phs_print	; no field width: nothing to count
+
+	; Count the characters that will be printed, but never more than
+	; the width: B = min(width, precision if any).
+	LD	B,A
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	Z,_phs_cnt
+	LD	A,(_printf_prec)
+	CP	B
+	JR	NC,_phs_cnt
+	LD	B,A
+_phs_cnt:
+	LD	H,D
+	LD	L,E
+	LD	C,0
+_phs_c1:
+	LD	A,C
+	CP	B
+	JR	NC,_phs_cd
+	LD	A,(HL)
+	OR	A
+	JR	Z,_phs_cd
+	INC	HL
+	INC	C
+	JR	_phs_c1
+_phs_cd:
+	LD	A,(_printf_width)
+	SUB	C		; padding = width - printed characters
+	LD	(_phs_pad),A
+	LD	B,A
+	LD	A,(_printf_left)
+	OR	A
+	JR	NZ,_phs_print
+	PUSH	DE
+	LD	E,' '
+	CALL	_printf_padn
+	POP	DE
+
+_phs_print:
+	; Load precision limit into B
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	Z,_phs_nop
@@ -57,10 +100,21 @@ _phs_nolim:
 	JR	_phs_loop
 
 _phs_done:
+	LD	A,(_printf_left)
+	OR	A
+	JR	Z,_phs_ret
+	LD	A,(_phs_pad)
+	LD	B,A
+	LD	E,' '
+	CALL	_printf_padn
+_phs_ret:
 	POP	BC
 	INC	C
 	INC	C
 	POP	HL
 	JP	_printf_loop
+
+	DSEG
+_phs_pad:	DB	0
 
 	END

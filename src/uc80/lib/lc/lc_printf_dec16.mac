@@ -1,0 +1,36 @@
+; lc_printf_dec16.mac - 16-bit unsigned decimal digits for %d and %u
+	.Z80
+
+	EXTRN	_printf_decbuf
+	EXTRN	_printf_dstart
+	EXTRN	_printf_dcnt
+	EXTRN	_prt_div16
+
+	CSEG
+
+; Entry: HL = value.  Exit: _printf_dstart/_printf_dcnt describe the digits.
+	PUBLIC	_printf_dec16
+_printf_dec16:
+	PUSH	BC
+	PUSH	IX
+	LD	IX,_printf_decbuf+24
+	LD	B,0
+_pd16_lp:
+	LD	DE,10
+	CALL	_prt_div16
+	LD	A,E
+	ADD	A,'0'
+	DEC	IX
+	LD	(IX+0),A
+	INC	B
+	LD	A,H
+	OR	L
+	JR	NZ,_pd16_lp
+	LD	(_printf_dstart),IX
+	LD	A,B
+	LD	(_printf_dcnt),A
+	POP	IX
+	POP	BC
+	RET
+
+	END

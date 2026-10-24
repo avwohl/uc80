@@ -23,6 +23,17 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- **`printf` honours precision, `-`, width on long forms, `%s` width and
+  `*`.** `%.4d`, `%5.3d` and `%.3x` now print the minimum number of
+  digits, `%-5d`, `%-5u` and `%-5x` left-justify, `%8ld`, `%-8lu` and
+  `%08lx` (and the `ll` forms) pad to the width, `%5s` and `%-5s` pad,
+  and `%*d`, `%.*d` and `%*s` read the width or precision from the
+  arguments. The flags `+`, space and `#` work for every integer
+  conversion. All integer handlers now end in one routine,
+  `_printf_numout`. `%llx`, `%lld` and `%llu` also write through
+  `sprintf` and `fprintf` now (they wrote to the console before).
+  `tests/test_printf_flags.py` compares about 1,200 conversions with the
+  host `printf`.
 - **Float multiply is correctly rounded.** `__fmul` lost one of two
   carries when it added the partial products, so a product could be
   wrong by up to 513 units in the last place, and it truncated instead

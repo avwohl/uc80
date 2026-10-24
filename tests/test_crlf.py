@@ -31,7 +31,8 @@ LC_DIR = LIB_DIR / "lc"
 CONOUT_MAC = LC_DIR / "lc_conout.mac"
 CPMEMU = REPO.parent / "cpmemu" / "src" / "cpmemu"
 
-# The console writers that must route through __conout.  lc_stdlib.mac is
+# The console writers that must route through __conout.  (lc_prt_dec64.mac
+# is not one any more: it only fills a buffer that _printf_numout prints.)  lc_stdlib.mac is
 # deliberately absent: abort() uses BDOS 9 with a '$'-terminated string and
 # is a terminal call (see the module note in lc_conout.mac).
 CONSOLE_MODULES = [
@@ -40,7 +41,6 @@ CONSOLE_MODULES = [
     "lc_printf_core.mac",
     "lc_file.mac",
     "lc_prt_dec32.mac",
-    "lc_prt_dec64.mac",
     "lc_prt_hex.mac",
     "lc_assert.mac",
 ]

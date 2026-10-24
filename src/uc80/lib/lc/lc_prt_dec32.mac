@@ -14,7 +14,14 @@ CONOUT	EQU	2
 	CSEG
 
 	PUBLIC	_prt_dec32
-_prt_dec32:
+	PUBLIC	_printf_dec32
+	EXTRN	_printf_decbuf
+	EXTRN	_printf_dstart
+	EXTRN	_printf_dcnt
+
+; _printf_dec32: DEHL -> decimal digits in _printf_decbuf, described by
+; _printf_dstart/_printf_dcnt.  _prt_dec32 prints them.
+_printf_dec32:
 	PUSH	BC
 	PUSH	IX
 
@@ -39,17 +46,32 @@ _prt32_loop:
 	OR	L
 	JR	NZ,_prt32_loop
 
-	; Pop and print digits
+	LD	HL,_printf_decbuf
+	LD	(_printf_dstart),HL
+	LD	A,B
+	LD	(_printf_dcnt),A
 _prt32_out:
 	POP	AF
 	ADD	A,'0'
-	LD	E,A
-	PUSH	BC
-	CALL	_printf_putc
-	POP	BC
+	LD	(HL),A
+	INC	HL
 	DJNZ	_prt32_out
 
 	POP	IX
+	POP	BC
+	RET
+
+_prt_dec32:
+	CALL	_printf_dec32
+	PUSH	BC
+	LD	HL,(_printf_dstart)
+	LD	A,(_printf_dcnt)
+	LD	B,A
+_prt32_raw:
+	LD	E,(HL)
+	CALL	_printf_putc
+	INC	HL
+	DJNZ	_prt32_raw
 	POP	BC
 	RET
 

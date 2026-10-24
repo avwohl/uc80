@@ -2,7 +2,8 @@
 	.Z80
 
 	EXTRN	_printf_loop
-	EXTRN	_prt_dec32
+	EXTRN	_printf_numout
+	EXTRN	_printf_dec32
 
 	CSEG
 
@@ -24,7 +25,8 @@ __printf_handle_lu:
 	LD	H,(HL)
 	LD	L,A
 	EX	DE,HL		; DEHL = value
-	CALL	_prt_dec32
+	CALL	_printf_dec32
+	CALL	_printf_numout
 	POP	BC
 	LD	A,C
 	ADD	A,4
