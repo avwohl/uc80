@@ -8403,6 +8403,16 @@ class CodeGenerator:
             is_long_long = self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right)
             is_long = self._is_long_expr(expr.left) or self._is_long_expr(expr.right)
 
+        # Pointer +/- integer (and pointer - pointer) is pointer-sized
+        # arithmetic, whatever the width of the integer operand: a 16-bit
+        # address plus a long index is a 16-bit address.  The 32-bit and
+        # 64-bit paths do not scale the integer by the element size, so
+        # ``short *b = a + n * n;`` with ``unsigned long n`` added n * n
+        # bytes instead of elements.  The 16-bit path scales, and takes the
+        # low word of the integer.
+        if (is_long or is_long_long) and self._is_pointer_arith(expr):
+            is_long = is_long_long = False
+
         # With --int=32, multiplication of two int-promotable operands
         # is performed in int (= 32-bit) per C 6.3.1.1, so the result
         # may not fit in 16-bit. Force the 32-bit multiply runtime in
@@ -16781,6 +16791,16 @@ class CodeGenerator:
         expr_type = self._get_expr_type(expr)
         return self._is_complex_type(expr_type)
 
+    def _is_pointer_arith(self, expr) -> bool:
+        """True for ``ptr + int``, ``int + ptr``, ``ptr - int`` and
+        ``ptr - ptr``: the result is a pointer or a ptrdiff (16 bits), even
+        when the integer operand is a long."""
+        if not (isinstance(expr, ast.BinaryOp) and expr.op in ("+", "-")):
+            return False
+        ptr = (lt.PointerType, lt.ArrayType)
+        return (isinstance(self._get_expr_type(expr.left), ptr)
+                or isinstance(self._get_expr_type(expr.right), ptr))
+
     def _is_long_long_expr(self, expr) -> bool:
         """Check if an expression has 64-bit type (long long)."""
         if isinstance(expr, ast.SequenceExpr):
@@ -16814,6 +16834,8 @@ class CodeGenerator:
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
                 # C99 6.3.1.8: float/double wins over long long in usual arithmetic conversions
                 if self._is_float_expr(expr.left) or self._is_float_expr(expr.right):
+                    return False
+                if self._is_pointer_arith(expr):
                     return False
                 return self._is_long_long_expr(expr.left) or self._is_long_long_expr(expr.right)
         if isinstance(expr, ast.Cast):
@@ -16885,6 +16907,8 @@ class CodeGenerator:
             # Binary operation is long if either operand is long
             # (excluding assignment operators which return target type)
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
+                if self._is_pointer_arith(expr):
+                    return False
                 if self._is_long_expr(expr.left) or self._is_long_expr(expr.right):
                     return True
                 # With --int=32 and short-typed operands, ``short * unsigned short``
