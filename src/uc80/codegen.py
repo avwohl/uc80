@@ -1528,6 +1528,12 @@ class CallGraphAnalyzer:
         if isinstance(t, ast.TypeName):
             _, t = resolve_type_from_decl(t.decl_specs,
                                            getattr(t, "abstract_declarator", None))
+        elif (hasattr(ast, "TypeNameWithDeclarator")
+              and isinstance(t, ast.TypeNameWithDeclarator)):
+            # sizeof(void *), sizeof(char[4]): the type-name carries an
+            # abstract declarator (the field is ``declarator``).
+            from uc_core.codegen_helpers import resolve_type_from_decl as _core_resolve
+            _, t = _core_resolve(t.decl_specs, t.declarator)
         if t.kind == "basic":
             if t.name == "void":
                 return 0
