@@ -73,9 +73,9 @@ comparable with region counts of other programs.
 - All six games build and match the golden file with llvm-z80,
   standalone SDCC 4.6 (`snake` after the `sqrtf()` mapping), and
   z88dk-sccz80 (except `mille`).
-- uc80 matches the golden file for `worm`, `snake`, `canfield` and
-  `invaders`. `robots` hangs and `mille` is wrong because of two
-  uc80 bugs (see below).
+- uc80 matches the golden file for all six games (after the two uc80
+  fixes below: `robots` 21205 bytes and 884.8M cycles, `mille` 31514
+  bytes and 1347.8M cycles).
 - SDCC 4.4 and z88dk-zsdcc give wrong output for `canfield`
   (zsdcc also for `invaders`). zsdcc does not finish the size-mode
   build of `snake` and `mille` in 30 minutes.
@@ -87,12 +87,14 @@ comparable with region counts of other programs.
 - dcc runs `worm` and `invaders`. It has no floating point (`snake`,
   `canfield`), cannot link `robots`, and `mille` does not finish.
 
-## uc80 bugs that these games found
+## uc80 bugs that these games found (both fixed)
 
 - A function and a global variable with names that differ only in
   case (`Score` and `score`): uc80 names the definition `_score_1`, but the
   call goes to `_score`, and the call jumps into the variable.
-  `robots` hangs.
+  `robots` hung.  Fixed: the call uses the label of the definition.
 - `(pp - arr) + 21` where `pp` and `arr` point to a structure of 110
   bytes: the result is 2310, not 21. The addition scales the integer
-  as if the difference were a pointer. `mille` is wrong.
+  as if the difference were a pointer. `mille` was wrong.  Fixed: a
+  pointer difference has type int.
+  Tests: `tests/test_ptrdiff_and_case_call.py`.
