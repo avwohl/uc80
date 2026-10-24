@@ -11408,7 +11408,12 @@ class CodeGenerator:
                 if (expr.func.name.text not in self.ctx.function_names
                         and not (func_sym and getattr(func_sym, 'has_body', False))):
                     self.ctx.implicit_externs.add(f"_{expr.func.name.text}")
-                self.ctx.emit_instr("call", f"_{expr.func.name.text}")
+                # A global whose name case-folds onto an earlier global has
+                # a label_override; the call must use the same label.
+                gsym = self.ctx.globals.get(expr.func.name.text)
+                self.ctx.emit_instr(
+                    "call", gsym.label() if gsym is not None
+                    else f"_{expr.func.name.text}")
             else:
                 # Function pointer variable - load pointer and call indirectly
                 self.gen_expr(expr.func)
@@ -13092,7 +13097,13 @@ class CodeGenerator:
             # the result type and gen_assignment emits a 2-byte store at
             # the dereference instead of 1 byte.
             if expr.op in ("+", "-"):
-                if isinstance(left_type, (lt.PointerType, lt.ArrayType)):
+                ptr_t = (lt.PointerType, lt.ArrayType)
+                if (expr.op == "-" and isinstance(left_type, ptr_t)
+                        and isinstance(right_type, ptr_t)):
+                    # ptr - ptr is a ptrdiff_t (int), not a pointer, so a
+                    # following ``+ 21`` is not scaled by the pointee size.
+                    return lt.BasicType(name="int", is_signed=True)
+                if isinstance(left_type, ptr_t):
                     return left_type
                 if isinstance(right_type, (lt.PointerType, lt.ArrayType)) and expr.op == "+":
                     return right_type
