@@ -10153,17 +10153,11 @@ class CodeGenerator:
             self.gen_expr(expr.operand)  # No-op
 
         elif op == "!":
-            op_is_32 = self._is_float_expr(expr.operand) or self._is_long_expr(expr.operand)
-            self.gen_expr(expr.operand, force_long=op_is_32)
-            # Logical NOT: if zero then 1 else 0
-            if op_is_32:
-                self.ctx.emit_instr("ld", "A,H")
-                self.ctx.emit_instr("or", "L")
-                self.ctx.emit_instr("or", "E")
-                self.ctx.emit_instr("or", "D")
-            else:
-                self.ctx.emit_instr("ld", "A,H")
-                self.ctx.emit_instr("or", "L")
+            # Logical NOT: if zero then 1 else 0.  The zero test sees
+            # all 64 bits of a long long and ignores the sign of a
+            # float -0.0.
+            self._gen_condition_value(expr.operand)
+            self._emit_condition_test(expr.operand)
             self.ctx.emit_instr("ld", "HL,0")
             self.ctx.emit_instr("jr", "NZ,$+3")
             self.ctx.emit_instr("inc", "L")
@@ -17408,6 +17402,12 @@ class CodeGenerator:
         if k is not None:
             self.gen_expr(left)
             return self._emit_cmp16_const(op, k, unsigned)
+        rm = self._ix16_mem(right)
+        if rm is not None:
+            lm = self._ix16_mem(left)
+            if lm is None:
+                self.gen_expr(left)
+            return self._emit_cmp16_mem(op, unsigned, lm, rm)
         if self._is_simple_operand(right):
             self.gen_expr(left)
             self.gen_expr_to_de(right)
@@ -17491,6 +17491,65 @@ class CodeGenerator:
             e("sbc", f"A,{hi}")
         return "C" if op == "<" else "NC"
 
+    def _ix16_mem(self, expr):
+        """The two operands ``(IX+d)`` and ``(IX+d+1)`` of a 16-bit
+        integer or pointer variable that lives in the IX frame (not
+        volatile), else None.  An ALU instruction can read them."""
+        sym = self._simple_sym(expr)
+        if sym is None or sym.is_global or sym.uses_shared_storage:
+            return None
+        t = _to_legacy(sym.sym_type)
+        if (self._type_size(t) != 2 or getattr(t, "is_volatile", False)
+                or self._is_bool_type(t)
+                or not self._ix_in_range(sym.offset, 2)):
+            return None
+        return (f"({ix_off(sym.offset)})", f"({ix_off(sym.offset + 1)})")
+
+    def _emit_cmp16_mem(self, op: str, unsigned: bool, lm, rm) -> str:
+        """Flags for ``left op right`` with ``right`` in the IX frame
+        (rm) and ``left`` in HL, or in the IX frame too (lm): the bytes
+        are read by the ALU, with no register load."""
+        e = self.ctx.emit_instr
+        if op in ("==", "!="):
+            if lm is None:
+                e("ld", "A,L")
+                e("xor", rm[0])
+                e("ld", "B,A")
+                e("ld", "A,H")
+            else:
+                e("ld", f"A,{lm[0]}")
+                e("xor", rm[0])
+                e("ld", "B,A")
+                e("ld", f"A,{lm[1]}")
+            e("xor", rm[1])
+            e("or", "B")
+            return "Z" if op == "==" else "NZ"
+        swap = op in (">", "<=")
+        if swap:
+            # left > right is right < left.
+            op = "<" if op == ">" else ">="
+        if lm is None:
+            lo, hi = "L", "H"
+        else:
+            lo, hi = lm
+        if swap:
+            e("ld", f"A,{rm[0]}")
+            e("sub", lo)
+            e("ld", f"A,{rm[1]}")
+            e("sbc", f"A,{hi}")
+        else:
+            if lm is None:
+                e("ld", "A,L")
+            else:
+                e("ld", f"A,{lm[0]}")
+            e("sub", rm[0])
+            if lm is None:
+                e("ld", "A,H")
+            else:
+                e("ld", f"A,{lm[1]}")
+            e("sbc", f"A,{rm[1]}")
+        return self._cmp16_sign_tail(op, unsigned)
+
     def _emit_cmp16_hl_de(self, op: str, unsigned: bool) -> str:
         """Flags for ``HL op DE``."""
         e = self.ctx.emit_instr
@@ -17507,6 +17566,12 @@ class CodeGenerator:
         e("sub", b[0])
         e("ld", f"A,{a[1]}")
         e("sbc", f"A,{b[1]}")
+        return self._cmp16_sign_tail(op, unsigned)
+
+    def _cmp16_sign_tail(self, op: str, unsigned: bool) -> str:
+        """The condition of ``a < b`` (op '<') or ``a >= b`` after the
+        16-bit subtraction a - b left its flags."""
+        e = self.ctx.emit_instr
         if unsigned:
             return "C" if op == "<" else "NC"
         # Signed: less when sign XOR overflow.
@@ -17685,6 +17750,12 @@ class CodeGenerator:
             self._gen_expr_a(cond)
             self.ctx.emit_instr("or", "A")
             return "NZ"
+        m = self._ix16_mem(cond)
+        if m is not None:
+            # A 16-bit variable in the IX frame: no register load.
+            self.ctx.emit_instr("ld", f"A,{m[0]}")
+            self.ctx.emit_instr("or", m[1])
+            return "NZ"
         if self._gen_truth_through_hl(cond):
             return "NZ"
         self._gen_condition_value(cond)
@@ -17760,7 +17831,14 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", "A,(__acc64+%d)" % off)
                 self.ctx.emit_instr("or", "B")
             return
-        if self._is_float_expr(condition) or self._is_long_expr(condition):
+        if self._is_float_expr(condition):
+            # -0.0 is zero too: leave the sign bit out of the test.
+            self.ctx.emit_instr("ld", "A,D")
+            self.ctx.emit_instr("and", "127")
+            self.ctx.emit_instr("or", "E")
+            self.ctx.emit_instr("or", "H")
+            self.ctx.emit_instr("or", "L")
+        elif self._is_long_expr(condition):
             self.ctx.emit_instr("ld", "A,H")
             self.ctx.emit_instr("or", "L")
             self.ctx.emit_instr("or", "E")

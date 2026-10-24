@@ -88,7 +88,10 @@ def rec(locals_: str, stmts: str) -> list[str]:
     frame (a non-recursive function keeps them in ??AUTO)."""
     o = ops(gen(GLOBALS + f"void f(int d) {{ {locals_} {stmts} "
                 "if (d) f(d - 1); } int main(void) { f(0); return 0; }"))
-    return o[:o.index("ld\tL,(IX+4)")]   # up to the `if (d)` test
+    # up to the `if (d)` test (a 16-bit frame variable is tested with
+    # ld A,(IX+4) / or (IX+5), or loaded with ld L,(IX+4))
+    return o[:min(o.index(i) for i in ("ld\tL,(IX+4)", "ld\tA,(IX+4)")
+                  if i in o)]
 
 
 def no_push(o):

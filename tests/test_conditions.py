@@ -436,6 +436,42 @@ def _pair_program(pairs):
     return src, want
 
 
+def _frame_program(pairs):
+    """Like _pair_program, but every comparison runs in a recursive
+    function, so the parameters and locals live in the IX frame
+    (``cmp (IX+d)`` forms): both operands as parameters, one parameter
+    and one local, and two locals."""
+    decls, calls, want = [], [], []
+    for n, (ta, tb) in enumerate(pairs):
+        ca, cb = TYPES[ta][0], TYPES[tb][0]
+        va, vb = TYPES[ta][3], TYPES[tb][3]
+        bits, signed = _common(ta, tb)
+        lit = lambda v: f"{v}L" if abs(v) > 32767 else str(v)
+        decls.append(f"{ca} va{n}[] = {{{', '.join(lit(v) for v in va)}}};")
+        decls.append(f"{cb} vb{n}[] = {{{', '.join(lit(v) for v in vb)}}};")
+        decls.append(f"unsigned r1_{n}({ca} a, {cb} b, int d) "
+                     f"{{ if (d) return r1_{n}(a, b, d - 1); "
+                     f"{_cmp_body('a', 'b')} }}")
+        decls.append(f"unsigned r2_{n}({ca} a, {cb} b, int d) "
+                     f"{{ {ca} la = a; if (d) return r2_{n}(a, b, d - 1); "
+                     f"{_cmp_body('la', 'b')} }}")
+        decls.append(f"unsigned r3_{n}({ca} a, {cb} b, int d) "
+                     f"{{ {ca} la = a; {cb} lb = b; "
+                     f"if (d) return r3_{n}(a, b, d - 1); "
+                     f"{_cmp_body('la', 'lb')} }}")
+        calls.append(
+            f"for (i = 0; i < {len(va)}; i++) for (j = 0; j < {len(vb)}; j++) "
+            f"printf(\"%u %u %u\\n\", r1_{n}(va{n}[i], vb{n}[j], 1), "
+            f"r2_{n}(va{n}[i], vb{n}[j], 1), r3_{n}(va{n}[i], vb{n}[j], 1));")
+        for a in va:
+            for b in vb:
+                m = _mask(a, b, bits, signed)
+                want.append(f"{m} {m} {m}")
+    src = ("\n".join(decls) + "\nint main(void) { int i, j; "
+           + " ".join(calls) + " return 0; }")
+    return src, want
+
+
 def _check(tmp_path, src, want, name):
     got = build_and_run(tmp_path, src, name)
     assert len(got) == len(want), (name, got[-3:])
@@ -451,6 +487,16 @@ def test_compare_pairs_16(tmp_path):
     for k in range(0, len(pairs), 8):
         src, want = _pair_program(pairs[k:k + 8])
         _check(tmp_path, src, want, f"pairs16_{k}")
+
+
+@needs_toolchain
+def test_compare_pairs_frame(tmp_path):
+    """16-bit comparisons of variables in the IX frame."""
+    names = ("i16", "u16", "s8", "u8")
+    pairs = [(a, b) for a in names for b in names]
+    for k in range(0, len(pairs), 4):
+        src, want = _frame_program(pairs[k:k + 4])
+        _check(tmp_path, src, want, f"frame_{k}")
 
 
 @needs_toolchain
@@ -630,3 +676,95 @@ int main(void) {
         x5 += 7
     want = ["200", f"{n2} {sc}", f"{n3} {x}", f"{n4} {u}", f"{n5} {x5}"]
     _check(tmp_path, src, want, "loops")
+
+
+class TestFrameVariables:
+    def test_truth_of_a_parameter_reads_both_bytes_from_memory(self):
+        assert cond("p", params="int p") == [
+            "ld\tA,(IX+4)", "or\t(IX+5)", "jp\tZ,@ENDIF2"]
+
+    def test_compare_two_parameters_without_loading_them(self):
+        o = cond("p < q", params="int p, int q")
+        assert o[:4] == ["ld\tA,(IX+4)", "sub\t(IX+6)", "ld\tA,(IX+5)",
+                         "sbc\tA,(IX+7)"]
+
+    def test_compare_value_with_a_parameter(self):
+        o = cond("g() == q", params="int q")
+        assert o[:6] == ["call\t_g", "ld\tA,L", "xor\t(IX+4)", "ld\tB,A",
+                         "ld\tA,H", "xor\t(IX+5)"]
+
+
+@needs_toolchain
+def test_truth_and_side_effects(tmp_path):
+    """Truth tests of frame variables, short-circuit order, a float -0.0,
+    and ! of a 64-bit value whose low 32 bits are zero."""
+    src = r"""
+int cnt;
+int t(int v) { cnt = cnt * 10 + 1; return v; }
+int u(int v) { cnt = cnt * 10 + 2; return v; }
+unsigned tr(int a, unsigned b, int d) {
+    unsigned r = 0;
+    if (d) return tr(a, b, d - 1);
+    if (a) r |= 1;
+    if (!a) r |= 2;
+    if (b) r |= 4;
+    if (a && b) r |= 8;
+    if (a || b) r |= 16;
+    r |= (a ? 32u : 0u) | (b != 0 ? 64u : 0u) | (a == 0 ? 128u : 0u);
+    return r;
+}
+float fz, fn;
+long long z, w;
+int main(void) {
+    int r, i;
+    static int av[] = {0, 1, 256, -32768, 255};
+    for (i = 0; i < 5; i++) {
+        printf("%u %u %u\n", tr(av[i], 0, 1), tr(0, av[i], 1),
+               tr(av[i], av[i], 1));
+    }
+    cnt = 0; r = t(0) && u(1); printf("%d %d\n", r, cnt);
+    cnt = 0; r = t(1) && u(0); printf("%d %d\n", r, cnt);
+    cnt = 0; r = t(1) || u(0); printf("%d %d\n", r, cnt);
+    cnt = 0; r = t(0) || u(0); printf("%d %d\n", r, cnt);
+    cnt = 0; r = (t(0) ? u(7) : t(8)); printf("%d %d\n", r, cnt);
+    cnt = 0; r = t(0) || u(0) && t(1); printf("%d %d\n", r, cnt);
+    fn = 2.0f; fz = 0.0f; fz = -fz;
+    printf("%d %d %d %d\n", !fz, !fn, fz ? 1 : 2, fz == 0);
+    if (fz) printf("true\n"); else printf("false\n");
+    z = 0; w = 0x100000000LL;
+    printf("%d %d %d\n", !z, !w, !!w);
+    return 0;
+}
+"""
+    want = []
+    for a in (0, 1, 256, -32768, 255):
+        def tr(a, b):
+            r = 0
+            r |= 1 if a else 0
+            r |= 2 if not a else 0
+            r |= 4 if b else 0
+            r |= 8 if a and b else 0
+            r |= 16 if a or b else 0
+            r |= (32 if a else 0) | (64 if b else 0) | (128 if a == 0 else 0)
+            return r
+        want.append(f"{tr(a, 0)} {tr(0, a & 0xFFFF)} {tr(a, a & 0xFFFF)}")
+    want += ["0 1", "0 12", "1 1", "0 12", "8 11", "0 12",
+             "1 0 2 1", "false", "1 0 1"]
+    _check(tmp_path, src, want, "truth")
+
+
+@needs_toolchain
+def test_runtime_accumulator_does_not_overlay_globals(tmp_path):
+    """The runtime's __acc64 and the program's first global are in one
+    COMMON block, at different addresses (two ``common //`` directives
+    would overlay: ``ll1 = 1LL << 32`` then changed ll0)."""
+    src = r"""
+long long ll0, ll1; int r;
+int main(void) {
+    ll1 = 0x100000000LL;
+    printf("%d %d %d\n", !ll0, !ll1, ll1 == 0);
+    r = !!ll1; printf("%d %d\n", r, ll1 && 1);
+    return 0;
+}
+"""
+    _check(tmp_path, src, ["1 0 0", "1 1"], "acc64_overlay")

@@ -114,7 +114,8 @@ class TestExpressionGeneration:
     def test_comparison_equal(self):
         """Equality comparison."""
         code = self._binop("==")
-        assert "sbc\tHL,DE" in code
+        # The parameters are in the IX frame: compared bytewise.
+        assert "xor\t(IX+6)" in code or "sbc\tHL,DE" in code
         assert "jp\tZ" in code
 
     def test_comparison_not_equal(self):
