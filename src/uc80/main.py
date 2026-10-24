@@ -17,7 +17,8 @@ from uc_core.type_config import TypeConfig, Z80_CPM
 from . import lib_dir, lib_file
 from .codegen import (generate, CodeGenerator, CodegenError, BSS_BANNER_PREFIX,
                       drop_unreferenced_externs)
-from .runtime import RuntimeLibrary, load_runtime_library
+from .runtime import (RuntimeLibrary, load_lib_modules, load_runtime_library,
+                      leave_to_library)
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
 from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
                       is_asm_begin, is_asm_end)
@@ -760,13 +761,47 @@ def main() -> int:
                             needed.add(label)
 
             funcs = runtime_lib.get_required_functions(needed) if needed else []
+
+            # A runtime module that libc needs comes into the link as a whole,
+            # so a function embedded here that it also defines would be in the
+            # image twice (and ul80 would warn "%Mult. Def. Global").  Leave
+            # those functions, and the data they use, to the library.
+            lib_provided: set[str] = set()
+            lib_externs = ''
+            if funcs and not args.runtime_lib:
+                lib_mods = load_lib_modules()
+                if lib_mods:
+                    all_funcs = funcs
+                    # What the link will need is what asm DCE leaves, not
+                    # what the compiler wrote: a dead function that calls
+                    # printf must not predict the printf modules.
+                    live_code = code
+                    if whole_program and not args.no_asm_dce:
+                        entry = set(program_public_labels) | asm_entry_labels
+                        if gen.call_graph_analyzer:
+                            entry |= {f"_{n}" for n in
+                                      gen.call_graph_analyzer.address_taken}
+                        try:
+                            live_code = asm_eliminate_dead_code(
+                                code, entry_points=entry)
+                        except Exception:
+                            live_code = code
+                    funcs, lib_provided = leave_to_library(
+                        runtime_lib, lib_mods, funcs, live_code,
+                        program_public_labels, set(gen.ctx.runtime_used))
+                    left = sorted({n for f in all_funcs if f not in funcs
+                                   for n in f.publics})
+                    if left:
+                        lib_externs = '\n\textrn\t' + ','.join(left)
             runtime_funcs_embedded = len(funcs)
 
             # Even if no runtime functions are embedded, we may need data EXTRN
             # declarations for symbols like __tmp32, __sret_buf referenced by
             # generated code
             data_section = runtime_lib.get_data_section(
-                funcs, gen.ctx.runtime_used) if (funcs or gen.ctx.runtime_used) else ''
+                funcs, gen.ctx.runtime_used,
+                lib_provided) if (funcs or gen.ctx.runtime_used) else ''
+            data_section = lib_externs + data_section
 
             if funcs or data_section:
                 # The module's own END is dropped; a single END is appended
@@ -789,6 +824,10 @@ def main() -> int:
 
                     # Add EXTRN declarations for external symbols needed by runtime
                     required_externs = runtime_lib.get_required_externs(funcs)
+                    # Functions this code calls that were left to the library
+                    kept_names = {n for f in funcs for n in f.publics}
+                    required_externs |= {d for f in funcs
+                                         for d in f.dependencies} - kept_names
                     if required_externs:
                         runtime_code.append("; External symbols needed by runtime")
                         for ext in sorted(required_externs):
@@ -805,11 +844,23 @@ def main() -> int:
                 # by optional DSEG content - don't wrap in additional DSEG.
                 # We must ensure EXTRN lines are in CSEG context since the
                 # compiler output may end in DSEG (for shared auto storage).
+                runtime_bss = ""
                 if data_section:
                     if not funcs:
                         # No runtime functions were emitted, so we haven't
                         # switched to CSEG yet - do it now for the EXTRNs
                         runtime_code.append("\n\tcseg")
+                    # The runtime's uninitialized data joins the program's
+                    # COMMON block (below).  A second ``common //`` of its
+                    # own would overlay the first at the same address: the
+                    # accumulator __acc64 would share its bytes with the
+                    # first global variable of the program.
+                    bss_marker = "\n\tcommon\t//"
+                    if (bss_marker in data_section and any(
+                            re.match(r'\s*COMMON\b', ln, re.IGNORECASE)
+                            for ln in lines)):
+                        data_section, _, runtime_bss = (
+                            data_section.partition(bss_marker))
                     runtime_code.append(data_section)
 
                 # Splice the runtime in *before* the COMMON (BSS) block - see
@@ -820,6 +871,11 @@ def main() -> int:
                 # DCE re-sorts the segments; under --no-asm-dce it miscompiled.
                 insert_at = _tail_insert_index(lines)
                 lines[insert_at:insert_at] = runtime_code
+                if runtime_bss:
+                    for i, ln in enumerate(lines):
+                        if re.match(r'\s*COMMON\b', ln, re.IGNORECASE):
+                            lines[i + 1:i + 1] = runtime_bss.split("\n")
+                            break
                 lines.append("\n\tend")
 
                 code = '\n'.join(lines)

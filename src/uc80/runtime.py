@@ -264,8 +264,22 @@ class RuntimeLibrary:
 
         return externs - defined
 
+    def data_symbols(self, functions: list[AsmFunction],
+                     additional_refs: set[str] | None = None,
+                     lib_provided: set[str] | None = None) -> set[str]:
+        """PUBLIC data symbols that get_data_section defines for these
+        functions (upper case)."""
+        text = self.get_data_section(functions, additional_refs, lib_provided)
+        names: set[str] = set()
+        for line in text.splitlines():
+            m = re.match(r'\s*public\s+(.+)', line, re.IGNORECASE)
+            if m:
+                names.update(n.strip().upper() for n in m.group(1).split(','))
+        return names
+
     def get_data_section(self, functions: list[AsmFunction],
-                         additional_refs: set[str] | None = None) -> str:
+                         additional_refs: set[str] | None = None,
+                         lib_provided: set[str] | None = None) -> str:
         """Get data section for embedded functions.
 
         When embedding runtime functions, we need to:
@@ -275,6 +289,10 @@ class RuntimeLibrary:
 
         This ensures embedded code shares the same storage as library code (like
         libc's printf) for PUBLIC symbols like __tmp32, __fman1, etc.
+
+        *lib_provided* (upper-case names) are PUBLIC symbols that a library
+        module the link pulls in anyway defines.  They are not defined here a
+        second time (a duplicate definition); an EXTRN takes their place.
         """
         if not self.data_sections:
             return ''
@@ -347,6 +365,10 @@ class RuntimeLibrary:
         # Uninitialized data (DS) goes in COMMON (BSS) to save binary space.
         data_refs = referenced - code_labels
         needed = [sym for sym in data_refs if sym in all_data]
+        provided = sorted(sym for sym in needed
+                          if lib_provided and sym.upper() in lib_provided)
+        if provided:
+            needed = [sym for sym in needed if sym not in provided]
         if needed:
             for sym in sorted(needed):
                 lines = all_data[sym]
@@ -370,6 +392,8 @@ class RuntimeLibrary:
 
         # Return DSEG content (initialized) then COMMON/BSS (uninitialized)
         result_lines: list[str] = []
+        if provided:
+            result_lines.append('\n\textrn\t' + ','.join(provided))
         if dseg_lines:
             result_lines.append('\n\tdseg')
             result_lines.append('; Embedded runtime data')
@@ -380,6 +404,111 @@ class RuntimeLibrary:
             result_lines.extend(bss_lines)
 
         return '\n'.join(result_lines)
+
+
+class LibModules:
+    """Which symbols each module of libc (lc/) and the runtime (rt/) defines
+    and needs, read from the library sources.
+
+    The linker pulls a library module whenever one of its symbols is
+    undefined, and then the whole module comes in.  When the compiler
+    embeds a runtime function that such a module also defines, the image
+    carries the function twice and ul80 warns "%Mult. Def. Global".
+    rt_modules_linked() predicts which runtime modules the link will pull,
+    so the compiler can leave their functions to the library.
+    """
+
+    def __init__(self, lib_dir: Path):
+        self.defines: dict[str, str] = {}       # symbol -> module (libc first)
+        self.needs: dict[str, set[str]] = {}    # module -> symbols it needs
+        self.module_defines: dict[str, set[str]] = {}
+        for sub in ("lc", "rt"):
+            d = lib_dir / sub
+            if not d.is_dir():
+                continue
+            for path in sorted(d.glob("*.mac")):
+                key = f"{sub}/{path.stem}"
+                pubs: set[str] = set()
+                exts: set[str] = set()
+                for line in path.read_text(errors="replace").splitlines():
+                    m = re.match(r"\s*(PUBLIC|EXTRN)\s+([^;]+)", line, re.IGNORECASE)
+                    if not m:
+                        continue
+                    names = {n.strip().upper() for n in m.group(2).split(",")
+                             if n.strip()}
+                    (pubs if m.group(1).upper() == "PUBLIC" else exts).update(names)
+                self.module_defines[key] = pubs
+                self.needs[key] = exts - pubs
+                for name in pubs:
+                    self.defines.setdefault(name, key)
+
+    def __bool__(self) -> bool:
+        return bool(self.module_defines)
+
+    def rt_modules_linked(self, undefined: set[str], defined: set[str]) -> set[str]:
+        """Runtime modules (keys "rt/...") the linker pulls in.
+
+        *undefined*: symbols the program references; *defined*: symbols the
+        program itself defines (they pull nothing).  Upper-case names.
+        """
+        pulled: set[str] = set()
+        seen: set[str] = set()
+        work = list(undefined)
+        while work:
+            sym = work.pop()
+            if sym in seen or sym in defined:
+                continue
+            seen.add(sym)
+            mod = self.defines.get(sym)
+            if mod is None or mod in pulled:
+                continue
+            pulled.add(mod)
+            work.extend(self.needs[mod])
+        return {m for m in pulled if m.startswith("rt/")}
+
+
+def leave_to_library(runtime_lib: "RuntimeLibrary", lib_mods: "LibModules",
+                     funcs: list[AsmFunction], code: str,
+                     program_publics: set[str],
+                     runtime_used: set[str]) -> tuple[list[AsmFunction], set[str]]:
+    """Drop embedded functions that a library module will supply anyway.
+
+    Returns (functions still to embed, PUBLIC symbols of the runtime modules
+    the link pulls in).  See LibModules.  The loop reaches a fixed point
+    because dropping a function never removes a module from the prediction:
+    it only removes a symbol the program defined itself.
+    """
+    # Every prototype of every included header is an EXTRN; main.py prunes
+    # the unused ones last (drop_unreferenced_externs), and so does this.
+    from .codegen import drop_unreferenced_externs
+    undefined = {n.strip().upper()
+                 for line in drop_unreferenced_externs(code).splitlines()
+                 for m in [re.match(r"\s*EXTRN\s+([^;]+)", line, re.IGNORECASE)] if m
+                 for n in m.group(1).split(",") if n.strip()}
+    prog_defined = {n.upper() for n in program_publics}
+    kept = list(funcs)
+    provided: set[str] = set()
+    while True:
+        defined = set(prog_defined)
+        for f in kept:
+            defined.update(p.upper() for p in f.publics)
+        defined |= runtime_lib.data_symbols(kept, runtime_used, provided)
+        wanted = set(undefined)
+        wanted.update(n.upper() for f in kept for n in f.externs)
+        mods = lib_mods.rt_modules_linked(wanted, defined)
+        now_provided: set[str] = set()
+        for m in mods:
+            now_provided |= lib_mods.module_defines[m]
+        now_kept = [f for f in funcs
+                    if not any(p.upper() in now_provided for p in f.publics)]
+        if now_provided == provided and len(now_kept) == len(kept):
+            return kept, provided
+        kept, provided = now_kept, now_provided
+
+
+def load_lib_modules() -> LibModules:
+    """The module/symbol index of the default libraries (may be empty)."""
+    return LibModules(lib_file("runtime.mac").parent)
 
 
 def load_runtime_library() -> RuntimeLibrary:

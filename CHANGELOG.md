@@ -23,6 +23,14 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- **A runtime function was linked twice.** When libc needs a runtime
+  module, the linker takes the whole module, and a function that the
+  compiler had embedded from the same module was then in the image twice
+  (ul80 warned `%Mult. Def. Global`; `ldiv()` could return `quot = -1`
+  next to 32-bit arithmetic because there were two copies of `__tmp32`).
+  The compiler now predicts the runtime modules the link will pull in
+  and leaves their functions and data to the library. A program with
+  floating point and `printf` is about 1.7 KB smaller.
 - **`free()` frees.** `malloc`, `calloc`, `realloc` and `free` use a
   first-fit free list kept in address order, and `free()` merges the
   block with free neighbours. `realloc` keeps a block that is already
