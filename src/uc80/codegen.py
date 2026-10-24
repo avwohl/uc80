@@ -19678,20 +19678,6 @@ class CodeGenerator:
             c = s[i]
             if c == "'":
                 result.append("''")  # Escape single quote
-            elif c == "\\" and i + 1 < n:
-                # Source-level escape (kept after _decode_string_literal
-                # only for the literal `\` case). Pass through.
-                next_c = s[i + 1]
-                if next_c == "'":
-                    result.append("''")
-                    i += 1
-                elif next_c == "\\":
-                    result.append("\\")
-                    i += 1
-                else:
-                    # Unknown escape — pass the second char through.
-                    result.append(next_c)
-                    i += 1
             else:
                 o = ord(c)
                 if 0x20 <= o <= 0x7e and c != "'":

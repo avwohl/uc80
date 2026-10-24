@@ -283,7 +283,7 @@ files = [
 edit = [
   { file = "bcd.c", old = "#include <sys/cdefs.h>\n", new = "" },
   { file = "bcd.c", old = "#include <sys/types.h>\n", new = "" },
-  { file = "bcd.c", old = "#include <unistd.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\ntypedef unsigned short u_short;\n" },
+  { file = "bcd.c", old = "#include <unistd.h>\n", new = "#include <ctype.h>\n#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\ntypedef unsigned short u_short;\n#undef isascii\n#define isascii(c) (((c) & ~0x7f) == 0)\n" },
   { file = "bcd.c", old = "\t/* revoke setgid privileges */\n\tsetgid(getgid());\n", new = "\tbench_args(&argc, &argv);\n" },
 ]
 stdin_file = "input.txt"
@@ -314,28 +314,6 @@ edit = [
 stdin_file = "input.txt"
 check_defines = ["lint"]
 time_defines = ["lint"]
-timeout = 600
-
-[[program]]
-name = "ahl-startrek"
-tier = 3
-timing = "total"
-about = "Super Star Trek (Mike Mayfield 1971 / David Ahl, BASIC Computer Games 1978; C port by Chris Nystrom 1996, z88dk examples/console copy; free to use and modify, no formal license): scripted mission with floating point"
-files = [
-  { repo = "z88dk", path = "examples/console/startrek.c", sha256 = "7b8993ceb49d32fe490c22037ec976af2fbb85789638a17a122b9da2b0a67798", main = true },
-  { shared = "support/posix_shim.c" },
-  { shared = "support/posix_shim.h" },
-  { shared = "stdio-glue/sglue.c" },
-  { shared = "stdio-glue/sglue.h" },
-]
-edit = [
-  { file = "startrek.c", old = "#pragma printf = \"%s %d %4.2f\"\n\n#pragma output CLIB_MALLOC_HEAP_SIZE    = 0             // do not create malloc heap\n#pragma output CLIB_STDIO_HEAP_SIZE     = 0             // do not create stdio heap (cannot open files)\n#pragma output CLIB_EXIT_STACK_SIZE     = 0             // do not reserve space for registering atexit() functions\n#pragma output CRT_ENABLE_COMMANDLINE   = 3             // create command line\n\n#ifdef __SPECTRUM\n#pragma output CRT_ORG_CODE             = 30000         // move ORG to 30000\n#pragma output REGISTER_SP              = -1            // indicate crt should not modify stack location\n#pragma output CRT_ENABLE_EIDI          = 0x01          // disable interrupts at start\n#endif\n\n#ifdef __RC2014\n#pragma output CRT_ORG_CODE                 = 0x8400    // move ORG to 0x8400 for -subtype=basic85\n                                                        // also all the instruction text is omitted\n#endif\n", new = "" },
-  { file = "startrek.c", old = "#include <input.h>\n// #include <time.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n#define double_t double\n" },
-  { file = "startrek.c", old = "  fflush(stdout);\n  fflush(stdin);\n", new = "  fflush(stdout);\n" },
-  { file = "startrek.c", old = "  fflush(stdin);   /** Z88DK **/\n", new = "" },
-  { file = "startrek.c", old = "  int tmp;\n  \n  intro();", new = "  int tmp;\n\n  bench_args(&argc, &argv);\n  intro();" },
-]
-stdin_file = "input.txt"
 timeout = 600
 
 [[program]]

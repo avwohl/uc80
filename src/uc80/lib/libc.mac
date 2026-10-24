@@ -780,6 +780,33 @@ _atanh_num:	DS	4
 
 
 
+; DEHL = DEHL * 10 + C (C = 0..9).  Clobbers A, BC; uses _strtod_tmp.
+_strtod_x10a:
+	LD	A,C
+	LD	(_strtod_tmp),HL
+	LD	(_strtod_tmp+2),DE
+	ADD	HL,HL		; * 2
+	RL	E
+	RL	D
+	ADD	HL,HL		; * 4
+	RL	E
+	RL	D
+	LD	BC,(_strtod_tmp)
+	ADD	HL,BC		; * 5, low word
+	EX	DE,HL
+	LD	BC,(_strtod_tmp+2)
+	ADC	HL,BC		; * 5, high word
+	EX	DE,HL
+	ADD	HL,HL		; * 10
+	RL	E
+	RL	D
+	LD	C,A
+	LD	B,0
+	ADD	HL,BC		; + digit
+	RET	NC
+	INC	DE
+	RET
+
 	EXTRN	__ltof
 	EXTRN	__fadd
 	EXTRN	__fsub
@@ -801,11 +828,11 @@ _atof:
 	PUSH	BC
 
 	; Call strtod with NULL endptr
+	LD	HL,0
+	PUSH	HL		; endptr = NULL (pushed first: last argument)
 	LD	L,(IX+4)
 	LD	H,(IX+5)	; HL = nptr
 	PUSH	HL
-	LD	HL,0
-	PUSH	HL		; endptr = NULL
 	CALL	_strtod
 	POP	BC
 	POP	BC
@@ -839,6 +866,14 @@ _strtod:
 	LD	A,1
 	LD	(_strtod_expadj),A	; Exponent adjustment (1.0 default)
 	LD	(_strtod_expadj+1),A
+	; Clear the exponent and the fraction state of an earlier call
+	LD	(_strtod_divisor),A	; divisor = 1
+	XOR	A
+	LD	(_strtod_exp),A
+	LD	(_strtod_exp+1),A
+	LD	(_strtod_divisor+1),A
+	LD	(_strtod_divisor+2),A
+	LD	(_strtod_divisor+3),A
 
 	; Initialize result to 0.0
 	XOR	A
@@ -899,49 +934,11 @@ _strtod_intloop:
 	SUB	'0'
 	LD	C,A		; C = digit value
 
-	; Multiply accumulator by 10 and add digit
+	; accumulator = accumulator * 10 + digit
 	PUSH	HL
-	PUSH	BC
-
-	; Load accumulator
 	LD	HL,(_strtod_intacc)
 	LD	DE,(_strtod_intacc+2)
-	; Multiply by 10: DEHL * 10
-	; Save original
-	PUSH	DE
-	PUSH	HL
-	; *2
-	ADD	HL,HL
-	RL	E
-	RL	D
-	; *4
-	ADD	HL,HL
-	RL	E
-	RL	D
-	; *8 + *2 = *10
-	POP	BC		; Original low
-	EX	(SP),HL		; Swap with original high, get *8 low
-	ADD	HL,BC		; *8 low + *2 low
-	EX	DE,HL		; DE = new low
-	POP	BC		; Original high
-	LD	A,H
-	ADC	A,C
-	LD	H,A
-	LD	A,L
-	ADC	A,B
-	LD	L,A		; HL = high, DE = low (wrong order)
-	EX	DE,HL		; DEHL = result*10
-	; Now add digit in C
-	POP	BC		; Get digit back
-	LD	A,L
-	ADD	A,C
-	LD	L,A
-	JR	NC,_strtod_noc1
-	INC	H
-	JR	NZ,_strtod_noc1
-	INC	DE
-_strtod_noc1:
-	; Store back
+	CALL	_strtod_x10a
 	LD	(_strtod_intacc),HL
 	LD	(_strtod_intacc+2),DE
 	POP	HL
@@ -978,70 +975,27 @@ _strtod_fracloop:
 	SUB	'0'
 	LD	C,A
 
-	; Multiply divisor by 10
+	; Digits past 1E8 of divisor do not fit a float: skip them
 	PUSH	HL
+	LD	HL,(_strtod_divisor+2)
+	LD	DE,05F5H
+	OR	A
+	SBC	HL,DE
+	JR	NC,_strtod_fracskip
 	PUSH	BC
 	LD	HL,(_strtod_divisor)
 	LD	DE,(_strtod_divisor+2)
-	; *10 (same as above)
-	PUSH	DE
-	PUSH	HL
-	ADD	HL,HL
-	RL	E
-	RL	D
-	ADD	HL,HL
-	RL	E
-	RL	D
-	POP	BC
-	EX	(SP),HL
-	ADD	HL,BC
-	EX	DE,HL
-	POP	BC
-	LD	A,H
-	ADC	A,C
-	LD	H,A
-	LD	A,L
-	ADC	A,B
-	LD	L,A
-	EX	DE,HL
+	LD	C,0
+	CALL	_strtod_x10a
 	LD	(_strtod_divisor),HL
 	LD	(_strtod_divisor+2),DE
-
-	; Multiply fracacc by 10 and add digit
 	LD	HL,(_strtod_fracacc)
 	LD	DE,(_strtod_fracacc+2)
-	PUSH	DE
-	PUSH	HL
-	ADD	HL,HL
-	RL	E
-	RL	D
-	ADD	HL,HL
-	RL	E
-	RL	D
 	POP	BC
-	EX	(SP),HL
-	ADD	HL,BC
-	EX	DE,HL
-	POP	BC
-	LD	A,H
-	ADC	A,C
-	LD	H,A
-	LD	A,L
-	ADC	A,B
-	LD	L,A
-	EX	DE,HL
-	; Add digit
-	POP	BC
-	LD	A,L
-	ADD	A,C
-	LD	L,A
-	JR	NC,_strtod_noc2
-	INC	H
-	JR	NZ,_strtod_noc2
-	INC	DE
-_strtod_noc2:
+	CALL	_strtod_x10a
 	LD	(_strtod_fracacc),HL
 	LD	(_strtod_fracacc+2),DE
+_strtod_fracskip:
 	POP	HL
 	INC	HL
 	JR	_strtod_fracloop
@@ -1110,8 +1064,8 @@ _strtod_convert:
 	OR	A
 	JR	NZ,_strtod_hasdigits
 	; No digits - return 0.0 with endptr = nptr
-	POP	HL		; Discard end
-	; HL = start (nptr)
+	POP	DE		; Discard end
+	PUSH	HL		; start (nptr) is the end pointer
 	JR	_strtod_storendptr
 
 _strtod_hasdigits:
@@ -1193,9 +1147,9 @@ _strtod_exploop:
 
 	; Multiply by 10
 	PUSH	BC
-	LD	BC,00004120H	; 10.0 in IEEE 754
+	LD	BC,00000000H	; 10.0 in IEEE 754 is 41200000H
 	LD	(__tmp32),BC
-	LD	BC,00000000H
+	LD	BC,04120H
 	LD	(__tmp32+2),BC
 	CALL	__fmul
 	POP	BC
@@ -1205,9 +1159,9 @@ _strtod_exploop:
 _strtod_expdiv:
 	; Divide by 10
 	PUSH	BC
-	LD	BC,00004120H	; 10.0 in IEEE 754
+	LD	BC,00000000H	; 10.0 in IEEE 754 is 41200000H
 	LD	(__tmp32),BC
-	LD	BC,00000000H
+	LD	BC,04120H
 	LD	(__tmp32+2),BC
 	CALL	__fdiv
 	POP	BC
@@ -9641,6 +9595,9 @@ _na_done:
 
 
 	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__ftoi
+	EXTRN	__ltof
 	EXTRN	__tmp32
 
 	CSEG
@@ -9671,6 +9628,120 @@ _powl:
 	LD	(_pow_y),HL
 	LD	(_pow_y+2),DE
 
+	; A whole-number exponent with |y| <= 64: repeated squaring is exact
+	; where exp(y*log(x)) loses the last bit ((int)pow(3,2) must be 9),
+	; and it accepts a negative x.
+	LD	HL,(_pow_y)
+	LD	DE,(_pow_y+2)
+	CALL	__ftoi
+	LD	A,D
+	OR	E
+	JR	Z,_pow_ipos
+	LD	A,D
+	AND	E
+	INC	A
+	JR	NZ,_pow_log	; not a sign extension of 16 bits
+	LD	A,H
+	INC	A
+	JR	NZ,_pow_log	; below -256
+	LD	A,L
+	CP	0C0H
+	JR	C,_pow_log	; below -64
+	JR	_pow_inrange
+_pow_ipos:
+	LD	A,H
+	OR	A
+	JR	NZ,_pow_log
+	LD	A,L
+	CP	65
+	JR	NC,_pow_log	; above 64
+_pow_inrange:
+	LD	(_pow_n),HL
+	LD	DE,0
+	BIT	7,H
+	JR	Z,_pow_se
+	DEC	DE
+_pow_se:
+	CALL	__ltof
+	LD	BC,(_pow_y)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,_pow_log	; y has a fraction
+	EX	DE,HL
+	LD	BC,(_pow_y+2)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,_pow_log
+
+	LD	HL,0
+	LD	(_pow_r),HL
+	LD	HL,3F80H
+	LD	(_pow_r+2),HL	; r = 1.0
+	LD	HL,(_pow_x)
+	LD	(_pow_b),HL
+	LD	HL,(_pow_x+2)
+	LD	(_pow_b+2),HL	; b = x
+	LD	HL,(_pow_n)
+	BIT	7,H
+	JR	Z,_pow_kp
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	INC	HL
+_pow_kp:
+	LD	(_pow_k),HL
+_pow_iloop:
+	LD	HL,(_pow_k)
+	LD	A,H
+	OR	L
+	JR	Z,_pow_idone
+	BIT	0,L
+	JR	Z,_pow_noacc
+	LD	HL,(_pow_b)
+	LD	DE,(_pow_b+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_pow_r)
+	LD	DE,(_pow_r+2)
+	CALL	__fmul		; r = r * b
+	LD	(_pow_r),HL
+	LD	(_pow_r+2),DE
+_pow_noacc:
+	LD	HL,(_pow_k)
+	SRL	H
+	RR	L
+	LD	(_pow_k),HL
+	LD	A,H
+	OR	L
+	JR	Z,_pow_idone
+	LD	HL,(_pow_b)
+	LD	DE,(_pow_b+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; b = b * b
+	LD	(_pow_b),HL
+	LD	(_pow_b+2),DE
+	JR	_pow_iloop
+_pow_idone:
+	LD	HL,(_pow_r)
+	LD	DE,(_pow_r+2)
+	LD	A,(_pow_n+1)
+	BIT	7,A
+	JR	Z,_pow_ret
+	LD	(__tmp32),HL	; negative exponent: 1 / r
+	LD	(__tmp32+2),DE
+	LD	DE,3F80H
+	LD	HL,0
+	CALL	__fdiv
+_pow_ret:
+	POP	BC
+	POP	IX
+	RET
+
+_pow_log:
 	; Compute log(x)
 	LD	HL,(_pow_x)
 	LD	DE,(_pow_x+2)
@@ -9706,6 +9777,10 @@ _powl:
 
 _pow_x:		DS	4
 _pow_y:		DS	4
+_pow_r:		DS	4
+_pow_b:		DS	4
+_pow_k:		DS	2
+_pow_n:		DS	2
 
 
 ; ============================================================
@@ -14502,6 +14577,13 @@ _scanf_white:
 	INC	HL
 	PUSH	HL
 	PUSH	BC
+	CALL	_scanf_skip_ws
+	POP	BC
+	POP	HL
+	JP	_scanf_loop
+
+; Internal subroutine: skip input white space, push back the first other
+; character.  Preserves BC, DE and HL.
 _scanf_skip_ws:
 	CALL	_scanf_getc
 	CP	' '
@@ -14513,10 +14595,7 @@ _scanf_skip_ws:
 	CP	13
 	JR	Z,_scanf_skip_ws
 	; Unget non-whitespace char
-	CALL	_scanf_ungetc
-	POP	BC
-	POP	HL
-	JP	_scanf_loop
+	JP	_scanf_ungetc
 
 _scanf_format:
 	INC	HL
@@ -14613,6 +14692,11 @@ _scanf_int:
 	PUSH	BC
 	CALL	_scanf_skip_ws
 	CALL	_scanf_read_int	; Result in HL
+	LD	A,(_scanf_got)
+	OR	A
+	JP	Z,_scanf_fail
+	POP	BC		; the reader used BC: get the argument offset back
+	PUSH	BC
 	PUSH	HL
 	; Get destination pointer
 	LD	H,0
@@ -14649,6 +14733,11 @@ _scanf_hex:
 	PUSH	BC
 	CALL	_scanf_skip_ws
 	CALL	_scanf_read_hex	; Result in HL
+	LD	A,(_scanf_got)
+	OR	A
+	JP	Z,_scanf_fail
+	POP	BC		; the reader used BC: get the argument offset back
+	PUSH	BC
 	PUSH	HL
 	; Get destination pointer
 	LD	H,0
@@ -14770,6 +14859,11 @@ _scanf_ld:
 	PUSH	BC
 	CALL	_scanf_skip_ws
 	CALL	_scanf_read_long	; Result in DEHL
+	LD	A,(_scanf_got)
+	OR	A
+	JP	Z,_scanf_fail
+	POP	BC		; the reader used BC: get the argument offset back
+	PUSH	BC
 	PUSH	DE
 	PUSH	HL
 	; Get destination pointer
@@ -14807,6 +14901,11 @@ _scanf_lx:
 	PUSH	BC
 	CALL	_scanf_skip_ws
 	CALL	_scanf_read_long_hex
+	LD	A,(_scanf_got)
+	OR	A
+	JP	Z,_scanf_fail
+	POP	BC		; the reader used BC: get the argument offset back
+	PUSH	BC
 	PUSH	DE
 	PUSH	HL
 	LD	H,0
@@ -14844,8 +14943,28 @@ _scanf_done:
 	POP	IX
 	RET
 
-; Internal: get a character based on mode
+; Internal: get a character based on mode.  Result in A; BC, DE and HL
+; are preserved (the BDOS and fgetc change them).
 _scanf_getc:
+	LD	A,(_scanf_ungot)
+	OR	A
+	JR	Z,_scanf_getc_new
+	PUSH	AF
+	XOR	A
+	LD	(_scanf_ungot),A
+	POP	AF
+	RET
+_scanf_getc_new:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	CALL	_scanf_getc_raw
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+_scanf_getc_raw:
 	LD	A,(_scanf_mode)
 	OR	A
 	JR	NZ,_scanf_getc_str
@@ -14870,18 +14989,52 @@ _scanf_getc_file:
 	PUSH	HL
 	CALL	_fgetc
 	POP	BC
+	LD	A,L
 	RET
 _scanf_getc_eof:
 	LD	A,0FFH
 	RET
 
-; Internal: unget character
+; Internal: unget character (A).  A file goes back to its stream, so the
+; next call sees it; stdin and a string keep it in _scanf_ungot.
 _scanf_ungetc:
+	PUSH	AF
+	LD	A,(_scanf_mode)
+	CP	2
+	JR	Z,_scanf_ungetc_f
+	POP	AF
 	LD	(_scanf_ungot),A
 	RET
+_scanf_ungetc_f:
+	POP	AF
+	CP	0FFH
+	RET	Z
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD	HL,(_scanf_fp)
+	PUSH	HL
+	LD	L,A
+	LD	H,0
+	PUSH	HL
+	CALL	_ungetc
+	POP	HL
+	POP	HL
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; Internal: a conversion found no digit; leave scanf
+_scanf_fail:
+	POP	BC
+	POP	HL
+	JP	_scanf_done
 
 ; Internal: read signed integer into HL
 _scanf_read_int:
+	XOR	A
+	LD	(_scanf_got),A
 	LD	HL,0
 	LD	D,0		; D = sign (0=positive, 1=negative)
 	; Check for sign
@@ -14904,6 +15057,10 @@ _scanf_ri_digit:
 	CP	'9'+1
 	JR	NC,_scanf_ri_done
 	; Digit - accumulate
+	PUSH	AF
+	LD	A,1
+	LD	(_scanf_got),A
+	POP	AF
 	SUB	'0'
 	PUSH	DE
 	LD	E,A
@@ -14936,6 +15093,8 @@ _scanf_ri_done:
 
 ; Internal: read hex integer into HL
 _scanf_read_hex:
+	XOR	A
+	LD	(_scanf_got),A
 	LD	HL,0
 	; Skip optional 0x prefix
 	CALL	_scanf_getc
@@ -14975,6 +15134,10 @@ _scanf_rh_AF:
 _scanf_rh_09:
 	SUB	'0'
 _scanf_rh_acc:
+	PUSH	AF
+	LD	A,1
+	LD	(_scanf_got),A
+	POP	AF
 	; HL = HL * 16 + digit
 	ADD	HL,HL
 	ADD	HL,HL
@@ -14989,6 +15152,8 @@ _scanf_rh_done:
 
 ; Internal: read long integer into DEHL
 _scanf_read_long:
+	XOR	A
+	LD	(_scanf_got),A
 	LD	HL,0
 	LD	DE,0
 	LD	B,0		; sign
@@ -15009,47 +15174,43 @@ _scanf_rl_digit:
 	JP	C,_scanf_rl_done
 	CP	'9'+1
 	JP	NC,_scanf_rl_done
+	PUSH	AF
+	LD	A,1
+	LD	(_scanf_got),A
+	POP	AF
 	SUB	'0'
 	PUSH	BC
 	LD	C,A
-	; DEHL = DEHL * 10 + digit
-	; First *10 = *8 + *2
-	PUSH	DE
-	PUSH	HL		; Save original
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; *2
-	PUSH	DE
-	PUSH	HL		; Save *2
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; *4
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; *8
-	; Add *2
-	POP	BC		; BC = *2 low
-	ADD	HL,BC
-	EX	(SP),HL		; Stack *8+*2 low, get *2 high
-	EX	DE,HL
-	POP	BC		; BC = *8+*2 low
-	ADC	HL,DE		; HL = *10 high
-	EX	DE,HL		; DE = *10 high
-	LD	H,B
-	LD	L,C		; HL = *10 low
-	POP	BC		; Discard saved original high
-	POP	BC		; Discard saved original low
-	; Add digit
-	LD	B,0
-	ADD	HL,BC
-	JR	NC,_scanf_rl_noc
-	INC	DE
-_scanf_rl_noc:
+	CALL	_scanf_x10a	; DEHL = DEHL * 10 + C
 	POP	BC		; Restore sign
 	JP	_scanf_rl_loop
+
+; DEHL = DEHL * 10 + C (C = 0..9).  Clobbers A and BC.
+_scanf_x10a:
+	LD	A,C
+	LD	(_scanf_tmp),HL
+	LD	(_scanf_tmp+2),DE
+	ADD	HL,HL		; * 2
+	RL	E
+	RL	D
+	ADD	HL,HL		; * 4
+	RL	E
+	RL	D
+	LD	BC,(_scanf_tmp)
+	ADD	HL,BC		; * 5, low word
+	EX	DE,HL
+	LD	BC,(_scanf_tmp+2)
+	ADC	HL,BC		; * 5, high word
+	EX	DE,HL
+	ADD	HL,HL		; * 10
+	RL	E
+	RL	D
+	LD	C,A
+	LD	B,0
+	ADD	HL,BC		; + digit
+	RET	NC
+	INC	DE
+	RET
 
 _scanf_rl_done:
 	CALL	_scanf_ungetc
@@ -15080,6 +15241,8 @@ _scanf_rl_neg_done:
 
 ; Internal: read long hex into DEHL
 _scanf_read_long_hex:
+	XOR	A
+	LD	(_scanf_got),A
 	LD	HL,0
 	LD	DE,0
 	; Skip optional 0x
@@ -15118,6 +15281,10 @@ _scanf_rlh_AF:
 _scanf_rlh_09:
 	SUB	'0'
 _scanf_rlh_acc:
+	PUSH	AF
+	LD	A,1
+	LD	(_scanf_got),A
+	POP	AF
 	; DEHL = DEHL * 16 + digit
 	SLA	L
 	RL	H
@@ -15154,6 +15321,8 @@ _sscanf:
 	LD	L,(IX+4)
 	LD	H,(IX+5)
 	LD	(_scanf_src),HL
+	XOR	A
+	LD	(_scanf_ungot),A
 	LD	A,1
 	LD	(_scanf_mode),A
 	; Setup format and args offset
@@ -15176,6 +15345,8 @@ _fscanf:
 	LD	L,(IX+4)
 	LD	H,(IX+5)
 	LD	(_scanf_fp),HL
+	XOR	A
+	LD	(_scanf_ungot),A
 	LD	A,2
 	LD	(_scanf_mode),A
 	LD	L,(IX+6)
@@ -15193,6 +15364,8 @@ _scanf_mode:	DS	1	; 0=stdin, 1=string, 2=file
 _scanf_src:	DS	2	; String source pointer
 _scanf_fp:	DS	2	; File pointer
 _scanf_ungot:	DS	1	; Ungetc'd character
+_scanf_got:	DS	1	; A conversion found a digit
+_scanf_tmp:	DS	4	; Work area of _scanf_x10a
 _scanf_buf:	DS	32	; Working buffer
 
 

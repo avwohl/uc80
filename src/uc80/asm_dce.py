@@ -297,8 +297,9 @@ class AssemblyDCE:
                 labels = [l.strip() for l in match.group(1).split(',')]
                 pending_public.update(labels)
                 self.public_data_labels.update(labels)
-                if current_data:
-                    current_data.lines.append(line)
+                # The declaration is not kept with the block before it (a
+                # dead block would take it along); it is written again
+                # in front of the block it names.
                 continue
 
             # Check for label (with optional colon)
@@ -314,9 +315,12 @@ class AssemblyDCE:
 
                 # Start new block
                 is_pub = label in pending_public or label in self.public_data_labels
+                block_lines = [line]
+                if label in pending_public:
+                    block_lines.insert(0, f"\tpublic\t{label}")
                 current_data = DataBlock(
                     label=label,
-                    lines=[line],
+                    lines=block_lines,
                     is_public=is_pub
                 )
                 pending_public.discard(label)

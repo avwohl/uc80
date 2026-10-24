@@ -8,6 +8,9 @@ CONIN	EQU	1
 PRTSTR	EQU	9
 
 	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__ftoi
+	EXTRN	__ltof
 	EXTRN	__tmp32
 	EXTRN	_math_getarg
 	EXTRN	_math_getarg2
@@ -42,6 +45,120 @@ _powl:
 	LD	(_pow_y),HL
 	LD	(_pow_y+2),DE
 
+	; A whole-number exponent with |y| <= 64: repeated squaring is exact
+	; where exp(y*log(x)) loses the last bit ((int)pow(3,2) must be 9),
+	; and it accepts a negative x.
+	LD	HL,(_pow_y)
+	LD	DE,(_pow_y+2)
+	CALL	__ftoi
+	LD	A,D
+	OR	E
+	JR	Z,_pow_ipos
+	LD	A,D
+	AND	E
+	INC	A
+	JR	NZ,_pow_log	; not a sign extension of 16 bits
+	LD	A,H
+	INC	A
+	JR	NZ,_pow_log	; below -256
+	LD	A,L
+	CP	0C0H
+	JR	C,_pow_log	; below -64
+	JR	_pow_inrange
+_pow_ipos:
+	LD	A,H
+	OR	A
+	JR	NZ,_pow_log
+	LD	A,L
+	CP	65
+	JR	NC,_pow_log	; above 64
+_pow_inrange:
+	LD	(_pow_n),HL
+	LD	DE,0
+	BIT	7,H
+	JR	Z,_pow_se
+	DEC	DE
+_pow_se:
+	CALL	__ltof
+	LD	BC,(_pow_y)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,_pow_log	; y has a fraction
+	EX	DE,HL
+	LD	BC,(_pow_y+2)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,_pow_log
+
+	LD	HL,0
+	LD	(_pow_r),HL
+	LD	HL,3F80H
+	LD	(_pow_r+2),HL	; r = 1.0
+	LD	HL,(_pow_x)
+	LD	(_pow_b),HL
+	LD	HL,(_pow_x+2)
+	LD	(_pow_b+2),HL	; b = x
+	LD	HL,(_pow_n)
+	BIT	7,H
+	JR	Z,_pow_kp
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	INC	HL
+_pow_kp:
+	LD	(_pow_k),HL
+_pow_iloop:
+	LD	HL,(_pow_k)
+	LD	A,H
+	OR	L
+	JR	Z,_pow_idone
+	BIT	0,L
+	JR	Z,_pow_noacc
+	LD	HL,(_pow_b)
+	LD	DE,(_pow_b+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_pow_r)
+	LD	DE,(_pow_r+2)
+	CALL	__fmul		; r = r * b
+	LD	(_pow_r),HL
+	LD	(_pow_r+2),DE
+_pow_noacc:
+	LD	HL,(_pow_k)
+	SRL	H
+	RR	L
+	LD	(_pow_k),HL
+	LD	A,H
+	OR	L
+	JR	Z,_pow_idone
+	LD	HL,(_pow_b)
+	LD	DE,(_pow_b+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	CALL	__fmul		; b = b * b
+	LD	(_pow_b),HL
+	LD	(_pow_b+2),DE
+	JR	_pow_iloop
+_pow_idone:
+	LD	HL,(_pow_r)
+	LD	DE,(_pow_r+2)
+	LD	A,(_pow_n+1)
+	BIT	7,A
+	JR	Z,_pow_ret
+	LD	(__tmp32),HL	; negative exponent: 1 / r
+	LD	(__tmp32+2),DE
+	LD	DE,3F80H
+	LD	HL,0
+	CALL	__fdiv
+_pow_ret:
+	POP	BC
+	POP	IX
+	RET
+
+_pow_log:
 	; Compute log(x)
 	LD	HL,(_pow_x)
 	LD	DE,(_pow_x+2)
@@ -77,5 +194,9 @@ _powl:
 
 _pow_x:		DS	4
 _pow_y:		DS	4
+_pow_r:		DS	4
+_pow_b:		DS	4
+_pow_k:		DS	2
+_pow_n:		DS	2
 
 	END

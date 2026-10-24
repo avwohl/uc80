@@ -308,3 +308,30 @@ _unused_data:
         assert "??AUTO:" in result
         assert "DS\t4" in result
         assert "_unused_data" not in result
+
+
+class TestPublicDataAfterDeadBlock:
+    """A PUBLIC declaration in DSEG belongs to the label after it."""
+
+    def test_public_data_survives_dead_block_before_it(self):
+        asm = """
+\t.Z80
+\tPUBLIC\t_main
+\tCSEG
+_main:
+\tLD\tHL,(__tmp32)
+\tRET
+
+\tDSEG
+_dead:
+\tDW\t1
+\tpublic\t__tmp32
+__tmp32:
+\tDW\t0,0
+
+\tEND
+"""
+        result = eliminate_dead_code(asm, entry_points={"_main"})
+        assert "_dead" not in result
+        assert "__tmp32:" in result
+        assert "public\t__tmp32" in result.lower().replace("  ", "\t")

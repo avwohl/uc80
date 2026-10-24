@@ -34,8 +34,7 @@ of that kind ends with this byte. The table lists the end of each game.
 | bsd-arithmetic | NetBSD arithmetic, Eamonn McManus 1989 | 3-clause BSD | end of file |
 | bsd-fish | NetBSD fish, Muffy Barkocy 1990 | 3-clause BSD | one side wins |
 | bsd-pig, bsd-number, bsd-morse, bsd-caesar, bsd-bcd, bsd-ppt | NetBSD filters, 3BSD to 4.4BSD | 3-clause BSD | end of file |
-| ahl-startrek | Super Star Trek, Mayfield and Ahl 1971-78, C port by Chris Nystrom 1996 (z88dk copy) | free to use, no license text | resign, then answer no |
-| fuzix-startrek | The same game without floating point (Alan Cox 2018, FUZIX) | free to use, no license text | resign, then answer no |
+| fuzix-startrek | Super Star Trek, Mayfield and Ahl 1971-78, without floating point (Alan Cox 2018, FUZIX) | free to use, no license text | resign, then answer no |
 | empire-trefonas | Empire, Peter Trefonas, CLOAD 1981, C conversion 2016 (z88dk copy) | no license text in the file | end of file in year 17 |
 | umchess | micro-Max 1.6 chess, H. G. Muller (z88dk copy) | no license text in the file | end of file after 16 moves |
 | hamurabi | Hamurabi, Rick Merrill and David Ahl, C version by Brian Troutwine 2010 (FUZIX copy) | MIT | the game rejects the ruler |
@@ -56,15 +55,16 @@ things:
   the random generator in the same state.
 - Call `bench_args()` or `px_ti()` first in `main()`. HI-TECH C loses
   script characters when the program prints before it reads.
-- Fix three faults of the upstream source. They make the output depend
+- Fix the faults of the upstream source. They make the output depend
   on the compiler, so the golden file would not match.
 
-The three faults are in the upstream source:
+These faults are in the upstream source:
 
 - v7-arithmetic: `random(range) + random(range)` has no fixed order of
   evaluation. The edit makes two statements.
 - fuzix-startrek: `int d1;` in `repair_damage()` has no initial value,
-  and `quadname[12]` is too short for "Sagittarius IV".
+  and `quadname[12]` is too short for "Sagittarius IV". The function name
+  `isqrt` also clashes with the z88dk header.
 
 The shared glue in `bench/programs/stdio-glue/` has two parts.
 `sg_getc()` returns end of file for 0FFh and 1Ah. It skips CR.
@@ -79,6 +79,11 @@ to the console. The SDCC library has no `FILE`.
   sieve table is 256 KB. They do not fit in a Z80 address space.
 - hangman and quiz: they need a word list of 196 KB or a question
   directory. No fair copy of that data exists in the harness.
+- ahl-startrek (the z88dk copy of Super Star Trek with `double`): the
+  golden file comes from a host build with 64-bit `double`. The game
+  prints damage values that depend on the last bits of each sum. No
+  compiler with 32-bit `float` can match the golden file. fuzix-startrek
+  is the same game with integers.
 - Larn, TSCP and the Scott Adams data: the project rules do not allow
   them.
 
@@ -87,13 +92,15 @@ to the console. The SDCC library has no `FILE`.
 The numbers are in `bench/results/results.csv`. For sdcc, sdcc-4.4 and
 z88dk-zsdcc only the size mode ran for most programs of this group.
 
-- uc80 runs 13 of 18 programs. The five that fail are v7-backgammon
-  (sscanf), bsd-bcd (no `isascii`), ahl-startrek and empire-trefonas
-  (atof, and a double backslash in a string) and hamurabi (rand
-  returns 0).
+- uc80 runs 16 of 17 programs. empire-trefonas does not run: the
+  floating-point code of uc80 makes an image of 69888 bytes, and an image
+  must be smaller than 64 KB. All other compilers fail to build the
+  program.
 - v7-wump, bsd-ppt and fuzix-startrek run on seven compilers each.
-- dcc has no `double`, so the four floating-point programs fail to build.
-- SDCC and llvm-z80 have no `%f`, `%.*s`, `EXIT_FAILURE`, `isascii`,
+- dcc has no `double`, so the floating-point programs fail to build.
+- SDCC and llvm-z80 have no `%f`, `%.*s`, `EXIT_FAILURE`,
   `snprintf` or `sscanf`. A program that needs one of them fails.
 - umchess needs a signed `char`. It gives a wrong game with sdcc-4.4 and
   both z88dk compilers.
+- bsd-bcd defines `isascii` for every compiler, because `isascii` is not
+  in C23.
