@@ -84,6 +84,7 @@ from compilers import TOOLS, Build, Compiler, Objects
 
 HT_ROOT = Path(os.environ.get("HITECH", TOOLS / "hitech-3.09"))
 TAIL_MAX = 120          # CP/M command tail limit is 127; keep a margin
+LINK_MAX = 108          # zxcc cut a LINQ tail of 117 bytes (measured)
 # The macros C.COM defines, then the C89 keywords that HI-TECH 3.09 does
 # not know, defined away (see the module comment).
 PREDEFINED = ["CPM", "HI_TECH_C", "z80", "const=", "volatile=", "signed="]
@@ -346,10 +347,15 @@ class HiTech(Compiler):
         # program is larger than 64 KB) still writes the map.
         if not mp.exists():
             return Objects(False, log=b.log)
+        # Partial links (see build()) have the per-module lines.
+        maps = sorted((work / "hitech").glob("p[0-9]*.map")) + [mp]
         want = [name83(Path(s).name).rsplit(".", 1)[0] for s in sources]
         found: dict[str, list[int]] = {}
         cur = None
-        for line in mp.read_text(errors="replace").splitlines():
+        lines = []
+        for m_ in maps:
+            lines += m_.read_text(errors="replace").splitlines()
+        for line in lines:
             if re.search(r"\.lib\s*$", line):
                 break
             m = re.match(r"(?:\w:)?(\S+)\.obj\s", line)
@@ -462,10 +468,42 @@ class HiTech(Compiler):
                 return fail()
             objs.append(f"{stem}.obj")
 
-        libs = ([tool("libf.lib")] if float_lib else []) + [tool("libc.lib")]
-        if self._run([tool("linq.com"), "--Z", "--Mprog.map",
-                      "--Ptext=0,data,bss", "--C100H", "--Oprog.com",
-                      tool("nrtcpm.obj")] + objs + libs, ht, log) != 0:
+        # The CP/M command tail holds 127 bytes, so a link with many
+        # modules cannot name them all.  The start-up module and the
+        # libraries are copied to the work directory (bare names), and
+        # when the modules still do not fit, LINQ -R joins them in groups
+        # into relocatable partial objects (pN.obj, with a map pN.map that
+        # objects() reads for the per-module sizes), which the last link
+        # names instead.
+        for f in ("nrtcpm.obj", "libc.lib", "libf.lib"):
+            if (HT_ROOT / f).exists() and not (ht / f).exists():
+                shutil.copy(HT_ROOT / f, ht / f)
+        libs = (["libf.lib"] if float_lib else []) + ["libc.lib"]
+        head = ["--Z", "--Mprog.map", "--Ptext=0,data,bss", "--C100H",
+                "--Oprog.com", "nrtcpm.obj"]
+        items = list(objs)
+        npart = 0
+        while len(" ".join(head + items + libs)) > LINK_MAX:
+            joined: list[str] = []
+            while items:
+                phead = ["--Z", f"--Mp{npart}.map", "--Ptext=0,data,bss",
+                         "--R", f"--Op{npart}.obj"]
+                chunk = [items.pop(0)]
+                while items and len(" ".join(phead + chunk + [items[0]])) \
+                        <= LINK_MAX:
+                    chunk.append(items.pop(0))
+                if len(chunk) == 1:
+                    joined += chunk
+                    continue
+                if self._run([tool("linq.com")] + phead + chunk, ht, log) != 0:
+                    return fail()
+                joined.append(f"p{npart}.obj")
+                npart += 1
+            if len(joined) >= len(objs) or len(joined) == len(items):
+                log.append("link line too long")
+                return fail()
+            items = joined
+        if self._run([tool("linq.com")] + head + items + libs, ht, log) != 0:
             return fail()
         com, mp = ht / "prog.com", ht / "prog.map"
         maptext = mp.read_text(errors="replace") if mp.exists() else ""
