@@ -289,26 +289,80 @@ __fmul:
 	PUSH	BC
 	PUSH	IX
 
-	; Check for zero
-	LD	A,D
-	AND	7FH
-	OR	E
-	OR	H
-	OR	L
-	JR	Z,__fmul_zero
+	; Result sign = xor of the operand signs; every special result
+	; (zero, infinity) carries it.
 	LD	A,(__tmp32+3)
-	AND	7FH
+	XOR	D
+	AND	80H
+	LD	(__fsgn1),A
+	; C = exponent of operand 1, B = exponent of operand 2
+	LD	A,D
+	ADD	A,A
+	LD	B,A
+	LD	A,E
+	RLCA
+	LD	A,B
+	ADC	A,0
+	LD	C,A
+	LD	A,(__tmp32+3)
+	ADD	A,A
 	LD	B,A
 	LD	A,(__tmp32+2)
-	OR	B
+	RLCA
+	LD	A,B
+	ADC	A,0
 	LD	B,A
-	LD	A,(__tmp32+1)
-	OR	B
-	LD	B,A
-	LD	A,(__tmp32)
-	OR	B
+	LD	A,C
+	INC	A
+	JR	Z,__fmul_sp1
+	LD	A,B
+	INC	A
+	JR	Z,__fmul_sp2
+	; A zero or subnormal operand (exponent 0): a signed zero.
+	LD	A,C
+	OR	A
 	JR	Z,__fmul_zero
+	LD	A,B
+	OR	A
+	JR	Z,__fmul_zero
+	JR	__fmul_unpack
 
+__fmul_sp1:
+	; operand 1 is an infinity or a NaN
+	LD	A,E
+	AND	7FH
+	OR	H
+	OR	L
+	JR	NZ,__fmul_nan
+	LD	A,B
+	INC	A
+	JR	NZ,__fmul_sp3
+__fmul_sp2:
+	; operand 2 is an infinity or a NaN
+	LD	A,(__tmp32+2)
+	AND	7FH
+	PUSH	HL
+	LD	HL,(__tmp32)
+	OR	H
+	OR	L
+	POP	HL
+	JR	NZ,__fmul_nan
+__fmul_sp3:
+	; no NaN, at least one infinity: inf * 0 is a NaN, else a signed inf
+	LD	A,C
+	OR	A
+	JR	Z,__fmul_nan
+	LD	A,B
+	OR	A
+	JR	Z,__fmul_nan
+	JR	__fmul_inf
+
+__fmul_nan:
+	LD	HL,0
+	LD	DE,7FC0H
+	JR	__fmul_done
+
+__fmul_unpack:
 	; Unpack operands
 	CALL	__funpack
 	LD	(__fsgn1),A
@@ -379,8 +433,10 @@ __fmul:
 	JR	__fmul_done
 
 __fmul_zero:
+	LD	A,(__fsgn1)
+	LD	D,A
+	LD	E,0
 	LD	HL,0
-	LD	DE,0
 	JR	__fmul_done
 
 __fmul_inf:

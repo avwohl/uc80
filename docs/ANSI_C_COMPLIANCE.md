@@ -139,7 +139,7 @@ Full file I/O via CP/M BDOS FCB calls. 128-byte buffering. Max 4 regular files +
 
 - [x] `printf()`, `fprintf()`, `sprintf()`, `snprintf()` - table-driven format dispatch
 - [x] `vprintf()`, `vfprintf()`, `vsprintf()`
-- [x] Format specifiers: %d %i %u %x %X %o %s %c %p %f %% with width, precision, `*` and the flags `- + space # 0`. The `l` and `ll` forms take the same width, precision and flags
+- [x] Format specifiers: %d %i %u %x %X %o %s %c %p %f %% with width, precision, `*` and the flags `- + space # 0`. The `l` and `ll` forms take the same width, precision and flags. Width and precision stop at 255. `%f` `%e` `%g` take a precision only (no width or flag). `%llX` and `%llo` are not implemented
 - [x] Long (%ld %lu %lx %lo) and long long (%lld %llu %llx) format specifiers
 - [x] `scanf()`, `fscanf()`, `sscanf()` - basic format parsing (%d %i %s %c %u %x)
 - [x] `fopen()`, `fclose()`, `freopen()`

@@ -116,9 +116,6 @@ def int_cases(length, convs, values_for, seed, per_conv=70):
         values = values_for(conv)
         for flags, width, prec in spec_combos(conv, rng, per_conv):
             value = rng.choice(values)
-            # "%#.0o" of 0 is "0": the shared routine drops all digits.
-            if conv == "o" and "#" in flags and prec == ".0" and value.startswith("0"):
-                continue
             cases.append(("%%%s%s%s%s%s" % (flags, width, prec, length, conv), value))
     return cases
 
@@ -143,7 +140,18 @@ class TestIntegerFlags:
             ("%8ld", "-123456L"), ("%08lx", "305419896UL"), ("%5s", '"ab"'),
             ("%-5s", '"ab"'), ("%.0d", "0"), ("%+d", "5"), ("% d", "5"),
             ("%#x", "255u"), ("%#o", "8u"), ("%#lx", "255UL"), ("%#X", "255u"),
+            ("%#.0o", "0u"), ("%#.0lo", "0UL"), ("%#5.0o", "0u"), ("%#.0x", "0u"),
         ])
+
+
+class TestHugeFields:
+    def test_width_and_precision_over_255_stay_at_255(self, tmp_path):
+        """Digits used to wrap modulo 256 (%300d printed a 44 column field)."""
+        src = ('#include <stdio.h>\nint main(void){ int a = printf("%300d", 1);'
+               ' int b = printf("|%.300d", 1); int c = printf("|%-1000s|", "a");'
+               ' printf("\\n%d %d %d\\n", a, b, c); return 0; }\n')
+        out = build_and_run(tmp_path, src).split("\n")
+        assert out[1] == "255 256 257", out[1]
 
 
 class TestStringAndChar:

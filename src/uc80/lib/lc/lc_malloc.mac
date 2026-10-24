@@ -167,14 +167,34 @@ _calloc:
 	PUSH	BC
 	LD	B,H
 	LD	C,L		; BC = nmemb
+	; Count with the smaller factor (fewer additions)
+	LD	A,B
+	CP	D
+	JR	C,_calloc_ordered
+	JR	NZ,_calloc_swap
+	LD	A,C
+	CP	E
+	JR	C,_calloc_ordered
+_calloc_swap:
+	PUSH	BC
+	LD	B,D
+	LD	C,E
+	POP	DE
+_calloc_ordered:
 	LD	HL,0
 _calloc_mult:
 	LD	A,B
 	OR	C
 	JR	Z,_calloc_mult_done
 	ADD	HL,DE
+	JR	C,_calloc_overflow	; nmemb * size does not fit: NULL
 	DEC	BC
 	JR	_calloc_mult
+_calloc_overflow:
+	POP	BC
+	LD	HL,0
+	POP	IX
+	RET
 _calloc_mult_done:
 	; HL = total size
 	POP	BC

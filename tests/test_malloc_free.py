@@ -352,3 +352,24 @@ int main(void) {
 }
 """
     assert build_and_run(tmp_path, src).strip() == "1 1"
+
+
+def test_calloc_overflow_returns_null(tmp_path):
+    """nmemb * size that does not fit in 16 bits must fail, not wrap."""
+    src = r"""
+#include <stdio.h>
+#include <stdlib.h>
+int main(void) {
+    char *p;
+    int i, nz = 0;
+    printf("%d %d %d\n", calloc(300, 300) != 0, calloc(256, 257) != 0,
+           calloc(65535, 65535) != 0);
+    p = calloc(2000, 3);     /* factors in the larger-first order */
+    for (i = 0; i < 6000; i++) nz += p[i] != 0;
+    printf("%d %d\n", p != 0, nz);
+    p = calloc(3, 2000);
+    printf("%d\n", p != 0);
+    return 0;
+}
+"""
+    assert build_and_run(tmp_path, src).split("\n")[:3] == ["0 0 0", "1 0", "1"]

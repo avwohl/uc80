@@ -221,10 +221,11 @@ _div:
 	ADD	IX,SP
 	PUSH	BC
 
-	LD	L,(IX+4)	; HL = numer
-	LD	H,(IX+5)
-	LD	E,(IX+6)	; DE = denom
-	LD	D,(IX+7)
+	; __sdiv16 and __smod16 compute DE op HL: DE = numer, HL = denom
+	LD	E,(IX+4)	; DE = numer
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = denom
+	LD	H,(IX+7)
 
 	; Compute quotient
 	PUSH	HL

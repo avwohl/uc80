@@ -8866,14 +8866,34 @@ _calloc:
 	PUSH	BC
 	LD	B,H
 	LD	C,L		; BC = nmemb
+	; Count with the smaller factor (fewer additions)
+	LD	A,B
+	CP	D
+	JR	C,_calloc_ordered
+	JR	NZ,_calloc_swap
+	LD	A,C
+	CP	E
+	JR	C,_calloc_ordered
+_calloc_swap:
+	PUSH	BC
+	LD	B,D
+	LD	C,E
+	POP	DE
+_calloc_ordered:
 	LD	HL,0
 _calloc_mult:
 	LD	A,B
 	OR	C
 	JR	Z,_calloc_mult_done
 	ADD	HL,DE
+	JR	C,_calloc_overflow	; nmemb * size does not fit: NULL
 	DEC	BC
 	JR	_calloc_mult
+_calloc_overflow:
+	POP	BC
+	LD	HL,0
+	POP	IX
+	RET
 _calloc_mult_done:
 	; HL = total size
 	POP	BC
@@ -10225,24 +10245,36 @@ _printf_isdig:
 	JR	NZ,_printf_precdig
 	; Width digit
 	LD	A,(_printf_width)
+	CP	26		; 26 * 10 > 255: stay at 255 (no wrap-around)
+	JR	NC,_printf_wsat
 	LD	C,A
 	ADD	A,A		; *2
 	ADD	A,A		; *4
 	ADD	A,C		; *5
 	ADD	A,A		; *10
 	ADD	A,B		; + digit
+	JR	NC,_printf_wstore
+_printf_wsat:
+	LD	A,255
+_printf_wstore:
 	LD	(_printf_width),A
 	POP	BC
 	JR	_printf_skip
 _printf_precdig:
 	; Precision digit
 	LD	A,(_printf_prec)
+	CP	26		; stay at 255 (no wrap-around)
+	JR	NC,_printf_psat
 	LD	C,A
 	ADD	A,A
 	ADD	A,A
 	ADD	A,C
 	ADD	A,A
 	ADD	A,B
+	JR	NC,_printf_pstore
+_printf_psat:
+	LD	A,255
+_printf_pstore:
 	LD	(_printf_prec),A
 	POP	BC
 	; Fall through to _printf_skip
@@ -12657,10 +12689,18 @@ _plo_cvt:
 	JR	Z,_plo_set
 	LD	A,(IX+0)
 	CP	'0'
-	JR	Z,_plo_set
+	JR	Z,_plo_set_z
 	DEC	IX
 	LD	(IX+0),'0'
 	INC	B
+	JR	_plo_set
+_plo_set_z:
+	; value 0 with '#': "%#.0o" still prints "0"
+	LD	A,(_printf_prec)
+	OR	A
+	JR	NZ,_plo_set
+	INC	A
+	LD	(_printf_prec),A
 _plo_set:
 	LD	(_printf_dstart),IX
 	LD	A,B
@@ -12819,10 +12859,18 @@ _pho_cvt:
 	JR	Z,_pho_set
 	LD	A,(IX+0)
 	CP	'0'
-	JR	Z,_pho_set
+	JR	Z,_pho_set_z
 	DEC	IX
 	LD	(IX+0),'0'
 	INC	B
+	JR	_pho_set
+_pho_set_z:
+	; value 0 with '#': "%#.0o" still prints "0"
+	LD	A,(_printf_prec)
+	OR	A
+	JR	NZ,_pho_set
+	INC	A
+	LD	(_printf_prec),A
 _pho_set:
 	LD	(_printf_dstart),IX
 	LD	A,B
@@ -16173,10 +16221,11 @@ _div:
 	ADD	IX,SP
 	PUSH	BC
 
-	LD	L,(IX+4)	; HL = numer
-	LD	H,(IX+5)
-	LD	E,(IX+6)	; DE = denom
-	LD	D,(IX+7)
+	; __sdiv16 and __smod16 compute DE op HL: DE = numer, HL = denom
+	LD	E,(IX+4)	; DE = numer
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = denom
+	LD	H,(IX+7)
 
 	; Compute quotient
 	PUSH	HL

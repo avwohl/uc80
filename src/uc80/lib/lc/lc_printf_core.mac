@@ -372,24 +372,36 @@ _printf_isdig:
 	JR	NZ,_printf_precdig
 	; Width digit
 	LD	A,(_printf_width)
+	CP	26		; 26 * 10 > 255: stay at 255 (no wrap-around)
+	JR	NC,_printf_wsat
 	LD	C,A
 	ADD	A,A		; *2
 	ADD	A,A		; *4
 	ADD	A,C		; *5
 	ADD	A,A		; *10
 	ADD	A,B		; + digit
+	JR	NC,_printf_wstore
+_printf_wsat:
+	LD	A,255
+_printf_wstore:
 	LD	(_printf_width),A
 	POP	BC
 	JR	_printf_skip
 _printf_precdig:
 	; Precision digit
 	LD	A,(_printf_prec)
+	CP	26		; stay at 255 (no wrap-around)
+	JR	NC,_printf_psat
 	LD	C,A
 	ADD	A,A
 	ADD	A,A
 	ADD	A,C
 	ADD	A,A
 	ADD	A,B
+	JR	NC,_printf_pstore
+_printf_psat:
+	LD	A,255
+_printf_pstore:
 	LD	(_printf_prec),A
 	POP	BC
 	; Fall through to _printf_skip

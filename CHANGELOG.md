@@ -23,6 +23,22 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- **`div()` returned `denom / numer`.** `_div` passed its operands to
+  `__sdiv16` and `__smod16` in swapped registers (they compute `DE op HL`),
+  so `div(4425, 3)` gave quotient 0, remainder 3. `ldiv()` was right.
+- **`calloc()` wrapped `nmemb * size`.** `calloc(300, 300)` returned a
+  24,464 byte block. It now returns NULL when the product does not fit in
+  16 bits, and counts with the smaller factor.
+- **`%#.0o` and `%#.0lo` of 0 printed nothing;** the C standard says `0`.
+- **A literal width or precision over 255 wrapped** (`%300d` made a 44
+  column field). It now stays at 255, as `%*d` already did.
+- **`__fmul` mishandled infinity, NaN and the sign of zero.** `x * inf`
+  returned garbage, `inf * 0` and any NaN operand were not NaN, and a zero or
+  an underflowed product was always `+0`. An infinity times a finite value
+  is now a signed infinity, `inf * 0` and a NaN operand give a NaN, and a
+  zero result keeps the sign. A subnormal operand is read as zero (a
+  subnormal result was already flushed to zero).
+
 - **A runtime function was linked twice.** When libc needs a runtime
   module, the linker takes the whole module, and a function that the
   compiler had embedded from the same module was then in the image twice

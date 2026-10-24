@@ -177,3 +177,60 @@ int main(void) {
         a, b = struct.unpack("<f", struct.pack("<f", a))[0], struct.unpack("<f", struct.pack("<f", b))[0]
         want.append("%08x" % struct.unpack("<I", struct.pack("<f", a * b))[0])
     assert run.stdout.replace("\r", "").split() == want
+
+
+SPECIALS = [  # (a bits, b bits, expected bits or None for "any NaN")
+    (0x7F800000, 0x3F800000, 0x7F800000),   # inf * 1
+    (0x39880F3A, 0x7F800000, 0x7F800000),   # finite * inf
+    (0xFF800000, 0xBF800000, 0x7F800000),   # -inf * -1
+    (0x314150E2, 0xFF800000, 0xFF800000),   # +x * -inf
+    (0x7F800000, 0x7F800000, 0x7F800000),   # inf * inf
+    (0x7F800000, 0xFF800000, 0xFF800000),   # inf * -inf
+    (0x7F800000, 0x00000000, None),         # inf * 0
+    (0x80000000, 0xFF800000, None),         # -0 * -inf
+    (0x7FC00000, 0x3F800000, None),         # NaN * 1
+    (0x3F800000, 0x7FA00001, None),         # 1 * NaN
+    (0x7F800000, 0x7FC00000, None),         # inf * NaN
+    (0x80000000, 0x40A00000, 0x80000000),   # -0 * 5
+    (0x00000000, 0xC0A00000, 0x80000000),   # 0 * -5
+    (0x80000000, 0x80000000, 0x00000000),   # -0 * -0
+    (0xE2623238, 0x00000000, 0x80000000),   # -x * 0
+    (0x06400000, 0x8F800001, 0x80000000),   # tiny * -tiny: underflow keeps the sign
+    (0x7F7FFFFF, 0x40000000, 0x7F800000),   # overflow to +inf
+    (0xFF7FFFFF, 0x40000000, 0xFF800000),   # overflow to -inf
+]
+
+
+def test_infinity_nan_and_signed_zero(tmp_path):
+    n = len(SPECIALS)
+    src = ("#include <stdio.h>\ntypedef union { float f; unsigned long u; } U;\n"
+           "static const unsigned long A[] = {%s};\nstatic const unsigned long B[] = {%s};\n"
+           "int main(void) { int i; for (i = 0; i < %d; i++) { U x, y, z;\n"
+           "  x.u = A[i]; y.u = B[i]; z.f = x.f * y.f; printf(\"%%08lx\\n\", z.u); }\n"
+           "  return 0; }\n") % (
+        ",".join("0x%08XUL" % a for a, _, _ in SPECIALS),
+        ",".join("0x%08XUL" % b for _, b, _ in SPECIALS), n)
+    got = run_c(tmp_path, src)
+    assert len(got) == n
+    for (a, b, want), g in zip(SPECIALS, got):
+        g = int(g, 16)
+        if want is None:
+            assert (g >> 23) & 0xFF == 0xFF and g & 0x7FFFFF, (hex(a), hex(b), hex(g))
+        else:
+            assert g == want, (hex(a), hex(b), hex(g), hex(want))
+
+
+def run_c(tmp_path, src):
+    c_file = tmp_path / "sp.c"
+    c_file.write_text(src)
+    mac, rel, com = (tmp_path / ("sp" + e) for e in (".mac", ".rel", ".com"))
+    r = subprocess.run([sys.executable, "-m", "uc80.main", str(c_file), "-o", str(mac)],
+                       capture_output=True, text=True, cwd=str(REPO))
+    assert r.returncode == 0, r.stderr
+    subprocess.run(["um80", str(mac), "-o", str(rel)], check=True, capture_output=True)
+    subprocess.run(["ul80", str(rel), str(LIB_DIR / "libc.lib"),
+                    str(LIB_DIR / "runtime.lib"), "-o", str(com)],
+                   check=True, capture_output=True)
+    run = subprocess.run([str(CPMEMU), str(com)], capture_output=True, text=True,
+                         timeout=60, env=dict(os.environ, PYTHONHASHSEED="0"))
+    return run.stdout.replace("\r", "").split()

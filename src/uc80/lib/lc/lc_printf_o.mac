@@ -3,6 +3,7 @@
 
 	EXTRN	_printf_loop
 	EXTRN	_printf_alt
+	EXTRN	_printf_prec
 	EXTRN	_printf_decbuf
 	EXTRN	_printf_dstart
 	EXTRN	_printf_dcnt
@@ -51,10 +52,18 @@ _pho_cvt:
 	JR	Z,_pho_set
 	LD	A,(IX+0)
 	CP	'0'
-	JR	Z,_pho_set
+	JR	Z,_pho_set_z
 	DEC	IX
 	LD	(IX+0),'0'
 	INC	B
+	JR	_pho_set
+_pho_set_z:
+	; value 0 with '#': "%#.0o" still prints "0"
+	LD	A,(_printf_prec)
+	OR	A
+	JR	NZ,_pho_set
+	INC	A
+	LD	(_printf_prec),A
 _pho_set:
 	LD	(_printf_dstart),IX
 	LD	A,B
