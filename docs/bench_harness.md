@@ -336,6 +336,9 @@ scripted input. `curses-demo` is a tinycurses program with a status
 window. `curses-demo-size` has the sources of `curses-demo` as a
 size-only program. Their manifest file is `bench/programs.d/games.toml`.
 
+The six curses games (robots, worm, snake, mille, canfield, invaders)
+are in [bench_games_curses.md](bench_games_curses.md).
+
 ### Shared support code
 
 The files in `bench/support/` are our own code (GPL-3.0-or-later). A
