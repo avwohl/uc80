@@ -72,7 +72,13 @@ class TestFrameElision:
     def test_parameter_read_keeps_the_frame(self):
         text = func(gen("int f(int a) { return a; }"), "f")
         assert "push\tIX" in text and "pop\tIX" in text
-        assert "ld\tSP,IX" in text
+        # F8: with no stack locals SP is IX already at the return.
+        assert "ld\tSP,IX" not in text
+
+    def test_stack_locals_keep_the_stack_pointer_restore(self):
+        text = func(gen("int f(int n) { int a[4]; a[0] = n; "
+                        "return n ? f(n - 1) + a[0] : 0; }"), "f")
+        assert "ld\tSP,IX" in text and "pop\tIX" in text
 
     def test_stack_local_keeps_the_frame(self):
         text = func(gen("int g(int *); int f(void) { int a; g(&a); return a; }"

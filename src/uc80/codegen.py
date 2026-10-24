@@ -1774,9 +1774,18 @@ class CallGraphAnalyzer:
         # record.  Its region must therefore not overlap any other, or its
         # locals sit on top of the caller's: two calls through the same
         # pointer returned the second result for both, silently.
+        # The same holds for everything such a function calls, directly
+        # or not: a callee reached through the pointer is as live as its
+        # caller, and main's locals sat under it.
         if self.address_taken:
             everyone = set(self.call_graph)
+            entered = set()
             for func in self.address_taken:
+                if func not in self.can_be_active_together:
+                    continue
+                entered.add(func)
+                entered.update(reachable.get(func, set()))
+            for func in entered:
                 if func not in self.can_be_active_together:
                     continue
                 self.can_be_active_together[func].update(everyone)
@@ -5318,7 +5327,13 @@ class CodeGenerator:
             # "ld SP,IX / pop IX" that undoes them (24 T-states).
             del self.ctx.lines[frame_start:frame_start + 3]
         else:
-            self.ctx.emit_instr("ld", "SP,IX")
+            # With no stack locals and no return slots, SP is already IX
+            # at the return (every call drops its arguments, and a
+            # statement expression or inline asm keeps the full epilogue).
+            if (frame_size > 0 or self._stmt_expr_seen
+                    or any("__UC80_ASM_BEGIN__" in ln
+                           for ln in self.ctx.lines[frame_start:])):
+                self.ctx.emit_instr("ld", "SP,IX")
             self.ctx.emit_instr("pop", "IX")
         self.ctx.emit_instr("ret")
         self.ctx.emit()
@@ -8301,7 +8316,7 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", f"A,({sym.label()})")
                 self.ctx.emit_instr("ld", "L,A")
                 self._emit_char_to_hl(self._is_signed_type(sym.sym_type))
-            else:
+            elif not self._hl_word_known(("m", sym.label()), sym.sym_type):
                 # Load 16-bit value
                 self.ctx.emit_instr("ld", f"HL,({sym.label()})")
         else:
@@ -9671,7 +9686,11 @@ class CodeGenerator:
                     self.ctx.emit_instr("ex", "DE,HL")  # Return value in HL
         elif isinstance(expr.left, ast.Index):
             # Array element assignment
-            if target_is_32bit:
+            tsize = self._type_size(target_type) if target_type else 2
+            if self._gen_loc_store(expr.left, tsize):
+                if tsize == 1:
+                    _char_result(target_type)
+            elif target_is_32bit:
                 # Save value twice: one for storing, one to restore result
                 if value_used:
                     self.ctx.emit_instr("push", "DE")  # Result high word
@@ -9721,7 +9740,12 @@ class CodeGenerator:
             member_type = self._get_member_type(expr.left)
             member_is_32bit = self._is_long_type(member_type) or self._is_float_type(member_type)
 
-            if member_is_32bit:
+            if self._gen_loc_store(
+                    expr.left,
+                    4 if member_is_32bit else (member_size if member_size in (1, 2) else 0)):
+                if member_size == 1 and not member_is_32bit:
+                    _char_result(member_type)
+            elif member_is_32bit:
                 # 32-bit member: save DEHL twice, store, restore result
                 if value_used:
                     self.ctx.emit_instr("push", "DE")  # Result high word
@@ -11621,7 +11645,16 @@ class CodeGenerator:
         if (isinstance(expr.expr, (ast.IntLiteral, ast.CharLiteral)) and not target_is_float
                 and not source_is_float and not target_is_64):
             # expr.expr.value is a uplox Token for IntLiteral; decode.
-            src_val = int_value(expr.expr) if isinstance(expr.expr, ast.IntLiteral) else expr.expr.value
+            if isinstance(expr.expr, ast.IntLiteral):
+                src_val = int_value(expr.expr)
+            else:
+                # (A narrow character constant is a signed char value.)
+                src_val = self._decode_char_literal(expr.expr)
+                ctext = getattr(expr.expr.value, "text", "")
+                if not (isinstance(ctext, str) and (
+                        ctext.startswith(("L'", "u'", "U'", "u8'")))
+                        ) and src_val >= 0x80:
+                    src_val -= 0x100
             # _Bool constant fold: normalize to 0 or 1 (C99 6.3.1.2)
             if self._is_bool_type(target_type):
                 val = 0 if src_val == 0 else 1
@@ -11798,6 +11831,12 @@ class CodeGenerator:
 
     def gen_index(self, expr: ast.Index) -> None:
         """Generate code for array indexing."""
+        # A constant element of a named array is read where it lives.
+        loc = self._direct_loc(expr)
+        if loc is not None and self._gen_loc_load(
+                loc, self._get_expr_type(expr)):
+            return
+
         # Generate address, then dereference
         self._gen_address(expr)
 
@@ -11866,6 +11905,12 @@ class CodeGenerator:
         pos = self._bf_fast_pos(expr)
         if pos is not None:
             self._gen_bf_value(expr, pos[0], pos[1])
+            return
+
+        # A member of a named struct is read where it lives.
+        loc = self._direct_loc(expr)
+        if loc is not None and self._gen_loc_load(
+                loc, self._get_member_type(expr)):
             return
 
         # Generate address of the member
@@ -13185,9 +13230,10 @@ class CodeGenerator:
                 elif isinstance(func_type, lt.PointerType) and isinstance(func_type.base_type, lt.FunctionType):
                     return func_type.base_type.return_type
         elif isinstance(expr, ast.TernaryOp):
-            # Result type is the common type of true/false branches
-            true_type = self._get_expr_type(expr.true_expr)
-            false_type = self._get_expr_type(expr.false_expr)
+            # Result type is the common type of true/false branches (a
+            # bit-field narrower than int is an int, C 6.3.1.1p2)
+            true_type = self._arith_operand_type(expr.true_expr)
+            false_type = self._arith_operand_type(expr.false_expr)
             # Apply usual arithmetic conversions
             if self._is_float_type(true_type) or self._is_float_type(false_type):
                 return lt.BasicType(name="double")
@@ -13473,6 +13519,30 @@ class CodeGenerator:
             # array[index]: base + index * element_size
             elem_size = self._get_index_elem_size(expr.array)
 
+            loc = self._direct_loc(expr)
+            if loc is not None:
+                self._gen_loc_address(loc)
+                return
+            k = self._const_int_operand(expr.index)
+            if k is not None and elem_size > 0:
+                # p[K]: the pointer, then K elements on.
+                self.gen_expr(expr.array)
+                self._emit_add_hl_small(k * elem_size, "DE")
+                return
+
+            if (elem_size in (1, 2, 3, 4)
+                    and self._simple_sym(expr.index) is not None
+                    and not self._is_long_expr(expr.index)
+                    and not self._index_base_in_bc(expr.array)):
+                # A computed base and a variable index: the base in HL,
+                # the index in DE, one ``add HL,DE`` per byte of the
+                # element -- no push / pop and no scaling shifts.
+                self.gen_expr(expr.array)
+                self.gen_expr_to_de(expr.index)
+                for _ in range(elem_size):
+                    self.ctx.emit_instr("add", "HL,DE")
+                return
+
             ix = self._src32(expr.index)
             if ix is not None and ix.const is None and ix.size == 4:
                 # A long index: only its low word is the offset.
@@ -13510,6 +13580,10 @@ class CodeGenerator:
 
         elif isinstance(expr, (ast.Member, ast.ArrowMember)):
             is_arrow = isinstance(expr, ast.ArrowMember)
+            loc = None if is_arrow else self._direct_loc(expr)
+            if loc is not None:
+                self._gen_loc_address(loc)
+                return
             if is_arrow:
                 self.gen_expr(expr.obj)  # p->member: p is the address
             elif isinstance(expr.obj, ast.Call):
@@ -13533,8 +13607,7 @@ class CodeGenerator:
             if is_struct_type(struct_type):
                 offset = self._resolve_member_offset(struct_type, expr.member)
                 if offset > 0:
-                    self.ctx.emit_instr("ld", f"DE,{offset}")
-                    self.ctx.emit_instr("add", "HL,DE")
+                    self._emit_add_hl_small(offset, "DE")
 
         elif isinstance(expr, ast.TernaryOp):
             # ``(c ? a : b).m`` designates one of the two operands, so the
@@ -14539,6 +14612,10 @@ class CodeGenerator:
                 self._ix_release(sym.offset, 1)
             return
         if self._a_char_load(expr):
+            loc = self._direct_loc(expr)
+            if loc is not None:
+                self._gen_loc_byte_a(loc)
+                return
             self._gen_address(expr)
             e("ld", "A,(HL)")
             return
@@ -14678,6 +14755,29 @@ class CodeGenerator:
                 self._emit_a_to_hl(signed)
             return True
         k = self._const_int_operand(self._peel_int_casts(rhs))
+        loc = self._direct_loc(lhs)
+        if loc is not None and loc[0] == "ix" and not self._ix_in_range(
+                loc[2], 1):
+            loc = None
+        if loc is not None and not (k is not None and loc[0] == "label"):
+            # A named object at a fixed address: store straight to it.
+            if k is not None:
+                e("ld", f"({ix_off(loc[2])}),{k & 0xFF}")
+            else:
+                self._gen_expr_a(rhs)
+                if loc[0] == "label":
+                    e("ld", f"({self._label_plus(loc[1], loc[2])}),A")
+                else:
+                    e("ld", f"({ix_off(loc[2])}),A")
+            if used:
+                if k is not None:
+                    v = k & 0xFF
+                    if signed and v >= 0x80:
+                        v -= 0x100
+                    e("ld", f"HL,{v & 0xFFFF}")
+                else:
+                    self._emit_a_to_hl(signed)
+            return True
         if k is not None:
             self._gen_lvalue_address(lhs)
             e("ld", f"(HL),{k & 0xFF}")
@@ -14726,6 +14826,12 @@ class CodeGenerator:
             if not isinstance(lhs.array, ast.Identifier):
                 return False
             sym = self.ctx.lookup(lhs.array.name.text)
+            if (sym is not None
+                    and isinstance(_to_legacy(sym.sym_type), lt.PointerType)
+                    and ptr_var(lhs.array)
+                    and self._const_int_operand(lhs.index) is not None
+                    and 0 < self._get_index_elem_size(lhs.array) <= 0x4000):
+                return True              # p[K]: the pointer, plus K
             if (sym is None or not isinstance(_to_legacy(sym.sym_type),
                                               lt.ArrayType)
                     or self._get_index_elem_size(lhs.array) != 1):
@@ -14811,6 +14917,14 @@ class CodeGenerator:
                 return True
         return False
 
+    def _index_base_in_bc(self, arr) -> bool:
+        """_emit_index_base_bc(arr) would succeed.  (A dry run: the
+        emitted lines are taken back.)"""
+        n = len(self.ctx.lines)
+        ok = self._emit_index_base_bc(arr)
+        del self.ctx.lines[n:]
+        return ok
+
     def _gen_simple_to_bc(self, expr) -> None:
         """BC = a simple operand (_is_simple_operand) with the value
         gen_expr would put in HL.  HL and DE are untouched; A and the
@@ -14848,8 +14962,9 @@ class CodeGenerator:
             return f"{label}-{-off}"
         return label
 
-    def _emit_add_hl_small(self, off: int) -> None:
-        """HL += off (mod 2**16) using BC; DE is untouched."""
+    def _emit_add_hl_small(self, off: int, reg: str = "BC") -> None:
+        """HL += off (mod 2**16) using ``reg`` (BC or DE); the other pair
+        is untouched."""
         e = self.ctx.emit_instr
         off &= 0xFFFF
         if off == 0:
@@ -14861,8 +14976,291 @@ class CodeGenerator:
             for _ in range(0x10000 - off):
                 e("dec", "HL")
         else:
-            e("ld", f"BC,{off}")
-            e("add", "HL,BC")
+            e("ld", f"{reg},{off}")
+            e("add", f"HL,{reg}")
+
+    # ---- objects at a fixed address ------------------------------------
+
+    def _direct_loc(self, expr):
+        """Where the lvalue ``expr`` lives when it names a fixed range of
+        bytes of a named object: ``x``, ``s.m`` and ``a[K]`` (K a
+        constant), nested any depth.  Returns ("label", "sym", offset)
+        for a global or shared-storage object (shared storage is the
+        label ``??AUTO``), ("ix", None, frame offset) for a stack local
+        or parameter, and None for any other shape (a pointer, a
+        variable index, a bit-field)."""
+        if isinstance(expr, ast.Identifier):
+            sym = self.ctx.lookup(expr.name.text)
+            if sym is None:
+                return None
+            t = _to_legacy(sym.sym_type)
+            if isinstance(t, lt.FunctionType) or (
+                    sym.is_global
+                    and expr.name.text in self.ctx.function_names):
+                return None
+            if isinstance(t, lt.ArrayType) and sym.is_param:
+                return None              # really a pointer
+            if sym.is_global:
+                return ("label", sym.label(), 0)
+            if sym.uses_shared_storage:
+                return ("label", "??AUTO", sym.shared_offset)
+            return ("ix", None, sym.offset)
+        if isinstance(expr, ast.Member) and not isinstance(
+                expr, ast.ArrowMember):
+            if self._get_bitfield_info(expr) is not None:
+                return None
+            base = self._direct_loc(expr.obj)
+            if base is None:
+                return None
+            st = self._get_expr_type(expr.obj)
+            if not is_struct_type(st):
+                return None
+            off = self._resolve_member_offset(st, expr.member)
+            return (base[0], base[1], base[2] + off)
+        if isinstance(expr, ast.Index):
+            k = self._const_int_operand(expr.index)
+            if k is None:
+                return None
+            if not isinstance(_to_legacy(self._get_expr_type(expr.array)),
+                              lt.ArrayType):
+                return None
+            size = self._get_index_elem_size(expr.array)
+            if size <= 0:
+                return None
+            base = self._direct_loc(expr.array)
+            if base is None:
+                return None
+            return (base[0], base[1], base[2] + k * size)
+        return None
+
+    def _gen_loc_address(self, loc) -> None:
+        """HL = the address of a _direct_loc object.  A stack object
+        costs DE, as _gen_address always has."""
+        kind, base, off = loc
+        if kind == "label":
+            self.ctx.emit_instr("ld", f"HL,{self._label_plus(base, off)}")
+        else:
+            self.ctx.emit_instr("push", "IX")
+            self.ctx.emit_instr("pop", "HL")
+            self._emit_add_hl_small(off, "DE")
+
+    # ---- a word already in HL ------------------------------------------
+    #
+    # ``i < n`` leaves HL alone, and the body then wants i in HL again; a
+    # store ``x = e`` leaves the value in HL, and the next statement reads
+    # x.  _hl_holds looks back over the lines emitted so far (never over a
+    # label, a jump target ``$+n``, or any instruction that could change
+    # H, L, the memory word or IX) for the instruction that put the word
+    # in HL.  Then the reload is not emitted.
+
+    _HL_INS = re.compile(r"\t([a-z]+)(?:[ \t]+([^;]*))?(?:;.*)?$",
+                         re.IGNORECASE)
+    _HL_PLUS0 = re.compile(r"\+0(?=\)|$)")
+    _HL_NV = re.compile(r"@CMP_NV\d+:$")
+    _HL_CC = frozenset(("nz", "z", "nc", "c", "po", "pe", "p", "m"))
+    _HL_R8 = frozenset(("a", "b", "c", "d", "e"))
+    _HL_ALU = frozenset(("add", "adc", "sub", "sbc", "and", "or", "xor",
+                         "cp"))
+    _HL_PLAIN = frozenset(("rlca", "rrca", "rla", "rra", "cpl", "neg",
+                           "scf", "ccf", "nop"))
+    _HL_ROT = frozenset(("rlc", "rrc", "rl", "rr", "sla", "sra", "srl"))
+
+    def _hl_transparent(self, op: str, args: str) -> bool:
+        """The instruction changes neither H, L, IX nor any memory except
+        the stack, and falls through (or is a conditional jump)."""
+        if op == "ld":
+            dst = args.partition(",")[0]
+            return dst in self._HL_R8 or dst in ("bc", "de")
+        if op in self._HL_ALU:
+            return not args.startswith(("hl", "ix", "iy"))
+        if op in ("inc", "dec"):
+            return args in self._HL_R8 or args in ("bc", "de")
+        if op in self._HL_PLAIN:
+            return True
+        if op == "bit":
+            return True
+        if op in self._HL_ROT:
+            return args in self._HL_R8
+        if op == "push":
+            return True
+        if op == "pop":
+            return args in ("bc", "de", "af")
+        if op in ("jr", "jp"):
+            return args.partition(",")[0] in self._HL_CC and "," in args
+        return False
+
+    _HL_ADDR = re.compile(r"\((?:(ix[+-]\d+)|([?@\w.$]+?)(?:([+-])(\d+))?)\)$")
+
+    @classmethod
+    def _hl_span(cls, text: str):
+        """(space, start, end) of the memory operand ``(nn)`` /
+        ``(label+n)`` / ``(ix+d)`` in ``text``, or None.  The end is one
+        past the last byte of a 2-byte word; callers pass the width."""
+        m = cls._HL_ADDR.match(text)
+        if m is None:
+            return None
+        if m.group(1):
+            return ("ix", int(m.group(1)[2:]))
+        off = int(m.group(4) or 0) * (-1 if m.group(3) == "-" else 1)
+        return (m.group(2), off)
+
+    def _hl_store_ok(self, op: str, args: str, key) -> bool:
+        """The instruction stores a register to a named place that does
+        not overlap the word ``key`` (and does not change H or L)."""
+        if op in ("inc", "dec"):
+            width, dst, src = 1, args, "a"
+        elif op == "ld":
+            dst, _, src = args.partition(",")
+            if src in ("hl", "de", "bc"):
+                width = 2
+            elif src in ("a", "b", "c", "d", "e", "h", "l"):
+                width = 1
+            elif re.fullmatch(r"-?\d+|-?[0-9a-f]+h", src):
+                width = 1
+            else:
+                return False
+        else:
+            return False
+        if not dst.startswith("(") or dst in ("(hl)", "(de)", "(bc)"):
+            return False
+        here = self._hl_span(dst)
+        if here is None:
+            return False
+        if key[0] == "m":
+            mine = self._hl_span(f"({key[1].lower()})")
+        else:
+            mine = ("ix", key[1])
+        if mine is None:
+            return False
+        if here[0] != mine[0]:
+            # An IX slot never overlaps a named static, and two named
+            # statics with different names are different objects.
+            return True
+        return here[1] + width <= mine[1] or mine[1] + 2 <= here[1]
+
+    def _hl_holds(self, key) -> bool:
+        """HL already holds the word at ``key``: ("m", "label+off") for a
+        word in memory, ("x", n) for the word at (IX+n)."""
+        lines = self.ctx.lines
+        i = len(lines) - 1
+        seen = 0
+        if key[0] == "m":
+            k = self._HL_PLUS0.sub("", key[1].lower())
+            ld_in, ld_out = f"hl,({k})", f"({k}),hl"
+        else:
+            lo, hi = ix_off(key[1]).lower(), ix_off(key[1] + 1).lower()
+            pairs = (({f"l,({lo})", f"h,({hi})"}), ({f"({lo}),l", f"({hi}),h"}))
+        while i >= 0 and seen < 16:
+            m = self._HL_INS.match(lines[i])
+            if m is None:
+                if lines[i].startswith("\t;") or self._HL_NV.match(lines[i]):
+                    # A comment, or the overflow fix-up label of a signed
+                    # compare, which only the jump just before it reaches.
+                    i -= 1
+                    continue
+                return False             # a label, or text we do not know
+            op = m.group(1).lower()
+            args = self._HL_PLUS0.sub(
+                "", (m.group(2) or "").replace(" ", "").lower())
+            if "$" in args:
+                return False
+            seen += 1
+            if key[0] == "m":
+                if op == "ld" and args in (ld_in, ld_out):
+                    return True
+            elif op == "ld" and i > 0:
+                prev = self._HL_INS.match(lines[i - 1])
+                if prev is not None and prev.group(1).lower() == "ld":
+                    pargs = (prev.group(2) or "").replace(" ", "").lower()
+                    if {args, pargs} in pairs:
+                        return True
+            if not (self._hl_transparent(op, args)
+                    or self._hl_store_ok(op, args, key)):
+                return False
+            i -= 1
+        return False
+
+    def _hl_word_known(self, key, t) -> bool:
+        """_hl_holds for a non-volatile word of type ``t``."""
+        return not self._is_volatile_type(t) and self._hl_holds(key)
+
+    def _gen_loc_store(self, lhs, size: int) -> bool:
+        """Store the value in HL (DEHL for 4 bytes) into ``lhs`` when it
+        is a named object at a fixed address (a global or shared-storage
+        ``a[K]`` or ``s.m``): ``ld (nn),HL``, with no address in HL and no
+        ``ld (HL),E / inc HL / ld (HL),D``.  HL still holds the value
+        afterwards.  Returns False (nothing emitted) for any other shape
+        or size."""
+        if not isinstance(lhs, (ast.Index, ast.Member)) or size not in (1, 2, 4):
+            return False
+        loc = self._direct_loc(lhs)
+        if loc is None or loc[0] != "label":
+            return False
+        e = self.ctx.emit_instr
+        at = self._label_plus(loc[1], loc[2])
+        if size == 1:
+            e("ld", "A,L")
+            e("ld", f"({at}),A")
+        else:
+            e("ld", f"({at}),HL")
+            if size == 4:
+                e("ld", f"({self._label_plus(loc[1], loc[2] + 2)}),DE")
+        return True
+
+    def _gen_loc_byte_a(self, loc) -> None:
+        """A = the byte at a _direct_loc object; nothing else changes."""
+        kind, base, off = loc
+        if kind == "label":
+            self.ctx.emit_instr("ld", f"A,({self._label_plus(base, off)})")
+        else:
+            d = self._ix_reach(off, 1)
+            self.ctx.emit_instr("ld", f"A,({ix_off(d)})")
+            self._ix_release(off, 1)
+
+    def _gen_loc_load(self, loc, t) -> bool:
+        """Load the scalar of type ``t`` at a _direct_loc object into HL
+        (DEHL for 4 bytes), extended by its type, without computing an
+        address.  Returns False (nothing emitted) for any other type."""
+        t = _to_legacy(t)
+        if not isinstance(t, (lt.BasicType, lt.EnumType, lt.PointerType)):
+            return False
+        if (self._is_long_long_type(t) or self._is_complex_type(t)):
+            return False
+        size = self._type_size(t)
+        if size not in (1, 2, 4):
+            return False
+        e = self.ctx.emit_instr
+        kind, base, off = loc
+        if size == 2:
+            if kind == "label":
+                key = ("m", self._label_plus(base, off))
+            elif self._ix_in_range(off, 2):
+                key = ("x", off)
+            else:
+                key = None
+            if key is not None and self._hl_word_known(key, t):
+                return True
+        if kind == "label":
+            at = self._label_plus(base, off)
+            if size == 1:
+                e("ld", f"A,({at})")
+                e("ld", "L,A")
+            else:
+                e("ld", f"HL,({at})")
+                if size == 4:
+                    e("ld", f"DE,({self._label_plus(base, off + 2)})")
+        else:
+            d = self._ix_reach(off, size)
+            e("ld", f"L,({ix_off(d)})")
+            if size >= 2:
+                e("ld", f"H,({ix_off(d + 1)})")
+            if size == 4:
+                e("ld", f"E,({ix_off(d + 2)})")
+                e("ld", f"D,({ix_off(d + 3)})")
+            self._ix_release(off, size)
+        if size == 1:
+            self._emit_char_to_hl(self._is_signed_type(t))
+        return True
 
     def _gen_address_keep_de(self, lhs, extra: int = 0,
                              allow_bf: bool = False) -> bool:
@@ -14928,9 +15326,11 @@ class CodeGenerator:
                       and (sym.is_global or sym.uses_shared_storage)):
                 return False
             size = self._get_index_elem_size(arr)
-            if size <= 0 or size & (size - 1) or size > 0x4000:
-                return False
             k = self._const_int_operand(lhs.index)
+            if size <= 0 or size > 0x4000:
+                return False
+            if k is None and size & (size - 1):
+                return False
             if k is None and self._simple_sym(lhs.index) is None:
                 return False
             if is_ptr:
@@ -14941,6 +15341,11 @@ class CodeGenerator:
                 base = f"??AUTO+{sym.shared_offset}"
             if base is not None and k is not None:
                 e("ld", f"HL,{self._label_plus(base, k * size)}")
+                return True
+            if k is not None and is_ptr:
+                # p[K]: the pointer, then K elements on.
+                self.gen_expr(arr)
+                self._emit_add_hl_small(k * size)
                 return True
             if k is not None:
                 e("ld", f"HL,{(k * size) & 0xFFFF}")
@@ -15111,6 +15516,29 @@ class CodeGenerator:
             return False
         e = self.ctx.emit_instr
         used = expr is not self._discard_expr
+        loc = self._direct_loc(lhs) if isinstance(
+            lhs, (ast.Index, ast.Member)) else None
+        if loc is not None and (loc[0] == "label"
+                                or self._ix_in_range(loc[2], 2)):
+            # A named object at a fixed address: store straight to it.
+            if loc[0] == "label":
+                at = self._label_plus(loc[1], loc[2])
+                if k is not None:
+                    e("ld", f"HL,{k & 0xFFFF}")
+                else:
+                    self.gen_expr(rhs)
+                e("ld", f"({at}),HL")
+            elif k is not None:
+                kv = k & 0xFFFF
+                e("ld", f"({ix_off(loc[2])}),{kv & 0xFF}")
+                e("ld", f"({ix_off(loc[2] + 1)}),{kv >> 8}")
+                if used:
+                    e("ld", f"HL,{kv}")
+            else:
+                self.gen_expr(rhs)
+                e("ld", f"({ix_off(loc[2])}),L")
+                e("ld", f"({ix_off(loc[2] + 1)}),H")
+            return True
         self._gen_lvalue_address(lhs)
         if k is not None:
             kv = k & 0xFFFF
@@ -15152,6 +15580,19 @@ class CodeGenerator:
             return False
         k &= 0xFFFFFFFF
         e = self.ctx.emit_instr
+        loc = self._direct_loc(lhs) if isinstance(
+            lhs, (ast.Index, ast.Member)) else None
+        if loc is not None and loc[0] == "label":
+            # A named object at a fixed address: two word stores.
+            e("ld", f"HL,{k & 0xFFFF}")
+            e("ld", f"({self._label_plus(loc[1], loc[2])}),HL")
+            if k >> 16 != k & 0xFFFF:
+                e("ld", f"HL,{k >> 16}")
+            e("ld", f"({self._label_plus(loc[1], loc[2] + 2)}),HL")
+            if expr is not self._discard_expr:
+                e("ld", f"HL,{k & 0xFFFF}")
+                e("ld", f"DE,{k >> 16}")
+            return True
         self._gen_lvalue_address(lhs)
         for i in range(4):
             if i:
@@ -16256,7 +16697,14 @@ class CodeGenerator:
         # IntLiteral with is_unsigned flag
         if isinstance(expr, ast.IntLiteral):
             _il, _ill, is_unsigned, _ih = int_flags(expr)
-            return is_unsigned
+            if is_unsigned:
+                return True
+            # An unsuffixed hex literal that does not fit int is unsigned
+            # int (0xFFFF), or unsigned long (C 6.4.4.1); _get_expr_type
+            # knows.
+            lit_type = self._get_expr_type(expr)
+            return bool(lit_type is not None
+                        and getattr(lit_type, "is_signed", True) is False)
         return False
 
     def _is_long_type(self, t) -> bool:
@@ -16679,8 +17127,14 @@ class CodeGenerator:
     def _load_local(self, sym: Symbol) -> None:
         """Load a local variable into HL."""
         if sym.uses_shared_storage:
+            if self._hl_word_known(("m", f"??AUTO+{sym.shared_offset}"),
+                                   sym.sym_type):
+                return
             self.ctx.emit_instr("ld", f"HL,(??AUTO+{sym.shared_offset})")
         else:
+            if (self._ix_in_range(sym.offset, 2)
+                    and self._hl_word_known(("x", sym.offset), sym.sym_type)):
+                return
             base = self._ix_reach(sym.offset, 2)
             self.ctx.emit_instr("ld", f"L,({ix_off(base)})")
             self.ctx.emit_instr("ld", f"H,({ix_off(base + 1)})")
@@ -17231,9 +17685,40 @@ class CodeGenerator:
             self._gen_expr_a(cond)
             self.ctx.emit_instr("or", "A")
             return "NZ"
+        if self._gen_truth_through_hl(cond):
+            return "NZ"
         self._gen_condition_value(cond)
         self._emit_condition_test(cond)
         return "NZ"
+
+    def _gen_truth_through_hl(self, cond) -> bool:
+        """The truth of a 16-bit ``*p``, ``p[i]`` or ``p->m`` read in
+        place: ``ld A,(HL) / inc HL / or (HL)``, with no 16-bit load and
+        no ``ld A,H / or L``.  A named object at a fixed address is read
+        with ``ld HL,(nn)`` by gen_expr already.  Returns False (nothing
+        emitted) for any other shape."""
+        if isinstance(cond, ast.UnaryOp):
+            if self._op_of(cond) != "*":
+                return False
+        elif not isinstance(cond, (ast.Index, ast.Member, ast.ArrowMember)):
+            return False
+        if not (self._cmp16_operand(cond)
+                and self._scalar16_type(self._get_expr_type(cond))):
+            return False
+        if isinstance(cond, (ast.Index, ast.Member, ast.ArrowMember)):
+            if (self._direct_loc(cond) is not None
+                    or (not isinstance(cond, ast.Index)
+                        and self._get_bitfield_info(cond) is not None)
+                    or self._bf_fast_pos(cond) is not None):
+                return False
+            self._gen_address(cond)
+        else:
+            self.gen_expr(cond.operand)
+        e = self.ctx.emit_instr
+        e("ld", "A,(HL)")
+        e("inc", "HL")
+        e("or", "(HL)")
+        return True
 
     def _gen_condition_value(self, condition: ast.Expression) -> None:
         """Evaluate a condition where _emit_condition_test will look for it.
@@ -17443,6 +17928,14 @@ class CodeGenerator:
                 return self._type_size(tt.base_type)
             if isinstance(tt, lt.ArrayType):
                 return self._type_size(tt.base_type)
+
+        # Any other base (``(&a[1][0])[k]``, ``(p + 1)[k]``): the type
+        # the expression has.
+        bt = _to_legacy(self._get_expr_type(array_expr))
+        if isinstance(bt, (lt.PointerType, lt.ArrayType)):
+            size = self._type_size(bt.base_type)
+            if size > 0:
+                return size
 
         # Default to 16-bit
         return 2

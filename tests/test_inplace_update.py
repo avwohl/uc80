@@ -235,10 +235,10 @@ class TestStores:
                                     "ld\t(HL),D"]
 
     def test_char_variable_widened(self):
-        assert fn("ia[1] = sc;") == ["ld\tHL,_ia+2", "ld\tA,(_sc)",
-                                     "ld\tE,A", "ld\tA,E", "rlca",
-                                     "sbc\tA,A", "ld\tD,A", "ld\t(HL),E",
-                                     "inc\tHL", "ld\t(HL),D"]
+        # F8: a static array element is stored with ld (nn),HL.
+        assert fn("ia[1] = sc;") == ["ld\tA,(_sc)", "ld\tL,A", "ld\tA,L",
+                                     "rlca", "sbc\tA,A", "ld\tH,A",
+                                     "ld\t(_ia+2),HL"]
 
     def test_expression_keeps_de(self):
         o = fn("*ip = x + y;")
@@ -268,9 +268,10 @@ class TestStores:
         assert o.count("push\tHL") == 1
 
     def test_long_constant(self):
+        # F8: a static member is stored as two words with ld (nn),HL.
         assert fn("s.c = 0x12345678L;") == [
-            "ld\tHL,_s+3", "ld\t(HL),120", "inc\tHL", "ld\t(HL),86",
-            "inc\tHL", "ld\t(HL),52", "inc\tHL", "ld\t(HL),18"]
+            "ld\tHL,22136", "ld\t(_s+3),HL", "ld\tHL,4660",
+            "ld\t(_s+5),HL"]
 
     def test_volatile_word_low_byte_first(self):
         o = fn("volatile int *vp; *vp += 3;")

@@ -37,9 +37,11 @@ class TestFunctionGeneration:
         code = gen("int g(void); int id(int a) { return a; } "
                    "int main(void) { return id(g()) + id(g()); }")
         body = code[code.index("_id:"):code.index("_main:")]
-        for text in ("push\tIX", "ld\tIX,0", "add\tIX,SP", "ld\tSP,IX",
+        for text in ("push\tIX", "ld\tIX,0", "add\tIX,SP",
                      "pop\tIX", "(IX+4)"):
             assert text in body
+        # F8: no stack locals, so SP is IX at the return already.
+        assert "ld\tSP,IX" not in body
 
     def test_frameless_function_that_calls_keeps_no_frame(self):
         """A call preserves IX, so a caller that never reads IX needs none."""

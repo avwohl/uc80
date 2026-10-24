@@ -22,7 +22,7 @@ usual arithmetic conversions, for the sizes in the TypeConfig.
 from __future__ import annotations
 
 from uc_core import ast
-from uc_core.ast_optimizer import ASTOptimizer
+from uc_core.ast_optimizer import ASTOptimizer, _binop
 from uc_core._const import int_flags, int_value, make_int_lit
 
 # Conversion ranks of the types a literal or a folded result can have.
@@ -34,6 +34,25 @@ _FOLD_OPS = frozenset(("+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
 
 class Uc80ASTOptimizer(ASTOptimizer):
     """See the module docstring."""
+
+    # ---- identities that would lose the type of an operand
+
+    def _simplify_identity(self, expr):
+        """``x + 0L`` is a long and ``x * 1u`` an unsigned int.  uc_core
+        drops only a literal with a U or LL suffix, as on a target whose
+        long is as wide as its int; here an L matters too:
+        ``(x + 0L) * y`` is a 32-bit multiply, and ``x`` alone was 16."""
+        for e in (expr.left, expr.right):
+            if isinstance(e, ast.IntLiteral) and any(int_flags(e)[:3]):
+                return None
+        return super()._simplify_identity(expr)
+
+    def _simplify_zero(self, expr):
+        """``x * 0``, ``x & 0``, ``0 / x``, ``0 << x`` have the type of x
+        promoted (and of the literal), which uc_core cannot know: an
+        int 0 replacing ``ui * 0`` made ``(ui * 0) + -129 > 15`` a signed
+        comparison.  Left to the code generator."""
+        return None
 
     # ---- strength reduction that would lose the literal's type
 
@@ -49,6 +68,27 @@ class Uc80ASTOptimizer(ASTOptimizer):
     def _is_unsigned_literal(*exprs):
         # Only the x / 2^n and x % 2^n reductions ask this.
         return False
+
+    def _optimize_expr(self, expr):
+        """``K ? a : b`` is not folded to a or b unless both are integer
+        literals of one type: the conditional has the common type of the
+        two (``1 ? ui : ul`` is unsigned long), which uc_core, knowing no
+        variable types, cannot tell.  A constant condition costs one
+        test in the generated code and the peephole removes that."""
+        if isinstance(expr, ast.TernaryOp):
+            expr.condition = self._optimize_expr(expr.condition)
+            expr.true_expr = self._optimize_expr(expr.true_expr)
+            expr.false_expr = self._optimize_expr(expr.false_expr)
+            t, f = expr.true_expr, expr.false_expr
+            if (isinstance(expr.condition, ast.IntLiteral)
+                    and isinstance(t, ast.IntLiteral)
+                    and isinstance(f, ast.IntLiteral)
+                    and self._literal_type(t)[:2] == self._literal_type(f)[:2]):
+                self._stat("ternary_fold")
+                self._changed = True
+                return t if int_value(expr.condition) != 0 else f
+            return expr
+        return super()._optimize_expr(expr)
 
     # ---- typed constant folding
 
@@ -138,6 +178,12 @@ class Uc80ASTOptimizer(ASTOptimizer):
 
     def _optimize_binary(self, expr):
         op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if op in ("^", "-") and self._is_same_identifier(expr.left,
+                                                         expr.right):
+            # uc_core folds ``x ^ x`` and ``x - x`` to an int 0, but the
+            # value has x's type: ``(-31932 + (ul ^ ul)) >> 31`` is an
+            # unsigned long shift, and with an int it shifted a negative.
+            return expr
         if (op in _FOLD_OPS and isinstance(expr.left, ast.IntLiteral)
                 and isinstance(expr.right, ast.IntLiteral)):
             folded = self._fold_typed(op, expr.left, expr.right)
@@ -160,13 +206,56 @@ class Uc80ASTOptimizer(ASTOptimizer):
                               rank, unsigned)
         return super()._optimize_unary(expr)
 
+    # (outer op, inner op) -> (new op, how c3 is made from c1 and c2)
+    _NESTED = {
+        ("+", "+"): ("+", lambda c1, c2: c1 + c2),
+        ("+", "-"): ("+", lambda c1, c2: c2 - c1),
+        ("-", "+"): ("+", lambda c1, c2: c1 - c2),
+        ("-", "-"): ("-", lambda c1, c2: c1 + c2),
+        ("*", "*"): ("*", lambda c1, c2: c1 * c2),
+    }
+
+    def _fits(self, value: int, rank: int, unsigned: bool) -> bool:
+        bits = self._bits(rank)
+        if unsigned:
+            return 0 <= value < (1 << bits)
+        return -(1 << (bits - 1)) <= value < (1 << (bits - 1))
+
     def _nested_const_fold(self, expr):
         """(x op c1) op c2 -> x op c3, with c3 of the common type of c1, c2.
 
-        uc_core mints c3 without the L suffix, so ``(x + 2L) - 10`` lost
-        its long type.
+        uc_core wraps c3 to the width of the literals, without a sign:
+        ``(x - 31) - (-127)`` became ``x - 65440``, a long constant, and
+        a long x then lost 65536 on the way.  c3 is made here from the
+        exact values, and the fold is not made when c3 does not fit the
+        common type of c1 and c2 (x may be wider than either).
         """
         inner = expr.left
+        outer = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if (isinstance(expr.right, ast.IntLiteral)
+                and isinstance(inner, ast.BinaryOp)
+                and isinstance(inner.right, ast.IntLiteral)):
+            iop = inner.op.text if hasattr(inner.op, "text") else inner.op
+            rule = self._NESTED.get((outer, iop))
+            if rule is not None:
+                t1 = self._literal_type(inner.right)
+                t2 = self._literal_type(expr.right)
+                rank, unsigned = self._common(t1, t2)
+                c3 = rule[1](self._wrap(t1[2], t1[0], t1[1]),
+                             self._wrap(t2[2], t2[0], t2[1]))
+                if not self._fits(c3, rank, unsigned):
+                    return None
+                new_op = rule[0]
+                if new_op == "-" and c3 < 0 and self._fits(-c3, rank, unsigned):
+                    new_op, c3 = "+", -c3
+                elif new_op == "-" and c3 < 0:
+                    return None
+                self._stat("nested_fold")
+                self._changed = True
+                if c3 == 0 and new_op in ("+", "-"):
+                    return inner.left
+                return _binop(new_op, inner.left,
+                              self._mint(c3, rank, unsigned))
         result = super()._nested_const_fold(expr)
         if (isinstance(result, ast.BinaryOp)
                 and isinstance(result.right, ast.IntLiteral)
