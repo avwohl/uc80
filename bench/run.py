@@ -38,14 +38,15 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from compilers import BENCH, TOOLS, all_compilers  # noqa: E402
+from compilers import (BENCH, TOOLS, TPA_LIMIT, TPA_STACK,  # noqa: E402
+                       all_compilers, size_only_status)
 
 CACHE = BENCH / "_cache"
 WORK = BENCH / "_work"
 RESULTS = BENCH / "results" / "results.csv"
 FIELDS = ["program", "tier", "compiler", "mode", "status", "image", "bss",
           "com", "check_com", "cycles", "total_cycles", "timing", "version",
-          "command"]
+          "command", "code", "data", "objects"]
 
 # Check builds that passed in this process: (base program, compiler, mode,
 # check defines) -> .com size.  A variant whose check build is the same as
@@ -126,7 +127,11 @@ def prepare_sources(prog: dict, repos: dict, dest: Path) -> list[Path]:
             src = fetch(f, repos)
             name = Path(f["path"]).name
         elif "shared" in f:
+            # Relative to bench/programs/, else to bench/ (for example
+            # "support/posix_shim.c").
             src = BENCH / "programs" / f["shared"]
+            if not src.exists():
+                src = BENCH / f["shared"]
             name = Path(f["shared"]).name
         else:
             src = BENCH / "programs" / prog.get("base", prog["name"]) / f["path"]
@@ -147,6 +152,16 @@ def prepare_sources(prog: dict, repos: dict, dest: Path) -> list[Path]:
         if target.suffix == ".c":
             out.append(target)
     return out
+
+
+def get_stdin(prog: dict) -> str:
+    """The standard input of a program: stdin_file (a file in
+    bench/programs/<program>/) or the stdin text, else nothing."""
+    if "stdin_file" in prog:
+        src = (BENCH / "programs" / prog.get("base", prog["name"])
+               / prog["stdin_file"])
+        return src.read_text(encoding="latin-1")
+    return prog.get("stdin", "")
 
 
 def normalize(text: str) -> str:
@@ -233,14 +248,67 @@ def build_defines(prog: dict, kind: str) -> list[str]:
 
 def bench_one(prog, comp, mode, repos, version) -> dict:
     with cell_lock(WORK / prog["name"] / comp.name / mode):
+        if prog.get("kind") == "size-only":
+            return _size_only_one(prog, comp, mode, repos, version)
         return _bench_one(prog, comp, mode, repos, version)
+
+
+def _size_only_one(prog, comp, mode, repos, version) -> dict:
+    """Build a size-only program: no run, no golden file.
+
+    Two builds: the per-object build (comp.objects: each source is
+    compiled alone, and the code size of each object is read from the
+    object, the listing or the map) and the whole-program link (the
+    usual comp.build).  The status is FITS when the program links and
+    its image, its BSS and TPA_STACK bytes of stack end below TPA_LIMIT;
+    TOO-BIG when it links and is larger, or when the linker stops
+    because the program is too large; BUILD-FAIL(objects) or
+    BUILD-FAIL(link) otherwise.  The per-object sizes are in the row
+    even when the link fails.
+    """
+    row = {"program": prog["name"], "tier": prog.get("tier", 3),
+           "compiler": comp.name, "mode": mode, "version": version}
+    defines = build_defines(prog, "time")
+    work = WORK / prog["name"] / comp.name / mode
+    for kind in ("objects", "link"):
+        wd = work / kind
+        if wd.exists():
+            shutil.rmtree(wd)
+        srcs = prepare_sources(prog, repos, wd)
+        if kind == "objects":
+            o = comp.objects(srcs, defines, [BENCH, wd], wd, mode)
+            (wd / "build.log").write_text(o.log)
+            if not o.ok:
+                timed_out = re.search(r"^timeout after \d+s", o.log, re.M)
+                row["status"] = ("BUILD-TIMEOUT(objects)" if timed_out
+                                 else "BUILD-FAIL(objects)")
+                return row
+            row["code"] = sum(c for _, c, _ in o.objects)
+            row["data"] = sum(d for _, _, d in o.objects)
+            row["objects"] = ";".join(f"{n}={c}/{d}"
+                                      for n, c, d in o.objects)
+            continue
+        b = comp.build(srcs, defines, [BENCH, wd], wd, mode)
+        (wd / "build.log").write_text(b.log)
+        row["command"] = b.command
+        if b.ok:
+            row["com"], row["image"], row["bss"] = (b.com.stat().st_size,
+                                                    b.image, b.bss)
+            end = 0x100 + (b.image or 0) + (b.bss or 0)
+            row["status"] = ("FITS" if end + TPA_STACK <= TPA_LIMIT
+                             else "TOO-BIG")
+        else:
+            timed_out = re.search(r"^timeout after \d+s", b.log, re.M)
+            row["status"] = ("BUILD-TIMEOUT(link)" if timed_out
+                             else size_only_status(b.log))
+    return row
 
 
 def _bench_one(prog, comp, mode, repos, version) -> dict:
     row = {"program": prog["name"], "tier": prog.get("tier", 1),
            "compiler": comp.name, "mode": mode, "version": version}
     golden = golden_path(prog).read_text()
-    stdin = prog.get("stdin", "")
+    stdin = get_stdin(prog)
     limit = prog.get("timeout", 600)
     same = build_defines(prog, "check") == build_defines(prog, "time")
     for kind in ("check", "time"):
@@ -296,7 +364,10 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
             row["status"] = "WRONG(time)"
             return row
         s, e = b.symbols.get("TIMER_START"), b.symbols.get("TIMER_STOP")
-        if s is not None and e is not None:
+        # timing = "total" (games): the count of the whole run, even when
+        # the program has TIMER labels.
+        if (s is not None and e is not None
+                and prog.get("timing") != "total"):
             # ticks with -start/-end runs until the end label; when the
             # program never reaches it, ticks never stops.  The region is
             # part of the whole run, so a few times the time of the whole
@@ -330,7 +401,7 @@ def make_golden(prog: dict, repos: dict) -> None:
                   + prog.get("defines", {}).get("host", [])]
                + [str(s) for s in srcs] + ["-o", str(work / "host"), "-lm"])
         subprocess.run(cmd, check=True)
-        out = subprocess.run([str(work / "host")], input=prog.get("stdin", ""),
+        out = subprocess.run([str(work / "host")], input=get_stdin(prog),
                              capture_output=True, text=True,
                              check=False).stdout
     (BENCH / "golden").mkdir(exist_ok=True)
@@ -378,7 +449,8 @@ def main() -> int:
     comps = [c for c in allc if not args.compiler or c.name in args.compiler]
     if args.list:
         for p in man["program"]:
-            print(f"{p['name']}\ttier {p.get('tier', 1)}\t{p.get('about', '')}")
+            print(f"{p['name']}\ttier {p.get('tier', 1)}"
+                  f"\t{p.get('kind', 'run')}\t{p.get('about', '')}")
         for c in allc:
             print(f"{c.name}\t{'available' if c.available() else 'missing'}")
         return 0
@@ -388,6 +460,9 @@ def main() -> int:
         return 2
     if args.golden:
         for p in progs:
+            if p.get("kind") == "size-only":
+                print(f"{p['name']}: size-only, no golden file")
+                continue
             make_golden(p, man.get("repo", {}))
         return 0
     if not ticks_path().exists():

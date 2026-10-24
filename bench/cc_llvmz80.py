@@ -96,8 +96,8 @@ import re
 import shutil
 from pathlib import Path
 
-from compilers import (BENCH, SDCC_HEAP_TOP, TOOLS, Build, Compiler, _run,
-                       ihx_to_com, read_sdld_map)
+from compilers import (BENCH, SDCC_HEAP_TOP, TOOLS, Build, Compiler, Objects,
+                       _run, ihx_to_com, read_sdld_map, sdcc_rel_sizes)
 
 TAG = "llvmz80-23.1.3-r1"
 
@@ -140,28 +140,51 @@ class LlvmZ80(Compiler):
         return (f"llvm-z80 {TAG} ({cv}), sdasz80/sdldz80 and z80.lib "
                 f"from SDCC {m.group(0) if m else '?'}")
 
+    def _flags(self, defines, includes, mode) -> list[str]:
+        mine = BENCH / "crt" / "llvm-z80"
+        opt = ["-Os"] if mode == "size" else ["-O2"]
+        return (["--target=z80-unknown-none-sdcc"] + opt + ["-mdouble=32"]
+                + [f"-I{i}" for i in includes]
+                + ["-Wno-error=" + w for w in (
+                    "implicit-function-declaration", "implicit-int",
+                    "int-conversion", "incompatible-pointer-types")]
+                + ["-fno-builtin-exp2f"]
+                + ["-D__reentrant=", "-isystem", str(mine / "include"),
+                   "-idirafter", str(self._sdcc_share() / "include")]
+                + [f"-D{d}" for d in defines])
+
+    def objects(self, sources, defines, includes, work, mode):
+        """clang -S and sdasz80, one .rel per source; the sizes are the
+        "A _CODE size" lines, as for SDCC."""
+        flags = self._flags(defines, includes, mode)
+        sdas = str(self._sdcc_bin() / "sdasz80")
+        log, objs = [], []
+        for src in sources:
+            stem = Path(src).stem
+            rc, out = _run([str(self.clang), "-S"] + flags
+                           + [str(src), "-o", f"{stem}.s"], work)
+            log.append(out)
+            if rc == 0:
+                rc, out = _run([sdas, "-g", "-o", f"{stem}.rel",
+                                f"{stem}.s"], work)
+                log.append(out)
+            if rc != 0 or not (work / f"{stem}.rel").exists():
+                return Objects(False, log="\n".join(log))
+            objs.append((stem,) + sdcc_rel_sizes(work / f"{stem}.rel"))
+        return Objects(True, objs, "\n".join(log))
+
     def build(self, sources, defines, includes, work, mode):
         log = []
         sbin = self._sdcc_bin()
         share = self._sdcc_share()
         sdas, sdld = str(sbin / "sdasz80"), str(sbin / "sdldz80")
         crt = BENCH / "crt" / "sdcc"
-        mine = BENCH / "crt" / "llvm-z80"
         for s in ("crt0_cpm", "cpmio"):
             rc, out = _run([sdas, "-g", "-o", f"{s}.rel",
                             str(crt / f"{s}.s")], work)
             if rc != 0:
                 return Build(False, log=out)
-        opt = ["-Os"] if mode == "size" else ["-O2"]
-        flags = (["--target=z80-unknown-none-sdcc"] + opt + ["-mdouble=32"]
-                 + [f"-I{i}" for i in includes]
-                 + ["-Wno-error=" + w for w in (
-                     "implicit-function-declaration", "implicit-int",
-                     "int-conversion", "incompatible-pointer-types")]
-                 + ["-fno-builtin-exp2f"]
-                 + ["-D__reentrant=", "-isystem", str(mine / "include"),
-                    "-idirafter", str(share / "include")]
-                 + [f"-D{d}" for d in defines])
+        flags = self._flags(defines, includes, mode)
         command = " ".join([str(self.clang)] + flags)
         rels = []
         for src in sources:

@@ -1,0 +1,19 @@
+hint
+50
+25
+37
+  35
+score
+?
+abc
+200
+0
+hint
+22
+99
+HINT
+15
+New
+ 10
+Score
+Quit

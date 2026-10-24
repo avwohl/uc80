@@ -60,7 +60,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from compilers import TOOLS, Build, Compiler
+from compilers import TOOLS, Build, Compiler, Objects, um80_sizes
 
 DCC_TAG = "v3.6.0"
 DCC_COMMIT = "2029023"
@@ -138,6 +138,48 @@ class Dcc(Compiler):
         if not ok:
             log.append(f"assembly of {mod}.MAC failed")
         return ok
+
+    def objects(self, sources, defines, includes, work, mode):
+        """dcc and dccpeep for each source, then um80 reads the size.
+
+        The sizes are the Code and Data segments that um80 reports for
+        the module's .MAC file (assembled with "-t -e .Z80", as for
+        DCC_ASM=um80), whatever DCC_ASM is.  Run time modules and the
+        cross-module dead code removal of dccrtlstrip are not part of
+        it, as for the other compilers' objects.
+        """
+        log: list[str] = []
+        home = DCC_HOME
+        peep = "-Os" if mode == "size" else "-Ot"
+        dflags = [f"-D{d}" for d in defines]
+        iflags = []
+        for i in list(includes) + [home]:
+            iflags += ["-I", str(i)]
+        srcs = [Path(s) for s in sources]
+        srcs.sort(key=lambda s: not s.read_text(encoding="latin-1")
+                  .startswith('#include "bench.h"'))
+        objs = []
+        for i, src in enumerate(srcs):
+            mac = work / f"M{i}.MAC"
+            cmd = ([str(home / "dcc")] + (["-module"] if i else [])
+                   + dflags + iflags + [str(src), "-o", str(mac)])
+            if self._run(cmd, work, log) != 0 or not mac.exists():
+                return Objects(False, log="\n".join(log))
+            tmp = work / f"_PEEP{i}.MAC"
+            if self._run([str(home / "dccpeep"), peep, str(mac), str(tmp)],
+                         work, log) != 0 or not tmp.exists():
+                return Objects(False, log="\n".join(log))
+            tmp.replace(mac)
+            _crlf(mac)
+            p = subprocess.run(["um80", "-t", "-e", ".Z80", mac.name,
+                                "-o", f"M{i}.REL"], cwd=work,
+                               capture_output=True, text=True)
+            log.append(p.stdout + p.stderr)
+            sz = um80_sizes(p.stdout)
+            if p.returncode != 0 or sz is None:
+                return Objects(False, log="\n".join(log))
+            objs.append((src.stem, sz[0], sz[1]))
+        return Objects(True, objs, "\n".join(log))
 
     def build(self, sources, defines, includes, work, mode):
         log: list[str] = []

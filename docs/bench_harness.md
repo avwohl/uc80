@@ -21,6 +21,7 @@ that file.
 | `bench/golden/<name>.txt` | The correct output of each program |
 | `bench/crt/sdcc/` | CP/M start-up code and console I/O for sdcc, sdcc-4.4 and llvm-z80 |
 | `bench/crt/llvm-z80/include/` | Header wrappers that let clang read the SDCC headers |
+| `bench/support/` | Shared support code for games: `posix_shim.[ch]` and `tinycurses.[ch]` (see [Games](#games-scripted-interactive-programs)) |
 | `bench/report.py` | Makes `docs/benchmarks_speed.md` from `results.csv` |
 | `bench/difftest.py` | The differential tester: random C programs, uc80 against SDCC (see [The differential tester](#the-differential-tester)) |
 
@@ -114,12 +115,15 @@ runner puts `#include "bench.h"` at the top of the main source.
 | `label` | Optional. The name that the report shows, for example `coremark (unofficial)`. |
 | `tier` | 0 baseline, 1 classic benchmarks, 2 kernels, 3 games and real programs. |
 | `about` | One line for the Programs table of the report. |
-| `files` | A list of files. `{repo, path, sha256}` is an upstream file. `{path}` is relative to `bench/programs/<name>/`. `{shared}` is relative to `bench/programs/` (a file that more than one program uses). `main = true` marks the source that gets `#include "bench.h"`. |
+| `files` | A list of files. `{repo, path, sha256}` is an upstream file. `{path}` is relative to `bench/programs/<name>/`. `{shared}` is relative to `bench/programs/`, or else to `bench/` (a file that more than one program uses, for example `support/posix_shim.c`). `main = true` marks the source that gets `#include "bench.h"`. |
 | `edit` | A list of `{file, old, new}` text replacements. The text in `old` must occur one time. Every compiler gets the same edited text. |
 | `check_defines` | The defines of the check build, for example `["PRINTF"]`. |
 | `time_defines` | The defines of the time build, for example `["TIMER"]`. |
 | `variants` | A list of `{name, defines}`. Each variant is one more program, `<name>+<variant>`, with the defines added for every compiler. A variant can also have `about`, `label` and `time_only = true`. |
+| `kind` | Optional. `"size-only"` makes a program that the runner builds but does not run (see [Size-only programs](#size-only-programs)). The default is a program that runs. |
 | `stdin` | Text for the standard input of the program. |
+| `stdin_file` | A file in `bench/programs/<name>/` that holds the standard input. A variant uses the file of its base program. Use it for a script that is longer than a few lines. |
+| `timing` | Optional. `"total"` makes the runner skip the region run. The row then has the cycles of the whole run and `timing=total`, also when the program has TIMER labels. Games use it. |
 | `defines.host` | Optional. More defines for the host build that makes the golden file (`run.py --golden`) only. No compiler gets a define that the other compilers do not get. |
 | `timeout` | Seconds for one run under `z88dk-ticks`. The default is 600. |
 
@@ -227,6 +231,213 @@ also compares the output of the time build with the golden file.
 The region run has a shorter time limit: five times the time of the full
 run, and not less than 60 seconds. A program that does not get to
 `TIMER_STOP` thus fails fast.
+
+## Size-only programs
+
+The runner only builds a program with `kind = "size-only"`. The
+program has no check build, no run and no golden file. Use this kind for a program that does
+not fit in memory, or that needs input that the harness cannot give.
+The report shows these programs in their own tables, and not in the
+speed tables.
+
+For each compiler and mode the runner makes two builds in
+`bench/_work/<program>/<compiler>/<mode>/objects/` and `.../link/`:
+
+1. **The per-object build.** The compiler compiles each source file
+   alone, with no link. The runner reads the code size and the data size of each
+   object. `Compiler.objects()` does this, and it returns a
+   `compilers.Objects`. The row holds the sums in `code` and `data`, and
+   the size of each object in `objects` (`name=code/data;...`).
+2. **The whole-program link.** The runner calls `build()` as for any
+   other program. The row holds `image`, `bss` and `com`.
+
+The status of a size-only row is one of these:
+
+| Status | Meaning |
+|---|---|
+| FITS | The program links, and `0100h + image + bss + 512` is not above `E400h`. |
+| TOO-BIG | The program links and is larger, or the linker stops and its message says that the program is too large (`compilers.TOO_BIG_RE`). |
+| BUILD-FAIL(objects) | A compiler or assembler stopped in the per-object build. |
+| BUILD-FAIL(link) | The link stopped, and the message does not say that the program is too large. The row keeps the per-object sizes. |
+| BUILD-TIMEOUT(objects), BUILD-TIMEOUT(link) | A tool stopped at its time limit. |
+
+`E400h` is the BDOS base of a 64 KB CP/M 2.2 system. The TPA is thus
+0100h to E3FFh, which is 58,112 bytes. The 512 bytes are for the stack.
+`TPA_LIMIT` and `TPA_STACK` in `bench/compilers.py` hold the numbers.
+The heap of the program has no reserve. Under `z88dk-ticks` the stack
+top is 0C9FEh, so a program that fits here can still be too large to
+run there.
+
+### How each compiler measures the size of an object
+
+Code is the instructions. Data is the variables, and for some compilers
+also the strings and the constant tables. Compare the sum of code and
+data (the second number in the report), because the compilers put
+strings in different places. Never compare the numbers of the
+per-object build with the size of a whole-program uc80 link. A
+whole-program link removes code that no function calls.
+
+| Compiler | Compile step | Code | Data |
+|---|---|---|---|
+| uc80 | `uc80 --no-whole-program --no-embed-runtime --no-embed-startup`, then `um80` | The "Code segment" bytes that `um80` prints | The "Data segment" bytes. This includes strings and the BSS. |
+| sdcc, sdcc-4.4 | `sdcc -c` | The areas `_CODE`, `_HOME`, `_GSINIT` and `_GSFINAL` of the `.rel` file. Strings and `const` tables are in `_CODE`. | `_DATA` and `_INITIALIZED`. `_INITIALIZER` (the ROM copy of `_INITIALIZED`) does not count. |
+| llvm-z80 | `clang -S`, then `sdasz80` | The same areas as for SDCC | The same areas as for SDCC |
+| z88dk-zsdcc, z88dk-sccz80 | `zcc +cpm -c`, then `z88dk-z80nm -a` | The sections that start with `code` | The sections `rodata`, `data` and `bss` |
+| hitech | The full build. The map of the link lists each module. | The `text` length of each user module | The `data` and `bss` lengths of the module |
+| dcc | `dcc` and `dccpeep`, then `um80 -t -e .Z80` | The "Code segment" bytes of the `.MAC` file | The "Data segment" bytes |
+
+Notes:
+
+- dcc puts all variables in its code segment. Its code number thus
+  includes the data, and its data number is 0. Compare the sum.
+- The hitech numbers include a 2048-byte input buffer of `posix_shim.c`
+  that no other compiler has.
+- The hitech and dcc numbers are weaker than the others. HI-TECH C has
+  no tool that prints the size of one `.obj`. The runner thus reads the
+  map of the link. A program that does not link has no per-object sizes.
+  For dcc, the per-object build does not run `dccrtlstrip`, which removes
+  unused code between modules.
+- The per-object uc80 build links against `libc.lib` in the whole link
+  only. Its object holds a table of the printf handlers (for example,
+  195 bytes of code for a three-line program). Thus uc80 has a fixed
+  offset for each object that calls `printf`.
+
+## Games: scripted interactive programs
+
+A game reads commands from the standard input and draws on a terminal.
+The harness runs a game under `z88dk-ticks` with its input from a file,
+and compares the output with a golden file from the host compiler.
+These rules make the run the same on every compiler:
+
+- **The input.** Put the script in `bench/programs/<name>/input.txt` and
+  name it with `stdin_file`. `z88dk-ticks` reads end of file as the byte
+  0FFh, so the script must end with the quit command of the program.
+- **The clock and the random numbers.** The program must not read the
+  clock. `posix_shim.h` maps `time()` to a function that returns the
+  constant 1000000000, and `getpid()` to 1. It maps `rand()` and
+  `srand()` to one generator for all compilers (the ANSI C sample
+  generator, `RAND_MAX` 32767). `srand()` takes an `unsigned`. A seed
+  that is larger than 16 bits gives different values on a 16-bit
+  compiler and on the host. Mask the seed to 15 bits, as `guess.c` does.
+- **The timing.** A game has no TIMER labels. Set `timing = "total"` in
+  the manifest. The cycles of the row are the count of the whole run,
+  and the report marks them with a dagger. Do not compare them with the
+  region counts of other programs.
+- **The golden file.** `python3 bench/run.py --golden <name>` builds the
+  program with the host `cc`, with the same shared files, runs it with
+  the same input and writes the output. Read the file. Make the golden
+  file again each time that you change the script, a seed, or a shared
+  file.
+- **The end of the output.** Make the program end its output with a
+  newline. `tinycurses` writes a newline in `endwin()`.
+
+The proof programs are our own. `game-guess` is a stdio game with a
+scripted input. `curses-demo` is a tinycurses program with a status
+window. `curses-demo-size` has the sources of `curses-demo` as a
+size-only program. Their manifest file is `bench/programs.d/games.toml`.
+
+### Shared support code
+
+The files in `bench/support/` are our own code (GPL-3.0-or-later). A
+program lists them as `{ shared = "support/<file>" }`. The same C text
+goes to every compiler, with a few `#ifdef` branches for the library
+differences below. The code is C89, because HI-TECH C 3.09 and dcc
+accept only C89. It has no `//` comments, no variadic macros, and no
+`#` or `##`.
+
+Its declarations are at the start of a block.
+
+**Names.** dcc and L80 keep only six characters of an external name:
+the `_` and five more. Two names with the same first five characters
+become one symbol. The link then calls the wrong function. For
+example, `mvaddch` and `mvaddstr` are the same name for dcc.
+
+- Each external name in `bench/support/` has a different five-character
+  prefix (`tc_xx` for tinycurses, `px_xx` for the shim).
+- The calls that a program makes are function-like macros that map to
+  these names. A function-like macro does not change a variable with
+  the same name, so `int index;` and `int move;` still work.
+- The printw family are object-like macros, because they take a
+  variable number of arguments.
+- A program of our own must follow the same rule for its public names.
+
+**posix_shim.h and posix_shim.c.** A game includes `posix_shim.h` after
+all system headers, and a manifest `edit` replaces the includes of
+`<unistd.h>`, `<time.h>`, `<signal.h>`, `<err.h>` and `<strings.h>`.
+
+| Call | What the shim does |
+|---|---|
+| `time(p)`, `getpid()` | Return the constants 1000000000 and 1. |
+| `sleep(n)`, `usleep(n)` | Return 0 at once. |
+| `getenv(s)` | Returns NULL. |
+| `signal(s, h)` | Returns NULL. A signal never comes. The handler type is `void *`. `SIGINT`, `SIG_IGN` and other macros are defined when the system has none. |
+| `rand()`, `srand(s)`, `random()`, `srandom(s)` | One generator for all compilers. |
+| `index`, `rindex`, `bzero`, `bcopy` | Macros for `strchr`, `strrchr`, `memset` and `memmove`. |
+| `strcasecmp`, `strncasecmp` | ASCII comparison without case. |
+| `bench_args(&argc, &argv)` | When argc is less than 1, sets argc to 1 and argv to `{"game", NULL}`. |
+| `err`, `errx`, `warn`, `warnx` | Print `game: message` (and `: error` for `err` and `warn`) to the standard OUTPUT, because the golden file holds only standard output. `err` and `errx` then call `exit()`. |
+| `px_vf(buf, cap, fmt, ap)` | A small formatter: `%% %c %s %d %i %u %x %X`, the `l` modifier, the flags `-` and `0`, and a width. No floating point. `err()` and `printw()` use it, so these functions print the same on every compiler. |
+
+Library differences that the shim hides:
+
+- **z88dk.** The classic console driver echoes each character that
+  `getchar()` reads. The shim maps `getchar()` to `fgetc_cons()`, which
+  makes the same BDOS call without the echo.
+- **HI-TECH C.** `getchar()` uses BDOS function 10, which
+  `z88dk-ticks` does not implement. The console output of HI-TECH C also
+  takes characters out of the input file while the program prints.
+  `bench_args()` and `initscr()` thus read the whole input (at most 2048
+  bytes) into a buffer, and the shim maps `getchar()` to `px_gc()`,
+  which reads from that buffer. The buffer is in the BSS of every hitech
+  game.
+- **SDCC and llvm-z80.** `stdlib.h` does not declare `exit()`. The shim
+  declares it. The CP/M start-up code of the harness defines it.
+- **z88dk sccz80.** A function with `...` cannot find its named
+  parameters with the default calling convention. `PX_VA` (`__stdc`) in
+  each prototype and definition of such a function selects the standard
+  convention, and the shim defines the `va_` macros for it. A program
+  of our own that defines a variadic function needs the same. `unsigned
+  long % 10` also gives wrong digits (for example 100000 % 10 is 4),
+  so `px_vf()` computes `v - (v / 10) * 10`. The second `long` argument
+  of one variadic call is read wrongly, so do not pass two `%ld` or
+  `%lu` arguments in one call under sccz80.
+- **uc80.** The AST optimizer runs the assignment of one `if` branch
+  in the case that the program takes the other branch. This happens
+  with a temporary for a long quotient. One branch has
+  `q = v / 10; d = v - q * 10; v = q;` and the other branch has
+  `d = v & 15; v = v >> 4;`. `px_vf()` has no such temporary.
+- **dcc.** The compiler refuses `sv = va_arg(ap, long)` in one arm of an
+  `if` and `sv = va_arg(ap, int)` in the other arm. `px_vf()` reads the
+  `int` into a temporary variable first.
+
+A game can read its input with `fgets()`, `gets()` or `scanf()`. Such
+a game needs a similar mapping for each compiler that echoes or does
+not support the call. Add the mapping to `posix_shim.h` in the same
+way.
+
+**tinycurses.h and tinycurses.c.** The library is a VT100 and ANSI subset
+of curses with a shadow screen. The screen has 24 lines (`LINES`) of 80
+columns (`COLS`). The library writes only the cells that changed, and
+only at `refresh()`, with `putchar()`. `getch()` refreshes, and then
+reads with `getchar()`.
+
+The header lists the functions. These are the main ones:
+
+```
+initscr endwin move addch addstr mvaddch mvaddstr printw mvprintw
+clear erase refresh clrtoeol getch cbreak noecho nl nonl standout
+standend newwin wmove waddch wrefresh
+```
+
+The library has no color, no attribute other than standout, no
+function key and no scroll. A window from `newwin()` is a rectangle of
+the one screen array. The window has no text of its own. Windows do
+not overlap in a managed way. There are at most two such windows. A
+write past the last cell returns `ERR`.
+
+`printw()` uses `px_vf()`. A program that uses tinycurses thus links
+`posix_shim.c` too. The host build gives byte-identical output, because
+the same C makes the output.
 
 ## The differential tester
 

@@ -17,6 +17,8 @@ python3 bench/run.py && python3 bench/report.py
 - A run counts only if its output matches the golden file in `bench/golden/`. **WRONG** means wrong output, **HANG** means no exit, **BUILD-FAIL** means the compiler, assembler or linker failed, and **BUILD-TIMEOUT** means a build tool hit its time limit (1800 s; 600 s for the hitech and dcc tools). (check) or (time) tells which build failed. **WRONG(time)**: the time build has the same defines as the check build, and its output is wrong. **HANG(region)**: the program did not get from `TIMER_START` to `TIMER_STOP`.
 - Every compiler compiles the same source with the same defines. A program variant such as `sieve+static` adds a define for every compiler.
 - Each compiler has a "size" mode and a "speed" mode. uc80 has one mode only.
+- Games (tier 3) read a script from standard input and have no TIMER labels (`timing = total` in the manifest). Their T-states are the count of the whole run, so they all have the † mark. Their random numbers and clock come from `bench/support/posix_shim.c`, so each run is the same on every compiler.
+- Programs with `kind = "size-only"` are not in these tables. They have their own tables in the section "Size-only programs".
 
 ## Size mode
 
@@ -114,6 +116,13 @@ python3 bench/run.py && python3 bench/report.py
 | snd-seq | 6,658 / 15,376,754 | 4,873 / 13,957,260 | 4,994 / 14,527,604 | 4,640 / 17,521,988 | **WRONG** | 8,949 / 24,918,331 | 4,398 / 37,203,347 | 4,930 / 14,082,830 |
 | snd-ymreg | 5,267 / 22,218,875 | 3,685 / 15,315,776 | 3,751 / 15,662,584 | 3,427 / 17,564,077 | 2,938 / 29,192,937 | 7,705 / 33,968,983 | 2,318 / 53,152,584 | 3,786 / 15,826,075 |
 | zx0 | 10,125 / 9,047,168 | 8,311 / 7,427,310 | 8,696 / 8,506,707 | 8,435 / 8,333,889 | 7,631 / 12,427,208 | 12,499 / 12,079,621 | 7,139 / 15,796,795 | 8,207 / 7,323,435 |
+
+### Tier 3: games and real programs
+
+| Program | uc80 | sdcc | sdcc-4.4 | z88dk-zsdcc | z88dk-sccz80 | hitech | dcc | llvm-z80 |
+|---|---|---|---|---|---|---|---|---|
+| curses-demo | 8,882 / 124,132,092† | 9,783 / 88,391,961† | 9,987 / 125,342,934† | 9,828 / 113,667,835† | 9,330 / 396,178,531† | 14,793 / 324,199,575† | 12,795 / 200,011,783† | 10,981 / 82,875,834† |
+| game-guess | 11,759 / 633,572† | 7,082 / 1,241,021† | 7,154 / 1,325,804† | 6,693 / 1,627,664† | 6,122 / 1,738,262† | 10,956 / 4,709,246† | 6,922 / 919,569† | 7,209 / 1,179,400† |
 
 ## Speed mode
 
@@ -214,6 +223,13 @@ uc80 has no speed mode, so its column repeats the size mode result.
 | snd-ymreg | 5,267 / 22,218,875 | 3,709 / 15,262,426 | 3,794 / 15,609,234 | 3,439 / 16,290,977 | 2,958 / 28,120,224 | 7,726 / 34,016,247 | 2,446 / 41,069,917 | 3,905 / 15,715,427 |
 | zx0 | 10,125 / 9,047,168 | 8,345 / 7,404,292 | 8,741 / 8,480,881 | 8,452 / 8,158,939 | 7,634 / 11,861,447 | 12,531 / 12,026,502 | 7,187 / 13,528,518 | 8,325 / 7,323,435 |
 
+### Tier 3: games and real programs
+
+| Program | uc80 | sdcc | sdcc-4.4 | z88dk-zsdcc | z88dk-sccz80 | hitech | dcc | llvm-z80 |
+|---|---|---|---|---|---|---|---|---|
+| curses-demo | 8,882 / 124,132,092† | 9,778 / 87,359,518† | 10,028 / 176,836,355† | 9,997 / 91,266,236† | 9,784 / 361,026,137† | 14,934 / 324,172,664† | 13,518 / 166,970,447† | 11,173 / 82,666,356† |
+| game-guess | 11,759 / 633,572† | 6,986 / 1,226,339† | 7,068 / 1,311,186† | 6,725 / 1,624,445† | 6,391 / 1,712,804† | 11,040 / 4,709,837† | 7,083 / 891,398† | 7,331 / 1,176,123† |
+
 ## uc80 against the other compilers
 
 A ratio is uc80 divided by the other compiler, so a ratio below 1.00 means uc80 is smaller or faster. The mean is the geometric mean over the programs that are OK on both compilers. Wins is the number of programs where uc80 is better, losses where uc80 is worse or equal. uc80 always uses its only mode. The `sort-*` programs time the library `qsort()` of each compiler, not the code that the compiler makes. The `qsort()` of SDCC is far slower than the one of uc80 on some inputs, so the T-state means are also shown without the `sort-*` programs.
@@ -224,13 +240,13 @@ Bytes as in the tables (minus the empty program of each compiler), and the whole
 
 | Other compiler (mode) | Programs | Mean bytes | Wins | Losses | Mean whole image |
 |---|---|---|---|---|---|
-| sdcc (size) | 74 | 1.58 | 15 | 59 | 1.49 |
-| sdcc-4.4 (size) | 72 | 1.55 | 25 | 47 | 1.46 |
-| z88dk-zsdcc (size) | 71 | 1.57 | 8 | 63 | 0.51 |
-| z88dk-sccz80 (size) | 64 | 1.41 | 16 | 48 | 0.49 |
-| hitech (size) | 58 | 0.73 | 45 | 13 | 0.49 |
-| dcc (size) | 42 | 1.62 | 7 | 35 | 1.23 |
-| llvm-z80 (size) | 75 | 1.58 | 11 | 64 | 1.50 |
+| sdcc (size) | 76 | 1.57 | 16 | 60 | 1.48 |
+| sdcc-4.4 (size) | 74 | 1.54 | 26 | 48 | 1.45 |
+| z88dk-zsdcc (size) | 73 | 1.57 | 9 | 64 | 0.51 |
+| z88dk-sccz80 (size) | 66 | 1.41 | 17 | 49 | 0.50 |
+| hitech (size) | 60 | 0.73 | 46 | 14 | 0.50 |
+| dcc (size) | 44 | 1.59 | 8 | 36 | 1.22 |
+| llvm-z80 (size) | 77 | 1.57 | 12 | 65 | 1.49 |
 
 ### T-states
 
@@ -260,6 +276,7 @@ Only programs where both counts are TIMER-region counts.
 | binary-trees | 4,408 | 7,128 | 0.62 | 177,222,743 | 193,715,914 | 0.91 |
 | binary-trees+static | 4,408 | 7,067 | 0.62 | 177,222,743 | 193,466,493 | 0.92 |
 | crc | 1,838 | 1,345 | 1.37 | 5,982,176 | 5,562,250 | 1.08 |
+| curses-demo | 8,882 | 9,783 | 0.91 | 124,132,092 | 88,391,961 | - |
 | davidly-e | 4,231 | 377 | 11.22 | 33,338,335 | 48,714,538 | 0.68 |
 | davidly-mm | 5,101 | 6,867 | 0.74 | 47,804,922 | 164,289,692 | 0.29 |
 | davidly-sieve | 4,478 | 3,066 | 1.46 | 53,660,649 | 52,942,774 | 1.01 |
@@ -284,6 +301,7 @@ Only programs where both counts are TIMER-region counts.
 | fannkuch+static-inline | 583 | 1,005 | 0.58 | 43,475,701 | 68,347,132 | 0.64 |
 | fasta | 5,661 | 5,758 | 0.98 | 241,057,249 | 414,952,783 | 0.58 |
 | fasta+static | 5,657 | 5,816 | 0.97 | 241,057,249 | 414,930,720 | 0.58 |
+| game-guess | 11,759 | 7,082 | 1.66 | 633,572 | 1,241,021 | - |
 | lz4 | 10,309 | 8,917 | 1.16 | 11,249,719 | 13,855,497 | 0.81 |
 | mandelbrot | 3,078 | 4,108 | 0.75 | 2,507,787,187 | 7,179,598,040 | 0.35 |
 | mandelbrot+static | 3,065 | 4,245 | 0.72 | 2,507,787,187 | 8,518,972,605 | 0.29 |
@@ -339,6 +357,42 @@ Only programs where both counts are TIMER-region counts.
 - whetstone: BUILD-FAIL(time)
 - whetstone+static: BUILD-FAIL(time)
 
+## Size-only programs
+
+These programs are built only. They are not run, and they have no golden file. Each compiler builds them in two ways. The per-object build compiles each source file alone and adds the sizes of the objects. The whole-program link builds the program as usual and tells whether it fits in the TPA of a 64 KB CP/M 2.2 system (addresses 0100h to E3FFh, minus 512 bytes of stack). The method for each compiler is in [bench_harness.md](bench_harness.md#size-only-programs).
+
+### Fit in the TPA (size mode)
+
+**FITS**: the program links, and its image and BSS fit. **TOO-BIG**: the program is larger (or the linker says so). **BUILD-FAIL(objects)** or **BUILD-FAIL(link)**: a compiler, assembler or linker step failed. A number is the bytes of image and BSS of the linked program, including start-up code and library.
+
+| Program | uc80 | sdcc | sdcc-4.4 | z88dk-zsdcc | z88dk-sccz80 | hitech | dcc | llvm-z80 |
+|---|---|---|---|---|---|---|---|---|
+| curses-demo-size | FITS (13,048) | FITS (13,977) | FITS (14,181) | FITS (19,058) | FITS (18,564) | FITS (23,205) | FITS (13,274) | FITS (15,231) |
+
+### Size of the objects (size mode)
+
+Each cell is **code / code plus data**, in bytes, summed over the objects of the program, without start-up code and library. The compilers differ in where strings and constant tables count, so compare the second number. The sizes of each object are in the `objects` column of `results.csv`.
+
+| Program | uc80 | sdcc | sdcc-4.4 | z88dk-zsdcc | z88dk-sccz80 | hitech | dcc | llvm-z80 |
+|---|---|---|---|---|---|---|---|---|
+| curses-demo-size | 7,981 / 12,437 | 6,351 / 10,433 | 6,500 / 10,582 | 6,758 / 10,960 | 7,217 / 11,418 | 7,855 / 14,111 | 13,007 / 13,007 | 7,524 / 11,662 |
+
+### Fit in the TPA (speed mode)
+
+**FITS**: the program links, and its image and BSS fit. **TOO-BIG**: the program is larger (or the linker says so). **BUILD-FAIL(objects)** or **BUILD-FAIL(link)**: a compiler, assembler or linker step failed. A number is the bytes of image and BSS of the linked program, including start-up code and library.
+
+| Program | uc80 | sdcc | sdcc-4.4 | z88dk-zsdcc | z88dk-sccz80 | hitech | dcc | llvm-z80 |
+|---|---|---|---|---|---|---|---|---|
+| curses-demo-size | FITS (13,048) | FITS (13,972) | FITS (14,222) | FITS (19,227) | FITS (19,018) | FITS (23,346) | FITS (13,998) | FITS (15,422) |
+
+### Size of the objects (speed mode)
+
+Each cell is **code / code plus data**, in bytes, summed over the objects of the program, without start-up code and library. The compilers differ in where strings and constant tables count, so compare the second number. The sizes of each object are in the `objects` column of `results.csv`.
+
+| Program | uc80 | sdcc | sdcc-4.4 | z88dk-zsdcc | z88dk-sccz80 | hitech | dcc | llvm-z80 |
+|---|---|---|---|---|---|---|---|---|
+| curses-demo-size | 7,981 / 12,437 | 6,356 / 10,438 | 6,551 / 10,633 | 6,990 / 11,192 | 7,708 / 11,909 | 7,996 / 14,252 | 14,092 / 14,092 | 7,716 / 11,853 |
+
 ## Programs
 
 | Program | Tier | What it measures |
@@ -346,6 +400,9 @@ Only programs where both counts are TIMER-region counts.
 | sieve | 1 | Sieve of Eratosthenes, primes in 2..7999 (z88dk) |
 | sieve+static | 1 | Sieve of Eratosthenes, primes in 2..7999 (z88dk) |
 | empty | 0 | int main(void) { return 0; } - startup and library baseline |
+| game-guess | 3 | Scripted stdio guessing game with posix_shim; whole-run T-states (our own code) |
+| curses-demo | 3 | tinycurses demo: walker on a field, status window, scripted keys; whole-run T-states (our own code) |
+| curses-demo-size | 3 | curses-demo sources, build only: code size per object, fit in a 58 KB TPA |
 | embench-crc32 | 2 | Embench-IoT crc32: table CRC-32 of 1024 rand_beebs() bytes (GPL-3.0-or-later) |
 | embench-matmult-int | 2 | Embench-IoT matmult-int: 20x20 long matrix multiply (GPL-3.0-or-later) |
 | embench-md5sum | 2 | Embench-IoT md5sum: MD5 of a 1000-byte message (md5.c MIT; beebsc and glue GPL-3.0-or-later) |

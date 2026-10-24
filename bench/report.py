@@ -156,6 +156,73 @@ def summary(by, progs, comps):
     return out
 
 
+def size_only_cell(r, which):
+    """A cell of a size-only table: "fit" (status and linked bytes) or
+    "obj" (per-object code bytes / code plus data bytes)."""
+    if r is None:
+        return "-"
+    code, data = num(r.get("code")), num(r.get("data"))
+    if which == "obj":
+        if code is None:
+            return f"**{r['status']}**"
+        return f"{code:,} / {code + data:,}"
+    st = r["status"] if r["status"] in ("FITS", "TOO-BIG") \
+        else f"**{r['status']}**"
+    img, bss = num(r.get("image")), num(r.get("bss"))
+    if img is None:
+        return st
+    return f"{st} ({img + bss:,})"
+
+
+def size_only_tables(by, man, comps, names):
+    """Markdown lines: one fit table and one per-object table for each
+    mode, for the programs with kind = "size-only"."""
+    out = ["## Size-only programs", "",
+           "These programs are built only. They are not run, and they have "
+           "no golden file. Each compiler builds them in two ways. The "
+           "per-object build compiles each source file alone and adds the "
+           "sizes of the objects. The whole-program link builds the "
+           "program as usual and tells whether it fits in the TPA of a "
+           "64 KB CP/M 2.2 system (addresses 0100h to E3FFh, minus 512 "
+           "bytes of stack). The method for each compiler is in "
+           "[bench_harness.md](bench_harness.md#size-only-programs).", ""]
+    for mode in ("size", "speed"):
+        if not any((p, c, mode) in by for p in names for c in comps):
+            continue
+        out += [f"### Fit in the TPA ({mode} mode)", "",
+                "**FITS**: the program links, and its image and BSS fit. "
+                "**TOO-BIG**: the program is larger (or the linker says "
+                "so). **BUILD-FAIL(objects)** or **BUILD-FAIL(link)**: a "
+                "compiler, assembler or linker step failed. A number is "
+                "the bytes of image and BSS of the linked program, "
+                "including start-up code and library.", "",
+                "| Program | " + " | ".join(comps) + " |",
+                "|---|" + "---|" * len(comps)]
+        for prog in names:
+            cells = [size_only_cell(by.get((prog, c, mode if (prog, c, mode)
+                                                  in by else "size")), "fit")
+                     for c in comps]
+            out.append(f"| {label(man.get(prog, {}), prog)} | "
+                       + " | ".join(cells) + " |")
+        out += ["", f"### Size of the objects ({mode} mode)", "",
+                "Each cell is **code / code plus data**, in bytes, summed "
+                "over the objects of the program, without start-up code "
+                "and library. The compilers differ in where strings and "
+                "constant tables count, so compare the second number. "
+                "The sizes of each object are in the `objects` column of "
+                "`results.csv`.", "",
+                "| Program | " + " | ".join(comps) + " |",
+                "|---|" + "---|" * len(comps)]
+        for prog in names:
+            cells = [size_only_cell(by.get((prog, c, mode if (prog, c, mode)
+                                                  in by else "size")), "obj")
+                     for c in comps]
+            out.append(f"| {label(man.get(prog, {}), prog)} | "
+                       + " | ".join(cells) + " |")
+        out.append("")
+    return out
+
+
 def label(p: dict, name: str) -> str:
     """The name the tables show: the manifest 'label', else the name."""
     return p.get("label", name)
@@ -167,6 +234,10 @@ def main() -> int:
     comps = sorted({r["compiler"] for r in rows},
                    key=lambda c: (ORDER.index(c) if c in ORDER else 99, c))
     by = {(r["program"], r["compiler"], r["mode"]): r for r in rows}
+    # Size-only programs have their own tables (size_only_tables).
+    sizeonly = [n for n, p in man.items() if p.get("kind") == "size-only"
+                and any(r["program"] == n for r in rows)]
+    run_rows = [r for r in rows if r["program"] not in sizeonly]
     versions = {}
     for r in rows:
         versions.setdefault(r["compiler"], r["version"])
@@ -208,7 +279,16 @@ def main() -> int:
            "defines. A program variant such as `sieve+static` adds a define "
            "for every compiler.",
            "- Each compiler has a \"size\" mode and a \"speed\" mode. uc80 "
-           "has one mode only.", ""]
+           "has one mode only.",
+           "- Games (tier 3) read a script from standard input and have no "
+           "TIMER labels (`timing = total` in the manifest). Their "
+           "T-states are the count of the whole run, so they all have the "
+           "\u2020 mark. Their random numbers and clock come from "
+           "`bench/support/posix_shim.c`, so each run is the same on every "
+           "compiler.",
+           "- Programs with `kind = \"size-only\"` are not in these "
+           "tables. They have their own tables in the section "
+           "\"Size-only programs\".", ""]
 
     for mode in ("size", "speed"):
         heads = comps
@@ -217,7 +297,7 @@ def main() -> int:
             out += ["uc80 has no speed mode, so its column repeats the size "
                     "mode result.", ""]
         tiers = defaultdict(list)
-        for prog in dict.fromkeys(r["program"] for r in rows):
+        for prog in dict.fromkeys(r["program"] for r in run_rows):
             tiers[int(man.get(prog, {}).get("tier", 1))].append(prog)
         for tier in sorted(tiers):
             out += [f"### {TIERS.get(tier, f'Tier {tier}')}", "",
@@ -234,8 +314,10 @@ def main() -> int:
                 out.append(f"| {name} | " + " | ".join(cells) + " |")
             out.append("")
 
-    out += summary(by, list(dict.fromkeys(r["program"] for r in rows)),
+    out += summary(by, list(dict.fromkeys(r["program"] for r in run_rows)),
                    comps)
+    if sizeonly:
+        out += size_only_tables(by, man, comps, sizeonly)
     out += ["## Programs", "", "| Program | Tier | What it measures |",
             "|---|---|---|"]
     for name, p in man.items():

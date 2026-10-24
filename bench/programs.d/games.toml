@@ -1,0 +1,51 @@
+# Tier 3: games and real programs (see docs/benchmark_proposal.md, 4.3).
+#
+# - game-guess, curses-demo: our own small programs (GPL-3.0-or-later)
+#   that prove the games harness: a scripted stdin, the shared
+#   posix_shim and tinycurses, and "timing = total" (whole-run counts).
+# - curses-demo-size: the same sources as a "size-only" program (the
+#   per-object size and the fit in a CP/M TPA, no run).
+#
+# The shared glue lives in bench/support/ and is listed as
+# {shared = "support/<file>"}.
+
+[[program]]
+name = "game-guess"
+tier = 3
+timing = "total"
+about = "Scripted stdio guessing game with posix_shim; whole-run T-states (our own code)"
+files = [
+  { path = "guess.c", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+]
+stdin_file = "input.txt"
+timeout = 300
+
+[[program]]
+name = "curses-demo"
+tier = 3
+timing = "total"
+about = "tinycurses demo: walker on a field, status window, scripted keys; whole-run T-states (our own code)"
+files = [
+  { path = "demo.c", main = true },
+  { shared = "support/tinycurses.c" },
+  { shared = "support/tinycurses.h" },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+]
+stdin_file = "input.txt"
+timeout = 300
+
+[[program]]
+name = "curses-demo-size"
+tier = 3
+kind = "size-only"
+about = "curses-demo sources, build only: code size per object, fit in a 58 KB TPA"
+files = [
+  { shared = "curses-demo/demo.c", main = true },
+  { shared = "support/tinycurses.c" },
+  { shared = "support/tinycurses.h" },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+]

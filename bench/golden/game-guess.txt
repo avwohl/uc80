@@ -1,0 +1,25 @@
+guess the number (argv ok: 1)
+Round 1: I picked a number from 1 to 100.
+guess> It is between 1 and 100.
+guess> 50 is too high.
+guess> 25 is too low.
+guess> 37 is too high.
+guess> 35 is right, in 4 tries.
+Round 2: I picked a number from 1 to 100.
+guess> 1 won in 2 rounds.
+guess> Try: a number, hint, new, score or quit.
+guess> game: what is 'abc'?
+guess> game: 200 is out of range
+guess> game: 0 is out of range
+guess> It is between 1 and 100.
+guess> 22 is right, in 3 tries.
+Round 3: I picked a number from 1 to 100.
+guess> 99 is too high.
+guess> It is between 1 and 98.
+guess> 15 is right, in 2 tries.
+Round 4: I picked a number from 1 to 100.
+guess> It was 11.
+Round 5: I picked a number from 1 to 100.
+guess> 10 is too low.
+guess> 3 won in 5 rounds.
+guess> Final: 3 won in 5 rounds. Bye.

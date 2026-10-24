@@ -36,6 +36,66 @@ class Build:
     bss: int | None = None
 
 
+@dataclass
+class Objects:
+    """Result of Compiler.objects(): per-object sizes of a size-only
+    program.  `objects` holds (source stem, code bytes, data bytes)."""
+    ok: bool
+    objects: list[tuple[str, int, int]] = field(default_factory=list)
+    log: str = ""
+
+
+# A size-only program FITS when its linked image plus BSS ends at least
+# TPA_STACK bytes below TPA_LIMIT.  TPA_LIMIT is the BDOS base of a
+# 64 KB CP/M 2.2 system (BDOS at E400h; the CCP below it can be
+# overwritten), so the TPA is 0100h to E3FFh, 58,112 bytes.  The stack
+# and the heap of the program need room too.
+TPA_LIMIT = 0xE400
+TPA_STACK = 0x200
+
+# A link failure whose message says the program is too large is TOO-BIG,
+# any other link failure is BUILD-FAIL(link).
+TOO_BIG_RE = re.compile(
+    r"too (big|large|many)|overflow|exceeds|out of memory|heap:|"
+    r"above the heap|overlap|beyond|address.*(range|64)|"
+    r"does not fit|memory full", re.I)
+
+
+def size_only_status(link_log: str) -> str:
+    """TOO-BIG or BUILD-FAIL(link), from the text of a failed link."""
+    return "TOO-BIG" if TOO_BIG_RE.search(link_log) else "BUILD-FAIL(link)"
+
+
+def um80_sizes(out: str) -> tuple[int, int] | None:
+    """(code, data) bytes from the summary that um80 prints."""
+    c = re.search(r"Code segment:\s*(\d+) bytes", out)
+    d = re.search(r"Data segment:\s*(\d+) bytes", out)
+    return (int(c.group(1)), int(d.group(1))) if c and d else None
+
+
+# Areas of an SDCC (sdasz80) .rel file.  Code is the instructions and,
+# for SDCC, the constants (strings and const tables live in _CODE).  Data
+# is the variables.  _INITIALIZER is the ROM copy of _INITIALIZED, so it
+# is not counted again.
+SDCC_CODE_AREAS = ("_CODE", "_HOME", "_GSINIT", "_GSFINAL", "_CABS")
+SDCC_SKIP_AREAS = ("_INITIALIZER", "_DABS")
+
+
+def sdcc_rel_sizes(rel: Path) -> tuple[int, int]:
+    """(code, data) bytes from the "A <area> size <hex>" lines."""
+    code = data = 0
+    for line in rel.read_text(errors="replace").splitlines():
+        m = re.match(r"A (\S+) size ([0-9A-Fa-f]+) flags", line)
+        if not m:
+            continue
+        area, n = m.group(1), int(m.group(2), 16)
+        if area in SDCC_CODE_AREAS:
+            code += n
+        elif area not in SDCC_SKIP_AREAS:
+            data += n
+    return code, data
+
+
 def _run(cmd: list[str], cwd: Path, env: dict | None = None,
          timeout: int = 1800) -> tuple[int, str]:
     try:
@@ -115,6 +175,12 @@ class Compiler:
               includes: list[Path], work: Path, mode: str) -> Build:
         raise NotImplementedError
 
+    def objects(self, sources: list[Path], defines: list[str],
+                includes: list[Path], work: Path, mode: str) -> Objects:
+        """Compile each source alone (no link) for a size-only program
+        and return the code and data bytes of each object."""
+        raise NotImplementedError
+
 
 class Uc80(Compiler):
     """uc80 -> um80 -> ul80, whole-program mode."""
@@ -164,6 +230,30 @@ class Uc80(Compiler):
         return b
 
 
+    def objects(self, sources, defines, includes, work, mode):
+        """uc80 --no-whole-program, no embedded runtime or start-up
+        code, one .rel per source; um80 prints the code and data sizes
+        of each .rel."""
+        log, objs = [], []
+        for src in sources:
+            stem = Path(src).stem
+            rc, out = _run(["uc80", str(src), "--no-whole-program",
+                            "--no-embed-runtime", "--no-embed-startup"]
+                           + [f"-I{i}" for i in includes]
+                           + [f"-D{d}" for d in defines]
+                           + ["-o", f"{stem}.mac"], work)
+            log.append(out)
+            if rc == 0:
+                rc, out = _run(["um80", f"{stem}.mac", "-o", f"{stem}.rel"],
+                               work)
+                log.append(out)
+            sz = um80_sizes(out) if rc == 0 else None
+            if sz is None:
+                return Objects(False, log="\n".join(log))
+            objs.append((stem, sz[0], sz[1]))
+        return Objects(True, objs, "\n".join(log))
+
+
 class Sdcc(Compiler):
     """Standalone SDCC, z80 port, with a small CP/M crt0 and BDOS putchar.
 
@@ -196,6 +286,28 @@ class Sdcc(Compiler):
         d = Path(shutil.which(self.exe)).parent
         return str(d / tool) if (d / tool).exists() else tool
 
+    def _flags(self, defines, includes, mode) -> list[str]:
+        opt = ["--opt-code-size"] if mode == "size" else ["--opt-code-speed"]
+        return (["-mz80"] + opt + ["--max-allocs-per-node", str(self.allocs)]
+                + self.extra_flags + [f"-I{i}" for i in includes]
+                + [f"-D{d}" for d in defines])
+
+    def objects(self, sources, defines, includes, work, mode):
+        """sdcc -c, one .rel per source; the sizes are the "A _CODE size"
+        lines (see sdcc_rel_sizes)."""
+        flags = self._flags(defines, includes, mode)
+        log, objs = [], []
+        for src in sources:
+            stem = Path(src).stem
+            rc, out = _run([self.exe, "-c"] + flags
+                           + [str(src), "-o", f"{stem}.rel"], work,
+                           timeout=self.timeout)
+            log.append(out)
+            if rc != 0 or not (work / f"{stem}.rel").exists():
+                return Objects(False, log="\n".join(log))
+            objs.append((stem,) + sdcc_rel_sizes(work / f"{stem}.rel"))
+        return Objects(True, objs, "\n".join(log))
+
     def build(self, sources, defines, includes, work, mode):
         log = []
         crt = BENCH / "crt" / "sdcc"
@@ -204,10 +316,7 @@ class Sdcc(Compiler):
                             str(crt / f"{s}.s")], work)
             if rc != 0:
                 return Build(False, log=out)
-        opt = ["--opt-code-size"] if mode == "size" else ["--opt-code-speed"]
-        flags = (["-mz80"] + opt + ["--max-allocs-per-node", str(self.allocs)]
-                 + self.extra_flags + [f"-I{i}" for i in includes]
-                 + [f"-D{d}" for d in defines])
+        flags = self._flags(defines, includes, mode)
         rels = []
         for src in sources:
             rel = f"{Path(src).stem}.rel"
@@ -261,13 +370,46 @@ class Z88dk(Compiler):
             return f"z88dk 2.4, zsdcc {m.group(0) if m else '?'}"
         return "z88dk 2.4, sccz80"
 
-    def build(self, sources, defines, includes, work, mode):
+    def _flags(self, mode) -> list[str]:
         if self.backend == "zsdcc":
             flags = ["-compiler=sdcc", "-SO3", "--max-allocs-per-node200000"]
             flags += ["--opt-code-size"] if mode == "size" else []
         else:
             flags = ["-compiler=sccz80", "-O3"]
             flags += [] if mode == "size" else ["--opt-code-speed=all"]
+        return flags
+
+    def objects(self, sources, defines, includes, work, mode):
+        """zcc -c, one .o per source; z88dk-z80nm lists the sections.
+        Code is the sections whose name starts with "code"; data is
+        rodata, data and bss (the sections of "" and IGNORE are empty)."""
+        log, objs = [], []
+        nm = self.root / "bin" / "z88dk-z80nm"
+        for src in sources:
+            stem = Path(src).stem
+            cmd = (["zcc", "+cpm"] + self._flags(mode)
+                   + [f"-I{i}" for i in includes]
+                   + [f"-D{d}" for d in defines]
+                   + ["-c", str(src), "-o", f"{stem}.o"])
+            rc, out = _run(cmd, work, self._env())
+            log.append(out)
+            if rc != 0 or not (work / f"{stem}.o").exists():
+                return Objects(False, log="\n".join(log))
+            rc, out = _run([str(nm), "-a", f"{stem}.o"], work, self._env())
+            code = data = 0
+            for m in re.finditer(r'Section "?(\w*)"?: (\d+) bytes', out):
+                if m.group(1).startswith("code"):
+                    code += int(m.group(2))
+                elif m.group(1) not in ("", "IGNORE"):
+                    data += int(m.group(2))
+            if rc != 0 or not re.search(r"Section", out):
+                log.append(out)
+                return Objects(False, log="\n".join(log))
+            objs.append((stem, code, data))
+        return Objects(True, objs, "\n".join(log))
+
+    def build(self, sources, defines, includes, work, mode):
+        flags = self._flags(mode)
         # Float library, as in the z88dk classic readmes: genmath for
         # sccz80 (-lm), math48 for zsdcc (-lmath48; with -lm zsdcc does
         # not link, and --math32 gives pow(2,n) = 2^n - 1).  A program

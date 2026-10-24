@@ -80,7 +80,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from compilers import TOOLS, Build, Compiler
+from compilers import TOOLS, Build, Compiler, Objects
 
 HT_ROOT = Path(os.environ.get("HITECH", TOOLS / "hitech-3.09"))
 TAIL_MAX = 120          # CP/M command tail limit is 127; keep a margin
@@ -328,6 +328,48 @@ class HiTech(Compiler):
         if out.strip():
             log.append(out.rstrip())
         return p.returncode
+
+    def objects(self, sources, defines, includes, work, mode):
+        """Per-module sizes from the link map of the full build.
+
+        HI-TECH has no tool that prints the size of one .obj, but the
+        map that LINQ writes lists, for each module, the length of its
+        text, data and bss psects.  Code is the text length, data is
+        data plus bss.  The map lists the user modules first and then
+        the library modules (after the "libc.lib" line); only the user
+        modules are read.  A build that stops before the link has no map, so
+        such a program has no per-module sizes.
+        """
+        b = self.build(sources, defines, includes, work, mode)
+        mp = work / "hitech" / "prog.map"
+        # A link that stops (for example "Fixup overflow" when the
+        # program is larger than 64 KB) still writes the map.
+        if not mp.exists():
+            return Objects(False, log=b.log)
+        want = [name83(Path(s).name).rsplit(".", 1)[0] for s in sources]
+        found: dict[str, list[int]] = {}
+        cur = None
+        for line in mp.read_text(errors="replace").splitlines():
+            if re.search(r"\.lib\s*$", line):
+                break
+            m = re.match(r"(?:\w:)?(\S+)\.obj\s", line)
+            if m:
+                cur = m.group(1)
+                found[cur] = [0, 0]
+            elif not (line[:1].isspace() and cur):
+                cur = None
+                continue
+            if cur is None or cur == "nrtcpm":
+                continue
+            # A module may continue on the next lines (data, bss).
+            for ps, _addr, ln in re.findall(
+                    r"(text|data|bss)\s+([0-9A-Fa-f]+)\s+([0-9A-Fa-f]+)",
+                    line):
+                found[cur][0 if ps == "text" else 1] += int(ln, 16)
+        if any(w not in found for w in want):
+            return Objects(False, log=b.log + "\nno map line for a module")
+        return Objects(True, [(Path(s).stem,) + tuple(found[w])
+                              for s, w in zip(sources, want)], b.log)
 
     def build(self, sources, defines, includes, work, mode):
         ht = work / "hitech"
