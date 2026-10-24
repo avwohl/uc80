@@ -10,6 +10,7 @@ bench/run.py instead.
 from __future__ import annotations
 
 import csv
+import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -45,6 +46,114 @@ def cell(r, base):
     # that nobody compares it with the region counts of other compilers.
     mark = "†" if r.get("timing") == "total" else ""
     return f"{size} / {cyc:,}{mark}"
+
+
+def geomean(xs):
+    return math.exp(sum(math.log(x) for x in xs) / len(xs))
+
+
+def pairs(by, other, omode, field, prog_ok, delta, region=False):
+    """(program, uc80 value, other value) for the programs OK on both.
+
+    delta: subtract each compiler's empty program (the table bytes).
+    region: keep only programs where both counts are TIMER-region counts.
+    """
+    out = []
+    for prog in prog_ok:
+        a, b = by.get((prog, "uc80", "size")), by.get((prog, other, omode))
+        if not a or not b or a["status"] != "OK" or b["status"] != "OK":
+            continue
+        if region and (a["timing"] != "region" or b["timing"] != "region"):
+            continue
+        x, y = num(a[field]), num(b[field])
+        if delta:
+            ea = by.get(("empty", "uc80", "size"))
+            eb = by.get(("empty", other, omode))
+            if not ea or not eb:
+                continue
+            x, y = x - num(ea["image"]), y - num(eb["image"])
+        if x and y and x > 0 and y > 0:
+            out.append((prog, x, y))
+    return out
+
+
+def stats(pr):
+    """Count, geometric mean of uc80/other, wins, losses, ties."""
+    if not pr:
+        return 0, None, 0, 0, 0
+    r = [x / y for _, x, y in pr]
+    return (len(r), geomean(r), sum(v < 1 for v in r),
+            sum(v > 1 for v in r), sum(v == 1 for v in r))
+
+
+def fmt(v):
+    return "-" if v is None else f"{v:.2f}"
+
+
+def summary(by, progs, comps):
+    """Markdown lines: uc80 against each other compiler."""
+    ok = [p for p in progs if p != "empty"]
+    nosort = [p for p in ok if not p.startswith("sort-")]
+    out = ["## uc80 against the other compilers", "",
+           "A ratio is uc80 divided by the other compiler, so a ratio "
+           "below 1.00 means uc80 is smaller or faster. The mean is the "
+           "geometric mean over the programs that are OK on both "
+           "compilers. Wins is the number of programs where uc80 is "
+           "better, losses where uc80 is worse or equal. uc80 always uses "
+           "its only mode. The `sort-*` programs time the library "
+           "`qsort()` of each compiler, not the code that the compiler "
+           "makes. The `qsort()` of SDCC is far slower than the one of "
+           "uc80 on some inputs, so the T-state means are also shown "
+           "without the `sort-*` programs.", "",
+           "### Size", "",
+           "Bytes as in the tables (minus the empty program of each "
+           "compiler), and the whole image.", "",
+           "| Other compiler (mode) | Programs | Mean bytes | Wins | "
+           "Losses | Mean whole image |",
+           "|---|---|---|---|---|---|"]
+    for c in comps:
+        if c == "uc80":
+            continue
+        n, g, w, l, t = stats(pairs(by, c, "size", "image", ok, True))
+        _, g2, _, _, _ = stats(pairs(by, c, "size", "image", ok, False))
+        out.append(f"| {c} (size) | {n} | {fmt(g)} | {w} | {l + t} | "
+                   f"{fmt(g2)} |")
+    out += ["", "### T-states", "",
+            "Only programs where both counts are TIMER-region counts.", "",
+            "| Other compiler (mode) | Programs | Mean | Wins | Losses | "
+            "Programs without sort-* | Mean without sort-* | Wins | "
+            "Losses |", "|---|---|---|---|---|---|---|---|---|"]
+    for c in comps:
+        if c == "uc80":
+            continue
+        for om in ("speed", "size"):
+            a = stats(pairs(by, c, om, "cycles", ok, False, True))
+            b = stats(pairs(by, c, om, "cycles", nosort, False, True))
+            out.append(f"| {c} ({om}) | {a[0]} | {fmt(a[1])} | {a[2]} | "
+                       f"{a[3] + a[4]} | {b[0]} | {fmt(b[1])} | {b[2]} | "
+                       f"{b[3] + b[4]} |")
+    out += ["", "### uc80 against SDCC 4.6.0 (size mode), by program", "",
+            "| Program | uc80 bytes | sdcc bytes | Ratio | uc80 T-states "
+            "| sdcc T-states | Ratio |", "|---|---|---|---|---|---|---|"]
+    eu = num(by[("empty", "uc80", "size")]["image"])
+    es = num(by[("empty", "sdcc", "size")]["image"])
+    for p in ok:
+        a, b = by.get((p, "uc80", "size")), by.get((p, "sdcc", "size"))
+        if not a or not b or a["status"] != "OK" or b["status"] != "OK":
+            continue
+        sa, sb = num(a["image"]) - eu, num(b["image"]) - es
+        ca, cb = num(a["cycles"]), num(b["cycles"])
+        both = a["timing"] == "region" and b["timing"] == "region"
+        tr = f"{ca / cb:.2f}" if both and ca and cb else "-"
+        out.append(f"| {p} | {sa:,} | {sb:,} | {sa / sb:.2f} | {ca:,} | "
+                   f"{cb:,} | {tr} |")
+    bad = [p for p in ok
+           if (p, "uc80", "size") in by
+           and by[(p, "uc80", "size")]["status"] != "OK"]
+    out += ["", "### Programs that fail on uc80", ""]
+    out += [f"- {p}: {by[(p, 'uc80', 'size')]['status']}" for p in bad]
+    out.append("")
+    return out
 
 
 def label(p: dict, name: str) -> str:
@@ -125,6 +234,8 @@ def main() -> int:
                 out.append(f"| {name} | " + " | ".join(cells) + " |")
             out.append("")
 
+    out += summary(by, list(dict.fromkeys(r["program"] for r in rows)),
+                   comps)
     out += ["## Programs", "", "| Program | Tier | What it measures |",
             "|---|---|---|"]
     for name, p in man.items():
