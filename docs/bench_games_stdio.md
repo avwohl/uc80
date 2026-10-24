@@ -18,9 +18,9 @@ The scripts come from a bot that reads the output of the host build and
 decides the next input. Each script is only a text file. The bot is not
 part of the repository.
 
-Some games have no quit command. A game of that kind stops at the end
-of the script, because the glue turns the byte 0FFh and the byte 1Ah
-into end of file (see below). The table lists the end of each game.
+Some games have no quit command. Such a game stops at the end of the
+script. The glue turns the byte 1Ah into end of file, and each script
+of that kind ends with this byte. The table lists the end of each game.
 
 ## Programs
 
@@ -67,11 +67,11 @@ The three faults are in the upstream source:
   and `quadname[12]` is too short for "Sagittarius IV".
 
 The shared glue in `bench/programs/stdio-glue/` has two parts.
-`sg_getc()` returns end of file for 0FFh and 1Ah, and skips CR.
+`sg_getc()` returns end of file for 0FFh and 1Ah. It skips CR.
 `sg_fgets()` is `fgets()` on top of `sg_getc()`. For SDCC and llvm-z80
-the header also maps `stdin`, `stdout`, `stderr`, `fflush`, `fprintf`,
-`fputs`, `ferror`, `feof` and `perror` to the console, because the SDCC
-library has no `FILE`.
+the header maps the `FILE` functions (`fflush`, `fprintf`, `fputs`,
+`ferror`, `feof`, `perror`) and the names `stdin`, `stdout` and `stderr`
+to the console. The SDCC library has no `FILE`.
 
 ## Not in the group
 
@@ -79,5 +79,21 @@ library has no `FILE`.
   sieve table is 256 KB. They do not fit in a Z80 address space.
 - hangman and quiz: they need a word list of 196 KB or a question
   directory. No fair copy of that data exists in the harness.
-- Larn, TSCP and the Scott Adams data: the license does not allow a
-  fetch that the harness can pin.
+- Larn, TSCP and the Scott Adams data: the project rules do not allow
+  them.
+
+## Results (size mode, first run)
+
+The numbers are in `bench/results/results.csv`. For sdcc, sdcc-4.4 and
+z88dk-zsdcc only the size mode ran for most programs of this group.
+
+- uc80 runs 13 of 18 programs. The five that fail are v7-backgammon
+  (sscanf), bsd-bcd (no `isascii`), ahl-startrek and empire-trefonas
+  (atof, and a double backslash in a string) and hamurabi (rand
+  returns 0).
+- v7-wump, bsd-ppt and fuzix-startrek run on seven compilers each.
+- dcc has no `double`, so the four floating-point programs fail to build.
+- SDCC and llvm-z80 have no `%f`, `%.*s`, `EXIT_FAILURE`, `isascii`,
+  `snprintf` or `sscanf`. A program that needs one of them fails.
+- umchess needs a signed `char`. It gives a wrong game with sdcc-4.4 and
+  both z88dk compilers.
