@@ -153,6 +153,38 @@ observable behaviour of a program uc80 compiles.
   variables. The heap now starts at `__END__`, the first free byte after
   the whole program. The smaller links above made the old bug hit with
   much smaller blocks. Rebuild the libraries (`uc80 --build-libs`).
+- **Fixes that the benchmark programs found.** The benchmark programs
+  (Embench, CoreMark, whetstone and the games) exposed these bugs:
+  - `sizeof (void *)` or the `sizeof` of another pointer or array type
+    name in a call argument stopped the compiler with an internal error
+    (`embench-tarfind`).
+  - `a + n * n` with an `unsigned long` index took the 32-bit path, which
+    does not scale by `sizeof(*a)`. Pointer plus or minus a `long` index
+    is now pointer arithmetic with scaling (`coremark`).
+  - A pointer difference had the pointer type, so `(p - q) + n` scaled `n`
+    by the size of the pointee. A pointer difference is now an `int`
+    (`mille`).
+  - A function whose name differs only in case from a global got a
+    suffixed label at its definition, but its call sites used the plain
+    name (`robots`).
+  - A label may stand in front of an `asm` statement (`whetstone`). This
+    needs `uc_core` 0.4.2.
+  - `"a\\b"` lost the backslash, because the code generator read the
+    decoded backslash as the start of a second escape.
+  - The assembly dead-code pass kept a `PUBLIC` in the data segment
+    together with the data block before it. A dead string literal in front
+    of `__tmp32` then took the `PUBLIC` along, so the library and the
+    program had two copies of `__tmp32`. `rand()` returned 0 next to
+    `exit()`, and floating-point code called `__fadd` with the right
+    operand in the wrong copy.
+  - `atof` pushed the `strtod` arguments in the wrong order, lost
+    fractions, had the words of the factor 10.0 swapped and unbalanced the
+    stack for a string without digits. State of an earlier call leaked in.
+  - `scanf` called the white-space loop as a subroutine, `ungetc` did
+    nothing, the integer readers destroyed the argument offset, `%ld` read
+    zero, and a conversion without digits counted as a match.
+  - `pow` with a whole-number exponent up to 64 now uses repeated
+    squaring, so `(int)pow(3, 2)` is 9 and `pow(-2, 3)` works.
 
 ## 0.7.0
 

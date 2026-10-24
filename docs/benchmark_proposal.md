@@ -1,6 +1,6 @@
 # Benchmark Expansion Proposal
 
-Status: proposal, revised 2026-10-24. Phases 0 to 2 are done in part or in full (see sections 1 and 7). The plan text of the other sections is the original plan. Starting point: issue
+Status: proposal, revised 2026-10-24. Phases 0 to 2, 4, 5 and part of 6 are done in part or in full (see sections 1 and 7). The plan text of the other sections is the original plan. Starting point: issue
 [avwohl/uc80#1](https://github.com/avwohl/uc80/issues/1), "No sdcc comparison in benchmarks".
 The results are in [benchmarks.md](benchmarks.md) and [benchmarks_speed.md](benchmarks_speed.md).
 
@@ -13,27 +13,31 @@ Items marked "unverified" were not confirmed. Effort figures are estimates, not 
 
 What is done:
 
-- The harness `bench/` runs 79 programs with 8 compilers (uc80, SDCC 4.6.0 and 4.4.0, z88dk zsdcc and sccz80, HI-TECH C 3.09, dcc 3.6.0, llvm-z80) and measures T-states with `z88dk-ticks`. [bench_harness.md](bench_harness.md) describes the harness. [benchmarks_speed.md](benchmarks_speed.md) has the tables and a summary of uc80 against each compiler.
-- Tier 1 (classic benchmarks) and tier 2 (Embench, Stanford, decompressors, sound-driver kernels, CoreMark) are in. z88dk 80cc is not in.
+- The harness `bench/` has 112 programs and 9 compilers (uc80, SDCC 4.6.0 and 4.4.0, z88dk zsdcc, sccz80 and 80cc, HI-TECH C 3.09, dcc 3.6.0, llvm-z80). It measures T-states with `z88dk-ticks`. 105 programs run, and 7 big games are built only ("size-only"). [bench_harness.md](bench_harness.md) describes the harness. [benchmarks_speed.md](benchmarks_speed.md) has the tables and a summary of uc80 against each compiler.
+- Tier 1 (classic benchmarks) and tier 2 (Embench, Stanford, decompressors, sound-driver kernels, CoreMark) are in.
+- z88dk 80cc is in (nightly tree, `-compiler=80cc -O3`, adapter `bench/cc_z88dk80cc.py`). It is the only compiler that is faster than uc80 on the mean without the `sort-*` programs (ratio 1.20).
+- The games tier (tier 3, 32 programs) is in. 25 programs run with scripted input: our own `game-guess` and `curses-demo`, 6 curses games (robots, worm, snake, mille, canfield, invaders), 4 V7 games, 9 NetBSD stdio games, Super Star Trek (integer version), micro-Max chess, Hamurabi and Empire. 7 programs are size-only: Rogue 3.6, trek, adventure, battlestar, monop, mojozork and `curses-demo-size`. The shared glue is `bench/support/posix_shim.[ch]` and `bench/support/tinycurses.[ch]`. The details are in [bench_games_stdio.md](bench_games_stdio.md), [bench_games_curses.md](bench_games_curses.md) and [bench_big_games.md](bench_big_games.md).
 - The unused-`EXTRN` blocker (6.1) is fixed. The heap bug, `qsort`, `printf` precision, `div()` and `ldiv()` are fixed (6.4, 6.5).
+- The four programs that failed on uc80 earlier now pass: `embench-tarfind` (`sizeof` of a pointer type in a call argument), `whetstone` and `whetstone+static` (a label before an `asm` statement) and `coremark-unofficial` (pointer plus `long` index). The games found 6 more uc80 bugs. We fixed all of them: `atof`, `scanf`, `pow`, a string escape, a dead-code pass that kept two copies of `__tmp32`, a pointer difference that had the pointer type, and a call to a function whose name differs from another global only in case. See the CHANGELOG, "Unreleased".
 - Eight families of code generator work and a faster runtime are in (see the CHANGELOG, "Unreleased").
-- `bench/difftest.py` compares uc80, SDCC and a Python model on random programs.
+- `bench/difftest.py` compares uc80, SDCC and a Python model on random programs. A run of 200 programs shows no uc80 failure.
 
-Result against SDCC 4.6.0 (74 programs that are OK on both, geometric mean of uc80 divided by SDCC):
+Result against SDCC 4.6.0 (96 programs for size and 78 for T-states that are OK on both, geometric mean of uc80 divided by SDCC):
 
-- Size: 1.58 (uc80 is bigger; the first run gave 2.01). uc80 is smaller on 15 programs and bigger on 59.
-- T-states against the speed mode of SDCC: 0.62 (uc80 is faster; the first run gave 0.90 over 61 programs). Without the `sort-*` programs the mean is 0.77. uc80 is faster on 52 programs and slower on 22.
-- The "uc80 wins on size" claim is false. The expectation in section 8 that uc80 loses on cycles is also false for the mean, but true for small integer loops and for code with many small functions.
+- Size: 1.53. uc80 is bigger. The first run gave 2.01 on 61 programs. uc80 is smaller on 19 programs and bigger on 77.
+- T-states against the speed mode of SDCC: 0.63. uc80 is faster. The first run gave 0.87 on 61 programs. Without the `sort-*` programs the mean is 0.77. uc80 is faster on 55 programs and slower on 23.
+- Games (18 games that run on both compilers, whole-run T-states): size 1.34, T-states 1.02. The stdio games are faster on uc80 and the curses games are 37 to 59 percent slower.
+- The "uc80 wins on size" claim is false. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
 
 What is left:
 
 - Freestanding and ROM target (6.3, phase 3): nothing done. The answer to issue #1 about the Neo Geo sound driver stays "not today".
-- Games tier and curses (6.4, phases 4 and 5): not started.
-- Four programs still fail on uc80: `embench-tarfind`, `whetstone`, `whetstone+static` and `coremark-unofficial` (see [benchmarks.md](benchmarks.md)).
-- Open compiler bugs from 6.5 that nobody rechecked: C1 to C10, C13 to C15.
+- One program fails on uc80: `empire-trefonas` (the image of 69,888 bytes is more than 64 KB). Two size-only programs, `battlestar-size` and `rogue36-size`, stop with BUILD-TIMEOUT at the whole-program link (bug C8, the dead-code pass).
+- Games tier gaps: mojozork runs only as a size-only row (no scripted Zork I run), and Rogue 3.6 is size-only. Larn, TSCP and the Scott Adams games are not in, because of their licenses. We did not run `battlestar-size`, `rogue36-size` and `mojozork-size` again for sdcc, sdcc-4.4 and zsdcc, because each build takes more than an hour. These rows come from the earlier run with the same tools and sources.
+- Open compiler bugs from 6.5. A recheck on 2026-10-24 with the single-file repros: C1 and C6 compile now. C3, C10 and C15 still give no diagnostic, and C13 still gives "internal error: unexpected token". C2, C4, C5, C7, C9 and C14 are not rechecked.
 - cpmemu T-states (6.2) are not needed for the numbers. We used `z88dk-ticks`.
 - A CI gate for size (5.5) and a rerun on a fresh machine.
-- z88dk 80cc, historic CP/M compilers and a check in an emulator with real timing.
+- Historic CP/M compilers and a check in an emulator with real timing.
 
 The original summary follows. Some of its statements are out of date; the status above wins.
 
@@ -520,7 +524,7 @@ Status: `malloc` and `free` (first-fit list with merging, heap from `__END__`), 
 
 ### 6.5 Compiler bugs found by the survey
 
-Status: C11 (`ldiv`), C12 (binary-trees) and C16 (duplicate runtime modules) are fixed; `binary-trees` is OK in the tables. The other bugs are not rechecked.
+Status: C11 (`ldiv`), C12 (binary-trees) and C16 (duplicate runtime modules) are fixed; `binary-trees` is OK in the tables. A recheck on 2026-10-24 shows that C1 and C6 are fixed, C3, C10 and C13 and C15 are not, and C8 still blocks the whole-program link of battlestar and Rogue 3.6. The other bugs are not rechecked.
 
 The repro files are in the survey's scratch directories. Each bug needs a regression test in the uc80 test suite.
 
@@ -547,7 +551,7 @@ The repro files are in the survey's scratch directories. Each bug needs a regres
 
 Effort figures are rough estimates for one developer.
 
-Status on 2026-10-24: phase 0 is done in part. The reply to issue #1, the `bench-size` CI gate, `float_t` and `double_t`, and the sync of the compliance documents are not rechecked. Phase 1 is done through `z88dk-ticks` instead of a new cpmemu timer. Phase 2 is done with 7 compilers (80cc is missing). Phase 6 is started: Stanford, Embench, CoreMark, decompressors and 4 sound kernels are in. Phases 3, 4 and 5 are not started.
+Status on 2026-10-24: phase 0 is done in part. The reply to issue #1, the `bench-size` CI gate, `float_t` and `double_t`, and the sync of the compliance documents are not rechecked. Phase 1 is done through `z88dk-ticks` instead of a new cpmemu timer. Phase 2 is done with 9 compilers (80cc is in). Phases 4 and 5 (the games tier) are done with the exceptions in section 1: argv, `fseek` and time functions were not needed, because the games use scripted stdin and the shim in `bench/support/posix_shim.c`; mojozork has a size-only row and no Zork I run. Phase 6 is started: Stanford, Embench, CoreMark, decompressors and 4 sound kernels are in. Phase 3 is not started.
 
 | Phase | Work | Output | Effort |
 |---|---|---|---|
