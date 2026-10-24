@@ -30,6 +30,12 @@
 #include <ctype.h>
 #include "posix_shim.h"
 
+/* Standalone SDCC has sqrtf() only; its double is a float anyway. */
+#if defined(__SDCC) && !defined(__Z88DK)
+#include <math.h>
+#define sqrt(x) sqrtf(x)
+#endif
+
 /* stdbool.h, stdint.h, sys/types.h, time.h */
 #define bool int
 #define true 1

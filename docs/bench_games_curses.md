@@ -64,12 +64,35 @@ compiler with a short mantissa gives the same game.
 To make the golden files again, run
 `python3 bench/run.py --golden robots worm snake mille canfield invaders`.
 
-## Known problems
+## Results
 
-- `robots`, `mille` and `canfield` show uc80 bugs. The bugs are in the
-  list of the status report of the session that made this group.
-- HI-TECH C stops with "Expression too complicated", "No room" or
-  "Out of memory" on some functions of `snake`, `mille`, `canfield` and
-  `invaders`.
-- dcc has no floating point (`snake` and `canfield`) and no support for
-  some statement forms.
+The first full run is in `bench/results/results.csv` (status, image
+bytes and whole-run T-states of each cell). Cycles of a game are not
+comparable with region counts of other programs.
+
+- All six games build and match the golden file with llvm-z80,
+  standalone SDCC 4.6 (`snake` after the `sqrtf()` mapping), and
+  z88dk-sccz80 (except `mille`).
+- uc80 matches the golden file for `worm`, `snake`, `canfield` and
+  `invaders`. `robots` hangs and `mille` is wrong because of two
+  uc80 bugs (see below).
+- SDCC 4.4 and z88dk-zsdcc give wrong output for `canfield`
+  (zsdcc also for `invaders`). zsdcc does not finish the size-mode
+  build of `snake` and `mille` in 30 minutes.
+- z88dk-sccz80 runs `mille` wrong: the game reads `U1` and then
+  does not take the space as the end of the card number.
+- HI-TECH C runs `worm` and `robots`. It stops with "Expression too
+  complicated", "No room", "Operand error" or "Out of memory" on the
+  other games.
+- dcc runs `worm` and `invaders`. It has no floating point (`snake`,
+  `canfield`), cannot link `robots`, and `mille` does not finish.
+
+## uc80 bugs that these games found
+
+- A function and a global variable with names that differ only in
+  case (`Score` and `score`): uc80 names the definition `_score_1`, but the
+  call goes to `_score`, and the call jumps into the variable.
+  `robots` hangs.
+- `(pp - arr) + 21` where `pp` and `arr` point to a structure of 110
+  bytes: the result is 2310, not 21. The addition scales the integer
+  as if the difference were a pointer. `mille` is wrong.
