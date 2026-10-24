@@ -10,67 +10,139 @@ PRTSTR	EQU	9
 	CSEG
 
 ; ============================================================
+; Allocator: first fit over a free list kept sorted by address.
+;
+; Every block, free or in use, starts with a 2-byte header holding the
+; payload size.  The pointer malloc returns is the payload.  A free
+; block keeps the address of the next free block in the first two bytes
+; of its payload (so the smallest payload is 2 bytes).
+;
+;   block:  [size lo][size hi][payload ...]
+;   free:   [size lo][size hi][next lo][next hi] ...
+;
+; malloc: take the first free block that fits.  If it leaves at least 4
+; bytes over, the request is carved from the END of that block (the free
+; block only shrinks, so the list needs no repair); otherwise the whole
+; block is taken.  With no fit the heap grows upwards from __END__
+; (ul80 defines it: the first free byte after the program, BSS
+; included) until it comes within 255 bytes of the stack pointer.
+; free: insert into the list in address order and merge with the free
+; neighbours on either side.
+; ============================================================
 	EXTRN	__END__
 	PUBLIC	_malloc
 _malloc:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-
-	; Get size
-	LD	C,(IX+4)
-	LD	B,(IX+5)
-
-	; Get current heap pointer
-	LD	HL,(_heap_ptr)
-
-	; If heap_ptr is 0, initialize it
-	LD	A,H
-	OR	L
-	JR	NZ,_malloc_have_heap
-	; Initialize heap to start at the first free byte after the whole
-	; program, BSS included (ul80 defines __END__).  _heap_start, a word
-	; in this module's own DSEG, put the heap on top of the program's
-	; later data and BSS, so malloc'd memory overwrote globals.
-	LD	HL,__END__
-	LD	(_heap_ptr),HL
-
-_malloc_have_heap:
-	; HL = current heap pointer (return value)
-	PUSH	HL		; Save return address
-
-	; Advance heap pointer by size
-	ADD	HL,BC
-	; Check if we would exceed stack (rough check)
-	; SP is approximate limit
-	PUSH	HL
-	EX	DE,HL
-	LD	HL,0
-	ADD	HL,SP
-	; DE = new heap ptr, HL = SP
-	; If new_ptr >= SP - 256, fail (leave some stack margin)
-	LD	BC,256
-	OR	A
-	SBC	HL,BC		; HL = SP - 256
-	EX	DE,HL		; DE = SP - 256, HL = new heap ptr
-	OR	A
-	SBC	HL,DE		; If new_heap > limit, carry clear and result positive
-	POP	HL		; HL = new heap ptr
-	JR	NC,_malloc_oom
-
-	; Store new heap pointer
-	LD	(_heap_ptr),HL
-
-	; Return saved pointer
-	POP	HL
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = size
+	CALL	__malloc_de
 	POP	IX
 	RET
 
-_malloc_oom:
-	; Out of memory - return NULL
-	POP	HL		; Discard saved pointer
+; Allocate DE bytes.  Returns HL = payload or 0.  Clobbers AF, BC, DE, IX.
+__malloc_de:
+	LD	A,D
+	OR	A
+	JR	NZ,_mde_sized
+	LD	A,E
+	CP	2
+	JR	NC,_mde_sized
+	LD	DE,2		; smallest payload holds the free-list link
+_mde_sized:
+	LD	HL,(_heap_ptr)
+	LD	A,H
+	OR	L
+	JR	NZ,_mde_init
+	LD	HL,__END__
+	LD	(_heap_ptr),HL
+_mde_init:
+	LD	BC,_free_head	; BC = address of the link that points at HL
+	LD	HL,(_free_head)
+_mde_scan:
+	LD	A,H
+	OR	L
+	JR	Z,_mde_grow
+	PUSH	HL
+	POP	IX		; IX = candidate block
+	LD	L,(IX+0)
+	LD	H,(IX+1)	; HL = its size
+	OR	A
+	SBC	HL,DE		; HL = size - request
+	JR	C,_mde_next
+	LD	A,H
+	OR	A
+	JR	NZ,_mde_split
+	LD	A,L
+	CP	4
+	JR	C,_mde_whole
+_mde_split:
+	DEC	HL
+	DEC	HL		; HL = size of what is left free
+	LD	(IX+0),L
+	LD	(IX+1),H
+	PUSH	IX
+	POP	BC
+	ADD	HL,BC
+	INC	HL
+	INC	HL		; HL = header of the new block, at the end
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL		; HL = payload
+	RET
+_mde_whole:
+	LD	L,(IX+2)
+	LD	H,(IX+3)	; HL = next free block
+	LD	A,L
+	LD	(BC),A		; unlink the candidate
+	INC	BC
+	LD	A,H
+	LD	(BC),A
+	PUSH	IX
+	POP	HL
+	INC	HL
+	INC	HL		; HL = payload
+	RET
+_mde_next:
+	PUSH	IX
+	POP	BC
+	INC	BC
+	INC	BC		; BC = &candidate.next
+	LD	L,(IX+2)
+	LD	H,(IX+3)
+	JR	_mde_scan
+
+_mde_grow:
+	LD	HL,(_heap_ptr)
+	PUSH	HL		; header of the new block
+	INC	HL
+	INC	HL
+	ADD	HL,DE		; HL = new top of heap
+	JR	C,_mde_oom
+	LD	B,H
+	LD	C,L		; BC = new top
 	LD	HL,0
-	POP	IX
+	ADD	HL,SP
+	PUSH	DE
+	LD	DE,255
+	OR	A
+	SBC	HL,DE		; HL = SP - 255
+	POP	DE
+	OR	A
+	SBC	HL,BC		; carry if the new top is above SP - 255
+	JR	C,_mde_oom
+	LD	(_heap_ptr),BC
+	POP	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL		; HL = payload
+	RET
+_mde_oom:
+	POP	HL
+	LD	HL,0
 	RET
 
 ; ============================================================
@@ -144,93 +216,209 @@ _calloc_ret:
 
 ; ============================================================
 ; void free(void *ptr)
-; Free memory - no-op in bump allocator
+; Put the block on the free list (sorted by address) and merge it with
+; the free blocks next to it.
 ; ============================================================
 	PUBLIC	_free
 _free:
-	RET			; No-op: bump allocator never frees
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = payload
+	CALL	__free_hl
+	POP	IX
+	RET
+
+; Free the block whose payload is HL (0 is ignored).
+; Clobbers AF, BC, DE, HL, IX.
+__free_hl:
+	LD	A,H
+	OR	L
+	RET	Z
+	DEC	HL
+	DEC	HL
+	EX	DE,HL		; DE = block
+	PUSH	DE
+	POP	IX		; IX = block
+	LD	BC,_free_head	; BC = address of the link that points at HL
+	LD	HL,(_free_head)
+_fre_scan:
+	LD	A,H
+	OR	L
+	JR	Z,_fre_here
+	LD	A,E
+	SUB	L
+	LD	A,D
+	SBC	A,H		; carry if block < candidate
+	JR	C,_fre_here
+	INC	HL
+	INC	HL
+	LD	B,H
+	LD	C,L		; BC = &candidate.next
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A		; HL = candidate.next
+	JR	_fre_scan
+_fre_here:
+	; the block goes between the block that owns link BC and HL
+	LD	(IX+2),L
+	LD	(IX+3),H	; block.next = HL
+	LD	A,E
+	LD	(BC),A
+	INC	BC
+	LD	A,D
+	LD	(BC),A
+	DEC	BC		; the link now points at the block
+	LD	A,H
+	OR	L
+	JR	Z,_fre_prev
+	; merge with the next block when it starts where this one ends
+	PUSH	HL		; next
+	LD	L,(IX+0)
+	LD	H,(IX+1)
+	INC	HL
+	INC	HL
+	ADD	HL,DE		; HL = end of this block
+	POP	DE		; DE = next
+	OR	A
+	SBC	HL,DE
+	JR	NZ,_fre_prev
+	LD	H,D
+	LD	L,E		; HL = next block
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = next.size
+	INC	HL		; HL = &next.next
+	PUSH	HL
+	LD	L,(IX+0)
+	LD	H,(IX+1)
+	ADD	HL,DE
+	INC	HL
+	INC	HL
+	LD	(IX+0),L
+	LD	(IX+1),H	; size += next.size + 2
+	POP	HL
+	LD	A,(HL)
+	LD	(IX+2),A
+	INC	HL
+	LD	A,(HL)
+	LD	(IX+3),A	; block.next = next.next
+_fre_prev:
+	; merge into the previous block when it ends where this one starts
+	LD	HL,_free_head
+	OR	A
+	SBC	HL,BC
+	RET	Z		; no previous block: BC is the list head
+	DEC	BC
+	DEC	BC		; BC = previous block
+	LD	H,B
+	LD	L,C
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = prev.size
+	LD	HL,2
+	ADD	HL,DE
+	ADD	HL,BC		; HL = end of the previous block
+	PUSH	IX
+	POP	DE		; DE = this block
+	OR	A
+	SBC	HL,DE
+	RET	NZ
+	LD	L,(IX+0)
+	LD	H,(IX+1)
+	INC	HL
+	INC	HL		; HL = this block's size + 2
+	LD	A,(BC)
+	LD	E,A
+	INC	BC
+	LD	A,(BC)
+	LD	D,A		; DE = prev.size, BC = prev + 1
+	ADD	HL,DE
+	LD	A,H
+	LD	(BC),A
+	DEC	BC
+	LD	A,L
+	LD	(BC),A		; prev.size += size + 2
+	INC	BC
+	INC	BC		; BC = &prev.next
+	LD	A,(IX+2)
+	LD	(BC),A
+	INC	BC
+	LD	A,(IX+3)
+	LD	(BC),A		; prev.next = block.next
+	RET
 
 ; ============================================================
 ; void *realloc(void *ptr, size_t size)
-; Resize allocated memory
-; Simple implementation: always allocates new block and copies
+; NULL ptr: malloc.  Size 0: free, return NULL.  A block that is
+; already big enough is returned as is; otherwise allocate, copy the old
+; contents and free the old block (the old block stays valid when the
+; allocation fails).
 ; ============================================================
 	PUBLIC	_realloc
 _realloc:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	L,(IX+4)	; HL = ptr
-	LD	H,(IX+5)
-	LD	C,(IX+6)	; BC = size
-	LD	B,(IX+7)
-
-	; If ptr is NULL, just malloc
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = ptr
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = size
 	LD	A,H
 	OR	L
-	JR	NZ,_realloc_check_size
-	; malloc(size)
-	PUSH	BC
-	CALL	_malloc
-	POP	DE
-	JR	_realloc_done
-
-_realloc_check_size:
-	; If size is 0, free and return NULL
-	LD	A,B
-	OR	C
-	JR	NZ,_realloc_do
-	; size is 0, return NULL
-	LD	HL,0
-	JR	_realloc_done
-
-_realloc_do:
-	; Save old pointer
-	PUSH	HL
-
-	; Allocate new block
-	PUSH	BC
-	CALL	_malloc
-	POP	DE		; DE = size (for copy)
-	LD	B,D
-	LD	C,E		; BC = size
-
-	; Check if malloc failed
-	LD	A,H
-	OR	L
-	JR	Z,_realloc_fail
-
-	; Copy old data to new block
-	; HL = new ptr, need old ptr
-	EX	DE,HL		; DE = new ptr
-	POP	HL		; HL = old ptr
-
-	; Copy BC bytes from HL to DE
-	; But BC might be larger than old allocation!
-	; Since we don't track sizes, copy the minimum
-	; For safety, just copy size bytes (user's responsibility)
-	PUSH	DE		; Save new ptr to return
-	LDIR			; Copy BC bytes from HL to DE
-	POP	HL		; HL = new ptr
-	JR	_realloc_done
-
-_realloc_fail:
-	POP	DE		; Discard old ptr
-	; HL is already 0
-
-_realloc_done:
-	POP	DE
-	POP	BC
+	JR	NZ,_rea_have
+	CALL	__malloc_de
 	POP	IX
 	RET
-
-; ============================================================
+_rea_have:
+	LD	A,D
+	OR	E
+	JR	NZ,_rea_do
+	CALL	__free_hl
+	LD	HL,0
+	POP	IX
+	RET
+_rea_do:
+	DEC	HL
+	DEC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = size of the old block
+	INC	HL		; HL = payload
+	PUSH	HL		; old payload
+	PUSH	BC		; old size
+	LD	H,B
+	LD	L,C
+	OR	A
+	SBC	HL,DE		; old size - requested size
+	JR	NC,_rea_same
+	CALL	__malloc_de	; HL = new payload
+	POP	BC		; BC = old size
+	POP	DE		; DE = old payload
+	LD	A,H
+	OR	L
+	JR	Z,_rea_ret	; no memory: the old block is untouched
+	PUSH	HL		; new payload
+	PUSH	DE		; old payload
+	EX	DE,HL		; DE = new, HL = old
+	LDIR
+	POP	HL
+	CALL	__free_hl
+	POP	HL		; new payload
+_rea_ret:
+	POP	IX
+	RET
+_rea_same:
+	POP	BC
+	POP	HL		; old payload
+	POP	IX
+	RET
 
 
 	DSEG
 _heap_ptr:	DW	0
+_free_head:	DW	0
 
 	END

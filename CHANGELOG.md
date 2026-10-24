@@ -23,6 +23,12 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- **`free()` frees.** `malloc`, `calloc`, `realloc` and `free` use a
+  first-fit free list kept in address order, and `free()` merges the
+  block with free neighbours. `realloc` keeps a block that is already
+  big enough and frees the old block after a copy. A program that
+  allocates and frees in a loop (binary-trees) no longer runs out of
+  memory.
 - **`printf` honours precision, `-`, width on long forms, `%s` width and
   `*`.** `%.4d`, `%5.3d` and `%.3x` now print the minimum number of
   digits, `%-5d`, `%-5u` and `%-5x` left-justify, `%8ld`, `%-8lu` and

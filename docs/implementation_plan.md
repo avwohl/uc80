@@ -145,7 +145,7 @@ not all of rt_arith16 and rt_arith32.
 - lc_file.mac - fopen/fclose/fread/fwrite/fseek/ftell and all file ops
 - lc_string.mac - all string.h functions
 - lc_math_helper.mac + lc_sin/cos/tan/exp/log/sqrt/pow/etc. - math library
-- lc_malloc.mac - bump allocator
+- lc_malloc.mac - first-fit free list allocator
 - lc_atoi.mac - integer string parsing
 - lc_atof.mac - float string parsing (strtod/strtof)
 

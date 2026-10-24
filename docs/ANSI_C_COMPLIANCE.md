@@ -158,8 +158,7 @@ Printf links only needed format handlers via `#pragma printf int|long|llong|floa
 ### `<stdlib.h>` - Implemented
 - [x] `atoi()`, `atol()`, `atof()`
 - [x] `strtol()`, `strtoul()`, `strtod()`, `strtof()`
-- [x] `malloc()`, `calloc()`, `realloc()` - bump allocator (no real free)
-- [x] `free()` - no-op
+- [x] `malloc()`, `calloc()`, `realloc()`, `free()` - first-fit free list, sorted by address, merged on `free()`. The heap grows from `__END__` up to 255 bytes below the stack pointer
 - [x] `abs()`, `labs()`, `div()`, `ldiv()`
 - [x] `rand()`, `srand()` - 16-bit LCG
 - [x] `exit()`, `abort()`, `atexit()` - supports 4 handlers
