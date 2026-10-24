@@ -768,3 +768,34 @@ int main(void) {
 }
 """
     _check(tmp_path, src, ["1 0 0", "1 1"], "acc64_overlay")
+
+
+@needs_toolchain
+def test_logical_and_or_of_a_float_yields_int(tmp_path):
+    """x && y and x || y have type int whatever the operands are.  A float
+    operand made the expression count as float, and the return (or the
+    assignment) then converted the 0/1 in HL with __ftoi: ``return x && y``
+    gave 0 or -1 for x = -1.0f."""
+    src = """
+int a1(float x, int y){ return x && y; }
+int a2(int y, float x){ return y && x; }
+int a3(float x, float y){ return x || y; }
+long a4(float x, int y){ return (x || y) + 100000L; }
+int a6(float x, int y){ return (x && y) + (x || y) * 2; }
+int main(void){
+  float fs[5]; int ys[3]; int i, j, fails = 0;
+  fs[0] = 0.0f; fs[1] = -0.0f; fs[2] = -1.0f; fs[3] = 1e-30f; fs[4] = 2.5f;
+  ys[0] = 0; ys[1] = 1; ys[2] = -3;
+  for (i = 0; i < 5; i++) for (j = 0; j < 3; j++) {
+    float x = fs[i]; int y = ys[j]; int nz = x != 0.0f; int ny = y != 0;
+    if (a1(x, y) != (nz && ny)) { fails++; printf("a1 %d %d\\n", i, j); }
+    if (a2(y, x) != (ny && nz)) { fails++; printf("a2 %d %d\\n", i, j); }
+    if (a3(x, (float)y) != (nz || ny)) { fails++; printf("a3 %d %d\\n", i, j); }
+    if (a4(x, y) != 100000L + (nz || ny)) { fails++; printf("a4 %d %d\\n", i, j); }
+    if (a6(x, y) != ((nz && ny) + 2 * (nz || ny))) { fails++; printf("a6 %d %d\\n", i, j); }
+  }
+  printf("fails=%d\\n", fails);
+  return 0;
+}
+"""
+    assert build_and_run(tmp_path, src) == ["fails=0"]

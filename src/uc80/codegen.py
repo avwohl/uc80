@@ -16740,8 +16740,8 @@ class CodeGenerator:
             if expr.op in ("-", "+"):
                 return self._is_float_expr(expr.operand)
         if isinstance(expr, ast.BinaryOp):
-            # Comparison operators always return int
-            if expr.op in ("==", "!=", "<", ">", "<=", ">="):
+            # Comparison operators and logical AND/OR always return int
+            if expr.op in ("==", "!=", "<", ">", "<=", ">=", "&&", "||"):
                 return False
             # Binary operation is float if either operand is float
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
@@ -16764,8 +16764,8 @@ class CodeGenerator:
             if expr.op in ("-", "+"):
                 return self._is_complex_expr(expr.operand)
         if isinstance(expr, ast.BinaryOp):
-            # Comparison operators always return int
-            if expr.op in ("==", "!=", "<", ">", "<=", ">="):
+            # Comparison operators and logical AND/OR always return int
+            if expr.op in ("==", "!=", "<", ">", "<=", ">=", "&&", "||"):
                 return False
             # Binary operation is complex if either operand is complex
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):

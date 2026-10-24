@@ -207,3 +207,27 @@ class TestFeatureDetection:
                ' printf("%s %d\\n", b, n); return 0; }\n')
         out = build_and_run(tmp_path, src)
         assert out == "42    |00a|      -5|   ab|   9 30\n"
+
+
+class TestFieldCapNoWrap:
+    """Width and precision stop at 255.  The padding count used to wrap
+    when digits + precision zeros + sign + 0x prefix reached 256: a sign
+    with precision 255 and a width made 255 extra blanks."""
+
+    def test_sign_and_prefix_with_large_precision(self, tmp_path):
+        src = ('#include <stdio.h>\n'
+               'int main(void){ int n;\n'
+               ' n = printf("[%+300.255d]", 42); printf("|%d\\n", n);\n'
+               ' n = printf("[%#400.254x]", 42); printf("|%d\\n", n);\n'
+               ' n = printf("[%-+300.255d]", 42); printf("|%d\\n", n);\n'
+               ' n = printf("[%+255.254d]", 42); printf("|%d\\n", n);\n'
+               ' return 0; }\n')
+        out = build_and_run(tmp_path, src)
+        lines = out.splitlines()
+        assert len(lines) == 4
+        # sign + 255 digits = 256 characters: wider than the field cap
+        assert lines[0].endswith("|258") and len(lines[0]) == 258 + 4
+        assert lines[1].endswith("|258") and len(lines[1]) == 258 + 4
+        assert lines[2].endswith("|258")
+        # sign + 254 digits = 255: exactly the width, no padding
+        assert lines[3].endswith("|257") and len(lines[3]) == 257 + 4

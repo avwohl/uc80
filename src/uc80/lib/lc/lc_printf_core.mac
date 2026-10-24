@@ -558,14 +558,23 @@ _pn_cnt:
 	LD	A,C
 	LD	(_pn_zeros),A
 	ADD	A,B		; B = characters before any padding
+	JR	NC,_pn_t1
+	LD	A,255		; the width is at most 255: saturate, never wrap
+_pn_t1:
 	LD	B,A
 	LD	A,(_pn_sign)
 	OR	A
 	JR	Z,_pn_ns
-	INC	B
+	LD	A,B
+	INC	A
+	JR	Z,_pn_ns	; already 255
+	LD	B,A
 _pn_ns:
 	LD	A,(_printf_pfxlen)
 	ADD	A,B
+	JR	NC,_pn_t2
+	LD	A,255
+_pn_t2:
 	LD	B,A
 	LD	A,(_printf_width)
 	SUB	B
