@@ -1,0 +1,2207 @@
+Do you want instructions? Type 'y' for yes,
+anything else means no.?? To play backgammon, type the numbers of the points
+from which pieces are to be moved. Thus, if the
+roll is '3,5', typing '2 6' will move a piece
+from point 2 three spaces to point 5,
+and a piece from point 6 forward to
+point 11.  If the moves must be made in the
+opposite order, the first character typed must
+be a minus ('-'). Thus, typing
+'-2 6' moves the piece on point 2
+by 5, and the piece on point 6 by 3.
+If you want to move a single piece several times,
+the sequence of points from which it is to be
+moved must be typed. Thus '14 17' will move
+a piece from point 14 to point 17 and thence to
+to point 22.
+If a double is rolled, you should type four numbers.
+Red pieces that have been removed from the board by
+being hit by white are on point 0 and
+must be brought in before any other move can be made.
+White pieces that are hit are removed to point 25.
+You will not be allowed to make an illegal move, or
+to make too many moves. However, if you make too
+few moves, the program does not care. In particular
+you may skip your turn by typing a 'new-line'
+all by itself.
+
+Choose the level of your oppponent.
+Type 'b' for beginner, or 'i' for intermediate.
+Anything else gets you an expert.?? You will play red. Do you wan't to move first?
+Type 'y' for yes, anything else means no.?? White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   2                   5           3               5
+   R                   W           W               R
+
+
+   W                   R           R               W
+   2                   5           3               5
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 6,  5
+your move, please?? Move 19 is not legal.
+your roll is 6,  5
+your move, please?? Move 1 is not legal.
+your roll is 5,  6
+your move, please?? white rolls 5,5
+white's move is:    8, 5    13, 5    8, 5    13, 5
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   2       2           5           3               5
+   R       W           W           W               R
+
+
+   W   R   R           R           R               W
+   2   1   1           5           1               3
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 2,  2
+your move, please?? Move 1 is not legal.
+your roll is 2,  2
+your move, please?? Move 1 is not legal.
+your roll is 2,  2
+your move, please?? Move 1 is not legal.
+your roll is 2,  2
+your move, please?? Move 22 is not legal.
+your roll is 2,  2
+your move, please?? Move 22 is not legal.
+your roll is 2,  2
+your move, please?? Move 23 is not legal.
+your roll is 2,  2
+your move, please?? Move 1 is not legal.
+your roll is 2,  2
+your move, please?? Move 1 is not legal.
+your roll is 2,  2
+your move, please?? Move 23 is not legal.
+your roll is 2,  2
+your move, please?? Move 17 is not legal.
+your roll is 2,  2
+your move, please?? Move 1 is not legal.
+your roll is 2,  2
+your move, please?? Move 1 is not legal.
+your roll is 2,  2
+your move, please?? Move 22 is not legal.
+your roll is 2,  2
+your move, please?? Move 23 is not legal.
+your roll is 2,  2
+your move, please?? Move 23 is not legal.
+your roll is 2,  2
+your move, please?? Move 23 is not legal.
+your roll is 2,  2
+your move, please?? Move 1 is not legal.
+your roll is 2,  2
+your move, please?? white rolls 6,4
+white's move is:    8, 6    6, 4
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   2   2   2           4           2               3
+   R   W   W           W           W               R
+
+
+   W   R   R   R       R                       R   W
+   2   1   1   1       5                       2   3
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 2,  4
+your move, please?? move 25 is illegal
+your roll is 4,  2
+your move, please?? white rolls 3,5
+white's move is:    13, 5    24, 3
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   1   2   2       1   4           3               2
+   R   W   W       R   W           W               R
+
+                           1R
+   W   R   R   W       R                       R   W
+   1   1   1   1       5                       3   2
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 4,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  2
+your move, please?? Move 0 is not legal.
+your roll is 2,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  4
+your move, please?? white rolls 2,2
+white's move is:    8, 2    6, 2    6, 2    24, 2
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   1   2   2   2   1   3           2               1
+   R   W   W   W   R   W           W               R
+
+                           2R
+       R   W   W       R                       R   W
+       1   1   1       5                       4   2
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? move 25 is illegal
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? move 25 is illegal
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? move 25 is illegal
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  2
+your move, please?? red's move skipped
+white rolls 3,6
+white's move is:    22, 6    16, 3
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   1   2   2   2   1   3           2               1
+   R   W   W   W   R   W           W               R
+
+                           2R
+       R       W       R                       R   W
+       1       1       5                       4   3
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? move 27 is illegal
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  4
+your move, please?? red's move skipped
+white rolls 4,3
+white's move is:    13, 4    9, 3
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   1   2   2   2   1   4           2               1
+   R   W   W   W   R   W           W               R
+
+                           2R
+       R       W       R                       R   W
+       1       1       5                       4   2
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  4
+your move, please?? red's move skipped
+white rolls 4,5
+white's move is:    21, 5    16, 4
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   1   2   2   2   1   4           2               1
+   R   W   W   W   R   W           W               W
+
+                           3R
+       R               R                       R   W
+       1               5                       4   2
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? Move 0 is not legal.
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? move 25 is illegal
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? Move 0 is not legal.
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? Move 0 is not legal.
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? Move 0 is not legal.
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? red's move skipped
+white rolls 6,6
+white's move is:    13, 6    7, 6    13, 6    7, 6
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   2   2   2   2   1   4           2               1
+   W   W   W   W   R   W           W               W
+
+                           4R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? Move 0 is not legal.
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? Move 0 is not legal.
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? move 26 is illegal
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? move 26 is illegal
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? move 26 is illegal
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? Move 0 is not legal.
+your roll is 1,  3
+your move, please?? Move 0 is not legal.
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? red's move skipped
+white rolls 3,3
+white's move is:    12, 3    8, 3    8, 3    9, 3
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   2   2   2   2   2   5
+   W   W   W   W   W   W
+
+                           5R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? Move 0 is not legal.
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? Move 0 is not legal.
+your roll is 1,  3
+your move, please?? move 26 is illegal
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? Move 0 is not legal.
+your roll is 1,  3
+your move, please?? Move 0 is not legal.
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  1
+your move, please?? piece on position 0 must be moved first
+your roll is 1,  3
+your move, please?? red's move skipped
+white rolls 5,3
+white's move is:    6, 3    6, 5
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   3   2   3   2   2   3
+   W   W   W   W   W   W
+
+                           5R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? move 29 is illegal
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? Move 0 is not legal.
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? Move 0 is not legal.
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? Move 0 is not legal.
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? Move 0 is not legal.
+your roll is 6,  4
+your move, please?? Move 0 is not legal.
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? red's move skipped
+white rolls 5,3
+white's move is:    3, 3    6, 5
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   4   2   2   2   2   2
+   W   W   W   W   W   W
+
+                           5R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? red's move skipped
+white rolls 6,2
+white's move is:    2, 2    2, 6
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   4       2   2   2   2
+   W       W   W   W   W
+
+                           5R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? Move 0 is not legal.
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  5
+your move, please?? red's move skipped
+white rolls 3,3
+white's move is:    6, 3    5, 3    5, 3    6, 3
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   4   2   4   2
+   W   W   W   W
+
+                           5R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? move 28 is illegal
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? Move 0 is not legal.
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? move 28 is illegal
+your roll is 5,  2
+your move, please?? move 28 is illegal
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? Move 0 is not legal.
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? Move 0 is not legal.
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? move 25 is illegal
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? move 28 is illegal
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? white rolls 6,2
+white's move is:    3, 2    3, 6
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   5   2   2   2   1
+   W   W   W   W   R
+
+                           4R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? Move 0 is not legal.
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? Move 0 is not legal.
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? Move 0 is not legal.
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? Move 0 is not legal.
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? move 26 is illegal
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? Move 0 is not legal.
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? Move 0 is not legal.
+your roll is 2,  3
+your move, please?? Move 0 is not legal.
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 3,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  3
+your move, please?? red's move skipped
+white rolls 1,5
+white's move is:    1, 5    1, 1
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   3   2   2   2   1
+   W   W   W   W   R
+
+                           4R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? move 28 is illegal
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? move 25 is illegal
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  6
+your move, please?? move 29 is illegal
+your roll is 6,  5
+your move, please?? white rolls 6,1
+white's move is:    4, 1    4, 6
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   3   2   3       1   1
+   W   W   W       R   R
+
+                           3R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  2
+your move, please?? red's move skipped
+white rolls 2,4
+white's move is:    1, 4    3, 2
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   3   2   2       1   1
+   W   W   W       R   R
+
+                           3R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 4,  6
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? piece on position 0 must be moved first
+your roll is 6,  4
+your move, please?? white rolls 5,1
+white's move is:    3, 5    3, 1
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   3   3       1   1   2
+   W   W       R   R   R
+
+                           1R
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? Move 23 is not legal.
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? Move 0 is not legal.
+your roll is 2,  5
+your move, please?? Move 0 is not legal.
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? Move 0 is not legal.
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? piece on position 0 must be moved first
+your roll is 5,  2
+your move, please?? Move 0 is not legal.
+your roll is 2,  5
+your move, please?? piece on position 0 must be moved first
+your roll is 2,  5
+your move, please?? Move 0 is not legal.
+your roll is 2,  5
+your move, please?? white rolls 6,4
+white's move is:    1, 6    2, 4
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   2   2       1   2   1           1
+   W   W       R   R   R           R
+
+
+       R               R                       R
+       1               5                       4
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 2,  3
+your move, please?? Move 23 is not legal.
+your roll is 3,  2
+your move, please?? white rolls 2,1
+white's move is:    1, 2    2, 1
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+   2   1       1   1   1           2
+   W   W       R   R   R           R
+
+
+       R               R               R       R
+       1               5               1       3
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 5,  2
+your move, please?? Move 23 is not legal.
+your roll is 2,  5
+your move, please?? white rolls 6,3
+white's move is:    1, 6    1, 3
+White's Home
+   1   2   3   4   5   6       7   8   9  10  11  12
+------------------------------------------------------
+       1       1       1           2       1
+       W       R       R           R       R
+
+
+       R       R       R               R       R
+       1       1       4               1       3
+------------------------------------------------------
+  24  23  22  21  20  19      18  17  16  15  14  13
+Red's Home
+
+
+
+
+your roll is 3,  3
+your move, please?? white rolls 4,4
+white's move is:    2, 4
+White wins
+Aren't you ashamed. You've been beaten by a computer.

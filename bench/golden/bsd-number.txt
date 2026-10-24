@@ -1,0 +1,51 @@
+zero.
+...
+one.
+...
+twelve.
+...
+one hundred.
+...
+one thousand.
+two hundred thirty-four.
+...
+sixty-five thousand.
+five hundred thirty-six.
+...
+one million.
+...
+minus
+forty-two.
+...
+three.
+and
+fourteen.
+hundredths.
+...
+five.
+tenths.
+...
+twelve million.
+three hundred forty-five thousand.
+six hundred seventy-eight.
+and
+nine.
+tenths.
+...
+one trillion.
+...
+two billion.
+one hundred forty-seven million.
+four hundred eighty-three thousand.
+six hundred forty-seven.
+...
+one hundred twenty-three octillion.
+four hundred fifty-six septillion.
+seven hundred eighty-nine sextillion.
+twelve quintillion.
+three hundred forty-five quadrillion.
+six hundred seventy-eight trillion.
+nine hundred one billion.
+two hundred thirty-four million.
+five hundred sixty-seven thousand.
+eight hundred ninety.

@@ -1,0 +1,119 @@
+Instructions? (y-n)
+Welcome to 'Hunt the Wumpus.'
+
+The Wumpus lives in a cave of 20 rooms.
+Each room has 3 tunnels leading to other rooms.
+
+Hazards:
+
+Bottomless Pits - Some rooms have Bottomless Pits in them.
+	If you go there, you fall into the pit and lose!
+Super Bats - Some other rooms have super bats.
+	If you go there, a bat will grab you and take you to
+	somewhere else in the cave where you could
+	fall into a pit or run into the . . .
+
+Wumpus:
+
+The Wumpus is not bothered by the hazards since
+he has sucker feet and is too big for a bat to lift.
+
+Usually he is asleep.
+Two things wake him up:
+	your entering his room
+	your shooting an arrow anywhere in the cave.
+If the wumpus wakes, he either decides to move one room or
+stay where he was.  But if he ends up where you are,
+he eats you up and you lose!
+
+You:
+
+Each turn you may either move or shoot a crooked arrow.
+
+Moving - You can move to one of the adjoining rooms;
+	that is, to one that has a tunnel connecting it with
+	the room you are in.
+
+Shooting - You have 5 arrows.  You lose when you run out.
+	Each arrow can go from 1 to 5 rooms.
+	You aim by telling the computer
+	The arrow's path is a list of room numbers
+	telling the arrow which room to go to next.
+	The list is terminated with a 0.
+	The first room in the path must be connected to the
+	room you are in.  Each succeeding room must be
+	connected to the previous room.
+	If there is no tunnel between two of the rooms
+	in the arrow's path, the arrow chooses one of the
+	three tunnels from the room it's in and goes its
+	own way.
+
+	If the arrow hits the wumpus, you win!
+	If the arrow hits you, you lose!
+
+Warnings:
+
+When you are one or two rooms away from the wumpus,
+the computer says:
+		'I smell a Wumpus'
+When you are one room away from some other hazard, it says:
+		Bat    - 'Bats nearby'
+		Pit    - 'I feel a draft'
+
+You are in room 10
+I smell a wumpus
+There are tunnels to 2 14 16
+Move or shoot (m-s) Give list of rooms terminated by 0
+You are in room 10
+I smell a wumpus
+There are tunnels to 2 14 16
+Move or shoot (m-s) Give list of rooms terminated by 0
+You are in room 10
+I smell a wumpus
+There are tunnels to 2 14 16
+Move or shoot (m-s) Give list of rooms terminated by 0
+You are in room 10
+I smell a wumpus
+There are tunnels to 2 14 16
+Move or shoot (m-s) Give list of rooms terminated by 0
+You are in room 10
+I smell a wumpus
+There are tunnels to 2 14 16
+Move or shoot (m-s) Give list of rooms terminated by 0
+That was your last shot
+Another game? (y-n) Same room setup? (y-n) You are in room 11
+I feel a draft
+There are tunnels to 6 14 19
+Move or shoot (m-s) You are in room 19
+You fell into a pit
+Another game? (y-n) Same room setup? (y-n) You are in room 2
+There are tunnels to 10 15 18
+Move or shoot (m-s) You are in room 15
+I smell a wumpus
+Bats nearby
+There are tunnels to 2 4 11
+Move or shoot (m-s) You are in room 2
+There are tunnels to 10 15 18
+Move or shoot (m-s) You are in room 18
+There are tunnels to 2 6 17
+Move or shoot (m-s) You are in room 6
+There are tunnels to 14 18 19
+Move or shoot (m-s) You are in room 19
+There are tunnels to 6 10 13
+Move or shoot (m-s) You are in room 6
+There are tunnels to 14 18 19
+Move or shoot (m-s) You are in room 14
+There are tunnels to 1 6 12
+Move or shoot (m-s) You are in room 12
+There are tunnels to 14 17 20
+Move or shoot (m-s) You are in room 20
+I feel a draft
+There are tunnels to 5 11 12
+Move or shoot (m-s) You are in room 12
+There are tunnels to 14 17 20
+Move or shoot (m-s) You are in room 20
+I feel a draft
+There are tunnels to 5 11 12
+Move or shoot (m-s) You are in room 5
+You fell into a pit
+Another game? (y-n)

@@ -1,0 +1,125 @@
+Instructions? (y-n) Sorry, but the instruction file is not in this version.
+
+You're in a cave with 20 rooms and 3 tunnels leading from each room.
+There are 3 bats and 3 pits scattered throughout the cave, and your
+quiver holds 5 custom super anti-evil Wumpus arrows.  Good luck.
+
+You are in room 14 of the cave, and have 5 arrows left.
+*whoosh* (I feel a draft from some pits).
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 4, 13, and 15.
+Move or shoot? (m-s) *thunk*  The arrow can't find a way from 13 to 7 and flies randomly
+into room 14!
+
+*Thwack!*  A sudden piercing feeling informs you that the ricochet
+of your wild arrow has resulted in it wedging in your side, causing
+extreme agony.  The evil Wumpus, with its psychic powers, realizes this
+and immediately rushes to your side, not to help, alas, but to EAT YOU!
+(*CHOMP*)
+
+Care to play another game? (y-n) In the same cave? (y-n)
+You are in room 3 of the cave, and have 5 arrows left.
+*rustle* *rustle* (must be bats nearby)
+*whoosh* (I feel a draft from some pits).
+There are tunnels to rooms 2, 3, and 4.
+Move or shoot? (m-s) *flap*  *flap*  *flap*  (humongous bats pick you up and move you!)
+*flap*  *flap*  *flap*  (humongous bats pick you up and move you again!)
+*flap*  *flap*  *flap*  (humongous bats pick you up and move you again!)
+
+You are in room 17 of the cave, and have 5 arrows left.
+*whoosh* (I feel a draft from some pits).
+There are tunnels to rooms 9, 16, and 18.
+Move or shoot? (m-s)
+You are in room 9 of the cave, and have 5 arrows left.
+*rustle* *rustle* (must be bats nearby)
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 8, 10, and 17.
+Move or shoot? (m-s) *thunk*  The arrow can't find a way from 10 to 15 and flies randomly
+into room 14!
+
+You are in room 9 of the cave, and have 4 arrows left.
+*rustle* *rustle* (must be bats nearby)
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 8, 10, and 17.
+Move or shoot? (m-s) *flap*  *flap*  *flap*  (humongous bats pick you up and move you!)
+
+You are in room 11 of the cave, and have 4 arrows left.
+*rustle* *rustle* (must be bats nearby)
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 10, 12, and 20.
+Move or shoot? (m-s)
+*Thwack!*  A sudden piercing feeling informs you that the ricochet
+of your wild arrow has resulted in it wedging in your side, causing
+extreme agony.  The evil Wumpus, with its psychic powers, realizes this
+and immediately rushes to your side, not to help, alas, but to EAT YOU!
+(*CHOMP*)
+
+Care to play another game? (y-n) In the same cave? (y-n)
+You are in room 14 of the cave, and have 5 arrows left.
+*whoosh* (I feel a draft from some pits).
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 4, 13, and 15.
+Move or shoot? (m-s)
+You are in room 14 of the cave, and have 4 arrows left.
+*whoosh* (I feel a draft from some pits).
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 4, 13, and 15.
+Move or shoot? (m-s)
+You are in room 13 of the cave, and have 4 arrows left.
+*rustle* *rustle* (must be bats nearby)
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 12, 14, and 16.
+Move or shoot? (m-s)
+You are in room 16 of the cave, and have 4 arrows left.
+*whoosh* (I feel a draft from some pits).
+There are tunnels to rooms 13, 15, and 17.
+Move or shoot? (m-s)
+You are in room 13 of the cave, and have 4 arrows left.
+*rustle* *rustle* (must be bats nearby)
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 12, 14, and 16.
+Move or shoot? (m-s)
+You are in room 13 of the cave, and have 3 arrows left.
+*rustle* *rustle* (must be bats nearby)
+There are tunnels to rooms 12, 14, and 16.
+Move or shoot? (m-s)
+You are in room 16 of the cave, and have 3 arrows left.
+*whoosh* (I feel a draft from some pits).
+There are tunnels to rooms 13, 15, and 17.
+Move or shoot? (m-s) Without conscious thought you grab for the side of the cave and manage
+to grasp onto a rocky outcrop.  Beneath your feet stretches the limitless
+depths of a bottomless pit!  Rock crumbles beneath your feet!
+
+You are in room 15 of the cave, and have 3 arrows left.
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 6, 14, and 16.
+Move or shoot? (m-s) *thunk*  The arrow can't find a way from 14 to 16 and flies randomly
+into room 4!
+
+You are in room 15 of the cave, and have 2 arrows left.
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 6, 14, and 16.
+Move or shoot? (m-s)
+You are in room 16 of the cave, and have 2 arrows left.
+*whoosh* (I feel a draft from some pits).
+There are tunnels to rooms 13, 15, and 17.
+Move or shoot? (m-s)
+You are in room 13 of the cave, and have 2 arrows left.
+*rustle* *rustle* (must be bats nearby)
+There are tunnels to rooms 12, 14, and 16.
+Move or shoot? (m-s)
+You are in room 14 of the cave, and have 2 arrows left.
+*whoosh* (I feel a draft from some pits).
+*sniff* (I can smell the evil Wumpus nearby!)
+There are tunnels to rooms 4, 13, and 15.
+Move or shoot? (m-s) *thunk*  The arrow can't find a way from 6 to 18 and flies randomly
+into room 5!
+*thwock!* *groan* *crash*
+
+A horrible roar fills the cave, and you realize, with a smile, that you
+have slain the evil Wumpus and won the game!  You don't want to tarry for
+long, however, because not only is the Wumpus famous, but the stench of
+dead Wumpus is also quite well known, a stench plenty enough to slay the
+mightiest adventurer at a single whiff!!
+
+Care to play another game? (y-n)

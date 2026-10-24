@@ -1,0 +1,189 @@
+Would you like instructions (y or n)? The instructions are not in this version.
+Hit return to continue...
+You get to start.
+
+Your hand is: 3 5 6 7 7 Q K
+You ask me for: 7 cards in my hand, 38 in the pool.
+My books: none
+You ask me for: Entering pro mode.
+You ask me for: I don't understand!
+You ask me for: I say "GO FISH!"
+You drew Q.
+You drew the guess!
+You get to ask again!
+
+Your hand is: 3 5 6 7 7 Q Q K
+You ask me for: I say "GO FISH!"
+You drew 8.
+I ask you for: 6.
+You have 1 6.
+I get another guess!
+I ask you for: A.
+You say "GO FISH!"
+
+Your hand is: 3 5 7 7 8 Q Q K
+You ask me for: I say "GO FISH!"
+You drew 7.
+I ask you for: 6.
+You say "GO FISH!"
+
+Your hand is: 3 5 7 7 7 8 Q Q K
+You ask me for: I say "GO FISH!"
+You drew 8.
+I ask you for: 2.
+You say "GO FISH!"
+
+Your hand is: 3 5 7 7 7 8 8 Q Q K
+You ask me for: I say "GO FISH!"
+You drew 2.
+I ask you for: 5.
+You have 1 5.
+I get another guess!
+I ask you for: 6.
+You say "GO FISH!"
+
+Your hand is: 2 3 7 7 7 8 8 Q Q K
+You ask me for: I have 1 2.
+You get another guess!
+
+Your hand is: 2 2 3 7 7 7 8 8 Q Q K
+You ask me for: I say "GO FISH!"
+You drew K.
+I ask you for: Q.
+You have 2 Q's.
+I get another guess!
+I ask you for: 6.
+You say "GO FISH!"
+
+Your hand is: 2 2 3 7 7 7 8 8 K K
+You ask me for: I say "GO FISH!"
+You drew A.
+I ask you for: 5.
+You say "GO FISH!"
+
+Your hand is: A 2 2 3 7 7 7 8 8 K K
+You ask me for: I say "GO FISH!"
+You drew K.
+I ask you for: 9.
+You say "GO FISH!"
+I drew the guess!
+I get to ask again!
+I ask you for: 10.
+You say "GO FISH!"
+I drew Q and made a book of Q's!
+
+Your hand is: A 2 2 3 7 7 7 8 8 K K K
+You ask me for: I say "GO FISH!"
+You drew 6.
+I ask you for: J.
+You say "GO FISH!"
+
+Your hand is: A 2 2 3 6 7 7 7 8 8 K K K
+You ask me for: I say "GO FISH!"
+You drew 5.
+I ask you for: 5.
+You have 1 5.
+I made a book of 5's!
+I get another guess!
+I ask you for: 6.
+You have 1 6.
+I made a book of 6's!
+I get another guess!
+I ask you for: 9.
+You say "GO FISH!"
+
+Your hand is: A 2 2 3 7 7 7 8 8 K K K
+You ask me for: I say "GO FISH!"
+You drew 4.
+I ask you for: A.
+You have 1 A.
+I get another guess!
+I ask you for: A.
+You say "GO FISH!"
+
+Your hand is: 2 2 3 4 7 7 7 8 8 K K K
+You ask me for: I say "GO FISH!"
+You drew 8.
+I ask you for: 9.
+You say "GO FISH!"
+
+Your hand is: 2 2 3 4 7 7 7 8 8 8 K K K
+You ask me for: I say "GO FISH!"
+You drew 10.
+I ask you for: 3.
+You have 1 3.
+I get another guess!
+I ask you for: A.
+You say "GO FISH!"
+
+Your hand is: 2 2 4 7 7 7 8 8 8 10 K K K
+You ask me for: I say "GO FISH!"
+You drew 2.
+I ask you for: 7.
+You have 3 7's.
+I made a book of 7's!
+I get another guess!
+I ask you for: A.
+You say "GO FISH!"
+
+Your hand is: 2 2 2 4 8 8 8 10 K K K
+You ask me for: I say "GO FISH!"
+You drew J.
+I ask you for: 4.
+You have 1 4.
+I get another guess!
+I ask you for: 10.
+You have 1 10.
+I made a book of 10's!
+I get another guess!
+I ask you for: J.
+You have 1 J.
+I made a book of J's!
+I get another guess!
+I ask you for: A.
+You say "GO FISH!"
+
+Your hand is: 2 2 2 8 8 8 K K K
+You ask me for: I say "GO FISH!"
+You drew 8 and made a book of 8's!
+You drew the guess!
+You get to ask again!
+
+Your hand is: 2 2 2 K K K + Book of 8
+You ask me for: I say "GO FISH!"
+You drew 4.
+I ask you for: A.
+You say "GO FISH!"
+I drew A and made a book of A's!
+I drew the guess!
+I get to ask again!
+I ask you for: 3.
+You say "GO FISH!"
+
+Your hand is: 2 2 2 4 K K K + Book of 8
+You ask me for: I have 1 2.
+You made a book of 2's!
+You get another guess!
+
+Your hand is: 4 K K K + Books of 2 8
+You ask me for: I have 2 4's.
+You get another guess!
+
+Your hand is: 4 4 4 K K K + Books of 2 8
+You ask me for: I say "GO FISH!"
+You drew K and made a book of K's!
+I ask you for: 3.
+You say "GO FISH!"
+I drew 3 and made a book of 3's!
+I drew the guess!
+I get to ask again!
+I ask you for: 9.
+You say "GO FISH!"
+I drew 9 and made a book of 9's!
+I don't have any more cards!
+My books: A 3 5 6 7 9 10 J Q
+Your books: 2 8 K
+
+I have 9, you have 3.
+
+I win!!!

@@ -1,0 +1,131 @@
+Try your hand at governing Ancient Sumeria
+successfully for a 10 year term of office.
+
+Hamurabi: I beg to report to you,
+in year 0, 0 people starved 5 came to the city.
+A horrible plague struck! Many people have died!
+
+Population is now 50
+The city now owns 1000 acres
+You have harvested 3 bushels per acre.
+Rats ate 200 bushels.
+
+You now have 2800 bushels in store.
+
+Land is trading at 21 bushels per acre.
+How many acres do you wish to buy?
+How many bushels do you wish to feed your people?
+(No starvation: 1000 bushels.)
+How many acres do you wish to plant with seed?
+(MAX: 500 acres)
+Hamurabi: I beg to report to you,
+in year 1, 15 people starved 2 came to the city.
+A horrible plague struck! Many people have died!
+
+Population is now 82
+The city now owns 1010 acres
+You have harvested 1 bushels per acre.
+Rats ate 945 bushels.
+
+You now have 1890 bushels in store.
+
+Land is trading at 20 bushels per acre.
+How many acres do you wish to buy?
+How many acres do you wish to sell?
+How many bushels do you wish to feed your people?
+(No starvation: 1640 bushels.)
+How many acres do you wish to plant with seed?
+(MAX: 820 acres)
+Hamurabi: I beg to report to you,
+in year 2, 25 people starved 15 came to the city.
+
+Population is now 179
+The city now owns 1010 acres
+You have harvested 2 bushels per acre.
+Rats ate 260 bushels.
+
+You now have 1042 bushels in store.
+
+Land is trading at 22 bushels per acre.
+How many acres do you wish to buy?
+How many acres do you wish to sell?
+How many bushels do you wish to feed your people?
+(No starvation: 3580 bushels.)
+How many acres do you wish to plant with seed?
+(MAX: 1790 acres)
+Hamurabi: I beg to report to you,
+in year 3, 54 people starved 5 came to the city.
+A horrible plague struck! Many people have died!
+
+Population is now 182
+The city now owns 929 acres
+You have harvested 6 bushels per acre.
+Rats ate 363 bushels.
+
+You now have 1818 bushels in store.
+
+Land is trading at 26 bushels per acre.
+How many acres do you wish to buy?
+How many acres do you wish to sell?
+How many bushels do you wish to feed your people?
+(No starvation: 3640 bushels.)
+How many acres do you wish to plant with seed?
+(MAX: 1820 acres)
+Hamurabi: I beg to report to you,
+in year 4, 55 people starved 7 came to the city.
+
+Population is now 371
+The city now owns 889 acres
+You have harvested 7 bushels per acre.
+Rats ate 351 bushels.
+
+You now have 2110 bushels in store.
+
+Land is trading at 23 bushels per acre.
+How many acres do you wish to buy?
+How many acres do you wish to sell?
+How many bushels do you wish to feed your people?
+(No starvation: 7420 bushels.)
+How many acres do you wish to plant with seed?
+(MAX: 3710 acres)
+Hamurabi: I beg to report to you,
+in year 5, 112 people starved 65 came to the city.
+A horrible plague struck! Many people have died!
+
+Population is now 646
+The city now owns 741 acres
+You have harvested 3 bushels per acre.
+Rats ate 184 bushels.
+
+You now have 920 bushels in store.
+
+Land is trading at 26 bushels per acre.
+How many acres do you wish to buy?
+How many acres do you wish to sell?
+How many bushels do you wish to feed your people?
+(No starvation: 12920 bushels.)
+How many acres do you wish to plant with seed?
+(MAX: 6460 acres)
+Hamurabi: I beg to report to you,
+in year 6, 194 people starved 102 came to the city.
+A horrible plague struck! Many people have died!
+
+Population is now 930
+The city now owns 416 acres
+You have harvested 2 bushels per acre.
+Rats ate 104 bushels.
+
+You now have 626 bushels in store.
+
+Land is trading at 19 bushels per acre.
+How many acres do you wish to buy?
+How many acres do you wish to sell?
+How many bushels do you wish to feed your people?
+(No starvation: 18600 bushels.)
+How many acres do you wish to plant with seed?
+(MAX: 9300 acres)
+You starved 551 people in one year!!!
+Due to this extreme mismanagement you have not only
+been impeached and thrown out of office but you have
+also been declared 'National Fink' !!
+So long for now.

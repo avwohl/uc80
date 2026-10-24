@@ -1,0 +1,1593 @@
+[startrek.intro]
+[startrek.logo]
+Your orders are as follows:
+ Destroy the 37 Klingon warships which have invaded
+ the galaxy before they can attack Federation Headquarters
+ on stardate 3938. This gives you 38 days. There are
+ 5 starbases in the galaxy for resupplying your ship.
+
+Hit any key to accept command.
+Your mission begins with your starship located
+in the galactic quadrant Spica IV.
+
+------------------------
+                            Stardate            3900
+                            Condition           GREEN
+ *                          Quadrant            8, 8
+    *        *              Sector              5, 4
+         <*>                Photon Torpedoes    10
+                            Total Energy        3000
+                            Shields             0
+          *                 Klingons Remaining  37
+------------------------
+
+Command?
+Energy available = 3000
+
+Input number of units to shields: Deflector Control Room report:
+  'Shields now at 1500 units per your command.'
+
+Command?
+------------------------
+                            Stardate            3900
+                            Condition           GREEN
+ *                          Quadrant            8, 8
+    *        *              Sector              5, 4
+         <*>                Photon Torpedoes    10
+                            Total Energy        3000
+                            Shields             1500
+          *                 Klingons Remaining  37
+------------------------
+
+Command?
+Long Range Scan for Quadrant 8, 8
+
+-------------------
+: 007 : 012 : *** :
+-------------------
+: 001 : 004 : *** :
+-------------------
+: *** : *** : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-8): Damage Control report:
+    Long range sensors damaged
+
+Now entering Arcturus IV quadrant...
+
+------------------------
+                            Stardate            3902
+                            Condition           GREEN
+                  >!<       Quadrant            7, 8
+                            Sector              5, 4
+         <*>    *           Photon Torpedoes    10
+                            Total Energy        2964
+                            Shields             1500
+             *              Klingons Remaining  37
+------------------------
+
+Command?
+------------------------
+                            Stardate            3902
+                            Condition           GREEN
+                  >!<       Quadrant            7, 8
+                            Sector              5, 4
+         <*>    *           Photon Torpedoes    10
+                            Total Energy        2964
+                            Shields             1500
+             *              Klingons Remaining  37
+------------------------
+
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): Damage Control report:
+    Short range sensors damaged
+
+Now entering Regulus IV quadrant...
+
+Combat Area  Condition Red
+
+*** Short Range Sensors are out ***
+Command?
+
+*** Short Range Sensors are out ***
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): 223 unit hit on Enterprise from sector 5, 7
+    <Shields down to 1277 units>
+
+Damage Control reports
+   'Phaser control' damaged by hit
+
+114 unit hit on Enterprise from sector 6, 7
+    <Shields down to 1163 units>
+
+Damage Control reports
+   'Phaser control' damaged by hit
+
+Damage Control report:
+    Phaser control repair completed
+
+Damage Control report:
+    Short range sensors damaged
+
+Now entering Aldebaran IV quadrant...
+
+
+*** Short Range Sensors are out ***
+Command?
+
+*** Short Range Sensors are out ***
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): Now entering Betelgeuse IV quadrant...
+
+Combat Area  Condition Red
+
+*** Short Range Sensors are out ***
+Command?
+
+*** Short Range Sensors are out ***
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): 632 unit hit on Enterprise from sector 5, 3
+    <Shields down to 531 units>
+
+Damage Control reports
+   'Long range sensors' damaged by hit
+
+Damage Control report:
+    Long range sensors damaged
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+
+*** Short Range Sensors are out ***
+Command?
+
+*** Short Range Sensors are out ***
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): 118 unit hit on Enterprise from sector 3, 3
+    <Shields down to 413 units>
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+
+*** Short Range Sensors are out ***
+Command?
+
+*** Short Range Sensors are out ***
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): 42 unit hit on Enterprise from sector 5, 4
+    <Shields down to 371 units>
+
+Damage Control report:
+    Shield control state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+
+*** Short Range Sensors are out ***
+Command?
+
+*** Short Range Sensors are out ***
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): 6 unit hit on Enterprise from sector 5, 2
+    <Shields down to 365 units>
+
+Damage Control report:
+    Short range sensors repair completed
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3912
+                            Condition           *RED*
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+   +K+                      Photon Torpedoes    10
+                            Total Energy        1649
+                            Shields             365
+                            Klingons Remaining  37
+------------------------
+
+Command?
+------------------------
+                            Stardate            3912
+                            Condition           *RED*
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+   +K+                      Photon Torpedoes    10
+                            Total Energy        1649
+                            Shields             365
+                            Klingons Remaining  37
+------------------------
+
+Command?
+Phasers locked on target;
+Energy available = 1284 units
+
+Number of units to fire: 305 unit hit on Klingon at sector 5, 2
+*** Klingon Destroyed ***
+
+Command?
+------------------------
+                            Stardate            3912
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1349
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): Damage Control report:
+    Damage control state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3913
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1331
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3913
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1331
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): Damage Control report:
+    Warp engines state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3914
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1313
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3914
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1313
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): Damage Control report:
+    Shield control state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3915
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1295
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3915
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1295
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-8): Damage Control report:
+    Warp engines damaged
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1277
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1277
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1265
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1265
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1253
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1253
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1241
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1241
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long range sensors is inoperable.
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Long range sensors repair completed
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1229
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1229
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Phaser control damaged
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1217
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1217
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1205
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1205
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Warp engines repair completed
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1193
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1193
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1181
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1181
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Long range sensors state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1169
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1169
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1157
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1157
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1145
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1145
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Short range sensors state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1133
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1133
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1121
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1121
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1109
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1109
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1097
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1097
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Short range sensors state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1085
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1085
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1073
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1073
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Photon tubes state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1061
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1061
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1049
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1049
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Library computer state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1037
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1037
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1025
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1025
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1013
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1013
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1001
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        1001
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        989
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        989
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Warp engines damaged
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        977
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        977
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        965
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        965
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        953
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        953
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        941
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        941
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        929
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        929
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Phaser control repair completed
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        917
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        917
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        905
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        905
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        893
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        893
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+Course (0-9): Warp Factor (0-0.2): Damage Control report:
+    Long range sensors state of repair improved
+
+Warp Engines shut down at sector 3, 4 due to bad navigation.
+
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        881
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+------------------------
+                            Stardate            3916
+                            Condition           GREEN
+          *                 Quadrant            4, 8
+         <*>                Sector              4, 4
+                            Photon Torpedoes    10
+                            Total Energy        881
+                            Shields             365
+                            Klingons Remaining  36
+------------------------
+
+Command?
+Long Range Scan for Quadrant 4, 8
+
+-------------------
+: 005 : 104 : *** :
+-------------------
+: 007 : 001 : *** :
+-------------------
+: 018 : 003 : *** :
+-------------------
+
+Command?
+There were 36 Klingon Battlecruisers left at the end of your mission.
+
+The Federation is in need of a new starship commander for a similar mission.
+If there is a volunteer, let him step forward and enter 'aye':

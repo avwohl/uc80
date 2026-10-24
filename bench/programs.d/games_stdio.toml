@@ -1,0 +1,447 @@
+# Tier 3, stdio game group: early Unix and classic BASIC-era games that
+# talk to a terminal through stdin and stdout only (see
+# docs/benchmark_proposal.md, 4.3, and docs/bench_harness.md, "Games").
+#
+# Every game gets a scripted input file (bench/programs/<name>/input.txt)
+# that plays a real game to its end, and a golden file from a host build
+# with the same shared glue (bench/support/posix_shim.[ch]).  Third-party
+# sources are fetched at a pinned commit and checked by sha256; nothing
+# of them is vendored.  The "edit" entries are applied for every
+# compiler: they remove Unix headers, replace K&R definitions (uc80
+# rejects them), and bind the game to the shim.
+#
+# Licenses:
+#   FUZIX Applications/V7/games   Caldera International license (V7, 1979),
+#                                 4-clause BSD style with an advertising
+#                                 clause: see Applications/V7/COPYRIGHT
+#   NetBSD games                  3-clause BSD (Regents of the University
+#                                 of California), per file header
+#   z88dk examples/console        per file; see each "about" line
+#   FUZIX Applications/games      per file header
+
+
+[repo.stdio-fuzix]
+commit = "776bfc942c0ce3f5b86e4c48848d154a60ff1cb6"
+raw = "https://raw.githubusercontent.com/EtchedPixels/FUZIX/{commit}/{path}"
+license = "Caldera license for Applications/V7/games; per file header elsewhere"
+
+[repo.stdio-netbsd]
+commit = "5b0e0d5997518246c017c6577adcb59be12d0a79"
+raw = "https://raw.githubusercontent.com/NetBSD/src/{commit}/games/{path}"
+license = "3-clause BSD (Regents of the University of California), per file header"
+
+[[program]]
+name = "v7-arithmetic"
+tier = 3
+timing = "total"
+about = "V7 arithmetic (Unix Version 7, 1979, FUZIX ANSI port; Caldera license): scripted quiz of 40 sums"
+files = [
+  { repo = "stdio-fuzix", path = "Applications/V7/games/arithmetic.c", sha256 = "e98d288862187a31f65702f73259657ae21134709608cde77c0577b96cc8bb6f", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "arithmetic.c", old = "#include <unistd.h>\n", new = "#include <time.h>\n" },
+  { file = "arithmetic.c", old = "#include <signal.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#undef random\n#define random a_rand\n#define getline a_getl\n" },
+  { file = "arithmetic.c", old = "void getline(char *s)\n{\n\tregister char *rs;\n\n\trs = s;\n\n\tfflush(stdout);\n\twhile ((*rs = getchar()) == ' ');\n\twhile (*rs != '\\n')\n\t\tif (*rs == 0)\n\t\t\texit(0);\n\t\telse if (rs >= &s[99]) {\n\t\t\twhile ((*rs = getchar()) != '\\n')\n\t\t\t\tif (*rs == '\\0')\n\t\t\t\t\texit(0);\n\t\t} else\n\t\t\t*++rs = getchar();\n\twhile (*--rs == ' ')\n\t\t*rs = '\\n';\n}\n", new = "void getline(char *s)\n{\n\tint c, n = 0;\n\n\tfflush(stdout);\n\tfor (;;) {\n\t\tc = getchar();\n\t\tif (c == EOF || c == 26 || c == 255 || c == 0)\n\t\t\texit(0);\n\t\tif (c == '\\r')\n\t\t\tcontinue;\n\t\tif (c == '\\n')\n\t\t\tbreak;\n\t\tif (c == ' ' && n == 0)\n\t\t\tcontinue;\n\t\tif (n < 99)\n\t\t\ts[n++] = c;\n\t}\n\twhile (n > 0 && s[n - 1] == ' ')\n\t\tn--;\n\ts[n] = '\\n';\n\ts[n + 1] = 0;\n}\n" },
+  { file = "arithmetic.c", old = "\tsignal(SIGINT, delete);\n", new = "\tbench_args(&argc, &argv);\n\tsignal(SIGINT, delete);\n" },
+  { file = "arithmetic.c", old = "k = stvec;", new = "k = (int)(stvec & 0x7fff);" },
+  { file = "arithmetic.c", old = "temp = random(range) + random(range);", new = "temp = random(range);\n\ttemp += random(range);" },
+  { file = "arithmetic.c", old = "l, l / rights, ((l * 100) / rights)%100);", new = "l, (int)(l / rights), (int)(((l * 100) / rights)%100));" },
+]
+stdin_file = "input.txt"
+timeout = 600
+
+[[program]]
+name = "v7-fish"
+tier = 3
+timing = "total"
+about = "V7 fish, Go Fish against the computer (Unix Version 7, 1979, FUZIX ANSI port; Caldera license): scripted full game"
+files = [
+  { repo = "stdio-fuzix", path = "Applications/V7/games/fish.c", sha256 = "f20d2815c41ff2b8c7d80a393fef291a88bbf8b447a626214f8926a95f16f857", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "fish.c", old = "#include <unistd.h>\n", new = "#include <stdint.h>\n#include <time.h>\n#include \"posix_shim.h\"\n#include \"sglue.h\"\n" },
+  { file = "fish.c", old = "\tregister int c;\n\n\tif (argc > 1 && argv[1][0] == '-') {", new = "\tregister int c;\n\n\tbench_args(&argc, &argv);\n\tif (argc > 1 && argv[1][0] == '-') {" },
+]
+stdin_file = "input.txt"
+timeout = 600
+
+[[program]]
+name = "v7-wump"
+tier = 3
+timing = "total"
+about = "V7 wump, Hunt the Wumpus (Unix Version 7, 1979, from PCC Vol 2 No 1, FUZIX ANSI port; Caldera license): scripted games"
+files = [
+  { repo = "stdio-fuzix", path = "Applications/V7/games/wump.c", sha256 = "27d27aaaea3409fbeab25949844d0468fc176e6aa3eb6cc19b5ec124517399e9", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "wump.c", old = "#include <stdlib.h>\n", new = "#include <stdlib.h>\n#include <stdint.h>\n#include <time.h>\n#include \"posix_shim.h\"\n#include \"sglue.h\"\n" },
+  { file = "wump.c", old = "\tprintf(\"Instructions? (y-n) \");", new = "\tbench_args(&argc, &argv);\n\tprintf(\"Instructions? (y-n) \");" },
+  { file = "wump.c", old = "srand((first[1] * first[0]) ^ first[1]);", new = "srand(((first[1] * first[0]) ^ first[1]) & 0x7fff);" },
+]
+stdin_file = "input.txt"
+timeout = 600
+
+[[program]]
+name = "bsd-wump"
+tier = 3
+timing = "total"
+about = "NetBSD wump, Hunt the Wumpus (Dave Taylor 1989, 4.3BSD-Reno era rewrite of the V7 game; 3-clause BSD): scripted games"
+files = [
+  { repo = "stdio-netbsd", path = "wump/wump.c", sha256 = "258373f9fe0e432bbdfa56605aae93b51ca4b8106d86cdb04428d51f615e823e", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "wump.c", old = "#include <sys/cdefs.h>\n", new = "" },
+  { file = "wump.c", old = "#include <err.h>\n#include <sys/types.h>\n#include <sys/file.h>\n#include <sys/wait.h>\n", new = "" },
+  { file = "wump.c", old = "#include <unistd.h>\n#include \"pathnames.h\"\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n" },
+  { file = "wump.c", old = "\t/* Revoke setgid privileges */\n\tsetgid(getgid());\n", new = "\tbench_args(&argc, &argv);\n" },
+  { file = "wump.c", old = "#ifdef DEBUG\n\twhile ((c = getopt(argc, argv, \"a:b:hp:r:t:d\")) != -1)\n#else\n\twhile ((c = getopt(argc, argv, \"a:b:hp:r:t:\")) != -1)\n#endif\n\t\tswitch (c) {\n\t\tcase 'a':\n\t\t\tarrow_num = atoi(optarg);\n\t\t\tbreak;\n\t\tcase 'b':\n\t\t\tbat_num = atoi(optarg);\n\t\t\tbreak;\n#ifdef DEBUG\n\t\tcase 'd':\n\t\t\tdebug = 1;\n\t\t\tbreak;\n#endif\n\t\tcase 'h':\n\t\t\tlevel = HARD;\n\t\t\tbreak;\n\t\tcase 'p':\n\t\t\tpit_num = atoi(optarg);\n\t\t\tbreak;\n\t\tcase 'r':\n\t\t\troom_num = atoi(optarg);\n\t\t\tif (room_num < MIN_ROOMS_IN_CAVE) {\n\t\t\t\t(void)fprintf(stderr,\n\t\"No self-respecting wumpus would live in such a small cave!\\n\");\n\t\t\t\texit(1);\n\t\t\t}\n\t\t\tif (room_num > MAX_ROOMS_IN_CAVE) {\n\t\t\t\t(void)fprintf(stderr,\n\t\"Even wumpi can't furnish caves that large!\\n\");\n\t\t\t\texit(1);\n\t\t\t}\n\t\t\tbreak;\n\t\tcase 't':\n\t\t\tlink_num = atoi(optarg);\n\t\t\tif (link_num < 2) {\n\t\t\t\t(void)fprintf(stderr,\n\t\"Wumpi like extra doors in their caves!\\n\");\n\t\t\t\texit(1);\n\t\t\t}\n\t\t\tbreak;\n\t\tcase '?':\n\t\tdefault:\n\t\t\tusage();\n\t}\n", new = "" },
+  { file = "wump.c", old = "srandom((int)time((time_t *)0));", new = "srandom(((int)time((time_t *)0)) & 0x7fff);" },
+  { file = "wump.c", old = "static void\ninstructions(void)\n{\n\tconst char *pager;\n\tpid_t pid;\n\tint status;\n\tint fd;\n\n\t/*\n\t * read the instructions file, if needed, and show the user how to\n\t * play this game!\n\t */\n\tif (!getans(\"Instructions? (y-n) \"))\n\t\treturn;\n\n\tif (access(_PATH_WUMPINFO, R_OK)) {\n\t\t(void)printf(\n\"Sorry, but the instruction file seems to have disappeared in a\\n\\\npuff of greasy black smoke! (poof)\\n\");\n\t\treturn;\n\t}\n\n\tif (!isatty(STDOUT_FILENO))\n\t\tpager = \"cat\";\n\telse {\n\t\tif (!(pager = getenv(\"PAGER\")) || (*pager == 0))\n\t\t\tpager = _PATH_PAGER;\n\t}\n\tswitch (pid = fork()) {\n\tcase 0: /* child */\n\t\tif ((fd = open(_PATH_WUMPINFO, O_RDONLY)) == -1)\n\t\t\terr(1, \"open %s\", _PATH_WUMPINFO);\n\t\tif (dup2(fd, STDIN_FILENO) == -1)\n\t\t\terr(1, \"dup2\");\n\t\t(void)execl(\"/bin/sh\", \"sh\", \"-c\", pager, (char *) NULL);\n\t\terr(1, \"exec sh -c %s\", pager);\n\tcase -1:\n\t\terr(1, \"fork\");\n\tdefault:\n\t\t(void)waitpid(pid, &status, 0);\n\t\tbreak;\n\t}\n}\n", new = "static void\ninstructions(void)\n{\n\tif (!getans(\"Instructions? (y-n) \"))\n\t\treturn;\n\t(void)printf(\"Sorry, but the instruction file is not in this version.\\n\");\n}\n" },
+]
+stdin_file = "input.txt"
+check_defines = ["lint"]
+time_defines = ["lint"]
+timeout = 600
+
+[[program]]
+name = "bsd-arithmetic"
+tier = 3
+timing = "total"
+about = "NetBSD arithmetic (Eamonn McManus 1989, rewrite of the V7 game for 4.3BSD-Reno; 3-clause BSD): scripted quiz with + - x /, wrong answers and score screens"
+files = [
+  { repo = "stdio-netbsd", path = "arithmetic/arithmetic.c", sha256 = "899d50398d71c189f1f144317bac62112d6756b4948049c368b02a4f91fe2636", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "arithmetic.c", old = "#include <sys/cdefs.h>\n", new = "" },
+  { file = "arithmetic.c", old = "#include <sys/types.h>\n#include <err.h>\n", new = "" },
+  { file = "arithmetic.c", old = "#include <signal.h>\n", new = "" },
+  { file = "arithmetic.c", old = "#include <unistd.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n#define __unused\n#define getprogname() \"arith\"\n" },
+  { file = "arithmetic.c", old = "static const char defaultkeys[] = \"+-\";", new = "static const char defaultkeys[] = \"+-x/\";" },
+  { file = "arithmetic.c", old = "\t/* Revoke setgid privileges */\n\tsetgid(getgid());\n\n\twhile ((ch = getopt(argc, argv, \"r:o:\")) != -1)\n\t\tswitch(ch) {\n\t\tcase 'o': {\n\t\t\tconst char *p;\n\n\t\t\tfor (p = keys = optarg; *p; ++p)\n\t\t\t\tif (!strchr(keylist, *p))\n\t\t\t\t\terrx(1, \"arithmetic: unknown key.\");\n\t\t\tnkeys = p - optarg;\n\t\t\tbreak;\n\t\t}\n\t\tcase 'r':\n\t\t\tif ((rangemax = atoi(optarg)) <= 0)\n\t\t\t\terrx(1, \"arithmetic: invalid range.\");\n\t\t\tbreak;\n\t\tcase '?':\n\t\tdefault:\n\t\t\tusage();\n\t\t}\n\tif (argc -= optind)\n\t\tusage();\n", new = "\tbench_args(&argc, &argv);\n" },
+  { file = "arithmetic.c", old = "srandom((int)time(NULL));", new = "srandom(((int)time(NULL)) & 0x7fff);" },
+]
+stdin_file = "input.txt"
+check_defines = ["lint"]
+time_defines = ["lint"]
+timeout = 600
+
+[[program]]
+name = "bsd-fish"
+tier = 3
+timing = "total"
+about = "NetBSD fish, Go Fish (Muffy Barkocy 1990, 4.3BSD-Reno era rewrite of the V7 game; 3-clause BSD): scripted full game with pro mode"
+files = [
+  { repo = "stdio-netbsd", path = "fish/fish.c", sha256 = "29331c62ebc8ee7e95b5534ce28f856ee700f774c2236cb8487d9fb651c39b27", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "fish.c", old = "#include <sys/cdefs.h>\n", new = "" },
+  { file = "fish.c", old = "#include <sys/types.h>\n#include <sys/wait.h>\n#include <errno.h>\n#include <fcntl.h>\n", new = "" },
+  { file = "fish.c", old = "#include <unistd.h>\n", new = "" },
+  { file = "fish.c", old = "#include <err.h>\n#include \"pathnames.h\"\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n#define arc4random_uniform(n) (rand() % (n))\n" },
+  { file = "fish.c", old = "\t/* Revoke setgid privileges */\n\tsetgid(getgid());\n", new = "\tbench_args(&argc, &argv);\n" },
+  { file = "fish.c", old = "\twhile ((ch = getopt(argc, argv, \"p\")) != -1)\n\t\tswitch(ch) {\n\t\tcase 'p':\n\t\t\tpromode = 1;\n\t\t\tbreak;\n\t\tcase '?':\n\t\tdefault:\n\t\t\tusage();\n\t\t}\n", new = "" },
+  { file = "fish.c", old = "\tpid_t pid;\n\tint fd;\n\tconst char *pager;\n\tint status;\n", new = "" },
+  { file = "fish.c", old = "\tswitch (pid = fork()) {\n\tcase 0: /* child */\n\t\tif (!isatty(1))\n\t\t\tpager = \"cat\";\n\t\telse {\n\t\t\tif (!(pager = getenv(\"PAGER\")) || (*pager == 0))\n\t\t\t\tpager = _PATH_MORE;\n\t\t}\n\t\tif ((fd = open(_PATH_INSTR, O_RDONLY)) == -1)\n\t\t\terr(1, \"open %s\", _PATH_INSTR);\n\t\tif (dup2(fd, 0) == -1)\n\t\t\terr(1, \"dup2\");\n\t\t(void)execl(\"/bin/sh\", \"sh\", \"-c\", pager, (char *) NULL);\n\t\terr(1, \"exec sh -c %s\", pager);\n\t\t/*NOTREACHED*/\n\tcase -1:\n\t\terr(1, \"fork\");\n\t\t/*NOTREACHED*/\n\tdefault:\n\t\t(void)waitpid(pid, &status, 0);\n\t\tbreak;\n\t}\n", new = "\t(void)printf(\"The instructions are not in this version.\\n\");\n" },
+]
+stdin_file = "input.txt"
+check_defines = ["lint"]
+time_defines = ["lint"]
+timeout = 600
+
+[[program]]
+name = "bsd-pig"
+tier = 3
+timing = "total"
+about = "NetBSD pig, Pig Latin filter (4.4BSD, 1993; 3-clause BSD): the first two paragraphs of the Gettysburg Address"
+files = [
+  { repo = "stdio-netbsd", path = "pig/pig.c", sha256 = "1b7f631b309d69d17debe4d0dc7e230ec3f7bf5abec053e44c0050770463a82a", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "pig.c", old = "#include <sys/cdefs.h>\n", new = "" },
+  { file = "pig.c", old = "#include <sys/types.h>\n\n", new = "" },
+  { file = "pig.c", old = "#include <err.h>\n", new = "" },
+  { file = "pig.c", old = "#include <unistd.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n" },
+  { file = "pig.c", old = "\twhile ((ch = getopt(argc, argv, \"\")) != -1)\n\t\tswitch(ch) {\n\t\tcase '?':\n\t\tdefault:\n\t\t\tusage();\n\t\t}\n\targc -= optind;\n\targv += optind;\n", new = "\tbench_args(&argc, &argv);\n\targc -= 1;\n\targv += 1;\n" },
+]
+stdin_file = "input.txt"
+check_defines = ["lint"]
+time_defines = ["lint"]
+timeout = 600
+
+[[program]]
+name = "bsd-number"
+tier = 3
+timing = "total"
+about = "NetBSD number, spells numbers in words (3BSD, 1979; 3-clause BSD): scripted list of 14 numbers"
+files = [
+  { repo = "stdio-netbsd", path = "number/number.c", sha256 = "9dc54863d9114a2af492ec88c44420c01c0f683590056979444a5d38e06b99d8", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "number.c", old = "#include <sys/cdefs.h>\n", new = "" },
+  { file = "number.c", old = "#include <sys/types.h>\n", new = "" },
+  { file = "number.c", old = "#include <err.h>\n", new = "" },
+  { file = "number.c", old = "#include <unistd.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n" },
+  { file = "number.c", old = "\twhile ((ch = getopt(argc, argv, \"l\")) != -1)\n\t\tswitch (ch) {\n\t\tcase 'l':\n\t\t\tlflag = 1;\n\t\t\tbreak;\n\t\tcase '?':\n\t\tdefault:\n\t\t\tusage();\n\t\t}\n\targc -= optind;\n\targv += optind;\n", new = "\tbench_args(&argc, &argv);\n\targc -= 1;\n\targv += 1;\n" },
+]
+stdin_file = "input.txt"
+check_defines = ["lint"]
+time_defines = ["lint"]
+timeout = 600
+
+[[program]]
+name = "bsd-morse"
+tier = 3
+timing = "total"
+about = "NetBSD morse, text to Morse code (4.3BSD-Reno, 1990; 3-clause BSD): two lines of text"
+files = [
+  { repo = "stdio-netbsd", path = "morse/morse.c", sha256 = "fa6ab7fea08b037cac8d71ed2aa088ac262548d03a117cb0da24dd1e7ea581fb", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "morse.c", old = "#include <sys/cdefs.h>\n", new = "" },
+  { file = "morse.c", old = "__COPYRIGHT(\"@(#) Copyright (c) 1988, 1993\\\n The Regents of the University of California.  All rights reserved.\");\n/*\t@(#)morse.c\t8.1 (Berkeley) 5/31/93\t*/\n__RCSID(\"$NetBSD: morse.c,v 1.23 2024/10/12 19:26:24 rillig Exp $\");\n", new = "" },
+  { file = "morse.c", old = "#include <unistd.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))\n" },
+  { file = "morse.c", old = "\t/* Revoke setgid privileges */\n\tsetgid(getgid());\n", new = "" },
+  { file = "morse.c", old = "\twhile ((ch = getopt(argc, argv, \"ds\")) != -1)\n\t\tswitch ((char)ch) {\n\t\tcase 'd':\n\t\t\tdflag = 1;\n\t\t\tbreak;\n\t\tcase 's':\n\t\t\tsflag = 1;\n\t\t\tbreak;\n\t\tdefault:\n\t\t\tfprintf(stderr, \"usage: morse [-ds] [string ...]\\n\");\n\t\t\texit(1);\n\t\t}\n\targc -= optind;\n\targv += optind;\n", new = "\tbench_args(&argc, &argv);\n\targc -= 1;\n\targv += 1;\n" },
+]
+stdin_file = "input.txt"
+check_defines = ["lint"]
+time_defines = ["lint"]
+timeout = 600
+
+[[program]]
+name = "bsd-caesar"
+tier = 3
+timing = "total"
+about = "NetBSD caesar, breaks a Caesar cipher by letter frequency (4.3BSD-Reno, 1990; 3-clause BSD): the Gettysburg Address rotated by 7, uses libm log()"
+files = [
+  { repo = "stdio-netbsd", path = "caesar/caesar.c", sha256 = "2ef61b3725094aa67d3a0ea4d8f1d4fc03b0c53117c0f81fc41fb21c2d7a6d93", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "caesar.c", old = "#include <sys/cdefs.h>\n__COPYRIGHT(\"@(#) Copyright (c) 1989, 1993\\\n The Regents of the University of California.  All rights reserved.\");\n", new = "" },
+  { file = "caesar.c", old = "__RCSID(\"$NetBSD: caesar.c,v 1.25 2025/09/18 22:25:04 rillig Exp $\");\n", new = "" },
+  { file = "caesar.c", old = "#include <err.h>\n", new = "" },
+  { file = "caesar.c", old = "#include <stdlib.h>\n\n#define NCHARS", new = "#include <stdlib.h>\n#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n\n#define NCHARS" },
+  { file = "caesar.c", old = "main(int argc, char **argv)\n{\n", new = "main(int argc, char **argv)\n{\n\n\tbench_args(&argc, &argv);\n" },
+]
+stdin_file = "input.txt"
+check_defines = ["lint"]
+time_defines = ["lint"]
+timeout = 600
+
+[[program]]
+name = "bsd-bcd"
+tier = 3
+timing = "total"
+about = "NetBSD bcd, prints punch cards (3BSD, 1979; 3-clause BSD): four lines of text"
+files = [
+  { repo = "stdio-netbsd", path = "bcd/bcd.c", sha256 = "1a3699312ea2b81e9e8ef0441bdd8e5c3cbd0f307899a763f1cea7af02dd33c3", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "bcd.c", old = "#include <sys/cdefs.h>\n", new = "" },
+  { file = "bcd.c", old = "#include <sys/types.h>\n", new = "" },
+  { file = "bcd.c", old = "#include <unistd.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\ntypedef unsigned short u_short;\n" },
+  { file = "bcd.c", old = "\t/* revoke setgid privileges */\n\tsetgid(getgid());\n", new = "\tbench_args(&argc, &argv);\n" },
+]
+stdin_file = "input.txt"
+check_defines = ["lint"]
+time_defines = ["lint"]
+timeout = 600
+
+[[program]]
+name = "bsd-ppt"
+tier = 3
+timing = "total"
+about = "NetBSD ppt, punched paper tape (4.3BSD-Reno, 1990; 3-clause BSD): two lines of text"
+files = [
+  { repo = "stdio-netbsd", path = "ppt/ppt.c", sha256 = "26a0f521e4906d2d3f70ea93900ec3fb818d84eb05896feb89e9f7e6e81b86ee", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "ppt.c", old = "#include <sys/cdefs.h>\n", new = "" },
+  { file = "ppt.c", old = "#include <err.h>\n", new = "" },
+  { file = "ppt.c", old = "#include <unistd.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n" },
+  { file = "ppt.c", old = "\textern char *__progname;\n\tfprintf(stderr, \"usage: %s [-d] [string ...]\\n\", __progname);", new = "\tfprintf(stderr, \"usage: ppt [-d] [string ...]\\n\");" },
+  { file = "ppt.c", old = "\t/* Revoke setgid privileges */\n\tsetgid(getgid());\n", new = "" },
+  { file = "ppt.c", old = "\twhile ((c = getopt(argc, argv, \"dh\")) != -1)\n\t\tswitch(c) {\n\t\tcase 'd':\n\t\t\tdflag = 1;\n\t\t\tbreak;\n\t\tcase 'h':\n\t\tcase '?':\n\t\tdefault:\n\t\t\tusage();\n\t\t}\n\targc -= optind;\n\targv += optind;\n", new = "\tbench_args(&argc, &argv);\n\targc -= 1;\n\targv += 1;\n" },
+]
+stdin_file = "input.txt"
+check_defines = ["lint"]
+time_defines = ["lint"]
+timeout = 600
+
+[[program]]
+name = "ahl-startrek"
+tier = 3
+timing = "total"
+about = "Super Star Trek (Mike Mayfield 1971 / David Ahl, BASIC Computer Games 1978; C port by Chris Nystrom 1996, z88dk examples/console copy; free to use and modify, no formal license): scripted mission with floating point"
+files = [
+  { repo = "z88dk", path = "examples/console/startrek.c", sha256 = "7b8993ceb49d32fe490c22037ec976af2fbb85789638a17a122b9da2b0a67798", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "startrek.c", old = "#pragma printf = \"%s %d %4.2f\"\n\n#pragma output CLIB_MALLOC_HEAP_SIZE    = 0             // do not create malloc heap\n#pragma output CLIB_STDIO_HEAP_SIZE     = 0             // do not create stdio heap (cannot open files)\n#pragma output CLIB_EXIT_STACK_SIZE     = 0             // do not reserve space for registering atexit() functions\n#pragma output CRT_ENABLE_COMMANDLINE   = 3             // create command line\n\n#ifdef __SPECTRUM\n#pragma output CRT_ORG_CODE             = 30000         // move ORG to 30000\n#pragma output REGISTER_SP              = -1            // indicate crt should not modify stack location\n#pragma output CRT_ENABLE_EIDI          = 0x01          // disable interrupts at start\n#endif\n\n#ifdef __RC2014\n#pragma output CRT_ORG_CODE                 = 0x8400    // move ORG to 0x8400 for -subtype=basic85\n                                                        // also all the instruction text is omitted\n#endif\n", new = "" },
+  { file = "startrek.c", old = "#include <input.h>\n// #include <time.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n#define double_t double\n" },
+  { file = "startrek.c", old = "  fflush(stdout);\n  fflush(stdin);\n", new = "  fflush(stdout);\n" },
+  { file = "startrek.c", old = "  fflush(stdin);   /** Z88DK **/\n", new = "" },
+  { file = "startrek.c", old = "  int tmp;\n  \n  intro();", new = "  int tmp;\n\n  bench_args(&argc, &argv);\n  intro();" },
+]
+stdin_file = "input.txt"
+timeout = 600
+
+[[program]]
+name = "empire-trefonas"
+tier = 3
+timing = "total"
+about = "Empire (Peter Trefonas, CLOAD 1981, TRS-80 BASIC; C conversion by aralbrec 2016, z88dk examples/console copy; no license text in the file): one human ruler against five computer rulers, scripted until a ruler wins, floating point"
+files = [
+  { repo = "z88dk", path = "examples/console/empire.c", sha256 = "b7103de7478ffe256a4ccac6f0cdebd5ffdf34486a651c2e4a0da6708640163b", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "empire.c", old = "#pragma printf = \"%s %d %.2f %10.0f %.1f %.0f\"\n#pragma scanf  = \"%s %d %[\"\n\n#pragma output CLIB_EXIT_STACK_SIZE  = 0\n#pragma output CLIB_MALLOC_HEAP_SIZE = 128\n#pragma output CLIB_STDIO_HEAP_SIZE  = 0\n\n#ifdef __SPECTRUM\n\n#pragma output CRT_ORG_CODE          = 24000\n#pragma output REGISTER_SP           = -1\n#pragma output CRT_ENABLE_EIDI       = 0x21\n\n#include <stropts.h>\n\n#endif\n", new = "" },
+  { file = "empire.c", old = "#include <input.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n#define double_t double\n" },
+  { file = "empire.c", old = "   in_wait_nokey();\n   in_pause(p);\n   in_wait_nokey();\n", new = "" },
+  { file = "empire.c", old = "void INPUT(char *p, char *fmt, ...)\n{\n   va_list arg;\n   va_start(arg, fmt);\n   \n   printf(\"%s\", p);\n   in_wait_nokey();\n   \n   fflush(stdin);\n   vscanf(fmt, arg);\n}\n", new = "void INPUT(char *p, char *fmt, ...) PX_VA\n{\n   va_list arg;\n   char line[80];\n   char *s, *d;\n   int n, w;\n\n   va_start(arg, fmt);\n   printf(\"%s\", p);\n   fflush(stdout);\n   if (fgets(line, 80, stdin) == 0)\n      exit(0);\n   if (fmt[1] == 'd')\n   {\n      *va_arg(arg, int *) = atoi(line);\n      return;\n   }\n   d = va_arg(arg, char *);\n   w = atoi(fmt + 1);\n   s = line;\n   while (*s == ' ')\n      ++s;\n   n = 0;\n   while (n < w && *s != 0 && *s != '\\n')\n   {\n      if (strchr(fmt, '[') != 0)\n      {\n         if (!((*s >= '0' && *s <= '9') || *s == '.' || *s == '-'))\n            break;\n      }\n      else if (*s == ' ')\n         break;\n      d[n++] = *s++;\n   }\n   if (n > 0)\n      d[n] = 0;\n}\n" },
+  { file = "empire.c", old = "void main(void)\n{\n#ifdef __SPECTRUM\n   ioctl(1, IOCTL_OTERM_PAUSE, 0);\n#endif\n", new = "int main(int argc, char **argv)\n{\n   bench_args(&argc, &argv);\n" },
+  { file = "empire.c", old = "   in_wait_nokey();\n   for (I=0; !in_test_key(); ++I) ;\n   in_wait_nokey();\n   \n   srand(I);", new = "   srand(4660);" },
+  { file = "empire.c", old = "Z[I][0] = strdup(buf);", new = "Z[I][0] = strcpy((char *)malloc(strlen(buf) + 1), buf);" },
+]
+stdin_file = "input.txt"
+timeout = 600
+
+[[program]]
+name = "umchess"
+tier = 3
+timing = "total"
+about = "micro-Max 1.6 chess (H.G. Muller, 2000s; z88dk examples/console copy, 133 lines; no license text in the file): engine plays itself from one scripted human opening move, search limited to 200 nodes"
+files = [
+  { repo = "z88dk", path = "examples/console/umchess.c", sha256 = "cff3f28c1a4aede7904f4bcdd8a25c9dd2761ae19cf344f211e8c05979bf7d9b", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "umchess.c", old = "#pragma printf = \"%c\"\n\n#include <stdio.h>\n", new = "#include <stdio.h>\n#include \"posix_shim.h\"\n#include \"sglue.h\"\n#define __dead\n" },
+  { file = "umchess.c", old = "char L,*P,", new = "int EF;\nchar L,*P," },
+  { file = "umchess.c", old = "main()\n{\n long k=8;", new = "int main(void)\n{\n long k=8;\n px_ti();" },
+  { file = "umchess.c", old = "P=c;W((*P++=getchar())>10);", new = "P=c;W((EF=getchar())!=-1&&(*P++=EF)>10);if(EF==-1)return 0;" },
+]
+stdin_file = "input.txt"
+timeout = 600
+
+[[program]]
+name = "hamurabi"
+tier = 3
+timing = "total"
+about = "Hamurabi (Rick Merrill / David Ahl, BASIC 1968-73, 'The Sumer Game'; C version by Brian L. Troutwine 2010, FUZIX games copy by Alan Cox 2018; MIT license): scripted 10-year term of office"
+files = [
+  { repo = "stdio-fuzix", path = "Applications/games/hamurabi.c", sha256 = "04d65f0801458b5fe366f438b132f1b3d26be7c571b363c1aa019340dc31c204", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "hamurabi.c", old = "#include <time.h>\n\n#ifdef USE_FLOAT", new = "#include <time.h>\n#include \"posix_shim.h\"\n#include \"sglue.h\"\n\n#ifdef USE_FLOAT" },
+  { file = "hamurabi.c", old = "int main(void) {\n\n  city_st *cty = new_city_st();\n  uint16_t inp, year;\n", new = "int main(void) {\n\n  city_st *cty;\n  uint16_t inp, year;\n\n  px_ti();\n  cty = new_city_st();\n" },
+]
+stdin_file = "input.txt"
+timeout = 600
+
+[[program]]
+name = "v7-backgammon"
+tier = 3
+timing = "total"
+about = "V7 backgammon (Unix Version 7, 1979, FUZIX ANSI port, 584 lines; Caldera license): scripted full game against the program, moves chosen by trial, ends when one side bears off all pieces"
+files = [
+  { repo = "stdio-fuzix", path = "Applications/V7/games/backgammon.c", sha256 = "1a17ee89ab5adc7b02993edc55f0524cea724b78dc0dbccdbb8f288470842eb5", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "backgammon.c", old = "#include <unistd.h>\n#include <string.h>\n", new = "#include <string.h>\n#include <stdint.h>\n#include <time.h>\n#include \"posix_shim.h\"\n#include \"sglue.h\"\n" },
+  { file = "backgammon.c", old = "\tgo[5] = NIL;\n\tprintf(\"Do you want instructions?", new = "\tgo[5] = NIL;\n\tbench_args(&argc, &argv);\n\tprintf(\"Do you want instructions?" },
+]
+stdin_file = "input.txt"
+timeout = 600
+
+[[program]]
+name = "fuzix-startrek"
+tier = 3
+timing = "total"
+about = "Super Star Trek, integer-only version (Mike Mayfield 1971 / David Ahl 1978, C port by Chris Nystrom 1996, reworked without floating point for FUZIX by Alan Cox 2018; free to use and modify, no formal license): scripted mission, text files replaced by a one-line note"
+files = [
+  { repo = "stdio-fuzix", path = "Applications/games/startrek.c", sha256 = "2049a2e3abdd8e3af62f671afb0a75a649a3fbd4ca1093a5c9e274c24fddbe36", main = true },
+  { shared = "support/posix_shim.c" },
+  { shared = "support/posix_shim.h" },
+  { shared = "stdio-glue/sglue.c" },
+  { shared = "stdio-glue/sglue.h" },
+]
+edit = [
+  { file = "startrek.c", old = "#include <unistd.h>\n", new = "#include \"posix_shim.h\"\n#include \"sglue.h\"\n" },
+  { file = "startrek.c", old = "static char quadname[12];", new = "static char quadname[16];" },
+  { file = "startrek.c", old = "\tint d1;\n\tuint16_t repair_factor;", new = "\tint d1 = 0;\n\tuint16_t repair_factor;" },
+  { file = "startrek.c", old = "static int16_t isqrt(int16_t i)", new = "static int16_t st_isqrt(int16_t i)" },
+  { file = "startrek.c", old = "j = isqrt(j);", new = "j = st_isqrt(j);" },
+  { file = "startrek.c", old = "\tchdir(TREK_DIR);\n", new = "\tbench_args(&argc, &argv);\n" },
+  { file = "startrek.c", old = "srand((unsigned) time(NULL));", new = "srand(((unsigned) time(NULL)) & 0x7fff);" },
+  { file = "startrek.c", old = "static void showfile(char *filename)\n{\n\tFILE *fp;\n\tchar buffer[MAXCOL];\n\tint row = 0;\n\n\tfp = fopen(filename, \"r\");\n\tif (fp == NULL) {\n\t\tperror(filename);\n\t\treturn;\n\t}\n\twhile (fgets(buffer, sizeof(buffer), fp) != NULL) {\n\t\tfputs(buffer, stdout);\n\t\tif (row++ > MAXROW - 3) {\n\t\t\tgetchar();\n\t\t\trow = 0;\n\t\t}\n\t}\n\tfclose(fp);\n}\n", new = "static void showfile(char *filename)\n{\n\tprintf(\"[%s]\\n\", filename);\n}\n" },
+]
+stdin_file = "input.txt"
+timeout = 600
