@@ -21,8 +21,74 @@ observable behaviour of a program uc80 compiles.
   `rt_mul`, `rt_div8`, `rt_neg32` and `rt_tmp32` hold shared pieces, so
   a program links only the pieces it uses.
 
+- **Code generator speed work (eight families).** Over the 61 programs that
+  were OK on uc80 in the first benchmark run, the geometric mean of the
+  size is now 0.83 of the first run. The mean of the T-states is 0.67 of
+  the first run. The numbers below are the effect of each step when we
+  made the step, measured with `bench/run.py`. Programs that the text
+  does not name stayed the same or improved.
+  - *Constants in arithmetic.* A multiply, divide, modulo or shift by a
+    constant no longer calls a runtime helper in the common cases. 16-bit
+    multiply uses a shift-and-add chain, unsigned divide and modulo by a
+    power of 2 use shifts and masks, and 32-bit shifts use byte and word
+    moves. `stanford-puzzle` 1,162 M to 861 M T-states (-26%),
+    `stanford-intmm` -19%, `crc` -13%, `fannkuch` -7%. Total of 41
+    programs -6.0%.
+  - *Operands and byte values.* A constant or simple variable on the right
+    of `+ - & | ^` goes straight into DE, and a value that is only used as
+    a `char` is computed in A. `sieve` -19%, `micro+a8` -22%,
+    `micro+loop` -22%, `snd-cmdq` -28%, `davidly-sieve` -19%.
+  - *In-place update.* `x++`, `x--`, `op=` and stores to `char`, array
+    element, member and `*p` work in place, and an unused value is not
+    kept in HL. `sieve` 4.69 M to 4.41 M, `snd-cmdq` 20.1 M to 17.1 M,
+    `fannkuch` 58.2 M to 51.5 M, `stanford-puzzle` 758 M to 720 M. The
+    image of `micro` is 326 bytes smaller.
+  - *Bit-fields.* A bit-field that lies in one byte is read and written
+    as that byte, with shifts, masks and `bit n,(hl)`. `micro+bits`
+    5.49 M to 1.39 M T-states (-75%).
+  - *Frames and switch.* A function that never uses IX has no frame
+    (68 T-states and 9 bytes less per call). A `switch` on a `char`, or on
+    an `int` whose case values share a high byte, compares bytes, and
+    dense cases use an 8-bit table. Every one of 41 images is 12 to 399
+    bytes smaller. `embench-statemate` 5.64 M to 5.24 M, `zx0` 10.2 M to
+    9.3 M, `snd-cmdq` 17.1 M to 16.1 M.
+  - *32-bit values.* `+ - & | ^`, compares, casts, shifts and `switch` on
+    a `long` read their operands straight into BC and A, with no call
+    through `__tmp32`. `embench-md5sum` 7.07 M to 3.64 M (-49%), `crc`
+    -41%, `embench-huffbench` -33%, `embench-crc32` -34%,
+    `micro+a32` -25%.
+  - *Addressing.* `x`, `s.m` and `a[K]` of a named object use `ld (nn)`
+    and `(IX+d)` directly, `p[K]` and `p->m` use `inc HL`, a 16-bit truth
+    test uses `ld A,(HL)` and `or (HL)`, and a word that is already in HL
+    is not loaded again. `davidly-ttt` 16.4 M to 14.2 M, `snd-cmdq`
+    15.7 M to 14.2 M, `queens` 369 M to 336 M, `statemate` 4.79 M to
+    4.32 M, 40 of 41 programs faster.
+  - *Conditions.* The code compares and tests a 16-bit variable in the IX
+    frame without a register load (`ld A,(IX+d)` and `sub (IX+e)`). `tak` 48,229,623
+    to 47,816,155, `embench-statemate` 4,324,681 to 4,315,073,
+    `davidly-ttt` 14,229,879 to 14,197,127.
+
 ### Fixed
 
+- **Integer promotion and `char` handling.** Each operand now gets its own
+  promotion (`unsigned char`, `short`, `_Bool`, enum and narrow bit-fields
+  become `int`). Thus with `unsigned char c = 10`, `(c - 20) < 0` is 1.
+  `long` with `unsigned int` divides as signed. `++` and `--` on a
+  one-byte local read two bytes, so the value of `c++` had the next
+  local in H and an index `i++` read the wrong element. The value of
+  `++c`, `(c = 300)` and `(s.f = 9)` is the narrowed stored value.
+  `unsigned int` with `long` is `long`. A switch on a `long` compared
+  only the low word. `++` and `--` on a `long`, `float` or `long long`
+  element, member or `*p` changed only the low 16 bits.
+- **The inliner and constant folder dropped types.** The inliner now
+  converts arguments and the return value to the declared types and does
+  not inline a call whose arguments have side effects (`sq(k++)` ran
+  `k++` twice). The folder of `ast_opt.py` kept the type of a literal
+  (`x * 8UL`, `-2L`, `-256L >= 65280u`).
+- **`!x` of a `long long` tested only the low 32 bits,** and `-0.0` was
+  true in `if`, `!`, `?:` and `&&`. `x && y` with a `float` operand gave 0
+  or -1. The runtime BSS had its own `COMMON` block that overlaid the
+  program's block, so `__acc64` shared bytes with the first global.
 - **`div()` returned `denom / numer`.** `_div` passed its operands to
   `__sdiv16` and `__smod16` in swapped registers (they compute `DE op HL`),
   so `div(4425, 3)` gave quotient 0, remainder 3. `ldiv()` was right.

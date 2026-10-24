@@ -1,13 +1,41 @@
 # Benchmark Expansion Proposal
 
-Status: proposal, revised 2026-10-23. Starting point: issue
+Status: proposal, revised 2026-10-24. Phases 0 to 2 are done in part or in full (see sections 1 and 7). The plan text of the other sections is the original plan. Starting point: issue
 [avwohl/uc80#1](https://github.com/avwohl/uc80/issues/1), "No sdcc comparison in benchmarks".
-The current results are in [benchmarks.md](benchmarks.md).
+The results are in [benchmarks.md](benchmarks.md) and [benchmarks_speed.md](benchmarks_speed.md).
 
 Every number in this document comes from a cited source or from a test run in a scratch copy of the toolchain.
 Items marked "unverified" were not confirmed. Effort figures are estimates, not measurements.
 
 ## 1. Summary
+
+### Status on 2026-10-24
+
+What is done:
+
+- The harness `bench/` runs 79 programs with 8 compilers (uc80, SDCC 4.6.0 and 4.4.0, z88dk zsdcc and sccz80, HI-TECH C 3.09, dcc 3.6.0, llvm-z80) and measures T-states with `z88dk-ticks`. [bench_harness.md](bench_harness.md) describes the harness. [benchmarks_speed.md](benchmarks_speed.md) has the tables and a summary of uc80 against each compiler.
+- Tier 1 (classic benchmarks) and tier 2 (Embench, Stanford, decompressors, sound-driver kernels, CoreMark) are in. z88dk 80cc is not in.
+- The unused-`EXTRN` blocker (6.1) is fixed. The heap bug, `qsort`, `printf` precision, `div()` and `ldiv()` are fixed (6.4, 6.5).
+- Eight families of code generator work and a faster runtime are in (see the CHANGELOG, "Unreleased").
+- `bench/difftest.py` compares uc80, SDCC and a Python model on random programs.
+
+Result against SDCC 4.6.0 (74 programs that are OK on both, geometric mean of uc80 divided by SDCC):
+
+- Size: 1.58 (uc80 is bigger; the first run gave 2.01). uc80 is smaller on 15 programs and bigger on 59.
+- T-states against the speed mode of SDCC: 0.62 (uc80 is faster; the first run gave 0.90 over 61 programs). Without the `sort-*` programs the mean is 0.77. uc80 is faster on 52 programs and slower on 22.
+- The "uc80 wins on size" claim is false. The expectation in section 8 that uc80 loses on cycles is also false for the mean, but true for small integer loops and for code with many small functions.
+
+What is left:
+
+- Freestanding and ROM target (6.3, phase 3): nothing done. The answer to issue #1 about the Neo Geo sound driver stays "not today".
+- Games tier and curses (6.4, phases 4 and 5): not started.
+- Four programs still fail on uc80: `embench-tarfind`, `whetstone`, `whetstone+static` and `coremark-unofficial` (see [benchmarks.md](benchmarks.md)).
+- Open compiler bugs from 6.5 that nobody rechecked: C1 to C10, C13 to C15.
+- cpmemu T-states (6.2) are not needed for the numbers. We used `z88dk-ticks`.
+- A CI gate for size (5.5) and a rerun on a fresh machine.
+- z88dk 80cc, historic CP/M compilers and a check in an emulator with real timing.
+
+The original summary follows. Some of its statements are out of date; the status above wins.
 
 - **What we add:** speed numbers in Z80 T-states, size metrics that leave out the C runtime, and more rival compilers.
   The rivals are standalone SDCC (4.4.0 and 4.6.0), z88dk (sccz80, zsdcc, 80cc), HI-TECH C 3.09, dcc and llvm-z80.
@@ -20,11 +48,11 @@ Items marked "unverified" were not confirmed. Effort figures are estimates, not 
   - uc80 writes M80 `.REL` files (bit-packed). `sdldz80` reads sdas `.rel` files (text), so `sdldz80` cannot link uc80 output with nullsound. uc80 also passes arguments on the stack, not in registers as SDCC `__sdcccall(1)` does, so calls into nullsound need shims.
 - **What uc80 can do today:** link an image at address 0 with a custom startup file, with port I/O through inline `asm`.
   The `--no-shared-storage` option puts locals in an IX stack frame, so locals work from ROM and are reentrant. Globals still need manual placement.
-- **Size and speed expectation:** the first like-for-like test does not support "uc80 wins on size against SDCC".
+- **Size and speed expectation (superseded by the status above):** the first like-for-like test does not support "uc80 wins on size against SDCC".
   On the z88dk sieve, the bytes beyond the 8,000-byte flags array are about 279 for SDCC 4.6.0 and about 658 for uc80 (the uc80 figure includes the CP/M crt0).
   An estimate puts the uc80 sieve at 7-10 M T-states, against 4.22 M for SDCC (estimate, not a measurement). The benchmarks in this proposal measure both.
-- **First fix:** the current toolchain links about 9 KB of unused libc into every program (section 6.1).
-  No new number is valid until uc80 fixes that regression.
+- **First fix (done in 8ffbdbf):** the toolchain linked about 9 KB of unused libc into every program (section 6.1).
+  No new number was valid until uc80 fixed that regression.
 - **Reply now:** post a first answer to issue #1 in Phase 0, not after the benchmarks, and ask the reporter for one hot function from the real driver. A draft is at the end of this document.
 
 ## 2. Why the current benchmark is not enough
@@ -426,6 +454,8 @@ Commit `manifest.toml` before the first rival run. Never drop a program after se
 
 ### 6.1 Blocker: unused EXTRNs pull in libc
 
+Status: fixed in 8ffbdbf. uc80 drops every `EXTRN` that nothing uses.
+
 - uc80 emits an `EXTRN` for every prototype in every included header (`src/uc80/codegen.py:3797-3800`, `:5028-5030`).
 - `asm_dce.py:575-582` keeps an `EXTRN` that nothing references.
 - Since um80 0.3.50 (2026-09-25), um80 writes an unused `EXTRN` as an empty chain, the way MACRO-80 does. ul80 then searches the libraries for the symbol (`um80_and_friends/CHANGELOG.md:821-827`).
@@ -435,6 +465,8 @@ Commit `manifest.toml` before the first rival run. Never drop a program after se
 - Fix: drop unreferenced `EXTRN` lines in `codegen.py`. Also define or remove `quick_exit`/`at_quick_exit`, which the header declares but libc does not define.
 
 ### 6.2 cpmemu / qkz80
+
+Status: not done, and not needed. The harness uses the alternative in the last row: `z88dk-ticks` with `-start` and `-end` on the `TIMER_START` and `TIMER_STOP` labels. The SP low-water mark, the port log and the ROM mode are not done.
 
 | Work | Detail | Effort (estimate) |
 |---|---|---|
@@ -447,6 +479,8 @@ Commit `manifest.toml` before the first rival run. Never drop a program after se
 | Hardware check | Run the sound kernels in a Neo Geo emulator (MAME or gngeo). A port log alone does not prove YM2610 timing. Headless mode unverified | later wave |
 
 ### 6.3 Freestanding target (needed before uc80 is a real answer to issue #1)
+
+Status: not started. Every gap in the table is still open.
 
 | Gap | Today |
 |---|---|
@@ -468,6 +502,8 @@ Good news for small RAM: uc80 overlays the locals of non-recursive functions in 
 
 ### 6.4 libc work for the game tier
 
+Status: `malloc` and `free` (first-fit list with merging, heap from `__END__`), `qsort` (ascending quicksort) and `printf` precision, `-` and `*` are fixed. The other rows are not rechecked or not started.
+
 | Gap | Today |
 |---|---|
 | argc/argv | crt0 calls `main()` with no arguments. The CP/M command tail at 0x80 is ignored |
@@ -483,6 +519,8 @@ Good news for small RAM: uc80 overlays the locals of non-recursive functions in 
 | qsort | Sorts in descending order with an ascending comparator (test output `32766 32753 7 5 0 -3`) |
 
 ### 6.5 Compiler bugs found by the survey
+
+Status: C11 (`ldiv`), C12 (binary-trees) and C16 (duplicate runtime modules) are fixed; `binary-trees` is OK in the tables. The other bugs are not rechecked.
 
 The repro files are in the survey's scratch directories. Each bug needs a regression test in the uc80 test suite.
 
@@ -508,6 +546,8 @@ The repro files are in the survey's scratch directories. Each bug needs a regres
 ## 7. Phased plan
 
 Effort figures are rough estimates for one developer.
+
+Status on 2026-10-24: phase 0 is done in part. The reply to issue #1, the `bench-size` CI gate, `float_t` and `double_t`, and the sync of the compliance documents are not rechecked. Phase 1 is done through `z88dk-ticks` instead of a new cpmemu timer. Phase 2 is done with 7 compilers (80cc is missing). Phase 6 is started: Stanford, Embench, CoreMark, decompressors and 4 sound kernels are in. Phases 3, 4 and 5 are not started.
 
 | Phase | Work | Output | Effort |
 |---|---|---|---|
