@@ -30,10 +30,17 @@ def _ul80_has_rom_options():
 
 
 pytestmark = pytest.mark.skipif(
-    not (shutil.which("um80") and _ul80_has_rom_options()
-         and (LIB / "libc_rom.lib").exists()
-         and (LIB / "runtime.lib").exists()),
-    reason="needs um80, a ul80 with ROM options and a built libc_rom.lib")
+    not (shutil.which("um80") and _ul80_has_rom_options()),
+    reason="needs um80 and a ul80 with ROM options")
+
+
+def test_rom_libraries_are_built():
+    """A missing library is a failure, not a skip (tests/conftest.py builds
+    the libraries when the tools exist)."""
+    for name in ("crt0_rom.rel", "libc_rom.lib", "runtime.lib"):
+        assert (LIB / name).exists(), (
+            name + " is missing; run 'uc80 --build-libs'")
+
 
 from romrun import Machine  # noqa: E402
 

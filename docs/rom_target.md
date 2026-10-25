@@ -22,6 +22,12 @@ Not done (needs `codegen.py` or other work):
 - The optional per-module BSS block for separate compilation.
 - All of Phase 2 and the later phases.
 
+Notes for the codegen work that follows:
+
+- `src/uc80/rom.py` strips the empty printf dispatch tables from the assembly text. The codegen change must replace this post-processing.
+- The user INT and NMI handler substitution works in whole-program mode only.
+- A global that C code defines has no PUBLIC label in whole-program mode. An assembly ISR must use an extern declaration and `PUBLIC _name` in the .mac file. Phase 2 ISRs that share C globals must remove this limit.
+
 
 ## 1. Answer to the issue
 

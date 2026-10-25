@@ -8,6 +8,7 @@ observable behaviour of a program uc80 compiles.
 
 ### Added
 
+- `tests/conftest.py` builds `libc_rom.lib` and `crt0_rom.rel` when a checkout lacks them. The ROM tests fail, not skip, if a library is missing.
 - **ROM target (Phase 1 of `docs/rom_target.md`): `uc80 --target=rom`** (alias
   `-ffreestanding`). The compiler embeds `lib/crt0_rom.mac` (reset vector,
   RST stubs, INT and NMI vectors, SP from `__RAM_END` or `--stack-top`, copy

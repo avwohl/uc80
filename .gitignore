@@ -61,3 +61,4 @@ Thumbs.db
 /tmp/
 *.bak
 fred.txt
+src/uc80/.build_libs.lock
