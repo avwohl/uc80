@@ -7,7 +7,9 @@ lose the type of a literal:
     into ``x >> 3``.  A shift has the type of its promoted LEFT operand,
     so the U or L of the literal is lost: ``x * 8UL`` is then done in 16
     bits, and ``-8 / 8u`` shifts arithmetically.  Codegen knows the
-    types, so it does these reductions itself.
+    types, so it does these reductions itself.  (``x * 8`` is wrong for
+    a float x as well; uc_core now skips float operands, and uc80 leaves
+    the multiply to the code generator.)
   * Constant folding mints the result without an L suffix, and decides
     signedness without looking at widths: ``-2L`` became an int, and
     ``-256L >= 65280u`` was compared unsigned although a 32-bit long
@@ -54,15 +56,16 @@ class Uc80ASTOptimizer(ASTOptimizer):
         comparison.  Left to the code generator."""
         return None
 
-    # ---- strength reduction that would lose the literal's type
+    # ---- strength reduction
 
     def _strength_reduce_mul(self, expr):
-        for e in (expr.left, expr.right):
-            if isinstance(e, ast.IntLiteral):
-                rank, unsigned, _ = self._literal_type(e)
-                if rank != _INT or unsigned:
-                    return None
-        return super()._strength_reduce_mul(expr)
+        """``x * 8`` is left to the code generator.  uc_core turns it into
+        ``x << 3`` (or ``x + x``), which is wrong for a float or double
+        ``x``, loses the U or L of a literal operand, and duplicates the
+        operand of ``x * 2`` (``(a % 2) * 2`` computed ``a % 2`` twice).
+        The code generator knows the types and has its own multiply by a
+        constant."""
+        return None
 
     @staticmethod
     def _is_unsigned_literal(*exprs):
@@ -232,6 +235,8 @@ class Uc80ASTOptimizer(ASTOptimizer):
         """
         inner = expr.left
         outer = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if self._maybe_float(inner):
+            return None          # (f + 1) + 2 is not f + 3 in a float
         if (isinstance(expr.right, ast.IntLiteral)
                 and isinstance(inner, ast.BinaryOp)
                 and isinstance(inner.right, ast.IntLiteral)):
