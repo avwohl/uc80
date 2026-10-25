@@ -11,7 +11,18 @@ import shutil
 import subprocess
 import sys
 
-import uc80
+
+# Test the checkout the tests live in, not an installed copy: every test
+# that spawns "python -m uc80.main" inherits this PYTHONPATH.
+_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "src")
+os.environ["PYTHONPATH"] = os.pathsep.join(
+    [_SRC] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep)
+              if p and p != _SRC])
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
+import uc80  # noqa: E402
 
 NEEDED = ("crt0_rom.rel", "libc_rom.lib", "runtime.lib", "libc.lib", "crt0.rel")
 

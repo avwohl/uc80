@@ -30,6 +30,7 @@ from . import sdas
 from . import isr_check
 from .z80_intrinsics import BARRIER_BEGIN, BARRIER_END
 from . import rom as rom_module
+from . import scan_hook
 
 from . import peep_local
 
@@ -913,6 +914,9 @@ def main() -> int:
                            isr_safe=args.isr_safe,
                            absolute=sdcc_found.absolute)
         code = gen.generate(merged_ast)
+        if scan_hook.needs_float_scanf(merged_ast, scanf_features):
+            code = scan_hook.add_float_reference(code, module_name,
+                                                 _tail_insert_index)
 
         def label_of(name):
             sym = gen.ctx.globals.get(name)

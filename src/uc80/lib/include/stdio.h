@@ -149,5 +149,9 @@ int vsprintf(char *str, const char *format, ...);
 int scanf(const char *format, ...);
 int fscanf(FILE *stream, const char *format, ...);
 int sscanf(const char *str, const char *format, ...);
+/* The last argument is a va_list (a char *) */
+int vscanf(const char *format, char *ap);
+int vfscanf(FILE *stream, const char *format, char *ap);
+int vsscanf(const char *str, const char *format, char *ap);
 
 #endif /* _STDIO_H */

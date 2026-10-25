@@ -141,7 +141,7 @@ Full file I/O via CP/M BDOS FCB calls. 128-byte buffering. Max 4 regular files +
 - [x] `vprintf()`, `vfprintf()`, `vsprintf()`
 - [x] Format specifiers: %d %i %u %x %X %o %s %c %p %f %% with width, precision, `*` and the flags `- + space # 0`. The `l` and `ll` forms take the same width, precision and flags. Width and precision stop at 255. `%f` `%e` `%g` take a precision only (no width or flag). `%llX` and `%llo` are not implemented
 - [x] Long (%ld %lu %lx %lo) and long long (%lld %llu %llx) format specifiers
-- [x] `scanf()`, `fscanf()`, `sscanf()` - basic format parsing (%d %i %s %c %u %x)
+- [x] `scanf()`, `fscanf()`, `sscanf()`, `vscanf()`, `vfscanf()`, `vsscanf()` - all conversions, widths, `%*`, `%n`, scan sets, the size modifiers and the float conversions (see [scanf.md](scanf.md))
 - [x] `fopen()`, `fclose()`, `freopen()`
 - [x] `fread()`, `fwrite()`
 - [x] `fgetc()`, `fputc()`, `getc()`, `putc()`
@@ -157,7 +157,7 @@ Printf links only needed format handlers via `#pragma printf int|long|llong|floa
 
 ### `<stdlib.h>` - Implemented
 - [x] `atoi()`, `atol()`, `atof()`
-- [x] `strtol()`, `strtoul()`, `strtod()`, `strtof()`
+- [x] `strtol()`, `strtoul()`, `strtoll()`, `strtoull()`, `strtod()`, `strtof()`, `strtold()`, `atoll()` - bases 0 and 2 to 36, `errno`, correct rounding of floats
 - [x] `malloc()`, `calloc()`, `realloc()`, `free()` - first-fit free list, sorted by address, merged on `free()`. The heap grows from `__END__` up to 255 bytes below the stack pointer
 - [x] `abs()`, `labs()`, `div()`, `ldiv()`
 - [x] `rand()`, `srand()` - 16-bit LCG

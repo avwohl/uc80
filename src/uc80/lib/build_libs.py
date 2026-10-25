@@ -94,6 +94,14 @@ def concat_modules(src_dir, output_path, header_comment):
         print(f"  No .mac files in {src_dir}")
         return False
 
+    # A module can stand in for another one that defines the same symbol
+    # (lc_scan_nofloat and lc_scan_float).  The first line of such a module
+    # says "CONCAT-SKIP": the library holds it, the joined file does not.
+    def skipped(path):
+        with open(path) as f:
+            return "CONCAT-SKIP" in f.readline()
+    mac_files = [m for m in mac_files if not skipped(m)]
+
     # First pass: collect all PUBLIC symbols
     public_syms = set()
     for path in mac_files:

@@ -6,15 +6,16 @@ IEEE 754 single-precision (32-bit) floating point is fully functional.
 `double` and `long double` are the same as `float` (32-bit) on this Z80 target.
 
 ### Arithmetic (lib/rt/rt_float.mac)
-- `__fadd` - Addition (DEHL + __tmp32)
+- `__fadd` - Addition (DEHL + __tmp32), rounds to nearest even, handles inf and NaN
 - `__fsub` - Subtraction (DEHL - __tmp32)
 - `__fmul` - Multiplication (24x24 partial products)
-- `__fdiv` - Division (non-restoring long division, 24-bit quotient)
+- `__fdiv` - Division (long division, 26-bit quotient, rounds to nearest even), handles inf, NaN and the sign of a zero result
+- `__fcmp` - Comparison. It does not give the NaN result of Annex F: the code generator reads only the Z and C flags, so a NaN operand compares like its bit pattern (`n == n` is true, `n != n` is false). Use `isnan` to test for a NaN. A fix needs a change in the code generator.
 - `__fneg` - Negation (sign bit flip)
 - `__fcmp` - Comparison (Z flag = equal, C flag = less than)
 
 ### Conversions (lib/rt/rt_float.mac)
-- `__itof` / `__ltof` - Signed 32-bit int to float
+- `__itof` / `__ltof` - Signed 32-bit int to float (rounds to nearest even)
 - `__uitof` - Unsigned 32-bit int to float
 - `__ftoi` - Float to signed int (truncate toward zero)
 
@@ -28,12 +29,13 @@ IEEE 754 single-precision (32-bit) floating point is fully functional.
 - Respects precision modifier (default 6 decimal places)
 - Enabled via `#pragma printf float` or `#pragma printf all`
 
-### Math Library (lib/lc/lc_*.mac)
-Full single-precision math library:
+### Math Library (lib/lc/lc_*.mac, from lib/csrc/*.c)
+Full single-precision math library; each function is within 2 ulp of the
+exact result ([docs/libm.md](libm.md)):
 - Trigonometric: sin, cos, tan, asin, acos, atan, atan2
 - Hyperbolic: sinh, cosh, tanh
 - Exponential: exp, log, log10, log2, pow
-- Roots: sqrt, cbrt, hypot
+- Roots: sqrt (correctly rounded), cbrt, hypot
 - Rounding: floor, ceil, trunc, round
 - Utilities: fabs, fmod, remainder, copysign, frexp, ldexp, modf
 

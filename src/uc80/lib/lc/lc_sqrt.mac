@@ -1,22 +1,14 @@
 ; lc_sqrt.mac - sqrt, sqrtf, sqrtl
+;
+; Correctly rounded square root with integer arithmetic.  The mantissa is
+; shifted so that the exponent is even, the digit-by-digit method gives a
+; 26-bit root, and the last bits and the remainder round to nearest even.
 	.Z80
-
-; CP/M BDOS function numbers
-BDOS	EQU	5
-CONOUT	EQU	2
-CONIN	EQU	1
-PRTSTR	EQU	9
-
-	EXTRN	__fadd
-	EXTRN	__fdiv
-	EXTRN	__tmp32
-	EXTRN	_math_getarg
 
 	CSEG
 
 ; ============================================================
-; sqrt(x) - Square root using Newton-Raphson
-; x_{n+1} = (x_n + S/x_n) / 2
+; double sqrt(double x)
 ; ============================================================
 	PUBLIC	_sqrt
 	PUBLIC	_sqrtf
@@ -25,123 +17,261 @@ _sqrt:
 _sqrtf:
 _sqrtl:
 	PUSH	IX
-	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
 
-	CALL	_math_getarg	; x in DEHL
-
-	; Check for zero or negative
+	; B = the biased exponent
 	LD	A,D
 	AND	7FH
-	OR	E
-	OR	H
-	OR	L
-	JR	Z,_sqrt_zero
-	BIT	7,D
-	JR	NZ,_sqrt_neg	; Negative -> return 0
-
-	; Save x
-	LD	(_sqrt_x),HL
-	LD	(_sqrt_x+2),DE
-
-	; Initial guess: halve the biased exponent
-	; new_exp = (exp - 127) / 2 + 127
-	; Extract 8-bit exponent
-	LD	A,D		; D = SEEEEEEE
-	AND	7FH		; A = 0EEEEEEE (upper 7 exp bits)
-	ADD	A,A		; A = EEEEEEE0
+	ADD	A,A
 	LD	B,A
-	LD	A,E		; E = EMMMMMMM
-	RLCA			; bit 0 = exp low bit
-	AND	1
-	OR	B		; A = full 8-bit exponent
-
-	; Halve the unbiased exponent
-	SUB	127		; A = exp - 127 (signed)
-	SRA	A		; A = (exp-127)/2 (arithmetic shift right)
-	ADD	A,127		; A = new biased exponent
-
-	; Reconstruct float with new exponent, mantissa=1.0
-	; D = sign(0) | exp[7:1], E = exp[0] | 0000000
-	LD	B,A		; Save exponent
-	SRL	A		; A = exp >> 1 = exp[7:1]
-	LD	D,A		; D = 0 exp[7:1]
-	LD	A,B
-	AND	1		; exp[0]
-	RRCA			; Rotate to bit 7
-	LD	E,A		; E = exp[0] 0000000
-	LD	H,0
-	LD	L,0
-	LD	(_sqrt_guess),HL
-	LD	(_sqrt_guess+2),DE
-
-_sqrt_iterate:
-	; Newton-Raphson: 8 iterations
-	LD	B,8
-
-_sqrt_loop:
-	PUSH	BC
-
-	; Compute x / guess
-	LD	HL,(_sqrt_x)
-	LD	DE,(_sqrt_x+2)
-	LD	A,(_sqrt_guess)
-	LD	(__tmp32),A
-	LD	A,(_sqrt_guess+1)
-	LD	(__tmp32+1),A
-	LD	A,(_sqrt_guess+2)
-	LD	(__tmp32+2),A
-	LD	A,(_sqrt_guess+3)
-	LD	(__tmp32+3),A
-	CALL	__fdiv		; DEHL = x / guess
-
-	; Add guess: DEHL = x/guess + guess
-	LD	A,(_sqrt_guess)
-	LD	(__tmp32),A
-	LD	A,(_sqrt_guess+1)
-	LD	(__tmp32+1),A
-	LD	A,(_sqrt_guess+2)
-	LD	(__tmp32+2),A
-	LD	A,(_sqrt_guess+3)
-	LD	(__tmp32+3),A
-	CALL	__fadd		; DEHL = (x/guess + guess)
-
-	; Divide by 2: decrement IEEE 754 exponent by 1
-	; Subtract 0x00800000 from DEHL (exponent bit 0 is E bit 7)
-	OR	A		; Clear carry
 	LD	A,E
-	SUB	80H
+	RLCA
+	LD	A,B
+	ADC	A,0
+	LD	B,A
+	JR	Z,_sqrt_z	; zero or subnormal
+	CP	255
+	JR	Z,_sqrt_sp	; inf or NaN
+	BIT	7,D
+	JR	NZ,_sqrt_nan	; negative
+	LD	A,E
+	OR	80H		; the implied bit
 	LD	E,A
-	LD	A,D
-	SBC	A,0		; Borrow into upper exponent bits
-	LD	D,A
-
-	; Update guess
-	LD	(_sqrt_guess),HL
-	LD	(_sqrt_guess+2),DE
-
-	POP	BC
-	DJNZ	_sqrt_loop
-
-	; Result in DEHL
-	LD	HL,(_sqrt_guess)
-	LD	DE,(_sqrt_guess+2)
-	JR	_sqrt_done
-
-_sqrt_zero:
-_sqrt_neg:
+	LD	D,0		; DEHL = the mantissa, 24 bits
+	LD	C,0		; C = 0: normal number
+_sqrt_go:
+	; B = exponent, C = 64 for a subnormal number
+	LD	A,B
+	SRL	A
+	ADD	A,63
+	SUB	C
+	LD	(_sqrt_e),A	; the exponent of a root with 25 bits
+	BIT	0,B
+	JR	Z,_sqrt_ev
+	ADD	HL,HL		; the unbiased exponent is even: mantissa * 2
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+_sqrt_ev:
+	LD	B,6
+_sqrt_sh6:
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	DJNZ	_sqrt_sh6
+	LD	(_sqrt_s),HL
+	LD	(_sqrt_s+2),DE
 	LD	HL,0
-	LD	DE,0
-
-_sqrt_done:
+	LD	(_sqrt_r),HL
+	LD	(_sqrt_r+2),HL
+	LD	(_sqrt_q),HL
+	LD	(_sqrt_q+2),HL
+	EXX
+	LD	B,26		; B' = loop counter
+	EXX
+_sqrt_lp:
+	; C = the next two bits of S, S = S << 2
+	LD	A,(_sqrt_s+3)
+	RLCA
+	RLCA
+	AND	3
+	LD	C,A
+	LD	HL,(_sqrt_s)
+	LD	DE,(_sqrt_s+2)
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	LD	(_sqrt_s),HL
+	LD	(_sqrt_s+2),DE
+	; R = R << 2 | C
+	LD	HL,(_sqrt_r)
+	LD	DE,(_sqrt_r+2)
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	(_sqrt_r),HL
+	LD	(_sqrt_r+2),DE
+	; DE:HL = T = Q << 2 | 1
+	LD	HL,(_sqrt_q)
+	LD	DE,(_sqrt_q+2)
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	INC	HL
+	; R - T
+	LD	BC,(_sqrt_r)
+	LD	A,C
+	SUB	L
+	LD	C,A
+	LD	A,B
+	SBC	A,H
+	LD	B,A
+	PUSH	BC
+	LD	HL,(_sqrt_r+2)
+	SBC	HL,DE		; carry if R < T
 	POP	BC
+	JR	C,_sqrt_no
+	LD	(_sqrt_r),BC
+	LD	(_sqrt_r+2),HL
+	SCF
+	JR	_sqrt_q2
+_sqrt_no:
+	OR	A
+_sqrt_q2:
+	; Q = Q * 2 + carry
+	LD	HL,(_sqrt_q)
+	LD	DE,(_sqrt_q+2)
+	ADC	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	LD	(_sqrt_q),HL
+	LD	(_sqrt_q+2),DE
+	EXX
+	DEC	B
+	EXX
+	JP	NZ,_sqrt_lp
+
+	; C = 1 when the remainder is not zero
+	LD	BC,(_sqrt_r)
+	LD	A,B
+	OR	C
+	LD	BC,(_sqrt_r+2)
+	OR	B
+	OR	C
+	ADD	A,255
+	SBC	A,A
+	AND	1
+	LD	C,A
+	LD	HL,(_sqrt_q)
+	LD	DE,(_sqrt_q+2)
+	; Q has 25 or 26 bits
+	BIT	1,D
+	JR	NZ,_sqrt_26
+	LD	A,L
+	AND	1
+	ADD	A,A
+	LD	B,A		; bit 1 of B = the round bit
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	LD	D,0		; exponent increment
+	JR	_sqrt_rnd
+_sqrt_26:
+	LD	A,L
+	AND	3
+	LD	B,A		; bit 1 = the round bit, bit 0 = sticky
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	LD	D,1
+_sqrt_rnd:
+	BIT	1,B
+	JR	Z,_sqrt_pack
+	LD	A,B
+	AND	1
+	OR	C
+	LD	B,A
+	LD	A,L
+	AND	1
+	OR	B
+	JR	Z,_sqrt_pack	; a tie goes to the even mantissa
+	INC	HL
+	LD	A,H
+	OR	L
+	JR	NZ,_sqrt_pack
+	INC	E
+	JR	NZ,_sqrt_pack
+	LD	E,80H		; the mantissa carried to 2^24
+	INC	D
+_sqrt_pack:
+	LD	A,(_sqrt_e)
+	ADD	A,D
+	SRL	A
+	LD	D,A
+	JR	C,_sqrt_ret
+	RES	7,E
+_sqrt_ret:
 	POP	IX
 	RET
 
-	COMMON	/lc_sqrt/
+_sqrt_nan:
+	LD	DE,7FC0H
+	LD	HL,0
+	JR	_sqrt_ret
 
-_sqrt_x:	DS	4
-_sqrt_guess:	DS	4
+_sqrt_sp:
+	; exponent 255: inf or NaN.  A NaN and +inf are the result, -inf is NaN.
+	LD	A,E
+	AND	7FH
+	OR	H
+	OR	L
+	JR	NZ,_sqrt_ret	; a NaN
+	BIT	7,D
+	JR	NZ,_sqrt_nan
+	JR	_sqrt_ret
+
+_sqrt_z:
+	; exponent 0: zero, or a subnormal number
+	LD	A,E
+	AND	7FH
+	OR	H
+	OR	L
+	JR	Z,_sqrt_ret	; +-0
+	BIT	7,D
+	JR	NZ,_sqrt_nan
+	LD	A,E
+	AND	7FH
+	LD	E,A
+	LD	D,0
+	LD	B,129
+_sqrt_nl:
+	ADD	HL,HL
+	RL	E
+	DEC	B
+	BIT	7,E
+	JR	Z,_sqrt_nl
+	LD	C,64
+	JP	_sqrt_go
+
+	COMMON	/lc_sqrt/
+_sqrt_s:
+	DS	4
+_sqrt_r:
+	DS	4
+_sqrt_q:
+	DS	4
+_sqrt_e:
+	DS	1
 
 	END

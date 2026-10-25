@@ -62,15 +62,22 @@ __itof_pos:
 
 	; If high byte D has bits set, shift right to bring mantissa
 	; into 24-bit range (bits 0-23) before __fnorm
+	LD	BC,0		; B = the last bit shifted out, C = the bits before it
 __itof_rshift:
 	LD	A,D
 	OR	A
-	JR	Z,__itof_store
+	JR	Z,__itof_round
+	LD	A,B
+	OR	C
+	LD	C,A
 	; Shift DEHL right by 1
 	SRL	D
 	RR	E
 	RR	H
 	RR	L
+	LD	A,0
+	RLA
+	LD	B,A
 	; Increment exponent
 	PUSH	HL
 	LD	HL,(__fexp1)
@@ -79,6 +86,22 @@ __itof_rshift:
 	POP	HL
 	JR	__itof_rshift
 
+__itof_round:
+	; Round to nearest, ties to even (the shift lost the bits in B and C)
+	LD	A,B
+	OR	A
+	JR	Z,__itof_store
+	LD	A,C
+	OR	A
+	JR	NZ,__itof_up
+	BIT	0,L
+	JR	Z,__itof_store
+__itof_up:
+	INC	HL
+	LD	A,H
+	OR	L
+	JR	NZ,__itof_store
+	INC	DE
 __itof_store:
 	; Store mantissa (now D=0, bits in EHL)
 	LD	(__fman1),HL

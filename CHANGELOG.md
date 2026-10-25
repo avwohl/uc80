@@ -8,7 +8,22 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- `__fdiv` gives the IEEE result for an infinity or NaN operand and keeps the sign of a zero numerator (`inf/2` was a huge finite number, `inf/inf` was 1.0, `0/-1` was `+0`). Float comparison with a NaN stays non-IEEE; recorded in `docs/FLOAT_STATUS.md`.
+- `strtol`, `strtoul`, `strtoll`, `strtoull` and scanf `%i` accept the C23 prefix `0b`; scanf has the `%b` conversion.
+- The tests use the `src` directory of their own checkout (`PYTHONPATH` set in `tests/conftest.py`).
 - `?:` after a side effect in the condition: `int a=v; return (a++ > 0) ? a : 99;` read `a` as `v` (uc80's own `?:` walk skipped the sequence point after the condition). uc80 now uses uc_core's walk and keeps only its typed constant fold (`_fold_ternary`). Needs the uc_core copy-propagation fix.
+
+- **scanf family rewritten in C** (`src/uc80/lib/csrc/`, generated into `lc/` by `gen_c_modules.py`). `sscanf`, `fscanf` and `scanf` now do `%f %e %g %a` (and `%lf`, `%Lf`), `%n`, widths (`%3c%d`), `%*` suppression, `%[...]` scan sets, `%%`, `%i` with `0x` and `0` prefixes, `%o %u %x` with signs, `%hhd %hd %ld %lld %zd %jd %td`, `%p`, and return EOF when the input ends before the first item. New `vscanf`, `vfscanf` and `vsscanf`. `sscanf` and `vsscanf` no longer link BDOS code.
+- `strtod`, `strtof`, `strtold` and `atof` rewritten: the result is correctly rounded (the old code was up to 20 units in the last place off, and `1e-38` or `99999999999` were far wrong), and `inf`, `infinity`, `nan`, `nan(chars)` and hex floats (`0x1p3`) work. The end pointer is the input pointer when no number is read. `errno` is `ERANGE` on overflow and underflow.
+- `strtol` and `strtoul` rewritten: bases 0 and 2 to 36, `0x` prefix only before a hex digit, overflow gives `LONG_MAX`, `LONG_MIN` or `ULONG_MAX` with `errno == ERANGE`, a bad base gives `EINVAL`.
+- `errno` is its own module (`lc_errno`), so `strtol` stays in the ROM library.
+- **Float `+ - / ` and int-to-float round to nearest, ties to even.** `__fadd` and `__fsub` dropped the bit they shifted out (so `x - y` was inexact when the exponents differed by one), `__fdiv` made only 23 bits when the dividend was smaller than the divisor (a result could be 2 units in the last place off), and `__itof`, `__ltof`, `__uitof` truncated (`(float)50066279` was one unit low). `__fadd` also handles infinity and NaN operands, and `x/0` is `+-inf` with the sign of `x`, `0/0` is NaN.
+- **libm rewritten in C** (`src/uc80/lib/csrc/`). Every `math.h` function is now within 2 units in the last place of the exact result (the old library was off by 5 to 10^9 for many arguments), handles infinity, NaN, signed zero and the C99 special cases, and reduces the argument of `sin`, `cos` and `tan` with Payne-Hanek, so `sin(1e30)` is right. `sqrt`, `cbrt`, `fmod`, `remainder`, `floor`, `ceil`, `trunc`, `round`, `hypot` are correctly rounded or exact; `pow` is exact when the result is a float (`pow(3,2)` is 9) and within 1 ulp otherwise. Fixed: `floor`, `ceil`, `trunc`, `round` clamped to +-2^31; `cbrt(27)` was 3.00007; `sinh(0)` and `tanh(0)` were `-inf`; `atan2` was wrong in the second and third quadrant; `acos(-1)` was 0; `exp(100)` was 2e-34; `modf` of a negative number and of a large number; `frexp(0)`; `ldexp(0, n)`; `remainder`; `log` near 1.
+- **The float part of `scanf` links only when the program needs it.** The compiler adds a reference when a scanf call has a float conversion in its format, a format that is not a literal, or when a scanf function is used without a call (`scan_hook.py`). `sscanf("%d")` is 3.2 KB instead of 1.5 KB before this change, and 9.3 KB if the float part always linked.
+- `printf("%f")`, `%e` and `%g` print the same digits as before with the rounding float runtime. The `%f` printer adds its pre-round term with rounding toward zero (`printf("%f", 12.34)` had become `12.340001`), and the `%e` printer no longer adds an ulp to make up for a truncating runtime. c-testsuite 00174 expects `sin(2)` as `0.909297`, the correct value.
+- `__fadd` is 511 bytes (was 439 bytes) and `__fdiv` 385 bytes (was 432), so float programs that only add, subtract and divide change by +72 to -47 bytes. `sscanf` and `vsscanf` are in the ROM library.
+- `sqrt` is correctly rounded and 399 bytes: an integer digit-by-digit root in assembly. The old one was off by one ulp in 25% of the cases.
+- `rint`, `nearbyint`, `lrint`, `llrint`, `lround`, `llround`, `remquo`, `nexttoward` and their `f` and `l` forms are new (`math.h` declared several of them but the library had none).
 
 ### Added
 
@@ -31,6 +46,8 @@ observable behaviour of a program uc80 compiles.
 - ROM target: a warning for each `#pragma uc80 vector`, because a C function has no RETI. Tests for const objects in two C modules and for an assembly module that reads a const array.
 - **Const data in the ROM** (`--target=rom` only): const objects, string literals and const compound literals go to CSEG, so the start-up code does not copy them to RAM. RAM of the four snd-* kernels drops by 33 to 232 bytes; ROM size and T-states stay the same. The CP/M output is byte-identical. See `docs/rom.md`.
 - **Roots and vectors for the ROM target**: `--entry NAME` (repeatable) and `#pragma uc80 keep NAME` keep a function the code never calls; a ROM program with no `main` starts at the first `--entry`; `#pragma uc80 vector 38h NAME` and `66h NAME` make the INT and NMI vectors jump to a C function; `#pragma uc80 public NAME` gives a static name or an unused BSS object a PUBLIC label. BSS objects of the ROM target keep their PUBLIC label. uc_core records `#pragma uc80 ...` lines in `Preprocessor.target_pragmas`.
+- `strtoll`, `strtoull`, `atoll`, `strtoimax` and `strtoumax`.
+
 - `tests/conftest.py` builds `libc_rom.lib` and `crt0_rom.rel` when a checkout lacks them. The ROM tests fail, not skip, if a library is missing.
 - **ROM target (Phase 1 of `docs/rom_target.md`): `uc80 --target=rom`** (alias
   `-ffreestanding`). The compiler embeds `lib/crt0_rom.mac` (reset vector,

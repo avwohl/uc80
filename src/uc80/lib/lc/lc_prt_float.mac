@@ -100,7 +100,7 @@ _prt_round_add:
 	LD	(__tmp32+2),DE
 	LD	HL,(__fwork)
 	LD	DE,(__fwork+2)
-	CALL	__fadd
+	CALL	_prt_addz
 	LD	(__fwork),HL
 	LD	(__fwork+2),DE
 	POP	HL
@@ -393,12 +393,64 @@ _prt_float_done:
 	POP	BC
 	RET
 
+; ============================================================
+; _prt_addz - DEHL = DEHL + (__tmp32), both positive, rounded toward zero.
+; __fadd rounds to nearest.  The pre-round step above adds half a unit of
+; the last printed digit, and the digit loop then cuts the result off, so
+; the sum has to be the largest float that is not above the exact sum.
+; The error of the nearest sum is found with the exact subtractions
+; s - x and d - (s - x); if it is negative, the sum is one float too high.
+; ============================================================
+_prt_addz:
+	LD	(_pz_x),HL
+	LD	(_pz_x+2),DE
+	LD	HL,(__tmp32)
+	LD	(_pz_d),HL
+	LD	HL,(__tmp32+2)
+	LD	(_pz_d+2),HL
+	LD	HL,(_pz_x)
+	CALL	__fadd			; DEHL = s (DE still holds the high word)
+	LD	(_pz_s),HL
+	LD	(_pz_s+2),DE
+	LD	HL,(_pz_x)
+	LD	(__tmp32),HL
+	LD	HL,(_pz_x+2)
+	LD	(__tmp32+2),HL
+	LD	HL,(_pz_s)
+	LD	DE,(_pz_s+2)
+	CALL	__fsub			; s - x
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_pz_d)
+	LD	DE,(_pz_d+2)
+	CALL	__fsub			; d - (s - x), the error of s
+	LD	A,D
+	LD	HL,(_pz_s)
+	LD	DE,(_pz_s+2)
+	OR	A
+	RET	P			; the error is not negative
+	LD	A,D			; the sum is one float too high
+	OR	E
+	OR	H
+	OR	L
+	RET	Z
+	DEC	HL
+	LD	A,H
+	AND	L
+	INC	A
+	RET	NZ
+	DEC	DE
+	RET
+
 
 	DSEG
 
 _prt_float_sinf:	DB	'INF'
 _prt_float_snan:	DB	'NAN'
 __fwork:	DS	4
+_pz_x:		DS	4
+_pz_d:		DS	4
+_pz_s:		DS	4
 __fint:		DS	4	; %f integer part, as a 32-bit integer
 _pbig_m:	DS	3	; %f >= 2^31: the 24-bit mantissa, shifted out MSB first
 _prt_big:	DS	40	; %f >= 2^31: decimal digits, least significant first
