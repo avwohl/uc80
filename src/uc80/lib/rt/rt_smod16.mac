@@ -1,0 +1,47 @@
+; rt_smod16.mac - __smod16
+; Split from rt_arith16.mac
+
+	.Z80
+
+	EXTRN	__div16
+
+	CSEG
+; ============================================================
+; 16-bit signed modulo: HL = DE % HL (signed)
+; Result has same sign as dividend (DE)
+; ============================================================
+	PUBLIC	__smod16
+__smod16:
+	LD	A,D
+	OR	A
+	PUSH	AF		; S flag = sign of the dividend
+	JP	P,__smod16_1
+	XOR	A		; DE = -DE
+	SUB	E
+	LD	E,A
+	SBC	A,A
+	SUB	D
+	LD	D,A
+__smod16_1:
+	BIT	7,H
+	JR	Z,__smod16_2
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__smod16_2:
+	CALL	__div16
+	EX	DE,HL		; HL = remainder
+	POP	AF
+	RET	P
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+	RET
+
+	END

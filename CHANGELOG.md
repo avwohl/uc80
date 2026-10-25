@@ -49,6 +49,9 @@ observable behaviour of a program uc80 compiles.
 
 ### Changed
 
+- The runtime library (`lib/rt/`) and the math, `strtod` and `scanf` parts of libc (`lib/lc/`) hold one module for each entry point, or for each group of entry points that share a body. `rt_arith16`, `rt_arith32`, `rt_arith64`, `rt_float`, `rt_complex`, `rt_mul`, `rt_div8`, `rt_setjmp`, `lc_atof`, `lc_scanf`, `lc_floor`, `lc_fabs`, `lc_fmax`, `lc_fmod`, `lc_fpclassify`, `lc_frexp`, `lc_logb`, `lc_math_helper`, `lc_atomic` and `lc_thread` are split. `runtime.lib` has 104 modules (was 11) and `libc.lib` has 250 (was 177). The image of no bench program grows; 58 of 109 get smaller (817,781 to 814,805 bytes in total). See `docs/libraries.md`.
+- `runtime.py` no longer reads a comment line as initialized data, so a `DS` block at the end of a module stays in the BSS of the embedded runtime.
+
 - **Zero-start runtime and libc variables are in the BSS.** `__tmp32`,
   `__divrem`, `__div32_dvd`, `__rem32`, the 64-bit, float and complex
   temporaries, `__sret_buf` and the static variables of libc are in a named

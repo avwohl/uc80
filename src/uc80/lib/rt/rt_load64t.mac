@@ -1,0 +1,45 @@
+; rt_load64t.mac - __load64t
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __load64t: Load 64-bit value from address to __tmp64
+; Input: HL = address of 64-bit value
+; Output: __tmp64 = value
+; ============================================================
+	PUBLIC	__load64t
+__load64t:
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__tmp64+6),DE
+	POP	DE
+	RET
+
+; ============================================================
+; __div64: 64-bit unsigned division __acc64 = __acc64 / __tmp64
+; Remainder stored in __rem64
+; Uses shift-and-subtract algorithm (same as __div32 but 64-bit)
+; ============================================================
+
+	END

@@ -1,0 +1,72 @@
+; rt_dv8w.mac - __dv8w
+; Split from rt_div8.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; __dv8w - one byte of long division by a 16-bit divisor
+; In:  HL = running remainder (< DE), A = next dividend byte,
+;      DE = divisor (1..65535)
+; Out: A = quotient byte, HL = new remainder
+; Preserves C, DE, IX, IY.  Clobbers B, flags.
+; ============================================================
+	PUBLIC	__dv8w
+__dv8w:
+	LD	B,A
+	LD	A,H
+	OR	A
+	JR	NZ,__dv8w_go
+	LD	A,L		; remainder < 256: if L:byte < DE the
+	CP	D		; quotient byte is 0
+	JR	C,__dv8w_z
+	JR	NZ,__dv8w_go
+	LD	A,B
+	CP	E
+	JR	NC,__dv8w_go
+__dv8w_z:
+	LD	H,L
+	LD	L,B
+	XOR	A
+	RET
+__dv8w_go:
+	LD	A,B
+	LD	B,8
+	BIT	7,D
+	JR	NZ,__dv8w_hl
+	; Divisor < 32768: 2*remainder+1 fits in 16 bits.  The carry
+	; after SBC (or the restoring ADD) is the complement of the
+	; quotient bit; RLA shifts it in as the next dividend bit leaves.
+__dv8w_lp:
+	RLA
+	ADC	HL,HL
+	SBC	HL,DE		; carry is 0 here
+	JR	NC,__dv8w_ok
+	ADD	HL,DE		; restore; this sets carry
+__dv8w_ok:
+	DJNZ	__dv8w_lp
+	RLA
+	CPL
+	RET
+__dv8w_hl:
+	RLA
+	ADC	HL,HL
+	JR	C,__dv8w_ov	; remainder passed 65535: above the divisor
+	SBC	HL,DE
+	JR	NC,__dv8w_hk
+	ADD	HL,DE
+__dv8w_hk:
+	DJNZ	__dv8w_hl
+	RLA
+	CPL
+	RET
+__dv8w_ov:
+	OR	A
+	SBC	HL,DE		; borrows
+	CCF			; carry 0: quotient bit 1
+	DJNZ	__dv8w_hl
+	RLA
+	CPL
+	RET
+
+	END

@@ -1,0 +1,42 @@
+; rt_sub64.mac - __sub64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __sub64: 64-bit subtraction __acc64 = __acc64 - __tmp64
+; ============================================================
+	PUBLIC	__sub64
+__sub64:
+	PUSH	BC
+	PUSH	DE
+	; Subtract word 0
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	OR	A			; Clear carry
+	SBC	HL,BC
+	LD	(__acc64),HL
+	; Subtract word 1 with borrow
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__acc64+2),HL
+	; Subtract word 2 with borrow
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__acc64+4),HL
+	; Subtract word 3 with borrow
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__acc64+6),HL
+	POP	DE
+	POP	BC
+	RET
+
+	END

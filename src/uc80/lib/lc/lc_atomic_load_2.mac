@@ -1,0 +1,27 @@
+; lc_atomic_load_2.mac - ___atomic_load_2
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; unsigned int __atomic_load_2(volatile void *obj)
+	PUBLIC	___atomic_load_2
+___atomic_load_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EI
+
+	EX	DE,HL
+	POP	IX
+	RET
+
+	END

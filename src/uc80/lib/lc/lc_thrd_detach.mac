@@ -1,0 +1,14 @@
+; lc_thrd_detach.mac - _thrd_detach
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; int thrd_detach(thrd_t thr)
+; Detach a thread - returns thrd_error under CP/M
+	PUBLIC	_thrd_detach
+_thrd_detach:
+	LD	HL,4		; thrd_error
+	RET
+
+	END

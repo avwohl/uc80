@@ -1,0 +1,29 @@
+; lc_atomic_flag_test_and_set_explicit.mac - _atomic_flag_test_and_set_explicit, _atomic_flag_test_and_set
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+	PUBLIC	_atomic_flag_test_and_set_explicit
+_atomic_flag_test_and_set_explicit:
+	PUBLIC	_atomic_flag_test_and_set
+_atomic_flag_test_and_set:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = obj
+
+	DI
+	LD	A,(HL)		; Get current value
+	LD	E,A		; Save for return
+	LD	(HL),1		; Set flag
+	EI
+
+	LD	L,E
+	LD	H,0		; Return old value
+	POP	IX
+	RET
+
+	END

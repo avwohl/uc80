@@ -1,0 +1,106 @@
+; rt_fcmp.mac - __fcmp
+; Split from rt_float.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+
+	CSEG
+; ============================================================
+; Float Comparison: Compare DEHL with (__tmp32)
+; Returns: Z if equal, C if DEHL < __tmp32
+; ============================================================
+	PUBLIC	__fcmp
+__fcmp:
+	PUSH	BC
+
+	; IEEE 754: -0.0 == +0.0. Special-case zero before the bit-pattern
+	; compare so a signed-zero pair doesn't end up "left < right" just
+	; because the sign bit differs.
+	LD	A,D
+	AND	7FH		; mask off left's sign bit
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fcmp_lnz
+	; left magnitude == 0; check right
+	LD	A,(__tmp32+3)
+	AND	7FH
+	LD	B,A
+	LD	A,(__tmp32+2)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32+1)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32)
+	OR	B
+	JR	NZ,__fcmp_lnz
+	; both zero (any sign) — return Z, NC
+	XOR	A		; clears Z=1 actually? XOR A sets Z; CP A is cleaner
+	POP	BC
+	RET
+__fcmp_lnz:
+
+	; Compare: left (DEHL) vs right (__tmp32)
+	; Sets Z if equal, C if left < right
+	LD	A,(__tmp32+3)
+	XOR	D
+	JP	P,__fcmp_same	; same sign
+
+	; Signs differ: the negative one is smaller.  Flip the sign
+	; bits so an unsigned compare of the high bytes says so.
+	LD	A,(__tmp32+3)
+	XOR	80H
+	LD	B,A		; B = right high byte (sign-flipped)
+	LD	A,D
+	XOR	80H		; A = left high byte (sign-flipped)
+	CP	B		; C if left < right
+	JR	__fcmp_diff
+
+__fcmp_same:
+	BIT	7,D
+	JR	NZ,__fcmp_neg
+
+	; Both positive: compare the magnitudes, left against right.
+	LD	A,(__tmp32+3)
+	LD	B,A
+	LD	A,D
+	CP	B		; C if left < right
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+2)
+	LD	B,A
+	LD	A,E
+	CP	B
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+1)
+	LD	B,A
+	LD	A,H
+	CP	B
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32)
+	LD	B,A
+	LD	A,L
+	CP	B
+	JR	__fcmp_diff
+
+__fcmp_neg:
+	; Both negative: the larger magnitude is the smaller value, so
+	; compare right against left.
+	LD	A,(__tmp32+3)
+	CP	D		; C if |right| < |left|, left < right
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+2)
+	CP	E
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+1)
+	CP	H
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32)
+	CP	L
+
+__fcmp_diff:
+	POP	BC
+	RET
+
+	END

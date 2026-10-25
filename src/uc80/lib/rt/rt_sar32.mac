@@ -1,0 +1,75 @@
+; rt_sar32.mac - __sar32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; 32-bit arithmetic right shift: DEHL = DEHL >> A (signed)
+; A >= 32 acts as 31: 0 or -1 by the sign.
+; ============================================================
+	PUBLIC	__sar32
+__sar32:
+	CP	5
+	JR	NC,__sar32_b
+__sar32_s:
+	OR	A
+	RET	Z
+__sar32_lp:
+	SRA	D
+	RR	E
+	RR	H
+	RR	L
+	DEC	A
+	JR	NZ,__sar32_lp
+	RET
+__sar32_b:
+	CP	32
+	JR	C,__sar32_0
+	LD	A,31
+__sar32_0:
+	CP	16
+	JR	C,__sar32_1
+	SUB	16		; shift by 16: word move, sign fill
+	EX	DE,HL
+	LD	DE,0
+	BIT	7,H
+	JR	Z,__sar32_1
+	DEC	DE
+__sar32_1:
+	CP	8
+	JR	C,__sar32_2
+	LD	L,H		; shift by 8: byte move, sign fill
+	LD	H,E
+	LD	E,D
+	LD	D,0
+	BIT	7,E
+	JR	Z,__sar32_1p
+	DEC	D
+__sar32_1p:
+	SUB	8
+__sar32_2:
+	CP	5
+	JR	C,__sar32_s
+	PUSH	BC		; 5..7: left by 8-n into a fifth byte
+	LD	B,A		; that starts as the sign fill
+	LD	A,8
+	SUB	B
+	LD	B,A
+	LD	A,D
+	RLA
+	SBC	A,A
+__sar32_ll:
+	ADD	HL,HL
+	RL	E
+	RL	D
+	RLA
+	DJNZ	__sar32_ll
+	LD	L,H
+	LD	H,E
+	LD	E,D
+	LD	D,A
+	POP	BC
+	RET
+
+	END

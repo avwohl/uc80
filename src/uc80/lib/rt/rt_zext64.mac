@@ -1,0 +1,23 @@
+; rt_zext64.mac - __zext64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __zext64: Zero-extend 32-bit DEHL to 64-bit in __acc64
+; Input: DEHL = 32-bit value
+; Output: __acc64 = zero-extended 64-bit value
+; ============================================================
+	PUBLIC	__zext64
+__zext64:
+	LD	(__acc64),HL		; Store low word
+	LD	(__acc64+2),DE		; Store second word
+	LD	HL,0
+	LD	(__acc64+4),HL		; Upper 32 bits = 0
+	LD	(__acc64+6),HL
+	RET
+
+	END

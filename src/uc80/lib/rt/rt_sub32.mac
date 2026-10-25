@@ -1,0 +1,25 @@
+; rt_sub32.mac - __sub32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+
+	CSEG
+; ============================================================
+; 32-bit subtraction: DEHL = DEHL - (__tmp32)
+; ============================================================
+	PUBLIC	__sub32
+__sub32:
+	PUSH	BC
+	LD	BC,(__tmp32)
+	OR	A		; Clear carry
+	SBC	HL,BC		; HL = left.low - right.low
+	EX	DE,HL
+	LD	BC,(__tmp32+2)
+	SBC	HL,BC		; HL = left.high - right.high - borrow
+	EX	DE,HL
+	POP	BC
+	RET
+
+	END

@@ -1,0 +1,68 @@
+; rt_cmp64.mac - __cmp64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __cmp64: Compare __acc64 with __tmp64 (signed)
+; Output: Flags set for signed comparison
+;         Z if equal, C if __acc64 < __tmp64 (signed)
+; Returns: HL = -1 if <, 0 if ==, 1 if >
+; ============================================================
+	PUBLIC	__cmp64
+__cmp64:
+	PUSH	BC
+	; First compare sign bits
+	LD	A,(__acc64+7)
+	XOR	A
+	LD	A,(__acc64+7)
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	JP	M,__cmp64_diffsign	; Different signs
+	; Same sign - compare magnitude from MSB to LSB
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	; Equal
+	LD	HL,0
+	POP	BC
+	RET
+__cmp64_neq:
+	; Not equal - check carry for less than
+	JR	C,__cmp64_lt
+	LD	HL,1			; Greater than
+	POP	BC
+	RET
+__cmp64_lt:
+	LD	HL,-1			; Less than
+	POP	BC
+	RET
+__cmp64_diffsign:
+	; Different signs - negative is less
+	LD	A,(__acc64+7)
+	AND	80H
+	JR	NZ,__cmp64_lt		; acc64 is negative, so less
+	LD	HL,1			; acc64 is positive, so greater
+	POP	BC
+	RET
+
+	END

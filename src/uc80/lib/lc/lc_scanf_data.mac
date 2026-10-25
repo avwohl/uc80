@@ -1,0 +1,24 @@
+; lc_scanf_data.mac - data
+; Split from lc_scanf.mac
+
+	.Z80
+
+	COMMON	/lc_scanf_data/
+; scanf work areas
+	PUBLIC	_scanf_count
+_scanf_count:	DS	1	; Number of matched items
+	PUBLIC	_scanf_mode
+_scanf_mode:	DS	1	; 0=stdin, 1=string, 2=file
+	PUBLIC	_scanf_src
+_scanf_src:	DS	2	; String source pointer
+	PUBLIC	_scanf_fp
+_scanf_fp:	DS	2	; File pointer
+	PUBLIC	_scanf_ungot
+_scanf_ungot:	DS	1	; Ungetc'd character
+	PUBLIC	_scanf_got
+_scanf_got:	DS	1	; A conversion found a digit
+	PUBLIC	_scanf_tmp
+_scanf_tmp:	DS	4	; Work area of _scanf_x10a
+_scanf_buf:	DS	32	; Working buffer
+
+	END

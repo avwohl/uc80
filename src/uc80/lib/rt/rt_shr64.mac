@@ -1,0 +1,41 @@
+; rt_shr64.mac - __shr64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __shr64: 64-bit logical right shift __acc64 = __acc64 >> A
+; Input: A = shift count (0-63)
+; ============================================================
+	PUBLIC	__shr64
+__shr64:
+	AND	63
+	RET	Z
+	PUSH	BC
+	LD	B,A
+__shr64_loop:
+	; Shift right by 1 from MSB
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	DJNZ	__shr64_loop
+	POP	BC
+	RET
+
+	END

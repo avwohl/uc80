@@ -1,0 +1,47 @@
+; lc_tss_delete.mac - _tss_delete
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_tss_dtors
+	EXTRN	_tss_slots
+
+	CSEG
+; void tss_delete(tss_t key)
+	PUBLIC	_tss_delete
+_tss_delete:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)
+	CP	8
+	JR	NC,_tss_del_done
+
+	ADD	A,A
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	A,0FFH
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A		; Mark as unused
+
+	; Clear destructor
+	LD	HL,_tss_dtors
+	ADD	HL,DE
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+_tss_del_done:
+	POP	IX
+	RET
+
+; ============================================================
+; call_once function
+; ============================================================
+
+	END

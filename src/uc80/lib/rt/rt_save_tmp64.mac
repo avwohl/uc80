@@ -1,0 +1,26 @@
+; rt_save_tmp64.mac - __save_tmp64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __save_tmp64: Save __tmp64 to stack (for complex binary ops)
+; ============================================================
+	PUBLIC	__save_tmp64
+__save_tmp64:
+	POP	BC
+	LD	HL,(__tmp64)
+	PUSH	HL
+	LD	HL,(__tmp64+2)
+	PUSH	HL
+	LD	HL,(__tmp64+4)
+	PUSH	HL
+	LD	HL,(__tmp64+6)
+	PUSH	HL
+	PUSH	BC
+	RET
+
+	END

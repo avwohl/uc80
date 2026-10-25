@@ -1,0 +1,33 @@
+; lc_trunc.mac - _trunc, _truncf, _truncl
+; Split from lc_floor.mac
+
+	.Z80
+
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	_math_getarg
+
+	CSEG
+; ============================================================
+; trunc(x) - round toward zero
+; ============================================================
+	PUBLIC	_trunc
+_trunc:
+	PUBLIC	_truncf
+_truncf:
+	PUBLIC	_truncl
+_truncl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	CALL	__ftoi
+	CALL	__itof
+
+	POP	BC
+	POP	IX
+	RET
+
+	END

@@ -1,0 +1,27 @@
+; rt_mod64.mac - __mod64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__div64
+	EXTRN	__rem64
+
+	CSEG
+; ============================================================
+; __mod64: 64-bit unsigned modulo __acc64 = __acc64 % __tmp64
+; ============================================================
+	PUBLIC	__mod64
+__mod64:
+	CALL	__div64
+	LD	HL,(__rem64)
+	LD	(__acc64),HL
+	LD	HL,(__rem64+2)
+	LD	(__acc64+2),HL
+	LD	HL,(__rem64+4)
+	LD	(__acc64+4),HL
+	LD	HL,(__rem64+6)
+	LD	(__acc64+6),HL
+	RET
+
+	END

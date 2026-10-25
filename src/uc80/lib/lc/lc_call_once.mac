@@ -1,0 +1,47 @@
+; lc_call_once.mac - _call_once
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; void call_once(once_flag *flag, void (*func)(void))
+	PUBLIC	_call_once
+_call_once:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; flag
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_call_once_done
+
+	; Mark as called
+	LD	(HL),1
+	EI
+
+	; Call function
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	CALL	_call_once_call
+	JR	_call_once_ret
+
+_call_once_done:
+	EI
+_call_once_ret:
+	POP	BC
+	POP	IX
+	RET
+
+_call_once_call:
+	JP	(HL)
+
+; ============================================================
+; Atomic operations (stdatomic.h)
+; All use DI/EI for atomicity on Z80
+; ============================================================
+
+	END

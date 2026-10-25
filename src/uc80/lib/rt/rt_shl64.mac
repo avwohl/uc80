@@ -1,0 +1,37 @@
+; rt_shl64.mac - __shl64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __shl64: 64-bit left shift __acc64 = __acc64 << A
+; Input: A = shift count (0-63)
+; ============================================================
+	PUBLIC	__shl64
+__shl64:
+	AND	63			; Limit to 0-63
+	RET	Z			; No shift needed
+	PUSH	BC
+	LD	B,A			; B = shift count
+__shl64_loop:
+	; Shift left by 1: shift each word and propagate carry
+	LD	HL,(__acc64)
+	ADD	HL,HL			; Shift word 0, carry out
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	ADC	HL,HL			; Shift word 1 with carry in
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	ADC	HL,HL			; Shift word 2 with carry in
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	ADC	HL,HL			; Shift word 3 with carry in
+	LD	(__acc64+6),HL
+	DJNZ	__shl64_loop
+	POP	BC
+	RET
+
+	END

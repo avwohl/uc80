@@ -1,0 +1,68 @@
+; rt_ctz64.mac - __ctz64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+	PUBLIC	__ctz64
+__ctz64:
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__ctz64_nz
+	LD	HL,64
+	RET
+__ctz64_nz:
+	PUSH	BC
+	LD	BC,0
+__ctz64_lp:
+	LD	A,(__acc64)
+	AND	1
+	JR	NZ,__ctz64_done
+	INC	BC
+	; Shift __acc64 right by 1
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	JR	__ctz64_lp
+__ctz64_done:
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+	END

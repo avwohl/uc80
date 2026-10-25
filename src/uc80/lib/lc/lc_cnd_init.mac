@@ -1,0 +1,25 @@
+; lc_cnd_init.mac - _cnd_init
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; int cnd_init(cnd_t *cond)
+	PUBLIC	_cnd_init
+_cnd_init:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	(HL),A		; waiters = 0
+	INC	HL
+	LD	(HL),A		; signaled = 0
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+	END

@@ -1,0 +1,27 @@
+; rt_mul16ng.mac - __mul16ng
+; Split from rt_arith16.mac
+
+	.Z80
+
+	EXTRN	__mul8x16
+
+	CSEG
+; ============================================================
+; __mul16ng - HL = -(DE * A), A = 1..255.  Part of __mul16.
+; __mul16w  - HL = DE * HL when neither operand fits in 8 bits:
+;   DE*L + ((E*H) mod 256)<<8.  Part of __mul16.
+; Kept apart from __mul16 so that the common 8-bit cases are one
+; short routine.  Same registers as __mul16.
+; ============================================================
+	PUBLIC	__mul16ng
+__mul16ng:
+	CALL	__mul8x16
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+	RET
+
+	END

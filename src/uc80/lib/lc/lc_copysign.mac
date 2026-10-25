@@ -1,0 +1,30 @@
+; lc_copysign.mac - _copysign, _copysignf
+; Split from lc_fabs.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; copysign(x, y) - return x with sign of y
+; ============================================================
+	PUBLIC	_copysign
+_copysign:
+	PUBLIC	_copysignf
+_copysignf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	A,(IX+7)
+	AND	7FH		; Clear x sign
+	LD	B,A
+	LD	A,(IX+11)	; y high byte
+	AND	80H		; Get y sign
+	OR	B		; Combine
+	LD	D,A
+	POP	IX
+	RET
+
+	END

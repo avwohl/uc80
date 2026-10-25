@@ -1,0 +1,15 @@
+; rt_zext32.mac - __zext32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; Zero-extend 16-bit HL to 32-bit DEHL
+; ============================================================
+	PUBLIC	__zext32
+__zext32:
+	LD	DE,0
+	RET
+
+	END

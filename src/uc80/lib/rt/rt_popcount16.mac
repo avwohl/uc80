@@ -1,0 +1,28 @@
+; rt_popcount16.mac - __popcount16
+; Split from rt_arith16.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; __popcount16 — count set bits in HL.
+; ============================================================
+	PUBLIC	__popcount16
+__popcount16:
+	PUSH	BC
+	LD	B,0		; counter
+	LD	C,16		; bits remaining
+__popcount16_lp:
+	SRL	H
+	RR	L
+	JR	NC,__popcount16_skip
+	INC	B
+__popcount16_skip:
+	DEC	C
+	JR	NZ,__popcount16_lp
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+
+	END

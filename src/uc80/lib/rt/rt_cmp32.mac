@@ -1,0 +1,35 @@
+; rt_cmp32.mac - __cmp32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+
+	CSEG
+; ============================================================
+; 32-bit compare: sets flags based on DEHL - (__tmp32)
+; Returns: Z if equal, C if DEHL < __tmp32 (unsigned)
+; ============================================================
+	PUBLIC	__cmp32
+__cmp32:
+	PUSH	BC
+	; Compare high words first
+	LD	BC,(__tmp32+2)
+	LD	A,D
+	CP	B
+	JR	NZ,__cmp32_done
+	LD	A,E
+	CP	C
+	JR	NZ,__cmp32_done
+	; High words equal, compare low
+	LD	BC,(__tmp32)
+	LD	A,H
+	CP	B
+	JR	NZ,__cmp32_done
+	LD	A,L
+	CP	C
+__cmp32_done:
+	POP	BC
+	RET
+
+	END

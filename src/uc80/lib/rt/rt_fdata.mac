@@ -1,0 +1,32 @@
+; rt_fdata.mac - __fop1, __fop2, __fsgn1, __fsgn2, __fexp1, __fexp2, __fman1, __fman2
+; Split from rt_float.mac
+
+	.Z80
+
+	COMMON	/rt_fdata/
+	PUBLIC	__fop1
+__fop1:
+	DS	4
+	PUBLIC	__fop2
+__fop2:
+	DS	4
+	PUBLIC	__fsgn1
+__fsgn1:
+	DS	1
+	PUBLIC	__fsgn2
+__fsgn2:
+	DS	1
+	PUBLIC	__fexp1
+__fexp1:
+	DS	2
+	PUBLIC	__fexp2
+__fexp2:
+	DS	2
+	PUBLIC	__fman1
+__fman1:
+	DS	4
+	PUBLIC	__fman2
+__fman2:
+	DS	4
+
+	END

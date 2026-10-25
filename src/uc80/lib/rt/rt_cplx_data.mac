@@ -1,0 +1,23 @@
+; rt_cplx_data.mac - __cplx_l, __cplx_r, __cplx_result, __cplx_tmp
+; Split from rt_complex.mac
+
+	.Z80
+
+	COMMON	/rt_cplx_data/
+	PUBLIC	__cplx_l
+__cplx_l:
+	DS	8
+	PUBLIC	__cplx_r
+__cplx_r:
+	DS	8
+	PUBLIC	__cplx_result
+__cplx_result:
+	DS	8
+	PUBLIC	__cplx_tmp
+__cplx_tmp:
+	DS	8
+	PUBLIC	__cplx_work
+__cplx_work:
+	DS	8
+
+	END

@@ -1,0 +1,71 @@
+; rt_shl32.mac - __shl32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; 32-bit left shift: DEHL = DEHL << A  (A >= 32 gives 0)
+; Counts below 5 shift bit by bit.  Larger counts move whole bytes
+; first; 5..7 leftover bits go the other way: right by 8-n into a
+; fifth byte, then a byte move.
+; ============================================================
+	PUBLIC	__shl32
+__shl32:
+	CP	5
+	JR	NC,__shl32_b
+__shl32_s:
+	OR	A
+	RET	Z
+__shl32_lp:
+	ADD	HL,HL
+	RL	E
+	RL	D
+	DEC	A
+	JR	NZ,__shl32_lp
+	RET
+__shl32_b:
+	CP	32
+	JR	NC,__shl32_z
+	CP	16
+	JR	C,__shl32_1
+	EX	DE,HL		; shift by 16: word move
+	LD	HL,0
+	SUB	16
+__shl32_1:
+	CP	8
+	JR	C,__shl32_2
+	LD	D,E		; shift by 8: byte move
+	LD	E,H
+	LD	H,L
+	LD	L,0
+	SUB	8
+__shl32_2:
+	CP	5
+	JR	C,__shl32_s
+	PUSH	BC
+	LD	B,A
+	LD	A,8
+	SUB	B
+	LD	B,A
+	XOR	A
+__shl32_rl:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	RRA
+	DJNZ	__shl32_rl
+	LD	D,E
+	LD	E,H
+	LD	H,L
+	LD	L,A
+	POP	BC
+	RET
+__shl32_z:
+	LD	HL,0
+	LD	D,H
+	LD	E,L
+	RET
+
+	END

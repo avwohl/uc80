@@ -1,0 +1,49 @@
+; rt_sdiv32.mac - __sdiv32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__neg32
+	EXTRN	__tmp32
+	EXTRN	__div32
+
+	CSEG
+; ============================================================
+; 32-bit signed division: DEHL = DEHL / (__tmp32) (signed)
+; Truncates toward zero.  Leaves |divisor| in __tmp32.
+; ============================================================
+	PUBLIC	__sdiv32
+__sdiv32:
+	LD	A,(__tmp32+3)
+	XOR	D
+	PUSH	AF		; S flag = sign of the quotient
+	BIT	7,D
+	CALL	NZ,__neg32
+	LD	A,(__tmp32+3)
+	OR	A
+	JP	P,__sdiv32_p
+	PUSH	HL		; __tmp32 = -__tmp32
+	LD	HL,__tmp32
+	XOR	A
+	SUB	(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	POP	HL
+__sdiv32_p:
+	CALL	__div32
+	POP	AF
+	RET	P
+	JP	__neg32
+
+	END

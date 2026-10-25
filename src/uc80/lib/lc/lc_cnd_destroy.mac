@@ -1,0 +1,28 @@
+; lc_cnd_destroy.mac - _cnd_destroy
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; void cnd_destroy(cnd_t *cond)
+	PUBLIC	_cnd_destroy
+_cnd_destroy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+	POP	IX
+	RET
+
+; ============================================================
+; Thread-specific storage functions
+; ============================================================
+
+	END

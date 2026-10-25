@@ -1,0 +1,133 @@
+; lc_thrd_sleep.mac - _thrd_sleep
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_thread_mode
+
+MPM_DELAY	EQU	141	; Delay
+
+	CSEG
+; int thrd_sleep(const struct timespec *duration, struct timespec *remaining)
+; Sleep for specified duration
+; Uses MPM_DELAY under MP/M, busy-wait under CP/M
+	PUBLIC	_thrd_sleep
+_thrd_sleep:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Get duration pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	; Load tv_sec (first 4 bytes)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	INC	HL
+	INC	HL		; Skip to tv_nsec (ignored for simplicity)
+
+	; Check thread mode
+	LD	A,(_thread_mode)
+	OR	A
+	JR	Z,_thrd_sleep_busy
+
+	; MP/M mode: use DELAY function
+	; Convert seconds to 1/60th second ticks
+	; DE = seconds, ticks = seconds * 60
+	PUSH	DE
+	POP	HL
+	ADD	HL,HL		; *2
+	LD	D,H
+	LD	E,L
+	ADD	HL,HL		; *4
+	ADD	HL,HL		; *8
+	ADD	HL,HL		; *16
+	ADD	HL,HL		; *32
+	ADD	HL,DE		; *32 + *2 = *34 (close to 60/2)
+	ADD	HL,HL		; *68... this is approximate
+	; Simpler: multiply by 64 (shift left 6 times)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D
+	SLA	E
+	RL	D		; DE = seconds * 64 (approx 60)
+
+	LD	C,MPM_DELAY	; XDOS Delay
+	CALL	5
+
+	LD	HL,0		; Return 0 (success)
+	JR	_thrd_sleep_ret
+
+_thrd_sleep_busy:
+	; CP/M mode: busy wait (very crude)
+	; Just loop for a while
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	; DE = seconds, loop DE * 10000 times
+_thrd_sleep_outer:
+	LD	A,D
+	OR	E
+	JR	Z,_thrd_sleep_done
+	LD	BC,10000
+_thrd_sleep_inner:
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,_thrd_sleep_inner
+	DEC	DE
+	JR	_thrd_sleep_outer
+
+_thrd_sleep_done:
+	LD	HL,0
+
+_thrd_sleep_ret:
+	; Set remaining to 0 if pointer provided
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	A,H
+	OR	L
+	JR	Z,_thrd_sleep_noremain
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+_thrd_sleep_noremain:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

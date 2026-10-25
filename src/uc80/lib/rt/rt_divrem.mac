@@ -1,0 +1,11 @@
+; rt_divrem.mac - __divrem
+; Split from rt_arith16.mac
+
+	.Z80
+
+	COMMON	/rt_divrem/
+	PUBLIC	__divrem
+__divrem:
+	DS	2
+
+	END

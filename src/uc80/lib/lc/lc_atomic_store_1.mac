@@ -1,0 +1,25 @@
+; lc_atomic_store_1.mac - ___atomic_store_1
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; void __atomic_store_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_store_1
+___atomic_store_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = obj
+	LD	A,(IX+6)	; val
+
+	DI
+	LD	(HL),A
+	EI
+
+	POP	IX
+	RET
+
+	END

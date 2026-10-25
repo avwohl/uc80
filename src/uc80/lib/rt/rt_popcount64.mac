@@ -1,0 +1,46 @@
+; rt_popcount64.mac - __popcount64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+	PUBLIC	__popcount64
+__popcount64:
+	PUSH	BC
+	LD	BC,0		; counter
+	LD	A,64		; bits remaining (using A; saved counter in BC)
+	PUSH	AF
+__popcount64_lp:
+	; Shift __acc64 right by 1; CF = LSB before shift
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	JR	NC,__popcount64_skip
+	INC	BC
+__popcount64_skip:
+	POP	AF
+	DEC	A
+	PUSH	AF
+	JR	NZ,__popcount64_lp
+	POP	AF
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+	END

@@ -1,0 +1,65 @@
+; lc_atomic_fetch_sub_4.mac - ___atomic_fetch_sub_4
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; unsigned long __atomic_fetch_sub_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_sub_4
+___atomic_fetch_sub_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	POP	DE
+	POP	HL
+	PUSH	DE
+	PUSH	HL
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	OR	A
+	SBC	HL,BC
+	EX	DE,HL
+	LD	C,(IX+8)
+	LD	B,(IX+9)
+	SBC	HL,BC
+	EX	DE,HL
+
+	PUSH	HL
+	PUSH	DE
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	POP	DE
+	POP	BC
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

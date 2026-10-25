@@ -1,0 +1,49 @@
+; rt_sar16.mac - __sar16
+; Split from rt_arith16.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; 16-bit arithmetic right shift: HL = DE >> L (signed)
+; ============================================================
+	PUBLIC	__sar16
+__sar16:
+	LD	A,L
+	EX	DE,HL
+	CP	8
+	JR	NC,__sar16_8
+	OR	A
+	RET	Z
+__sar16_lp:
+	SRA	H
+	RR	L
+	DEC	A
+	JR	NZ,__sar16_lp
+	RET
+__sar16_8:
+	CP	16
+	JR	NC,__sar16_f
+	SUB	8		; shift by 8 is a byte move and a
+	LD	L,H		; sign fill
+	LD	H,0
+	BIT	7,L
+	JR	Z,__sar16_p
+	DEC	H
+__sar16_p:
+	OR	A
+	RET	Z
+__sar16_b:
+	SRA	L
+	DEC	A
+	JR	NZ,__sar16_b
+	RET
+__sar16_f:
+	LD	A,H		; shift >= 16: 0 or -1 by the sign
+	RLA
+	SBC	A,A
+	LD	H,A
+	LD	L,A
+	RET
+
+	END

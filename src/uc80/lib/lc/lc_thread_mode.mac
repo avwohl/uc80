@@ -1,0 +1,16 @@
+; lc_thread_mode.mac - data
+; Split from lc_thread.mac
+
+	.Z80
+
+	COMMON	/lc_thread_mode/
+	PUBLIC	_thread_mode
+_thread_mode:	DS	1
+	PUBLIC	_thread_current
+_thread_current:	DS	1
+	PUBLIC	_tss_slots
+_tss_slots:	DS	16
+	PUBLIC	_tss_dtors
+_tss_dtors:	DS	16
+
+	END

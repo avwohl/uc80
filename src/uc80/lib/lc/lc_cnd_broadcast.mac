@@ -1,0 +1,15 @@
+; lc_cnd_broadcast.mac - _cnd_broadcast
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_cnd_signal
+
+	CSEG
+; int cnd_broadcast(cnd_t *cond)
+	PUBLIC	_cnd_broadcast
+_cnd_broadcast:
+	; Same as signal for our simple implementation
+	JP	_cnd_signal
+
+	END

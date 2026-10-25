@@ -1,0 +1,112 @@
+; lc_atomic_compare_exchange_4.mac - ___atomic_compare_exchange_4
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; _Bool __atomic_compare_exchange_4(volatile void *obj, void *expected, unsigned long desired)
+	PUBLIC	___atomic_compare_exchange_4
+___atomic_compare_exchange_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	; Load current value into stack temp area
+	PUSH	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = current
+	POP	HL
+
+	; Load expected
+	PUSH	HL
+	PUSH	BC
+	PUSH	DE
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; expected ptr
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = expected
+
+	; Compare (stack has current)
+	POP	HL		; current low
+	LD	A,L
+	CP	E
+	JR	NZ,_cmpxchg4_fail
+	LD	A,H
+	CP	D
+	JR	NZ,_cmpxchg4_fail
+	POP	HL		; current high
+	LD	A,L
+	CP	C
+	JR	NZ,_cmpxchg4_f2
+	LD	A,H
+	CP	B
+	JR	NZ,_cmpxchg4_f2
+
+	; Equal - store desired
+	POP	HL		; obj
+	LD	A,(IX+10)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+11)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+12)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+13)
+	LD	(HL),A
+	EI
+	LD	HL,1
+	POP	BC
+	POP	IX
+	RET
+
+_cmpxchg4_f2:
+	PUSH	HL		; Push back to balance stack
+_cmpxchg4_fail:
+	; Store current in *expected
+	POP	DE		; current high (or junk)
+	POP	HL		; current low (or high if came from f2)
+	; This is getting complex, let me simplify...
+	; Just re-read and store
+	POP	HL		; obj
+	PUSH	HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = current
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	POP	HL		; Discard obj
+	EI
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+	END

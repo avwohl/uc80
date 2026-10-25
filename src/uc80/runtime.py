@@ -375,7 +375,10 @@ class RuntimeLibrary:
             for sym in sorted(needed):
                 lines = all_data[sym]
                 # Check if all data is uninitialized (DS only)
+                # A comment line does not make the block initialised: the
+                # banner of the next module follows the last data block.
                 is_bss = all(
+                    l.strip().startswith(';') or
                     re.match(r'\s*(DS|DEFS)\s', l.strip(), re.IGNORECASE) or
                     re.match(r'^(\w+):', l.strip()) or
                     not l.strip()

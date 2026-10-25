@@ -1,0 +1,36 @@
+; rt_neg64.mac - __neg64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __neg64: 64-bit negation __acc64 = -__acc64
+; ============================================================
+	PUBLIC	__neg64
+__neg64:
+	PUSH	BC
+	; Negate = 0 - value
+	LD	HL,0
+	LD	BC,(__acc64)
+	OR	A
+	SBC	HL,BC
+	LD	(__acc64),HL
+	LD	HL,0
+	LD	BC,(__acc64+2)
+	SBC	HL,BC
+	LD	(__acc64+2),HL
+	LD	HL,0
+	LD	BC,(__acc64+4)
+	SBC	HL,BC
+	LD	(__acc64+4),HL
+	LD	HL,0
+	LD	BC,(__acc64+6)
+	SBC	HL,BC
+	LD	(__acc64+6),HL
+	POP	BC
+	RET
+
+	END

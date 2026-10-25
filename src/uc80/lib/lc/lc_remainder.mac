@@ -1,0 +1,18 @@
+; lc_remainder.mac - _remainder, _remainderf
+; Split from lc_fmod.mac
+
+	.Z80
+
+	EXTRN	_fmod
+
+	CSEG
+; ============================================================
+; remainder - same as fmod for now
+; ============================================================
+	PUBLIC	_remainder
+_remainder:
+	PUBLIC	_remainderf
+_remainderf:
+	JP	_fmod
+
+	END

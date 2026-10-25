@@ -1,0 +1,71 @@
+; rt_clz64.mac - __clz64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __clz64 / __ctz64 / __popcount64 / __ffs64 — bit-count helpers
+; on __acc64. All return HL = result (0..64), H=0. Defensive on
+; zero: clz/ctz return 64 instead of UB.
+; ============================================================
+	PUBLIC	__clz64
+__clz64:
+	; Test if zero
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__clz64_nz
+	LD	HL,64
+	RET
+__clz64_nz:
+	PUSH	BC
+	LD	BC,0		; counter
+__clz64_lp:
+	; Test bit 7 of high byte (byte 7)
+	LD	A,(__acc64+7)
+	AND	80H
+	JR	NZ,__clz64_done
+	INC	BC
+	; Shift __acc64 left by 1
+	LD	HL,(__acc64)
+	ADD	HL,HL
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	ADC	HL,HL
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	ADC	HL,HL
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	ADC	HL,HL
+	LD	(__acc64+6),HL
+	JR	__clz64_lp
+__clz64_done:
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+	END

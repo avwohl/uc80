@@ -1,0 +1,103 @@
+; rt_mul64.mac - __mul64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__tmp64
+
+	COMMON	/rt_mul64/
+__mul64_mcd:	DS	8	; Multiplicand
+__mul64_mpr:	DS	8	; Multiplier
+	CSEG
+	PUBLIC	__mul64
+__mul64:
+	PUSH	BC
+	PUSH	DE
+	; Save multiplicand (__acc64) to __mul64_mcd
+	LD	HL,(__acc64)
+	LD	(__mul64_mcd),HL
+	LD	HL,(__acc64+2)
+	LD	(__mul64_mcd+2),HL
+	LD	HL,(__acc64+4)
+	LD	(__mul64_mcd+4),HL
+	LD	HL,(__acc64+6)
+	LD	(__mul64_mcd+6),HL
+	; Copy multiplier (__tmp64) to __mul64_mpr
+	LD	HL,(__tmp64)
+	LD	(__mul64_mpr),HL
+	LD	HL,(__tmp64+2)
+	LD	(__mul64_mpr+2),HL
+	LD	HL,(__tmp64+4)
+	LD	(__mul64_mpr+4),HL
+	LD	HL,(__tmp64+6)
+	LD	(__mul64_mpr+6),HL
+	; Initialize result (__acc64) to 0
+	LD	HL,0
+	LD	(__acc64),HL
+	LD	(__acc64+2),HL
+	LD	(__acc64+4),HL
+	LD	(__acc64+6),HL
+	; Loop through 64 bits
+	LD	B,64
+__mul64_loop:
+	; Shift multiplier right, get LSB
+	LD	HL,(__mul64_mpr+6)
+	SRL	H
+	RR	L
+	LD	(__mul64_mpr+6),HL
+	LD	HL,(__mul64_mpr+4)
+	RR	H
+	RR	L
+	LD	(__mul64_mpr+4),HL
+	LD	HL,(__mul64_mpr+2)
+	RR	H
+	RR	L
+	LD	(__mul64_mpr+2),HL
+	LD	HL,(__mul64_mpr)
+	RR	H
+	RR	L
+	LD	(__mul64_mpr),HL
+	JR	NC,__mul64_noadd
+	; Add multiplicand to result. NB: load through DE rather than BC —
+	; ``LD BC,(nn)`` would clobber B, which is our DJNZ loop counter.
+	; That was the long-standing miscompile in this routine: any
+	; iteration where the add path ran (multiplier bit set) overwrote
+	; B with a byte of the multiplicand, terminating the loop early
+	; once mcd's high byte happened to be 1.
+	LD	HL,(__acc64)
+	LD	DE,(__mul64_mcd)
+	ADD	HL,DE
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	DE,(__mul64_mcd+2)
+	ADC	HL,DE
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	DE,(__mul64_mcd+4)
+	ADC	HL,DE
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	DE,(__mul64_mcd+6)
+	ADC	HL,DE
+	LD	(__acc64+6),HL
+__mul64_noadd:
+	; Shift multiplicand left
+	LD	HL,(__mul64_mcd)
+	ADD	HL,HL
+	LD	(__mul64_mcd),HL
+	LD	HL,(__mul64_mcd+2)
+	ADC	HL,HL
+	LD	(__mul64_mcd+2),HL
+	LD	HL,(__mul64_mcd+4)
+	ADC	HL,HL
+	LD	(__mul64_mcd+4),HL
+	LD	HL,(__mul64_mcd+6)
+	ADC	HL,HL
+	LD	(__mul64_mcd+6),HL
+	DJNZ	__mul64_loop
+	POP	DE
+	POP	BC
+	RET
+
+	END

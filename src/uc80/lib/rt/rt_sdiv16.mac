@@ -1,0 +1,47 @@
+; rt_sdiv16.mac - __sdiv16
+; Split from rt_arith16.mac
+
+	.Z80
+
+	EXTRN	__div16
+
+	CSEG
+; ============================================================
+; 16-bit signed division: HL = DE / HL (signed)
+; Truncates toward zero.  Sets __divrem to |DE| % |HL|.
+; ============================================================
+	PUBLIC	__sdiv16
+__sdiv16:
+	LD	A,D
+	XOR	H
+	PUSH	AF		; S flag = sign of the quotient
+	BIT	7,D
+	JR	Z,__sdiv16_1
+	XOR	A		; DE = -DE
+	SUB	E
+	LD	E,A
+	SBC	A,A
+	SUB	D
+	LD	D,A
+__sdiv16_1:
+	BIT	7,H
+	JR	Z,__sdiv16_2
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__sdiv16_2:
+	CALL	__div16
+	POP	AF
+	RET	P
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+	RET
+
+	END

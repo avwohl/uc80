@@ -1,0 +1,21 @@
+; lc_threads_use_mpm.mac - ___threads_use_mpm
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_thread_mode
+
+	CSEG
+; void __threads_use_mpm(int enable)
+; Set thread mode
+	PUBLIC	___threads_use_mpm
+___threads_use_mpm:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	LD	(_thread_mode),A
+	POP	IX
+	RET
+
+	END

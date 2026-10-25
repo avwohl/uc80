@@ -1,0 +1,25 @@
+; lc_thrd_equal.mac - _thrd_equal
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; int thrd_equal(thrd_t lhs, thrd_t rhs)
+; Compare two thread IDs
+	PUBLIC	_thrd_equal
+_thrd_equal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)	; lhs
+	CP	(IX+6)		; rhs
+	JR	Z,_thrd_eq_yes
+	LD	HL,0
+	POP	IX
+	RET
+_thrd_eq_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+	END

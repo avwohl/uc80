@@ -1,0 +1,35 @@
+; lc_atomic_load_4.mac - ___atomic_load_4
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; unsigned long __atomic_load_4(volatile void *obj)
+	PUBLIC	___atomic_load_4
+___atomic_load_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	EI
+
+	; Return DEHL for long
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,B
+	POP	IX
+	RET
+
+	END

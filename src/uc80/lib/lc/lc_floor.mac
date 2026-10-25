@@ -1,13 +1,8 @@
-; lc_floor.mac - floor, ceil, trunc, round and f/l variants
+; lc_floor.mac - _floor, _floorf, _floorl
+; Split from lc_floor.mac
+
 	.Z80
 
-; CP/M BDOS function numbers
-BDOS	EQU	5
-CONOUT	EQU	2
-CONIN	EQU	1
-PRTSTR	EQU	9
-
-	EXTRN	__fadd
 	EXTRN	__fsub
 	EXTRN	__ftoi
 	EXTRN	__itof
@@ -15,15 +10,14 @@ PRTSTR	EQU	9
 	EXTRN	_math_getarg
 
 	CSEG
-
 ; ============================================================
 ; floor(x) - round toward negative infinity
 ; ============================================================
 	PUBLIC	_floor
-	PUBLIC	_floorf
-	PUBLIC	_floorl
 _floor:
+	PUBLIC	_floorf
 _floorf:
+	PUBLIC	_floorl
 _floorl:
 	PUSH	IX
 	PUSH	BC
@@ -85,107 +79,7 @@ _floor_done:
 	POP	IX
 	RET
 
-; ============================================================
-; ceil(x) = -floor(-x)
-; ============================================================
-	PUBLIC	_ceil
-	PUBLIC	_ceilf
-	PUBLIC	_ceill
-_ceil:
-_ceilf:
-_ceill:
-	PUSH	IX
-	PUSH	BC
-	LD	IX,0
-	ADD	IX,SP
-
-	CALL	_math_getarg
-
-	; Negate
-	LD	A,D
-	XOR	80H
-	LD	D,A
-
-	; floor(-x)
-	PUSH	DE
-	PUSH	HL
-	CALL	_floorf
-	POP	BC
-	POP	BC
-
-	; Negate result
-	LD	A,D
-	XOR	80H
-	LD	D,A
-
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; trunc(x) - round toward zero
-; ============================================================
-	PUBLIC	_trunc
-	PUBLIC	_truncf
-	PUBLIC	_truncl
-_trunc:
-_truncf:
-_truncl:
-	PUSH	IX
-	PUSH	BC
-	LD	IX,0
-	ADD	IX,SP
-
-	CALL	_math_getarg
-	CALL	__ftoi
-	CALL	__itof
-
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; round(x) - round to nearest, ties away from zero
-; ============================================================
-	PUBLIC	_round
-	PUBLIC	_roundf
-	PUBLIC	_roundl
-_round:
-_roundf:
-_roundl:
-	PUSH	IX
-	PUSH	BC
-	LD	IX,0
-	ADD	IX,SP
-
-	CALL	_math_getarg
-
-	; Add 0.5 (or -0.5 if negative)
-	LD	A,D
-	AND	80H
-	LD	B,A		; Save sign
-
-	; 0.5 = 3F000000
-	LD	A,0
-	LD	(__tmp32),A
-	LD	(__tmp32+1),A
-	LD	A,0
-	LD	(__tmp32+2),A
-	LD	A,3FH
-	OR	B		; Apply sign
-	LD	(__tmp32+3),A
-	CALL	__fadd
-
-	; Truncate
-	CALL	__ftoi
-	CALL	__itof
-
-	POP	BC
-	POP	IX
-	RET
-
 	COMMON	/lc_floor/
-
 _floor_x:	DS	4
 _floor_t:	DS	4
 _floor_sign:	DS	1

@@ -1,0 +1,47 @@
+; lc_ceil.mac - _ceil, _ceilf, _ceill
+; Split from lc_floor.mac
+
+	.Z80
+
+	EXTRN	_math_getarg
+	EXTRN	_floorf
+
+	CSEG
+; ============================================================
+; ceil(x) = -floor(-x)
+; ============================================================
+	PUBLIC	_ceil
+_ceil:
+	PUBLIC	_ceilf
+_ceilf:
+	PUBLIC	_ceill
+_ceill:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Negate
+	LD	A,D
+	XOR	80H
+	LD	D,A
+
+	; floor(-x)
+	PUSH	DE
+	PUSH	HL
+	CALL	_floorf
+	POP	BC
+	POP	BC
+
+	; Negate result
+	LD	A,D
+	XOR	80H
+	LD	D,A
+
+	POP	BC
+	POP	IX
+	RET
+
+	END

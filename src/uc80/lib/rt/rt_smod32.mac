@@ -1,0 +1,51 @@
+; rt_smod32.mac - __smod32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__neg32
+	EXTRN	__tmp32
+	EXTRN	__div32
+	EXTRN	__rem32
+
+	CSEG
+; ============================================================
+; 32-bit signed modulo: DEHL = DEHL % (__tmp32) (signed)
+; Result has same sign as dividend.  Leaves |divisor| in __tmp32.
+; ============================================================
+	PUBLIC	__smod32
+__smod32:
+	LD	A,D
+	OR	A
+	PUSH	AF		; S flag = sign of the dividend
+	CALL	M,__neg32
+	LD	A,(__tmp32+3)
+	OR	A
+	JP	P,__smod32_p
+	PUSH	HL		; __tmp32 = -__tmp32
+	LD	HL,__tmp32
+	XOR	A
+	SUB	(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	POP	HL
+__smod32_p:
+	CALL	__div32
+	LD	HL,(__rem32)
+	LD	DE,(__rem32+2)
+	POP	AF
+	RET	P
+	JP	__neg32
+
+	END

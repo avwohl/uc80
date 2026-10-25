@@ -1,0 +1,31 @@
+; lc_mpm_available.mac - ___mpm_available
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; int __mpm_available(void)
+; Check if MP/M is available (BDOS function 12 returns 0x31 or higher for MP/M)
+	PUBLIC	___mpm_available
+___mpm_available:
+	PUSH	BC
+	LD	C,12		; Get CP/M version
+	CALL	5
+	; H = 0 for CP/M, non-zero for MP/M
+	LD	A,H
+	OR	A
+	JR	Z,_mpm_no
+	; Check if H has MP/M flag
+	LD	A,L
+	CP	31H		; MP/M 1.x
+	JR	NC,_mpm_yes
+_mpm_no:
+	LD	HL,0
+	POP	BC
+	RET
+_mpm_yes:
+	LD	HL,1
+	POP	BC
+	RET
+
+	END

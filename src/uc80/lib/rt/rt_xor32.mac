@@ -1,0 +1,28 @@
+; rt_xor32.mac - __xor32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+
+	CSEG
+; ============================================================
+; 32-bit bitwise XOR: DEHL = DEHL ^ (__tmp32)
+; ============================================================
+	PUBLIC	__xor32
+__xor32:
+	LD	A,(__tmp32)
+	XOR	L
+	LD	L,A
+	LD	A,(__tmp32+1)
+	XOR	H
+	LD	H,A
+	LD	A,(__tmp32+2)
+	XOR	E
+	LD	E,A
+	LD	A,(__tmp32+3)
+	XOR	D
+	LD	D,A
+	RET
+
+	END

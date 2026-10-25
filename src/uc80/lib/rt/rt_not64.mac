@@ -1,0 +1,53 @@
+; rt_not64.mac - __not64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __not64: 64-bit bitwise NOT __acc64 = ~__acc64
+; ============================================================
+	PUBLIC	__not64
+__not64:
+	LD	HL,(__acc64)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64+6),HL
+	RET
+
+; ============================================================
+; __mul64: 64-bit multiplication __acc64 = __acc64 * __tmp64
+; Uses shift-and-add algorithm (slow but correct)
+; ============================================================
+
+	END

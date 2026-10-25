@@ -293,7 +293,7 @@ class TestLibcRom:
         safe, unsafe = rom.rom_modules(LIB)
         for key in ("lc/lc_strlen", "lc/lc_memcpy", "lc/lc_qsort",
                     "lc/lc_strtol", "lc/lc_rand", "lc/lc_bsearch",
-                    "rt/rt_arith16", "rt/rt_float"):
+                    "rt/rt_mul16", "rt/rt_fadd"):
             assert key in safe, key
         for key in ("lc/lc_puts", "lc/lc_printf_core", "lc/lc_exit",
                     "lc/lc_malloc", "lc/lc_fopen", "lc/lc_getchar",

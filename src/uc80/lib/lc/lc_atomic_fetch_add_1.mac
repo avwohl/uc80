@@ -1,0 +1,31 @@
+; lc_atomic_fetch_add_1.mac - ___atomic_fetch_add_1
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; unsigned char __atomic_fetch_add_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_add_1
+___atomic_fetch_add_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A		; C = val
+
+	DI
+	LD	A,(HL)		; Get old value
+	LD	E,A		; Save for return
+	ADD	A,C		; Add
+	LD	(HL),A		; Store result
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+	END

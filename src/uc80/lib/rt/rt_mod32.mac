@@ -1,0 +1,20 @@
+; rt_mod32.mac - __mod32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__div32
+	EXTRN	__rem32
+
+	CSEG
+; ============================================================
+; 32-bit unsigned modulo: DEHL = DEHL % (__tmp32)
+; ============================================================
+	PUBLIC	__mod32
+__mod32:
+	CALL	__div32
+	LD	HL,(__rem32)
+	LD	DE,(__rem32+2)
+	RET
+
+	END

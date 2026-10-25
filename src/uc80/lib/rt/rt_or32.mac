@@ -1,0 +1,28 @@
+; rt_or32.mac - __or32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+
+	CSEG
+; ============================================================
+; 32-bit bitwise OR: DEHL = DEHL | (__tmp32)
+; ============================================================
+	PUBLIC	__or32
+__or32:
+	LD	A,(__tmp32)
+	OR	L
+	LD	L,A
+	LD	A,(__tmp32+1)
+	OR	H
+	LD	H,A
+	LD	A,(__tmp32+2)
+	OR	E
+	LD	E,A
+	LD	A,(__tmp32+3)
+	OR	D
+	LD	D,A
+	RET
+
+	END

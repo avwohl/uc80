@@ -1,24 +1,16 @@
-; lc_frexp.mac - frexp, frexpf, ldexp, ldexpf
+; lc_frexp.mac - _frexp, _frexpf
+; Split from lc_frexp.mac
+
 	.Z80
 
-; CP/M BDOS function numbers
-BDOS	EQU	5
-CONOUT	EQU	2
-CONIN	EQU	1
-PRTSTR	EQU	9
-
-	EXTRN	__tmp32
-	EXTRN	_math_getarg
-
 	CSEG
-
 ; ============================================================
 ; frexp(x, int *exp) - extract mantissa and exponent
 ; Returns mantissa in [0.5, 1), stores exponent
 ; ============================================================
 	PUBLIC	_frexp
-	PUBLIC	_frexpf
 _frexp:
+	PUBLIC	_frexpf
 _frexpf:
 	PUSH	IX
 	PUSH	BC
@@ -68,61 +60,6 @@ _frexpf:
 	LD	D,A
 	LD	A,E
 	AND	7FH		; Clear exp bit 0 (E0=0 for 126)
-	LD	E,A
-
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; ldexp(x, n) - multiply x by 2^n
-; ============================================================
-	PUBLIC	_ldexp
-	PUBLIC	_ldexpf
-_ldexp:
-_ldexpf:
-	PUSH	IX
-	PUSH	BC
-	LD	IX,0
-	ADD	IX,SP
-
-	; Read float arg: IX+6..IX+9
-	LD	L,(IX+6)
-	LD	H,(IX+7)
-	LD	E,(IX+8)
-	LD	D,(IX+9)
-
-	; Get int exponent n (at IX+10)
-	LD	B,(IX+10)
-
-	; Extract 8-bit biased exponent
-	LD	A,D		; D = SEEEEEEE
-	AND	7FH		; Strip sign
-	ADD	A,A		; EEEEEEE0
-	LD	C,A
-	LD	A,E		; EMMMMMMM
-	RLCA			; MMMMMMME
-	AND	1
-	OR	C		; Full 8-bit exponent
-
-	; Add n
-	ADD	A,B		; New biased exponent
-
-	; Reconstruct: D = S | exp[7:1], E = exp[0] | mantissa[6:0]
-	LD	C,A		; Save new exponent
-	SRL	A		; A = exp >> 1 = 0_exp[7:1]
-	LD	B,A
-	LD	A,D
-	AND	80H		; Keep sign
-	OR	B
-	LD	D,A
-	LD	A,C		; New exponent
-	AND	1		; exp[0]
-	RRCA			; Rotate to bit 7
-	LD	B,A
-	LD	A,E
-	AND	7FH		; Keep mantissa bits
-	OR	B		; Set exp[0]
 	LD	E,A
 
 	POP	BC

@@ -1,0 +1,20 @@
+; rt_sext32.mac - __sext32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; Sign-extend 16-bit HL to 32-bit DEHL
+; ============================================================
+	PUBLIC	__sext32
+__sext32:
+	LD	D,H
+	LD	A,D
+	RLA			; Get sign bit into carry
+	SBC	A,A		; A = 0xFF if negative, 0 if positive
+	LD	D,A
+	LD	E,A
+	RET
+
+	END

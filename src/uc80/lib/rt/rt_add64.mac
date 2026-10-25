@@ -1,0 +1,41 @@
+; rt_add64.mac - __add64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __add64: 64-bit addition __acc64 = __acc64 + __tmp64
+; ============================================================
+	PUBLIC	__add64
+__add64:
+	PUSH	BC
+	PUSH	DE
+	; Add word 0
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	ADD	HL,BC
+	LD	(__acc64),HL
+	; Add word 1 with carry
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	ADC	HL,BC
+	LD	(__acc64+2),HL
+	; Add word 2 with carry
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	ADC	HL,BC
+	LD	(__acc64+4),HL
+	; Add word 3 with carry
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	ADC	HL,BC
+	LD	(__acc64+6),HL
+	POP	DE
+	POP	BC
+	RET
+
+	END

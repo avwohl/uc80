@@ -1,0 +1,57 @@
+; lc_cnd_wait.mac - _cnd_wait
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_mtx_lock
+	EXTRN	_mtx_unlock
+	EXTRN	_thrd_yield
+
+	CSEG
+; int cnd_wait(cnd_t *cond, mtx_t *mtx)
+	PUBLIC	_cnd_wait
+_cnd_wait:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Unlock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; mtx
+	PUSH	HL
+	CALL	_mtx_unlock
+	POP	BC
+
+	; Wait for signal
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; cond
+	INC	HL		; Point to signaled
+
+_cnd_wait_loop:
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_cnd_wait_done
+	EI
+	CALL	_thrd_yield
+	JR	_cnd_wait_loop
+
+_cnd_wait_done:
+	XOR	A
+	LD	(HL),A		; Clear signal
+	EI
+
+	; Re-lock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+
+	LD	HL,0		; thrd_success
+	POP	BC
+	POP	IX
+	RET
+
+	END

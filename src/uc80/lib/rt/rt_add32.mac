@@ -1,0 +1,32 @@
+; rt_add32.mac - __add32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+
+	CSEG
+; ============================================================
+; 32-bit routines
+; Convention: DEHL = 32-bit value (DE=high word, HL=low word)
+; For binary ops: left in DEHL, right in __tmp32
+; Result returned in DEHL
+; ============================================================
+
+; ============================================================
+; 32-bit addition: DEHL = DEHL + (__tmp32)
+; ============================================================
+	PUBLIC	__add32
+__add32:
+	; DEHL = DEHL + (__tmp32)
+	PUSH	BC
+	LD	BC,(__tmp32)	; BC = right low word
+	ADD	HL,BC		; HL = left.low + right.low
+	EX	DE,HL		; HL = left.high, DE = result.low
+	LD	BC,(__tmp32+2)	; BC = right high word
+	ADC	HL,BC		; HL = left.high + right.high + carry
+	EX	DE,HL		; DEHL = result
+	POP	BC
+	RET
+
+	END

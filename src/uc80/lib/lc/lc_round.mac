@@ -1,0 +1,53 @@
+; lc_round.mac - _round, _roundf, _roundl
+; Split from lc_floor.mac
+
+	.Z80
+
+	EXTRN	__fadd
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	__tmp32
+	EXTRN	_math_getarg
+
+	CSEG
+; ============================================================
+; round(x) - round to nearest, ties away from zero
+; ============================================================
+	PUBLIC	_round
+_round:
+	PUBLIC	_roundf
+_roundf:
+	PUBLIC	_roundl
+_roundl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Add 0.5 (or -0.5 if negative)
+	LD	A,D
+	AND	80H
+	LD	B,A		; Save sign
+
+	; 0.5 = 3F000000
+	LD	A,0
+	LD	(__tmp32),A
+	LD	(__tmp32+1),A
+	LD	A,0
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	OR	B		; Apply sign
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; Truncate
+	CALL	__ftoi
+	CALL	__itof
+
+	POP	BC
+	POP	IX
+	RET
+
+	END

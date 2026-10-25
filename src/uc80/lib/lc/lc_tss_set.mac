@@ -1,0 +1,40 @@
+; lc_tss_set.mac - _tss_set
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_tss_slots
+
+	CSEG
+; int tss_set(tss_t key, void *val)
+	PUBLIC	_tss_set
+_tss_set:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; key
+	CP	8
+	JR	NC,_tss_set_err
+
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	A,(IX+6)	; val low
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)	; val high
+	LD	(HL),A
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_tss_set_err:
+	LD	HL,4		; thrd_error
+	POP	IX
+	RET
+
+	END

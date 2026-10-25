@@ -1,0 +1,18 @@
+; lc_thrd_current.mac - _thrd_current
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_thread_current
+
+	CSEG
+; thrd_t thrd_current(void)
+; Get current thread ID
+	PUBLIC	_thrd_current
+_thrd_current:
+	LD	A,(_thread_current)
+	LD	L,A
+	LD	H,0
+	RET
+
+	END

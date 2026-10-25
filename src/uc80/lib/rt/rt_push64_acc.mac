@@ -1,0 +1,27 @@
+; rt_push64_acc.mac - __push64_acc
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __push64_acc: Push __acc64 (8 bytes) onto caller's stack
+; Push order: w3 (highest) deepest, w0 (lowest) on top
+; ============================================================
+	PUBLIC	__push64_acc
+__push64_acc:
+	POP	BC			; save return address
+	LD	HL,(__acc64+6)
+	PUSH	HL			; w3 (highest, deepest on stack)
+	LD	HL,(__acc64+4)
+	PUSH	HL			; w2
+	LD	HL,(__acc64+2)
+	PUSH	HL			; w1
+	LD	HL,(__acc64)
+	PUSH	HL			; w0 (lowest, top of stack)
+	PUSH	BC			; return address
+	RET
+
+	END

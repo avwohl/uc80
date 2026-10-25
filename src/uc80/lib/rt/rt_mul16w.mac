@@ -1,0 +1,24 @@
+; rt_mul16w.mac - __mul16w
+; Split from rt_arith16.mac
+
+	.Z80
+
+	EXTRN	__mul8x16
+
+	CSEG
+	PUBLIC	__mul16w
+__mul16w:
+	PUSH	HL
+	LD	A,L
+	CALL	__mul8x16	; HL = DE * L
+	EX	(SP),HL		; HL = right operand, stack = partial
+	LD	A,H
+	LD	D,0		; DE = E
+	CALL	__mul8x16	; L = (H * E) & 0FFH
+	LD	A,L
+	POP	HL
+	ADD	A,H
+	LD	H,A
+	RET
+
+	END

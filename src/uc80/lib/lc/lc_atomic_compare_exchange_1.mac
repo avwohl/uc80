@@ -1,0 +1,48 @@
+; lc_atomic_compare_exchange_1.mac - ___atomic_compare_exchange_1
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; _Bool __atomic_compare_exchange_1(volatile void *obj, void *expected, unsigned char desired)
+	PUBLIC	___atomic_compare_exchange_1
+___atomic_compare_exchange_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; expected
+	LD	A,(IX+8)	; desired
+
+	DI
+	LD	C,(HL)		; Current value
+	PUSH	DE
+	EX	DE,HL
+	LD	B,(HL)		; Expected value
+	EX	DE,HL
+	POP	DE
+	LD	A,C
+	CP	B		; Compare
+	JR	NZ,_cmpxchg1_fail
+
+	; Equal - store desired
+	LD	A,(IX+8)
+	LD	(HL),A
+	EI
+	LD	HL,1
+	POP	IX
+	RET
+
+_cmpxchg1_fail:
+	; Not equal - store current in *expected
+	LD	A,C
+	LD	(DE),A
+	EI
+	LD	HL,0
+	POP	IX
+	RET
+
+	END

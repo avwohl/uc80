@@ -1,0 +1,39 @@
+; rt_clz32.mac - __clz32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; __clz32 — count leading zeros of 32-bit DEHL.
+; Returns count in HL (0..32). 32 if input zero (defensive).
+; ============================================================
+	PUBLIC	__clz32
+__clz32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__clz32_zero
+	PUSH	BC
+	LD	B,0		; counter
+__clz32_lp:
+	BIT	7,D
+	JR	NZ,__clz32_done
+	INC	B
+	; Shift DEHL left by 1
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	JR	__clz32_lp
+__clz32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__clz32_zero:
+	LD	HL,32
+	RET
+
+	END

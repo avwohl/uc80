@@ -1,0 +1,49 @@
+; rt_ucmp64.mac - __ucmp64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __ucmp64: Compare __acc64 with __tmp64 (unsigned)
+; Returns: HL = -1 if <, 0 if ==, 1 if >
+; ============================================================
+	PUBLIC	__ucmp64
+__ucmp64:
+	PUSH	BC
+	; Compare from MSB to LSB
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	; Equal
+	LD	HL,0
+	POP	BC
+	RET
+__ucmp64_neq:
+	JR	C,__ucmp64_lt
+	LD	HL,1
+	POP	BC
+	RET
+__ucmp64_lt:
+	LD	HL,-1
+	POP	BC
+	RET
+
+	END

@@ -1,0 +1,55 @@
+; rt_or64.mac - __or64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __or64: 64-bit bitwise OR __acc64 = __acc64 | __tmp64
+; ============================================================
+	PUBLIC	__or64
+__or64:
+	PUSH	BC
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64+6),HL
+	POP	BC
+	RET
+
+	END

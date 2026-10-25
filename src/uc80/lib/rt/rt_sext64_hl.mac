@@ -1,0 +1,18 @@
+; rt_sext64_hl.mac - __sext64_hl
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__sext32
+	EXTRN	__sext64
+
+	CSEG
+; ============================================================
+; __sext64_hl: Sign-extend 16-bit HL to 64-bit in __acc64
+; ============================================================
+	PUBLIC	__sext64_hl
+__sext64_hl:
+	CALL	__sext32		; HL -> DEHL
+	JP	__sext64		; DEHL -> __acc64 (tail call)
+
+	END

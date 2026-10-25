@@ -1,0 +1,104 @@
+; rt_mul32.mac - __mul32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__mul16_32
+	EXTRN	__neg32
+	EXTRN	__tmp32
+
+	CSEG
+; ============================================================
+; 32-bit multiplication: DEHL = DEHL * (__tmp32)  (low 32 bits)
+; When both operands are sign-extended 16-bit values the product is
+; +-(|AL| * |BL|): one __mul16_32 with its 8-bit fast paths.
+; Otherwise, with A = AH:AL (DEHL) and B = BH:BL (__tmp32):
+;   A*B mod 2^32 = AL*BL + ((AH*BL + AL*BH) mod 2^16) << 16
+; Each product is a __mul16_32 (only the low word of the cross
+; products is used); a cross product is skipped when AH or BH is 0.  __tmp32 is not changed.
+; Preserves BC, IX, IY.
+; ============================================================
+	PUBLIC	__mul32
+__mul32:
+	PUSH	BC
+	LD	A,H		; DEHL = sign extension of HL?
+	RLA
+	SBC	A,A
+	CP	D
+	JR	NZ,__mul32_g
+	CP	E
+	JR	NZ,__mul32_g
+	LD	C,A
+	LD	A,(__tmp32+1)	; and __tmp32 of its low word?
+	RLA
+	SBC	A,A
+	LD	B,A
+	LD	A,(__tmp32+2)
+	CP	B
+	JR	NZ,__mul32_g
+	LD	A,(__tmp32+3)
+	CP	B
+	JR	NZ,__mul32_g
+	XOR	C
+	PUSH	AF		; S flag = sign of the product
+	BIT	7,H
+	JR	Z,__mul32_s1
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__mul32_s1:
+	LD	B,H
+	LD	C,L		; BC = |AL|
+	LD	HL,(__tmp32)
+	BIT	7,H
+	JR	Z,__mul32_s2
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__mul32_s2:
+	EX	DE,HL		; DE = |BL|
+	CALL	__mul16_32	; DEHL = |AL| * |BL|
+	POP	AF
+	POP	BC
+	RET	P
+	JP	__neg32
+__mul32_g:
+	LD	B,H
+	LD	C,L		; BC = AL
+	LD	A,D
+	OR	E
+	JR	Z,__mul32_1	; AH = 0: DE = 0 = cross sum so far
+	PUSH	BC
+	LD	BC,(__tmp32)
+	CALL	__mul16_32	; HL = (AH * BL) mod 2^16
+	POP	BC
+	EX	DE,HL		; DE = cross sum
+__mul32_1:
+	LD	HL,(__tmp32+2)
+	LD	A,H
+	OR	L
+	JR	Z,__mul32_2	; BH = 0
+	PUSH	DE
+	EX	DE,HL
+	CALL	__mul16_32	; HL = (AL * BH) mod 2^16
+	POP	DE
+	ADD	HL,DE
+	EX	DE,HL		; DE = cross sum
+__mul32_2:
+	PUSH	DE
+	LD	DE,(__tmp32)
+	CALL	__mul16_32	; DEHL = AL * BL
+	EX	DE,HL
+	POP	BC
+	ADD	HL,BC		; high word += cross sum
+	EX	DE,HL
+	POP	BC
+	RET
+
+	END

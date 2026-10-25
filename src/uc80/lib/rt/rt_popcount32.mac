@@ -1,0 +1,31 @@
+; rt_popcount32.mac - __popcount32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; __popcount32 — count set bits in 32-bit DEHL.
+; ============================================================
+	PUBLIC	__popcount32
+__popcount32:
+	PUSH	BC
+	LD	B,0
+	LD	C,32
+__popcount32_lp:
+	; Shift DEHL right by 1; check carry
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	NC,__popcount32_skip
+	INC	B
+__popcount32_skip:
+	DEC	C
+	JR	NZ,__popcount32_lp
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+
+	END

@@ -1,0 +1,31 @@
+; lc_mtx_destroy.mac - _mtx_destroy
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; void mtx_destroy(mtx_t *mtx)
+; Destroy a mutex (no-op, just clear it)
+	PUBLIC	_mtx_destroy
+_mtx_destroy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	B,12		; Size of mtx_t
+_mtx_destroy_loop:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_mtx_destroy_loop
+
+	POP	IX
+	RET
+
+; ============================================================
+; Condition variable functions
+; ============================================================
+
+	END

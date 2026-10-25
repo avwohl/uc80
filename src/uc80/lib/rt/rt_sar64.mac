@@ -1,0 +1,41 @@
+; rt_sar64.mac - __sar64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __sar64: 64-bit arithmetic right shift __acc64 = __acc64 >> A (signed)
+; Input: A = shift count (0-63)
+; ============================================================
+	PUBLIC	__sar64
+__sar64:
+	AND	63
+	RET	Z
+	PUSH	BC
+	LD	B,A
+__sar64_loop:
+	; Arithmetic shift right by 1 (preserve sign)
+	LD	HL,(__acc64+6)
+	SRA	H			; Arithmetic shift preserves sign
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	DJNZ	__sar64_loop
+	POP	BC
+	RET
+
+	END

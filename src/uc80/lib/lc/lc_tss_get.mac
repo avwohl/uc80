@@ -1,0 +1,37 @@
+; lc_tss_get.mac - _tss_get
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_tss_slots
+
+	CSEG
+; void *tss_get(tss_t key)
+	PUBLIC	_tss_get
+_tss_get:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; key
+	CP	8
+	JR	NC,_tss_get_null
+
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	POP	IX
+	RET
+
+_tss_get_null:
+	LD	HL,0
+	POP	IX
+	RET
+
+	END

@@ -1,0 +1,24 @@
+; lc_signbit.mac - _signbit
+; Split from lc_fpclassify.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; signbit(x) - return nonzero if sign bit is set
+; ============================================================
+	PUBLIC	_signbit
+_signbit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte, sign in bit 7
+	RLCA			; Sign into bit 0
+	AND	1
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+	END

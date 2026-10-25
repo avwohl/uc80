@@ -1,0 +1,83 @@
+; lc_mtx_lock.mac - _mtx_lock
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_thrd_yield
+	EXTRN	_thread_current
+
+	CSEG
+; int mtx_lock(mtx_t *mtx)
+; Lock a mutex
+	PUBLIC	_mtx_lock
+_mtx_lock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+_mtx_lock_retry:
+	DI			; Disable interrupts
+	LD	A,(HL)		; locked flag
+	OR	A
+	JR	Z,_mtx_lock_acq
+
+	; Already locked - check if recursive
+	INC	HL
+	LD	A,(HL)		; type
+	DEC	HL
+	AND	1		; mtx_recursive
+	JR	Z,_mtx_lock_wait
+
+	; Check if we own it
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	CP	(HL)		; owner
+	POP	HL
+	JR	NZ,_mtx_lock_wait
+
+	; We own it, increment count
+	PUSH	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	(HL)		; count++
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+	JR	_mtx_lock_ret
+
+_mtx_lock_wait:
+	EI			; Re-enable interrupts
+	; Yield and retry
+	PUSH	HL
+	CALL	_thrd_yield
+	POP	HL
+	JR	_mtx_lock_retry
+
+_mtx_lock_acq:
+	; Acquire the lock
+	LD	(HL),1		; locked = 1
+	; Set owner
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	LD	(HL),A		; owner
+	INC	HL
+	LD	(HL),1		; count = 1
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+
+_mtx_lock_ret:
+	POP	BC
+	POP	IX
+	RET
+
+	END

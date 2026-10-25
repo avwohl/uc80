@@ -1,0 +1,64 @@
+; lc_mtx_trylock.mac - _mtx_trylock
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_thread_current
+
+	CSEG
+; int mtx_trylock(mtx_t *mtx)
+; Try to lock mutex without blocking
+	PUBLIC	_mtx_trylock
+_mtx_trylock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_mtx_try_busy
+
+	; Lock it
+	LD	(HL),1
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	LD	(HL),A
+	INC	HL
+	LD	(HL),1
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_mtx_try_busy:
+	; Check if recursive and we own it
+	INC	HL
+	LD	A,(HL)		; type
+	AND	1
+	JR	Z,_mtx_try_fail
+	INC	HL
+	LD	A,(_thread_current)
+	CP	(HL)
+	JR	NZ,_mtx_try_fail
+	; We own it
+	INC	HL
+	INC	(HL)
+	EI
+	LD	HL,0
+	POP	IX
+	RET
+
+_mtx_try_fail:
+	EI
+	LD	HL,3		; thrd_busy
+	POP	IX
+	RET
+
+	END

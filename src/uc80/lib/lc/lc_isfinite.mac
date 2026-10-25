@@ -1,0 +1,34 @@
+; lc_isfinite.mac - _isfinite
+; Split from lc_fpclassify.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; isfinite(x) - return nonzero if finite (not inf or nan)
+; ============================================================
+	PUBLIC	_isfinite
+_isfinite:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	Z,_isfinite_z	; inf or nan
+	LD	HL,1
+	POP	IX
+	RET
+_isfinite_z:
+	LD	HL,0
+	POP	IX
+	RET
+
+	END

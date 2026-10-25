@@ -1,0 +1,60 @@
+; rt_dv8n.mac - __dv8n
+; Split from rt_div8.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; __dv8n - one byte of long division by an 8-bit divisor
+; In:  A = running remainder (< C), E = next dividend byte,
+;      C = divisor (1..255)
+; Out: E = quotient byte, A = new remainder
+; Preserves C, D, HL, IX, IY.  Clobbers B, flags.
+; ============================================================
+	PUBLIC	__dv8n
+__dv8n:
+	OR	A
+	JR	NZ,__dv8n_go
+	LD	A,E		; remainder 0: if the byte is below the
+	CP	C		; divisor the quotient byte is 0
+	JR	NC,__dv8n_g0
+	LD	E,0
+	RET
+__dv8n_g0:
+	XOR	A
+__dv8n_go:
+	LD	B,8
+	BIT	7,C
+	JR	NZ,__dv8n_hi
+	; Divisor < 128: 2*remainder+1 fits in a byte.  The carry after
+	; CP/SUB is the complement of the quotient bit; RL E shifts it in
+	; as the next dividend bit leaves.
+__dv8n_lp:
+	RL	E
+	RLA
+	CP	C
+	JR	C,__dv8n_nx
+	SUB	C
+__dv8n_nx:
+	DJNZ	__dv8n_lp
+	RL	E
+	LD	B,A
+	LD	A,E
+	CPL
+	LD	E,A
+	LD	A,B
+	RET
+__dv8n_hi:
+	SLA	E		; next dividend bit out, quotient bit 0 in
+	RLA
+	JR	C,__dv8n_sub	; remainder passed 255: above the divisor
+	CP	C
+	JR	C,__dv8n_hn
+__dv8n_sub:
+	SUB	C
+	INC	E
+__dv8n_hn:
+	DJNZ	__dv8n_hi
+	RET
+
+	END

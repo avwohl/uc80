@@ -1,0 +1,54 @@
+; rt_fpack.mac - __fpack
+; Split from rt_float.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; Float Pack: Combine sign, exponent, mantissa into IEEE 754
+; Input: A = sign (0 or 80H), BC = exponent, DEHL = mantissa
+; Output: DEHL = IEEE 754 float
+; ============================================================
+	PUBLIC	__fpack
+__fpack:
+	PUSH	AF		; Save sign
+
+	; Check for zero mantissa
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fpack_nz
+	; Return zero
+	LD	DE,0
+	LD	HL,0
+	POP	AF
+	RET
+
+__fpack_nz:
+	; Combine exponent and mantissa
+	; Exponent in C, mantissa in E.H.L (bit 23 is implied 1)
+	LD	A,E
+	AND	7FH		; Clear implied 1 bit
+	LD	E,A
+
+	; Insert exponent into result
+	; D will hold exp[7:1], E will hold exp[0]|mantissa[22:16]
+	LD	A,C		; Get exponent
+	SRL	A		; Shift right, bit 0 → carry, bits 7-1 → bits 6-0
+	LD	D,A		; D = exp[7:1] in bits 6-0
+
+	; Insert exponent bit 0 into E bit 7
+	LD	A,E		; A = mantissa bits 22-16 (cleared of implied 1)
+	JR	NC,__fpack_exp0_clear
+	SET	7,A		; Set bit 7 if exponent bit 0 was 1
+__fpack_exp0_clear:
+	LD	E,A		; E = exp[0]|mantissa[22:16]
+
+	; Add sign
+	POP	AF
+	OR	D
+	LD	D,A
+	RET
+
+	END

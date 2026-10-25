@@ -1,0 +1,49 @@
+; rt_mul16.mac - __mul16
+; Split from rt_arith16.mac
+
+	.Z80
+
+	EXTRN	__mul8x16
+	EXTRN	__mul16ng
+	EXTRN	__mul16w
+
+	CSEG
+; ============================================================
+; 16-bit multiplication: HL = DE * HL (low 16 bits; signed and
+; unsigned give the same bits)
+; Preserves BC, IX, IY.  Clobbers A, DE, flags.
+; When either operand fits in 8 bits it is the multiplier of one
+; __mul8x16.  An operand in -255..-1 is negated to 1..255 and the
+; product negated back.  Otherwise
+;   DE*HL mod 2^16 = DE*L + ((E*H) mod 256)<<8.
+; ============================================================
+	PUBLIC	__mul16
+__mul16:
+	LD	A,H
+	OR	A
+	JR	NZ,__mul16_h
+	OR	L		; A = L
+	JP	__mul8x16	; HL = DE * L
+__mul16_h:
+	LD	A,D
+	OR	A
+	JR	NZ,__mul16_n
+	LD	A,E
+	EX	DE,HL
+	JP	__mul8x16	; HL = HL * E
+__mul16_n:
+	LD	A,H
+	INC	A
+	JR	NZ,__mul16_n2	; H <> 0FFH
+	SUB	L		; A = -L (A was 0)
+	JP	NZ,__mul16ng	; HL = -(DE * -HL)
+__mul16_n2:
+	LD	A,D
+	INC	A
+	JP	NZ,__mul16w	; D <> 0FFH
+	SUB	E		; A = -E
+	JP	Z,__mul16w	; DE = -256
+	EX	DE,HL
+	JP	__mul16ng	; HL = -(HL * -DE)
+
+	END

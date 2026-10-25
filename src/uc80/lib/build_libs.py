@@ -124,11 +124,13 @@ def concat_modules(src_dir, output_path, header_comment):
         with open(path) as f:
             lines = f.read().splitlines()
 
+        # CSEG first: the banner must not land in the data segment of the
+        # module before (runtime.py would read it as part of that data).
         out.append('')
+        out.append('\tCSEG')
         out.append(f'; {"=" * 60}')
         out.append(f'; {name}')
         out.append(f'; {"=" * 60}')
-        out.append('\tCSEG')
 
         for line in lines:
             # Skip lines with ;! marker

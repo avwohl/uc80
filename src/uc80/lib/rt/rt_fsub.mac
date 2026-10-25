@@ -1,0 +1,26 @@
+; rt_fsub.mac - __fsub
+; Split from rt_float.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+	EXTRN	__fadd
+
+	CSEG
+; ============================================================
+; Float Subtraction: DEHL = DEHL - (__tmp32)
+; ============================================================
+	PUBLIC	__fsub
+__fsub:
+	; Negate op2 sign and call fadd
+	LD	A,(__tmp32+3)
+	XOR	80H
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	; Restore op2 sign
+	LD	A,(__tmp32+3)
+	XOR	80H
+	LD	(__tmp32+3),A
+	RET
+
+	END

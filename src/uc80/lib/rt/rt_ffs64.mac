@@ -1,0 +1,43 @@
+; rt_ffs64.mac - __ffs64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__ctz64
+
+	CSEG
+	PUBLIC	__ffs64
+__ffs64:
+	; If zero return 0; else return 1+CTZ
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__ffs64_nz
+	LD	HL,0
+	RET
+__ffs64_nz:
+	CALL	__ctz64
+	INC	HL
+	RET
+
+	END

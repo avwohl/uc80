@@ -1,0 +1,50 @@
+; rt_funpack.mac - __funpack
+; Split from rt_float.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; Float Unpack: Extract sign, exponent, mantissa from DEHL
+; Input: DEHL = IEEE 754 float
+; Output: A = sign (0 or 80H), BC = exponent, DEHL = mantissa (with implied 1)
+; ============================================================
+	PUBLIC	__funpack
+__funpack:
+	; Extract sign
+	LD	A,D
+	AND	80H
+	PUSH	AF		; Save sign
+
+	; Extract exponent (8 bits)
+	; exp = (D & 0x7F) << 1 | (E >> 7)
+	; D = sign|exp[7:1], E = exp[0]|mant[22:16]
+	LD	A,D
+	ADD	A,A		; A = exp[7:1] << 1 (sign shifted out)
+	LD	B,A		; B = exp[7:1] << 1
+	LD	A,E
+	RLCA			; Rotate left, carry = bit 7 = exp[0]
+	LD	A,B		; A = exp[7:1] << 1
+	ADC	A,0		; A = exp[7:1] << 1 + exp[0] = full exponent
+	LD	C,A
+	LD	B,0		; BC = exponent
+
+	; Extract mantissa and add implied 1
+	LD	A,E
+	AND	7FH		; Clear exponent bit
+	OR	80H		; Add implied 1
+	LD	E,A
+	; DEHL now has mantissa with bit 23 = 1 (the implied 1)
+	; But we need it shifted properly - E has bits 23-16, H has 15-8, L has 7-0
+	; Actually mantissa is in bits 22-0, so we need to arrange
+	; Let's shift everything to put implied 1 at bit 23
+	; E.H.L has mantissa bits 22-0 with E bit 7 = 1 (implied)
+	; This is already in the right position
+
+	; Put mantissa in DEHL as 24-bit value in low 24 bits
+	LD	D,0
+
+	POP	AF		; Restore sign
+	RET
+
+	END

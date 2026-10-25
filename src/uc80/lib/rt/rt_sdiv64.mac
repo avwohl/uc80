@@ -1,0 +1,71 @@
+; rt_sdiv64.mac - __sdiv64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__div64
+	EXTRN	__neg64
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __sdiv64: 64-bit signed division __acc64 = __acc64 / __tmp64
+; ============================================================
+	PUBLIC	__sdiv64
+__sdiv64:
+	; Check signs: XOR high bytes to determine result sign
+	LD	A,(__acc64+7)
+	PUSH	AF		; Save acc sign
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	PUSH	AF		; Save result sign (bit 7)
+
+	; Make dividend positive if negative
+	POP	AF
+	PUSH	AF
+	LD	A,(__acc64+7)
+	BIT	7,A
+	JR	Z,__sdiv64_dvdpos
+	; Negate __acc64
+	CALL	__neg64
+__sdiv64_dvdpos:
+	; Make divisor positive if negative
+	LD	A,(__tmp64+7)
+	BIT	7,A
+	JR	Z,__sdiv64_dvspos
+	; Negate __tmp64
+	PUSH	HL
+	LD	HL,0
+	LD	BC,(__tmp64)
+	OR	A
+	SBC	HL,BC
+	LD	(__tmp64),HL
+	LD	HL,0
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__tmp64+2),HL
+	LD	HL,0
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__tmp64+4),HL
+	LD	HL,0
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__tmp64+6),HL
+	POP	HL
+__sdiv64_dvspos:
+	; Do unsigned division
+	CALL	__div64
+
+	; Negate result if signs were different
+	POP	AF		; result sign
+	BIT	7,A
+	JR	Z,__sdiv64_done
+	CALL	__neg64
+__sdiv64_done:
+	POP	AF		; discard saved acc sign
+	RET
+
+	END

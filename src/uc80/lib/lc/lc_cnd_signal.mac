@@ -1,0 +1,23 @@
+; lc_cnd_signal.mac - _cnd_signal
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; int cnd_signal(cnd_t *cond)
+	PUBLIC	_cnd_signal
+_cnd_signal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	INC	HL
+	LD	(HL),1		; signaled = 1
+
+	LD	HL,0
+	POP	IX
+	RET
+
+	END

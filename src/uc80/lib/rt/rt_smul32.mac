@@ -1,0 +1,24 @@
+; rt_smul32.mac - __smul32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	EXTRN	__mul32
+
+	CSEG
+; ============================================================
+; 32-bit signed multiplication: DEHL = DEHL * (__tmp32)
+; The low 32 bits of a product do not depend on the signs, so this
+; is __mul32.  Not a bare "JP __mul32": the peephole pass runs on
+; the code between inline-asm regions one piece at a time, and a
+; label whose only code is a jump, with no reference in the same
+; piece, is removed as a jump to a jump.
+; ============================================================
+	PUBLIC	__smul32
+__smul32:
+	PUSH	BC
+	CALL	__mul32
+	POP	BC
+	RET
+
+	END

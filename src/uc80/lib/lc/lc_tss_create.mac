@@ -1,0 +1,72 @@
+; lc_tss_create.mac - _tss_create
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_tss_dtors
+	EXTRN	_tss_slots
+
+	CSEG
+; int tss_create(tss_t *key, tss_dtor_t dtor)
+	PUBLIC	_tss_create
+_tss_create:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Find free slot (value 0xFFFF means unused)
+	LD	HL,_tss_slots
+	LD	B,0		; Slot index
+_tss_create_loop:
+	LD	A,B
+	CP	8		; 8 slots max
+	JR	NC,_tss_create_fail
+
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,D
+	AND	E
+	INC	A
+	JR	Z,_tss_create_found
+	INC	B
+	JR	_tss_create_loop
+
+_tss_create_found:
+	; Store NULL initially
+	DEC	HL
+	DEC	HL
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+	; Store destructor
+	LD	HL,_tss_dtors
+	LD	A,B
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	LD	A,(IX+6)	; dtor low
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)	; dtor high
+	LD	(HL),A
+
+	; Store key
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),B		; key = slot index
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_tss_create_fail:
+	LD	HL,1		; thrd_nomem
+	POP	IX
+	RET
+
+	END

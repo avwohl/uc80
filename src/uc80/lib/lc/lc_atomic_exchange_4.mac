@@ -1,0 +1,50 @@
+; lc_atomic_exchange_4.mac - ___atomic_exchange_4
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; unsigned long __atomic_exchange_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_exchange_4
+___atomic_exchange_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	; Read old value
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = old
+	; Store new value
+	LD	A,(IX+9)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+8)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+7)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+6)
+	LD	(HL),A
+	EI
+
+	; Return old in DEHL
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,B
+	POP	BC
+	POP	IX
+	RET
+
+	END

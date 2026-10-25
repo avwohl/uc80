@@ -1,0 +1,26 @@
+; rt_not32.mac - __not32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; 32-bit bitwise NOT: DEHL = ~DEHL
+; ============================================================
+	PUBLIC	__not32
+__not32:
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	A,E
+	CPL
+	LD	E,A
+	LD	A,D
+	CPL
+	LD	D,A
+	RET
+
+	END

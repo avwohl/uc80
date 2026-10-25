@@ -1,0 +1,12 @@
+; rt_rem64.mac - __rem64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	COMMON	/rt_rem64/
+	PUBLIC	__div64_dvd
+__div64_dvd:	DS	8	; dividend
+	PUBLIC	__rem64
+__rem64:	DS	8	; remainder
+
+	END

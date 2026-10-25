@@ -1,0 +1,35 @@
+; lc_atomic_exchange_2.mac - ___atomic_exchange_2
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; unsigned int __atomic_exchange_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_exchange_2
+___atomic_exchange_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; val
+
+	DI
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = old value
+	LD	(HL),D
+	DEC	HL
+	LD	(HL),E		; Store new
+	EI
+
+	LD	H,B
+	LD	L,C
+	POP	BC
+	POP	IX
+	RET
+
+	END

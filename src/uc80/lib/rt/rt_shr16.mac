@@ -1,0 +1,40 @@
+; rt_shr16.mac - __shr16
+; Split from rt_arith16.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; 16-bit logical right shift: HL = DE >> L (unsigned)
+; ============================================================
+	PUBLIC	__shr16
+__shr16:
+	LD	A,L
+	EX	DE,HL
+	CP	8
+	JR	NC,__shr16_8
+	OR	A
+	RET	Z
+__shr16_lp:
+	SRL	H
+	RR	L
+	DEC	A
+	JR	NZ,__shr16_lp
+	RET
+__shr16_8:
+	CP	16
+	JR	NC,__shr16_z
+	LD	L,H		; shift by 8 is a byte move
+	LD	H,0
+	SUB	8
+	RET	Z
+__shr16_b:
+	SRL	L
+	DEC	A
+	JR	NZ,__shr16_b
+	RET
+__shr16_z:
+	LD	HL,0
+	RET
+
+	END

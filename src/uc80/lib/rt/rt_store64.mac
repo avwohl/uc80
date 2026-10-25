@@ -1,0 +1,39 @@
+; rt_store64.mac - __store64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __store64: Store __acc64 to address
+; Input: HL = destination address
+; Output: __acc64 stored at address
+; ============================================================
+	PUBLIC	__store64
+__store64:
+	PUSH	DE
+	LD	DE,(__acc64)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	DE,(__acc64+2)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	DE,(__acc64+4)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	DE,(__acc64+6)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	POP	DE
+	RET
+
+	END

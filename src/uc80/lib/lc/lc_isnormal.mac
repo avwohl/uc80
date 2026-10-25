@@ -1,0 +1,36 @@
+; lc_isnormal.mac - _isnormal
+; Split from lc_fpclassify.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; isnormal(x) - return nonzero if normal
+; ============================================================
+	PUBLIC	_isnormal
+_isnormal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	OR	A
+	JR	Z,_isnormal_z	; exp 0 = zero or subnormal
+	CP	255
+	JR	Z,_isnormal_z	; exp 255 = inf or nan
+	LD	HL,1
+	POP	IX
+	RET
+_isnormal_z:
+	LD	HL,0
+	POP	IX
+	RET
+
+	END

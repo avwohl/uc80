@@ -1,0 +1,26 @@
+; lc_thrd_yield.mac - _thrd_yield
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_thread_mode
+
+MPM_DISPATCH	EQU	142	; Dispatch (yield)
+
+	CSEG
+; void thrd_yield(void)
+; Yield execution to other threads
+	PUBLIC	_thrd_yield
+_thrd_yield:
+	LD	A,(_thread_mode)
+	OR	A
+	RET	Z		; No-op under CP/M
+
+	; MP/M: dispatch (yield CPU)
+	PUSH	BC
+	LD	C,MPM_DISPATCH
+	CALL	5
+	POP	BC
+	RET
+
+	END

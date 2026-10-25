@@ -1,0 +1,14 @@
+; rt_rem32.mac - __rem32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	COMMON	/rt_rem32/
+	PUBLIC	__div32_dvd
+__div32_dvd:
+	DS	4
+	PUBLIC	__rem32
+__rem32:
+	DS	4
+
+	END

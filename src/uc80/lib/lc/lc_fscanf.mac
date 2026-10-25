@@ -1,0 +1,36 @@
+; lc_fscanf.mac - _fscanf
+; Split from lc_scanf.mac
+
+	.Z80
+
+	EXTRN	_scanf_count
+	EXTRN	_scanf_fp
+	EXTRN	_scanf_loop
+	EXTRN	_scanf_mode
+	EXTRN	_scanf_ungot
+
+	CSEG
+; ============================================================
+; fscanf - read from file
+; ============================================================
+	PUBLIC	_fscanf
+_fscanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; stream at IX+4, fmt at IX+6, args at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_scanf_fp),HL
+	XOR	A
+	LD	(_scanf_ungot),A
+	LD	A,2
+	LD	(_scanf_mode),A
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	C,8
+	XOR	A
+	LD	(_scanf_count),A
+	JP	_scanf_loop
+
+	END

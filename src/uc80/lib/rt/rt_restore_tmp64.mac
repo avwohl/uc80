@@ -1,0 +1,26 @@
+; rt_restore_tmp64.mac - __restore_tmp64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __restore_tmp64: Restore __tmp64 from stack
+; ============================================================
+	PUBLIC	__restore_tmp64
+__restore_tmp64:
+	POP	BC
+	POP	HL
+	LD	(__tmp64+6),HL
+	POP	HL
+	LD	(__tmp64+4),HL
+	POP	HL
+	LD	(__tmp64+2),HL
+	POP	HL
+	LD	(__tmp64),HL
+	PUSH	BC
+	RET
+
+	END

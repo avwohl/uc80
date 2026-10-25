@@ -1,0 +1,46 @@
+; lc_mtx_unlock.mac - _mtx_unlock
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; int mtx_unlock(mtx_t *mtx)
+; Unlock a mutex
+	PUBLIC	_mtx_unlock
+_mtx_unlock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+	DI
+	; Check if recursive
+	INC	HL
+	LD	A,(HL)		; type
+	AND	1
+	JR	Z,_mtx_unlock_do
+
+	; Recursive - decrement count
+	INC	HL
+	INC	HL
+	DEC	(HL)		; count--
+	JR	NZ,_mtx_unlock_recur
+	; Count reached 0, release
+	DEC	HL
+	DEC	HL
+	DEC	HL		; Back to start
+
+_mtx_unlock_do:
+	DEC	HL		; Back to locked flag
+	XOR	A
+	LD	(HL),A		; locked = 0
+
+_mtx_unlock_recur:
+	EI
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+	END

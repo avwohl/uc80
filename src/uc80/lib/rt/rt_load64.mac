@@ -1,0 +1,39 @@
+; rt_load64.mac - __load64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __load64: Load 64-bit value from address to __acc64
+; Input: HL = address of 64-bit value
+; Output: __acc64 = value
+; ============================================================
+	PUBLIC	__load64
+__load64:
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__acc64),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__acc64+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__acc64+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__acc64+6),DE
+	POP	DE
+	RET
+
+	END

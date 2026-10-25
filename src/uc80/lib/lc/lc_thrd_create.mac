@@ -1,0 +1,17 @@
+; lc_thrd_create.mac - _thrd_create
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
+; Create a new thread - only works under MP/M
+; Under CP/M, returns thrd_error
+	PUBLIC	_thrd_create
+_thrd_create:
+	; Under plain CP/M, we can't create threads
+	; Return thrd_error (4)
+	LD	HL,4		; thrd_error
+	RET
+
+	END

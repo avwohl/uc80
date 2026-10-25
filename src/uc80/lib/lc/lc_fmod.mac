@@ -1,13 +1,8 @@
-; lc_fmod.mac - fmod, fmodf, fmodl, remainder, remainderf
+; lc_fmod.mac - _fmod, _fmodf, _fmodl
+; Split from lc_fmod.mac
+
 	.Z80
 
-; CP/M BDOS function numbers
-BDOS	EQU	5
-CONOUT	EQU	2
-CONIN	EQU	1
-PRTSTR	EQU	9
-
-	EXTRN	__fadd
 	EXTRN	__fsub
 	EXTRN	__fmul
 	EXTRN	__fdiv
@@ -18,16 +13,15 @@ PRTSTR	EQU	9
 	EXTRN	_math_getarg2
 
 	CSEG
-
 ; ============================================================
 ; fmod(x, y) - floating-point remainder
 ; fmod(x, y) = x - trunc(x/y) * y
 ; ============================================================
 	PUBLIC	_fmod
-	PUBLIC	_fmodf
-	PUBLIC	_fmodl
 _fmod:
+	PUBLIC	_fmodf
 _fmodf:
+	PUBLIC	_fmodl
 _fmodl:
 	PUSH	IX
 	PUSH	BC
@@ -77,17 +71,7 @@ _fmodl:
 	POP	IX
 	RET
 
-; ============================================================
-; remainder - same as fmod for now
-; ============================================================
-	PUBLIC	_remainder
-	PUBLIC	_remainderf
-_remainder:
-_remainderf:
-	JP	_fmod
-
 	COMMON	/lc_fmod/
-
 _fmod_x:	DS	4
 _fmod_y:	DS	4
 

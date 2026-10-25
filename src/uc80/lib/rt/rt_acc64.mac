@@ -1,0 +1,19 @@
+; rt_acc64.mac - __acc64, __tmp64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; 64-bit Integer Support
+; Convention: 64-bit values stored in __acc64 (accumulator) and __tmp64
+; ============================================================
+
+; 64-bit accumulator and temporary storage
+	COMMON	/rt_acc64/
+	PUBLIC	__acc64
+__acc64:	DS	8	; 64-bit accumulator
+	PUBLIC	__tmp64
+__tmp64:	DS	8	; 64-bit temporary
+
+	END

@@ -1,0 +1,97 @@
+; rt_fnorm.mac - __fnorm
+; Split from rt_float.mac
+
+	.Z80
+
+	EXTRN	__fexp1
+	EXTRN	__fman1
+
+	CSEG
+; ============================================================
+; Float Normalize: Normalize mantissa in __fman1 and adjust __fexp1
+; ============================================================
+	PUBLIC	__fnorm
+__fnorm:
+	; Check for zero
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	RET	Z		; Zero stays zero
+
+	; Check if bits above bit 23 are set (D != 0)
+	; If so, shift right until D == 0 and bit 7 of E is the leading 1
+	LD	A,D
+	OR	A
+	JR	Z,__fnorm_loop	; D is zero, go to left-shift path
+
+	; Right-shift path: mantissa is too large (bits above bit 23 set)
+__fnorm_rloop:
+	LD	A,D
+	OR	A
+	JR	Z,__fnorm_rchk	; D is zero, check if normalized
+	; Shift mantissa right
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	; Increment exponent
+	PUSH	DE
+	PUSH	HL
+	LD	HL,(__fexp1)
+	INC	HL
+	LD	(__fexp1),HL
+	POP	HL
+	POP	DE
+	JR	__fnorm_rloop
+
+__fnorm_rchk:
+	; D is zero. Check if bit 7 of E is set (normalized)
+	BIT	7,E
+	JR	NZ,__fnorm_done	; Done
+	; Still need left shifts
+	; Fall through to left-shift loop
+
+	; Shift left until bit 23 is set (bit 7 of E)
+__fnorm_loop:
+	BIT	7,E
+	JR	NZ,__fnorm_done	; Normalized when bit 23 set
+
+	; Shift mantissa left
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
+
+	; Decrement exponent
+	PUSH	DE
+	PUSH	HL
+	LD	HL,(__fexp1)
+	DEC	HL
+	LD	(__fexp1),HL
+	POP	HL
+	POP	DE
+
+	; Check for underflow
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fnorm_loop
+
+	; Underflow to zero
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+	LD	HL,0
+	LD	(__fexp1),HL
+	RET
+
+__fnorm_done:
+	; Save normalized mantissa back to memory
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+	RET
+
+	END

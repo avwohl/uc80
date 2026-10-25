@@ -1,0 +1,59 @@
+; rt_mul16_32.mac - __mul16_32
+; Split from rt_mul.mac
+
+	.Z80
+
+	EXTRN	__mul8x16
+
+	CSEG
+; ============================================================
+; __mul16_32 - 16 x 16 -> 32-bit unsigned multiply: DEHL = BC * DE
+; Preserves BC, IX, IY.  Clobbers A, flags.
+; One or two __mul8x16 passes: an operand whose high byte is 0 is
+; the multiplier of a single pass.
+; ============================================================
+	PUBLIC	__mul16_32
+__mul16_32:
+	LD	A,B
+	OR	A
+	JR	Z,__m1632_c	; BC < 256: one pass, multiplier C
+	LD	A,D
+	OR	A
+	JR	NZ,__m1632_2
+	LD	A,E		; DE < 256: one pass, multiplier E,
+	LD	D,B		; multiplicand BC
+	LD	E,C
+	JR	__m1632_1
+__m1632_c:
+	LD	A,C
+__m1632_1:
+	CALL	__mul8x16	; AHL = A * DE
+	LD	E,A
+	LD	D,0
+	RET
+__m1632_2:
+	PUSH	BC
+	LD	A,C
+	CALL	__mul8x16	; P0 = AHL = C * DE
+	PUSH	HL
+	LD	C,A		; C = P0 bits 16..23
+	LD	A,B
+	CALL	__mul8x16	; P1 = AHL = B * DE
+	POP	DE		; DE = P0 bits 0..15
+	LD	B,A		; B = P1 bits 16..23
+	LD	A,D		; result = P0 + (P1 << 8)
+	ADD	A,L
+	LD	D,A		; D = byte 1
+	LD	A,C
+	ADC	A,H
+	LD	C,A		; C = byte 2
+	LD	A,B
+	ADC	A,0		; A = byte 3
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,A
+	POP	BC
+	RET
+
+	END

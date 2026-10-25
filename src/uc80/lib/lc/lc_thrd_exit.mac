@@ -1,0 +1,16 @@
+; lc_thrd_exit.mac - _thrd_exit
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_exit
+
+	CSEG
+; void thrd_exit(int res)
+; Exit current thread (exits program under CP/M)
+	PUBLIC	_thrd_exit
+_thrd_exit:
+	; Under CP/M, just exit the program
+	JP	_exit
+
+	END

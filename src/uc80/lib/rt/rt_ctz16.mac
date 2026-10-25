@@ -1,0 +1,34 @@
+; rt_ctz16.mac - __ctz16
+; Split from rt_arith16.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; __ctz16 — count trailing zeros of 16-bit HL.
+; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
+; ============================================================
+	PUBLIC	__ctz16
+__ctz16:
+	LD	A,H
+	OR	L
+	JR	Z,__ctz16_zero
+	PUSH	BC
+	LD	B,0
+__ctz16_lp:
+	BIT	0,L
+	JR	NZ,__ctz16_done
+	INC	B
+	SRL	H
+	RR	L
+	JR	__ctz16_lp
+__ctz16_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ctz16_zero:
+	LD	HL,16
+	RET
+
+	END

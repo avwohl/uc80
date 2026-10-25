@@ -1,0 +1,92 @@
+; rt_mul8x16.mac - __mul8x16
+; Split from rt_mul.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; __mul8x16 - 8 x 16 -> 24-bit unsigned multiply: AHL = A * DE
+; In:  A = multiplier, DE = multiplicand
+; Out: HL = product bits 0..15, A = product bits 16..23
+; Preserves BC, DE, IX, IY.  Clobbers flags.
+;
+; MSB first and unrolled.  The ADD A,A chain finds the top set bit of
+; the multiplier (11 T for each leading zero bit) and jumps into the
+; unrolled steps at that bit, so a small multiplier costs only a few
+; steps.  Each later step is "ADD HL,HL / RLA": the carry out of HL
+; moves into the low end of A while the next multiplier bit leaves
+; the top of A, so A ends holding the high byte of the product.
+; ============================================================
+	PUBLIC	__mul8x16
+__mul8x16:
+	LD	HL,0
+	ADD	A,A
+	JR	C,__m816_7
+	ADD	A,A
+	JR	C,__m816_6
+	ADD	A,A
+	JR	C,__m816_5
+	ADD	A,A
+	JR	C,__m816_4
+	ADD	A,A
+	JR	C,__m816_3
+	ADD	A,A
+	JR	C,__m816_2
+	ADD	A,A
+	JR	C,__m816_1
+	ADD	A,A
+	JR	C,__m816_0
+	RET			; multiplier 0: A = 0, HL = 0
+__m816_7:
+	ADD	HL,DE		; HL was 0: HL = DE, A low bits are 0
+	ADD	HL,HL
+	RLA
+	JR	NC,__m816_6n
+__m816_6:
+	ADD	HL,DE
+	ADC	A,0
+__m816_6n:
+	ADD	HL,HL
+	RLA
+	JR	NC,__m816_5n
+__m816_5:
+	ADD	HL,DE
+	ADC	A,0
+__m816_5n:
+	ADD	HL,HL
+	RLA
+	JR	NC,__m816_4n
+__m816_4:
+	ADD	HL,DE
+	ADC	A,0
+__m816_4n:
+	ADD	HL,HL
+	RLA
+	JR	NC,__m816_3n
+__m816_3:
+	ADD	HL,DE
+	ADC	A,0
+__m816_3n:
+	ADD	HL,HL
+	RLA
+	JR	NC,__m816_2n
+__m816_2:
+	ADD	HL,DE
+	ADC	A,0
+__m816_2n:
+	ADD	HL,HL
+	RLA
+	JR	NC,__m816_1n
+__m816_1:
+	ADD	HL,DE
+	ADC	A,0
+__m816_1n:
+	ADD	HL,HL
+	RLA
+	RET	NC
+__m816_0:
+	ADD	HL,DE
+	ADC	A,0
+	RET
+
+	END

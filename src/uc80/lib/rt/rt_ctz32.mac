@@ -1,0 +1,38 @@
+; rt_ctz32.mac - __ctz32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; __ctz32 — count trailing zeros of 32-bit DEHL.
+; ============================================================
+	PUBLIC	__ctz32
+__ctz32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__ctz32_zero
+	PUSH	BC
+	LD	B,0
+__ctz32_lp:
+	BIT	0,L
+	JR	NZ,__ctz32_done
+	INC	B
+	; Shift DEHL right by 1
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	__ctz32_lp
+__ctz32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ctz32_zero:
+	LD	HL,32
+	RET
+
+	END

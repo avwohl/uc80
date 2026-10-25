@@ -1,0 +1,25 @@
+; rt_mov64.mac - __mov64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __mov64: Copy __acc64 to __tmp64
+; ============================================================
+	PUBLIC	__mov64
+__mov64:
+	LD	HL,(__acc64)
+	LD	(__tmp64),HL
+	LD	HL,(__acc64+2)
+	LD	(__tmp64+2),HL
+	LD	HL,(__acc64+4)
+	LD	(__tmp64+4),HL
+	LD	HL,(__acc64+6)
+	LD	(__tmp64+6),HL
+	RET
+
+	END

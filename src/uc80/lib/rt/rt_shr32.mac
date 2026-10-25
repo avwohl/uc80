@@ -1,0 +1,68 @@
+; rt_shr32.mac - __shr32
+; Split from rt_arith32.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; 32-bit logical right shift: DEHL = DEHL >> A (unsigned)
+; ============================================================
+	PUBLIC	__shr32
+__shr32:
+	CP	5
+	JR	NC,__shr32_b
+__shr32_s:
+	OR	A
+	RET	Z
+__shr32_lp:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	DEC	A
+	JR	NZ,__shr32_lp
+	RET
+__shr32_b:
+	CP	32
+	JR	NC,__shr32_z
+	CP	16
+	JR	C,__shr32_1
+	EX	DE,HL		; shift by 16: word move
+	LD	DE,0
+	SUB	16
+__shr32_1:
+	CP	8
+	JR	C,__shr32_2
+	LD	L,H		; shift by 8: byte move
+	LD	H,E
+	LD	E,D
+	LD	D,0
+	SUB	8
+__shr32_2:
+	CP	5
+	JR	C,__shr32_s
+	PUSH	BC		; 5..7: left by 8-n into a fifth byte
+	LD	B,A
+	LD	A,8
+	SUB	B
+	LD	B,A
+	XOR	A
+__shr32_ll:
+	ADD	HL,HL
+	RL	E
+	RL	D
+	RLA
+	DJNZ	__shr32_ll
+	LD	L,H
+	LD	H,E
+	LD	E,D
+	LD	D,A
+	POP	BC
+	RET
+__shr32_z:
+	LD	HL,0
+	LD	D,H
+	LD	E,L
+	RET
+
+	END

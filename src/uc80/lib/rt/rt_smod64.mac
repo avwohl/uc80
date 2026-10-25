@@ -1,0 +1,79 @@
+; rt_smod64.mac - __smod64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__div64
+	EXTRN	__neg64
+	EXTRN	__rem64
+	EXTRN	__tmp64
+
+	CSEG
+; ============================================================
+; __smod64: 64-bit signed modulo __acc64 = __acc64 % __tmp64
+; Remainder has same sign as dividend
+; ============================================================
+	PUBLIC	__smod64
+__smod64:
+	; Save dividend sign
+	LD	A,(__acc64+7)
+	PUSH	AF
+
+	; Check signs
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	PUSH	AF
+
+	; Make dividend positive
+	LD	A,(__acc64+7)
+	BIT	7,A
+	JR	Z,__smod64_dvdpos
+	CALL	__neg64
+__smod64_dvdpos:
+	; Make divisor positive
+	LD	A,(__tmp64+7)
+	BIT	7,A
+	JR	Z,__smod64_dvspos
+	PUSH	HL
+	LD	HL,0
+	LD	BC,(__tmp64)
+	OR	A
+	SBC	HL,BC
+	LD	(__tmp64),HL
+	LD	HL,0
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__tmp64+2),HL
+	LD	HL,0
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__tmp64+4),HL
+	LD	HL,0
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__tmp64+6),HL
+	POP	HL
+__smod64_dvspos:
+	; Do unsigned division (remainder in __rem64)
+	CALL	__div64
+
+	; Load remainder into __acc64
+	LD	HL,(__rem64)
+	LD	(__acc64),HL
+	LD	HL,(__rem64+2)
+	LD	(__acc64+2),HL
+	LD	HL,(__rem64+4)
+	LD	(__acc64+4),HL
+	LD	HL,(__rem64+6)
+	LD	(__acc64+6),HL
+
+	; Negate remainder if dividend was negative
+	POP	AF		; discard result sign
+	POP	AF		; dividend sign
+	BIT	7,A
+	RET	Z
+	JP	__neg64		; tail call
+
+	END

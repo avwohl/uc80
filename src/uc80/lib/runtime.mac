@@ -11,89 +11,1146 @@ PRTSTR	EQU	9		; Print string (address in DE, '$' terminated)
 
 	CSEG
 
-; ============================================================
-; rt_arith16.mac
-; ============================================================
 	CSEG
-; rt_arith16.mac - 16-bit arithmetic routines
-; Split from runtime.mac
-
-
+; ============================================================
+; rt_acc64.mac
+; ============================================================
+; rt_acc64.mac - __acc64, __tmp64
+; Split from rt_arith64.mac
 
 
 	CSEG
+; ============================================================
+; 64-bit Integer Support
+; Convention: 64-bit values stored in __acc64 (accumulator) and __tmp64
+; ============================================================
+
+; 64-bit accumulator and temporary storage
+	COMMON	/rt_acc64/
+	PUBLIC	__acc64
+__acc64:	DS	8	; 64-bit accumulator
+	PUBLIC	__tmp64
+__tmp64:	DS	8	; 64-bit temporary
+
+
+	CSEG
+; ============================================================
+; rt_add32.mac
+; ============================================================
+; rt_add32.mac - __add32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit routines
+; Convention: DEHL = 32-bit value (DE=high word, HL=low word)
+; For binary ops: left in DEHL, right in __tmp32
+; Result returned in DEHL
+; ============================================================
 
 ; ============================================================
-; 16-bit multiplication: HL = DE * HL (low 16 bits; signed and
-; unsigned give the same bits)
-; Preserves BC, IX, IY.  Clobbers A, DE, flags.
-; When either operand fits in 8 bits it is the multiplier of one
-; __mul8x16.  An operand in -255..-1 is negated to 1..255 and the
-; product negated back.  Otherwise
-;   DE*HL mod 2^16 = DE*L + ((E*H) mod 256)<<8.
+; 32-bit addition: DEHL = DEHL + (__tmp32)
 ; ============================================================
-	PUBLIC	__mul16
-__mul16:
-	LD	A,H
-	OR	A
-	JR	NZ,__mul16_h
-	OR	L		; A = L
-	JP	__mul8x16	; HL = DE * L
-__mul16_h:
-	LD	A,D
-	OR	A
-	JR	NZ,__mul16_n
-	LD	A,E
-	EX	DE,HL
-	JP	__mul8x16	; HL = HL * E
-__mul16_n:
-	LD	A,H
-	INC	A
-	JR	NZ,__mul16_n2	; H <> 0FFH
-	SUB	L		; A = -L (A was 0)
-	JP	NZ,__mul16ng	; HL = -(DE * -HL)
-__mul16_n2:
-	LD	A,D
-	INC	A
-	JP	NZ,__mul16w	; D <> 0FFH
-	SUB	E		; A = -E
-	JP	Z,__mul16w	; DE = -256
-	EX	DE,HL
-	JP	__mul16ng	; HL = -(HL * -DE)
+	PUBLIC	__add32
+__add32:
+	; DEHL = DEHL + (__tmp32)
+	PUSH	BC
+	LD	BC,(__tmp32)	; BC = right low word
+	ADD	HL,BC		; HL = left.low + right.low
+	EX	DE,HL		; HL = left.high, DE = result.low
+	LD	BC,(__tmp32+2)	; BC = right high word
+	ADC	HL,BC		; HL = left.high + right.high + carry
+	EX	DE,HL		; DEHL = result
+	POP	BC
+	RET
 
+
+	CSEG
 ; ============================================================
-; __mul16ng - HL = -(DE * A), A = 1..255.  Part of __mul16.
-; __mul16w  - HL = DE * HL when neither operand fits in 8 bits:
-;   DE*L + ((E*H) mod 256)<<8.  Part of __mul16.
-; Kept apart from __mul16 so that the common 8-bit cases are one
-; short routine.  Same registers as __mul16.
+; rt_add64.mac
 ; ============================================================
-	PUBLIC	__mul16ng
-__mul16ng:
-	CALL	__mul8x16
-	XOR	A		; HL = -HL
-	SUB	L
+; rt_add64.mac - __add64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __add64: 64-bit addition __acc64 = __acc64 + __tmp64
+; ============================================================
+	PUBLIC	__add64
+__add64:
+	PUSH	BC
+	PUSH	DE
+	; Add word 0
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	ADD	HL,BC
+	LD	(__acc64),HL
+	; Add word 1 with carry
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	ADC	HL,BC
+	LD	(__acc64+2),HL
+	; Add word 2 with carry
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	ADC	HL,BC
+	LD	(__acc64+4),HL
+	; Add word 3 with carry
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	ADC	HL,BC
+	LD	(__acc64+6),HL
+	POP	DE
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_and32.mac
+; ============================================================
+; rt_and32.mac - __and32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit bitwise AND: DEHL = DEHL & (__tmp32)
+; ============================================================
+	PUBLIC	__and32
+__and32:
+	LD	A,(__tmp32)
+	AND	L
 	LD	L,A
-	SBC	A,A
-	SUB	H
+	LD	A,(__tmp32+1)
+	AND	H
 	LD	H,A
+	LD	A,(__tmp32+2)
+	AND	E
+	LD	E,A
+	LD	A,(__tmp32+3)
+	AND	D
+	LD	D,A
 	RET
 
-	PUBLIC	__mul16w
-__mul16w:
-	PUSH	HL
+
+	CSEG
+; ============================================================
+; rt_and64.mac
+; ============================================================
+; rt_and64.mac - __and64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __and64: 64-bit bitwise AND __acc64 = __acc64 & __tmp64
+; ============================================================
+	PUBLIC	__and64
+__and64:
+	PUSH	BC
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
 	LD	A,L
-	CALL	__mul8x16	; HL = DE * L
-	EX	(SP),HL		; HL = right operand, stack = partial
+	AND	C
+	LD	L,A
 	LD	A,H
-	LD	D,0		; DE = E
-	CALL	__mul8x16	; L = (H * E) & 0FFH
-	LD	A,L
-	POP	HL
-	ADD	A,H
+	AND	B
 	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	LD	A,L
+	AND	C
+	LD	L,A
+	LD	A,H
+	AND	B
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	LD	A,L
+	AND	C
+	LD	L,A
+	LD	A,H
+	AND	B
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	LD	A,L
+	AND	C
+	LD	L,A
+	LD	A,H
+	AND	B
+	LD	H,A
+	LD	(__acc64+6),HL
+	POP	BC
 	RET
 
+
+	CSEG
+; ============================================================
+; rt_bswap64.mac
+; ============================================================
+; rt_bswap64.mac - __bswap64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __bswap64 — reverse the byte order of __acc64.
+; Models __builtin_bswap64(uint64_t). uc80 routes that builtin here.
+; ============================================================
+	PUBLIC	__bswap64
+__bswap64:
+	; Swap byte 0 <-> byte 7
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+7)
+	LD	(__acc64),A
+	LD	A,B
+	LD	(__acc64+7),A
+	; Swap byte 1 <-> byte 6
+	LD	A,(__acc64+1)
+	LD	B,A
+	LD	A,(__acc64+6)
+	LD	(__acc64+1),A
+	LD	A,B
+	LD	(__acc64+6),A
+	; Swap byte 2 <-> byte 5
+	LD	A,(__acc64+2)
+	LD	B,A
+	LD	A,(__acc64+5)
+	LD	(__acc64+2),A
+	LD	A,B
+	LD	(__acc64+5),A
+	; Swap byte 3 <-> byte 4
+	LD	A,(__acc64+3)
+	LD	B,A
+	LD	A,(__acc64+4)
+	LD	(__acc64+3),A
+	LD	A,B
+	LD	(__acc64+4),A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_cadd.mac
+; ============================================================
+; rt_cadd.mac - __cadd
+; Split from rt_complex.mac
+
+
+
+	CSEG
+; ============================================================
+; Complex Addition: __cplx_result = __cplx_l + __cplx_r
+; (a+bi) + (c+di) = (a+c) + (b+d)i
+; ============================================================
+	PUBLIC	__cadd
+__cadd:
+	; Add real parts: result.real = l.real + r.real
+	LD	HL,(__cplx_l)		; l.real low
+	LD	DE,(__cplx_l+2)		; l.real high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_r)		; r.real low
+	LD	DE,(__cplx_r+2)		; r.real high
+	CALL	__fadd
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Add imag parts: result.imag = l.imag + r.imag
+	LD	HL,(__cplx_l+4)		; l.imag low
+	LD	DE,(__cplx_l+6)		; l.imag high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_r+4)		; r.imag low
+	LD	DE,(__cplx_r+6)		; r.imag high
+	CALL	__fadd
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_callhl.mac
+; ============================================================
+; rt_callhl.mac - __callhl
+; Split from rt_arith16.mac
+
+
+	CSEG
+; ============================================================
+; Indirect call through HL
+; ============================================================
+	PUBLIC	__callhl
+__callhl:
+	JP	(HL)		; Jump to address in HL
+
+
+	CSEG
+; ============================================================
+; rt_cdiv.mac
+; ============================================================
+; rt_cdiv.mac - __cdiv
+; Split from rt_complex.mac
+
+
+
+	CSEG
+; ============================================================
+; Complex Division: __cplx_result = __cplx_l / __cplx_r
+; (a+bi) / (c+di) = (ac+bd)/(c²+d²) + (bc-ad)/(c²+d²)i
+; Let: a=l.real, b=l.imag, c=r.real, d=r.imag
+; ============================================================
+	PUBLIC	__cdiv
+__cdiv:
+	; First calculate denominator: c² + d²
+
+	; Calculate c²
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; c is already in DEHL, multiply by itself
+	CALL	__fmul			; DEHL = c²
+	PUSH	DE
+	PUSH	HL			; Save c² on stack
+
+	; Calculate d²
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; d is already in DEHL, multiply by itself
+	CALL	__fmul			; DEHL = d²
+	; Add c² + d²
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE			; Restore c²
+	CALL	__fadd			; DEHL = c² + d²
+	LD	(__cplx_work),HL	; Store denominator
+	LD	(__cplx_work+2),DE
+
+	; Calculate numerator real: ac + bd
+
+	; Calculate ac
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*c
+	PUSH	DE
+	PUSH	HL			; Save ac on stack
+
+	; Calculate bd
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*d
+	; Add ac + bd
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE			; Restore ac
+	CALL	__fadd			; DEHL = ac + bd
+
+	; Divide by denominator for real part
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	LD	(__cplx_work+4),HL	; Save denom
+	LD	(__cplx_work+6),DE
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	LD	BC,(__cplx_work)
+	LD	(__tmp32),BC
+	LD	BC,(__cplx_work+2)
+	LD	(__tmp32+2),BC
+	CALL	__fdiv			; DEHL = (ac+bd)/(c²+d²)
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Restore denominator
+	LD	HL,(__cplx_work+4)
+	LD	(__cplx_work),HL
+	LD	HL,(__cplx_work+6)
+	LD	(__cplx_work+2),HL
+
+	; Calculate numerator imag: bc - ad
+
+	; Calculate bc
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*c
+	PUSH	DE
+	PUSH	HL			; Save bc on stack
+
+	; Calculate ad
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*d
+	; Subtract bc - ad
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE			; Restore bc
+	CALL	__fsub			; DEHL = bc - ad
+
+	; Divide by denominator for imag part
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	LD	BC,(__tmp32)
+	LD	(__cplx_work+4),BC
+	LD	BC,(__tmp32+2)
+	LD	(__cplx_work+6),BC
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_work+4)
+	LD	DE,(__cplx_work+6)
+	CALL	__fdiv			; DEHL = (bc-ad)/(c²+d²)
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_clrsb16.mac
+; ============================================================
+; rt_clrsb16.mac - __clrsb16
+; Split from rt_arith16.mac
+
+
+
+	CSEG
+; ============================================================
+; __clrsb16 — count leading sign bits minus 1 (16-bit signed HL).
+; clrsb(x) = clz(x ^ (x >> 15)) - 1, with clrsb(0) and clrsb(-1) = 15.
+; ============================================================
+	PUBLIC	__clrsb16
+__clrsb16:
+	; If MSB set (negative), XOR with 0xFFFF (flip all bits).
+	; Otherwise leave HL alone.
+	BIT	7,H
+	JR	Z,__clrsb16_pos
+	; Negative: XOR HL with 0xFFFF
+	LD	A,H
+	XOR	0FFH
+	LD	H,A
+	LD	A,L
+	XOR	0FFH
+	LD	L,A
+__clrsb16_pos:
+	; Now HL has leading 0 bits we count, MSB is 0.
+	LD	A,H
+	OR	L
+	JR	Z,__clrsb16_all_same	; all bits matched sign → 15
+	CALL	__clz16
+	DEC	HL
+	RET
+__clrsb16_all_same:
+	LD	HL,15
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_clrsb32.mac
+; ============================================================
+; rt_clrsb32.mac - __clrsb32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; __clrsb32 — count leading sign bits minus 1 (32-bit signed DEHL).
+; clrsb(x) = clz(x ^ (x >> 31)) - 1, with clrsb(0) / clrsb(-1) = 31.
+; ============================================================
+	PUBLIC	__clrsb32
+__clrsb32:
+	; If MSB (bit 31, D bit 7) is set, XOR DEHL with 0xFFFFFFFF.
+	BIT	7,D
+	JR	Z,__clrsb32_pos
+	LD	A,D
+	XOR	0FFH
+	LD	D,A
+	LD	A,E
+	XOR	0FFH
+	LD	E,A
+	LD	A,H
+	XOR	0FFH
+	LD	H,A
+	LD	A,L
+	XOR	0FFH
+	LD	L,A
+__clrsb32_pos:
+	; All bits 0 → all sign bits → 31.
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__clrsb32_all_same
+	CALL	__clz32
+	DEC	HL
+	RET
+__clrsb32_all_same:
+	LD	HL,31
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_clrsb64.mac
+; ============================================================
+; rt_clrsb64.mac - __clrsb64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __clrsb64 — count leading sign bits minus 1 (64-bit signed __acc64).
+; clrsb(x) = clz(x ^ (x >> 63)) - 1, with clrsb(0) / clrsb(-1) = 63.
+; ============================================================
+	PUBLIC	__clrsb64
+__clrsb64:
+	; If MSB of byte 7 set, XOR every byte of __acc64 with 0xFF.
+	LD	A,(__acc64+7)
+	AND	80H
+	JR	Z,__clrsb64_pos
+	; Negative: flip all bits
+	PUSH	BC
+	LD	HL,__acc64
+	LD	B,8
+__clrsb64_flip:
+	LD	A,(HL)
+	XOR	0FFH
+	LD	(HL),A
+	INC	HL
+	DJNZ	__clrsb64_flip
+	POP	BC
+__clrsb64_pos:
+	; Check for zero (all bits matched sign)
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	Z,__clrsb64_all_same
+	CALL	__clz64
+	DEC	HL
+	RET
+__clrsb64_all_same:
+	LD	HL,63
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_clz16.mac
+; ============================================================
+; rt_clz16.mac - __clz16
+; Split from rt_arith16.mac
+
+
+	CSEG
+; ============================================================
+; __clz16 — count leading zeros of 16-bit HL.
+; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
+; ============================================================
+	PUBLIC	__clz16
+__clz16:
+	LD	A,H
+	OR	L
+	JR	Z,__clz16_zero
+	PUSH	BC
+	LD	B,0		; counter
+	; Probe bits from high (15) down to 0
+__clz16_lp:
+	BIT	7,H
+	JR	NZ,__clz16_done
+	INC	B
+	ADD	HL,HL
+	JR	__clz16_lp
+__clz16_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__clz16_zero:
+	LD	HL,16
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_clz32.mac
+; ============================================================
+; rt_clz32.mac - __clz32
+; Split from rt_arith32.mac
+
+
+	CSEG
+; ============================================================
+; __clz32 — count leading zeros of 32-bit DEHL.
+; Returns count in HL (0..32). 32 if input zero (defensive).
+; ============================================================
+	PUBLIC	__clz32
+__clz32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__clz32_zero
+	PUSH	BC
+	LD	B,0		; counter
+__clz32_lp:
+	BIT	7,D
+	JR	NZ,__clz32_done
+	INC	B
+	; Shift DEHL left by 1
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	JR	__clz32_lp
+__clz32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__clz32_zero:
+	LD	HL,32
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_clz64.mac
+; ============================================================
+; rt_clz64.mac - __clz64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __clz64 / __ctz64 / __popcount64 / __ffs64 — bit-count helpers
+; on __acc64. All return HL = result (0..64), H=0. Defensive on
+; zero: clz/ctz return 64 instead of UB.
+; ============================================================
+	PUBLIC	__clz64
+__clz64:
+	; Test if zero
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__clz64_nz
+	LD	HL,64
+	RET
+__clz64_nz:
+	PUSH	BC
+	LD	BC,0		; counter
+__clz64_lp:
+	; Test bit 7 of high byte (byte 7)
+	LD	A,(__acc64+7)
+	AND	80H
+	JR	NZ,__clz64_done
+	INC	BC
+	; Shift __acc64 left by 1
+	LD	HL,(__acc64)
+	ADD	HL,HL
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	ADC	HL,HL
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	ADC	HL,HL
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	ADC	HL,HL
+	LD	(__acc64+6),HL
+	JR	__clz64_lp
+__clz64_done:
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_cmp32.mac
+; ============================================================
+; rt_cmp32.mac - __cmp32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit compare: sets flags based on DEHL - (__tmp32)
+; Returns: Z if equal, C if DEHL < __tmp32 (unsigned)
+; ============================================================
+	PUBLIC	__cmp32
+__cmp32:
+	PUSH	BC
+	; Compare high words first
+	LD	BC,(__tmp32+2)
+	LD	A,D
+	CP	B
+	JR	NZ,__cmp32_done
+	LD	A,E
+	CP	C
+	JR	NZ,__cmp32_done
+	; High words equal, compare low
+	LD	BC,(__tmp32)
+	LD	A,H
+	CP	B
+	JR	NZ,__cmp32_done
+	LD	A,L
+	CP	C
+__cmp32_done:
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_cmp64.mac
+; ============================================================
+; rt_cmp64.mac - __cmp64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __cmp64: Compare __acc64 with __tmp64 (signed)
+; Output: Flags set for signed comparison
+;         Z if equal, C if __acc64 < __tmp64 (signed)
+; Returns: HL = -1 if <, 0 if ==, 1 if >
+; ============================================================
+	PUBLIC	__cmp64
+__cmp64:
+	PUSH	BC
+	; First compare sign bits
+	LD	A,(__acc64+7)
+	XOR	A
+	LD	A,(__acc64+7)
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	JP	M,__cmp64_diffsign	; Different signs
+	; Same sign - compare magnitude from MSB to LSB
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	SBC	HL,BC
+	JR	NZ,__cmp64_neq
+	; Equal
+	LD	HL,0
+	POP	BC
+	RET
+__cmp64_neq:
+	; Not equal - check carry for less than
+	JR	C,__cmp64_lt
+	LD	HL,1			; Greater than
+	POP	BC
+	RET
+__cmp64_lt:
+	LD	HL,-1			; Less than
+	POP	BC
+	RET
+__cmp64_diffsign:
+	; Different signs - negative is less
+	LD	A,(__acc64+7)
+	AND	80H
+	JR	NZ,__cmp64_lt		; acc64 is negative, so less
+	LD	HL,1			; acc64 is positive, so greater
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_cmul.mac
+; ============================================================
+; rt_cmul.mac - __cmul
+; Split from rt_complex.mac
+
+
+
+	CSEG
+; ============================================================
+; Complex Multiplication: __cplx_result = __cplx_l * __cplx_r
+; (a+bi) * (c+di) = (ac-bd) + (ad+bc)i
+; Let: a=l.real, b=l.imag, c=r.real, d=r.imag
+; ============================================================
+	PUBLIC	__cmul
+__cmul:
+	; Calculate ac (a*c)
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*c
+	LD	(__cplx_work),HL	; store ac
+	LD	(__cplx_work+2),DE
+
+	; Calculate bd (b*d)
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*d
+	; Store bd in __tmp32 for subtraction
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; result.real = ac - bd
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	CALL	__fsub
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Calculate ad (a*d)
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*d
+	LD	(__cplx_work),HL	; store ad
+	LD	(__cplx_work+2),DE
+
+	; Calculate bc (b*c)
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*c
+	; Store bc in __tmp32 for addition
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; result.imag = ad + bc
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	CALL	__fadd
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_cplx_data.mac
+; ============================================================
+; rt_cplx_data.mac - __cplx_l, __cplx_r, __cplx_result, __cplx_tmp
+; Split from rt_complex.mac
+
+
+	COMMON	/rt_cplx_data/
+	PUBLIC	__cplx_l
+__cplx_l:
+	DS	8
+	PUBLIC	__cplx_r
+__cplx_r:
+	DS	8
+	PUBLIC	__cplx_result
+__cplx_result:
+	DS	8
+	PUBLIC	__cplx_tmp
+__cplx_tmp:
+	DS	8
+	PUBLIC	__cplx_work
+__cplx_work:
+	DS	8
+
+
+	CSEG
+; ============================================================
+; rt_csub.mac
+; ============================================================
+; rt_csub.mac - __csub
+; Split from rt_complex.mac
+
+
+
+	CSEG
+; ============================================================
+; Complex Subtraction: __cplx_result = __cplx_l - __cplx_r
+; (a+bi) - (c+di) = (a-c) + (b-d)i
+; ============================================================
+	PUBLIC	__csub
+__csub:
+	; Sub real parts: result.real = l.real - r.real
+	LD	HL,(__cplx_r)		; r.real low
+	LD	DE,(__cplx_r+2)		; r.real high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; l.real low
+	LD	DE,(__cplx_l+2)		; l.real high
+	CALL	__fsub
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Sub imag parts: result.imag = l.imag - r.imag
+	LD	HL,(__cplx_r+4)		; r.imag low
+	LD	DE,(__cplx_r+6)		; r.imag high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; l.imag low
+	LD	DE,(__cplx_l+6)		; l.imag high
+	CALL	__fsub
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_ctz16.mac
+; ============================================================
+; rt_ctz16.mac - __ctz16
+; Split from rt_arith16.mac
+
+
+	CSEG
+; ============================================================
+; __ctz16 — count trailing zeros of 16-bit HL.
+; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
+; ============================================================
+	PUBLIC	__ctz16
+__ctz16:
+	LD	A,H
+	OR	L
+	JR	Z,__ctz16_zero
+	PUSH	BC
+	LD	B,0
+__ctz16_lp:
+	BIT	0,L
+	JR	NZ,__ctz16_done
+	INC	B
+	SRL	H
+	RR	L
+	JR	__ctz16_lp
+__ctz16_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ctz16_zero:
+	LD	HL,16
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_ctz32.mac
+; ============================================================
+; rt_ctz32.mac - __ctz32
+; Split from rt_arith32.mac
+
+
+	CSEG
+; ============================================================
+; __ctz32 — count trailing zeros of 32-bit DEHL.
+; ============================================================
+	PUBLIC	__ctz32
+__ctz32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__ctz32_zero
+	PUSH	BC
+	LD	B,0
+__ctz32_lp:
+	BIT	0,L
+	JR	NZ,__ctz32_done
+	INC	B
+	; Shift DEHL right by 1
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	__ctz32_lp
+__ctz32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ctz32_zero:
+	LD	HL,32
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_ctz64.mac
+; ============================================================
+; rt_ctz64.mac - __ctz64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+	PUBLIC	__ctz64
+__ctz64:
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__ctz64_nz
+	LD	HL,64
+	RET
+__ctz64_nz:
+	PUSH	BC
+	LD	BC,0
+__ctz64_lp:
+	LD	A,(__acc64)
+	AND	1
+	JR	NZ,__ctz64_done
+	INC	BC
+	; Shift __acc64 right by 1
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	JR	__ctz64_lp
+__ctz64_done:
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_div16.mac
+; ============================================================
+; rt_div16.mac - __div16
+; Split from rt_arith16.mac
+
+
+
+	CSEG
 ; ============================================================
 ; 16-bit unsigned division: HL = DE / HL
 ; Also sets __divrem to remainder (DE % HL), and returns the
@@ -101,7 +1158,6 @@ __mul16w:
 ; Preserves BC, IX, IY.  Clobbers A, flags.
 ; ============================================================
 	PUBLIC	__div16
-	PUBLIC	__divrem
 __div16:
 	EX	DE,HL		; HL = dividend, DE = divisor
 	LD	A,D
@@ -151,509 +1207,17 @@ __div16_zero:
 	LD	E,L
 	RET
 
-	COMMON	/rt_arith16/
-__divrem:
-	DS	2
 
 	CSEG
-
 ; ============================================================
-; 16-bit unsigned modulo: HL = DE % HL
+; rt_div32.mac
 ; ============================================================
-	PUBLIC	__mod16
-__mod16:
-	CALL	__div16		; remainder in DE
-	EX	DE,HL
-	RET
-
-; ============================================================
-; 16-bit signed division: HL = DE / HL (signed)
-; Truncates toward zero.  Sets __divrem to |DE| % |HL|.
-; ============================================================
-	PUBLIC	__sdiv16
-__sdiv16:
-	LD	A,D
-	XOR	H
-	PUSH	AF		; S flag = sign of the quotient
-	BIT	7,D
-	JR	Z,__sdiv16_1
-	XOR	A		; DE = -DE
-	SUB	E
-	LD	E,A
-	SBC	A,A
-	SUB	D
-	LD	D,A
-__sdiv16_1:
-	BIT	7,H
-	JR	Z,__sdiv16_2
-	XOR	A		; HL = -HL
-	SUB	L
-	LD	L,A
-	SBC	A,A
-	SUB	H
-	LD	H,A
-__sdiv16_2:
-	CALL	__div16
-	POP	AF
-	RET	P
-	XOR	A		; HL = -HL
-	SUB	L
-	LD	L,A
-	SBC	A,A
-	SUB	H
-	LD	H,A
-	RET
-
-; ============================================================
-; 16-bit signed modulo: HL = DE % HL (signed)
-; Result has same sign as dividend (DE)
-; ============================================================
-	PUBLIC	__smod16
-__smod16:
-	LD	A,D
-	OR	A
-	PUSH	AF		; S flag = sign of the dividend
-	JP	P,__smod16_1
-	XOR	A		; DE = -DE
-	SUB	E
-	LD	E,A
-	SBC	A,A
-	SUB	D
-	LD	D,A
-__smod16_1:
-	BIT	7,H
-	JR	Z,__smod16_2
-	XOR	A		; HL = -HL
-	SUB	L
-	LD	L,A
-	SBC	A,A
-	SUB	H
-	LD	H,A
-__smod16_2:
-	CALL	__div16
-	EX	DE,HL		; HL = remainder
-	POP	AF
-	RET	P
-	XOR	A		; HL = -HL
-	SUB	L
-	LD	L,A
-	SBC	A,A
-	SUB	H
-	LD	H,A
-	RET
-
-; ============================================================
-; 16-bit left shift: HL = DE << L  (L >= 16 gives 0; H ignored)
-; ============================================================
-	PUBLIC	__shl16
-__shl16:
-	LD	A,L
-	EX	DE,HL
-	CP	8
-	JR	NC,__shl16_8
-__shl16_s:
-	OR	A
-	RET	Z
-__shl16_lp:
-	ADD	HL,HL
-	DEC	A
-	JR	NZ,__shl16_lp
-	RET
-__shl16_8:
-	CP	16
-	JR	NC,__shl16_z
-	LD	H,L		; shift by 8 is a byte move
-	LD	L,0
-	SUB	8
-	JR	__shl16_s
-__shl16_z:
-	LD	HL,0
-	RET
-
-; ============================================================
-; 16-bit logical right shift: HL = DE >> L (unsigned)
-; ============================================================
-	PUBLIC	__shr16
-__shr16:
-	LD	A,L
-	EX	DE,HL
-	CP	8
-	JR	NC,__shr16_8
-	OR	A
-	RET	Z
-__shr16_lp:
-	SRL	H
-	RR	L
-	DEC	A
-	JR	NZ,__shr16_lp
-	RET
-__shr16_8:
-	CP	16
-	JR	NC,__shr16_z
-	LD	L,H		; shift by 8 is a byte move
-	LD	H,0
-	SUB	8
-	RET	Z
-__shr16_b:
-	SRL	L
-	DEC	A
-	JR	NZ,__shr16_b
-	RET
-__shr16_z:
-	LD	HL,0
-	RET
-
-; ============================================================
-; 16-bit arithmetic right shift: HL = DE >> L (signed)
-; ============================================================
-	PUBLIC	__sar16
-__sar16:
-	LD	A,L
-	EX	DE,HL
-	CP	8
-	JR	NC,__sar16_8
-	OR	A
-	RET	Z
-__sar16_lp:
-	SRA	H
-	RR	L
-	DEC	A
-	JR	NZ,__sar16_lp
-	RET
-__sar16_8:
-	CP	16
-	JR	NC,__sar16_f
-	SUB	8		; shift by 8 is a byte move and a
-	LD	L,H		; sign fill
-	LD	H,0
-	BIT	7,L
-	JR	Z,__sar16_p
-	DEC	H
-__sar16_p:
-	OR	A
-	RET	Z
-__sar16_b:
-	SRA	L
-	DEC	A
-	JR	NZ,__sar16_b
-	RET
-__sar16_f:
-	LD	A,H		; shift >= 16: 0 or -1 by the sign
-	RLA
-	SBC	A,A
-	LD	H,A
-	LD	L,A
-	RET
-
-; ============================================================
-; __clz16 — count leading zeros of 16-bit HL.
-; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
-; ============================================================
-	PUBLIC	__clz16
-__clz16:
-	LD	A,H
-	OR	L
-	JR	Z,__clz16_zero
-	PUSH	BC
-	LD	B,0		; counter
-	; Probe bits from high (15) down to 0
-__clz16_lp:
-	BIT	7,H
-	JR	NZ,__clz16_done
-	INC	B
-	ADD	HL,HL
-	JR	__clz16_lp
-__clz16_done:
-	LD	L,B
-	LD	H,0
-	POP	BC
-	RET
-__clz16_zero:
-	LD	HL,16
-	RET
-
-; ============================================================
-; __clrsb16 — count leading sign bits minus 1 (16-bit signed HL).
-; clrsb(x) = clz(x ^ (x >> 15)) - 1, with clrsb(0) and clrsb(-1) = 15.
-; ============================================================
-	PUBLIC	__clrsb16
-__clrsb16:
-	; If MSB set (negative), XOR with 0xFFFF (flip all bits).
-	; Otherwise leave HL alone.
-	BIT	7,H
-	JR	Z,__clrsb16_pos
-	; Negative: XOR HL with 0xFFFF
-	LD	A,H
-	XOR	0FFH
-	LD	H,A
-	LD	A,L
-	XOR	0FFH
-	LD	L,A
-__clrsb16_pos:
-	; Now HL has leading 0 bits we count, MSB is 0.
-	LD	A,H
-	OR	L
-	JR	Z,__clrsb16_all_same	; all bits matched sign → 15
-	CALL	__clz16
-	DEC	HL
-	RET
-__clrsb16_all_same:
-	LD	HL,15
-	RET
-
-; ============================================================
-; __ctz16 — count trailing zeros of 16-bit HL.
-; Undefined for x=0 per GCC. Returns 16 if HL == 0 (defensive).
-; ============================================================
-	PUBLIC	__ctz16
-__ctz16:
-	LD	A,H
-	OR	L
-	JR	Z,__ctz16_zero
-	PUSH	BC
-	LD	B,0
-__ctz16_lp:
-	BIT	0,L
-	JR	NZ,__ctz16_done
-	INC	B
-	SRL	H
-	RR	L
-	JR	__ctz16_lp
-__ctz16_done:
-	LD	L,B
-	LD	H,0
-	POP	BC
-	RET
-__ctz16_zero:
-	LD	HL,16
-	RET
-
-; ============================================================
-; __popcount16 — count set bits in HL.
-; ============================================================
-	PUBLIC	__popcount16
-__popcount16:
-	PUSH	BC
-	LD	B,0		; counter
-	LD	C,16		; bits remaining
-__popcount16_lp:
-	SRL	H
-	RR	L
-	JR	NC,__popcount16_skip
-	INC	B
-__popcount16_skip:
-	DEC	C
-	JR	NZ,__popcount16_lp
-	LD	L,B
-	LD	H,0
-	POP	BC
-	RET
-
-; ============================================================
-; __ffs16 — find lowest set bit (1-indexed), 0 if none.
-; Models __builtin_ffs / POSIX ffs for 16-bit operands. uc80 calls
-; this from gen_call when the user invokes ``__builtin_ffs(int)``.
-; In:  HL = value
-; Out: HL = 1..16 (position of lowest set bit) or 0 if HL==0
-; ============================================================
-	PUBLIC	__ffs16
-__ffs16:
-	LD	A,H
-	OR	L
-	JR	Z,__ffs16_zero
-	PUSH	BC
-	LD	B,1		; current bit position
-	LD	A,L
-__ffs16_lo:
-	RRCA
-	JR	C,__ffs16_found
-	INC	B
-	LD	C,A
-	LD	A,B
-	CP	9
-	LD	A,C
-	JR	NZ,__ffs16_lo
-	; First 8 bits all zero; move to high byte
-	LD	A,H
-__ffs16_hi:
-	RRCA
-	JR	C,__ffs16_found
-	INC	B
-	JR	__ffs16_hi
-__ffs16_found:
-	LD	L,B
-	LD	H,0
-	POP	BC
-	RET
-__ffs16_zero:
-	LD	HL,0
-	RET
-
-; ============================================================
-; Indirect call through HL
-; ============================================================
-	PUBLIC	__callhl
-__callhl:
-	JP	(HL)		; Jump to address in HL
-
-; ============================================================
-; rt_arith32.mac
-; ============================================================
-	CSEG
-; rt_arith32.mac - 32-bit arithmetic routines
-; Split from runtime.mac
+; rt_div32.mac - __div32
+; Split from rt_arith32.mac
 
 
 
 	CSEG
-
-; ============================================================
-; 32-bit routines
-; Convention: DEHL = 32-bit value (DE=high word, HL=low word)
-; For binary ops: left in DEHL, right in __tmp32
-; Result returned in DEHL
-; ============================================================
-
-; ============================================================
-; 32-bit addition: DEHL = DEHL + (__tmp32)
-; ============================================================
-	PUBLIC	__add32
-__add32:
-	; DEHL = DEHL + (__tmp32)
-	PUSH	BC
-	LD	BC,(__tmp32)	; BC = right low word
-	ADD	HL,BC		; HL = left.low + right.low
-	EX	DE,HL		; HL = left.high, DE = result.low
-	LD	BC,(__tmp32+2)	; BC = right high word
-	ADC	HL,BC		; HL = left.high + right.high + carry
-	EX	DE,HL		; DEHL = result
-	POP	BC
-	RET
-
-; ============================================================
-; 32-bit subtraction: DEHL = DEHL - (__tmp32)
-; ============================================================
-	PUBLIC	__sub32
-__sub32:
-	PUSH	BC
-	LD	BC,(__tmp32)
-	OR	A		; Clear carry
-	SBC	HL,BC		; HL = left.low - right.low
-	EX	DE,HL
-	LD	BC,(__tmp32+2)
-	SBC	HL,BC		; HL = left.high - right.high - borrow
-	EX	DE,HL
-	POP	BC
-	RET
-
-; ============================================================
-; 32-bit multiplication: DEHL = DEHL * (__tmp32)  (low 32 bits)
-; When both operands are sign-extended 16-bit values the product is
-; +-(|AL| * |BL|): one __mul16_32 with its 8-bit fast paths.
-; Otherwise, with A = AH:AL (DEHL) and B = BH:BL (__tmp32):
-;   A*B mod 2^32 = AL*BL + ((AH*BL + AL*BH) mod 2^16) << 16
-; Each product is a __mul16_32 (only the low word of the cross
-; products is used); a cross product is skipped when AH or BH is 0.  __tmp32 is not changed.
-; Preserves BC, IX, IY.
-; ============================================================
-	PUBLIC	__mul32
-__mul32:
-	PUSH	BC
-	LD	A,H		; DEHL = sign extension of HL?
-	RLA
-	SBC	A,A
-	CP	D
-	JR	NZ,__mul32_g
-	CP	E
-	JR	NZ,__mul32_g
-	LD	C,A
-	LD	A,(__tmp32+1)	; and __tmp32 of its low word?
-	RLA
-	SBC	A,A
-	LD	B,A
-	LD	A,(__tmp32+2)
-	CP	B
-	JR	NZ,__mul32_g
-	LD	A,(__tmp32+3)
-	CP	B
-	JR	NZ,__mul32_g
-	XOR	C
-	PUSH	AF		; S flag = sign of the product
-	BIT	7,H
-	JR	Z,__mul32_s1
-	XOR	A		; HL = -HL
-	SUB	L
-	LD	L,A
-	SBC	A,A
-	SUB	H
-	LD	H,A
-__mul32_s1:
-	LD	B,H
-	LD	C,L		; BC = |AL|
-	LD	HL,(__tmp32)
-	BIT	7,H
-	JR	Z,__mul32_s2
-	XOR	A		; HL = -HL
-	SUB	L
-	LD	L,A
-	SBC	A,A
-	SUB	H
-	LD	H,A
-__mul32_s2:
-	EX	DE,HL		; DE = |BL|
-	CALL	__mul16_32	; DEHL = |AL| * |BL|
-	POP	AF
-	POP	BC
-	RET	P
-	JP	__neg32
-__mul32_g:
-	LD	B,H
-	LD	C,L		; BC = AL
-	LD	A,D
-	OR	E
-	JR	Z,__mul32_1	; AH = 0: DE = 0 = cross sum so far
-	PUSH	BC
-	LD	BC,(__tmp32)
-	CALL	__mul16_32	; HL = (AH * BL) mod 2^16
-	POP	BC
-	EX	DE,HL		; DE = cross sum
-__mul32_1:
-	LD	HL,(__tmp32+2)
-	LD	A,H
-	OR	L
-	JR	Z,__mul32_2	; BH = 0
-	PUSH	DE
-	EX	DE,HL
-	CALL	__mul16_32	; HL = (AL * BH) mod 2^16
-	POP	DE
-	ADD	HL,DE
-	EX	DE,HL		; DE = cross sum
-__mul32_2:
-	PUSH	DE
-	LD	DE,(__tmp32)
-	CALL	__mul16_32	; DEHL = AL * BL
-	EX	DE,HL
-	POP	BC
-	ADD	HL,BC		; high word += cross sum
-	EX	DE,HL
-	POP	BC
-	RET
-
-; ============================================================
-; 32-bit signed multiplication: DEHL = DEHL * (__tmp32)
-; The low 32 bits of a product do not depend on the signs, so this
-; is __mul32.  Not a bare "JP __mul32": the peephole pass runs on
-; the code between inline-asm regions one piece at a time, and a
-; label whose only code is a jump, with no reference in the same
-; piece, is removed as a jump to a jump.
-; ============================================================
-	PUBLIC	__smul32
-__smul32:
-	PUSH	BC
-	CALL	__mul32
-	POP	BC
-	RET
-
 ; ============================================================
 ; 32-bit unsigned division: DEHL = DEHL / (__tmp32)
 ; Also stores remainder in __rem32.
@@ -668,7 +1232,6 @@ __smul32:
 ; 32-bit restoring division run.
 ; ============================================================
 	PUBLIC	__div32
-	PUBLIC	__rem32
 __div32:
 	PUSH	BC
 	LD	(__div32_dvd),HL
@@ -816,1362 +1379,17 @@ __div32_gn:
 	DJNZ	__div32_gl
 	RET
 
-; ============================================================
-; 32-bit unsigned modulo: DEHL = DEHL % (__tmp32)
-; ============================================================
-	PUBLIC	__mod32
-__mod32:
-	CALL	__div32
-	LD	HL,(__rem32)
-	LD	DE,(__rem32+2)
-	RET
 
-; ============================================================
-; 32-bit signed division: DEHL = DEHL / (__tmp32) (signed)
-; Truncates toward zero.  Leaves |divisor| in __tmp32.
-; ============================================================
-	PUBLIC	__sdiv32
-__sdiv32:
-	LD	A,(__tmp32+3)
-	XOR	D
-	PUSH	AF		; S flag = sign of the quotient
-	BIT	7,D
-	CALL	NZ,__neg32
-	LD	A,(__tmp32+3)
-	OR	A
-	JP	P,__sdiv32_p
-	PUSH	HL		; __tmp32 = -__tmp32
-	LD	HL,__tmp32
-	XOR	A
-	SUB	(HL)
-	LD	(HL),A
-	INC	HL
-	LD	A,0
-	SBC	A,(HL)
-	LD	(HL),A
-	INC	HL
-	LD	A,0
-	SBC	A,(HL)
-	LD	(HL),A
-	INC	HL
-	LD	A,0
-	SBC	A,(HL)
-	LD	(HL),A
-	POP	HL
-__sdiv32_p:
-	CALL	__div32
-	POP	AF
-	RET	P
-	JP	__neg32
-
-; ============================================================
-; 32-bit signed modulo: DEHL = DEHL % (__tmp32) (signed)
-; Result has same sign as dividend.  Leaves |divisor| in __tmp32.
-; ============================================================
-	PUBLIC	__smod32
-__smod32:
-	LD	A,D
-	OR	A
-	PUSH	AF		; S flag = sign of the dividend
-	CALL	M,__neg32
-	LD	A,(__tmp32+3)
-	OR	A
-	JP	P,__smod32_p
-	PUSH	HL		; __tmp32 = -__tmp32
-	LD	HL,__tmp32
-	XOR	A
-	SUB	(HL)
-	LD	(HL),A
-	INC	HL
-	LD	A,0
-	SBC	A,(HL)
-	LD	(HL),A
-	INC	HL
-	LD	A,0
-	SBC	A,(HL)
-	LD	(HL),A
-	INC	HL
-	LD	A,0
-	SBC	A,(HL)
-	LD	(HL),A
-	POP	HL
-__smod32_p:
-	CALL	__div32
-	LD	HL,(__rem32)
-	LD	DE,(__rem32+2)
-	POP	AF
-	RET	P
-	JP	__neg32
-
-; ============================================================
-; 32-bit compare: sets flags based on DEHL - (__tmp32)
-; Returns: Z if equal, C if DEHL < __tmp32 (unsigned)
-; ============================================================
-	PUBLIC	__cmp32
-__cmp32:
-	PUSH	BC
-	; Compare high words first
-	LD	BC,(__tmp32+2)
-	LD	A,D
-	CP	B
-	JR	NZ,__cmp32_done
-	LD	A,E
-	CP	C
-	JR	NZ,__cmp32_done
-	; High words equal, compare low
-	LD	BC,(__tmp32)
-	LD	A,H
-	CP	B
-	JR	NZ,__cmp32_done
-	LD	A,L
-	CP	C
-__cmp32_done:
-	POP	BC
-	RET
-
-; ============================================================
-; 32-bit left shift: DEHL = DEHL << A  (A >= 32 gives 0)
-; Counts below 5 shift bit by bit.  Larger counts move whole bytes
-; first; 5..7 leftover bits go the other way: right by 8-n into a
-; fifth byte, then a byte move.
-; ============================================================
-	PUBLIC	__shl32
-__shl32:
-	CP	5
-	JR	NC,__shl32_b
-__shl32_s:
-	OR	A
-	RET	Z
-__shl32_lp:
-	ADD	HL,HL
-	RL	E
-	RL	D
-	DEC	A
-	JR	NZ,__shl32_lp
-	RET
-__shl32_b:
-	CP	32
-	JR	NC,__shl32_z
-	CP	16
-	JR	C,__shl32_1
-	EX	DE,HL		; shift by 16: word move
-	LD	HL,0
-	SUB	16
-__shl32_1:
-	CP	8
-	JR	C,__shl32_2
-	LD	D,E		; shift by 8: byte move
-	LD	E,H
-	LD	H,L
-	LD	L,0
-	SUB	8
-__shl32_2:
-	CP	5
-	JR	C,__shl32_s
-	PUSH	BC
-	LD	B,A
-	LD	A,8
-	SUB	B
-	LD	B,A
-	XOR	A
-__shl32_rl:
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	RRA
-	DJNZ	__shl32_rl
-	LD	D,E
-	LD	E,H
-	LD	H,L
-	LD	L,A
-	POP	BC
-	RET
-__shl32_z:
-	LD	HL,0
-	LD	D,H
-	LD	E,L
-	RET
-
-; ============================================================
-; 32-bit logical right shift: DEHL = DEHL >> A (unsigned)
-; ============================================================
-	PUBLIC	__shr32
-__shr32:
-	CP	5
-	JR	NC,__shr32_b
-__shr32_s:
-	OR	A
-	RET	Z
-__shr32_lp:
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	DEC	A
-	JR	NZ,__shr32_lp
-	RET
-__shr32_b:
-	CP	32
-	JR	NC,__shr32_z
-	CP	16
-	JR	C,__shr32_1
-	EX	DE,HL		; shift by 16: word move
-	LD	DE,0
-	SUB	16
-__shr32_1:
-	CP	8
-	JR	C,__shr32_2
-	LD	L,H		; shift by 8: byte move
-	LD	H,E
-	LD	E,D
-	LD	D,0
-	SUB	8
-__shr32_2:
-	CP	5
-	JR	C,__shr32_s
-	PUSH	BC		; 5..7: left by 8-n into a fifth byte
-	LD	B,A
-	LD	A,8
-	SUB	B
-	LD	B,A
-	XOR	A
-__shr32_ll:
-	ADD	HL,HL
-	RL	E
-	RL	D
-	RLA
-	DJNZ	__shr32_ll
-	LD	L,H
-	LD	H,E
-	LD	E,D
-	LD	D,A
-	POP	BC
-	RET
-__shr32_z:
-	LD	HL,0
-	LD	D,H
-	LD	E,L
-	RET
-
-; ============================================================
-; 32-bit arithmetic right shift: DEHL = DEHL >> A (signed)
-; A >= 32 acts as 31: 0 or -1 by the sign.
-; ============================================================
-	PUBLIC	__sar32
-__sar32:
-	CP	5
-	JR	NC,__sar32_b
-__sar32_s:
-	OR	A
-	RET	Z
-__sar32_lp:
-	SRA	D
-	RR	E
-	RR	H
-	RR	L
-	DEC	A
-	JR	NZ,__sar32_lp
-	RET
-__sar32_b:
-	CP	32
-	JR	C,__sar32_0
-	LD	A,31
-__sar32_0:
-	CP	16
-	JR	C,__sar32_1
-	SUB	16		; shift by 16: word move, sign fill
-	EX	DE,HL
-	LD	DE,0
-	BIT	7,H
-	JR	Z,__sar32_1
-	DEC	DE
-__sar32_1:
-	CP	8
-	JR	C,__sar32_2
-	LD	L,H		; shift by 8: byte move, sign fill
-	LD	H,E
-	LD	E,D
-	LD	D,0
-	BIT	7,E
-	JR	Z,__sar32_1p
-	DEC	D
-__sar32_1p:
-	SUB	8
-__sar32_2:
-	CP	5
-	JR	C,__sar32_s
-	PUSH	BC		; 5..7: left by 8-n into a fifth byte
-	LD	B,A		; that starts as the sign fill
-	LD	A,8
-	SUB	B
-	LD	B,A
-	LD	A,D
-	RLA
-	SBC	A,A
-__sar32_ll:
-	ADD	HL,HL
-	RL	E
-	RL	D
-	RLA
-	DJNZ	__sar32_ll
-	LD	L,H
-	LD	H,E
-	LD	E,D
-	LD	D,A
-	POP	BC
-	RET
-
-; ============================================================
-; 32-bit bitwise AND: DEHL = DEHL & (__tmp32)
-; ============================================================
-	PUBLIC	__and32
-__and32:
-	LD	A,(__tmp32)
-	AND	L
-	LD	L,A
-	LD	A,(__tmp32+1)
-	AND	H
-	LD	H,A
-	LD	A,(__tmp32+2)
-	AND	E
-	LD	E,A
-	LD	A,(__tmp32+3)
-	AND	D
-	LD	D,A
-	RET
-
-; ============================================================
-; 32-bit bitwise OR: DEHL = DEHL | (__tmp32)
-; ============================================================
-	PUBLIC	__or32
-__or32:
-	LD	A,(__tmp32)
-	OR	L
-	LD	L,A
-	LD	A,(__tmp32+1)
-	OR	H
-	LD	H,A
-	LD	A,(__tmp32+2)
-	OR	E
-	LD	E,A
-	LD	A,(__tmp32+3)
-	OR	D
-	LD	D,A
-	RET
-
-; ============================================================
-; 32-bit bitwise XOR: DEHL = DEHL ^ (__tmp32)
-; ============================================================
-	PUBLIC	__xor32
-__xor32:
-	LD	A,(__tmp32)
-	XOR	L
-	LD	L,A
-	LD	A,(__tmp32+1)
-	XOR	H
-	LD	H,A
-	LD	A,(__tmp32+2)
-	XOR	E
-	LD	E,A
-	LD	A,(__tmp32+3)
-	XOR	D
-	LD	D,A
-	RET
-
-; ============================================================
-; 32-bit bitwise NOT: DEHL = ~DEHL
-; ============================================================
-	PUBLIC	__not32
-__not32:
-	LD	A,L
-	CPL
-	LD	L,A
-	LD	A,H
-	CPL
-	LD	H,A
-	LD	A,E
-	CPL
-	LD	E,A
-	LD	A,D
-	CPL
-	LD	D,A
-	RET
-
-; ============================================================
-; Sign-extend 16-bit HL to 32-bit DEHL
-; ============================================================
-	PUBLIC	__sext32
-__sext32:
-	LD	D,H
-	LD	A,D
-	RLA			; Get sign bit into carry
-	SBC	A,A		; A = 0xFF if negative, 0 if positive
-	LD	D,A
-	LD	E,A
-	RET
-
-; ============================================================
-; Zero-extend 16-bit HL to 32-bit DEHL
-; ============================================================
-	PUBLIC	__zext32
-__zext32:
-	LD	DE,0
-	RET
-
-; ============================================================
-; __clz32 — count leading zeros of 32-bit DEHL.
-; Returns count in HL (0..32). 32 if input zero (defensive).
-; ============================================================
-	PUBLIC	__clz32
-__clz32:
-	LD	A,D
-	OR	E
-	OR	H
-	OR	L
-	JR	Z,__clz32_zero
-	PUSH	BC
-	LD	B,0		; counter
-__clz32_lp:
-	BIT	7,D
-	JR	NZ,__clz32_done
-	INC	B
-	; Shift DEHL left by 1
-	ADD	HL,HL
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-	JR	__clz32_lp
-__clz32_done:
-	LD	L,B
-	LD	H,0
-	POP	BC
-	RET
-__clz32_zero:
-	LD	HL,32
-	RET
-
-; ============================================================
-; __clrsb32 — count leading sign bits minus 1 (32-bit signed DEHL).
-; clrsb(x) = clz(x ^ (x >> 31)) - 1, with clrsb(0) / clrsb(-1) = 31.
-; ============================================================
-	PUBLIC	__clrsb32
-__clrsb32:
-	; If MSB (bit 31, D bit 7) is set, XOR DEHL with 0xFFFFFFFF.
-	BIT	7,D
-	JR	Z,__clrsb32_pos
-	LD	A,D
-	XOR	0FFH
-	LD	D,A
-	LD	A,E
-	XOR	0FFH
-	LD	E,A
-	LD	A,H
-	XOR	0FFH
-	LD	H,A
-	LD	A,L
-	XOR	0FFH
-	LD	L,A
-__clrsb32_pos:
-	; All bits 0 → all sign bits → 31.
-	LD	A,D
-	OR	E
-	OR	H
-	OR	L
-	JR	Z,__clrsb32_all_same
-	CALL	__clz32
-	DEC	HL
-	RET
-__clrsb32_all_same:
-	LD	HL,31
-	RET
-
-; ============================================================
-; __ctz32 — count trailing zeros of 32-bit DEHL.
-; ============================================================
-	PUBLIC	__ctz32
-__ctz32:
-	LD	A,D
-	OR	E
-	OR	H
-	OR	L
-	JR	Z,__ctz32_zero
-	PUSH	BC
-	LD	B,0
-__ctz32_lp:
-	BIT	0,L
-	JR	NZ,__ctz32_done
-	INC	B
-	; Shift DEHL right by 1
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	JR	__ctz32_lp
-__ctz32_done:
-	LD	L,B
-	LD	H,0
-	POP	BC
-	RET
-__ctz32_zero:
-	LD	HL,32
-	RET
-
-; ============================================================
-; __popcount32 — count set bits in 32-bit DEHL.
-; ============================================================
-	PUBLIC	__popcount32
-__popcount32:
-	PUSH	BC
-	LD	B,0
-	LD	C,32
-__popcount32_lp:
-	; Shift DEHL right by 1; check carry
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	JR	NC,__popcount32_skip
-	INC	B
-__popcount32_skip:
-	DEC	C
-	JR	NZ,__popcount32_lp
-	LD	L,B
-	LD	H,0
-	POP	BC
-	RET
-
-; ============================================================
-; __ffs32 — 1-indexed lowest set bit of DEHL, 0 if none.
-; ============================================================
-	PUBLIC	__ffs32
-__ffs32:
-	LD	A,D
-	OR	E
-	OR	H
-	OR	L
-	JR	Z,__ffs32_zero
-	PUSH	BC
-	LD	B,1
-__ffs32_lp:
-	BIT	0,L
-	JR	NZ,__ffs32_done
-	INC	B
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	JR	__ffs32_lp
-__ffs32_done:
-	LD	L,B
-	LD	H,0
-	POP	BC
-	RET
-__ffs32_zero:
-	LD	HL,0
-	RET
-
-	COMMON	/rt_arith32/
-__div32_dvd:
-	DS	4
-__rem32:
-	DS	4
-
-; ============================================================
-; rt_arith64.mac
-; ============================================================
 	CSEG
-; rt_arith64.mac - 64-bit arithmetic routines
-; Split from runtime.mac
+; ============================================================
+; rt_div64.mac
+; ============================================================
+; rt_div64.mac - __div64
+; Split from rt_arith64.mac
 
 
 
 	CSEG
-
-; ============================================================
-; 64-bit Integer Support
-; Convention: 64-bit values stored in __acc64 (accumulator) and __tmp64
-; ============================================================
-
-; 64-bit accumulator and temporary storage
-	COMMON	/rt_arith64/
-	PUBLIC	__acc64
-	PUBLIC	__tmp64
-__acc64:	DS	8	; 64-bit accumulator
-__tmp64:	DS	8	; 64-bit temporary
-	CSEG
-
-; ============================================================
-; __sext64: Sign-extend 32-bit DEHL to 64-bit in __acc64
-; Input: DEHL = 32-bit value
-; Output: __acc64 = sign-extended 64-bit value
-; ============================================================
-	PUBLIC	__sext64
-__sext64:
-	LD	(__acc64),HL		; Store low word
-	LD	(__acc64+2),DE		; Store second word
-	; Sign extend from bit 31
-	BIT	7,D
-	JR	Z,__sext64_pos
-	LD	HL,0FFFFH		; Negative: extend with 1s
-	JR	__sext64_store
-__sext64_pos:
-	LD	HL,0			; Positive: extend with 0s
-__sext64_store:
-	LD	(__acc64+4),HL
-	LD	(__acc64+6),HL
-	RET
-
-; ============================================================
-; __zext64: Zero-extend 32-bit DEHL to 64-bit in __acc64
-; Input: DEHL = 32-bit value
-; Output: __acc64 = zero-extended 64-bit value
-; ============================================================
-	PUBLIC	__zext64
-__zext64:
-	LD	(__acc64),HL		; Store low word
-	LD	(__acc64+2),DE		; Store second word
-	LD	HL,0
-	LD	(__acc64+4),HL		; Upper 32 bits = 0
-	LD	(__acc64+6),HL
-	RET
-
-; ============================================================
-; __load64: Load 64-bit value from address to __acc64
-; Input: HL = address of 64-bit value
-; Output: __acc64 = value
-; ============================================================
-	PUBLIC	__load64
-__load64:
-	PUSH	DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(__acc64),DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(__acc64+2),DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(__acc64+4),DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(__acc64+6),DE
-	POP	DE
-	RET
-
-; ============================================================
-; __store64: Store __acc64 to address
-; Input: HL = destination address
-; Output: __acc64 stored at address
-; ============================================================
-	PUBLIC	__store64
-__store64:
-	PUSH	DE
-	LD	DE,(__acc64)
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	INC	HL
-	LD	DE,(__acc64+2)
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	INC	HL
-	LD	DE,(__acc64+4)
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	INC	HL
-	LD	DE,(__acc64+6)
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	POP	DE
-	RET
-
-; ============================================================
-; __add64: 64-bit addition __acc64 = __acc64 + __tmp64
-; ============================================================
-	PUBLIC	__add64
-__add64:
-	PUSH	BC
-	PUSH	DE
-	; Add word 0
-	LD	HL,(__acc64)
-	LD	BC,(__tmp64)
-	ADD	HL,BC
-	LD	(__acc64),HL
-	; Add word 1 with carry
-	LD	HL,(__acc64+2)
-	LD	BC,(__tmp64+2)
-	ADC	HL,BC
-	LD	(__acc64+2),HL
-	; Add word 2 with carry
-	LD	HL,(__acc64+4)
-	LD	BC,(__tmp64+4)
-	ADC	HL,BC
-	LD	(__acc64+4),HL
-	; Add word 3 with carry
-	LD	HL,(__acc64+6)
-	LD	BC,(__tmp64+6)
-	ADC	HL,BC
-	LD	(__acc64+6),HL
-	POP	DE
-	POP	BC
-	RET
-
-; ============================================================
-; __sub64: 64-bit subtraction __acc64 = __acc64 - __tmp64
-; ============================================================
-	PUBLIC	__sub64
-__sub64:
-	PUSH	BC
-	PUSH	DE
-	; Subtract word 0
-	LD	HL,(__acc64)
-	LD	BC,(__tmp64)
-	OR	A			; Clear carry
-	SBC	HL,BC
-	LD	(__acc64),HL
-	; Subtract word 1 with borrow
-	LD	HL,(__acc64+2)
-	LD	BC,(__tmp64+2)
-	SBC	HL,BC
-	LD	(__acc64+2),HL
-	; Subtract word 2 with borrow
-	LD	HL,(__acc64+4)
-	LD	BC,(__tmp64+4)
-	SBC	HL,BC
-	LD	(__acc64+4),HL
-	; Subtract word 3 with borrow
-	LD	HL,(__acc64+6)
-	LD	BC,(__tmp64+6)
-	SBC	HL,BC
-	LD	(__acc64+6),HL
-	POP	DE
-	POP	BC
-	RET
-
-; ============================================================
-; __neg64: 64-bit negation __acc64 = -__acc64
-; ============================================================
-	PUBLIC	__neg64
-__neg64:
-	PUSH	BC
-	; Negate = 0 - value
-	LD	HL,0
-	LD	BC,(__acc64)
-	OR	A
-	SBC	HL,BC
-	LD	(__acc64),HL
-	LD	HL,0
-	LD	BC,(__acc64+2)
-	SBC	HL,BC
-	LD	(__acc64+2),HL
-	LD	HL,0
-	LD	BC,(__acc64+4)
-	SBC	HL,BC
-	LD	(__acc64+4),HL
-	LD	HL,0
-	LD	BC,(__acc64+6)
-	SBC	HL,BC
-	LD	(__acc64+6),HL
-	POP	BC
-	RET
-
-; ============================================================
-; __cmp64: Compare __acc64 with __tmp64 (signed)
-; Output: Flags set for signed comparison
-;         Z if equal, C if __acc64 < __tmp64 (signed)
-; Returns: HL = -1 if <, 0 if ==, 1 if >
-; ============================================================
-	PUBLIC	__cmp64
-__cmp64:
-	PUSH	BC
-	; First compare sign bits
-	LD	A,(__acc64+7)
-	XOR	A
-	LD	A,(__acc64+7)
-	LD	B,A
-	LD	A,(__tmp64+7)
-	XOR	B
-	JP	M,__cmp64_diffsign	; Different signs
-	; Same sign - compare magnitude from MSB to LSB
-	LD	HL,(__acc64+6)
-	LD	BC,(__tmp64+6)
-	OR	A
-	SBC	HL,BC
-	JR	NZ,__cmp64_neq
-	LD	HL,(__acc64+4)
-	LD	BC,(__tmp64+4)
-	SBC	HL,BC
-	JR	NZ,__cmp64_neq
-	LD	HL,(__acc64+2)
-	LD	BC,(__tmp64+2)
-	SBC	HL,BC
-	JR	NZ,__cmp64_neq
-	LD	HL,(__acc64)
-	LD	BC,(__tmp64)
-	SBC	HL,BC
-	JR	NZ,__cmp64_neq
-	; Equal
-	LD	HL,0
-	POP	BC
-	RET
-__cmp64_neq:
-	; Not equal - check carry for less than
-	JR	C,__cmp64_lt
-	LD	HL,1			; Greater than
-	POP	BC
-	RET
-__cmp64_lt:
-	LD	HL,-1			; Less than
-	POP	BC
-	RET
-__cmp64_diffsign:
-	; Different signs - negative is less
-	LD	A,(__acc64+7)
-	AND	80H
-	JR	NZ,__cmp64_lt		; acc64 is negative, so less
-	LD	HL,1			; acc64 is positive, so greater
-	POP	BC
-	RET
-
-; ============================================================
-; __ucmp64: Compare __acc64 with __tmp64 (unsigned)
-; Returns: HL = -1 if <, 0 if ==, 1 if >
-; ============================================================
-	PUBLIC	__ucmp64
-__ucmp64:
-	PUSH	BC
-	; Compare from MSB to LSB
-	LD	HL,(__acc64+6)
-	LD	BC,(__tmp64+6)
-	OR	A
-	SBC	HL,BC
-	JR	NZ,__ucmp64_neq
-	LD	HL,(__acc64+4)
-	LD	BC,(__tmp64+4)
-	SBC	HL,BC
-	JR	NZ,__ucmp64_neq
-	LD	HL,(__acc64+2)
-	LD	BC,(__tmp64+2)
-	SBC	HL,BC
-	JR	NZ,__ucmp64_neq
-	LD	HL,(__acc64)
-	LD	BC,(__tmp64)
-	SBC	HL,BC
-	JR	NZ,__ucmp64_neq
-	; Equal
-	LD	HL,0
-	POP	BC
-	RET
-__ucmp64_neq:
-	JR	C,__ucmp64_lt
-	LD	HL,1
-	POP	BC
-	RET
-__ucmp64_lt:
-	LD	HL,-1
-	POP	BC
-	RET
-
-; ============================================================
-; __shl64: 64-bit left shift __acc64 = __acc64 << A
-; Input: A = shift count (0-63)
-; ============================================================
-	PUBLIC	__shl64
-__shl64:
-	AND	63			; Limit to 0-63
-	RET	Z			; No shift needed
-	PUSH	BC
-	LD	B,A			; B = shift count
-__shl64_loop:
-	; Shift left by 1: shift each word and propagate carry
-	LD	HL,(__acc64)
-	ADD	HL,HL			; Shift word 0, carry out
-	LD	(__acc64),HL
-	LD	HL,(__acc64+2)
-	ADC	HL,HL			; Shift word 1 with carry in
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64+4)
-	ADC	HL,HL			; Shift word 2 with carry in
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+6)
-	ADC	HL,HL			; Shift word 3 with carry in
-	LD	(__acc64+6),HL
-	DJNZ	__shl64_loop
-	POP	BC
-	RET
-
-; ============================================================
-; __shr64: 64-bit logical right shift __acc64 = __acc64 >> A
-; Input: A = shift count (0-63)
-; ============================================================
-	PUBLIC	__shr64
-__shr64:
-	AND	63
-	RET	Z
-	PUSH	BC
-	LD	B,A
-__shr64_loop:
-	; Shift right by 1 from MSB
-	LD	HL,(__acc64+6)
-	SRL	H
-	RR	L
-	LD	(__acc64+6),HL
-	LD	HL,(__acc64+4)
-	RR	H
-	RR	L
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+2)
-	RR	H
-	RR	L
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64)
-	RR	H
-	RR	L
-	LD	(__acc64),HL
-	DJNZ	__shr64_loop
-	POP	BC
-	RET
-
-; ============================================================
-; __sar64: 64-bit arithmetic right shift __acc64 = __acc64 >> A (signed)
-; Input: A = shift count (0-63)
-; ============================================================
-	PUBLIC	__sar64
-__sar64:
-	AND	63
-	RET	Z
-	PUSH	BC
-	LD	B,A
-__sar64_loop:
-	; Arithmetic shift right by 1 (preserve sign)
-	LD	HL,(__acc64+6)
-	SRA	H			; Arithmetic shift preserves sign
-	RR	L
-	LD	(__acc64+6),HL
-	LD	HL,(__acc64+4)
-	RR	H
-	RR	L
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+2)
-	RR	H
-	RR	L
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64)
-	RR	H
-	RR	L
-	LD	(__acc64),HL
-	DJNZ	__sar64_loop
-	POP	BC
-	RET
-
-; ============================================================
-; __and64: 64-bit bitwise AND __acc64 = __acc64 & __tmp64
-; ============================================================
-	PUBLIC	__and64
-__and64:
-	PUSH	BC
-	LD	HL,(__acc64)
-	LD	BC,(__tmp64)
-	LD	A,L
-	AND	C
-	LD	L,A
-	LD	A,H
-	AND	B
-	LD	H,A
-	LD	(__acc64),HL
-	LD	HL,(__acc64+2)
-	LD	BC,(__tmp64+2)
-	LD	A,L
-	AND	C
-	LD	L,A
-	LD	A,H
-	AND	B
-	LD	H,A
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64+4)
-	LD	BC,(__tmp64+4)
-	LD	A,L
-	AND	C
-	LD	L,A
-	LD	A,H
-	AND	B
-	LD	H,A
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+6)
-	LD	BC,(__tmp64+6)
-	LD	A,L
-	AND	C
-	LD	L,A
-	LD	A,H
-	AND	B
-	LD	H,A
-	LD	(__acc64+6),HL
-	POP	BC
-	RET
-
-; ============================================================
-; __or64: 64-bit bitwise OR __acc64 = __acc64 | __tmp64
-; ============================================================
-	PUBLIC	__or64
-__or64:
-	PUSH	BC
-	LD	HL,(__acc64)
-	LD	BC,(__tmp64)
-	LD	A,L
-	OR	C
-	LD	L,A
-	LD	A,H
-	OR	B
-	LD	H,A
-	LD	(__acc64),HL
-	LD	HL,(__acc64+2)
-	LD	BC,(__tmp64+2)
-	LD	A,L
-	OR	C
-	LD	L,A
-	LD	A,H
-	OR	B
-	LD	H,A
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64+4)
-	LD	BC,(__tmp64+4)
-	LD	A,L
-	OR	C
-	LD	L,A
-	LD	A,H
-	OR	B
-	LD	H,A
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+6)
-	LD	BC,(__tmp64+6)
-	LD	A,L
-	OR	C
-	LD	L,A
-	LD	A,H
-	OR	B
-	LD	H,A
-	LD	(__acc64+6),HL
-	POP	BC
-	RET
-
-; ============================================================
-; __xor64: 64-bit bitwise XOR __acc64 = __acc64 ^ __tmp64
-; ============================================================
-	PUBLIC	__xor64
-__xor64:
-	PUSH	BC
-	LD	HL,(__acc64)
-	LD	BC,(__tmp64)
-	LD	A,L
-	XOR	C
-	LD	L,A
-	LD	A,H
-	XOR	B
-	LD	H,A
-	LD	(__acc64),HL
-	LD	HL,(__acc64+2)
-	LD	BC,(__tmp64+2)
-	LD	A,L
-	XOR	C
-	LD	L,A
-	LD	A,H
-	XOR	B
-	LD	H,A
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64+4)
-	LD	BC,(__tmp64+4)
-	LD	A,L
-	XOR	C
-	LD	L,A
-	LD	A,H
-	XOR	B
-	LD	H,A
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+6)
-	LD	BC,(__tmp64+6)
-	LD	A,L
-	XOR	C
-	LD	L,A
-	LD	A,H
-	XOR	B
-	LD	H,A
-	LD	(__acc64+6),HL
-	POP	BC
-	RET
-
-; ============================================================
-; __not64: 64-bit bitwise NOT __acc64 = ~__acc64
-; ============================================================
-	PUBLIC	__not64
-__not64:
-	LD	HL,(__acc64)
-	LD	A,L
-	CPL
-	LD	L,A
-	LD	A,H
-	CPL
-	LD	H,A
-	LD	(__acc64),HL
-	LD	HL,(__acc64+2)
-	LD	A,L
-	CPL
-	LD	L,A
-	LD	A,H
-	CPL
-	LD	H,A
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64+4)
-	LD	A,L
-	CPL
-	LD	L,A
-	LD	A,H
-	CPL
-	LD	H,A
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+6)
-	LD	A,L
-	CPL
-	LD	L,A
-	LD	A,H
-	CPL
-	LD	H,A
-	LD	(__acc64+6),HL
-	RET
-
-; ============================================================
-; __mul64: 64-bit multiplication __acc64 = __acc64 * __tmp64
-; Uses shift-and-add algorithm (slow but correct)
-; ============================================================
-	COMMON	/rt_arith64/
-__mul64_mcd:	DS	8	; Multiplicand
-__mul64_mpr:	DS	8	; Multiplier
-	CSEG
-
-	PUBLIC	__mul64
-__mul64:
-	PUSH	BC
-	PUSH	DE
-	; Save multiplicand (__acc64) to __mul64_mcd
-	LD	HL,(__acc64)
-	LD	(__mul64_mcd),HL
-	LD	HL,(__acc64+2)
-	LD	(__mul64_mcd+2),HL
-	LD	HL,(__acc64+4)
-	LD	(__mul64_mcd+4),HL
-	LD	HL,(__acc64+6)
-	LD	(__mul64_mcd+6),HL
-	; Copy multiplier (__tmp64) to __mul64_mpr
-	LD	HL,(__tmp64)
-	LD	(__mul64_mpr),HL
-	LD	HL,(__tmp64+2)
-	LD	(__mul64_mpr+2),HL
-	LD	HL,(__tmp64+4)
-	LD	(__mul64_mpr+4),HL
-	LD	HL,(__tmp64+6)
-	LD	(__mul64_mpr+6),HL
-	; Initialize result (__acc64) to 0
-	LD	HL,0
-	LD	(__acc64),HL
-	LD	(__acc64+2),HL
-	LD	(__acc64+4),HL
-	LD	(__acc64+6),HL
-	; Loop through 64 bits
-	LD	B,64
-__mul64_loop:
-	; Shift multiplier right, get LSB
-	LD	HL,(__mul64_mpr+6)
-	SRL	H
-	RR	L
-	LD	(__mul64_mpr+6),HL
-	LD	HL,(__mul64_mpr+4)
-	RR	H
-	RR	L
-	LD	(__mul64_mpr+4),HL
-	LD	HL,(__mul64_mpr+2)
-	RR	H
-	RR	L
-	LD	(__mul64_mpr+2),HL
-	LD	HL,(__mul64_mpr)
-	RR	H
-	RR	L
-	LD	(__mul64_mpr),HL
-	JR	NC,__mul64_noadd
-	; Add multiplicand to result. NB: load through DE rather than BC —
-	; ``LD BC,(nn)`` would clobber B, which is our DJNZ loop counter.
-	; That was the long-standing miscompile in this routine: any
-	; iteration where the add path ran (multiplier bit set) overwrote
-	; B with a byte of the multiplicand, terminating the loop early
-	; once mcd's high byte happened to be 1.
-	LD	HL,(__acc64)
-	LD	DE,(__mul64_mcd)
-	ADD	HL,DE
-	LD	(__acc64),HL
-	LD	HL,(__acc64+2)
-	LD	DE,(__mul64_mcd+2)
-	ADC	HL,DE
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64+4)
-	LD	DE,(__mul64_mcd+4)
-	ADC	HL,DE
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+6)
-	LD	DE,(__mul64_mcd+6)
-	ADC	HL,DE
-	LD	(__acc64+6),HL
-__mul64_noadd:
-	; Shift multiplicand left
-	LD	HL,(__mul64_mcd)
-	ADD	HL,HL
-	LD	(__mul64_mcd),HL
-	LD	HL,(__mul64_mcd+2)
-	ADC	HL,HL
-	LD	(__mul64_mcd+2),HL
-	LD	HL,(__mul64_mcd+4)
-	ADC	HL,HL
-	LD	(__mul64_mcd+4),HL
-	LD	HL,(__mul64_mcd+6)
-	ADC	HL,HL
-	LD	(__mul64_mcd+6),HL
-	DJNZ	__mul64_loop
-	POP	DE
-	POP	BC
-	RET
-
-; ============================================================
-; __mov64: Copy __acc64 to __tmp64
-; ============================================================
-	PUBLIC	__mov64
-__mov64:
-	LD	HL,(__acc64)
-	LD	(__tmp64),HL
-	LD	HL,(__acc64+2)
-	LD	(__tmp64+2),HL
-	LD	HL,(__acc64+4)
-	LD	(__tmp64+4),HL
-	LD	HL,(__acc64+6)
-	LD	(__tmp64+6),HL
-	RET
-
-; ============================================================
-; __sext64_hl: Sign-extend 16-bit HL to 64-bit in __acc64
-; ============================================================
-	PUBLIC	__sext64_hl
-__sext64_hl:
-	CALL	__sext32		; HL -> DEHL
-	JP	__sext64		; DEHL -> __acc64 (tail call)
-
-; ============================================================
-; __zext64_hl: Zero-extend 16-bit HL to 64-bit in __acc64
-; ============================================================
-	PUBLIC	__zext64_hl
-__zext64_hl:
-	LD	DE,0
-	JP	__zext64		; tail call
-
-; ============================================================
-; __push64_acc: Push __acc64 (8 bytes) onto caller's stack
-; Push order: w3 (highest) deepest, w0 (lowest) on top
-; ============================================================
-	PUBLIC	__push64_acc
-__push64_acc:
-	POP	BC			; save return address
-	LD	HL,(__acc64+6)
-	PUSH	HL			; w3 (highest, deepest on stack)
-	LD	HL,(__acc64+4)
-	PUSH	HL			; w2
-	LD	HL,(__acc64+2)
-	PUSH	HL			; w1
-	LD	HL,(__acc64)
-	PUSH	HL			; w0 (lowest, top of stack)
-	PUSH	BC			; return address
-	RET
-
-; ============================================================
-; __save_tmp64: Save __tmp64 to stack (for complex binary ops)
-; ============================================================
-	PUBLIC	__save_tmp64
-__save_tmp64:
-	POP	BC
-	LD	HL,(__tmp64)
-	PUSH	HL
-	LD	HL,(__tmp64+2)
-	PUSH	HL
-	LD	HL,(__tmp64+4)
-	PUSH	HL
-	LD	HL,(__tmp64+6)
-	PUSH	HL
-	PUSH	BC
-	RET
-
-; ============================================================
-; __restore_tmp64: Restore __tmp64 from stack
-; ============================================================
-	PUBLIC	__restore_tmp64
-__restore_tmp64:
-	POP	BC
-	POP	HL
-	LD	(__tmp64+6),HL
-	POP	HL
-	LD	(__tmp64+4),HL
-	POP	HL
-	LD	(__tmp64+2),HL
-	POP	HL
-	LD	(__tmp64),HL
-	PUSH	BC
-	RET
-
-; ============================================================
-; __load64t: Load 64-bit value from address to __tmp64
-; Input: HL = address of 64-bit value
-; Output: __tmp64 = value
-; ============================================================
-	PUBLIC	__load64t
-__load64t:
-	PUSH	DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(__tmp64),DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(__tmp64+2),DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	(__tmp64+4),DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	LD	(__tmp64+6),DE
-	POP	DE
-	RET
-
-; ============================================================
-; __div64: 64-bit unsigned division __acc64 = __acc64 / __tmp64
-; Remainder stored in __rem64
-; Uses shift-and-subtract algorithm (same as __div32 but 64-bit)
-; ============================================================
-	COMMON	/rt_arith64/
-	PUBLIC	__rem64
-__div64_dvd:	DS	8	; dividend
-__rem64:	DS	8	; remainder
-	CSEG
-
 	PUBLIC	__div64
 __div64:
 	PUSH	BC
@@ -2300,721 +1518,30 @@ __div64_nosub:
 	POP	BC
 	RET
 
-; ============================================================
-; __mod64: 64-bit unsigned modulo __acc64 = __acc64 % __tmp64
-; ============================================================
-	PUBLIC	__mod64
-__mod64:
-	CALL	__div64
-	LD	HL,(__rem64)
-	LD	(__acc64),HL
-	LD	HL,(__rem64+2)
-	LD	(__acc64+2),HL
-	LD	HL,(__rem64+4)
-	LD	(__acc64+4),HL
-	LD	HL,(__rem64+6)
-	LD	(__acc64+6),HL
-	RET
 
-; ============================================================
-; __sdiv64: 64-bit signed division __acc64 = __acc64 / __tmp64
-; ============================================================
-	PUBLIC	__sdiv64
-__sdiv64:
-	; Check signs: XOR high bytes to determine result sign
-	LD	A,(__acc64+7)
-	PUSH	AF		; Save acc sign
-	LD	B,A
-	LD	A,(__tmp64+7)
-	XOR	B
-	PUSH	AF		; Save result sign (bit 7)
-
-	; Make dividend positive if negative
-	POP	AF
-	PUSH	AF
-	LD	A,(__acc64+7)
-	BIT	7,A
-	JR	Z,__sdiv64_dvdpos
-	; Negate __acc64
-	CALL	__neg64
-__sdiv64_dvdpos:
-	; Make divisor positive if negative
-	LD	A,(__tmp64+7)
-	BIT	7,A
-	JR	Z,__sdiv64_dvspos
-	; Negate __tmp64
-	PUSH	HL
-	LD	HL,0
-	LD	BC,(__tmp64)
-	OR	A
-	SBC	HL,BC
-	LD	(__tmp64),HL
-	LD	HL,0
-	LD	BC,(__tmp64+2)
-	SBC	HL,BC
-	LD	(__tmp64+2),HL
-	LD	HL,0
-	LD	BC,(__tmp64+4)
-	SBC	HL,BC
-	LD	(__tmp64+4),HL
-	LD	HL,0
-	LD	BC,(__tmp64+6)
-	SBC	HL,BC
-	LD	(__tmp64+6),HL
-	POP	HL
-__sdiv64_dvspos:
-	; Do unsigned division
-	CALL	__div64
-
-	; Negate result if signs were different
-	POP	AF		; result sign
-	BIT	7,A
-	JR	Z,__sdiv64_done
-	CALL	__neg64
-__sdiv64_done:
-	POP	AF		; discard saved acc sign
-	RET
-
-; ============================================================
-; __smod64: 64-bit signed modulo __acc64 = __acc64 % __tmp64
-; Remainder has same sign as dividend
-; ============================================================
-	PUBLIC	__smod64
-__smod64:
-	; Save dividend sign
-	LD	A,(__acc64+7)
-	PUSH	AF
-
-	; Check signs
-	LD	B,A
-	LD	A,(__tmp64+7)
-	XOR	B
-	PUSH	AF
-
-	; Make dividend positive
-	LD	A,(__acc64+7)
-	BIT	7,A
-	JR	Z,__smod64_dvdpos
-	CALL	__neg64
-__smod64_dvdpos:
-	; Make divisor positive
-	LD	A,(__tmp64+7)
-	BIT	7,A
-	JR	Z,__smod64_dvspos
-	PUSH	HL
-	LD	HL,0
-	LD	BC,(__tmp64)
-	OR	A
-	SBC	HL,BC
-	LD	(__tmp64),HL
-	LD	HL,0
-	LD	BC,(__tmp64+2)
-	SBC	HL,BC
-	LD	(__tmp64+2),HL
-	LD	HL,0
-	LD	BC,(__tmp64+4)
-	SBC	HL,BC
-	LD	(__tmp64+4),HL
-	LD	HL,0
-	LD	BC,(__tmp64+6)
-	SBC	HL,BC
-	LD	(__tmp64+6),HL
-	POP	HL
-__smod64_dvspos:
-	; Do unsigned division (remainder in __rem64)
-	CALL	__div64
-
-	; Load remainder into __acc64
-	LD	HL,(__rem64)
-	LD	(__acc64),HL
-	LD	HL,(__rem64+2)
-	LD	(__acc64+2),HL
-	LD	HL,(__rem64+4)
-	LD	(__acc64+4),HL
-	LD	HL,(__rem64+6)
-	LD	(__acc64+6),HL
-
-	; Negate remainder if dividend was negative
-	POP	AF		; discard result sign
-	POP	AF		; dividend sign
-	BIT	7,A
-	RET	Z
-	JP	__neg64		; tail call
-
-; ============================================================
-; __clz64 / __ctz64 / __popcount64 / __ffs64 — bit-count helpers
-; on __acc64. All return HL = result (0..64), H=0. Defensive on
-; zero: clz/ctz return 64 instead of UB.
-; ============================================================
-	PUBLIC	__clz64
-__clz64:
-	; Test if zero
-	LD	A,(__acc64)
-	LD	B,A
-	LD	A,(__acc64+1)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+2)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+3)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+4)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+5)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+6)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+7)
-	OR	B
-	JR	NZ,__clz64_nz
-	LD	HL,64
-	RET
-__clz64_nz:
-	PUSH	BC
-	LD	BC,0		; counter
-__clz64_lp:
-	; Test bit 7 of high byte (byte 7)
-	LD	A,(__acc64+7)
-	AND	80H
-	JR	NZ,__clz64_done
-	INC	BC
-	; Shift __acc64 left by 1
-	LD	HL,(__acc64)
-	ADD	HL,HL
-	LD	(__acc64),HL
-	LD	HL,(__acc64+2)
-	ADC	HL,HL
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64+4)
-	ADC	HL,HL
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+6)
-	ADC	HL,HL
-	LD	(__acc64+6),HL
-	JR	__clz64_lp
-__clz64_done:
-	LD	L,C
-	LD	H,B
-	POP	BC
-	RET
-
-; ============================================================
-; __clrsb64 — count leading sign bits minus 1 (64-bit signed __acc64).
-; clrsb(x) = clz(x ^ (x >> 63)) - 1, with clrsb(0) / clrsb(-1) = 63.
-; ============================================================
-	PUBLIC	__clrsb64
-__clrsb64:
-	; If MSB of byte 7 set, XOR every byte of __acc64 with 0xFF.
-	LD	A,(__acc64+7)
-	AND	80H
-	JR	Z,__clrsb64_pos
-	; Negative: flip all bits
-	PUSH	BC
-	LD	HL,__acc64
-	LD	B,8
-__clrsb64_flip:
-	LD	A,(HL)
-	XOR	0FFH
-	LD	(HL),A
-	INC	HL
-	DJNZ	__clrsb64_flip
-	POP	BC
-__clrsb64_pos:
-	; Check for zero (all bits matched sign)
-	LD	A,(__acc64)
-	LD	B,A
-	LD	A,(__acc64+1)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+2)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+3)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+4)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+5)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+6)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+7)
-	OR	B
-	JR	Z,__clrsb64_all_same
-	CALL	__clz64
-	DEC	HL
-	RET
-__clrsb64_all_same:
-	LD	HL,63
-	RET
-
-	PUBLIC	__ctz64
-__ctz64:
-	LD	A,(__acc64)
-	LD	B,A
-	LD	A,(__acc64+1)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+2)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+3)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+4)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+5)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+6)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+7)
-	OR	B
-	JR	NZ,__ctz64_nz
-	LD	HL,64
-	RET
-__ctz64_nz:
-	PUSH	BC
-	LD	BC,0
-__ctz64_lp:
-	LD	A,(__acc64)
-	AND	1
-	JR	NZ,__ctz64_done
-	INC	BC
-	; Shift __acc64 right by 1
-	LD	HL,(__acc64+6)
-	SRL	H
-	RR	L
-	LD	(__acc64+6),HL
-	LD	HL,(__acc64+4)
-	RR	H
-	RR	L
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+2)
-	RR	H
-	RR	L
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64)
-	RR	H
-	RR	L
-	LD	(__acc64),HL
-	JR	__ctz64_lp
-__ctz64_done:
-	LD	L,C
-	LD	H,B
-	POP	BC
-	RET
-
-	PUBLIC	__popcount64
-__popcount64:
-	PUSH	BC
-	LD	BC,0		; counter
-	LD	A,64		; bits remaining (using A; saved counter in BC)
-	PUSH	AF
-__popcount64_lp:
-	; Shift __acc64 right by 1; CF = LSB before shift
-	LD	HL,(__acc64+6)
-	SRL	H
-	RR	L
-	LD	(__acc64+6),HL
-	LD	HL,(__acc64+4)
-	RR	H
-	RR	L
-	LD	(__acc64+4),HL
-	LD	HL,(__acc64+2)
-	RR	H
-	RR	L
-	LD	(__acc64+2),HL
-	LD	HL,(__acc64)
-	RR	H
-	RR	L
-	LD	(__acc64),HL
-	JR	NC,__popcount64_skip
-	INC	BC
-__popcount64_skip:
-	POP	AF
-	DEC	A
-	PUSH	AF
-	JR	NZ,__popcount64_lp
-	POP	AF
-	LD	L,C
-	LD	H,B
-	POP	BC
-	RET
-
-	PUBLIC	__ffs64
-__ffs64:
-	; If zero return 0; else return 1+CTZ
-	LD	A,(__acc64)
-	LD	B,A
-	LD	A,(__acc64+1)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+2)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+3)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+4)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+5)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+6)
-	OR	B
-	LD	B,A
-	LD	A,(__acc64+7)
-	OR	B
-	JR	NZ,__ffs64_nz
-	LD	HL,0
-	RET
-__ffs64_nz:
-	CALL	__ctz64
-	INC	HL
-	RET
-
-; ============================================================
-; __bswap64 — reverse the byte order of __acc64.
-; Models __builtin_bswap64(uint64_t). uc80 routes that builtin here.
-; ============================================================
-	PUBLIC	__bswap64
-__bswap64:
-	; Swap byte 0 <-> byte 7
-	LD	A,(__acc64)
-	LD	B,A
-	LD	A,(__acc64+7)
-	LD	(__acc64),A
-	LD	A,B
-	LD	(__acc64+7),A
-	; Swap byte 1 <-> byte 6
-	LD	A,(__acc64+1)
-	LD	B,A
-	LD	A,(__acc64+6)
-	LD	(__acc64+1),A
-	LD	A,B
-	LD	(__acc64+6),A
-	; Swap byte 2 <-> byte 5
-	LD	A,(__acc64+2)
-	LD	B,A
-	LD	A,(__acc64+5)
-	LD	(__acc64+2),A
-	LD	A,B
-	LD	(__acc64+5),A
-	; Swap byte 3 <-> byte 4
-	LD	A,(__acc64+3)
-	LD	B,A
-	LD	A,(__acc64+4)
-	LD	(__acc64+3),A
-	LD	A,B
-	LD	(__acc64+4),A
-	RET
-
-
-; ============================================================
-; rt_complex.mac
-; ============================================================
 	CSEG
-; rt_complex.mac - Complex number arithmetic
-; Split from runtime.mac
+; ============================================================
+; rt_divrem.mac
+; ============================================================
+; rt_divrem.mac - __divrem
+; Split from rt_arith16.mac
 
+
+	COMMON	/rt_divrem/
+	PUBLIC	__divrem
+__divrem:
+	DS	2
 
 
 	CSEG
-
-	CSEG
-
 ; ============================================================
-; Complex Addition: __cplx_result = __cplx_l + __cplx_r
-; (a+bi) + (c+di) = (a+c) + (b+d)i
+; rt_dv8n.mac
 ; ============================================================
-	PUBLIC	__cadd
-__cadd:
-	; Add real parts: result.real = l.real + r.real
-	LD	HL,(__cplx_l)		; l.real low
-	LD	DE,(__cplx_l+2)		; l.real high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_r)		; r.real low
-	LD	DE,(__cplx_r+2)		; r.real high
-	CALL	__fadd
-	LD	(__cplx_result),HL
-	LD	(__cplx_result+2),DE
-
-	; Add imag parts: result.imag = l.imag + r.imag
-	LD	HL,(__cplx_l+4)		; l.imag low
-	LD	DE,(__cplx_l+6)		; l.imag high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_r+4)		; r.imag low
-	LD	DE,(__cplx_r+6)		; r.imag high
-	CALL	__fadd
-	LD	(__cplx_result+4),HL
-	LD	(__cplx_result+6),DE
-	RET
-
-; ============================================================
-; Complex Subtraction: __cplx_result = __cplx_l - __cplx_r
-; (a+bi) - (c+di) = (a-c) + (b-d)i
-; ============================================================
-	PUBLIC	__csub
-__csub:
-	; Sub real parts: result.real = l.real - r.real
-	LD	HL,(__cplx_r)		; r.real low
-	LD	DE,(__cplx_r+2)		; r.real high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l)		; l.real low
-	LD	DE,(__cplx_l+2)		; l.real high
-	CALL	__fsub
-	LD	(__cplx_result),HL
-	LD	(__cplx_result+2),DE
-
-	; Sub imag parts: result.imag = l.imag - r.imag
-	LD	HL,(__cplx_r+4)		; r.imag low
-	LD	DE,(__cplx_r+6)		; r.imag high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l+4)		; l.imag low
-	LD	DE,(__cplx_l+6)		; l.imag high
-	CALL	__fsub
-	LD	(__cplx_result+4),HL
-	LD	(__cplx_result+6),DE
-	RET
-
-; ============================================================
-; Complex Multiplication: __cplx_result = __cplx_l * __cplx_r
-; (a+bi) * (c+di) = (ac-bd) + (ad+bc)i
-; Let: a=l.real, b=l.imag, c=r.real, d=r.imag
-; ============================================================
-	PUBLIC	__cmul
-__cmul:
-	; Calculate ac (a*c)
-	LD	HL,(__cplx_r)		; c low
-	LD	DE,(__cplx_r+2)		; c high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l)		; a low
-	LD	DE,(__cplx_l+2)		; a high
-	CALL	__fmul			; DEHL = a*c
-	LD	(__cplx_work),HL	; store ac
-	LD	(__cplx_work+2),DE
-
-	; Calculate bd (b*d)
-	LD	HL,(__cplx_r+4)		; d low
-	LD	DE,(__cplx_r+6)		; d high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l+4)		; b low
-	LD	DE,(__cplx_l+6)		; b high
-	CALL	__fmul			; DEHL = b*d
-	; Store bd in __tmp32 for subtraction
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	; result.real = ac - bd
-	LD	HL,(__cplx_work)
-	LD	DE,(__cplx_work+2)
-	CALL	__fsub
-	LD	(__cplx_result),HL
-	LD	(__cplx_result+2),DE
-
-	; Calculate ad (a*d)
-	LD	HL,(__cplx_r+4)		; d low
-	LD	DE,(__cplx_r+6)		; d high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l)		; a low
-	LD	DE,(__cplx_l+2)		; a high
-	CALL	__fmul			; DEHL = a*d
-	LD	(__cplx_work),HL	; store ad
-	LD	(__cplx_work+2),DE
-
-	; Calculate bc (b*c)
-	LD	HL,(__cplx_r)		; c low
-	LD	DE,(__cplx_r+2)		; c high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l+4)		; b low
-	LD	DE,(__cplx_l+6)		; b high
-	CALL	__fmul			; DEHL = b*c
-	; Store bc in __tmp32 for addition
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	; result.imag = ad + bc
-	LD	HL,(__cplx_work)
-	LD	DE,(__cplx_work+2)
-	CALL	__fadd
-	LD	(__cplx_result+4),HL
-	LD	(__cplx_result+6),DE
-	RET
-
-; ============================================================
-; Complex Division: __cplx_result = __cplx_l / __cplx_r
-; (a+bi) / (c+di) = (ac+bd)/(c²+d²) + (bc-ad)/(c²+d²)i
-; Let: a=l.real, b=l.imag, c=r.real, d=r.imag
-; ============================================================
-	PUBLIC	__cdiv
-__cdiv:
-	; First calculate denominator: c² + d²
-
-	; Calculate c²
-	LD	HL,(__cplx_r)		; c low
-	LD	DE,(__cplx_r+2)		; c high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	; c is already in DEHL, multiply by itself
-	CALL	__fmul			; DEHL = c²
-	PUSH	DE
-	PUSH	HL			; Save c² on stack
-
-	; Calculate d²
-	LD	HL,(__cplx_r+4)		; d low
-	LD	DE,(__cplx_r+6)		; d high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	; d is already in DEHL, multiply by itself
-	CALL	__fmul			; DEHL = d²
-	; Add c² + d²
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	POP	HL
-	POP	DE			; Restore c²
-	CALL	__fadd			; DEHL = c² + d²
-	LD	(__cplx_work),HL	; Store denominator
-	LD	(__cplx_work+2),DE
-
-	; Calculate numerator real: ac + bd
-
-	; Calculate ac
-	LD	HL,(__cplx_r)		; c low
-	LD	DE,(__cplx_r+2)		; c high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l)		; a low
-	LD	DE,(__cplx_l+2)		; a high
-	CALL	__fmul			; DEHL = a*c
-	PUSH	DE
-	PUSH	HL			; Save ac on stack
-
-	; Calculate bd
-	LD	HL,(__cplx_r+4)		; d low
-	LD	DE,(__cplx_r+6)		; d high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l+4)		; b low
-	LD	DE,(__cplx_l+6)		; b high
-	CALL	__fmul			; DEHL = b*d
-	; Add ac + bd
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	POP	HL
-	POP	DE			; Restore ac
-	CALL	__fadd			; DEHL = ac + bd
-
-	; Divide by denominator for real part
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_work)
-	LD	DE,(__cplx_work+2)
-	LD	(__cplx_work+4),HL	; Save denom
-	LD	(__cplx_work+6),DE
-	LD	HL,(__tmp32)
-	LD	DE,(__tmp32+2)
-	LD	BC,(__cplx_work)
-	LD	(__tmp32),BC
-	LD	BC,(__cplx_work+2)
-	LD	(__tmp32+2),BC
-	CALL	__fdiv			; DEHL = (ac+bd)/(c²+d²)
-	LD	(__cplx_result),HL
-	LD	(__cplx_result+2),DE
-
-	; Restore denominator
-	LD	HL,(__cplx_work+4)
-	LD	(__cplx_work),HL
-	LD	HL,(__cplx_work+6)
-	LD	(__cplx_work+2),HL
-
-	; Calculate numerator imag: bc - ad
-
-	; Calculate bc
-	LD	HL,(__cplx_r)		; c low
-	LD	DE,(__cplx_r+2)		; c high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l+4)		; b low
-	LD	DE,(__cplx_l+6)		; b high
-	CALL	__fmul			; DEHL = b*c
-	PUSH	DE
-	PUSH	HL			; Save bc on stack
-
-	; Calculate ad
-	LD	HL,(__cplx_r+4)		; d low
-	LD	DE,(__cplx_r+6)		; d high
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_l)		; a low
-	LD	DE,(__cplx_l+2)		; a high
-	CALL	__fmul			; DEHL = a*d
-	; Subtract bc - ad
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	POP	HL
-	POP	DE			; Restore bc
-	CALL	__fsub			; DEHL = bc - ad
-
-	; Divide by denominator for imag part
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_work)
-	LD	DE,(__cplx_work+2)
-	LD	BC,(__tmp32)
-	LD	(__cplx_work+4),BC
-	LD	BC,(__tmp32+2)
-	LD	(__cplx_work+6),BC
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__cplx_work+4)
-	LD	DE,(__cplx_work+6)
-	CALL	__fdiv			; DEHL = (bc-ad)/(c²+d²)
-	LD	(__cplx_result+4),HL
-	LD	(__cplx_result+6),DE
-	RET
-
-	COMMON	/rt_complex/
-	PUBLIC	__cplx_l,__cplx_r,__cplx_result,__cplx_tmp
-__cplx_l:
-	DS	8
-__cplx_r:
-	DS	8
-__cplx_result:
-	DS	8
-__cplx_tmp:
-	DS	8
-__cplx_work:
-	DS	8
-
-; ============================================================
-; rt_div8.mac
-; ============================================================
-	CSEG
-; rt_div8.mac - one byte of long division (8- and 16-bit divisor)
-; Used by rt_arith16 (__div16) and rt_arith32 (__div32).  A module
-; of its own, so a library link of one does not bring in the other.
+; rt_dv8n.mac - __dv8n
+; Split from rt_div8.mac
 
 
 	CSEG
-
 ; ============================================================
 ; __dv8n - one byte of long division by an 8-bit divisor
 ; In:  A = running remainder (< C), E = next dividend byte,
@@ -3068,6 +1595,16 @@ __dv8n_hn:
 	DJNZ	__dv8n_hi
 	RET
 
+
+	CSEG
+; ============================================================
+; rt_dv8w.mac
+; ============================================================
+; rt_dv8w.mac - __dv8w
+; Split from rt_div8.mac
+
+
+	CSEG
 ; ============================================================
 ; __dv8w - one byte of long division by a 16-bit divisor
 ; In:  HL = running remainder (< DE), A = next dividend byte,
@@ -3134,17 +1671,16 @@ __dv8w_ov:
 	RET
 
 
-; ============================================================
-; rt_float.mac
-; ============================================================
 	CSEG
-; rt_float.mac - IEEE 754 single-precision floating point
-; Split from runtime.mac
+; ============================================================
+; rt_fadd.mac
+; ============================================================
+; rt_fadd.mac - __fadd
+; Split from rt_float.mac
 
 
 
 	CSEG
-
 ; ============================================================
 ; IEEE 754 Single-Precision Floating Point Library
 ; ============================================================
@@ -3401,22 +1937,601 @@ __fadd_inf_pos:
 	LD	HL,0
 	JR	__fadd_done
 
+
+	CSEG
 ; ============================================================
-; Float Subtraction: DEHL = DEHL - (__tmp32)
+; rt_fcmp.mac
 ; ============================================================
-	PUBLIC	__fsub
-__fsub:
-	; Negate op2 sign and call fadd
+; rt_fcmp.mac - __fcmp
+; Split from rt_float.mac
+
+
+
+	CSEG
+; ============================================================
+; Float Comparison: Compare DEHL with (__tmp32)
+; Returns: Z if equal, C if DEHL < __tmp32
+; ============================================================
+	PUBLIC	__fcmp
+__fcmp:
+	PUSH	BC
+
+	; IEEE 754: -0.0 == +0.0. Special-case zero before the bit-pattern
+	; compare so a signed-zero pair doesn't end up "left < right" just
+	; because the sign bit differs.
+	LD	A,D
+	AND	7FH		; mask off left's sign bit
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fcmp_lnz
+	; left magnitude == 0; check right
+	LD	A,(__tmp32+3)
+	AND	7FH
+	LD	B,A
+	LD	A,(__tmp32+2)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32+1)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32)
+	OR	B
+	JR	NZ,__fcmp_lnz
+	; both zero (any sign) — return Z, NC
+	XOR	A		; clears Z=1 actually? XOR A sets Z; CP A is cleaner
+	POP	BC
+	RET
+__fcmp_lnz:
+
+	; Compare: left (DEHL) vs right (__tmp32)
+	; Sets Z if equal, C if left < right
+	LD	A,(__tmp32+3)
+	XOR	D
+	JP	P,__fcmp_same	; same sign
+
+	; Signs differ: the negative one is smaller.  Flip the sign
+	; bits so an unsigned compare of the high bytes says so.
 	LD	A,(__tmp32+3)
 	XOR	80H
-	LD	(__tmp32+3),A
-	CALL	__fadd
-	; Restore op2 sign
+	LD	B,A		; B = right high byte (sign-flipped)
+	LD	A,D
+	XOR	80H		; A = left high byte (sign-flipped)
+	CP	B		; C if left < right
+	JR	__fcmp_diff
+
+__fcmp_same:
+	BIT	7,D
+	JR	NZ,__fcmp_neg
+
+	; Both positive: compare the magnitudes, left against right.
 	LD	A,(__tmp32+3)
-	XOR	80H
-	LD	(__tmp32+3),A
+	LD	B,A
+	LD	A,D
+	CP	B		; C if left < right
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+2)
+	LD	B,A
+	LD	A,E
+	CP	B
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+1)
+	LD	B,A
+	LD	A,H
+	CP	B
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32)
+	LD	B,A
+	LD	A,L
+	CP	B
+	JR	__fcmp_diff
+
+__fcmp_neg:
+	; Both negative: the larger magnitude is the smaller value, so
+	; compare right against left.
+	LD	A,(__tmp32+3)
+	CP	D		; C if |right| < |left|, left < right
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+2)
+	CP	E
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+1)
+	CP	H
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32)
+	CP	L
+
+__fcmp_diff:
+	POP	BC
 	RET
 
+
+	CSEG
+; ============================================================
+; rt_fdata.mac
+; ============================================================
+; rt_fdata.mac - __fop1, __fop2, __fsgn1, __fsgn2, __fexp1, __fexp2, __fman1, __fman2
+; Split from rt_float.mac
+
+
+	COMMON	/rt_fdata/
+	PUBLIC	__fop1
+__fop1:
+	DS	4
+	PUBLIC	__fop2
+__fop2:
+	DS	4
+	PUBLIC	__fsgn1
+__fsgn1:
+	DS	1
+	PUBLIC	__fsgn2
+__fsgn2:
+	DS	1
+	PUBLIC	__fexp1
+__fexp1:
+	DS	2
+	PUBLIC	__fexp2
+__fexp2:
+	DS	2
+	PUBLIC	__fman1
+__fman1:
+	DS	4
+	PUBLIC	__fman2
+__fman2:
+	DS	4
+
+
+	CSEG
+; ============================================================
+; rt_fdiv.mac
+; ============================================================
+; rt_fdiv.mac - __fdiv
+; Split from rt_float.mac
+
+
+
+	CSEG
+; ============================================================
+; Float Division: DEHL = DEHL / (__tmp32)
+; Native implementation using long division
+; ============================================================
+	PUBLIC	__fdiv
+__fdiv:
+	PUSH	BC
+	PUSH	IX
+
+	; Check for zero divisor -> infinity
+	LD	A,(__tmp32+3)
+	AND	7FH
+	LD	B,A
+	LD	A,(__tmp32+2)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32+1)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32)
+	OR	B
+	JR	NZ,__fdiv_check_dividend
+	; Divisor is zero - return infinity
+	LD	DE,07F80H		; +infinity
+	LD	HL,0
+	JR	@fdiv_exit
+
+__fdiv_check_dividend:
+	; Check for zero dividend -> zero
+	LD	A,D
+	AND	7FH
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fdiv_do_div
+	; Dividend is zero
+	LD	DE,0
+	LD	HL,0
+	JR	@fdiv_exit
+
+__fdiv_do_div:
+	; Unpack dividend
+	CALL	__funpack
+	LD	(__fsgn1),A
+	LD	(__fexp1),BC
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+
+	; Unpack divisor
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	CALL	__funpack
+	LD	(__fsgn2),A
+	LD	(__fexp2),BC
+	LD	(__fman2),HL
+	LD	(__fman2+2),DE
+
+	; Result sign = xor of signs
+	LD	A,(__fsgn1)
+	LD	B,A
+	LD	A,(__fsgn2)
+	XOR	B
+	LD	(__fsgn1),A
+
+	; Result exponent = exp1 - exp2 + 127
+	LD	HL,(__fexp1)
+	LD	DE,(__fexp2)
+	OR	A
+	SBC	HL,DE
+	LD	DE,127
+	ADD	HL,DE
+	; Underflow: exp went negative — flush to zero rather than wrapping
+	; into a bogus near-one float via the truncated low byte.
+	BIT	7,H
+	JR	NZ,__fdiv_underflow
+	; Overflow: if HL >= 255 the result is inf. (HL > 0xFF is also
+	; overflow; check that first.)
+	LD	A,H
+	OR	A
+	JR	NZ,__fdiv_inf
+	LD	A,L
+	CP	255
+	JR	NC,__fdiv_inf
+	LD	(__fexp1),HL
+
+	; Divide mantissas using long division
+	CALL	__fdiv_man
+
+	; Pack result
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	BC,(__fexp1)
+	LD	A,(__fsgn1)
+	CALL	__fpack
+
+@fdiv_exit:
+	POP	IX
+	POP	BC
+	RET
+
+__fdiv_underflow:
+	LD	DE,0
+	LD	HL,0
+	JR	@fdiv_exit
+
+__fdiv_inf:
+	; +/- inf based on result sign (xor'd into __fsgn1 above).
+	LD	A,(__fsgn1)
+	OR	A
+	JR	Z,__fdiv_inf_pos
+	LD	DE,0FF80H		; -inf
+	LD	HL,0
+	JR	@fdiv_exit
+__fdiv_inf_pos:
+	LD	DE,07F80H		; +inf
+	LD	HL,0
+	JR	@fdiv_exit
+
+; Mantissa division helper
+; Divides __fman1 by __fman2 (24-bit / 24-bit)
+; Both have implied 1 at bit 23 (E bit 7, D=0)
+; Result stored in __fman1
+;
+; Algorithm: Non-restoring division
+; We compute quo = dividend / divisor
+; where both have implied 1, so both are in [1, 2)
+; Result is in range (0.5, 2)
+;
+; Use __fdiv_rem[0..3] for temporary storage of dividend copy
+;
+__fdiv_man:
+	; Copy dividend to __fdiv_rem (we'll shift this and use as working copy)
+	LD	A,(__fman1)
+	LD	(__fdiv_rem),A
+	LD	A,(__fman1+1)
+	LD	(__fdiv_rem+1),A
+	LD	A,(__fman1+2)
+	LD	(__fdiv_rem+2),A
+	XOR	A
+	LD	(__fdiv_rem+3),A	; Clear high byte (for 32-bit shifts)
+
+	; Clear quotient (will be stored in __fman1)
+	LD	(__fman1),A
+	LD	(__fman1+1),A
+	LD	(__fman1+2),A
+
+	; Loop 24 times for 24 quotient bits
+	LD	B,24
+
+@fdiv_lp:
+	PUSH	BC
+
+	; Compare dividend (in __fdiv_rem, 32-bit) with divisor (in __fman2, 24-bit)
+	; __fdiv_rem can overflow to 32 bits during shifts
+
+	; Check high byte (byte 3) of dividend - divisor is only 24-bit
+	LD	A,(__fdiv_rem+3)
+	OR	A
+	JR	NZ,@fdiv_sub		; dividend has bit 24+, definitely >= divisor
+
+	; High byte is 0, compare 24-bit portion
+	; Compare byte 2 (high of 24-bit portion)
+	LD	A,(__fdiv_rem+2)
+	LD	C,A
+	LD	A,(__fman2+2)
+	CP	C
+	JR	C,@fdiv_sub		; divisor < dividend, subtract
+	JR	NZ,@fdiv_nosub		; divisor > dividend, no subtract
+
+	; Byte 2 equal, compare byte 1
+	LD	A,(__fdiv_rem+1)
+	LD	C,A
+	LD	A,(__fman2+1)
+	CP	C
+	JR	C,@fdiv_sub
+	JR	NZ,@fdiv_nosub
+
+	; Byte 1 equal, compare byte 0
+	LD	A,(__fdiv_rem)
+	LD	C,A
+	LD	A,(__fman2)
+	CP	C
+	JR	C,@fdiv_sub
+	JR	NZ,@fdiv_nosub
+
+	; All equal: dividend == divisor, subtract
+@fdiv_sub:
+	; dividend (32-bit) -= divisor (24-bit)
+	LD	A,(__fdiv_rem)
+	LD	C,A
+	LD	A,(__fman2)
+	LD	E,A
+	LD	A,C
+	SUB	E
+	LD	(__fdiv_rem),A
+
+	LD	A,(__fdiv_rem+1)
+	LD	C,A
+	LD	A,(__fman2+1)
+	LD	E,A
+	LD	A,C
+	SBC	A,E
+	LD	(__fdiv_rem+1),A
+
+	LD	A,(__fdiv_rem+2)
+	LD	C,A
+	LD	A,(__fman2+2)
+	LD	E,A
+	LD	A,C
+	SBC	A,E
+	LD	(__fdiv_rem+2),A
+
+	; Handle borrow into byte 3 (subtract 0 with carry)
+	LD	A,(__fdiv_rem+3)
+	SBC	A,0
+	LD	(__fdiv_rem+3),A
+
+	; Set quotient bit (shift left first to preserve carry chain, then set bit 0)
+	LD	A,(__fman1)
+	ADD	A,A
+	LD	(__fman1),A
+	LD	A,(__fman1+1)
+	ADC	A,A
+	LD	(__fman1+1),A
+	LD	A,(__fman1+2)
+	ADC	A,A
+	LD	(__fman1+2),A
+	; Now set bit 0 of quotient
+	LD	A,(__fman1)
+	OR	1
+	LD	(__fman1),A
+	JR	@fdiv_next
+
+@fdiv_nosub:
+	; Don't subtract, just shift quotient left (bit 0 stays 0)
+	LD	A,(__fman1)
+	ADD	A,A
+	LD	(__fman1),A
+	LD	A,(__fman1+1)
+	ADC	A,A
+	LD	(__fman1+1),A
+	LD	A,(__fman1+2)
+	ADC	A,A
+	LD	(__fman1+2),A
+
+@fdiv_next:
+	; Shift dividend (32-bit) left by 1 for next iteration
+	LD	A,(__fdiv_rem)
+	ADD	A,A
+	LD	(__fdiv_rem),A
+	LD	A,(__fdiv_rem+1)
+	ADC	A,A
+	LD	(__fdiv_rem+1),A
+	LD	A,(__fdiv_rem+2)
+	ADC	A,A
+	LD	(__fdiv_rem+2),A
+	LD	A,(__fdiv_rem+3)
+	ADC	A,A
+	LD	(__fdiv_rem+3),A
+
+	POP	BC
+	DEC	B
+	JP	NZ,@fdiv_lp
+
+	; Quotient is now in __fman1 (24 bits)
+	; Check if normalization needed (bit 23 should be 1)
+	; May need to shift multiple times if quotient is small
+@fdiv_norm:
+	LD	A,(__fman1+2)
+	BIT	7,A
+	JR	NZ,@fdiv_dn
+
+	; Bit 23 is 0, shift left and decrement exponent
+	LD	A,(__fman1)
+	ADD	A,A
+	LD	(__fman1),A
+	LD	A,(__fman1+1)
+	ADC	A,A
+	LD	(__fman1+1),A
+	LD	A,(__fman1+2)
+	ADC	A,A
+	LD	(__fman1+2),A
+
+	LD	HL,(__fexp1)
+	DEC	HL
+	LD	(__fexp1),HL
+	JP	@fdiv_norm		; Loop until normalized
+
+@fdiv_dn:
+	RET
+
+	COMMON	/rt_fdiv/
+; Dividend copy of __fdiv (private to __fdiv)
+__fdiv_rem:
+	DS	4
+
+
+	CSEG
+; ============================================================
+; rt_ffs16.mac
+; ============================================================
+; rt_ffs16.mac - __ffs16
+; Split from rt_arith16.mac
+
+
+	CSEG
+; ============================================================
+; __ffs16 — find lowest set bit (1-indexed), 0 if none.
+; Models __builtin_ffs / POSIX ffs for 16-bit operands. uc80 calls
+; this from gen_call when the user invokes ``__builtin_ffs(int)``.
+; In:  HL = value
+; Out: HL = 1..16 (position of lowest set bit) or 0 if HL==0
+; ============================================================
+	PUBLIC	__ffs16
+__ffs16:
+	LD	A,H
+	OR	L
+	JR	Z,__ffs16_zero
+	PUSH	BC
+	LD	B,1		; current bit position
+	LD	A,L
+__ffs16_lo:
+	RRCA
+	JR	C,__ffs16_found
+	INC	B
+	LD	C,A
+	LD	A,B
+	CP	9
+	LD	A,C
+	JR	NZ,__ffs16_lo
+	; First 8 bits all zero; move to high byte
+	LD	A,H
+__ffs16_hi:
+	RRCA
+	JR	C,__ffs16_found
+	INC	B
+	JR	__ffs16_hi
+__ffs16_found:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ffs16_zero:
+	LD	HL,0
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_ffs32.mac
+; ============================================================
+; rt_ffs32.mac - __ffs32
+; Split from rt_arith32.mac
+
+
+	CSEG
+; ============================================================
+; __ffs32 — 1-indexed lowest set bit of DEHL, 0 if none.
+; ============================================================
+	PUBLIC	__ffs32
+__ffs32:
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	Z,__ffs32_zero
+	PUSH	BC
+	LD	B,1
+__ffs32_lp:
+	BIT	0,L
+	JR	NZ,__ffs32_done
+	INC	B
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	__ffs32_lp
+__ffs32_done:
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+__ffs32_zero:
+	LD	HL,0
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_ffs64.mac
+; ============================================================
+; rt_ffs64.mac - __ffs64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+	PUBLIC	__ffs64
+__ffs64:
+	; If zero return 0; else return 1+CTZ
+	LD	A,(__acc64)
+	LD	B,A
+	LD	A,(__acc64+1)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+2)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+3)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+4)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+5)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+6)
+	OR	B
+	LD	B,A
+	LD	A,(__acc64+7)
+	OR	B
+	JR	NZ,__ffs64_nz
+	LD	HL,0
+	RET
+__ffs64_nz:
+	CALL	__ctz64
+	INC	HL
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_fmul.mac
+; ============================================================
+; rt_fmul.mac - __fmul
+; Split from rt_float.mac
+
+
+
+	CSEG
 ; ============================================================
 ; Float Multiplication: DEHL = DEHL * (__tmp32)
 ; ============================================================
@@ -3774,548 +2889,231 @@ __fmul_expinc:
 
 ; __mul16_32 (DEHL = BC * DE) lives in rt_mul.mac.
 
-; ============================================================
-; Float Division: DEHL = DEHL / (__tmp32)
-; Native implementation using long division
-; ============================================================
-	PUBLIC	__fdiv
-__fdiv:
-	PUSH	BC
-	PUSH	IX
+	COMMON	/rt_fmul/
+; Temporary storage for partial products in float multiplication
+; (private to __fmul)
+__fmul_hh:
+	DS	4
+__fmul_hl:
+	DS	4
+__fmul_lh:
+	DS	4
+__fmul_ll:
+	DS	4
 
-	; Check for zero divisor -> infinity
-	LD	A,(__tmp32+3)
-	AND	7FH
-	LD	B,A
-	LD	A,(__tmp32+2)
-	OR	B
-	LD	B,A
-	LD	A,(__tmp32+1)
-	OR	B
-	LD	B,A
-	LD	A,(__tmp32)
-	OR	B
-	JR	NZ,__fdiv_check_dividend
-	; Divisor is zero - return infinity
-	LD	DE,07F80H		; +infinity
-	LD	HL,0
-	JR	@fdiv_exit
 
-__fdiv_check_dividend:
-	; Check for zero dividend -> zero
+	CSEG
+; ============================================================
+; rt_fneg.mac
+; ============================================================
+; rt_fneg.mac - __fneg
+; Split from rt_float.mac
+
+
+	CSEG
+; ============================================================
+; Float Negation: DEHL = -DEHL
+; ============================================================
+	PUBLIC	__fneg
+__fneg:
 	LD	A,D
-	AND	7FH
+	XOR	80H
+	LD	D,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_fnorm.mac
+; ============================================================
+; rt_fnorm.mac - __fnorm
+; Split from rt_float.mac
+
+
+
+	CSEG
+; ============================================================
+; Float Normalize: Normalize mantissa in __fman1 and adjust __fexp1
+; ============================================================
+	PUBLIC	__fnorm
+__fnorm:
+	; Check for zero
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	A,D
 	OR	E
 	OR	H
 	OR	L
-	JR	NZ,__fdiv_do_div
-	; Dividend is zero
-	LD	DE,0
-	LD	HL,0
-	JR	@fdiv_exit
+	RET	Z		; Zero stays zero
 
-__fdiv_do_div:
-	; Unpack dividend
-	CALL	__funpack
-	LD	(__fsgn1),A
-	LD	(__fexp1),BC
-	LD	(__fman1),HL
-	LD	(__fman1+2),DE
+	; Check if bits above bit 23 are set (D != 0)
+	; If so, shift right until D == 0 and bit 7 of E is the leading 1
+	LD	A,D
+	OR	A
+	JR	Z,__fnorm_loop	; D is zero, go to left-shift path
 
-	; Unpack divisor
-	LD	HL,(__tmp32)
-	LD	DE,(__tmp32+2)
-	CALL	__funpack
-	LD	(__fsgn2),A
-	LD	(__fexp2),BC
-	LD	(__fman2),HL
-	LD	(__fman2+2),DE
-
-	; Result sign = xor of signs
-	LD	A,(__fsgn1)
-	LD	B,A
-	LD	A,(__fsgn2)
-	XOR	B
-	LD	(__fsgn1),A
-
-	; Result exponent = exp1 - exp2 + 127
+	; Right-shift path: mantissa is too large (bits above bit 23 set)
+__fnorm_rloop:
+	LD	A,D
+	OR	A
+	JR	Z,__fnorm_rchk	; D is zero, check if normalized
+	; Shift mantissa right
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	; Increment exponent
+	PUSH	DE
+	PUSH	HL
 	LD	HL,(__fexp1)
-	LD	DE,(__fexp2)
-	OR	A
-	SBC	HL,DE
-	LD	DE,127
-	ADD	HL,DE
-	; Underflow: exp went negative — flush to zero rather than wrapping
-	; into a bogus near-one float via the truncated low byte.
-	BIT	7,H
-	JR	NZ,__fdiv_underflow
-	; Overflow: if HL >= 255 the result is inf. (HL > 0xFF is also
-	; overflow; check that first.)
-	LD	A,H
-	OR	A
-	JR	NZ,__fdiv_inf
-	LD	A,L
-	CP	255
-	JR	NC,__fdiv_inf
+	INC	HL
 	LD	(__fexp1),HL
+	POP	HL
+	POP	DE
+	JR	__fnorm_rloop
 
-	; Divide mantissas using long division
-	CALL	__fdiv_man
+__fnorm_rchk:
+	; D is zero. Check if bit 7 of E is set (normalized)
+	BIT	7,E
+	JR	NZ,__fnorm_done	; Done
+	; Still need left shifts
+	; Fall through to left-shift loop
 
-	; Pack result
-	LD	HL,(__fman1)
-	LD	DE,(__fman1+2)
-	LD	BC,(__fexp1)
-	LD	A,(__fsgn1)
-	CALL	__fpack
+	; Shift left until bit 23 is set (bit 7 of E)
+__fnorm_loop:
+	BIT	7,E
+	JR	NZ,__fnorm_done	; Normalized when bit 23 set
 
-@fdiv_exit:
-	POP	IX
-	POP	BC
-	RET
+	; Shift mantissa left
+	SLA	L
+	RL	H
+	RL	E
+	RL	D
 
-__fdiv_underflow:
-	LD	DE,0
-	LD	HL,0
-	JR	@fdiv_exit
-
-__fdiv_inf:
-	; +/- inf based on result sign (xor'd into __fsgn1 above).
-	LD	A,(__fsgn1)
-	OR	A
-	JR	Z,__fdiv_inf_pos
-	LD	DE,0FF80H		; -inf
-	LD	HL,0
-	JR	@fdiv_exit
-__fdiv_inf_pos:
-	LD	DE,07F80H		; +inf
-	LD	HL,0
-	JR	@fdiv_exit
-
-; Mantissa division helper
-; Divides __fman1 by __fman2 (24-bit / 24-bit)
-; Both have implied 1 at bit 23 (E bit 7, D=0)
-; Result stored in __fman1
-;
-; Algorithm: Non-restoring division
-; We compute quo = dividend / divisor
-; where both have implied 1, so both are in [1, 2)
-; Result is in range (0.5, 2)
-;
-; Use __fdiv_rem[0..3] for temporary storage of dividend copy
-;
-__fdiv_man:
-	; Copy dividend to __fdiv_rem (we'll shift this and use as working copy)
-	LD	A,(__fman1)
-	LD	(__fdiv_rem),A
-	LD	A,(__fman1+1)
-	LD	(__fdiv_rem+1),A
-	LD	A,(__fman1+2)
-	LD	(__fdiv_rem+2),A
-	XOR	A
-	LD	(__fdiv_rem+3),A	; Clear high byte (for 32-bit shifts)
-
-	; Clear quotient (will be stored in __fman1)
-	LD	(__fman1),A
-	LD	(__fman1+1),A
-	LD	(__fman1+2),A
-
-	; Loop 24 times for 24 quotient bits
-	LD	B,24
-
-@fdiv_lp:
-	PUSH	BC
-
-	; Compare dividend (in __fdiv_rem, 32-bit) with divisor (in __fman2, 24-bit)
-	; __fdiv_rem can overflow to 32 bits during shifts
-
-	; Check high byte (byte 3) of dividend - divisor is only 24-bit
-	LD	A,(__fdiv_rem+3)
-	OR	A
-	JR	NZ,@fdiv_sub		; dividend has bit 24+, definitely >= divisor
-
-	; High byte is 0, compare 24-bit portion
-	; Compare byte 2 (high of 24-bit portion)
-	LD	A,(__fdiv_rem+2)
-	LD	C,A
-	LD	A,(__fman2+2)
-	CP	C
-	JR	C,@fdiv_sub		; divisor < dividend, subtract
-	JR	NZ,@fdiv_nosub		; divisor > dividend, no subtract
-
-	; Byte 2 equal, compare byte 1
-	LD	A,(__fdiv_rem+1)
-	LD	C,A
-	LD	A,(__fman2+1)
-	CP	C
-	JR	C,@fdiv_sub
-	JR	NZ,@fdiv_nosub
-
-	; Byte 1 equal, compare byte 0
-	LD	A,(__fdiv_rem)
-	LD	C,A
-	LD	A,(__fman2)
-	CP	C
-	JR	C,@fdiv_sub
-	JR	NZ,@fdiv_nosub
-
-	; All equal: dividend == divisor, subtract
-@fdiv_sub:
-	; dividend (32-bit) -= divisor (24-bit)
-	LD	A,(__fdiv_rem)
-	LD	C,A
-	LD	A,(__fman2)
-	LD	E,A
-	LD	A,C
-	SUB	E
-	LD	(__fdiv_rem),A
-
-	LD	A,(__fdiv_rem+1)
-	LD	C,A
-	LD	A,(__fman2+1)
-	LD	E,A
-	LD	A,C
-	SBC	A,E
-	LD	(__fdiv_rem+1),A
-
-	LD	A,(__fdiv_rem+2)
-	LD	C,A
-	LD	A,(__fman2+2)
-	LD	E,A
-	LD	A,C
-	SBC	A,E
-	LD	(__fdiv_rem+2),A
-
-	; Handle borrow into byte 3 (subtract 0 with carry)
-	LD	A,(__fdiv_rem+3)
-	SBC	A,0
-	LD	(__fdiv_rem+3),A
-
-	; Set quotient bit (shift left first to preserve carry chain, then set bit 0)
-	LD	A,(__fman1)
-	ADD	A,A
-	LD	(__fman1),A
-	LD	A,(__fman1+1)
-	ADC	A,A
-	LD	(__fman1+1),A
-	LD	A,(__fman1+2)
-	ADC	A,A
-	LD	(__fman1+2),A
-	; Now set bit 0 of quotient
-	LD	A,(__fman1)
-	OR	1
-	LD	(__fman1),A
-	JR	@fdiv_next
-
-@fdiv_nosub:
-	; Don't subtract, just shift quotient left (bit 0 stays 0)
-	LD	A,(__fman1)
-	ADD	A,A
-	LD	(__fman1),A
-	LD	A,(__fman1+1)
-	ADC	A,A
-	LD	(__fman1+1),A
-	LD	A,(__fman1+2)
-	ADC	A,A
-	LD	(__fman1+2),A
-
-@fdiv_next:
-	; Shift dividend (32-bit) left by 1 for next iteration
-	LD	A,(__fdiv_rem)
-	ADD	A,A
-	LD	(__fdiv_rem),A
-	LD	A,(__fdiv_rem+1)
-	ADC	A,A
-	LD	(__fdiv_rem+1),A
-	LD	A,(__fdiv_rem+2)
-	ADC	A,A
-	LD	(__fdiv_rem+2),A
-	LD	A,(__fdiv_rem+3)
-	ADC	A,A
-	LD	(__fdiv_rem+3),A
-
-	POP	BC
-	DEC	B
-	JP	NZ,@fdiv_lp
-
-	; Quotient is now in __fman1 (24 bits)
-	; Check if normalization needed (bit 23 should be 1)
-	; May need to shift multiple times if quotient is small
-@fdiv_norm:
-	LD	A,(__fman1+2)
-	BIT	7,A
-	JR	NZ,@fdiv_dn
-
-	; Bit 23 is 0, shift left and decrement exponent
-	LD	A,(__fman1)
-	ADD	A,A
-	LD	(__fman1),A
-	LD	A,(__fman1+1)
-	ADC	A,A
-	LD	(__fman1+1),A
-	LD	A,(__fman1+2)
-	ADC	A,A
-	LD	(__fman1+2),A
-
+	; Decrement exponent
+	PUSH	DE
+	PUSH	HL
 	LD	HL,(__fexp1)
 	DEC	HL
 	LD	(__fexp1),HL
-	JP	@fdiv_norm		; Loop until normalized
+	POP	HL
+	POP	DE
 
-@fdiv_dn:
-	RET
-
-; ============================================================
-; Float Comparison: Compare DEHL with (__tmp32)
-; Returns: Z if equal, C if DEHL < __tmp32
-; ============================================================
-	PUBLIC	__fcmp
-__fcmp:
-	PUSH	BC
-
-	; IEEE 754: -0.0 == +0.0. Special-case zero before the bit-pattern
-	; compare so a signed-zero pair doesn't end up "left < right" just
-	; because the sign bit differs.
+	; Check for underflow
 	LD	A,D
-	AND	7FH		; mask off left's sign bit
 	OR	E
 	OR	H
 	OR	L
-	JR	NZ,__fcmp_lnz
-	; left magnitude == 0; check right
-	LD	A,(__tmp32+3)
-	AND	7FH
-	LD	B,A
-	LD	A,(__tmp32+2)
-	OR	B
-	LD	B,A
-	LD	A,(__tmp32+1)
-	OR	B
-	LD	B,A
-	LD	A,(__tmp32)
-	OR	B
-	JR	NZ,__fcmp_lnz
-	; both zero (any sign) — return Z, NC
-	XOR	A		; clears Z=1 actually? XOR A sets Z; CP A is cleaner
-	POP	BC
+	JR	NZ,__fnorm_loop
+
+	; Underflow to zero
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+	LD	HL,0
+	LD	(__fexp1),HL
 	RET
-__fcmp_lnz:
 
-	; Compare: left (DEHL) vs right (__tmp32)
-	; Sets Z if equal, C if left < right
-	LD	A,(__tmp32+3)
-	XOR	D
-	JP	P,__fcmp_same	; same sign
+__fnorm_done:
+	; Save normalized mantissa back to memory
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+	RET
 
-	; Signs differ: the negative one is smaller.  Flip the sign
-	; bits so an unsigned compare of the high bytes says so.
+
+	CSEG
+; ============================================================
+; rt_fpack.mac
+; ============================================================
+; rt_fpack.mac - __fpack
+; Split from rt_float.mac
+
+
+	CSEG
+; ============================================================
+; Float Pack: Combine sign, exponent, mantissa into IEEE 754
+; Input: A = sign (0 or 80H), BC = exponent, DEHL = mantissa
+; Output: DEHL = IEEE 754 float
+; ============================================================
+	PUBLIC	__fpack
+__fpack:
+	PUSH	AF		; Save sign
+
+	; Check for zero mantissa
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__fpack_nz
+	; Return zero
+	LD	DE,0
+	LD	HL,0
+	POP	AF
+	RET
+
+__fpack_nz:
+	; Combine exponent and mantissa
+	; Exponent in C, mantissa in E.H.L (bit 23 is implied 1)
+	LD	A,E
+	AND	7FH		; Clear implied 1 bit
+	LD	E,A
+
+	; Insert exponent into result
+	; D will hold exp[7:1], E will hold exp[0]|mantissa[22:16]
+	LD	A,C		; Get exponent
+	SRL	A		; Shift right, bit 0 → carry, bits 7-1 → bits 6-0
+	LD	D,A		; D = exp[7:1] in bits 6-0
+
+	; Insert exponent bit 0 into E bit 7
+	LD	A,E		; A = mantissa bits 22-16 (cleared of implied 1)
+	JR	NC,__fpack_exp0_clear
+	SET	7,A		; Set bit 7 if exponent bit 0 was 1
+__fpack_exp0_clear:
+	LD	E,A		; E = exp[0]|mantissa[22:16]
+
+	; Add sign
+	POP	AF
+	OR	D
+	LD	D,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_fsub.mac
+; ============================================================
+; rt_fsub.mac - __fsub
+; Split from rt_float.mac
+
+
+
+	CSEG
+; ============================================================
+; Float Subtraction: DEHL = DEHL - (__tmp32)
+; ============================================================
+	PUBLIC	__fsub
+__fsub:
+	; Negate op2 sign and call fadd
 	LD	A,(__tmp32+3)
 	XOR	80H
-	LD	B,A		; B = right high byte (sign-flipped)
-	LD	A,D
-	XOR	80H		; A = left high byte (sign-flipped)
-	CP	B		; C if left < right
-	JR	__fcmp_diff
-
-__fcmp_same:
-	BIT	7,D
-	JR	NZ,__fcmp_neg
-
-	; Both positive: compare the magnitudes, left against right.
+	LD	(__tmp32+3),A
+	CALL	__fadd
+	; Restore op2 sign
 	LD	A,(__tmp32+3)
-	LD	B,A
-	LD	A,D
-	CP	B		; C if left < right
-	JR	NZ,__fcmp_diff
-	LD	A,(__tmp32+2)
-	LD	B,A
-	LD	A,E
-	CP	B
-	JR	NZ,__fcmp_diff
-	LD	A,(__tmp32+1)
-	LD	B,A
-	LD	A,H
-	CP	B
-	JR	NZ,__fcmp_diff
-	LD	A,(__tmp32)
-	LD	B,A
-	LD	A,L
-	CP	B
-	JR	__fcmp_diff
-
-__fcmp_neg:
-	; Both negative: the larger magnitude is the smaller value, so
-	; compare right against left.
-	LD	A,(__tmp32+3)
-	CP	D		; C if |right| < |left|, left < right
-	JR	NZ,__fcmp_diff
-	LD	A,(__tmp32+2)
-	CP	E
-	JR	NZ,__fcmp_diff
-	LD	A,(__tmp32+1)
-	CP	H
-	JR	NZ,__fcmp_diff
-	LD	A,(__tmp32)
-	CP	L
-
-__fcmp_diff:
-	POP	BC
+	XOR	80H
+	LD	(__tmp32+3),A
 	RET
 
+
+	CSEG
 ; ============================================================
-; Integer to Float: DEHL = float(DEHL) (signed 32-bit)
-; Also known as __ltof for long to float conversion
+; rt_ftoi.mac
 ; ============================================================
-	PUBLIC	__itof
-	PUBLIC	__ltof
-__ltof:
-__itof:
-	PUSH	BC
+; rt_ftoi.mac - __ftoi
+; Split from rt_float.mac
 
-	; Check for zero
-	LD	A,D
-	OR	E
-	OR	H
-	OR	L
-	JR	NZ,__itof_nz
-	LD	DE,0
-	LD	HL,0
-	JR	__itof_done
 
-__itof_nz:
-	; Get sign
-	LD	A,D
-	AND	80H
-	LD	(__fsgn1),A
 
-	; Make positive if negative
-	BIT	7,D
-	JR	Z,__itof_pos
-	CALL	__neg32
-	; Check for LONG_MIN overflow: __neg32(0x80000000) = 0x80000000
-	BIT	7,D
-	JR	Z,__itof_pos
-	; Special case: value is 2^31, mantissa = 1<<23, exp = 127+31
-	LD	HL,0
-	LD	(__fman1),HL
-	LD	DE,0080H	; E=0x80 = bit 23 set
-	LD	(__fman1+2),DE
-	LD	HL,127+31
-	LD	(__fexp1),HL
-	JR	__itof_pack
-
-__itof_pos:
-	; Initial exponent = 127 + 23 (normalizing to bit 23)
-	PUSH	HL
-	LD	HL,127+23
-	LD	(__fexp1),HL
-	POP	HL
-
-	; If high byte D has bits set, shift right to bring mantissa
-	; into 24-bit range (bits 0-23) before __fnorm
-__itof_rshift:
-	LD	A,D
-	OR	A
-	JR	Z,__itof_store
-	; Shift DEHL right by 1
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	; Increment exponent
-	PUSH	HL
-	LD	HL,(__fexp1)
-	INC	HL
-	LD	(__fexp1),HL
-	POP	HL
-	JR	__itof_rshift
-
-__itof_store:
-	; Store mantissa (now D=0, bits in EHL)
-	LD	(__fman1),HL
-	LD	(__fman1+2),DE
-
-	; Normalize (shift mantissa left until bit 23 is set)
-	CALL	__fnorm
-__itof_pack:
-
-	; Pack result
-	LD	HL,(__fman1)
-	LD	DE,(__fman1+2)
-	LD	BC,(__fexp1)
-	LD	A,(__fsgn1)
-	CALL	__fpack
-
-__itof_done:
-	POP	BC
-	RET
-
-; ============================================================
-; Unsigned Integer to Float: DEHL = float(DEHL) (unsigned 32-bit)
-; ============================================================
-	PUBLIC	__uitof
-__uitof:
-	PUSH	BC
-
-	; Check for zero
-	LD	A,D
-	OR	E
-	OR	H
-	OR	L
-	JR	NZ,__uitof_nz
-	LD	DE,0
-	LD	HL,0
-	JR	__uitof_done
-
-__uitof_nz:
-	; Sign is always positive
-	XOR	A
-	LD	(__fsgn1),A
-
-	; Initial exponent = 127 + 23 (normalizing to bit 23)
-	PUSH	HL
-	LD	HL,127+23
-	LD	(__fexp1),HL
-	POP	HL
-
-	; If high byte D has bits set, shift right to bring mantissa
-	; into 24-bit range (bits 0-23) before __fnorm
-__uitof_rshift:
-	LD	A,D
-	OR	A
-	JR	Z,__uitof_store
-	; Shift DEHL right by 1
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	; Increment exponent
-	PUSH	HL
-	LD	HL,(__fexp1)
-	INC	HL
-	LD	(__fexp1),HL
-	POP	HL
-	JR	__uitof_rshift
-
-__uitof_store:
-	; Store mantissa
-	LD	(__fman1),HL
-	LD	(__fman1+2),DE
-
-	; Normalize
-	CALL	__fnorm
-
-	; Pack
-	LD	HL,(__fman1)
-	LD	DE,(__fman1+2)
-	LD	BC,(__fexp1)
-	LD	A,(__fsgn1)
-	CALL	__fpack
-
-__uitof_done:
-	POP	BC
-	RET
-
+	CSEG
 ; ============================================================
 ; Float to Integer: DEHL = int(DEHL) (truncate towards zero)
 ; ============================================================
@@ -4416,6 +3214,16 @@ __ftoi_done:
 	POP	BC
 	RET
 
+
+	CSEG
+; ============================================================
+; rt_funpack.mac
+; ============================================================
+; rt_funpack.mac - __funpack
+; Split from rt_float.mac
+
+
+	CSEG
 ; ============================================================
 ; Float Unpack: Extract sign, exponent, mantissa from DEHL
 ; Input: DEHL = IEEE 754 float
@@ -4459,194 +3267,740 @@ __funpack:
 	POP	AF		; Restore sign
 	RET
 
-; ============================================================
-; Float Pack: Combine sign, exponent, mantissa into IEEE 754
-; Input: A = sign (0 or 80H), BC = exponent, DEHL = mantissa
-; Output: DEHL = IEEE 754 float
-; ============================================================
-	PUBLIC	__fpack
-__fpack:
-	PUSH	AF		; Save sign
 
-	; Check for zero mantissa
+	CSEG
+; ============================================================
+; rt_load64.mac
+; ============================================================
+; rt_load64.mac - __load64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __load64: Load 64-bit value from address to __acc64
+; Input: HL = address of 64-bit value
+; Output: __acc64 = value
+; ============================================================
+	PUBLIC	__load64
+__load64:
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__acc64),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__acc64+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__acc64+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__acc64+6),DE
+	POP	DE
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_load64t.mac
+; ============================================================
+; rt_load64t.mac - __load64t
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __load64t: Load 64-bit value from address to __tmp64
+; Input: HL = address of 64-bit value
+; Output: __tmp64 = value
+; ============================================================
+	PUBLIC	__load64t
+__load64t:
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64+2),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	(__tmp64+4),DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(__tmp64+6),DE
+	POP	DE
+	RET
+
+; ============================================================
+; __div64: 64-bit unsigned division __acc64 = __acc64 / __tmp64
+; Remainder stored in __rem64
+; Uses shift-and-subtract algorithm (same as __div32 but 64-bit)
+; ============================================================
+
+
+	CSEG
+; ============================================================
+; rt_longjmp.mac
+; ============================================================
+; rt_longjmp.mac - _longjmp
+; Split from rt_setjmp.mac
+
+
+	CSEG
+; ============================================================
+; longjmp - Non-local goto
+; void longjmp(jmp_buf env, int val)
+; env at SP+4, val at SP+2 (after return address)
+; If val==0, returns 1, else returns val
+; ============================================================
+	PUBLIC	_longjmp
+_longjmp:
+	; Get parameters - we'll discard our return address
+	; Stack at entry: [ret_addr, env, val, ...]
+	; (C calling convention: args pushed right-to-left)
+	POP	DE		; Discard longjmp's return address
+	POP	HL		; HL = env pointer
+	POP	BC		; BC = val
+
+	; If val == 0, set val = 1
+	LD	A,B
+	OR	C
+	JR	NZ,_longjmp_valok
+	LD	BC,1
+_longjmp_valok:
+	; BC = return value, HL = env
+
+	; Get return address from env[0..1] into DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	; DE = return address, HL = env+2
+
+	; Get saved SP from env[2..3]
+	LD	A,(HL)
+	INC	HL
+	PUSH	HL		; Save env+3
+	LD	H,(HL)
+	LD	L,A		; HL = saved SP
+	EX	(SP),HL		; Stack: [saved SP], HL = env+3
+	INC	HL		; HL = env+4
+
+	; Get saved IX from env[4..5]
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A		; HL = saved IX
+	PUSH	HL
+	POP	IX		; IX restored
+
+	; Now: DE = return addr, BC = return val, (SP) = saved SP
+	POP	HL		; HL = saved SP
+	LD	SP,HL		; Switch stack!
+
+	; Stack now points to original env location in caller's frame
+	; Push return address so RET will go there
+	PUSH	DE
+
+	; Return value in HL
+	LD	H,B
+	LD	L,C
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_ltof.mac
+; ============================================================
+; rt_ltof.mac - __ltof, __itof
+; Split from rt_float.mac
+
+
+
+	CSEG
+; ============================================================
+; Integer to Float: DEHL = float(DEHL) (signed 32-bit)
+; Also known as __ltof for long to float conversion
+; ============================================================
+	PUBLIC	__ltof
+__ltof:
+	PUBLIC	__itof
+__itof:
+	PUSH	BC
+
+	; Check for zero
 	LD	A,D
 	OR	E
 	OR	H
 	OR	L
-	JR	NZ,__fpack_nz
-	; Return zero
+	JR	NZ,__itof_nz
 	LD	DE,0
 	LD	HL,0
-	POP	AF
-	RET
+	JR	__itof_done
 
-__fpack_nz:
-	; Combine exponent and mantissa
-	; Exponent in C, mantissa in E.H.L (bit 23 is implied 1)
-	LD	A,E
-	AND	7FH		; Clear implied 1 bit
-	LD	E,A
-
-	; Insert exponent into result
-	; D will hold exp[7:1], E will hold exp[0]|mantissa[22:16]
-	LD	A,C		; Get exponent
-	SRL	A		; Shift right, bit 0 → carry, bits 7-1 → bits 6-0
-	LD	D,A		; D = exp[7:1] in bits 6-0
-
-	; Insert exponent bit 0 into E bit 7
-	LD	A,E		; A = mantissa bits 22-16 (cleared of implied 1)
-	JR	NC,__fpack_exp0_clear
-	SET	7,A		; Set bit 7 if exponent bit 0 was 1
-__fpack_exp0_clear:
-	LD	E,A		; E = exp[0]|mantissa[22:16]
-
-	; Add sign
-	POP	AF
-	OR	D
-	LD	D,A
-	RET
-
-; ============================================================
-; Float Normalize: Normalize mantissa in __fman1 and adjust __fexp1
-; ============================================================
-	PUBLIC	__fnorm
-__fnorm:
-	; Check for zero
-	LD	HL,(__fman1)
-	LD	DE,(__fman1+2)
+__itof_nz:
+	; Get sign
 	LD	A,D
-	OR	E
-	OR	H
-	OR	L
-	RET	Z		; Zero stays zero
+	AND	80H
+	LD	(__fsgn1),A
 
-	; Check if bits above bit 23 are set (D != 0)
-	; If so, shift right until D == 0 and bit 7 of E is the leading 1
+	; Make positive if negative
+	BIT	7,D
+	JR	Z,__itof_pos
+	CALL	__neg32
+	; Check for LONG_MIN overflow: __neg32(0x80000000) = 0x80000000
+	BIT	7,D
+	JR	Z,__itof_pos
+	; Special case: value is 2^31, mantissa = 1<<23, exp = 127+31
+	LD	HL,0
+	LD	(__fman1),HL
+	LD	DE,0080H	; E=0x80 = bit 23 set
+	LD	(__fman1+2),DE
+	LD	HL,127+31
+	LD	(__fexp1),HL
+	JR	__itof_pack
+
+__itof_pos:
+	; Initial exponent = 127 + 23 (normalizing to bit 23)
+	PUSH	HL
+	LD	HL,127+23
+	LD	(__fexp1),HL
+	POP	HL
+
+	; If high byte D has bits set, shift right to bring mantissa
+	; into 24-bit range (bits 0-23) before __fnorm
+__itof_rshift:
 	LD	A,D
 	OR	A
-	JR	Z,__fnorm_loop	; D is zero, go to left-shift path
-
-	; Right-shift path: mantissa is too large (bits above bit 23 set)
-__fnorm_rloop:
-	LD	A,D
-	OR	A
-	JR	Z,__fnorm_rchk	; D is zero, check if normalized
-	; Shift mantissa right
+	JR	Z,__itof_store
+	; Shift DEHL right by 1
 	SRL	D
 	RR	E
 	RR	H
 	RR	L
 	; Increment exponent
-	PUSH	DE
 	PUSH	HL
 	LD	HL,(__fexp1)
 	INC	HL
 	LD	(__fexp1),HL
 	POP	HL
-	POP	DE
-	JR	__fnorm_rloop
+	JR	__itof_rshift
 
-__fnorm_rchk:
-	; D is zero. Check if bit 7 of E is set (normalized)
-	BIT	7,E
-	JR	NZ,__fnorm_done	; Done
-	; Still need left shifts
-	; Fall through to left-shift loop
+__itof_store:
+	; Store mantissa (now D=0, bits in EHL)
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
 
-	; Shift left until bit 23 is set (bit 7 of E)
-__fnorm_loop:
-	BIT	7,E
-	JR	NZ,__fnorm_done	; Normalized when bit 23 set
+	; Normalize (shift mantissa left until bit 23 is set)
+	CALL	__fnorm
+__itof_pack:
 
-	; Shift mantissa left
-	SLA	L
-	RL	H
-	RL	E
-	RL	D
+	; Pack result
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	BC,(__fexp1)
+	LD	A,(__fsgn1)
+	CALL	__fpack
 
-	; Decrement exponent
-	PUSH	DE
+__itof_done:
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_mod16.mac
+; ============================================================
+; rt_mod16.mac - __mod16
+; Split from rt_arith16.mac
+
+
+
+	CSEG
+; ============================================================
+; 16-bit unsigned modulo: HL = DE % HL
+; ============================================================
+	PUBLIC	__mod16
+__mod16:
+	CALL	__div16		; remainder in DE
+	EX	DE,HL
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_mod32.mac
+; ============================================================
+; rt_mod32.mac - __mod32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit unsigned modulo: DEHL = DEHL % (__tmp32)
+; ============================================================
+	PUBLIC	__mod32
+__mod32:
+	CALL	__div32
+	LD	HL,(__rem32)
+	LD	DE,(__rem32+2)
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_mod64.mac
+; ============================================================
+; rt_mod64.mac - __mod64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __mod64: 64-bit unsigned modulo __acc64 = __acc64 % __tmp64
+; ============================================================
+	PUBLIC	__mod64
+__mod64:
+	CALL	__div64
+	LD	HL,(__rem64)
+	LD	(__acc64),HL
+	LD	HL,(__rem64+2)
+	LD	(__acc64+2),HL
+	LD	HL,(__rem64+4)
+	LD	(__acc64+4),HL
+	LD	HL,(__rem64+6)
+	LD	(__acc64+6),HL
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_mov64.mac
+; ============================================================
+; rt_mov64.mac - __mov64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __mov64: Copy __acc64 to __tmp64
+; ============================================================
+	PUBLIC	__mov64
+__mov64:
+	LD	HL,(__acc64)
+	LD	(__tmp64),HL
+	LD	HL,(__acc64+2)
+	LD	(__tmp64+2),HL
+	LD	HL,(__acc64+4)
+	LD	(__tmp64+4),HL
+	LD	HL,(__acc64+6)
+	LD	(__tmp64+6),HL
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_mul16.mac
+; ============================================================
+; rt_mul16.mac - __mul16
+; Split from rt_arith16.mac
+
+
+
+	CSEG
+; ============================================================
+; 16-bit multiplication: HL = DE * HL (low 16 bits; signed and
+; unsigned give the same bits)
+; Preserves BC, IX, IY.  Clobbers A, DE, flags.
+; When either operand fits in 8 bits it is the multiplier of one
+; __mul8x16.  An operand in -255..-1 is negated to 1..255 and the
+; product negated back.  Otherwise
+;   DE*HL mod 2^16 = DE*L + ((E*H) mod 256)<<8.
+; ============================================================
+	PUBLIC	__mul16
+__mul16:
+	LD	A,H
+	OR	A
+	JR	NZ,__mul16_h
+	OR	L		; A = L
+	JP	__mul8x16	; HL = DE * L
+__mul16_h:
+	LD	A,D
+	OR	A
+	JR	NZ,__mul16_n
+	LD	A,E
+	EX	DE,HL
+	JP	__mul8x16	; HL = HL * E
+__mul16_n:
+	LD	A,H
+	INC	A
+	JR	NZ,__mul16_n2	; H <> 0FFH
+	SUB	L		; A = -L (A was 0)
+	JP	NZ,__mul16ng	; HL = -(DE * -HL)
+__mul16_n2:
+	LD	A,D
+	INC	A
+	JP	NZ,__mul16w	; D <> 0FFH
+	SUB	E		; A = -E
+	JP	Z,__mul16w	; DE = -256
+	EX	DE,HL
+	JP	__mul16ng	; HL = -(HL * -DE)
+
+
+	CSEG
+; ============================================================
+; rt_mul16_32.mac
+; ============================================================
+; rt_mul16_32.mac - __mul16_32
+; Split from rt_mul.mac
+
+
+
+	CSEG
+; ============================================================
+; __mul16_32 - 16 x 16 -> 32-bit unsigned multiply: DEHL = BC * DE
+; Preserves BC, IX, IY.  Clobbers A, flags.
+; One or two __mul8x16 passes: an operand whose high byte is 0 is
+; the multiplier of a single pass.
+; ============================================================
+	PUBLIC	__mul16_32
+__mul16_32:
+	LD	A,B
+	OR	A
+	JR	Z,__m1632_c	; BC < 256: one pass, multiplier C
+	LD	A,D
+	OR	A
+	JR	NZ,__m1632_2
+	LD	A,E		; DE < 256: one pass, multiplier E,
+	LD	D,B		; multiplicand BC
+	LD	E,C
+	JR	__m1632_1
+__m1632_c:
+	LD	A,C
+__m1632_1:
+	CALL	__mul8x16	; AHL = A * DE
+	LD	E,A
+	LD	D,0
+	RET
+__m1632_2:
+	PUSH	BC
+	LD	A,C
+	CALL	__mul8x16	; P0 = AHL = C * DE
 	PUSH	HL
-	LD	HL,(__fexp1)
-	DEC	HL
-	LD	(__fexp1),HL
-	POP	HL
-	POP	DE
+	LD	C,A		; C = P0 bits 16..23
+	LD	A,B
+	CALL	__mul8x16	; P1 = AHL = B * DE
+	POP	DE		; DE = P0 bits 0..15
+	LD	B,A		; B = P1 bits 16..23
+	LD	A,D		; result = P0 + (P1 << 8)
+	ADD	A,L
+	LD	D,A		; D = byte 1
+	LD	A,C
+	ADC	A,H
+	LD	C,A		; C = byte 2
+	LD	A,B
+	ADC	A,0		; A = byte 3
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,A
+	POP	BC
+	RET
 
-	; Check for underflow
+
+	CSEG
+; ============================================================
+; rt_mul16ng.mac
+; ============================================================
+; rt_mul16ng.mac - __mul16ng
+; Split from rt_arith16.mac
+
+
+
+	CSEG
+; ============================================================
+; __mul16ng - HL = -(DE * A), A = 1..255.  Part of __mul16.
+; __mul16w  - HL = DE * HL when neither operand fits in 8 bits:
+;   DE*L + ((E*H) mod 256)<<8.  Part of __mul16.
+; Kept apart from __mul16 so that the common 8-bit cases are one
+; short routine.  Same registers as __mul16.
+; ============================================================
+	PUBLIC	__mul16ng
+__mul16ng:
+	CALL	__mul8x16
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_mul16w.mac
+; ============================================================
+; rt_mul16w.mac - __mul16w
+; Split from rt_arith16.mac
+
+
+
+	CSEG
+	PUBLIC	__mul16w
+__mul16w:
+	PUSH	HL
+	LD	A,L
+	CALL	__mul8x16	; HL = DE * L
+	EX	(SP),HL		; HL = right operand, stack = partial
+	LD	A,H
+	LD	D,0		; DE = E
+	CALL	__mul8x16	; L = (H * E) & 0FFH
+	LD	A,L
+	POP	HL
+	ADD	A,H
+	LD	H,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_mul32.mac
+; ============================================================
+; rt_mul32.mac - __mul32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit multiplication: DEHL = DEHL * (__tmp32)  (low 32 bits)
+; When both operands are sign-extended 16-bit values the product is
+; +-(|AL| * |BL|): one __mul16_32 with its 8-bit fast paths.
+; Otherwise, with A = AH:AL (DEHL) and B = BH:BL (__tmp32):
+;   A*B mod 2^32 = AL*BL + ((AH*BL + AL*BH) mod 2^16) << 16
+; Each product is a __mul16_32 (only the low word of the cross
+; products is used); a cross product is skipped when AH or BH is 0.  __tmp32 is not changed.
+; Preserves BC, IX, IY.
+; ============================================================
+	PUBLIC	__mul32
+__mul32:
+	PUSH	BC
+	LD	A,H		; DEHL = sign extension of HL?
+	RLA
+	SBC	A,A
+	CP	D
+	JR	NZ,__mul32_g
+	CP	E
+	JR	NZ,__mul32_g
+	LD	C,A
+	LD	A,(__tmp32+1)	; and __tmp32 of its low word?
+	RLA
+	SBC	A,A
+	LD	B,A
+	LD	A,(__tmp32+2)
+	CP	B
+	JR	NZ,__mul32_g
+	LD	A,(__tmp32+3)
+	CP	B
+	JR	NZ,__mul32_g
+	XOR	C
+	PUSH	AF		; S flag = sign of the product
+	BIT	7,H
+	JR	Z,__mul32_s1
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__mul32_s1:
+	LD	B,H
+	LD	C,L		; BC = |AL|
+	LD	HL,(__tmp32)
+	BIT	7,H
+	JR	Z,__mul32_s2
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__mul32_s2:
+	EX	DE,HL		; DE = |BL|
+	CALL	__mul16_32	; DEHL = |AL| * |BL|
+	POP	AF
+	POP	BC
+	RET	P
+	JP	__neg32
+__mul32_g:
+	LD	B,H
+	LD	C,L		; BC = AL
 	LD	A,D
 	OR	E
-	OR	H
+	JR	Z,__mul32_1	; AH = 0: DE = 0 = cross sum so far
+	PUSH	BC
+	LD	BC,(__tmp32)
+	CALL	__mul16_32	; HL = (AH * BL) mod 2^16
+	POP	BC
+	EX	DE,HL		; DE = cross sum
+__mul32_1:
+	LD	HL,(__tmp32+2)
+	LD	A,H
 	OR	L
-	JR	NZ,__fnorm_loop
+	JR	Z,__mul32_2	; BH = 0
+	PUSH	DE
+	EX	DE,HL
+	CALL	__mul16_32	; HL = (AL * BH) mod 2^16
+	POP	DE
+	ADD	HL,DE
+	EX	DE,HL		; DE = cross sum
+__mul32_2:
+	PUSH	DE
+	LD	DE,(__tmp32)
+	CALL	__mul16_32	; DEHL = AL * BL
+	EX	DE,HL
+	POP	BC
+	ADD	HL,BC		; high word += cross sum
+	EX	DE,HL
+	POP	BC
+	RET
 
-	; Underflow to zero
-	LD	(__fman1),HL
-	LD	(__fman1+2),DE
+
+	CSEG
+; ============================================================
+; rt_mul64.mac
+; ============================================================
+; rt_mul64.mac - __mul64
+; Split from rt_arith64.mac
+
+
+
+	COMMON	/rt_mul64/
+__mul64_mcd:	DS	8	; Multiplicand
+__mul64_mpr:	DS	8	; Multiplier
+	CSEG
+	PUBLIC	__mul64
+__mul64:
+	PUSH	BC
+	PUSH	DE
+	; Save multiplicand (__acc64) to __mul64_mcd
+	LD	HL,(__acc64)
+	LD	(__mul64_mcd),HL
+	LD	HL,(__acc64+2)
+	LD	(__mul64_mcd+2),HL
+	LD	HL,(__acc64+4)
+	LD	(__mul64_mcd+4),HL
+	LD	HL,(__acc64+6)
+	LD	(__mul64_mcd+6),HL
+	; Copy multiplier (__tmp64) to __mul64_mpr
+	LD	HL,(__tmp64)
+	LD	(__mul64_mpr),HL
+	LD	HL,(__tmp64+2)
+	LD	(__mul64_mpr+2),HL
+	LD	HL,(__tmp64+4)
+	LD	(__mul64_mpr+4),HL
+	LD	HL,(__tmp64+6)
+	LD	(__mul64_mpr+6),HL
+	; Initialize result (__acc64) to 0
 	LD	HL,0
-	LD	(__fexp1),HL
+	LD	(__acc64),HL
+	LD	(__acc64+2),HL
+	LD	(__acc64+4),HL
+	LD	(__acc64+6),HL
+	; Loop through 64 bits
+	LD	B,64
+__mul64_loop:
+	; Shift multiplier right, get LSB
+	LD	HL,(__mul64_mpr+6)
+	SRL	H
+	RR	L
+	LD	(__mul64_mpr+6),HL
+	LD	HL,(__mul64_mpr+4)
+	RR	H
+	RR	L
+	LD	(__mul64_mpr+4),HL
+	LD	HL,(__mul64_mpr+2)
+	RR	H
+	RR	L
+	LD	(__mul64_mpr+2),HL
+	LD	HL,(__mul64_mpr)
+	RR	H
+	RR	L
+	LD	(__mul64_mpr),HL
+	JR	NC,__mul64_noadd
+	; Add multiplicand to result. NB: load through DE rather than BC —
+	; ``LD BC,(nn)`` would clobber B, which is our DJNZ loop counter.
+	; That was the long-standing miscompile in this routine: any
+	; iteration where the add path ran (multiplier bit set) overwrote
+	; B with a byte of the multiplicand, terminating the loop early
+	; once mcd's high byte happened to be 1.
+	LD	HL,(__acc64)
+	LD	DE,(__mul64_mcd)
+	ADD	HL,DE
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	DE,(__mul64_mcd+2)
+	ADC	HL,DE
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	DE,(__mul64_mcd+4)
+	ADC	HL,DE
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	DE,(__mul64_mcd+6)
+	ADC	HL,DE
+	LD	(__acc64+6),HL
+__mul64_noadd:
+	; Shift multiplicand left
+	LD	HL,(__mul64_mcd)
+	ADD	HL,HL
+	LD	(__mul64_mcd),HL
+	LD	HL,(__mul64_mcd+2)
+	ADC	HL,HL
+	LD	(__mul64_mcd+2),HL
+	LD	HL,(__mul64_mcd+4)
+	ADC	HL,HL
+	LD	(__mul64_mcd+4),HL
+	LD	HL,(__mul64_mcd+6)
+	ADC	HL,HL
+	LD	(__mul64_mcd+6),HL
+	DJNZ	__mul64_loop
+	POP	DE
+	POP	BC
 	RET
 
-__fnorm_done:
-	; Save normalized mantissa back to memory
-	LD	(__fman1),HL
-	LD	(__fman1+2),DE
-	RET
 
-; ============================================================
-; Float Negation: DEHL = -DEHL
-; ============================================================
-	PUBLIC	__fneg
-__fneg:
-	LD	A,D
-	XOR	80H
-	LD	D,A
-	RET
-
-	COMMON	/rt_float/
-	PUBLIC	__fop1,__fop2,__fsgn1,__fsgn2,__fexp1,__fexp2,__fman1,__fman2
-__fop1:
-	DS	4
-__fop2:
-	DS	4
-__fsgn1:
-	DS	1
-__fsgn2:
-	DS	1
-__fexp1:
-	DS	2
-__fexp2:
-	DS	2
-__fman1:
-	DS	4
-__fman2:
-	DS	4
-__fdiv_rem:
-	DS	4
-
-
-; Temporary storage for partial products in float multiplication
-__fmul_hh:
-	DS	4
-__fmul_hl:
-	DS	4
-__fmul_lh:
-	DS	4
-__fmul_ll:
-	DS	4
-
-; ============================================================
-; rt_mul.mac
-; ============================================================
 	CSEG
-; rt_mul.mac - 8x16 and 16x16 unsigned multiply cores
-; Used by rt_arith16 (__mul16), rt_arith32 (__mul32) and rt_float
-; (__fmul).  A module of its own, so a library link of one of
-; them does not bring in the others.
+; ============================================================
+; rt_mul8x16.mac
+; ============================================================
+; rt_mul8x16.mac - __mul8x16
+; Split from rt_mul.mac
 
 
 	CSEG
-
 ; ============================================================
 ; __mul8x16 - 8 x 16 -> 24-bit unsigned multiply: AHL = A * DE
 ; In:  A = multiplier, DE = multiplicand
@@ -4732,61 +4086,11 @@ __m816_0:
 	ADC	A,0
 	RET
 
-; ============================================================
-; __mul16_32 - 16 x 16 -> 32-bit unsigned multiply: DEHL = BC * DE
-; Preserves BC, IX, IY.  Clobbers A, flags.
-; One or two __mul8x16 passes: an operand whose high byte is 0 is
-; the multiplier of a single pass.
-; ============================================================
-	PUBLIC	__mul16_32
-__mul16_32:
-	LD	A,B
-	OR	A
-	JR	Z,__m1632_c	; BC < 256: one pass, multiplier C
-	LD	A,D
-	OR	A
-	JR	NZ,__m1632_2
-	LD	A,E		; DE < 256: one pass, multiplier E,
-	LD	D,B		; multiplicand BC
-	LD	E,C
-	JR	__m1632_1
-__m1632_c:
-	LD	A,C
-__m1632_1:
-	CALL	__mul8x16	; AHL = A * DE
-	LD	E,A
-	LD	D,0
-	RET
-__m1632_2:
-	PUSH	BC
-	LD	A,C
-	CALL	__mul8x16	; P0 = AHL = C * DE
-	PUSH	HL
-	LD	C,A		; C = P0 bits 16..23
-	LD	A,B
-	CALL	__mul8x16	; P1 = AHL = B * DE
-	POP	DE		; DE = P0 bits 0..15
-	LD	B,A		; B = P1 bits 16..23
-	LD	A,D		; result = P0 + (P1 << 8)
-	ADD	A,L
-	LD	D,A		; D = byte 1
-	LD	A,C
-	ADC	A,H
-	LD	C,A		; C = byte 2
-	LD	A,B
-	ADC	A,0		; A = byte 3
-	LD	L,E
-	LD	H,D
-	LD	E,C
-	LD	D,A
-	POP	BC
-	RET
 
-
+	CSEG
 ; ============================================================
 ; rt_neg32.mac
 ; ============================================================
-	CSEG
 ; rt_neg32.mac - 32-bit negate
 ; A module of its own: rt_float (linked from the library for printf)
 ; needs it, and it should not bring in the rest of rt_arith32.
@@ -4814,16 +4118,794 @@ __neg32:
 	RET
 
 
+	CSEG
+; ============================================================
+; rt_neg64.mac
+; ============================================================
+; rt_neg64.mac - __neg64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __neg64: 64-bit negation __acc64 = -__acc64
+; ============================================================
+	PUBLIC	__neg64
+__neg64:
+	PUSH	BC
+	; Negate = 0 - value
+	LD	HL,0
+	LD	BC,(__acc64)
+	OR	A
+	SBC	HL,BC
+	LD	(__acc64),HL
+	LD	HL,0
+	LD	BC,(__acc64+2)
+	SBC	HL,BC
+	LD	(__acc64+2),HL
+	LD	HL,0
+	LD	BC,(__acc64+4)
+	SBC	HL,BC
+	LD	(__acc64+4),HL
+	LD	HL,0
+	LD	BC,(__acc64+6)
+	SBC	HL,BC
+	LD	(__acc64+6),HL
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_not32.mac
+; ============================================================
+; rt_not32.mac - __not32
+; Split from rt_arith32.mac
+
+
+	CSEG
+; ============================================================
+; 32-bit bitwise NOT: DEHL = ~DEHL
+; ============================================================
+	PUBLIC	__not32
+__not32:
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	A,E
+	CPL
+	LD	E,A
+	LD	A,D
+	CPL
+	LD	D,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_not64.mac
+; ============================================================
+; rt_not64.mac - __not64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __not64: 64-bit bitwise NOT __acc64 = ~__acc64
+; ============================================================
+	PUBLIC	__not64
+__not64:
+	LD	HL,(__acc64)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	A,L
+	CPL
+	LD	L,A
+	LD	A,H
+	CPL
+	LD	H,A
+	LD	(__acc64+6),HL
+	RET
+
+; ============================================================
+; __mul64: 64-bit multiplication __acc64 = __acc64 * __tmp64
+; Uses shift-and-add algorithm (slow but correct)
+; ============================================================
+
+
+	CSEG
+; ============================================================
+; rt_or32.mac
+; ============================================================
+; rt_or32.mac - __or32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit bitwise OR: DEHL = DEHL | (__tmp32)
+; ============================================================
+	PUBLIC	__or32
+__or32:
+	LD	A,(__tmp32)
+	OR	L
+	LD	L,A
+	LD	A,(__tmp32+1)
+	OR	H
+	LD	H,A
+	LD	A,(__tmp32+2)
+	OR	E
+	LD	E,A
+	LD	A,(__tmp32+3)
+	OR	D
+	LD	D,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_or64.mac
+; ============================================================
+; rt_or64.mac - __or64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __or64: 64-bit bitwise OR __acc64 = __acc64 | __tmp64
+; ============================================================
+	PUBLIC	__or64
+__or64:
+	PUSH	BC
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	A,H
+	OR	B
+	LD	H,A
+	LD	(__acc64+6),HL
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_popcount16.mac
+; ============================================================
+; rt_popcount16.mac - __popcount16
+; Split from rt_arith16.mac
+
+
+	CSEG
+; ============================================================
+; __popcount16 — count set bits in HL.
+; ============================================================
+	PUBLIC	__popcount16
+__popcount16:
+	PUSH	BC
+	LD	B,0		; counter
+	LD	C,16		; bits remaining
+__popcount16_lp:
+	SRL	H
+	RR	L
+	JR	NC,__popcount16_skip
+	INC	B
+__popcount16_skip:
+	DEC	C
+	JR	NZ,__popcount16_lp
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_popcount32.mac
+; ============================================================
+; rt_popcount32.mac - __popcount32
+; Split from rt_arith32.mac
+
+
+	CSEG
+; ============================================================
+; __popcount32 — count set bits in 32-bit DEHL.
+; ============================================================
+	PUBLIC	__popcount32
+__popcount32:
+	PUSH	BC
+	LD	B,0
+	LD	C,32
+__popcount32_lp:
+	; Shift DEHL right by 1; check carry
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	JR	NC,__popcount32_skip
+	INC	B
+__popcount32_skip:
+	DEC	C
+	JR	NZ,__popcount32_lp
+	LD	L,B
+	LD	H,0
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_popcount64.mac
+; ============================================================
+; rt_popcount64.mac - __popcount64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+	PUBLIC	__popcount64
+__popcount64:
+	PUSH	BC
+	LD	BC,0		; counter
+	LD	A,64		; bits remaining (using A; saved counter in BC)
+	PUSH	AF
+__popcount64_lp:
+	; Shift __acc64 right by 1; CF = LSB before shift
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	JR	NC,__popcount64_skip
+	INC	BC
+__popcount64_skip:
+	POP	AF
+	DEC	A
+	PUSH	AF
+	JR	NZ,__popcount64_lp
+	POP	AF
+	LD	L,C
+	LD	H,B
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_push64_acc.mac
+; ============================================================
+; rt_push64_acc.mac - __push64_acc
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __push64_acc: Push __acc64 (8 bytes) onto caller's stack
+; Push order: w3 (highest) deepest, w0 (lowest) on top
+; ============================================================
+	PUBLIC	__push64_acc
+__push64_acc:
+	POP	BC			; save return address
+	LD	HL,(__acc64+6)
+	PUSH	HL			; w3 (highest, deepest on stack)
+	LD	HL,(__acc64+4)
+	PUSH	HL			; w2
+	LD	HL,(__acc64+2)
+	PUSH	HL			; w1
+	LD	HL,(__acc64)
+	PUSH	HL			; w0 (lowest, top of stack)
+	PUSH	BC			; return address
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_rem32.mac
+; ============================================================
+; rt_rem32.mac - __rem32
+; Split from rt_arith32.mac
+
+
+	COMMON	/rt_rem32/
+	PUBLIC	__div32_dvd
+__div32_dvd:
+	DS	4
+	PUBLIC	__rem32
+__rem32:
+	DS	4
+
+
+	CSEG
+; ============================================================
+; rt_rem64.mac
+; ============================================================
+; rt_rem64.mac - __rem64
+; Split from rt_arith64.mac
+
+
+	COMMON	/rt_rem64/
+	PUBLIC	__div64_dvd
+__div64_dvd:	DS	8	; dividend
+	PUBLIC	__rem64
+__rem64:	DS	8	; remainder
+
+
+	CSEG
+; ============================================================
+; rt_restore_tmp64.mac
+; ============================================================
+; rt_restore_tmp64.mac - __restore_tmp64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __restore_tmp64: Restore __tmp64 from stack
+; ============================================================
+	PUBLIC	__restore_tmp64
+__restore_tmp64:
+	POP	BC
+	POP	HL
+	LD	(__tmp64+6),HL
+	POP	HL
+	LD	(__tmp64+4),HL
+	POP	HL
+	LD	(__tmp64+2),HL
+	POP	HL
+	LD	(__tmp64),HL
+	PUSH	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_sar16.mac
+; ============================================================
+; rt_sar16.mac - __sar16
+; Split from rt_arith16.mac
+
+
+	CSEG
+; ============================================================
+; 16-bit arithmetic right shift: HL = DE >> L (signed)
+; ============================================================
+	PUBLIC	__sar16
+__sar16:
+	LD	A,L
+	EX	DE,HL
+	CP	8
+	JR	NC,__sar16_8
+	OR	A
+	RET	Z
+__sar16_lp:
+	SRA	H
+	RR	L
+	DEC	A
+	JR	NZ,__sar16_lp
+	RET
+__sar16_8:
+	CP	16
+	JR	NC,__sar16_f
+	SUB	8		; shift by 8 is a byte move and a
+	LD	L,H		; sign fill
+	LD	H,0
+	BIT	7,L
+	JR	Z,__sar16_p
+	DEC	H
+__sar16_p:
+	OR	A
+	RET	Z
+__sar16_b:
+	SRA	L
+	DEC	A
+	JR	NZ,__sar16_b
+	RET
+__sar16_f:
+	LD	A,H		; shift >= 16: 0 or -1 by the sign
+	RLA
+	SBC	A,A
+	LD	H,A
+	LD	L,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_sar32.mac
+; ============================================================
+; rt_sar32.mac - __sar32
+; Split from rt_arith32.mac
+
+
+	CSEG
+; ============================================================
+; 32-bit arithmetic right shift: DEHL = DEHL >> A (signed)
+; A >= 32 acts as 31: 0 or -1 by the sign.
+; ============================================================
+	PUBLIC	__sar32
+__sar32:
+	CP	5
+	JR	NC,__sar32_b
+__sar32_s:
+	OR	A
+	RET	Z
+__sar32_lp:
+	SRA	D
+	RR	E
+	RR	H
+	RR	L
+	DEC	A
+	JR	NZ,__sar32_lp
+	RET
+__sar32_b:
+	CP	32
+	JR	C,__sar32_0
+	LD	A,31
+__sar32_0:
+	CP	16
+	JR	C,__sar32_1
+	SUB	16		; shift by 16: word move, sign fill
+	EX	DE,HL
+	LD	DE,0
+	BIT	7,H
+	JR	Z,__sar32_1
+	DEC	DE
+__sar32_1:
+	CP	8
+	JR	C,__sar32_2
+	LD	L,H		; shift by 8: byte move, sign fill
+	LD	H,E
+	LD	E,D
+	LD	D,0
+	BIT	7,E
+	JR	Z,__sar32_1p
+	DEC	D
+__sar32_1p:
+	SUB	8
+__sar32_2:
+	CP	5
+	JR	C,__sar32_s
+	PUSH	BC		; 5..7: left by 8-n into a fifth byte
+	LD	B,A		; that starts as the sign fill
+	LD	A,8
+	SUB	B
+	LD	B,A
+	LD	A,D
+	RLA
+	SBC	A,A
+__sar32_ll:
+	ADD	HL,HL
+	RL	E
+	RL	D
+	RLA
+	DJNZ	__sar32_ll
+	LD	L,H
+	LD	H,E
+	LD	E,D
+	LD	D,A
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_sar64.mac
+; ============================================================
+; rt_sar64.mac - __sar64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __sar64: 64-bit arithmetic right shift __acc64 = __acc64 >> A (signed)
+; Input: A = shift count (0-63)
+; ============================================================
+	PUBLIC	__sar64
+__sar64:
+	AND	63
+	RET	Z
+	PUSH	BC
+	LD	B,A
+__sar64_loop:
+	; Arithmetic shift right by 1 (preserve sign)
+	LD	HL,(__acc64+6)
+	SRA	H			; Arithmetic shift preserves sign
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	DJNZ	__sar64_loop
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_save_tmp64.mac
+; ============================================================
+; rt_save_tmp64.mac - __save_tmp64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __save_tmp64: Save __tmp64 to stack (for complex binary ops)
+; ============================================================
+	PUBLIC	__save_tmp64
+__save_tmp64:
+	POP	BC
+	LD	HL,(__tmp64)
+	PUSH	HL
+	LD	HL,(__tmp64+2)
+	PUSH	HL
+	LD	HL,(__tmp64+4)
+	PUSH	HL
+	LD	HL,(__tmp64+6)
+	PUSH	HL
+	PUSH	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_sdiv16.mac
+; ============================================================
+; rt_sdiv16.mac - __sdiv16
+; Split from rt_arith16.mac
+
+
+
+	CSEG
+; ============================================================
+; 16-bit signed division: HL = DE / HL (signed)
+; Truncates toward zero.  Sets __divrem to |DE| % |HL|.
+; ============================================================
+	PUBLIC	__sdiv16
+__sdiv16:
+	LD	A,D
+	XOR	H
+	PUSH	AF		; S flag = sign of the quotient
+	BIT	7,D
+	JR	Z,__sdiv16_1
+	XOR	A		; DE = -DE
+	SUB	E
+	LD	E,A
+	SBC	A,A
+	SUB	D
+	LD	D,A
+__sdiv16_1:
+	BIT	7,H
+	JR	Z,__sdiv16_2
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__sdiv16_2:
+	CALL	__div16
+	POP	AF
+	RET	P
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_sdiv32.mac
+; ============================================================
+; rt_sdiv32.mac - __sdiv32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit signed division: DEHL = DEHL / (__tmp32) (signed)
+; Truncates toward zero.  Leaves |divisor| in __tmp32.
+; ============================================================
+	PUBLIC	__sdiv32
+__sdiv32:
+	LD	A,(__tmp32+3)
+	XOR	D
+	PUSH	AF		; S flag = sign of the quotient
+	BIT	7,D
+	CALL	NZ,__neg32
+	LD	A,(__tmp32+3)
+	OR	A
+	JP	P,__sdiv32_p
+	PUSH	HL		; __tmp32 = -__tmp32
+	LD	HL,__tmp32
+	XOR	A
+	SUB	(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	POP	HL
+__sdiv32_p:
+	CALL	__div32
+	POP	AF
+	RET	P
+	JP	__neg32
+
+
+	CSEG
+; ============================================================
+; rt_sdiv64.mac
+; ============================================================
+; rt_sdiv64.mac - __sdiv64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __sdiv64: 64-bit signed division __acc64 = __acc64 / __tmp64
+; ============================================================
+	PUBLIC	__sdiv64
+__sdiv64:
+	; Check signs: XOR high bytes to determine result sign
+	LD	A,(__acc64+7)
+	PUSH	AF		; Save acc sign
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	PUSH	AF		; Save result sign (bit 7)
+
+	; Make dividend positive if negative
+	POP	AF
+	PUSH	AF
+	LD	A,(__acc64+7)
+	BIT	7,A
+	JR	Z,__sdiv64_dvdpos
+	; Negate __acc64
+	CALL	__neg64
+__sdiv64_dvdpos:
+	; Make divisor positive if negative
+	LD	A,(__tmp64+7)
+	BIT	7,A
+	JR	Z,__sdiv64_dvspos
+	; Negate __tmp64
+	PUSH	HL
+	LD	HL,0
+	LD	BC,(__tmp64)
+	OR	A
+	SBC	HL,BC
+	LD	(__tmp64),HL
+	LD	HL,0
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__tmp64+2),HL
+	LD	HL,0
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__tmp64+4),HL
+	LD	HL,0
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__tmp64+6),HL
+	POP	HL
+__sdiv64_dvspos:
+	; Do unsigned division
+	CALL	__div64
+
+	; Negate result if signs were different
+	POP	AF		; result sign
+	BIT	7,A
+	JR	Z,__sdiv64_done
+	CALL	__neg64
+__sdiv64_done:
+	POP	AF		; discard saved acc sign
+	RET
+
+
+	CSEG
 ; ============================================================
 ; rt_setjmp.mac
 ; ============================================================
-	CSEG
-; rt_setjmp.mac - setjmp/longjmp
-; Split from runtime.mac
+; rt_setjmp.mac - _setjmp
+; Split from rt_setjmp.mac
 
 
 	CSEG
-
 ; ============================================================
 ; setjmp - Save calling environment
 ; int setjmp(jmp_buf env)
@@ -4879,71 +4961,595 @@ _setjmp:
 	POP	IX
 	RET
 
+
+	CSEG
 ; ============================================================
-; longjmp - Non-local goto
-; void longjmp(jmp_buf env, int val)
-; env at SP+4, val at SP+2 (after return address)
-; If val==0, returns 1, else returns val
+; rt_sext32.mac
 ; ============================================================
-	PUBLIC	_longjmp
-_longjmp:
-	; Get parameters - we'll discard our return address
-	; Stack at entry: [ret_addr, env, val, ...]
-	; (C calling convention: args pushed right-to-left)
-	POP	DE		; Discard longjmp's return address
-	POP	HL		; HL = env pointer
-	POP	BC		; BC = val
+; rt_sext32.mac - __sext32
+; Split from rt_arith32.mac
 
-	; If val == 0, set val = 1
-	LD	A,B
-	OR	C
-	JR	NZ,_longjmp_valok
-	LD	BC,1
-_longjmp_valok:
-	; BC = return value, HL = env
 
-	; Get return address from env[0..1] into DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	; DE = return address, HL = env+2
-
-	; Get saved SP from env[2..3]
-	LD	A,(HL)
-	INC	HL
-	PUSH	HL		; Save env+3
-	LD	H,(HL)
-	LD	L,A		; HL = saved SP
-	EX	(SP),HL		; Stack: [saved SP], HL = env+3
-	INC	HL		; HL = env+4
-
-	; Get saved IX from env[4..5]
-	LD	A,(HL)
-	INC	HL
-	LD	H,(HL)
-	LD	L,A		; HL = saved IX
-	PUSH	HL
-	POP	IX		; IX restored
-
-	; Now: DE = return addr, BC = return val, (SP) = saved SP
-	POP	HL		; HL = saved SP
-	LD	SP,HL		; Switch stack!
-
-	; Stack now points to original env location in caller's frame
-	; Push return address so RET will go there
-	PUSH	DE
-
-	; Return value in HL
-	LD	H,B
-	LD	L,C
+	CSEG
+; ============================================================
+; Sign-extend 16-bit HL to 32-bit DEHL
+; ============================================================
+	PUBLIC	__sext32
+__sext32:
+	LD	D,H
+	LD	A,D
+	RLA			; Get sign bit into carry
+	SBC	A,A		; A = 0xFF if negative, 0 if positive
+	LD	D,A
+	LD	E,A
 	RET
 
 
+	CSEG
+; ============================================================
+; rt_sext64.mac
+; ============================================================
+; rt_sext64.mac - __sext64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __sext64: Sign-extend 32-bit DEHL to 64-bit in __acc64
+; Input: DEHL = 32-bit value
+; Output: __acc64 = sign-extended 64-bit value
+; ============================================================
+	PUBLIC	__sext64
+__sext64:
+	LD	(__acc64),HL		; Store low word
+	LD	(__acc64+2),DE		; Store second word
+	; Sign extend from bit 31
+	BIT	7,D
+	JR	Z,__sext64_pos
+	LD	HL,0FFFFH		; Negative: extend with 1s
+	JR	__sext64_store
+__sext64_pos:
+	LD	HL,0			; Positive: extend with 0s
+__sext64_store:
+	LD	(__acc64+4),HL
+	LD	(__acc64+6),HL
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_sext64_hl.mac
+; ============================================================
+; rt_sext64_hl.mac - __sext64_hl
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __sext64_hl: Sign-extend 16-bit HL to 64-bit in __acc64
+; ============================================================
+	PUBLIC	__sext64_hl
+__sext64_hl:
+	CALL	__sext32		; HL -> DEHL
+	JP	__sext64		; DEHL -> __acc64 (tail call)
+
+
+	CSEG
+; ============================================================
+; rt_shl16.mac
+; ============================================================
+; rt_shl16.mac - __shl16
+; Split from rt_arith16.mac
+
+
+	CSEG
+; ============================================================
+; 16-bit left shift: HL = DE << L  (L >= 16 gives 0; H ignored)
+; ============================================================
+	PUBLIC	__shl16
+__shl16:
+	LD	A,L
+	EX	DE,HL
+	CP	8
+	JR	NC,__shl16_8
+__shl16_s:
+	OR	A
+	RET	Z
+__shl16_lp:
+	ADD	HL,HL
+	DEC	A
+	JR	NZ,__shl16_lp
+	RET
+__shl16_8:
+	CP	16
+	JR	NC,__shl16_z
+	LD	H,L		; shift by 8 is a byte move
+	LD	L,0
+	SUB	8
+	JR	__shl16_s
+__shl16_z:
+	LD	HL,0
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_shl32.mac
+; ============================================================
+; rt_shl32.mac - __shl32
+; Split from rt_arith32.mac
+
+
+	CSEG
+; ============================================================
+; 32-bit left shift: DEHL = DEHL << A  (A >= 32 gives 0)
+; Counts below 5 shift bit by bit.  Larger counts move whole bytes
+; first; 5..7 leftover bits go the other way: right by 8-n into a
+; fifth byte, then a byte move.
+; ============================================================
+	PUBLIC	__shl32
+__shl32:
+	CP	5
+	JR	NC,__shl32_b
+__shl32_s:
+	OR	A
+	RET	Z
+__shl32_lp:
+	ADD	HL,HL
+	RL	E
+	RL	D
+	DEC	A
+	JR	NZ,__shl32_lp
+	RET
+__shl32_b:
+	CP	32
+	JR	NC,__shl32_z
+	CP	16
+	JR	C,__shl32_1
+	EX	DE,HL		; shift by 16: word move
+	LD	HL,0
+	SUB	16
+__shl32_1:
+	CP	8
+	JR	C,__shl32_2
+	LD	D,E		; shift by 8: byte move
+	LD	E,H
+	LD	H,L
+	LD	L,0
+	SUB	8
+__shl32_2:
+	CP	5
+	JR	C,__shl32_s
+	PUSH	BC
+	LD	B,A
+	LD	A,8
+	SUB	B
+	LD	B,A
+	XOR	A
+__shl32_rl:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	RRA
+	DJNZ	__shl32_rl
+	LD	D,E
+	LD	E,H
+	LD	H,L
+	LD	L,A
+	POP	BC
+	RET
+__shl32_z:
+	LD	HL,0
+	LD	D,H
+	LD	E,L
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_shl64.mac
+; ============================================================
+; rt_shl64.mac - __shl64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __shl64: 64-bit left shift __acc64 = __acc64 << A
+; Input: A = shift count (0-63)
+; ============================================================
+	PUBLIC	__shl64
+__shl64:
+	AND	63			; Limit to 0-63
+	RET	Z			; No shift needed
+	PUSH	BC
+	LD	B,A			; B = shift count
+__shl64_loop:
+	; Shift left by 1: shift each word and propagate carry
+	LD	HL,(__acc64)
+	ADD	HL,HL			; Shift word 0, carry out
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	ADC	HL,HL			; Shift word 1 with carry in
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	ADC	HL,HL			; Shift word 2 with carry in
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	ADC	HL,HL			; Shift word 3 with carry in
+	LD	(__acc64+6),HL
+	DJNZ	__shl64_loop
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_shr16.mac
+; ============================================================
+; rt_shr16.mac - __shr16
+; Split from rt_arith16.mac
+
+
+	CSEG
+; ============================================================
+; 16-bit logical right shift: HL = DE >> L (unsigned)
+; ============================================================
+	PUBLIC	__shr16
+__shr16:
+	LD	A,L
+	EX	DE,HL
+	CP	8
+	JR	NC,__shr16_8
+	OR	A
+	RET	Z
+__shr16_lp:
+	SRL	H
+	RR	L
+	DEC	A
+	JR	NZ,__shr16_lp
+	RET
+__shr16_8:
+	CP	16
+	JR	NC,__shr16_z
+	LD	L,H		; shift by 8 is a byte move
+	LD	H,0
+	SUB	8
+	RET	Z
+__shr16_b:
+	SRL	L
+	DEC	A
+	JR	NZ,__shr16_b
+	RET
+__shr16_z:
+	LD	HL,0
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_shr32.mac
+; ============================================================
+; rt_shr32.mac - __shr32
+; Split from rt_arith32.mac
+
+
+	CSEG
+; ============================================================
+; 32-bit logical right shift: DEHL = DEHL >> A (unsigned)
+; ============================================================
+	PUBLIC	__shr32
+__shr32:
+	CP	5
+	JR	NC,__shr32_b
+__shr32_s:
+	OR	A
+	RET	Z
+__shr32_lp:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	DEC	A
+	JR	NZ,__shr32_lp
+	RET
+__shr32_b:
+	CP	32
+	JR	NC,__shr32_z
+	CP	16
+	JR	C,__shr32_1
+	EX	DE,HL		; shift by 16: word move
+	LD	DE,0
+	SUB	16
+__shr32_1:
+	CP	8
+	JR	C,__shr32_2
+	LD	L,H		; shift by 8: byte move
+	LD	H,E
+	LD	E,D
+	LD	D,0
+	SUB	8
+__shr32_2:
+	CP	5
+	JR	C,__shr32_s
+	PUSH	BC		; 5..7: left by 8-n into a fifth byte
+	LD	B,A
+	LD	A,8
+	SUB	B
+	LD	B,A
+	XOR	A
+__shr32_ll:
+	ADD	HL,HL
+	RL	E
+	RL	D
+	RLA
+	DJNZ	__shr32_ll
+	LD	L,H
+	LD	H,E
+	LD	E,D
+	LD	D,A
+	POP	BC
+	RET
+__shr32_z:
+	LD	HL,0
+	LD	D,H
+	LD	E,L
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_shr64.mac
+; ============================================================
+; rt_shr64.mac - __shr64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __shr64: 64-bit logical right shift __acc64 = __acc64 >> A
+; Input: A = shift count (0-63)
+; ============================================================
+	PUBLIC	__shr64
+__shr64:
+	AND	63
+	RET	Z
+	PUSH	BC
+	LD	B,A
+__shr64_loop:
+	; Shift right by 1 from MSB
+	LD	HL,(__acc64+6)
+	SRL	H
+	RR	L
+	LD	(__acc64+6),HL
+	LD	HL,(__acc64+4)
+	RR	H
+	RR	L
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+2)
+	RR	H
+	RR	L
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64)
+	RR	H
+	RR	L
+	LD	(__acc64),HL
+	DJNZ	__shr64_loop
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_smod16.mac
+; ============================================================
+; rt_smod16.mac - __smod16
+; Split from rt_arith16.mac
+
+
+
+	CSEG
+; ============================================================
+; 16-bit signed modulo: HL = DE % HL (signed)
+; Result has same sign as dividend (DE)
+; ============================================================
+	PUBLIC	__smod16
+__smod16:
+	LD	A,D
+	OR	A
+	PUSH	AF		; S flag = sign of the dividend
+	JP	P,__smod16_1
+	XOR	A		; DE = -DE
+	SUB	E
+	LD	E,A
+	SBC	A,A
+	SUB	D
+	LD	D,A
+__smod16_1:
+	BIT	7,H
+	JR	Z,__smod16_2
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__smod16_2:
+	CALL	__div16
+	EX	DE,HL		; HL = remainder
+	POP	AF
+	RET	P
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_smod32.mac
+; ============================================================
+; rt_smod32.mac - __smod32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit signed modulo: DEHL = DEHL % (__tmp32) (signed)
+; Result has same sign as dividend.  Leaves |divisor| in __tmp32.
+; ============================================================
+	PUBLIC	__smod32
+__smod32:
+	LD	A,D
+	OR	A
+	PUSH	AF		; S flag = sign of the dividend
+	CALL	M,__neg32
+	LD	A,(__tmp32+3)
+	OR	A
+	JP	P,__smod32_p
+	PUSH	HL		; __tmp32 = -__tmp32
+	LD	HL,__tmp32
+	XOR	A
+	SUB	(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	INC	HL
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	POP	HL
+__smod32_p:
+	CALL	__div32
+	LD	HL,(__rem32)
+	LD	DE,(__rem32+2)
+	POP	AF
+	RET	P
+	JP	__neg32
+
+
+	CSEG
+; ============================================================
+; rt_smod64.mac
+; ============================================================
+; rt_smod64.mac - __smod64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __smod64: 64-bit signed modulo __acc64 = __acc64 % __tmp64
+; Remainder has same sign as dividend
+; ============================================================
+	PUBLIC	__smod64
+__smod64:
+	; Save dividend sign
+	LD	A,(__acc64+7)
+	PUSH	AF
+
+	; Check signs
+	LD	B,A
+	LD	A,(__tmp64+7)
+	XOR	B
+	PUSH	AF
+
+	; Make dividend positive
+	LD	A,(__acc64+7)
+	BIT	7,A
+	JR	Z,__smod64_dvdpos
+	CALL	__neg64
+__smod64_dvdpos:
+	; Make divisor positive
+	LD	A,(__tmp64+7)
+	BIT	7,A
+	JR	Z,__smod64_dvspos
+	PUSH	HL
+	LD	HL,0
+	LD	BC,(__tmp64)
+	OR	A
+	SBC	HL,BC
+	LD	(__tmp64),HL
+	LD	HL,0
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__tmp64+2),HL
+	LD	HL,0
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__tmp64+4),HL
+	LD	HL,0
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__tmp64+6),HL
+	POP	HL
+__smod64_dvspos:
+	; Do unsigned division (remainder in __rem64)
+	CALL	__div64
+
+	; Load remainder into __acc64
+	LD	HL,(__rem64)
+	LD	(__acc64),HL
+	LD	HL,(__rem64+2)
+	LD	(__acc64+2),HL
+	LD	HL,(__rem64+4)
+	LD	(__acc64+4),HL
+	LD	HL,(__rem64+6)
+	LD	(__acc64+6),HL
+
+	; Negate remainder if dividend was negative
+	POP	AF		; discard result sign
+	POP	AF		; dividend sign
+	BIT	7,A
+	RET	Z
+	JP	__neg64		; tail call
+
+
+	CSEG
+; ============================================================
+; rt_smul32.mac
+; ============================================================
+; rt_smul32.mac - __smul32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit signed multiplication: DEHL = DEHL * (__tmp32)
+; The low 32 bits of a product do not depend on the signs, so this
+; is __mul32.  Not a bare "JP __mul32": the peephole pass runs on
+; the code between inline-asm regions one piece at a time, and a
+; label whose only code is a jump, with no reference in the same
+; piece, is removed as a jump to a jump.
+; ============================================================
+	PUBLIC	__smul32
+__smul32:
+	PUSH	BC
+	CALL	__mul32
+	POP	BC
+	RET
+
+
+	CSEG
 ; ============================================================
 ; rt_sret.mac
 ; ============================================================
-	CSEG
 ; rt_sret.mac - struct return buffer
 ; Split out of rt_arith32.mac: __sret_buf is where a function returning a
 ; struct by value leaves its result, so every translation unit that returns
@@ -4958,10 +5564,121 @@ _longjmp_valok:
 	PUBLIC	__sret_buf
 __sret_buf:	DS	256		; Struct return buffer
 
+	CSEG
+; ============================================================
+; rt_store64.mac
+; ============================================================
+; rt_store64.mac - __store64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __store64: Store __acc64 to address
+; Input: HL = destination address
+; Output: __acc64 stored at address
+; ============================================================
+	PUBLIC	__store64
+__store64:
+	PUSH	DE
+	LD	DE,(__acc64)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	DE,(__acc64+2)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	DE,(__acc64+4)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	LD	DE,(__acc64+6)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	POP	DE
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_sub32.mac
+; ============================================================
+; rt_sub32.mac - __sub32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit subtraction: DEHL = DEHL - (__tmp32)
+; ============================================================
+	PUBLIC	__sub32
+__sub32:
+	PUSH	BC
+	LD	BC,(__tmp32)
+	OR	A		; Clear carry
+	SBC	HL,BC		; HL = left.low - right.low
+	EX	DE,HL
+	LD	BC,(__tmp32+2)
+	SBC	HL,BC		; HL = left.high - right.high - borrow
+	EX	DE,HL
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_sub64.mac
+; ============================================================
+; rt_sub64.mac - __sub64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __sub64: 64-bit subtraction __acc64 = __acc64 - __tmp64
+; ============================================================
+	PUBLIC	__sub64
+__sub64:
+	PUSH	BC
+	PUSH	DE
+	; Subtract word 0
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	OR	A			; Clear carry
+	SBC	HL,BC
+	LD	(__acc64),HL
+	; Subtract word 1 with borrow
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	LD	(__acc64+2),HL
+	; Subtract word 2 with borrow
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	LD	(__acc64+4),HL
+	; Subtract word 3 with borrow
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	SBC	HL,BC
+	LD	(__acc64+6),HL
+	POP	DE
+	POP	BC
+	RET
+
+
+	CSEG
 ; ============================================================
 ; rt_tmp32.mac
 ; ============================================================
-	CSEG
 ; rt_tmp32.mac - __tmp32, the right operand of the 32-bit helpers
 ; A data module of its own: many libc modules use __tmp32, and
 ; linking one of them should not bring in rt_arith32.
@@ -4971,6 +5688,281 @@ __sret_buf:	DS	256		; Struct return buffer
 	PUBLIC	__tmp32
 __tmp32:
 	DS	4
+
+
+	CSEG
+; ============================================================
+; rt_ucmp64.mac
+; ============================================================
+; rt_ucmp64.mac - __ucmp64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __ucmp64: Compare __acc64 with __tmp64 (unsigned)
+; Returns: HL = -1 if <, 0 if ==, 1 if >
+; ============================================================
+	PUBLIC	__ucmp64
+__ucmp64:
+	PUSH	BC
+	; Compare from MSB to LSB
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	OR	A
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	SBC	HL,BC
+	JR	NZ,__ucmp64_neq
+	; Equal
+	LD	HL,0
+	POP	BC
+	RET
+__ucmp64_neq:
+	JR	C,__ucmp64_lt
+	LD	HL,1
+	POP	BC
+	RET
+__ucmp64_lt:
+	LD	HL,-1
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_uitof.mac
+; ============================================================
+; rt_uitof.mac - __uitof
+; Split from rt_float.mac
+
+
+
+	CSEG
+; ============================================================
+; Unsigned Integer to Float: DEHL = float(DEHL) (unsigned 32-bit)
+; ============================================================
+	PUBLIC	__uitof
+__uitof:
+	PUSH	BC
+
+	; Check for zero
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	JR	NZ,__uitof_nz
+	LD	DE,0
+	LD	HL,0
+	JR	__uitof_done
+
+__uitof_nz:
+	; Sign is always positive
+	XOR	A
+	LD	(__fsgn1),A
+
+	; Initial exponent = 127 + 23 (normalizing to bit 23)
+	PUSH	HL
+	LD	HL,127+23
+	LD	(__fexp1),HL
+	POP	HL
+
+	; If high byte D has bits set, shift right to bring mantissa
+	; into 24-bit range (bits 0-23) before __fnorm
+__uitof_rshift:
+	LD	A,D
+	OR	A
+	JR	Z,__uitof_store
+	; Shift DEHL right by 1
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	; Increment exponent
+	PUSH	HL
+	LD	HL,(__fexp1)
+	INC	HL
+	LD	(__fexp1),HL
+	POP	HL
+	JR	__uitof_rshift
+
+__uitof_store:
+	; Store mantissa
+	LD	(__fman1),HL
+	LD	(__fman1+2),DE
+
+	; Normalize
+	CALL	__fnorm
+
+	; Pack
+	LD	HL,(__fman1)
+	LD	DE,(__fman1+2)
+	LD	BC,(__fexp1)
+	LD	A,(__fsgn1)
+	CALL	__fpack
+
+__uitof_done:
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_xor32.mac
+; ============================================================
+; rt_xor32.mac - __xor32
+; Split from rt_arith32.mac
+
+
+
+	CSEG
+; ============================================================
+; 32-bit bitwise XOR: DEHL = DEHL ^ (__tmp32)
+; ============================================================
+	PUBLIC	__xor32
+__xor32:
+	LD	A,(__tmp32)
+	XOR	L
+	LD	L,A
+	LD	A,(__tmp32+1)
+	XOR	H
+	LD	H,A
+	LD	A,(__tmp32+2)
+	XOR	E
+	LD	E,A
+	LD	A,(__tmp32+3)
+	XOR	D
+	LD	D,A
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_xor64.mac
+; ============================================================
+; rt_xor64.mac - __xor64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __xor64: 64-bit bitwise XOR __acc64 = __acc64 ^ __tmp64
+; ============================================================
+	PUBLIC	__xor64
+__xor64:
+	PUSH	BC
+	LD	HL,(__acc64)
+	LD	BC,(__tmp64)
+	LD	A,L
+	XOR	C
+	LD	L,A
+	LD	A,H
+	XOR	B
+	LD	H,A
+	LD	(__acc64),HL
+	LD	HL,(__acc64+2)
+	LD	BC,(__tmp64+2)
+	LD	A,L
+	XOR	C
+	LD	L,A
+	LD	A,H
+	XOR	B
+	LD	H,A
+	LD	(__acc64+2),HL
+	LD	HL,(__acc64+4)
+	LD	BC,(__tmp64+4)
+	LD	A,L
+	XOR	C
+	LD	L,A
+	LD	A,H
+	XOR	B
+	LD	H,A
+	LD	(__acc64+4),HL
+	LD	HL,(__acc64+6)
+	LD	BC,(__tmp64+6)
+	LD	A,L
+	XOR	C
+	LD	L,A
+	LD	A,H
+	XOR	B
+	LD	H,A
+	LD	(__acc64+6),HL
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_zext32.mac
+; ============================================================
+; rt_zext32.mac - __zext32
+; Split from rt_arith32.mac
+
+
+	CSEG
+; ============================================================
+; Zero-extend 16-bit HL to 32-bit DEHL
+; ============================================================
+	PUBLIC	__zext32
+__zext32:
+	LD	DE,0
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_zext64.mac
+; ============================================================
+; rt_zext64.mac - __zext64
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __zext64: Zero-extend 32-bit DEHL to 64-bit in __acc64
+; Input: DEHL = 32-bit value
+; Output: __acc64 = zero-extended 64-bit value
+; ============================================================
+	PUBLIC	__zext64
+__zext64:
+	LD	(__acc64),HL		; Store low word
+	LD	(__acc64+2),DE		; Store second word
+	LD	HL,0
+	LD	(__acc64+4),HL		; Upper 32 bits = 0
+	LD	(__acc64+6),HL
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_zext64_hl.mac
+; ============================================================
+; rt_zext64_hl.mac - __zext64_hl
+; Split from rt_arith64.mac
+
+
+
+	CSEG
+; ============================================================
+; __zext64_hl: Zero-extend 16-bit HL to 64-bit in __acc64
+; ============================================================
+	PUBLIC	__zext64_hl
+__zext64_hl:
+	LD	DE,0
+	JP	__zext64		; tail call
 
 
 	END

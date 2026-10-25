@@ -11,10 +11,10 @@ PRTSTR	EQU	9		; Print string (address in DE, '$' terminated)
 
 	CSEG
 
+	CSEG
 ; ============================================================
 ; lc_abort.mac
 ; ============================================================
-	CSEG
 ; lc_abort.mac - split from lc_stdlib.mac
 
 
@@ -41,10 +41,10 @@ _abort:
 _abort_msg:	DB	'Aborted',0DH,0AH,'$'
 
 
+	CSEG
 ; ============================================================
 ; lc_abs.mac
 ; ============================================================
-	CSEG
 ; lc_abs.mac - split from lc_stdlib.mac
 
 
@@ -73,10 +73,10 @@ _abs_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_acos.mac
 ; ============================================================
-	CSEG
 ; lc_acos.mac - acos, acosf (depends on asin)
 
 
@@ -116,10 +116,10 @@ _acosf:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_acosh.mac
 ; ============================================================
-	CSEG
 ; lc_acosh.mac - acosh, acoshf
 ; acosh(x) = log(x + sqrt(x^2 - 1)), x >= 1
 
@@ -197,10 +197,10 @@ _acosh_x:	DS	4
 _acosh_t:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_asin.mac
 ; ============================================================
-	CSEG
 ; lc_asin.mac - asin, asinf (depends on sqrt, atan)
 
 
@@ -267,10 +267,10 @@ _asinf:
 _asin_x:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_asinh.mac
 ; ============================================================
-	CSEG
 ; lc_asinh.mac - asinh, asinhf
 ; asinh(x) = log(x + sqrt(x^2 + 1))
 
@@ -342,10 +342,10 @@ _asinhf:
 _asinh_x:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_assert.mac
 ; ============================================================
-	CSEG
 ; lc_assert.mac - assert support
 
 
@@ -458,10 +458,10 @@ _assert_div_dn:
 _assert_msg:	DB	'Assert: ',0
 
 
+	CSEG
 ; ============================================================
 ; lc_atan.mac
 ; ============================================================
-	CSEG
 ; lc_atan.mac - atan, atanf
 ; Range reduction: |x|>=2 -> pi/2-atan(1/x), 0.5<=|x|<2 -> pi/4+atan((x-1)/(x+1))
 
@@ -691,10 +691,10 @@ _atan_inv:	DS	1
 _atan_off:	DS	1
 
 
+	CSEG
 ; ============================================================
 ; lc_atan2.mac
 ; ============================================================
-	CSEG
 ; lc_atan2.mac - atan2, atan2f (depends on atan)
 
 
@@ -750,10 +750,10 @@ _atan2_x:	DS	4
 _atan2_y:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_atanh.mac
 ; ============================================================
-	CSEG
 ; lc_atanh.mac - atanh, atanhf
 ; atanh(x) = 0.5 * log((1+x) / (1-x)), |x| < 1
 
@@ -834,10 +834,10 @@ _atanh_x:	DS	4
 _atanh_num:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_atexit.mac
 ; ============================================================
-	CSEG
 ; lc_atexit.mac - split from lc_stdlib.mac
 
 
@@ -890,50 +890,16 @@ _atexit_fail:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_atof.mac
 ; ============================================================
-	CSEG
-; lc_atof.mac - string to float conversion
+; lc_atof.mac - _atof
+; Split from lc_atof.mac
 
 
-
-; DEHL = DEHL * 10 + C (C = 0..9).  Clobbers A, BC; uses _strtod_tmp.
-_strtod_x10a:
-	LD	A,C
-	LD	(_strtod_tmp),HL
-	LD	(_strtod_tmp+2),DE
-	ADD	HL,HL		; * 2
-	RL	E
-	RL	D
-	ADD	HL,HL		; * 4
-	RL	E
-	RL	D
-	LD	BC,(_strtod_tmp)
-	ADD	HL,BC		; * 5, low word
-	EX	DE,HL
-	LD	BC,(_strtod_tmp+2)
-	ADC	HL,BC		; * 5, high word
-	EX	DE,HL
-	ADD	HL,HL		; * 10
-	RL	E
-	RL	D
-	LD	C,A
-	LD	B,0
-	ADD	HL,BC		; + digit
-	RET	NC
-	INC	DE
-	RET
-
-	EXTRN	__ltof
-	EXTRN	__fadd
-	EXTRN	__fsub
-	EXTRN	__fmul
-	EXTRN	__fdiv
-	EXTRN	__tmp32
 
 	CSEG
-
 ; ============================================================
 ; double atof(const char *nptr)
 ; Convert string to double (IEEE 754 single precision)
@@ -959,405 +925,11 @@ _atof:
 	POP	IX
 	RET
 
-; ============================================================
-; double strtod(const char *nptr, char **endptr)
-; Convert string to double (IEEE 754 single precision)
-; Format: [ws][sign][digits][.digits][e[sign]digits]
-; Returns result in DEHL
-; ============================================================
-	PUBLIC	_strtod
-	PUBLIC	_strtof		; Same as strtod for our implementation
-	PUBLIC	_strtold	; Same as strtod for our implementation
-_strtof:
-_strtold:
-_strtod:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
 
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = nptr
-	XOR	A
-	LD	(_strtod_neg),A	; Clear negative flag
-	LD	(_strtod_expneg),A	; Clear exponent negative
-	LD	A,1
-	LD	(_strtod_expadj),A	; Exponent adjustment (1.0 default)
-	LD	(_strtod_expadj+1),A
-	; Clear the exponent and the fraction state of an earlier call
-	LD	(_strtod_divisor),A	; divisor = 1
-	XOR	A
-	LD	(_strtod_exp),A
-	LD	(_strtod_exp+1),A
-	LD	(_strtod_divisor+1),A
-	LD	(_strtod_divisor+2),A
-	LD	(_strtod_divisor+3),A
-
-	; Initialize result to 0.0
-	XOR	A
-	LD	(_strtod_result),A
-	LD	(_strtod_result+1),A
-	LD	(_strtod_result+2),A
-	LD	(_strtod_result+3),A
-
-	; Skip leading whitespace
-_strtod_skip:
-	LD	A,(HL)
-	CP	' '
-	JR	Z,_strtod_skipnext
-	CP	09H
-	JR	Z,_strtod_skipnext
-	CP	0AH
-	JR	Z,_strtod_skipnext
-	CP	0DH
-	JR	Z,_strtod_skipnext
-	JR	_strtod_sign
-_strtod_skipnext:
-	INC	HL
-	JR	_strtod_skip
-
-_strtod_sign:
-	PUSH	HL		; Save start position for endptr
-	LD	A,(HL)
-	CP	'-'
-	JR	NZ,_strtod_chkplus
-	LD	A,1
-	LD	(_strtod_neg),A
-	INC	HL
-	JR	_strtod_intpart
-_strtod_chkplus:
-	CP	'+'
-	JR	NZ,_strtod_intpart
-	INC	HL
-
-_strtod_intpart:
-	; Parse integer part: accumulate digits
-	; Use 32-bit integer accumulator first
-	XOR	A
-	LD	(_strtod_intacc),A
-	LD	(_strtod_intacc+1),A
-	LD	(_strtod_intacc+2),A
-	LD	(_strtod_intacc+3),A
-	LD	(_strtod_gotdigit),A	; No digits yet
-
-_strtod_intloop:
-	LD	A,(HL)
-	CP	'0'
-	JR	C,_strtod_intdone
-	CP	'9'+1
-	JR	NC,_strtod_intdone
-	; Got a digit
-	LD	B,1
-	LD	(_strtod_gotdigit),A
-	SUB	'0'
-	LD	C,A		; C = digit value
-
-	; accumulator = accumulator * 10 + digit
-	PUSH	HL
-	LD	HL,(_strtod_intacc)
-	LD	DE,(_strtod_intacc+2)
-	CALL	_strtod_x10a
-	LD	(_strtod_intacc),HL
-	LD	(_strtod_intacc+2),DE
-	POP	HL
-	INC	HL
-	JR	_strtod_intloop
-
-_strtod_intdone:
-	; Check for decimal point
-	LD	A,(HL)
-	CP	'.'
-	JR	NZ,_strtod_chkexp
-
-	INC	HL		; Skip decimal point
-	; Parse fractional part
-	LD	DE,1		; Divisor starts at 1
-	LD	(_strtod_divisor),DE
-	LD	DE,0
-	LD	(_strtod_divisor+2),DE
-	XOR	A
-	LD	(_strtod_fracacc),A
-	LD	(_strtod_fracacc+1),A
-	LD	(_strtod_fracacc+2),A
-	LD	(_strtod_fracacc+3),A
-
-_strtod_fracloop:
-	LD	A,(HL)
-	CP	'0'
-	JR	C,_strtod_fracdone
-	CP	'9'+1
-	JR	NC,_strtod_fracdone
-	; Got a fractional digit
-	LD	B,1
-	LD	(_strtod_gotdigit),A
-	SUB	'0'
-	LD	C,A
-
-	; Digits past 1E8 of divisor do not fit a float: skip them
-	PUSH	HL
-	LD	HL,(_strtod_divisor+2)
-	LD	DE,05F5H
-	OR	A
-	SBC	HL,DE
-	JR	NC,_strtod_fracskip
-	PUSH	BC
-	LD	HL,(_strtod_divisor)
-	LD	DE,(_strtod_divisor+2)
-	LD	C,0
-	CALL	_strtod_x10a
-	LD	(_strtod_divisor),HL
-	LD	(_strtod_divisor+2),DE
-	LD	HL,(_strtod_fracacc)
-	LD	DE,(_strtod_fracacc+2)
-	POP	BC
-	CALL	_strtod_x10a
-	LD	(_strtod_fracacc),HL
-	LD	(_strtod_fracacc+2),DE
-_strtod_fracskip:
-	POP	HL
-	INC	HL
-	JR	_strtod_fracloop
-
-_strtod_fracdone:
-
-_strtod_chkexp:
-	; Check for exponent
-	LD	A,(HL)
-	CP	'e'
-	JR	Z,_strtod_parseexp
-	CP	'E'
-	JR	Z,_strtod_parseexp
-	JR	_strtod_convert
-
-_strtod_parseexp:
-	INC	HL		; Skip 'e'
-	XOR	A
-	LD	(_strtod_expneg),A
-	LD	(_strtod_exp),A
-	LD	(_strtod_exp+1),A
-
-	LD	A,(HL)
-	CP	'-'
-	JR	NZ,_strtod_expplus
-	LD	A,1
-	LD	(_strtod_expneg),A
-	INC	HL
-	JR	_strtod_expdigits
-_strtod_expplus:
-	CP	'+'
-	JR	NZ,_strtod_expdigits
-	INC	HL
-
-_strtod_expdigits:
-	LD	A,(HL)
-	CP	'0'
-	JR	C,_strtod_convert
-	CP	'9'+1
-	JR	NC,_strtod_convert
-	SUB	'0'
-	LD	C,A
-	; exp = exp * 10 + digit
-	PUSH	HL
-	LD	HL,(_strtod_exp)
-	LD	D,H
-	LD	E,L
-	ADD	HL,HL		; *2
-	ADD	HL,HL		; *4
-	ADD	HL,DE		; *5
-	ADD	HL,HL		; *10
-	LD	D,0
-	LD	E,C
-	ADD	HL,DE
-	LD	(_strtod_exp),HL
-	POP	HL
-	INC	HL
-	JR	_strtod_expdigits
-
-_strtod_convert:
-	; Save end position
-	EX	(SP),HL		; HL = start, (SP) = end
-
-	; Check if we got any digits
-	LD	A,(_strtod_gotdigit)
-	OR	A
-	JR	NZ,_strtod_hasdigits
-	; No digits - return 0.0 with endptr = nptr
-	POP	DE		; Discard end
-	PUSH	HL		; start (nptr) is the end pointer
-	JR	_strtod_storendptr
-
-_strtod_hasdigits:
-	POP	HL		; HL = end position
-	PUSH	HL		; Save it back
-
-	; Convert integer part to float
-	PUSH	HL
-	LD	HL,(_strtod_intacc)
-	LD	DE,(_strtod_intacc+2)
-	CALL	__ltof		; Convert long to float
-	LD	(_strtod_result),HL
-	LD	(_strtod_result+2),DE
-	POP	HL
-
-	; Add fractional part if any
-	LD	A,(_strtod_divisor)
-	DEC	A
-	OR	A
-	JR	NZ,_strtod_addfrac
-	LD	A,(_strtod_divisor+1)
-	OR	A
-	JR	NZ,_strtod_addfrac
-	LD	A,(_strtod_divisor+2)
-	OR	A
-	JR	NZ,_strtod_addfrac
-	LD	A,(_strtod_divisor+3)
-	OR	A
-	JR	Z,_strtod_applyexp
-
-_strtod_addfrac:
-	; Convert fracacc to float
-	PUSH	HL
-	LD	HL,(_strtod_fracacc)
-	LD	DE,(_strtod_fracacc+2)
-	CALL	__ltof
-	; Divide by divisor
-	LD	(_strtod_tmp),HL
-	LD	(_strtod_tmp+2),DE
-	LD	HL,(_strtod_divisor)
-	LD	DE,(_strtod_divisor+2)
-	CALL	__ltof
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(_strtod_tmp)
-	LD	DE,(_strtod_tmp+2)
-	CALL	__fdiv
-	; Add to result
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(_strtod_result)
-	LD	DE,(_strtod_result+2)
-	CALL	__fadd
-	LD	(_strtod_result),HL
-	LD	(_strtod_result+2),DE
-	POP	HL
-
-_strtod_applyexp:
-	; Apply exponent if any
-	LD	DE,(_strtod_exp)
-	LD	A,D
-	OR	E
-	JR	Z,_strtod_applysign
-
-	; Build 10^exp
-	PUSH	HL
-	LD	HL,(_strtod_result)
-	LD	DE,(_strtod_result+2)
-	LD	BC,(_strtod_exp)
-
-_strtod_exploop:
-	LD	A,B
-	OR	C
-	JR	Z,_strtod_expdone
-	; Multiply or divide by 10
-	LD	A,(_strtod_expneg)
-	OR	A
-	JR	NZ,_strtod_expdiv
-
-	; Multiply by 10
-	PUSH	BC
-	LD	BC,00000000H	; 10.0 in IEEE 754 is 41200000H
-	LD	(__tmp32),BC
-	LD	BC,04120H
-	LD	(__tmp32+2),BC
-	CALL	__fmul
-	POP	BC
-	DEC	BC
-	JR	_strtod_exploop
-
-_strtod_expdiv:
-	; Divide by 10
-	PUSH	BC
-	LD	BC,00000000H	; 10.0 in IEEE 754 is 41200000H
-	LD	(__tmp32),BC
-	LD	BC,04120H
-	LD	(__tmp32+2),BC
-	CALL	__fdiv
-	POP	BC
-	DEC	BC
-	JR	_strtod_exploop
-
-_strtod_expdone:
-	LD	(_strtod_result),HL
-	LD	(_strtod_result+2),DE
-	POP	HL
-
-_strtod_applysign:
-	; Apply negative sign if needed
-	LD	A,(_strtod_neg)
-	OR	A
-	JR	Z,_strtod_storendptr
-
-	; Negate: flip sign bit
-	LD	HL,(_strtod_result+2)
-	LD	A,H
-	XOR	80H
-	LD	H,A
-	LD	(_strtod_result+2),HL
-
-_strtod_storendptr:
-	; Store endptr if not NULL
-	POP	HL		; HL = end position
-	LD	C,(IX+6)
-	LD	B,(IX+7)	; BC = endptr
-	LD	A,B
-	OR	C
-	JR	Z,_strtod_retval
-	; Store HL at *endptr
-	LD	A,L
-	LD	(BC),A
-	INC	BC
-	LD	A,H
-	LD	(BC),A
-
-_strtod_retval:
-	LD	HL,(_strtod_result)
-	LD	DE,(_strtod_result+2)
-	POP	BC
-	POP	IX
-	RET
-
-	EXTRN	__ltof
-	EXTRN	__fadd
-	EXTRN	__fsub
-	EXTRN	__fmul
-	EXTRN	__fdiv
-	EXTRN	__tmp32
-
-; strtod work variables
-_strtod_neg:	DB	0
-_strtod_expneg:	DB	0
-_strtod_gotdigit: DB	0
-_strtod_exp:	DW	0
-_strtod_expadj:	DW	1
-_strtod_intacc:	DS	4
-_strtod_fracacc: DS	4
-_strtod_divisor: DS	4
-_strtod_result:	DS	4
-_strtod_tmp:	DS	4
-
-; ============================================================
-; Multibyte/Wide Character Conversion Functions
-; Minimal implementation for C locale (1:1 char mapping)
-; ============================================================
-
-; int mblen(const char *s, size_t n)
-; Determine bytes in multibyte character
-
-
+	CSEG
 ; ============================================================
 ; lc_atoi.mac
 ; ============================================================
-	CSEG
 ; lc_atoi.mac - split from lc_atoi.mac
 
 
@@ -1462,10 +1034,10 @@ _atoi_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_atol.mac
 ; ============================================================
-	CSEG
 ; lc_atol.mac - split from lc_atoi.mac
 
 
@@ -1630,118 +1202,15 @@ _atol_acc:	DS	4
 _atol_tmp:	DS	4
 
 
-; ============================================================
-; lc_atomic.mac
-; ============================================================
 	CSEG
-; lc_atomic.mac - atomic operations
+; ============================================================
+; lc_atomic_compare_exchange_1.mac
+; ============================================================
+; lc_atomic_compare_exchange_1.mac - ___atomic_compare_exchange_1
+; Split from lc_atomic.mac
 
 
 	CSEG
-
-	PUBLIC	_atomic_flag_test_and_set
-	PUBLIC	_atomic_flag_test_and_set_explicit
-_atomic_flag_test_and_set_explicit:
-_atomic_flag_test_and_set:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = obj
-
-	DI
-	LD	A,(HL)		; Get current value
-	LD	E,A		; Save for return
-	LD	(HL),1		; Set flag
-	EI
-
-	LD	L,E
-	LD	H,0		; Return old value
-	POP	IX
-	RET
-
-; void atomic_flag_clear(volatile atomic_flag *obj)
-	PUBLIC	_atomic_flag_clear
-	PUBLIC	_atomic_flag_clear_explicit
-_atomic_flag_clear_explicit:
-_atomic_flag_clear:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-
-	DI
-	LD	(HL),0		; Clear flag
-	EI
-
-	POP	IX
-	RET
-
-; ============================================================
-; 1-byte atomic operations
-; ============================================================
-
-; void __atomic_store_1(volatile void *obj, unsigned char val)
-	PUBLIC	___atomic_store_1
-___atomic_store_1:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = obj
-	LD	A,(IX+6)	; val
-
-	DI
-	LD	(HL),A
-	EI
-
-	POP	IX
-	RET
-
-; unsigned char __atomic_load_1(volatile void *obj)
-	PUBLIC	___atomic_load_1
-___atomic_load_1:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-
-	DI
-	LD	A,(HL)
-	EI
-
-	LD	L,A
-	LD	H,0
-	POP	IX
-	RET
-
-; unsigned char __atomic_exchange_1(volatile void *obj, unsigned char val)
-	PUBLIC	___atomic_exchange_1
-___atomic_exchange_1:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,(IX+6)
-
-	DI
-	LD	E,(HL)		; Get old value
-	LD	(HL),A		; Store new value
-	EI
-
-	LD	L,E
-	LD	H,0
-	POP	IX
-	RET
-
 ; _Bool __atomic_compare_exchange_1(volatile void *obj, void *expected, unsigned char desired)
 	PUBLIC	___atomic_compare_exchange_1
 ___atomic_compare_exchange_1:
@@ -1783,199 +1252,16 @@ _cmpxchg1_fail:
 	POP	IX
 	RET
 
-; unsigned char __atomic_fetch_add_1(volatile void *obj, unsigned char val)
-	PUBLIC	___atomic_fetch_add_1
-___atomic_fetch_add_1:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
 
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,(IX+6)
-	LD	C,A		; C = val
-
-	DI
-	LD	A,(HL)		; Get old value
-	LD	E,A		; Save for return
-	ADD	A,C		; Add
-	LD	(HL),A		; Store result
-	EI
-
-	LD	L,E
-	LD	H,0
-	POP	IX
-	RET
-
-; unsigned char __atomic_fetch_sub_1(volatile void *obj, unsigned char val)
-	PUBLIC	___atomic_fetch_sub_1
-___atomic_fetch_sub_1:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,(IX+6)
-	LD	C,A
-
-	DI
-	LD	A,(HL)
-	LD	E,A
-	SUB	C
-	LD	(HL),A
-	EI
-
-	LD	L,E
-	LD	H,0
-	POP	IX
-	RET
-
-; unsigned char __atomic_fetch_or_1(volatile void *obj, unsigned char val)
-	PUBLIC	___atomic_fetch_or_1
-___atomic_fetch_or_1:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,(IX+6)
-	LD	C,A
-
-	DI
-	LD	A,(HL)
-	LD	E,A
-	OR	C
-	LD	(HL),A
-	EI
-
-	LD	L,E
-	LD	H,0
-	POP	IX
-	RET
-
-; unsigned char __atomic_fetch_xor_1(volatile void *obj, unsigned char val)
-	PUBLIC	___atomic_fetch_xor_1
-___atomic_fetch_xor_1:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,(IX+6)
-	LD	C,A
-
-	DI
-	LD	A,(HL)
-	LD	E,A
-	XOR	C
-	LD	(HL),A
-	EI
-
-	LD	L,E
-	LD	H,0
-	POP	IX
-	RET
-
-; unsigned char __atomic_fetch_and_1(volatile void *obj, unsigned char val)
-	PUBLIC	___atomic_fetch_and_1
-___atomic_fetch_and_1:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,(IX+6)
-	LD	C,A
-
-	DI
-	LD	A,(HL)
-	LD	E,A
-	AND	C
-	LD	(HL),A
-	EI
-
-	LD	L,E
-	LD	H,0
-	POP	IX
-	RET
-
+	CSEG
 ; ============================================================
-; 2-byte atomic operations
+; lc_atomic_compare_exchange_2.mac
 ; ============================================================
+; lc_atomic_compare_exchange_2.mac - ___atomic_compare_exchange_2
+; Split from lc_atomic.mac
 
-; void __atomic_store_2(volatile void *obj, unsigned int val)
-	PUBLIC	___atomic_store_2
-___atomic_store_2:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
 
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; obj
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; val
-
-	DI
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	EI
-
-	POP	IX
-	RET
-
-; unsigned int __atomic_load_2(volatile void *obj)
-	PUBLIC	___atomic_load_2
-___atomic_load_2:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-
-	DI
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EI
-
-	EX	DE,HL
-	POP	IX
-	RET
-
-; unsigned int __atomic_exchange_2(volatile void *obj, unsigned int val)
-	PUBLIC	___atomic_exchange_2
-___atomic_exchange_2:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; obj
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; val
-
-	DI
-	LD	C,(HL)
-	INC	HL
-	LD	B,(HL)		; BC = old value
-	LD	(HL),D
-	DEC	HL
-	LD	(HL),E		; Store new
-	EI
-
-	LD	H,B
-	LD	L,C
-	POP	BC
-	POP	IX
-	RET
-
+	CSEG
 ; _Bool __atomic_compare_exchange_2(volatile void *obj, void *expected, unsigned int desired)
 	PUBLIC	___atomic_compare_exchange_2
 ___atomic_compare_exchange_2:
@@ -2037,286 +1323,16 @@ _cmpxchg2_fail:
 	POP	IX
 	RET
 
-; unsigned int __atomic_fetch_add_2(volatile void *obj, unsigned int val)
-	PUBLIC	___atomic_fetch_add_2
-___atomic_fetch_add_2:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
 
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; obj
-
-	DI
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = old value
-	DEC	HL
-	PUSH	DE		; Save old
-
-	LD	C,(IX+6)
-	LD	B,(IX+7)	; BC = val
-	EX	DE,HL
-	ADD	HL,BC		; HL = old + val
-	EX	DE,HL		; DE = result
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	EI
-
-	POP	HL		; Return old value
-	POP	BC
-	POP	IX
-	RET
-
-; unsigned int __atomic_fetch_sub_2(volatile void *obj, unsigned int val)
-	PUBLIC	___atomic_fetch_sub_2
-___atomic_fetch_sub_2:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-
-	DI
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = old
-	DEC	HL
-	PUSH	DE
-
-	LD	C,(IX+6)
-	LD	B,(IX+7)
-	EX	DE,HL
-	OR	A
-	SBC	HL,BC		; HL = old - val
-	EX	DE,HL
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	EI
-
-	POP	HL
-	POP	BC
-	POP	IX
-	RET
-
-; unsigned int __atomic_fetch_or_2(volatile void *obj, unsigned int val)
-	PUBLIC	___atomic_fetch_or_2
-___atomic_fetch_or_2:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-
-	DI
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	DEC	HL
-	PUSH	DE		; Save old
-
-	LD	A,E
-	OR	(IX+6)
-	LD	E,A
-	LD	A,D
-	OR	(IX+7)
-	LD	D,A
-
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	EI
-
-	POP	HL
-	POP	BC
-	POP	IX
-	RET
-
-; unsigned int __atomic_fetch_xor_2(volatile void *obj, unsigned int val)
-	PUBLIC	___atomic_fetch_xor_2
-___atomic_fetch_xor_2:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-
-	DI
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	DEC	HL
-	PUSH	DE
-
-	LD	A,E
-	XOR	(IX+6)
-	LD	E,A
-	LD	A,D
-	XOR	(IX+7)
-	LD	D,A
-
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	EI
-
-	POP	HL
-	POP	BC
-	POP	IX
-	RET
-
-; unsigned int __atomic_fetch_and_2(volatile void *obj, unsigned int val)
-	PUBLIC	___atomic_fetch_and_2
-___atomic_fetch_and_2:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-
-	DI
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	DEC	HL
-	PUSH	DE
-
-	LD	A,E
-	AND	(IX+6)
-	LD	E,A
-	LD	A,D
-	AND	(IX+7)
-	LD	D,A
-
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	EI
-
-	POP	HL
-	POP	BC
-	POP	IX
-	RET
-
+	CSEG
 ; ============================================================
-; 4-byte atomic operations (for long)
+; lc_atomic_compare_exchange_4.mac
 ; ============================================================
+; lc_atomic_compare_exchange_4.mac - ___atomic_compare_exchange_4
+; Split from lc_atomic.mac
 
-; void __atomic_store_4(volatile void *obj, unsigned long val)
-	PUBLIC	___atomic_store_4
-___atomic_store_4:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
 
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; obj
-
-	DI
-	LD	A,(IX+6)
-	LD	(HL),A
-	INC	HL
-	LD	A,(IX+7)
-	LD	(HL),A
-	INC	HL
-	LD	A,(IX+8)
-	LD	(HL),A
-	INC	HL
-	LD	A,(IX+9)
-	LD	(HL),A
-	EI
-
-	POP	IX
-	RET
-
-; unsigned long __atomic_load_4(volatile void *obj)
-	PUBLIC	___atomic_load_4
-___atomic_load_4:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-
-	DI
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	C,(HL)
-	INC	HL
-	LD	B,(HL)
-	EI
-
-	; Return DEHL for long
-	LD	L,E
-	LD	H,D
-	LD	E,C
-	LD	D,B
-	POP	IX
-	RET
-
-; unsigned long __atomic_exchange_4(volatile void *obj, unsigned long val)
-	PUBLIC	___atomic_exchange_4
-___atomic_exchange_4:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; obj
-
-	DI
-	; Read old value
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	C,(HL)
-	INC	HL
-	LD	B,(HL)		; BCDE = old
-	; Store new value
-	LD	A,(IX+9)
-	LD	(HL),A
-	DEC	HL
-	LD	A,(IX+8)
-	LD	(HL),A
-	DEC	HL
-	LD	A,(IX+7)
-	LD	(HL),A
-	DEC	HL
-	LD	A,(IX+6)
-	LD	(HL),A
-	EI
-
-	; Return old in DEHL
-	LD	L,E
-	LD	H,D
-	LD	E,C
-	LD	D,B
-	POP	BC
-	POP	IX
-	RET
-
+	CSEG
 ; _Bool __atomic_compare_exchange_4(volatile void *obj, void *expected, unsigned long desired)
 	PUBLIC	___atomic_compare_exchange_4
 ___atomic_compare_exchange_4:
@@ -2422,6 +1438,218 @@ _cmpxchg4_fail:
 	POP	IX
 	RET
 
+
+	CSEG
+; ============================================================
+; lc_atomic_exchange_1.mac
+; ============================================================
+; lc_atomic_exchange_1.mac - ___atomic_exchange_1
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned char __atomic_exchange_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_exchange_1
+___atomic_exchange_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+
+	DI
+	LD	E,(HL)		; Get old value
+	LD	(HL),A		; Store new value
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_exchange_2.mac
+; ============================================================
+; lc_atomic_exchange_2.mac - ___atomic_exchange_2
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned int __atomic_exchange_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_exchange_2
+___atomic_exchange_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; val
+
+	DI
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = old value
+	LD	(HL),D
+	DEC	HL
+	LD	(HL),E		; Store new
+	EI
+
+	LD	H,B
+	LD	L,C
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_exchange_4.mac
+; ============================================================
+; lc_atomic_exchange_4.mac - ___atomic_exchange_4
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned long __atomic_exchange_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_exchange_4
+___atomic_exchange_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	; Read old value
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = old
+	; Store new value
+	LD	A,(IX+9)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+8)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+7)
+	LD	(HL),A
+	DEC	HL
+	LD	A,(IX+6)
+	LD	(HL),A
+	EI
+
+	; Return old in DEHL
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,B
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_add_1.mac
+; ============================================================
+; lc_atomic_fetch_add_1.mac - ___atomic_fetch_add_1
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned char __atomic_fetch_add_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_add_1
+___atomic_fetch_add_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A		; C = val
+
+	DI
+	LD	A,(HL)		; Get old value
+	LD	E,A		; Save for return
+	ADD	A,C		; Add
+	LD	(HL),A		; Store result
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_add_2.mac
+; ============================================================
+; lc_atomic_fetch_add_2.mac - ___atomic_fetch_add_2
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned int __atomic_fetch_add_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_add_2
+___atomic_fetch_add_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = old value
+	DEC	HL
+	PUSH	DE		; Save old
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = val
+	EX	DE,HL
+	ADD	HL,BC		; HL = old + val
+	EX	DE,HL		; DE = result
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL		; Return old value
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_add_4.mac
+; ============================================================
+; lc_atomic_fetch_add_4.mac - ___atomic_fetch_add_4
+; Split from lc_atomic.mac
+
+
+	CSEG
 ; unsigned long __atomic_fetch_add_4(volatile void *obj, unsigned long val)
 	PUBLIC	___atomic_fetch_add_4
 ___atomic_fetch_add_4:
@@ -2483,9 +1711,106 @@ ___atomic_fetch_add_4:
 	POP	IX
 	RET
 
-; unsigned long __atomic_fetch_sub_4(volatile void *obj, unsigned long val)
-	PUBLIC	___atomic_fetch_sub_4
-___atomic_fetch_sub_4:
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_and_1.mac
+; ============================================================
+; lc_atomic_fetch_and_1.mac - ___atomic_fetch_and_1
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned char __atomic_fetch_and_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_and_1
+___atomic_fetch_and_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	AND	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; ============================================================
+; 2-byte atomic operations
+; ============================================================
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_and_2.mac
+; ============================================================
+; lc_atomic_fetch_and_2.mac - ___atomic_fetch_and_2
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned int __atomic_fetch_and_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_and_2
+___atomic_fetch_and_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL
+	PUSH	DE
+
+	LD	A,E
+	AND	(IX+6)
+	LD	E,A
+	LD	A,D
+	AND	(IX+7)
+	LD	D,A
+
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; 4-byte atomic operations (for long)
+; ============================================================
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_and_4.mac
+; ============================================================
+; lc_atomic_fetch_and_4.mac - ___atomic_fetch_and_4
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned long __atomic_fetch_and_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_and_4
+___atomic_fetch_and_4:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
@@ -2505,42 +1830,131 @@ ___atomic_fetch_sub_4:
 	LD	D,(HL)
 	PUSH	DE
 
+	POP	BC
 	POP	DE
-	POP	HL
 	PUSH	DE
-	PUSH	HL
+	PUSH	BC
 
-	LD	C,(IX+6)
-	LD	B,(IX+7)
-	OR	A
-	SBC	HL,BC
-	EX	DE,HL
-	LD	C,(IX+8)
-	LD	B,(IX+9)
-	SBC	HL,BC
-	EX	DE,HL
+	LD	A,E
+	AND	(IX+6)
+	LD	E,A
+	LD	A,D
+	AND	(IX+7)
+	LD	D,A
+	LD	A,C
+	AND	(IX+8)
+	LD	C,A
+	LD	A,B
+	AND	(IX+9)
+	LD	B,A
 
-	PUSH	HL
-	PUSH	DE
 	LD	L,(IX+4)
 	LD	H,(IX+5)
-	POP	DE
-	POP	BC
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
 	LD	(HL),C
 	INC	HL
 	LD	(HL),B
+	EI
+
+	POP	DE
+	POP	HL
+	EX	DE,HL
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_or_1.mac
+; ============================================================
+; lc_atomic_fetch_or_1.mac - ___atomic_fetch_or_1
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned char __atomic_fetch_or_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_or_1
+___atomic_fetch_or_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	OR	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_or_2.mac
+; ============================================================
+; lc_atomic_fetch_or_2.mac - ___atomic_fetch_or_2
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned int __atomic_fetch_or_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_or_2
+___atomic_fetch_or_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
 	INC	HL
+	LD	D,(HL)
+	DEC	HL
+	PUSH	DE		; Save old
+
+	LD	A,E
+	OR	(IX+6)
+	LD	E,A
+	LD	A,D
+	OR	(IX+7)
+	LD	D,A
+
 	LD	(HL),E
 	INC	HL
 	LD	(HL),D
 	EI
 
 	POP	HL
-	POP	DE
 	POP	BC
 	POP	IX
 	RET
 
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_or_4.mac
+; ============================================================
+; lc_atomic_fetch_or_4.mac - ___atomic_fetch_or_4
+; Split from lc_atomic.mac
+
+
+	CSEG
 ; unsigned long __atomic_fetch_or_4(volatile void *obj, unsigned long val)
 	PUBLIC	___atomic_fetch_or_4
 ___atomic_fetch_or_4:
@@ -2601,6 +2015,244 @@ ___atomic_fetch_or_4:
 	POP	IX
 	RET
 
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_sub_1.mac
+; ============================================================
+; lc_atomic_fetch_sub_1.mac - ___atomic_fetch_sub_1
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned char __atomic_fetch_sub_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_sub_1
+___atomic_fetch_sub_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	SUB	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_sub_2.mac
+; ============================================================
+; lc_atomic_fetch_sub_2.mac - ___atomic_fetch_sub_2
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned int __atomic_fetch_sub_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_sub_2
+___atomic_fetch_sub_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = old
+	DEC	HL
+	PUSH	DE
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	EX	DE,HL
+	OR	A
+	SBC	HL,BC		; HL = old - val
+	EX	DE,HL
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_sub_4.mac
+; ============================================================
+; lc_atomic_fetch_sub_4.mac - ___atomic_fetch_sub_4
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned long __atomic_fetch_sub_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_fetch_sub_4
+___atomic_fetch_sub_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	PUSH	DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	PUSH	DE
+
+	POP	DE
+	POP	HL
+	PUSH	DE
+	PUSH	HL
+
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	OR	A
+	SBC	HL,BC
+	EX	DE,HL
+	LD	C,(IX+8)
+	LD	B,(IX+9)
+	SBC	HL,BC
+	EX	DE,HL
+
+	PUSH	HL
+	PUSH	DE
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	POP	DE
+	POP	BC
+	LD	(HL),C
+	INC	HL
+	LD	(HL),B
+	INC	HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_xor_1.mac
+; ============================================================
+; lc_atomic_fetch_xor_1.mac - ___atomic_fetch_xor_1
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned char __atomic_fetch_xor_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_xor_1
+___atomic_fetch_xor_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	XOR	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_xor_2.mac
+; ============================================================
+; lc_atomic_fetch_xor_2.mac - ___atomic_fetch_xor_2
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned int __atomic_fetch_xor_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_fetch_xor_2
+___atomic_fetch_xor_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	DEC	HL
+	PUSH	DE
+
+	LD	A,E
+	XOR	(IX+6)
+	LD	E,A
+	LD	A,D
+	XOR	(IX+7)
+	LD	D,A
+
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	HL
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_fetch_xor_4.mac
+; ============================================================
+; lc_atomic_fetch_xor_4.mac - ___atomic_fetch_xor_4
+; Split from lc_atomic.mac
+
+
+	CSEG
 ; unsigned long __atomic_fetch_xor_4(volatile void *obj, unsigned long val)
 	PUBLIC	___atomic_fetch_xor_4
 ___atomic_fetch_xor_4:
@@ -2659,13 +2311,146 @@ ___atomic_fetch_xor_4:
 	POP	IX
 	RET
 
-; unsigned long __atomic_fetch_and_4(volatile void *obj, unsigned long val)
-	PUBLIC	___atomic_fetch_and_4
-___atomic_fetch_and_4:
+
+	CSEG
+; ============================================================
+; lc_atomic_flag_clear_explicit.mac
+; ============================================================
+; lc_atomic_flag_clear_explicit.mac - _atomic_flag_clear_explicit, _atomic_flag_clear
+; Split from lc_atomic.mac
+
+
+	CSEG
+; void atomic_flag_clear(volatile atomic_flag *obj)
+	PUBLIC	_atomic_flag_clear_explicit
+_atomic_flag_clear_explicit:
+	PUBLIC	_atomic_flag_clear
+_atomic_flag_clear:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	(HL),0		; Clear flag
+	EI
+
+	POP	IX
+	RET
+
+; ============================================================
+; 1-byte atomic operations
+; ============================================================
+
+
+	CSEG
+; ============================================================
+; lc_atomic_flag_test_and_set_explicit.mac
+; ============================================================
+; lc_atomic_flag_test_and_set_explicit.mac - _atomic_flag_test_and_set_explicit, _atomic_flag_test_and_set
+; Split from lc_atomic.mac
+
+
+	CSEG
+	PUBLIC	_atomic_flag_test_and_set_explicit
+_atomic_flag_test_and_set_explicit:
+	PUBLIC	_atomic_flag_test_and_set
+_atomic_flag_test_and_set:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = obj
+
+	DI
+	LD	A,(HL)		; Get current value
+	LD	E,A		; Save for return
+	LD	(HL),1		; Set flag
+	EI
+
+	LD	L,E
+	LD	H,0		; Return old value
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_load_1.mac
+; ============================================================
+; lc_atomic_load_1.mac - ___atomic_load_1
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned char __atomic_load_1(volatile void *obj)
+	PUBLIC	___atomic_load_1
+___atomic_load_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	A,(HL)
+	EI
+
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_load_2.mac
+; ============================================================
+; lc_atomic_load_2.mac - ___atomic_load_2
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned int __atomic_load_2(volatile void *obj)
+	PUBLIC	___atomic_load_2
+___atomic_load_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EI
+
+	EX	DE,HL
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_load_4.mac
+; ============================================================
+; lc_atomic_load_4.mac - ___atomic_load_4
+; Split from lc_atomic.mac
+
+
+	CSEG
+; unsigned long __atomic_load_4(volatile void *obj)
+	PUBLIC	___atomic_load_4
+___atomic_load_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
 
 	LD	L,(IX+4)
 	LD	H,(IX+5)
@@ -2675,53 +2460,120 @@ ___atomic_fetch_and_4:
 	INC	HL
 	LD	D,(HL)
 	INC	HL
-	PUSH	DE
-	LD	E,(HL)
+	LD	C,(HL)
 	INC	HL
-	LD	D,(HL)
-	PUSH	DE
-
-	POP	BC
-	POP	DE
-	PUSH	DE
-	PUSH	BC
-
-	LD	A,E
-	AND	(IX+6)
-	LD	E,A
-	LD	A,D
-	AND	(IX+7)
-	LD	D,A
-	LD	A,C
-	AND	(IX+8)
-	LD	C,A
-	LD	A,B
-	AND	(IX+9)
-	LD	B,A
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	INC	HL
-	LD	(HL),C
-	INC	HL
-	LD	(HL),B
+	LD	B,(HL)
 	EI
 
-	POP	DE
-	POP	HL
-	EX	DE,HL
-	POP	BC
+	; Return DEHL for long
+	LD	L,E
+	LD	H,D
+	LD	E,C
+	LD	D,B
 	POP	IX
 	RET
 
 
+	CSEG
+; ============================================================
+; lc_atomic_store_1.mac
+; ============================================================
+; lc_atomic_store_1.mac - ___atomic_store_1
+; Split from lc_atomic.mac
+
+
+	CSEG
+; void __atomic_store_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_store_1
+___atomic_store_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = obj
+	LD	A,(IX+6)	; val
+
+	DI
+	LD	(HL),A
+	EI
+
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_store_2.mac
+; ============================================================
+; lc_atomic_store_2.mac - ___atomic_store_2
+; Split from lc_atomic.mac
+
+
+	CSEG
+; void __atomic_store_2(volatile void *obj, unsigned int val)
+	PUBLIC	___atomic_store_2
+___atomic_store_2:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; val
+
+	DI
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	EI
+
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_atomic_store_4.mac
+; ============================================================
+; lc_atomic_store_4.mac - ___atomic_store_4
+; Split from lc_atomic.mac
+
+
+	CSEG
+; void __atomic_store_4(volatile void *obj, unsigned long val)
+	PUBLIC	___atomic_store_4
+___atomic_store_4:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; obj
+
+	DI
+	LD	A,(IX+6)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+8)
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+9)
+	LD	(HL),A
+	EI
+
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_bsearch.mac
 ; ============================================================
-	CSEG
 ; lc_bsearch.mac - bsearch, split from lc_qsort.mac
 
 	CSEG
@@ -2834,10 +2686,60 @@ bs_jphl:
 	JP	(HL)
 
 
+	CSEG
+; ============================================================
+; lc_call_once.mac
+; ============================================================
+; lc_call_once.mac - _call_once
+; Split from lc_thread.mac
+
+
+	CSEG
+; void call_once(once_flag *flag, void (*func)(void))
+	PUBLIC	_call_once
+_call_once:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; flag
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_call_once_done
+
+	; Mark as called
+	LD	(HL),1
+	EI
+
+	; Call function
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	CALL	_call_once_call
+	JR	_call_once_ret
+
+_call_once_done:
+	EI
+_call_once_ret:
+	POP	BC
+	POP	IX
+	RET
+
+_call_once_call:
+	JP	(HL)
+
+; ============================================================
+; Atomic operations (stdatomic.h)
+; All use DI/EI for atomicity on Z80
+; ============================================================
+
+
+	CSEG
 ; ============================================================
 ; lc_calloc.mac
 ; ============================================================
-	CSEG
 ; lc_calloc.mac - split from lc_malloc.mac
 
 
@@ -2934,10 +2836,10 @@ _calloc_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_cbrt.mac
 ; ============================================================
-	CSEG
 ; lc_cbrt.mac - cbrt, cbrtf
 
 
@@ -3068,10 +2970,58 @@ _cbrt_g2:	DS	4
 _cbrt_t:	DS	4
 
 
+	CSEG
+; ============================================================
+; lc_ceil.mac
+; ============================================================
+; lc_ceil.mac - _ceil, _ceilf, _ceill
+; Split from lc_floor.mac
+
+
+
+	CSEG
+; ============================================================
+; ceil(x) = -floor(-x)
+; ============================================================
+	PUBLIC	_ceil
+_ceil:
+	PUBLIC	_ceilf
+_ceilf:
+	PUBLIC	_ceill
+_ceill:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Negate
+	LD	A,D
+	XOR	80H
+	LD	D,A
+
+	; floor(-x)
+	PUSH	DE
+	PUSH	HL
+	CALL	_floorf
+	POP	BC
+	POP	BC
+
+	; Negate result
+	LD	A,D
+	XOR	80H
+	LD	D,A
+
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_clearerr.mac
 ; ============================================================
-	CSEG
 ; lc_clearerr.mac - split from lc_file.mac
 
 FLAG_EOF	EQU	02H
@@ -3102,10 +3052,10 @@ _clearerr_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_clock.mac
 ; ============================================================
-	CSEG
 ; lc_clock.mac - split from lc_time.mac
 
 
@@ -3124,10 +3074,239 @@ _clock:
 ; ============================================================
 
 
+	CSEG
+; ============================================================
+; lc_cnd_broadcast.mac
+; ============================================================
+; lc_cnd_broadcast.mac - _cnd_broadcast
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; int cnd_broadcast(cnd_t *cond)
+	PUBLIC	_cnd_broadcast
+_cnd_broadcast:
+	; Same as signal for our simple implementation
+	JP	_cnd_signal
+
+
+	CSEG
+; ============================================================
+; lc_cnd_destroy.mac
+; ============================================================
+; lc_cnd_destroy.mac - _cnd_destroy
+; Split from lc_thread.mac
+
+
+	CSEG
+; void cnd_destroy(cnd_t *cond)
+	PUBLIC	_cnd_destroy
+_cnd_destroy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+	POP	IX
+	RET
+
+; ============================================================
+; Thread-specific storage functions
+; ============================================================
+
+
+	CSEG
+; ============================================================
+; lc_cnd_init.mac
+; ============================================================
+; lc_cnd_init.mac - _cnd_init
+; Split from lc_thread.mac
+
+
+	CSEG
+; int cnd_init(cnd_t *cond)
+	PUBLIC	_cnd_init
+_cnd_init:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	(HL),A		; waiters = 0
+	INC	HL
+	LD	(HL),A		; signaled = 0
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_cnd_signal.mac
+; ============================================================
+; lc_cnd_signal.mac - _cnd_signal
+; Split from lc_thread.mac
+
+
+	CSEG
+; int cnd_signal(cnd_t *cond)
+	PUBLIC	_cnd_signal
+_cnd_signal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	INC	HL
+	LD	(HL),1		; signaled = 1
+
+	LD	HL,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_cnd_timedwait.mac
+; ============================================================
+; lc_cnd_timedwait.mac - _cnd_timedwait
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; int cnd_timedwait(cnd_t *cond, mtx_t *mtx, const struct timespec *ts)
+	PUBLIC	_cnd_timedwait
+_cnd_timedwait:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Unlock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_unlock
+	POP	BC
+
+	; Try a few times
+	LD	B,100
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	INC	HL
+
+_cnd_timed_loop:
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_cnd_timed_done
+	EI
+	PUSH	HL
+	PUSH	BC
+	CALL	_thrd_yield
+	POP	BC
+	POP	HL
+	DJNZ	_cnd_timed_loop
+
+	; Timeout
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+	LD	HL,2		; thrd_timedout
+	JR	_cnd_timed_ret
+
+_cnd_timed_done:
+	XOR	A
+	LD	(HL),A
+	EI
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+	LD	HL,0
+
+_cnd_timed_ret:
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_cnd_wait.mac
+; ============================================================
+; lc_cnd_wait.mac - _cnd_wait
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; int cnd_wait(cnd_t *cond, mtx_t *mtx)
+	PUBLIC	_cnd_wait
+_cnd_wait:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Unlock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; mtx
+	PUSH	HL
+	CALL	_mtx_unlock
+	POP	BC
+
+	; Wait for signal
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; cond
+	INC	HL		; Point to signaled
+
+_cnd_wait_loop:
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_cnd_wait_done
+	EI
+	CALL	_thrd_yield
+	JR	_cnd_wait_loop
+
+_cnd_wait_done:
+	XOR	A
+	LD	(HL),A		; Clear signal
+	EI
+
+	; Re-lock mutex
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	PUSH	HL
+	CALL	_mtx_lock
+	POP	BC
+
+	LD	HL,0		; thrd_success
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_complex.mac
 ; ============================================================
-	CSEG
 ; lc_complex.mac - complex number functions
 
 
@@ -3958,10 +4137,10 @@ _cplx_w:	DS	8	; Second input / work area
 _cplx_res:	DS	8	; Result storage
 
 
+	CSEG
 ; ============================================================
 ; lc_conout.mac
 ; ============================================================
-	CSEG
 ; lc_conout.mac - the single console-output choke point for libc
 ;
 ; EVERY libc routine that writes a character to the CP/M console calls
@@ -4042,10 +4221,43 @@ ___crlf_mode:	DB	1	; non-zero: translate LF -> CR LF
 __conout_last:	DB	0	; last character handed to BDOS
 
 
+	CSEG
+; ============================================================
+; lc_copysign.mac
+; ============================================================
+; lc_copysign.mac - _copysign, _copysignf
+; Split from lc_fabs.mac
+
+
+	CSEG
+; ============================================================
+; copysign(x, y) - return x with sign of y
+; ============================================================
+	PUBLIC	_copysign
+_copysign:
+	PUBLIC	_copysignf
+_copysignf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	A,(IX+7)
+	AND	7FH		; Clear x sign
+	LD	B,A
+	LD	A,(IX+11)	; y high byte
+	AND	80H		; Get y sign
+	OR	B		; Combine
+	LD	D,A
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_cos.mac
 ; ============================================================
-	CSEG
 ; lc_cos.mac - cos, cosf, cosl
 
 
@@ -4292,10 +4504,10 @@ _cos_n:		DS	4
 _cos_save_neg:	DS	1
 
 
+	CSEG
 ; ============================================================
 ; lc_cosh.mac
 ; ============================================================
-	CSEG
 ; lc_cosh.mac - cosh, coshf (depends on exp)
 
 
@@ -4367,10 +4579,10 @@ _cosh_x:	DS	4
 _cosh_ep:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_cputs.mac
 ; ============================================================
-	CSEG
 ; lc_cputs.mac - split from lc_puts.mac
 
 
@@ -4408,10 +4620,10 @@ _cputs_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_data.mac
 ; ============================================================
-	CSEG
 ; lc_data.mac - global data
 
 	DSEG
@@ -4435,10 +4647,10 @@ _stderr:	DW	_stderr_data
 _errno:	DW	0
 
 
+	CSEG
 ; ============================================================
 ; lc_div.mac
 ; ============================================================
-	CSEG
 ; lc_div.mac - split from lc_stdlib.mac
 
 
@@ -4491,10 +4703,10 @@ _div:
 _div_result:	DS	4	; div_t: quot (2), rem (2)
 
 
+	CSEG
 ; ============================================================
 ; lc_exit.mac
 ; ============================================================
-	CSEG
 ; lc_exit.mac - split from lc_stdlib.mac
 
 
@@ -4540,10 +4752,10 @@ _exit_done:
 	JP	0
 
 
+	CSEG
 ; ============================================================
 ; lc_exit_data.mac
 ; ============================================================
-	CSEG
 ; lc_exit_data.mac - split from lc_stdlib.mac
 
 
@@ -4559,10 +4771,10 @@ _atexit_cnt:	DS	1	; Number of registered handlers
 _atexit_tab:	DS	8	; 4 function pointers (2 bytes each)
 
 
+	CSEG
 ; ============================================================
 ; lc_exp.mac
 ; ============================================================
-	CSEG
 ; lc_exp.mac - exp, expf, expl
 ; Range reduction: exp(x) = exp(r) * 2^k where k = trunc(x/ln2), r = x - k*ln2
 
@@ -4756,10 +4968,10 @@ _exp_term:	DS	4
 _exp_k:		DS	1
 
 
+	CSEG
 ; ============================================================
 ; lc_exp2.mac
 ; ============================================================
-	CSEG
 ; lc_exp2.mac - exp2, exp2f
 ; exp2(x) = 2^x = exp(x * ln(2))
 ; ln(2) = 0.693147... = 3F317218H
@@ -4802,10 +5014,10 @@ _exp2f:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_expm1.mac
 ; ============================================================
-	CSEG
 ; lc_expm1.mac - expm1, expm1f
 ; expm1(x) = exp(x) - 1
 
@@ -4855,24 +5067,24 @@ _expm1f:
 _expm1_t:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_fabs.mac
 ; ============================================================
-	CSEG
-; lc_fabs.mac - fabs, fabsf, fabsl, copysign, copysignf
+; lc_fabs.mac - _fabs, _fabsf, _fabsl
+; Split from lc_fabs.mac
 
 
 	CSEG
-
 ; ============================================================
 ; fabs(x) - return absolute value
 ; For 32-bit float, clear sign bit (bit 31)
 ; ============================================================
 	PUBLIC	_fabs
-	PUBLIC	_fabsf
-	PUBLIC	_fabsl
 _fabs:
+	PUBLIC	_fabsf
 _fabsf:
+	PUBLIC	_fabsl
 _fabsl:
 	PUSH	IX
 	LD	IX,0
@@ -4886,34 +5098,11 @@ _fabsl:
 	POP	IX
 	RET
 
-; ============================================================
-; copysign(x, y) - return x with sign of y
-; ============================================================
-	PUBLIC	_copysign
-	PUBLIC	_copysignf
-_copysign:
-_copysignf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	E,(IX+6)
-	LD	A,(IX+7)
-	AND	7FH		; Clear x sign
-	LD	B,A
-	LD	A,(IX+11)	; y high byte
-	AND	80H		; Get y sign
-	OR	B		; Combine
-	LD	D,A
-	POP	IX
-	RET
 
-
+	CSEG
 ; ============================================================
 ; lc_fclose.mac
 ; ============================================================
-	CSEG
 ; lc_fclose.mac - split from lc_file.mac
 
 BDOS_CLOSE	EQU	16	; Close file
@@ -4990,10 +5179,10 @@ _fclose_ok:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fdim.mac
 ; ============================================================
-	CSEG
 ; lc_fdim.mac - fdim, fdimf
 ; fdim(x, y) = max(x - y, 0)
 
@@ -5059,10 +5248,10 @@ _fdim_zero:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_feof.mac
 ; ============================================================
-	CSEG
 ; lc_feof.mac - split from lc_file.mac
 
 
@@ -5095,10 +5284,10 @@ _feof_yes:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_ferror.mac
 ; ============================================================
-	CSEG
 ; lc_ferror.mac - split from lc_file.mac
 
 
@@ -5135,10 +5324,10 @@ _ferror_yes:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fflush.mac
 ; ============================================================
-	CSEG
 ; lc_fflush.mac - split from lc_file.mac
 
 
@@ -5189,10 +5378,10 @@ _fflush_done_pub:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fgetc.mac
 ; ============================================================
-	CSEG
 ; lc_fgetc.mac - split from lc_file.mac
 
 BDOS_READ	EQU	20	; Read sequential
@@ -5382,10 +5571,10 @@ _fgetc_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fgetpos.mac
 ; ============================================================
-	CSEG
 ; lc_fgetpos.mac - split from lc_file.mac
 
 
@@ -5448,10 +5637,10 @@ _fgetpos_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fgets.mac
 ; ============================================================
-	CSEG
 ; lc_fgets.mac - split from lc_file.mac
 
 
@@ -5549,29 +5738,28 @@ _fgets_null:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_floor.mac
 ; ============================================================
-	CSEG
-; lc_floor.mac - floor, ceil, trunc, round and f/l variants
+; lc_floor.mac - _floor, _floorf, _floorl
+; Split from lc_floor.mac
 
 
-	EXTRN	__fadd
 	EXTRN	__fsub
 	EXTRN	__ftoi
 	EXTRN	__itof
 	EXTRN	__tmp32
 
 	CSEG
-
 ; ============================================================
 ; floor(x) - round toward negative infinity
 ; ============================================================
 	PUBLIC	_floor
-	PUBLIC	_floorf
-	PUBLIC	_floorl
 _floor:
+	PUBLIC	_floorf
 _floorf:
+	PUBLIC	_floorl
 _floorl:
 	PUSH	IX
 	PUSH	BC
@@ -5633,117 +5821,17 @@ _floor_done:
 	POP	IX
 	RET
 
-; ============================================================
-; ceil(x) = -floor(-x)
-; ============================================================
-	PUBLIC	_ceil
-	PUBLIC	_ceilf
-	PUBLIC	_ceill
-_ceil:
-_ceilf:
-_ceill:
-	PUSH	IX
-	PUSH	BC
-	LD	IX,0
-	ADD	IX,SP
-
-	CALL	_math_getarg
-
-	; Negate
-	LD	A,D
-	XOR	80H
-	LD	D,A
-
-	; floor(-x)
-	PUSH	DE
-	PUSH	HL
-	CALL	_floorf
-	POP	BC
-	POP	BC
-
-	; Negate result
-	LD	A,D
-	XOR	80H
-	LD	D,A
-
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; trunc(x) - round toward zero
-; ============================================================
-	PUBLIC	_trunc
-	PUBLIC	_truncf
-	PUBLIC	_truncl
-_trunc:
-_truncf:
-_truncl:
-	PUSH	IX
-	PUSH	BC
-	LD	IX,0
-	ADD	IX,SP
-
-	CALL	_math_getarg
-	CALL	__ftoi
-	CALL	__itof
-
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; round(x) - round to nearest, ties away from zero
-; ============================================================
-	PUBLIC	_round
-	PUBLIC	_roundf
-	PUBLIC	_roundl
-_round:
-_roundf:
-_roundl:
-	PUSH	IX
-	PUSH	BC
-	LD	IX,0
-	ADD	IX,SP
-
-	CALL	_math_getarg
-
-	; Add 0.5 (or -0.5 if negative)
-	LD	A,D
-	AND	80H
-	LD	B,A		; Save sign
-
-	; 0.5 = 3F000000
-	LD	A,0
-	LD	(__tmp32),A
-	LD	(__tmp32+1),A
-	LD	A,0
-	LD	(__tmp32+2),A
-	LD	A,3FH
-	OR	B		; Apply sign
-	LD	(__tmp32+3),A
-	CALL	__fadd
-
-	; Truncate
-	CALL	__ftoi
-	CALL	__itof
-
-	POP	BC
-	POP	IX
-	RET
-
 	COMMON	/lc_floor/
-
 _floor_x:	DS	4
 _floor_t:	DS	4
 _floor_sign:	DS	1
 _ceil_x:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_fma.mac
 ; ============================================================
-	CSEG
 ; lc_fma.mac - fma, fmaf
 ; fma(x, y, z) = x * y + z
 
@@ -5798,24 +5886,24 @@ _fmaf:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fmax.mac
 ; ============================================================
-	CSEG
-; lc_fmax.mac - fmax, fmaxf, fmin, fminf
+; lc_fmax.mac - _fmax, _fmaxf
+; Split from lc_fmax.mac
 
 
 	EXTRN	__fcmp
 	EXTRN	__tmp32
 
 	CSEG
-
 ; ============================================================
 ; fmax(x, y) - return larger of x, y
 ; ============================================================
 	PUBLIC	_fmax
-	PUBLIC	_fmaxf
 _fmax:
+	PUBLIC	_fmaxf
 _fmaxf:
 	PUSH	IX
 	LD	IX,0
@@ -5850,12 +5938,25 @@ _fmax_ret:
 	POP	IX
 	RET
 
+
+	CSEG
+; ============================================================
+; lc_fmin.mac
+; ============================================================
+; lc_fmin.mac - _fmin, _fminf
+; Split from lc_fmax.mac
+
+
+	EXTRN	__fcmp
+	EXTRN	__tmp32
+
+	CSEG
 ; ============================================================
 ; fmin(x, y) - return smaller of x, y
 ; ============================================================
 	PUBLIC	_fmin
-	PUBLIC	_fminf
 _fmin:
+	PUBLIC	_fminf
 _fminf:
 	PUSH	IX
 	LD	IX,0
@@ -5892,14 +5993,14 @@ _fmin_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fmod.mac
 ; ============================================================
-	CSEG
-; lc_fmod.mac - fmod, fmodf, fmodl, remainder, remainderf
+; lc_fmod.mac - _fmod, _fmodf, _fmodl
+; Split from lc_fmod.mac
 
 
-	EXTRN	__fadd
 	EXTRN	__fsub
 	EXTRN	__fmul
 	EXTRN	__fdiv
@@ -5908,16 +6009,15 @@ _fmin_ret:
 	EXTRN	__tmp32
 
 	CSEG
-
 ; ============================================================
 ; fmod(x, y) - floating-point remainder
 ; fmod(x, y) = x - trunc(x/y) * y
 ; ============================================================
 	PUBLIC	_fmod
-	PUBLIC	_fmodf
-	PUBLIC	_fmodl
 _fmod:
+	PUBLIC	_fmodf
 _fmodf:
+	PUBLIC	_fmodl
 _fmodl:
 	PUSH	IX
 	PUSH	BC
@@ -5967,25 +6067,15 @@ _fmodl:
 	POP	IX
 	RET
 
-; ============================================================
-; remainder - same as fmod for now
-; ============================================================
-	PUBLIC	_remainder
-	PUBLIC	_remainderf
-_remainder:
-_remainderf:
-	JP	_fmod
-
 	COMMON	/lc_fmod/
-
 _fmod_x:	DS	4
 _fmod_y:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_fopen.mac
 ; ============================================================
-	CSEG
 ; lc_fopen.mac - split from lc_file.mac
 
 BDOS_OPEN	EQU	15	; Open file
@@ -6288,22 +6378,15 @@ _parse_done:
 _file_slots:	DS	680	; 4 FILE structures * 170 bytes each
 
 
+	CSEG
 ; ============================================================
 ; lc_fpclassify.mac
 ; ============================================================
-	CSEG
-; lc_fpclassify.mac - fpclassify, isfinite, isinf, isnan, isnormal, signbit
-; IEEE 754 classification functions
-;
-; FP_NAN       0
-; FP_INFINITE  1
-; FP_ZERO      2
-; FP_SUBNORMAL 3
-; FP_NORMAL    4
+; lc_fpclassify.mac - _fpclassify
+; Split from lc_fpclassify.mac
 
 
 	CSEG
-
 ; ============================================================
 ; fpclassify(x) - classify floating-point value
 ; ============================================================
@@ -6370,140 +6453,11 @@ _fpc_nan:
 	POP	IX
 	RET
 
-; ============================================================
-; isfinite(x) - return nonzero if finite (not inf or nan)
-; ============================================================
-	PUBLIC	_isfinite
-_isfinite:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
 
-	LD	A,(IX+7)	; D byte (SEEEEEEE)
-	AND	7FH		; Strip sign (0EEEEEEE)
-	ADD	A,A		; Shift left (EEEEEEE0)
-	LD	B,A
-	LD	A,(IX+6)	; E byte (EMMMMMMM)
-	RLCA			; Rotate - exp low bit into bit 0
-	AND	1		; Isolate exp low bit
-	OR	B		; A = 8-bit biased exponent
-	CP	255
-	JR	Z,_ret_zero	; inf or nan
-	LD	HL,1
-	POP	IX
-	RET
-
-; ============================================================
-; isinf(x) - return nonzero if infinity
-; ============================================================
-	PUBLIC	_isinf
-_isinf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	A,(IX+7)	; D byte (SEEEEEEE)
-	AND	7FH		; Strip sign (0EEEEEEE)
-	ADD	A,A		; Shift left (EEEEEEE0)
-	LD	B,A
-	LD	A,(IX+6)	; E byte (EMMMMMMM)
-	RLCA			; Rotate - exp low bit into bit 0
-	AND	1		; Isolate exp low bit
-	OR	B		; A = 8-bit biased exponent
-	CP	255
-	JR	NZ,_ret_zero	; exp != 255, not inf
-	; Check mantissa == 0
-	LD	A,(IX+6)
-	AND	7FH
-	OR	(IX+5)
-	OR	(IX+4)
-	JR	NZ,_ret_zero	; NaN, not inf
-	LD	HL,1
-	POP	IX
-	RET
-
-; ============================================================
-; isnan(x) - return nonzero if NaN
-; ============================================================
-	PUBLIC	_isnan
-_isnan:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	A,(IX+7)	; D byte (SEEEEEEE)
-	AND	7FH		; Strip sign (0EEEEEEE)
-	ADD	A,A		; Shift left (EEEEEEE0)
-	LD	B,A
-	LD	A,(IX+6)	; E byte (EMMMMMMM)
-	RLCA			; Rotate - exp low bit into bit 0
-	AND	1		; Isolate exp low bit
-	OR	B		; A = 8-bit biased exponent
-	CP	255
-	JR	NZ,_ret_zero	; exp != 255, not nan
-	; Check mantissa != 0
-	LD	A,(IX+6)
-	AND	7FH
-	OR	(IX+5)
-	OR	(IX+4)
-	JR	Z,_ret_zero	; mantissa 0 = inf, not nan
-	LD	HL,1
-	POP	IX
-	RET
-
-; ============================================================
-; isnormal(x) - return nonzero if normal
-; ============================================================
-	PUBLIC	_isnormal
-_isnormal:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	A,(IX+7)	; D byte (SEEEEEEE)
-	AND	7FH		; Strip sign (0EEEEEEE)
-	ADD	A,A		; Shift left (EEEEEEE0)
-	LD	B,A
-	LD	A,(IX+6)	; E byte (EMMMMMMM)
-	RLCA			; Rotate - exp low bit into bit 0
-	AND	1		; Isolate exp low bit
-	OR	B		; A = 8-bit biased exponent
-	OR	A
-	JR	Z,_ret_zero	; exp 0 = zero or subnormal
-	CP	255
-	JR	Z,_ret_zero	; exp 255 = inf or nan
-	LD	HL,1
-	POP	IX
-	RET
-
-; Shared return-zero
-_ret_zero:
-	LD	HL,0
-	POP	IX
-	RET
-
-; ============================================================
-; signbit(x) - return nonzero if sign bit is set
-; ============================================================
-	PUBLIC	_signbit
-_signbit:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	A,(IX+7)	; D byte, sign in bit 7
-	RLCA			; Sign into bit 0
-	AND	1
-	LD	L,A
-	LD	H,0
-	POP	IX
-	RET
-
-
+	CSEG
 ; ============================================================
 ; lc_fprintf.mac
 ; ============================================================
-	CSEG
 ; lc_fprintf.mac - fprintf, vfprintf (vprintf and vsprintf are in lc_vprintf.mac and lc_vsprintf.mac).
 ;
 ; Each of these carried its own formatter, so a conversion the printf
@@ -6612,10 +6566,10 @@ _fprintf_sink:
 _fprintf_stream: DS	2
 
 
+	CSEG
 ; ============================================================
 ; lc_fputc.mac
 ; ============================================================
-	CSEG
 ; lc_fputc.mac - split from lc_file.mac
 
 BDOS_WRITE	EQU	21	; Write sequential
@@ -6802,10 +6756,10 @@ _fflush_err:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fputs.mac
 ; ============================================================
-	CSEG
 ; lc_fputs.mac - split from lc_file.mac
 
 
@@ -6874,10 +6828,10 @@ _fputs_err:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fread.mac
 ; ============================================================
-	CSEG
 ; lc_fread.mac - split from lc_file.mac
 
 
@@ -6984,10 +6938,10 @@ _fread_ptr:	DS	2	; fread dest pointer temp
 _fread_cnt:	DS	2	; fread byte counter temp
 
 
+	CSEG
 ; ============================================================
 ; lc_free.mac
 ; ============================================================
-	CSEG
 ; lc_free.mac - split from lc_malloc.mac
 
 
@@ -7133,10 +7087,10 @@ _fre_prev:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_freopen.mac
 ; ============================================================
-	CSEG
 ; lc_freopen.mac - split from lc_file.mac
 
 
@@ -7181,24 +7135,22 @@ _freopen:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_frexp.mac
 ; ============================================================
-	CSEG
-; lc_frexp.mac - frexp, frexpf, ldexp, ldexpf
+; lc_frexp.mac - _frexp, _frexpf
+; Split from lc_frexp.mac
 
-
-	EXTRN	__tmp32
 
 	CSEG
-
 ; ============================================================
 ; frexp(x, int *exp) - extract mantissa and exponent
 ; Returns mantissa in [0.5, 1), stores exponent
 ; ============================================================
 	PUBLIC	_frexp
-	PUBLIC	_frexpf
 _frexp:
+	PUBLIC	_frexpf
 _frexpf:
 	PUSH	IX
 	PUSH	BC
@@ -7254,66 +7206,45 @@ _frexpf:
 	POP	IX
 	RET
 
+
+	CSEG
 ; ============================================================
-; ldexp(x, n) - multiply x by 2^n
+; lc_fscanf.mac
 ; ============================================================
-	PUBLIC	_ldexp
-	PUBLIC	_ldexpf
-_ldexp:
-_ldexpf:
+; lc_fscanf.mac - _fscanf
+; Split from lc_scanf.mac
+
+
+
+	CSEG
+; ============================================================
+; fscanf - read from file
+; ============================================================
+	PUBLIC	_fscanf
+_fscanf:
 	PUSH	IX
-	PUSH	BC
 	LD	IX,0
 	ADD	IX,SP
-
-	; Read float arg: IX+6..IX+9
+	; stream at IX+4, fmt at IX+6, args at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_scanf_fp),HL
+	XOR	A
+	LD	(_scanf_ungot),A
+	LD	A,2
+	LD	(_scanf_mode),A
 	LD	L,(IX+6)
 	LD	H,(IX+7)
-	LD	E,(IX+8)
-	LD	D,(IX+9)
-
-	; Get int exponent n (at IX+10)
-	LD	B,(IX+10)
-
-	; Extract 8-bit biased exponent
-	LD	A,D		; D = SEEEEEEE
-	AND	7FH		; Strip sign
-	ADD	A,A		; EEEEEEE0
-	LD	C,A
-	LD	A,E		; EMMMMMMM
-	RLCA			; MMMMMMME
-	AND	1
-	OR	C		; Full 8-bit exponent
-
-	; Add n
-	ADD	A,B		; New biased exponent
-
-	; Reconstruct: D = S | exp[7:1], E = exp[0] | mantissa[6:0]
-	LD	C,A		; Save new exponent
-	SRL	A		; A = exp >> 1 = 0_exp[7:1]
-	LD	B,A
-	LD	A,D
-	AND	80H		; Keep sign
-	OR	B
-	LD	D,A
-	LD	A,C		; New exponent
-	AND	1		; exp[0]
-	RRCA			; Rotate to bit 7
-	LD	B,A
-	LD	A,E
-	AND	7FH		; Keep mantissa bits
-	OR	B		; Set exp[0]
-	LD	E,A
-
-	POP	BC
-	POP	IX
-	RET
+	LD	C,8
+	XOR	A
+	LD	(_scanf_count),A
+	JP	_scanf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_fseek.mac
 ; ============================================================
-	CSEG
 ; lc_fseek.mac - split from lc_file.mac
 
 
@@ -7429,10 +7360,10 @@ _fseek_err:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fsetpos.mac
 ; ============================================================
-	CSEG
 ; lc_fsetpos.mac - split from lc_file.mac
 
 
@@ -7507,10 +7438,10 @@ _fsetpos:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_ftell.mac
 ; ============================================================
-	CSEG
 ; lc_ftell.mac - split from lc_file.mac
 
 
@@ -7590,10 +7521,10 @@ _ftell_err:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_fwrite.mac
 ; ============================================================
-	CSEG
 ; lc_fwrite.mac - split from lc_file.mac
 
 
@@ -7692,10 +7623,10 @@ _fwrite_ptr:	DS	2	; fwrite source pointer temp
 _fwrite_cnt:	DS	2	; fwrite byte counter temp
 
 
+	CSEG
 ; ============================================================
 ; lc_getc.mac
 ; ============================================================
-	CSEG
 ; lc_getc.mac - split from lc_file.mac
 
 
@@ -7711,10 +7642,10 @@ _getc:
 	JP	_fgetc		; Just tail-call fgetc
 
 
+	CSEG
 ; ============================================================
 ; lc_getchar.mac
 ; ============================================================
-	CSEG
 ; lc_getchar.mac - getchar
 
 
@@ -7735,10 +7666,10 @@ _getchar:
 
 
 
+	CSEG
 ; ============================================================
 ; lc_getenv.mac
 ; ============================================================
-	CSEG
 ; lc_getenv.mac - split from lc_misc.mac
 
 
@@ -7754,10 +7685,10 @@ _getenv:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_gets.mac
 ; ============================================================
-	CSEG
 ; lc_gets.mac - gets
 
 
@@ -7801,10 +7732,10 @@ _gets_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_hypot.mac
 ; ============================================================
-	CSEG
 ; lc_hypot.mac - hypot, hypotf (depends on sqrt)
 
 
@@ -7867,10 +7798,84 @@ _hypotf:
 _hypot_x2:	DS	4
 
 
+	CSEG
+; ============================================================
+; lc_ilogb.mac
+; ============================================================
+; lc_ilogb.mac - _ilogb, _ilogbf
+; Split from lc_logb.mac
+
+
+	CSEG
+; ============================================================
+; ilogb(x) - return exponent as int
+; Returns: HL = unbiased exponent
+; ============================================================
+	PUBLIC	_ilogb
+_ilogb:
+	PUBLIC	_ilogbf
+_ilogbf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Extract 8-bit exponent from IEEE 754
+	; D has SEEEEEEE, E has EMMMMMM
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = full 8-bit biased exponent
+
+	; Check zero (exp=0)
+	OR	A
+	JR	Z,_ilogb_zero
+
+	; Check inf/nan (exp=255)
+	CP	255
+	JR	Z,_ilogb_inf
+
+	; Normal: exp - 127
+	SUB	127
+	LD	L,A
+	RLA			; Sign extend
+	SBC	A,A
+	LD	H,A
+	POP	IX
+	RET
+
+_ilogb_zero:
+	; Check mantissa for subnormal
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_ilogb_sub
+	; True zero: return INT_MIN
+	LD	HL,8000H
+	POP	IX
+	RET
+
+_ilogb_sub:
+	; Subnormal: return -126
+	LD	HL,0FF82H
+	POP	IX
+	RET
+
+_ilogb_inf:
+	; Return INT_MAX
+	LD	HL,7FFFH
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_isalnum.mac
 ; ============================================================
-	CSEG
 ; lc_isalnum.mac - split from lc_ctype.mac
 
 
@@ -7909,10 +7914,10 @@ _isalnum_no:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_isalpha.mac
 ; ============================================================
-	CSEG
 ; lc_isalpha.mac - split from lc_ctype.mac
 
 
@@ -7946,10 +7951,10 @@ _isalpha_no:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_isdigit.mac
 ; ============================================================
-	CSEG
 ; lc_isdigit.mac - split from lc_ctype.mac
 
 
@@ -7975,10 +7980,90 @@ _isdigit_no:
 	RET
 
 
+	CSEG
+; ============================================================
+; lc_isfinite.mac
+; ============================================================
+; lc_isfinite.mac - _isfinite
+; Split from lc_fpclassify.mac
+
+
+	CSEG
+; ============================================================
+; isfinite(x) - return nonzero if finite (not inf or nan)
+; ============================================================
+	PUBLIC	_isfinite
+_isfinite:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	Z,_isfinite_z	; inf or nan
+	LD	HL,1
+	POP	IX
+	RET
+_isfinite_z:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_isinf.mac
+; ============================================================
+; lc_isinf.mac - _isinf
+; Split from lc_fpclassify.mac
+
+
+	CSEG
+; ============================================================
+; isinf(x) - return nonzero if infinity
+; ============================================================
+	PUBLIC	_isinf
+_isinf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	NZ,_isinf_z	; exp != 255, not inf
+	; Check mantissa == 0
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	NZ,_isinf_z	; NaN, not inf
+	LD	HL,1
+	POP	IX
+	RET
+_isinf_z:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_islower.mac
 ; ============================================================
-	CSEG
 ; lc_islower.mac - split from lc_ctype.mac
 
 
@@ -8004,10 +8089,92 @@ _islower_no:
 	RET
 
 
+	CSEG
+; ============================================================
+; lc_isnan.mac
+; ============================================================
+; lc_isnan.mac - _isnan
+; Split from lc_fpclassify.mac
+
+
+	CSEG
+; ============================================================
+; isnan(x) - return nonzero if NaN
+; ============================================================
+	PUBLIC	_isnan
+_isnan:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	CP	255
+	JR	NZ,_isnan_z	; exp != 255, not nan
+	; Check mantissa != 0
+	LD	A,(IX+6)
+	AND	7FH
+	OR	(IX+5)
+	OR	(IX+4)
+	JR	Z,_isnan_z	; mantissa 0 = inf, not nan
+	LD	HL,1
+	POP	IX
+	RET
+_isnan_z:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_isnormal.mac
+; ============================================================
+; lc_isnormal.mac - _isnormal
+; Split from lc_fpclassify.mac
+
+
+	CSEG
+; ============================================================
+; isnormal(x) - return nonzero if normal
+; ============================================================
+	PUBLIC	_isnormal
+_isnormal:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte (SEEEEEEE)
+	AND	7FH		; Strip sign (0EEEEEEE)
+	ADD	A,A		; Shift left (EEEEEEE0)
+	LD	B,A
+	LD	A,(IX+6)	; E byte (EMMMMMMM)
+	RLCA			; Rotate - exp low bit into bit 0
+	AND	1		; Isolate exp low bit
+	OR	B		; A = 8-bit biased exponent
+	OR	A
+	JR	Z,_isnormal_z	; exp 0 = zero or subnormal
+	CP	255
+	JR	Z,_isnormal_z	; exp 255 = inf or nan
+	LD	HL,1
+	POP	IX
+	RET
+_isnormal_z:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_isprint.mac
 ; ============================================================
-	CSEG
 ; lc_isprint.mac - split from lc_ctype.mac
 
 
@@ -8033,10 +8200,10 @@ _isprint_no:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_isspace.mac
 ; ============================================================
-	CSEG
 ; lc_isspace.mac - split from lc_ctype.mac
 
 
@@ -8070,10 +8237,10 @@ _isspace_yes:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_isupper.mac
 ; ============================================================
-	CSEG
 ; lc_isupper.mac - split from lc_ctype.mac
 
 
@@ -8099,10 +8266,10 @@ _isupper_no:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_isxdigit.mac
 ; ============================================================
-	CSEG
 ; lc_isxdigit.mac - split from lc_ctype.mac
 
 
@@ -8142,10 +8309,10 @@ _isxdigit_no:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_labs.mac
 ; ============================================================
-	CSEG
 ; lc_labs.mac - split from lc_stdlib.mac
 
 
@@ -8188,10 +8355,75 @@ _labs_done:
 	RET
 
 
+	CSEG
+; ============================================================
+; lc_ldexp.mac
+; ============================================================
+; lc_ldexp.mac - _ldexp, _ldexpf
+; Split from lc_frexp.mac
+
+
+	CSEG
+; ============================================================
+; ldexp(x, n) - multiply x by 2^n
+; ============================================================
+	PUBLIC	_ldexp
+_ldexp:
+	PUBLIC	_ldexpf
+_ldexpf:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	; Read float arg: IX+6..IX+9
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
+
+	; Get int exponent n (at IX+10)
+	LD	B,(IX+10)
+
+	; Extract 8-bit biased exponent
+	LD	A,D		; D = SEEEEEEE
+	AND	7FH		; Strip sign
+	ADD	A,A		; EEEEEEE0
+	LD	C,A
+	LD	A,E		; EMMMMMMM
+	RLCA			; MMMMMMME
+	AND	1
+	OR	C		; Full 8-bit exponent
+
+	; Add n
+	ADD	A,B		; New biased exponent
+
+	; Reconstruct: D = S | exp[7:1], E = exp[0] | mantissa[6:0]
+	LD	C,A		; Save new exponent
+	SRL	A		; A = exp >> 1 = 0_exp[7:1]
+	LD	B,A
+	LD	A,D
+	AND	80H		; Keep sign
+	OR	B
+	LD	D,A
+	LD	A,C		; New exponent
+	AND	1		; exp[0]
+	RRCA			; Rotate to bit 7
+	LD	B,A
+	LD	A,E
+	AND	7FH		; Keep mantissa bits
+	OR	B		; Set exp[0]
+	LD	E,A
+
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_ldiv.mac
 ; ============================================================
-	CSEG
 ; lc_ldiv.mac - split from lc_stdlib.mac
 
 
@@ -8260,10 +8492,10 @@ _ldiv:
 _ldiv_result:	DS	8	; ldiv_t: quot (4), rem (4)
 
 
+	CSEG
 ; ============================================================
 ; lc_locale.mac
 ; ============================================================
-	CSEG
 ; lc_locale.mac - locale functions
 
 
@@ -8360,10 +8592,10 @@ _lconv_data:
 	DB	127		; n_sign_posn
 
 
+	CSEG
 ; ============================================================
 ; lc_log.mac
 ; ============================================================
-	CSEG
 ; lc_log.mac - log, logf, logl
 ; Range reduction: log(x) = e*ln(2) + log(m) where x = m * 2^e, m in [1,2)
 
@@ -8602,10 +8834,10 @@ _log_term:	DS	4
 _log_e:		DS	1
 
 
+	CSEG
 ; ============================================================
 ; lc_log10.mac
 ; ============================================================
-	CSEG
 ; lc_log10.mac - log10, log10f, log10l (depends on log)
 
 
@@ -8652,10 +8884,10 @@ _log10l:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_log1p.mac
 ; ============================================================
-	CSEG
 ; lc_log1p.mac - log1p, log1pf
 ; log1p(x) = log(1 + x)
 
@@ -8697,10 +8929,10 @@ _log1pf:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_log2.mac
 ; ============================================================
-	CSEG
 ; lc_log2.mac - log2, log2f (depends on log)
 
 
@@ -8745,88 +8977,23 @@ _log2f:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_logb.mac
 ; ============================================================
-	CSEG
-; lc_logb.mac - logb, logbf, ilogb, ilogbf
-; Extract exponent from IEEE 754 float
+; lc_logb.mac - _logb, _logbf
+; Split from lc_logb.mac
 
 
 	EXTRN	__itof
 
 	CSEG
-
-; ============================================================
-; ilogb(x) - return exponent as int
-; Returns: HL = unbiased exponent
-; ============================================================
-	PUBLIC	_ilogb
-	PUBLIC	_ilogbf
-_ilogb:
-_ilogbf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	; Extract 8-bit exponent from IEEE 754
-	; D has SEEEEEEE, E has EMMMMMM
-	LD	A,(IX+7)	; D byte (SEEEEEEE)
-	AND	7FH		; Strip sign (0EEEEEEE)
-	ADD	A,A		; Shift left (EEEEEEE0)
-	LD	B,A
-	LD	A,(IX+6)	; E byte (EMMMMMMM)
-	RLCA			; Rotate - exp low bit into bit 0
-	AND	1		; Isolate exp low bit
-	OR	B		; A = full 8-bit biased exponent
-
-	; Check zero (exp=0)
-	OR	A
-	JR	Z,_ilogb_zero
-
-	; Check inf/nan (exp=255)
-	CP	255
-	JR	Z,_ilogb_inf
-
-	; Normal: exp - 127
-	SUB	127
-	LD	L,A
-	RLA			; Sign extend
-	SBC	A,A
-	LD	H,A
-	POP	IX
-	RET
-
-_ilogb_zero:
-	; Check mantissa for subnormal
-	LD	A,(IX+6)
-	AND	7FH
-	OR	(IX+5)
-	OR	(IX+4)
-	JR	NZ,_ilogb_sub
-	; True zero: return INT_MIN
-	LD	HL,8000H
-	POP	IX
-	RET
-
-_ilogb_sub:
-	; Subnormal: return -126
-	LD	HL,0FF82H
-	POP	IX
-	RET
-
-_ilogb_inf:
-	; Return INT_MAX
-	LD	HL,7FFFH
-	POP	IX
-	RET
-
 ; ============================================================
 ; logb(x) - return exponent as float
 ; ============================================================
 	PUBLIC	_logb
-	PUBLIC	_logbf
 _logb:
+	PUBLIC	_logbf
 _logbf:
 	PUSH	IX
 	LD	IX,0
@@ -8891,10 +9058,10 @@ _logb_inf:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_malloc.mac
 ; ============================================================
-	CSEG
 ; lc_malloc.mac - split from lc_malloc.mac
 
 
@@ -9045,10 +9212,10 @@ _mde_oom:
 _heap_ptr:	DS	2
 
 
+	CSEG
 ; ============================================================
 ; lc_malloc_data.mac
 ; ============================================================
-	CSEG
 ; lc_malloc_data.mac - split from lc_malloc.mac
 
 
@@ -9060,17 +9227,15 @@ _heap_ptr:	DS	2
 _free_head:	DS	2
 
 
-; ============================================================
-; lc_math_helper.mac
-; ============================================================
 	CSEG
-; lc_math_helper.mac - shared math helper functions
+; ============================================================
+; lc_math_getarg.mac
+; ============================================================
+; lc_math_getarg.mac - _math_getarg
+; Split from lc_math_helper.mac
 
-
-	EXTRN	__tmp32
 
 	CSEG
-
 ; ============================================================
 ; Helper: Load float argument from stack into DEHL
 ; Call with IX pointing to stack frame
@@ -9084,6 +9249,18 @@ _math_getarg:
 	LD	D,(IX+9)
 	RET
 
+
+	CSEG
+; ============================================================
+; lc_math_getarg2.mac
+; ============================================================
+; lc_math_getarg2.mac - _math_getarg2
+; Split from lc_math_helper.mac
+
+
+	EXTRN	__tmp32
+
+	CSEG
 ; ============================================================
 ; Helper: Load second float argument into __tmp32
 ; ============================================================
@@ -9100,10 +9277,10 @@ _math_getarg2:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_mblen.mac
 ; ============================================================
-	CSEG
 ; lc_mblen.mac - split from lc_wchar.mac
 
 
@@ -9153,10 +9330,10 @@ _mblen_zero:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_mbstowcs.mac
 ; ============================================================
-	CSEG
 ; lc_mbstowcs.mac - split from lc_wchar.mac
 
 
@@ -9249,10 +9426,10 @@ _mbstowcs_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_mbtowc.mac
 ; ============================================================
-	CSEG
 ; lc_mbtowc.mac - split from lc_wchar.mac
 
 
@@ -9331,10 +9508,10 @@ _mbtowc_err:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_memchr.mac
 ; ============================================================
-	CSEG
 ; lc_memchr.mac - split from lc_mem.mac
 
 
@@ -9374,10 +9551,10 @@ _memchr_notfound:
 ; Returns: number of characters written (excluding null)
 
 
+	CSEG
 ; ============================================================
 ; lc_memcmp.mac
 ; ============================================================
-	CSEG
 ; lc_memcmp.mac - split from lc_mem.mac
 
 
@@ -9427,10 +9604,10 @@ _memcmp_diff:
 ; Returns: pointer to allocated memory, or NULL (0) if failed
 
 
+	CSEG
 ; ============================================================
 ; lc_memcpy.mac
 ; ============================================================
-	CSEG
 ; lc_memcpy.mac - split from lc_mem.mac
 
 
@@ -9461,10 +9638,10 @@ _memcpy_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_memmove.mac
 ; ============================================================
-	CSEG
 ; lc_memmove.mac - split from lc_mem.mac
 
 
@@ -9510,10 +9687,10 @@ _memmove_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_mempcpy.mac
 ; ============================================================
-	CSEG
 ; lc_mempcpy.mac - split from lc_mem.mac
 
 
@@ -9543,10 +9720,10 @@ _mempcpy_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_memset.mac
 ; ============================================================
-	CSEG
 ; lc_memset.mac - split from lc_mem.mac
 
 
@@ -9585,10 +9762,10 @@ _memset_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_modf.mac
 ; ============================================================
-	CSEG
 ; lc_modf.mac - modf, modff
 
 
@@ -9655,10 +9832,357 @@ _modf_x:	DS	4
 _modf_i:	DS	4
 
 
+	CSEG
+; ============================================================
+; lc_mpm_available.mac
+; ============================================================
+; lc_mpm_available.mac - ___mpm_available
+; Split from lc_thread.mac
+
+
+	CSEG
+; int __mpm_available(void)
+; Check if MP/M is available (BDOS function 12 returns 0x31 or higher for MP/M)
+	PUBLIC	___mpm_available
+___mpm_available:
+	PUSH	BC
+	LD	C,12		; Get CP/M version
+	CALL	5
+	; H = 0 for CP/M, non-zero for MP/M
+	LD	A,H
+	OR	A
+	JR	Z,_mpm_no
+	; Check if H has MP/M flag
+	LD	A,L
+	CP	31H		; MP/M 1.x
+	JR	NC,_mpm_yes
+_mpm_no:
+	LD	HL,0
+	POP	BC
+	RET
+_mpm_yes:
+	LD	HL,1
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_mtx_destroy.mac
+; ============================================================
+; lc_mtx_destroy.mac - _mtx_destroy
+; Split from lc_thread.mac
+
+
+	CSEG
+; void mtx_destroy(mtx_t *mtx)
+; Destroy a mutex (no-op, just clear it)
+	PUBLIC	_mtx_destroy
+_mtx_destroy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	XOR	A
+	LD	B,12		; Size of mtx_t
+_mtx_destroy_loop:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_mtx_destroy_loop
+
+	POP	IX
+	RET
+
+; ============================================================
+; Condition variable functions
+; ============================================================
+
+
+	CSEG
+; ============================================================
+; lc_mtx_init.mac
+; ============================================================
+; lc_mtx_init.mac - _mtx_init
+; Split from lc_thread.mac
+
+
+	CSEG
+; int mtx_init(mtx_t *mtx, int type)
+; Initialize a mutex
+	PUBLIC	_mtx_init
+_mtx_init:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+	; Clear the mutex structure
+	XOR	A
+	LD	(HL),A		; locked = 0
+	INC	HL
+	LD	A,(IX+6)	; type
+	LD	(HL),A
+	INC	HL
+	XOR	A
+	LD	(HL),A		; owner = 0
+	INC	HL
+	LD	(HL),A		; count = 0
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_mtx_lock.mac
+; ============================================================
+; lc_mtx_lock.mac - _mtx_lock
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; int mtx_lock(mtx_t *mtx)
+; Lock a mutex
+	PUBLIC	_mtx_lock
+_mtx_lock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+_mtx_lock_retry:
+	DI			; Disable interrupts
+	LD	A,(HL)		; locked flag
+	OR	A
+	JR	Z,_mtx_lock_acq
+
+	; Already locked - check if recursive
+	INC	HL
+	LD	A,(HL)		; type
+	DEC	HL
+	AND	1		; mtx_recursive
+	JR	Z,_mtx_lock_wait
+
+	; Check if we own it
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	CP	(HL)		; owner
+	POP	HL
+	JR	NZ,_mtx_lock_wait
+
+	; We own it, increment count
+	PUSH	HL
+	INC	HL
+	INC	HL
+	INC	HL
+	INC	(HL)		; count++
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+	JR	_mtx_lock_ret
+
+_mtx_lock_wait:
+	EI			; Re-enable interrupts
+	; Yield and retry
+	PUSH	HL
+	CALL	_thrd_yield
+	POP	HL
+	JR	_mtx_lock_retry
+
+_mtx_lock_acq:
+	; Acquire the lock
+	LD	(HL),1		; locked = 1
+	; Set owner
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	LD	(HL),A		; owner
+	INC	HL
+	LD	(HL),1		; count = 1
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+
+_mtx_lock_ret:
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_mtx_timedlock.mac
+; ============================================================
+; lc_mtx_timedlock.mac - _mtx_timedlock
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; int mtx_timedlock(mtx_t *mtx, const struct timespec *ts)
+; Lock with timeout - simplified, just tries a few times then fails
+	PUBLIC	_mtx_timedlock
+_mtx_timedlock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	B,100		; Try 100 times
+_mtx_timed_loop:
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	CALL	_mtx_trylock
+	POP	BC
+	LD	A,H
+	OR	L
+	JR	Z,_mtx_timed_ok	; Got it
+	DJNZ	_mtx_timed_loop
+
+	; Timeout
+	LD	HL,2		; thrd_timedout
+	JR	_mtx_timed_ret
+
+_mtx_timed_ok:
+	LD	HL,0		; thrd_success
+
+_mtx_timed_ret:
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_mtx_trylock.mac
+; ============================================================
+; lc_mtx_trylock.mac - _mtx_trylock
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; int mtx_trylock(mtx_t *mtx)
+; Try to lock mutex without blocking
+	PUBLIC	_mtx_trylock
+_mtx_trylock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+	DI
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_mtx_try_busy
+
+	; Lock it
+	LD	(HL),1
+	PUSH	HL
+	INC	HL
+	INC	HL
+	LD	A,(_thread_current)
+	LD	(HL),A
+	INC	HL
+	LD	(HL),1
+	POP	HL
+	EI
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_mtx_try_busy:
+	; Check if recursive and we own it
+	INC	HL
+	LD	A,(HL)		; type
+	AND	1
+	JR	Z,_mtx_try_fail
+	INC	HL
+	LD	A,(_thread_current)
+	CP	(HL)
+	JR	NZ,_mtx_try_fail
+	; We own it
+	INC	HL
+	INC	(HL)
+	EI
+	LD	HL,0
+	POP	IX
+	RET
+
+_mtx_try_fail:
+	EI
+	LD	HL,3		; thrd_busy
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_mtx_unlock.mac
+; ============================================================
+; lc_mtx_unlock.mac - _mtx_unlock
+; Split from lc_thread.mac
+
+
+	CSEG
+; int mtx_unlock(mtx_t *mtx)
+; Unlock a mutex
+	PUBLIC	_mtx_unlock
+_mtx_unlock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+
+	DI
+	; Check if recursive
+	INC	HL
+	LD	A,(HL)		; type
+	AND	1
+	JR	Z,_mtx_unlock_do
+
+	; Recursive - decrement count
+	INC	HL
+	INC	HL
+	DEC	(HL)		; count--
+	JR	NZ,_mtx_unlock_recur
+	; Count reached 0, release
+	DEC	HL
+	DEC	HL
+	DEC	HL		; Back to start
+
+_mtx_unlock_do:
+	DEC	HL		; Back to locked flag
+	XOR	A
+	LD	(HL),A		; locked = 0
+
+_mtx_unlock_recur:
+	EI
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_nan.mac
 ; ============================================================
-	CSEG
 ; lc_nan.mac - nan, nanf
 ; Return quiet NaN (7FC00000H)
 
@@ -9674,10 +10198,10 @@ _nanf:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_nextafter.mac
 ; ============================================================
-	CSEG
 ; lc_nextafter.mac - nextafter, nextafterf
 ; Return next representable float from x toward y
 
@@ -9803,10 +10327,10 @@ _na_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_perror.mac
 ; ============================================================
-	CSEG
 ; lc_perror.mac - split from lc_file.mac
 
 
@@ -9883,10 +10407,10 @@ _perror_msg:
 	DB	'Error',0
 
 
+	CSEG
 ; ============================================================
 ; lc_pow.mac
 ; ============================================================
-	CSEG
 ; lc_pow.mac - pow, powf, powl (depends on log, exp)
 
 
@@ -10079,10 +10603,10 @@ _pow_k:		DS	2
 _pow_n:		DS	2
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_all.mac
 ; ============================================================
-	CSEG
 ; lc_printf_all.mac - default printf format table (all handlers)
 ; This module provides the full __printf_format_table when no
 ; #pragma printf is specified. It references all format handlers
@@ -10175,10 +10699,10 @@ __printf_ll_entry:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_c.mac
 ; ============================================================
-	CSEG
 ; lc_printf_c.mac - printf %c handler
 
 
@@ -10244,10 +10768,10 @@ _phc_left:
 	JP	_printf_padn
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_core.mac
 ; ============================================================
-	CSEG
 ; lc_printf_core.mac - printf core dispatcher
 ; Table-driven printf: searches __printf_format_table for format handlers
 ;
@@ -11021,10 +11545,10 @@ _prt_float_prec:	DB	6
 __ftmp:		DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_d.mac
 ; ============================================================
-	CSEG
 ; lc_printf_d.mac - printf %d/%i handler
 
 
@@ -11069,10 +11593,10 @@ _phd_go:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_dec16.mac
 ; ============================================================
-	CSEG
 ; lc_printf_dec16.mac - 16-bit unsigned decimal digits for %d and %u
 
 
@@ -11104,10 +11628,10 @@ _pd16_lp:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_e.mac
 ; ============================================================
-	CSEG
 ; lc_printf_e.mac - printf %e / %E handler (float, scientific notation)
 ;
 ; Style [-]d.ddde+dd per C17 7.21.6.1 p8.  The exponent always carries at
@@ -11857,10 +12381,10 @@ _prt_e_half:	DS	4
 _prt_e_dexp:	DS	1
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_f.mac
 ; ============================================================
-	CSEG
 ; lc_printf_f.mac - printf %f handler (float)
 
 
@@ -11917,10 +12441,10 @@ _phf_go:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_g.mac
 ; ============================================================
-	CSEG
 ; lc_printf_g.mac - printf %g / %G handler
 ;
 ; C17 7.21.6.1 p8, implemented literally:
@@ -12248,10 +12772,10 @@ _g_pend:	DB	0
 _g_dot:		DB	0
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_l.mac
 ; ============================================================
-	CSEG
 ; lc_printf_l.mac - printf 'l' length prefix handler
 ; Dispatches to __printf_long_table, or 'll' to __printf_ll_table
 
@@ -12338,10 +12862,10 @@ _phl_ll_unknown:
 	JP	_printf_unk_echo
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_ld.mac
 ; ============================================================
-	CSEG
 ; lc_printf_ld.mac - printf %ld handler (signed long decimal)
 
 
@@ -12399,10 +12923,10 @@ _phld_pos:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_lld.mac
 ; ============================================================
-	CSEG
 ; lc_printf_lld.mac - printf %lld handler (signed long long decimal)
 
 
@@ -12479,10 +13003,10 @@ _phlld_pos:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_llu.mac
 ; ============================================================
-	CSEG
 ; lc_printf_llu.mac - printf %llu handler (unsigned long long decimal)
 
 
@@ -12528,10 +13052,10 @@ __printf_handle_llu:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_llx.mac
 ; ============================================================
-	CSEG
 ; lc_printf_llx.mac - printf %llx handler (long long hex)
 
 
@@ -12587,10 +13111,10 @@ __printf_handle_llx:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_lo.mac
 ; ============================================================
-	CSEG
 ; lc_printf_lo.mac - printf %lo handler (unsigned long octal)
 
 
@@ -12713,10 +13237,10 @@ _plo_set:
 _plo_val:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_lu.mac
 ; ============================================================
-	CSEG
 ; lc_printf_lu.mac - printf %lu handler (unsigned long decimal)
 
 
@@ -12750,10 +13274,10 @@ __printf_handle_lu:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_lx.mac
 ; ============================================================
-	CSEG
 ; lc_printf_lx.mac - printf %lx and %lX handlers (long hex)
 
 
@@ -12804,10 +13328,10 @@ __printf_handle_lx:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_o.mac
 ; ============================================================
-	CSEG
 ; lc_printf_o.mac - printf %o handler (unsigned int octal)
 
 
@@ -12880,10 +13404,10 @@ _pho_set:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_s.mac
 ; ============================================================
-	CSEG
 ; lc_printf_s.mac - printf %s handler
 
 
@@ -12996,10 +13520,10 @@ _phs_ret:
 _phs_pad:	DS	1
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_u.mac
 ; ============================================================
-	CSEG
 ; lc_printf_u.mac - printf %u handler
 
 
@@ -13027,10 +13551,10 @@ __printf_handle_u:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_printf_x.mac
 ; ============================================================
-	CSEG
 ; lc_printf_x.mac - printf %x, %X, %p handlers
 
 
@@ -13071,10 +13595,10 @@ __printf_handle_x:
 	JP	_printf_loop
 
 
+	CSEG
 ; ============================================================
 ; lc_prt_dec32.mac
 ; ============================================================
-	CSEG
 ; lc_prt_dec32.mac - print DEHL as 32-bit decimal
 
 
@@ -13205,10 +13729,10 @@ _div32_10_nosub:
 _prt32_val:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_prt_dec64.mac
 ; ============================================================
-	CSEG
 ; lc_prt_dec64.mac - print 64-bit value as unsigned decimal
 
 
@@ -13330,10 +13854,10 @@ _div64_10_nosub:
 _prt64_val:	DS	8
 
 
+	CSEG
 ; ============================================================
 ; lc_prt_float.mac
 ; ============================================================
-	CSEG
 ; lc_prt_float.mac - the %f float printer (_prt_float)
 ; Only lc_printf_f links this module, with the soft-float runtime it needs.
 ; _printf_putc, _printf_upper, __ftmp and _prt_float_prec stay in
@@ -13734,10 +14258,10 @@ _prt_big:	DS	40	; %f >= 2^31: decimal digits, least significant first
 _prt_biglen:	DB	1
 
 
+	CSEG
 ; ============================================================
 ; lc_prt_hex.mac
 ; ============================================================
-	CSEG
 ; lc_prt_hex.mac - hex printing helpers
 ;
 ; _prt_hex and _prt_hex4 honor the _printf_upper flag: when nonzero,
@@ -13853,10 +14377,10 @@ _prt_hex4_nib:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_putc.mac
 ; ============================================================
-	CSEG
 ; lc_putc.mac - split from lc_file.mac
 
 
@@ -13872,10 +14396,10 @@ _putc:
 	JP	_fputc		; Just tail-call fputc
 
 
+	CSEG
 ; ============================================================
 ; lc_putchar.mac
 ; ============================================================
-	CSEG
 ; lc_putchar.mac - putchar
 
 
@@ -13907,10 +14431,10 @@ _putchar:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_puts.mac
 ; ============================================================
-	CSEG
 ; lc_puts.mac - split from lc_puts.mac
 
 
@@ -13960,10 +14484,10 @@ _puts_newline:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_qsort.mac
 ; ============================================================
-	CSEG
 ; lc_qsort.mac - qsort (bsearch is in lc_bsearch.mac)
 
 
@@ -14564,10 +15088,10 @@ QS_END:
 QS_NV	EQU	QS_END-QS_VARS
 
 
+	CSEG
 ; ============================================================
 ; lc_rand.mac
 ; ============================================================
-	CSEG
 ; lc_rand.mac - split from lc_stdlib.mac
 
 
@@ -14607,10 +15131,10 @@ rand_sk:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_rand_data.mac
 ; ============================================================
-	CSEG
 ; lc_rand_data.mac - split from lc_stdlib.mac
 
 
@@ -14624,10 +15148,10 @@ rand_sk:
 _rand_seed:	DW	1	; Default seed = 1
 
 
+	CSEG
 ; ============================================================
 ; lc_realloc.mac
 ; ============================================================
-	CSEG
 ; lc_realloc.mac - split from lc_malloc.mac
 
 
@@ -14701,10 +15225,10 @@ _rea_same:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_reduce_trig.mac
 ; ============================================================
-	CSEG
 ; lc_reduce_trig.mac - reduce |x| to [0, pi] for sin/cos Taylor series
 
 	EXTRN	__fmul
@@ -14825,10 +15349,30 @@ _trig_x:	DS	4
 _trig_negate:	DS	1
 
 
+	CSEG
+; ============================================================
+; lc_remainder.mac
+; ============================================================
+; lc_remainder.mac - _remainder, _remainderf
+; Split from lc_fmod.mac
+
+
+
+	CSEG
+; ============================================================
+; remainder - same as fmod for now
+; ============================================================
+	PUBLIC	_remainder
+_remainder:
+	PUBLIC	_remainderf
+_remainderf:
+	JP	_fmod
+
+
+	CSEG
 ; ============================================================
 ; lc_remove.mac
 ; ============================================================
-	CSEG
 ; lc_remove.mac - split from lc_file.mac
 
 
@@ -14873,10 +15417,10 @@ _remove_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_remove_data.mac
 ; ============================================================
-	CSEG
 ; lc_remove_data.mac - split from lc_file.mac
 
 
@@ -14889,10 +15433,10 @@ _tmp_fcb:
 	DS	36
 
 
+	CSEG
 ; ============================================================
 ; lc_rename.mac
 ; ============================================================
-	CSEG
 ; lc_rename.mac - split from lc_file.mac
 
 BDOS_RENAME	EQU	23	; Rename file
@@ -14945,10 +15489,10 @@ _rename_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_rewind.mac
 ; ============================================================
-	CSEG
 ; lc_rewind.mac - split from lc_file.mac
 
 
@@ -14991,10 +15535,65 @@ _rewind:
 	RET
 
 
+	CSEG
+; ============================================================
+; lc_round.mac
+; ============================================================
+; lc_round.mac - _round, _roundf, _roundl
+; Split from lc_floor.mac
+
+
+	EXTRN	__fadd
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	__tmp32
+
+	CSEG
+; ============================================================
+; round(x) - round to nearest, ties away from zero
+; ============================================================
+	PUBLIC	_round
+_round:
+	PUBLIC	_roundf
+_roundf:
+	PUBLIC	_roundl
+_roundl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+
+	; Add 0.5 (or -0.5 if negative)
+	LD	A,D
+	AND	80H
+	LD	B,A		; Save sign
+
+	; 0.5 = 3F000000
+	LD	A,0
+	LD	(__tmp32),A
+	LD	(__tmp32+1),A
+	LD	A,0
+	LD	(__tmp32+2),A
+	LD	A,3FH
+	OR	B		; Apply sign
+	LD	(__tmp32+3),A
+	CALL	__fadd
+
+	; Truncate
+	CALL	__ftoi
+	CALL	__itof
+
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_scalbn.mac
 ; ============================================================
-	CSEG
 ; lc_scalbn.mac - scalbn, scalbnf, scalbln, scalblnf
 ; scalbn(x, n) = x * 2^n (same as ldexp)
 
@@ -15013,17 +15612,16 @@ _scalblnf:
 	JP	_ldexpf
 
 
+	CSEG
 ; ============================================================
 ; lc_scanf.mac
 ; ============================================================
+; lc_scanf.mac - _scanf
+; Split from lc_scanf.mac
+
+
+
 	CSEG
-; lc_scanf.mac - scanf family
-
-
-
-
-	CSEG
-
 ; ============================================================
 ; scanf family - formatted input
 ; int scanf(const char *fmt, ...)
@@ -15043,7 +15641,24 @@ _scanf:
 	XOR	A
 	LD	(_scanf_count),A ; matched count
 	LD	(_scanf_mode),A  ; mode=0: stdin
+	JP	_scanf_loop
 
+
+	CSEG
+; ============================================================
+; lc_scanf_core.mac
+; ============================================================
+; lc_scanf_core.mac - _scanf_loop
+; Split from lc_scanf.mac
+
+
+
+	CSEG
+; ============================================================
+; scanf engine - shared by scanf, sscanf and fscanf
+; In: HL = format string, C = offset of the next argument from IX
+; ============================================================
+	PUBLIC	_scanf_loop
 _scanf_loop:
 	LD	A,(HL)
 	OR	A
@@ -15809,70 +16424,38 @@ _scanf_rlh_done:
 	CALL	_scanf_ungetc
 	RET
 
-; ============================================================
-; sscanf - read from string
-; ============================================================
-	PUBLIC	_sscanf
-_sscanf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	; str at IX+4, fmt at IX+6, args at IX+8
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	(_scanf_src),HL
-	XOR	A
-	LD	(_scanf_ungot),A
-	LD	A,1
-	LD	(_scanf_mode),A
-	; Setup format and args offset
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = format
-	LD	C,8		; args start at IX+8
-	XOR	A
-	LD	(_scanf_count),A
-	JP	_scanf_loop
 
+	CSEG
 ; ============================================================
-; fscanf - read from file
+; lc_scanf_data.mac
 ; ============================================================
-	PUBLIC	_fscanf
-_fscanf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	; stream at IX+4, fmt at IX+6, args at IX+8
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	(_scanf_fp),HL
-	XOR	A
-	LD	(_scanf_ungot),A
-	LD	A,2
-	LD	(_scanf_mode),A
-	LD	L,(IX+6)
-	LD	H,(IX+7)
-	LD	C,8
-	XOR	A
-	LD	(_scanf_count),A
-	JP	_scanf_loop
+; lc_scanf_data.mac - data
+; Split from lc_scanf.mac
 
-	COMMON	/lc_scanf/
 
+	COMMON	/lc_scanf_data/
 ; scanf work areas
+	PUBLIC	_scanf_count
 _scanf_count:	DS	1	; Number of matched items
+	PUBLIC	_scanf_mode
 _scanf_mode:	DS	1	; 0=stdin, 1=string, 2=file
+	PUBLIC	_scanf_src
 _scanf_src:	DS	2	; String source pointer
+	PUBLIC	_scanf_fp
 _scanf_fp:	DS	2	; File pointer
+	PUBLIC	_scanf_ungot
 _scanf_ungot:	DS	1	; Ungetc'd character
+	PUBLIC	_scanf_got
 _scanf_got:	DS	1	; A conversion found a digit
+	PUBLIC	_scanf_tmp
 _scanf_tmp:	DS	4	; Work area of _scanf_x10a
 _scanf_buf:	DS	32	; Working buffer
 
 
+	CSEG
 ; ============================================================
 ; lc_setbuf.mac
 ; ============================================================
-	CSEG
 ; lc_setbuf.mac - split from lc_file.mac
 
 
@@ -15888,10 +16471,10 @@ _setbuf:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_setvbuf.mac
 ; ============================================================
-	CSEG
 ; lc_setvbuf.mac - split from lc_file.mac
 
 
@@ -15909,10 +16492,10 @@ _setvbuf:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_signal.mac
 ; ============================================================
-	CSEG
 ; lc_signal.mac - signal handling
 
 
@@ -16108,10 +16691,37 @@ _raise_err:
 _signal_table:	DS	14
 
 
+	CSEG
+; ============================================================
+; lc_signbit.mac
+; ============================================================
+; lc_signbit.mac - _signbit
+; Split from lc_fpclassify.mac
+
+
+	CSEG
+; ============================================================
+; signbit(x) - return nonzero if sign bit is set
+; ============================================================
+	PUBLIC	_signbit
+_signbit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+7)	; D byte, sign in bit 7
+	RLCA			; Sign into bit 0
+	AND	1
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_sin.mac
 ; ============================================================
-	CSEG
 ; lc_sin.mac - sin, sinf, sinl
 
 
@@ -16322,10 +16932,10 @@ _sin_n:		DS	4
 _sin_iter:	DS	1
 
 
+	CSEG
 ; ============================================================
 ; lc_sinh.mac
 ; ============================================================
-	CSEG
 ; lc_sinh.mac - sinh, sinhf (depends on exp)
 
 
@@ -16398,10 +17008,10 @@ _sinh_x:	DS	4
 _sinh_ep:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_snprintf.mac
 ; ============================================================
-	CSEG
 ; lc_snprintf.mac - snprintf(): the shared printf engine, bounded buffer.
 ;
 ; Was a third copy of the formatter, and the most threadbare of them: it
@@ -16499,10 +17109,10 @@ _snprintf_out:	DS	2
 _snprintf_max:	DS	2
 
 
+	CSEG
 ; ============================================================
 ; lc_sprintf.mac
 ; ============================================================
-	CSEG
 ; lc_sprintf.mac - sprintf(): the shared printf engine, writing to a buffer.
 ;
 ; This file used to carry a second, independent formatter: its own
@@ -16578,10 +17188,10 @@ _sprintf_sink:
 _sprintf_out:	DS	2	; next byte of the caller's buffer
 
 
+	CSEG
 ; ============================================================
 ; lc_sqrt.mac
 ; ============================================================
-	CSEG
 ; lc_sqrt.mac - sqrt, sqrtf, sqrtl
 
 
@@ -16722,10 +17332,10 @@ _sqrt_x:	DS	4
 _sqrt_guess:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_srand.mac
 ; ============================================================
-	CSEG
 ; lc_srand.mac - split from lc_stdlib.mac
 
 
@@ -16748,10 +17358,45 @@ _srand:
 	RET
 
 
+	CSEG
+; ============================================================
+; lc_sscanf.mac
+; ============================================================
+; lc_sscanf.mac - _sscanf
+; Split from lc_scanf.mac
+
+
+
+	CSEG
+; ============================================================
+; sscanf - read from string
+; ============================================================
+	PUBLIC	_sscanf
+_sscanf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	; str at IX+4, fmt at IX+6, args at IX+8
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_scanf_src),HL
+	XOR	A
+	LD	(_scanf_ungot),A
+	LD	A,1
+	LD	(_scanf_mode),A
+	; Setup format and args offset
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = format
+	LD	C,8		; args start at IX+8
+	XOR	A
+	LD	(_scanf_count),A
+	JP	_scanf_loop
+
+
+	CSEG
 ; ============================================================
 ; lc_strcat.mac
 ; ============================================================
-	CSEG
 ; lc_strcat.mac - split from lc_string.mac
 
 
@@ -16786,10 +17431,10 @@ _strcat_loop:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strchr.mac
 ; ============================================================
-	CSEG
 ; lc_strchr.mac - split from lc_string.mac
 
 
@@ -16824,10 +17469,10 @@ _strchr_loop:
 ; Copy n bytes from src to dest
 
 
+	CSEG
 ; ============================================================
 ; lc_strcmp.mac
 ; ============================================================
-	CSEG
 ; lc_strcmp.mac - split from lc_string.mac
 
 
@@ -16866,10 +17511,10 @@ _strcmp_diff:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strcpy.mac
 ; ============================================================
-	CSEG
 ; lc_strcpy.mac - split from lc_string.mac
 
 
@@ -16898,10 +17543,10 @@ _strcpy_loop:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strcspn.mac
 ; ============================================================
-	CSEG
 ; lc_strcspn.mac - split from lc_string.mac
 
 
@@ -16965,10 +17610,10 @@ _strcspn_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strdup.mac
 ; ============================================================
-	CSEG
 ; lc_strdup.mac - split from lc_string.mac
 
 
@@ -17040,10 +17685,10 @@ _strdup_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strerror.mac
 ; ============================================================
-	CSEG
 ; lc_strerror.mac - split from lc_string.mac
 
 
@@ -17128,10 +17773,10 @@ _strerr_nosys:	DB	'Not implemented',0
 _strerr_unknown: DB	'Unknown error',0
 
 
+	CSEG
 ; ============================================================
 ; lc_strlen.mac
 ; ============================================================
-	CSEG
 ; lc_strlen.mac - split from lc_string.mac
 
 
@@ -17155,10 +17800,10 @@ _strlen:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strncat.mac
 ; ============================================================
-	CSEG
 ; lc_strncat.mac - split from lc_string.mac
 
 
@@ -17220,10 +17865,10 @@ _strncat_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strncmp.mac
 ; ============================================================
-	CSEG
 ; lc_strncmp.mac - split from lc_string.mac
 
 
@@ -17286,10 +17931,10 @@ _strncmp_diff:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strncpy.mac
 ; ============================================================
-	CSEG
 ; lc_strncpy.mac - split from lc_string.mac
 
 
@@ -17347,10 +17992,10 @@ _strncpy_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strpbrk.mac
 ; ============================================================
-	CSEG
 ; lc_strpbrk.mac - split from lc_string.mac
 
 
@@ -17410,10 +18055,10 @@ _strpbrk_notfound:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strrchr.mac
 ; ============================================================
-	CSEG
 ; lc_strrchr.mac - split from lc_string.mac
 
 
@@ -17454,10 +18099,10 @@ _strrchr_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strspn.mac
 ; ============================================================
-	CSEG
 ; lc_strspn.mac - split from lc_string.mac
 
 
@@ -17514,10 +18159,10 @@ _strspn_done:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_strstr.mac
 ; ============================================================
-	CSEG
 ; lc_strstr.mac - split from lc_string.mac
 
 
@@ -17588,10 +18233,446 @@ _strstr_notfound:
 	RET
 
 
+	CSEG
+; ============================================================
+; lc_strtod.mac
+; ============================================================
+; lc_strtod.mac - _strtof, _strtold, _strtod
+; Split from lc_atof.mac
+
+
+	EXTRN	__ltof
+	EXTRN	__fadd
+	EXTRN	__fmul
+	EXTRN	__fdiv
+	EXTRN	__tmp32
+
+	CSEG
+; lc_atof.mac - string to float conversion
+
+
+
+; DEHL = DEHL * 10 + C (C = 0..9).  Clobbers A, BC; uses _strtod_tmp.
+_strtod_x10a:
+	LD	A,C
+	LD	(_strtod_tmp),HL
+	LD	(_strtod_tmp+2),DE
+	ADD	HL,HL		; * 2
+	RL	E
+	RL	D
+	ADD	HL,HL		; * 4
+	RL	E
+	RL	D
+	LD	BC,(_strtod_tmp)
+	ADD	HL,BC		; * 5, low word
+	EX	DE,HL
+	LD	BC,(_strtod_tmp+2)
+	ADC	HL,BC		; * 5, high word
+	EX	DE,HL
+	ADD	HL,HL		; * 10
+	RL	E
+	RL	D
+	LD	C,A
+	LD	B,0
+	ADD	HL,BC		; + digit
+	RET	NC
+	INC	DE
+	RET
+
+
+; ============================================================
+; double strtod(const char *nptr, char **endptr)
+; Convert string to double (IEEE 754 single precision)
+; Format: [ws][sign][digits][.digits][e[sign]digits]
+; Returns result in DEHL
+; ============================================================
+	PUBLIC	_strtof
+_strtof:
+	PUBLIC	_strtold
+_strtold:
+	PUBLIC	_strtod
+_strtod:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = nptr
+	XOR	A
+	LD	(_strtod_neg),A	; Clear negative flag
+	LD	(_strtod_expneg),A	; Clear exponent negative
+	LD	A,1
+	LD	(_strtod_expadj),A	; Exponent adjustment (1.0 default)
+	LD	(_strtod_expadj+1),A
+	; Clear the exponent and the fraction state of an earlier call
+	LD	(_strtod_divisor),A	; divisor = 1
+	XOR	A
+	LD	(_strtod_exp),A
+	LD	(_strtod_exp+1),A
+	LD	(_strtod_divisor+1),A
+	LD	(_strtod_divisor+2),A
+	LD	(_strtod_divisor+3),A
+
+	; Initialize result to 0.0
+	XOR	A
+	LD	(_strtod_result),A
+	LD	(_strtod_result+1),A
+	LD	(_strtod_result+2),A
+	LD	(_strtod_result+3),A
+
+	; Skip leading whitespace
+_strtod_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_strtod_skipnext
+	CP	09H
+	JR	Z,_strtod_skipnext
+	CP	0AH
+	JR	Z,_strtod_skipnext
+	CP	0DH
+	JR	Z,_strtod_skipnext
+	JR	_strtod_sign
+_strtod_skipnext:
+	INC	HL
+	JR	_strtod_skip
+
+_strtod_sign:
+	PUSH	HL		; Save start position for endptr
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_strtod_chkplus
+	LD	A,1
+	LD	(_strtod_neg),A
+	INC	HL
+	JR	_strtod_intpart
+_strtod_chkplus:
+	CP	'+'
+	JR	NZ,_strtod_intpart
+	INC	HL
+
+_strtod_intpart:
+	; Parse integer part: accumulate digits
+	; Use 32-bit integer accumulator first
+	XOR	A
+	LD	(_strtod_intacc),A
+	LD	(_strtod_intacc+1),A
+	LD	(_strtod_intacc+2),A
+	LD	(_strtod_intacc+3),A
+	LD	(_strtod_gotdigit),A	; No digits yet
+
+_strtod_intloop:
+	LD	A,(HL)
+	CP	'0'
+	JR	C,_strtod_intdone
+	CP	'9'+1
+	JR	NC,_strtod_intdone
+	; Got a digit
+	LD	B,1
+	LD	(_strtod_gotdigit),A
+	SUB	'0'
+	LD	C,A		; C = digit value
+
+	; accumulator = accumulator * 10 + digit
+	PUSH	HL
+	LD	HL,(_strtod_intacc)
+	LD	DE,(_strtod_intacc+2)
+	CALL	_strtod_x10a
+	LD	(_strtod_intacc),HL
+	LD	(_strtod_intacc+2),DE
+	POP	HL
+	INC	HL
+	JR	_strtod_intloop
+
+_strtod_intdone:
+	; Check for decimal point
+	LD	A,(HL)
+	CP	'.'
+	JR	NZ,_strtod_chkexp
+
+	INC	HL		; Skip decimal point
+	; Parse fractional part
+	LD	DE,1		; Divisor starts at 1
+	LD	(_strtod_divisor),DE
+	LD	DE,0
+	LD	(_strtod_divisor+2),DE
+	XOR	A
+	LD	(_strtod_fracacc),A
+	LD	(_strtod_fracacc+1),A
+	LD	(_strtod_fracacc+2),A
+	LD	(_strtod_fracacc+3),A
+
+_strtod_fracloop:
+	LD	A,(HL)
+	CP	'0'
+	JR	C,_strtod_fracdone
+	CP	'9'+1
+	JR	NC,_strtod_fracdone
+	; Got a fractional digit
+	LD	B,1
+	LD	(_strtod_gotdigit),A
+	SUB	'0'
+	LD	C,A
+
+	; Digits past 1E8 of divisor do not fit a float: skip them
+	PUSH	HL
+	LD	HL,(_strtod_divisor+2)
+	LD	DE,05F5H
+	OR	A
+	SBC	HL,DE
+	JR	NC,_strtod_fracskip
+	PUSH	BC
+	LD	HL,(_strtod_divisor)
+	LD	DE,(_strtod_divisor+2)
+	LD	C,0
+	CALL	_strtod_x10a
+	LD	(_strtod_divisor),HL
+	LD	(_strtod_divisor+2),DE
+	LD	HL,(_strtod_fracacc)
+	LD	DE,(_strtod_fracacc+2)
+	POP	BC
+	CALL	_strtod_x10a
+	LD	(_strtod_fracacc),HL
+	LD	(_strtod_fracacc+2),DE
+_strtod_fracskip:
+	POP	HL
+	INC	HL
+	JR	_strtod_fracloop
+
+_strtod_fracdone:
+
+_strtod_chkexp:
+	; Check for exponent
+	LD	A,(HL)
+	CP	'e'
+	JR	Z,_strtod_parseexp
+	CP	'E'
+	JR	Z,_strtod_parseexp
+	JR	_strtod_convert
+
+_strtod_parseexp:
+	INC	HL		; Skip 'e'
+	XOR	A
+	LD	(_strtod_expneg),A
+	LD	(_strtod_exp),A
+	LD	(_strtod_exp+1),A
+
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_strtod_expplus
+	LD	A,1
+	LD	(_strtod_expneg),A
+	INC	HL
+	JR	_strtod_expdigits
+_strtod_expplus:
+	CP	'+'
+	JR	NZ,_strtod_expdigits
+	INC	HL
+
+_strtod_expdigits:
+	LD	A,(HL)
+	CP	'0'
+	JR	C,_strtod_convert
+	CP	'9'+1
+	JR	NC,_strtod_convert
+	SUB	'0'
+	LD	C,A
+	; exp = exp * 10 + digit
+	PUSH	HL
+	LD	HL,(_strtod_exp)
+	LD	D,H
+	LD	E,L
+	ADD	HL,HL		; *2
+	ADD	HL,HL		; *4
+	ADD	HL,DE		; *5
+	ADD	HL,HL		; *10
+	LD	D,0
+	LD	E,C
+	ADD	HL,DE
+	LD	(_strtod_exp),HL
+	POP	HL
+	INC	HL
+	JR	_strtod_expdigits
+
+_strtod_convert:
+	; Save end position
+	EX	(SP),HL		; HL = start, (SP) = end
+
+	; Check if we got any digits
+	LD	A,(_strtod_gotdigit)
+	OR	A
+	JR	NZ,_strtod_hasdigits
+	; No digits - return 0.0 with endptr = nptr
+	POP	DE		; Discard end
+	PUSH	HL		; start (nptr) is the end pointer
+	JR	_strtod_storendptr
+
+_strtod_hasdigits:
+	POP	HL		; HL = end position
+	PUSH	HL		; Save it back
+
+	; Convert integer part to float
+	PUSH	HL
+	LD	HL,(_strtod_intacc)
+	LD	DE,(_strtod_intacc+2)
+	CALL	__ltof		; Convert long to float
+	LD	(_strtod_result),HL
+	LD	(_strtod_result+2),DE
+	POP	HL
+
+	; Add fractional part if any
+	LD	A,(_strtod_divisor)
+	DEC	A
+	OR	A
+	JR	NZ,_strtod_addfrac
+	LD	A,(_strtod_divisor+1)
+	OR	A
+	JR	NZ,_strtod_addfrac
+	LD	A,(_strtod_divisor+2)
+	OR	A
+	JR	NZ,_strtod_addfrac
+	LD	A,(_strtod_divisor+3)
+	OR	A
+	JR	Z,_strtod_applyexp
+
+_strtod_addfrac:
+	; Convert fracacc to float
+	PUSH	HL
+	LD	HL,(_strtod_fracacc)
+	LD	DE,(_strtod_fracacc+2)
+	CALL	__ltof
+	; Divide by divisor
+	LD	(_strtod_tmp),HL
+	LD	(_strtod_tmp+2),DE
+	LD	HL,(_strtod_divisor)
+	LD	DE,(_strtod_divisor+2)
+	CALL	__ltof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_strtod_tmp)
+	LD	DE,(_strtod_tmp+2)
+	CALL	__fdiv
+	; Add to result
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_strtod_result)
+	LD	DE,(_strtod_result+2)
+	CALL	__fadd
+	LD	(_strtod_result),HL
+	LD	(_strtod_result+2),DE
+	POP	HL
+
+_strtod_applyexp:
+	; Apply exponent if any
+	LD	DE,(_strtod_exp)
+	LD	A,D
+	OR	E
+	JR	Z,_strtod_applysign
+
+	; Build 10^exp
+	PUSH	HL
+	LD	HL,(_strtod_result)
+	LD	DE,(_strtod_result+2)
+	LD	BC,(_strtod_exp)
+
+_strtod_exploop:
+	LD	A,B
+	OR	C
+	JR	Z,_strtod_expdone
+	; Multiply or divide by 10
+	LD	A,(_strtod_expneg)
+	OR	A
+	JR	NZ,_strtod_expdiv
+
+	; Multiply by 10
+	PUSH	BC
+	LD	BC,00000000H	; 10.0 in IEEE 754 is 41200000H
+	LD	(__tmp32),BC
+	LD	BC,04120H
+	LD	(__tmp32+2),BC
+	CALL	__fmul
+	POP	BC
+	DEC	BC
+	JR	_strtod_exploop
+
+_strtod_expdiv:
+	; Divide by 10
+	PUSH	BC
+	LD	BC,00000000H	; 10.0 in IEEE 754 is 41200000H
+	LD	(__tmp32),BC
+	LD	BC,04120H
+	LD	(__tmp32+2),BC
+	CALL	__fdiv
+	POP	BC
+	DEC	BC
+	JR	_strtod_exploop
+
+_strtod_expdone:
+	LD	(_strtod_result),HL
+	LD	(_strtod_result+2),DE
+	POP	HL
+
+_strtod_applysign:
+	; Apply negative sign if needed
+	LD	A,(_strtod_neg)
+	OR	A
+	JR	Z,_strtod_storendptr
+
+	; Negate: flip sign bit
+	LD	HL,(_strtod_result+2)
+	LD	A,H
+	XOR	80H
+	LD	H,A
+	LD	(_strtod_result+2),HL
+
+_strtod_storendptr:
+	; Store endptr if not NULL
+	POP	HL		; HL = end position
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = endptr
+	LD	A,B
+	OR	C
+	JR	Z,_strtod_retval
+	; Store HL at *endptr
+	LD	A,L
+	LD	(BC),A
+	INC	BC
+	LD	A,H
+	LD	(BC),A
+
+_strtod_retval:
+	LD	HL,(_strtod_result)
+	LD	DE,(_strtod_result+2)
+	POP	BC
+	POP	IX
+	RET
+
+
+; strtod work variables
+_strtod_neg:	DB	0
+_strtod_expneg:	DB	0
+_strtod_gotdigit: DB	0
+_strtod_exp:	DW	0
+_strtod_expadj:	DW	1
+_strtod_intacc:	DS	4
+_strtod_fracacc: DS	4
+_strtod_divisor: DS	4
+_strtod_result:	DS	4
+_strtod_tmp:	DS	4
+
+; ============================================================
+; Multibyte/Wide Character Conversion Functions
+; Minimal implementation for C locale (1:1 char mapping)
+; ============================================================
+
+; int mblen(const char *s, size_t n)
+; Determine bytes in multibyte character
+
+
+	CSEG
 ; ============================================================
 ; lc_strtok.mac
 ; ============================================================
-	CSEG
 ; lc_strtok.mac - split from lc_string.mac
 
 
@@ -17707,10 +18788,10 @@ _strtok_next:	DS	2	; Next position in string
 _strtok_tok:	DS	2	; Start of current token
 
 
+	CSEG
 ; ============================================================
 ; lc_strtol.mac
 ; ============================================================
-	CSEG
 ; lc_strtol.mac - split from lc_atoi.mac
 
 
@@ -17992,10 +19073,10 @@ _strtol_acc:	DS	4
 _strtol_tmp:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_strtol_data.mac
 ; ============================================================
-	CSEG
 ; lc_strtol_data.mac - split from lc_atoi.mac
 
 
@@ -18009,10 +19090,10 @@ _strtol_base:	DS	1
 _strtol_neg:	DS	1
 
 
+	CSEG
 ; ============================================================
 ; lc_strtoul.mac
 ; ============================================================
-	CSEG
 ; lc_strtoul.mac - split from lc_atoi.mac
 
 
@@ -18065,10 +19146,10 @@ _strtoul_pref:
 	JP	_strtol_prefix	; Share the rest of strtol code
 
 
+	CSEG
 ; ============================================================
 ; lc_system.mac
 ; ============================================================
-	CSEG
 ; lc_system.mac - split from lc_misc.mac
 
 
@@ -18086,10 +19167,10 @@ _system:
 ; ============================================================
 
 
+	CSEG
 ; ============================================================
 ; lc_tan.mac
 ; ============================================================
-	CSEG
 ; lc_tan.mac - tan, tanf, tanl (depends on sin, cos)
 
 
@@ -18153,10 +19234,10 @@ _tan_x:		DS	4
 _tan_sin:	DS	4
 
 
+	CSEG
 ; ============================================================
 ; lc_tanh.mac
 ; ============================================================
-	CSEG
 ; lc_tanh.mac - tanh, tanhf (depends on sinh, cosh)
 
 
@@ -18216,56 +19297,15 @@ _tanh_x:	DS	4
 _tanh_s:	DS	4
 
 
-; ============================================================
-; lc_thread.mac
-; ============================================================
 	CSEG
-; lc_thread.mac - threading support
-
-
-; MP/M XDOS function numbers
-MPM_DISPATCH	EQU	142	; Dispatch (yield)
-MPM_DELAY	EQU	141	; Delay
+; ============================================================
+; lc_thrd_create.mac
+; ============================================================
+; lc_thrd_create.mac - _thrd_create
+; Split from lc_thread.mac
 
 
 	CSEG
-
-; int __mpm_available(void)
-; Check if MP/M is available (BDOS function 12 returns 0x31 or higher for MP/M)
-	PUBLIC	___mpm_available
-___mpm_available:
-	PUSH	BC
-	LD	C,12		; Get CP/M version
-	CALL	5
-	; H = 0 for CP/M, non-zero for MP/M
-	LD	A,H
-	OR	A
-	JR	Z,_mpm_no
-	; Check if H has MP/M flag
-	LD	A,L
-	CP	31H		; MP/M 1.x
-	JR	NC,_mpm_yes
-_mpm_no:
-	LD	HL,0
-	POP	BC
-	RET
-_mpm_yes:
-	LD	HL,1
-	POP	BC
-	RET
-
-; void __threads_use_mpm(int enable)
-; Set thread mode
-	PUBLIC	___threads_use_mpm
-___threads_use_mpm:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	LD	(_thread_mode),A
-	POP	IX
-	RET
-
 ; int thrd_create(thrd_t *thr, thrd_start_t func, void *arg)
 ; Create a new thread - only works under MP/M
 ; Under CP/M, returns thrd_error
@@ -18276,6 +19316,53 @@ _thrd_create:
 	LD	HL,4		; thrd_error
 	RET
 
+
+	CSEG
+; ============================================================
+; lc_thrd_current.mac
+; ============================================================
+; lc_thrd_current.mac - _thrd_current
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; thrd_t thrd_current(void)
+; Get current thread ID
+	PUBLIC	_thrd_current
+_thrd_current:
+	LD	A,(_thread_current)
+	LD	L,A
+	LD	H,0
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_thrd_detach.mac
+; ============================================================
+; lc_thrd_detach.mac - _thrd_detach
+; Split from lc_thread.mac
+
+
+	CSEG
+; int thrd_detach(thrd_t thr)
+; Detach a thread - returns thrd_error under CP/M
+	PUBLIC	_thrd_detach
+_thrd_detach:
+	LD	HL,4		; thrd_error
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_thrd_equal.mac
+; ============================================================
+; lc_thrd_equal.mac - _thrd_equal
+; Split from lc_thread.mac
+
+
+	CSEG
 ; int thrd_equal(thrd_t lhs, thrd_t rhs)
 ; Compare two thread IDs
 	PUBLIC	_thrd_equal
@@ -18294,15 +19381,58 @@ _thrd_eq_yes:
 	POP	IX
 	RET
 
-; thrd_t thrd_current(void)
-; Get current thread ID
-	PUBLIC	_thrd_current
-_thrd_current:
-	LD	A,(_thread_current)
-	LD	L,A
-	LD	H,0
+
+	CSEG
+; ============================================================
+; lc_thrd_exit.mac
+; ============================================================
+; lc_thrd_exit.mac - _thrd_exit
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; void thrd_exit(int res)
+; Exit current thread (exits program under CP/M)
+	PUBLIC	_thrd_exit
+_thrd_exit:
+	; Under CP/M, just exit the program
+	JP	_exit
+
+
+	CSEG
+; ============================================================
+; lc_thrd_join.mac
+; ============================================================
+; lc_thrd_join.mac - _thrd_join
+; Split from lc_thread.mac
+
+
+	CSEG
+; int thrd_join(thrd_t thr, int *res)
+; Wait for thread to finish - returns thrd_error under CP/M
+	PUBLIC	_thrd_join
+_thrd_join:
+	LD	HL,4		; thrd_error
 	RET
 
+; ============================================================
+; Mutex functions - use DI/EI for synchronization
+; ============================================================
+
+
+	CSEG
+; ============================================================
+; lc_thrd_sleep.mac
+; ============================================================
+; lc_thrd_sleep.mac - _thrd_sleep
+; Split from lc_thread.mac
+
+
+
+MPM_DELAY	EQU	141	; Delay
+
+	CSEG
 ; int thrd_sleep(const struct timespec *duration, struct timespec *remaining)
 ; Sleep for specified duration
 ; Uses MPM_DELAY under MP/M, busy-wait under CP/M
@@ -18425,6 +19555,19 @@ _thrd_sleep_noremain:
 	POP	IX
 	RET
 
+
+	CSEG
+; ============================================================
+; lc_thrd_yield.mac
+; ============================================================
+; lc_thrd_yield.mac - _thrd_yield
+; Split from lc_thread.mac
+
+
+
+MPM_DISPATCH	EQU	142	; Dispatch (yield)
+
+	CSEG
 ; void thrd_yield(void)
 ; Yield execution to other threads
 	PUBLIC	_thrd_yield
@@ -18440,658 +19583,53 @@ _thrd_yield:
 	POP	BC
 	RET
 
-; void thrd_exit(int res)
-; Exit current thread (exits program under CP/M)
-	PUBLIC	_thrd_exit
-_thrd_exit:
-	; Under CP/M, just exit the program
-	JP	_exit
 
-; int thrd_detach(thrd_t thr)
-; Detach a thread - returns thrd_error under CP/M
-	PUBLIC	_thrd_detach
-_thrd_detach:
-	LD	HL,4		; thrd_error
-	RET
-
-; int thrd_join(thrd_t thr, int *res)
-; Wait for thread to finish - returns thrd_error under CP/M
-	PUBLIC	_thrd_join
-_thrd_join:
-	LD	HL,4		; thrd_error
-	RET
-
+	CSEG
 ; ============================================================
-; Mutex functions - use DI/EI for synchronization
+; lc_thread_mode.mac
 ; ============================================================
+; lc_thread_mode.mac - data
+; Split from lc_thread.mac
 
-; int mtx_init(mtx_t *mtx, int type)
-; Initialize a mutex
-	PUBLIC	_mtx_init
-_mtx_init:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
 
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = mtx
-	; Clear the mutex structure
-	XOR	A
-	LD	(HL),A		; locked = 0
-	INC	HL
-	LD	A,(IX+6)	; type
-	LD	(HL),A
-	INC	HL
-	XOR	A
-	LD	(HL),A		; owner = 0
-	INC	HL
-	LD	(HL),A		; count = 0
-
-	LD	HL,0		; thrd_success
-	POP	IX
-	RET
-
-; int mtx_lock(mtx_t *mtx)
-; Lock a mutex
-	PUBLIC	_mtx_lock
-_mtx_lock:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = mtx
-
-_mtx_lock_retry:
-	DI			; Disable interrupts
-	LD	A,(HL)		; locked flag
-	OR	A
-	JR	Z,_mtx_lock_acq
-
-	; Already locked - check if recursive
-	INC	HL
-	LD	A,(HL)		; type
-	DEC	HL
-	AND	1		; mtx_recursive
-	JR	Z,_mtx_lock_wait
-
-	; Check if we own it
-	PUSH	HL
-	INC	HL
-	INC	HL
-	LD	A,(_thread_current)
-	CP	(HL)		; owner
-	POP	HL
-	JR	NZ,_mtx_lock_wait
-
-	; We own it, increment count
-	PUSH	HL
-	INC	HL
-	INC	HL
-	INC	HL
-	INC	(HL)		; count++
-	POP	HL
-	EI
-	LD	HL,0		; thrd_success
-	JR	_mtx_lock_ret
-
-_mtx_lock_wait:
-	EI			; Re-enable interrupts
-	; Yield and retry
-	PUSH	HL
-	CALL	_thrd_yield
-	POP	HL
-	JR	_mtx_lock_retry
-
-_mtx_lock_acq:
-	; Acquire the lock
-	LD	(HL),1		; locked = 1
-	; Set owner
-	PUSH	HL
-	INC	HL
-	INC	HL
-	LD	A,(_thread_current)
-	LD	(HL),A		; owner
-	INC	HL
-	LD	(HL),1		; count = 1
-	POP	HL
-	EI
-	LD	HL,0		; thrd_success
-
-_mtx_lock_ret:
-	POP	BC
-	POP	IX
-	RET
-
-; int mtx_trylock(mtx_t *mtx)
-; Try to lock mutex without blocking
-	PUBLIC	_mtx_trylock
-_mtx_trylock:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = mtx
-
-	DI
-	LD	A,(HL)
-	OR	A
-	JR	NZ,_mtx_try_busy
-
-	; Lock it
-	LD	(HL),1
-	PUSH	HL
-	INC	HL
-	INC	HL
-	LD	A,(_thread_current)
-	LD	(HL),A
-	INC	HL
-	LD	(HL),1
-	POP	HL
-	EI
-	LD	HL,0		; thrd_success
-	POP	IX
-	RET
-
-_mtx_try_busy:
-	; Check if recursive and we own it
-	INC	HL
-	LD	A,(HL)		; type
-	AND	1
-	JR	Z,_mtx_try_fail
-	INC	HL
-	LD	A,(_thread_current)
-	CP	(HL)
-	JR	NZ,_mtx_try_fail
-	; We own it
-	INC	HL
-	INC	(HL)
-	EI
-	LD	HL,0
-	POP	IX
-	RET
-
-_mtx_try_fail:
-	EI
-	LD	HL,3		; thrd_busy
-	POP	IX
-	RET
-
-; int mtx_timedlock(mtx_t *mtx, const struct timespec *ts)
-; Lock with timeout - simplified, just tries a few times then fails
-	PUBLIC	_mtx_timedlock
-_mtx_timedlock:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	B,100		; Try 100 times
-_mtx_timed_loop:
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	PUSH	HL
-	CALL	_mtx_trylock
-	POP	BC
-	LD	A,H
-	OR	L
-	JR	Z,_mtx_timed_ok	; Got it
-	DJNZ	_mtx_timed_loop
-
-	; Timeout
-	LD	HL,2		; thrd_timedout
-	JR	_mtx_timed_ret
-
-_mtx_timed_ok:
-	LD	HL,0		; thrd_success
-
-_mtx_timed_ret:
-	POP	BC
-	POP	IX
-	RET
-
-; int mtx_unlock(mtx_t *mtx)
-; Unlock a mutex
-	PUBLIC	_mtx_unlock
-_mtx_unlock:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = mtx
-
-	DI
-	; Check if recursive
-	INC	HL
-	LD	A,(HL)		; type
-	AND	1
-	JR	Z,_mtx_unlock_do
-
-	; Recursive - decrement count
-	INC	HL
-	INC	HL
-	DEC	(HL)		; count--
-	JR	NZ,_mtx_unlock_recur
-	; Count reached 0, release
-	DEC	HL
-	DEC	HL
-	DEC	HL		; Back to start
-
-_mtx_unlock_do:
-	DEC	HL		; Back to locked flag
-	XOR	A
-	LD	(HL),A		; locked = 0
-
-_mtx_unlock_recur:
-	EI
-	LD	HL,0		; thrd_success
-	POP	IX
-	RET
-
-; void mtx_destroy(mtx_t *mtx)
-; Destroy a mutex (no-op, just clear it)
-	PUBLIC	_mtx_destroy
-_mtx_destroy:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	XOR	A
-	LD	B,12		; Size of mtx_t
-_mtx_destroy_loop:
-	LD	(HL),A
-	INC	HL
-	DJNZ	_mtx_destroy_loop
-
-	POP	IX
-	RET
-
-; ============================================================
-; Condition variable functions
-; ============================================================
-
-; int cnd_init(cnd_t *cond)
-	PUBLIC	_cnd_init
-_cnd_init:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	XOR	A
-	LD	(HL),A		; waiters = 0
-	INC	HL
-	LD	(HL),A		; signaled = 0
-
-	LD	HL,0		; thrd_success
-	POP	IX
-	RET
-
-; int cnd_signal(cnd_t *cond)
-	PUBLIC	_cnd_signal
-_cnd_signal:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	INC	HL
-	LD	(HL),1		; signaled = 1
-
-	LD	HL,0
-	POP	IX
-	RET
-
-; int cnd_broadcast(cnd_t *cond)
-	PUBLIC	_cnd_broadcast
-_cnd_broadcast:
-	; Same as signal for our simple implementation
-	JP	_cnd_signal
-
-; int cnd_wait(cnd_t *cond, mtx_t *mtx)
-	PUBLIC	_cnd_wait
-_cnd_wait:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	; Unlock mutex
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; mtx
-	PUSH	HL
-	CALL	_mtx_unlock
-	POP	BC
-
-	; Wait for signal
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; cond
-	INC	HL		; Point to signaled
-
-_cnd_wait_loop:
-	DI
-	LD	A,(HL)
-	OR	A
-	JR	NZ,_cnd_wait_done
-	EI
-	CALL	_thrd_yield
-	JR	_cnd_wait_loop
-
-_cnd_wait_done:
-	XOR	A
-	LD	(HL),A		; Clear signal
-	EI
-
-	; Re-lock mutex
-	LD	L,(IX+6)
-	LD	H,(IX+7)
-	PUSH	HL
-	CALL	_mtx_lock
-	POP	BC
-
-	LD	HL,0		; thrd_success
-	POP	BC
-	POP	IX
-	RET
-
-; int cnd_timedwait(cnd_t *cond, mtx_t *mtx, const struct timespec *ts)
-	PUBLIC	_cnd_timedwait
-_cnd_timedwait:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	; Unlock mutex
-	LD	L,(IX+6)
-	LD	H,(IX+7)
-	PUSH	HL
-	CALL	_mtx_unlock
-	POP	BC
-
-	; Try a few times
-	LD	B,100
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	INC	HL
-
-_cnd_timed_loop:
-	DI
-	LD	A,(HL)
-	OR	A
-	JR	NZ,_cnd_timed_done
-	EI
-	PUSH	HL
-	PUSH	BC
-	CALL	_thrd_yield
-	POP	BC
-	POP	HL
-	DJNZ	_cnd_timed_loop
-
-	; Timeout
-	LD	L,(IX+6)
-	LD	H,(IX+7)
-	PUSH	HL
-	CALL	_mtx_lock
-	POP	BC
-	LD	HL,2		; thrd_timedout
-	JR	_cnd_timed_ret
-
-_cnd_timed_done:
-	XOR	A
-	LD	(HL),A
-	EI
-	LD	L,(IX+6)
-	LD	H,(IX+7)
-	PUSH	HL
-	CALL	_mtx_lock
-	POP	BC
-	LD	HL,0
-
-_cnd_timed_ret:
-	POP	BC
-	POP	IX
-	RET
-
-; void cnd_destroy(cnd_t *cond)
-	PUBLIC	_cnd_destroy
-_cnd_destroy:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	XOR	A
-	LD	(HL),A
-	INC	HL
-	LD	(HL),A
-
-	POP	IX
-	RET
-
-; ============================================================
-; Thread-specific storage functions
-; ============================================================
-
-; int tss_create(tss_t *key, tss_dtor_t dtor)
-	PUBLIC	_tss_create
-_tss_create:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	; Find free slot (value 0xFFFF means unused)
-	LD	HL,_tss_slots
-	LD	B,0		; Slot index
-_tss_create_loop:
-	LD	A,B
-	CP	8		; 8 slots max
-	JR	NC,_tss_create_fail
-
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	A,D
-	AND	E
-	INC	A
-	JR	Z,_tss_create_found
-	INC	B
-	JR	_tss_create_loop
-
-_tss_create_found:
-	; Store NULL initially
-	DEC	HL
-	DEC	HL
-	XOR	A
-	LD	(HL),A
-	INC	HL
-	LD	(HL),A
-
-	; Store destructor
-	LD	HL,_tss_dtors
-	LD	A,B
-	ADD	A,A		; *2
-	LD	E,A
-	LD	D,0
-	ADD	HL,DE
-	LD	A,(IX+6)	; dtor low
-	LD	(HL),A
-	INC	HL
-	LD	A,(IX+7)	; dtor high
-	LD	(HL),A
-
-	; Store key
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	(HL),B		; key = slot index
-
-	LD	HL,0		; thrd_success
-	POP	IX
-	RET
-
-_tss_create_fail:
-	LD	HL,1		; thrd_nomem
-	POP	IX
-	RET
-
-; void *tss_get(tss_t key)
-	PUBLIC	_tss_get
-_tss_get:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	A,(IX+4)	; key
-	CP	8
-	JR	NC,_tss_get_null
-
-	ADD	A,A		; *2
-	LD	E,A
-	LD	D,0
-	LD	HL,_tss_slots
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	EX	DE,HL
-	POP	IX
-	RET
-
-_tss_get_null:
-	LD	HL,0
-	POP	IX
-	RET
-
-; int tss_set(tss_t key, void *val)
-	PUBLIC	_tss_set
-_tss_set:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	A,(IX+4)	; key
-	CP	8
-	JR	NC,_tss_set_err
-
-	ADD	A,A		; *2
-	LD	E,A
-	LD	D,0
-	LD	HL,_tss_slots
-	ADD	HL,DE
-	LD	A,(IX+6)	; val low
-	LD	(HL),A
-	INC	HL
-	LD	A,(IX+7)	; val high
-	LD	(HL),A
-
-	LD	HL,0		; thrd_success
-	POP	IX
-	RET
-
-_tss_set_err:
-	LD	HL,4		; thrd_error
-	POP	IX
-	RET
-
-; void tss_delete(tss_t key)
-	PUBLIC	_tss_delete
-_tss_delete:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	A,(IX+4)
-	CP	8
-	JR	NC,_tss_del_done
-
-	ADD	A,A
-	LD	E,A
-	LD	D,0
-	LD	HL,_tss_slots
-	ADD	HL,DE
-	LD	A,0FFH
-	LD	(HL),A
-	INC	HL
-	LD	(HL),A		; Mark as unused
-
-	; Clear destructor
-	LD	HL,_tss_dtors
-	ADD	HL,DE
-	XOR	A
-	LD	(HL),A
-	INC	HL
-	LD	(HL),A
-
-_tss_del_done:
-	POP	IX
-	RET
-
-; ============================================================
-; call_once function
-; ============================================================
-
-; void call_once(once_flag *flag, void (*func)(void))
-	PUBLIC	_call_once
-_call_once:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; flag
-	DI
-	LD	A,(HL)
-	OR	A
-	JR	NZ,_call_once_done
-
-	; Mark as called
-	LD	(HL),1
-	EI
-
-	; Call function
-	LD	L,(IX+6)
-	LD	H,(IX+7)
-	CALL	_call_once_call
-	JR	_call_once_ret
-
-_call_once_done:
-	EI
-_call_once_ret:
-	POP	BC
-	POP	IX
-	RET
-
-_call_once_call:
-	JP	(HL)
-
-; ============================================================
-; Atomic operations (stdatomic.h)
-; All use DI/EI for atomicity on Z80
-; ============================================================
-
-
-
-	COMMON	/lc_thread/
+	COMMON	/lc_thread_mode/
+	PUBLIC	_thread_mode
 _thread_mode:	DS	1
+	PUBLIC	_thread_current
 _thread_current:	DS	1
+	PUBLIC	_tss_slots
 _tss_slots:	DS	16
+	PUBLIC	_tss_dtors
 _tss_dtors:	DS	16
 
 
+	CSEG
+; ============================================================
+; lc_threads_use_mpm.mac
+; ============================================================
+; lc_threads_use_mpm.mac - ___threads_use_mpm
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; void __threads_use_mpm(int enable)
+; Set thread mode
+	PUBLIC	___threads_use_mpm
+___threads_use_mpm:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	LD	(_thread_mode),A
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_time.mac
 ; ============================================================
-	CSEG
 ; lc_time.mac - split from lc_time.mac
 
 
@@ -19130,10 +19668,10 @@ _time_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_tmpfile.mac
 ; ============================================================
-	CSEG
 ; lc_tmpfile.mac - split from lc_file.mac
 
 
@@ -19181,10 +19719,10 @@ _tmpfile_name:
 	DS	13
 
 
+	CSEG
 ; ============================================================
 ; lc_tmpnam.mac
 ; ============================================================
-	CSEG
 ; lc_tmpnam.mac - split from lc_file.mac
 
 
@@ -19309,10 +19847,10 @@ _tmpnam_buf:
 	DS	13		; TMP00000.$$$ + null
 
 
+	CSEG
 ; ============================================================
 ; lc_tolower.mac
 ; ============================================================
-	CSEG
 ; lc_tolower.mac - split from lc_ctype.mac
 
 
@@ -19337,10 +19875,10 @@ _tolower_ret:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_toupper.mac
 ; ============================================================
-	CSEG
 ; lc_toupper.mac - split from lc_ctype.mac
 
 
@@ -19365,10 +19903,247 @@ _toupper_ret:
 	RET
 
 
+	CSEG
+; ============================================================
+; lc_trunc.mac
+; ============================================================
+; lc_trunc.mac - _trunc, _truncf, _truncl
+; Split from lc_floor.mac
+
+
+	EXTRN	__ftoi
+	EXTRN	__itof
+
+	CSEG
+; ============================================================
+; trunc(x) - round toward zero
+; ============================================================
+	PUBLIC	_trunc
+_trunc:
+	PUBLIC	_truncf
+_truncf:
+	PUBLIC	_truncl
+_truncl:
+	PUSH	IX
+	PUSH	BC
+	LD	IX,0
+	ADD	IX,SP
+
+	CALL	_math_getarg
+	CALL	__ftoi
+	CALL	__itof
+
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_tss_create.mac
+; ============================================================
+; lc_tss_create.mac - _tss_create
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; int tss_create(tss_t *key, tss_dtor_t dtor)
+	PUBLIC	_tss_create
+_tss_create:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Find free slot (value 0xFFFF means unused)
+	LD	HL,_tss_slots
+	LD	B,0		; Slot index
+_tss_create_loop:
+	LD	A,B
+	CP	8		; 8 slots max
+	JR	NC,_tss_create_fail
+
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,D
+	AND	E
+	INC	A
+	JR	Z,_tss_create_found
+	INC	B
+	JR	_tss_create_loop
+
+_tss_create_found:
+	; Store NULL initially
+	DEC	HL
+	DEC	HL
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+	; Store destructor
+	LD	HL,_tss_dtors
+	LD	A,B
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	LD	A,(IX+6)	; dtor low
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)	; dtor high
+	LD	(HL),A
+
+	; Store key
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(HL),B		; key = slot index
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_tss_create_fail:
+	LD	HL,1		; thrd_nomem
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_tss_delete.mac
+; ============================================================
+; lc_tss_delete.mac - _tss_delete
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; void tss_delete(tss_t key)
+	PUBLIC	_tss_delete
+_tss_delete:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)
+	CP	8
+	JR	NC,_tss_del_done
+
+	ADD	A,A
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	A,0FFH
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A		; Mark as unused
+
+	; Clear destructor
+	LD	HL,_tss_dtors
+	ADD	HL,DE
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+
+_tss_del_done:
+	POP	IX
+	RET
+
+; ============================================================
+; call_once function
+; ============================================================
+
+
+	CSEG
+; ============================================================
+; lc_tss_get.mac
+; ============================================================
+; lc_tss_get.mac - _tss_get
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; void *tss_get(tss_t key)
+	PUBLIC	_tss_get
+_tss_get:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; key
+	CP	8
+	JR	NC,_tss_get_null
+
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	EX	DE,HL
+	POP	IX
+	RET
+
+_tss_get_null:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_tss_set.mac
+; ============================================================
+; lc_tss_set.mac - _tss_set
+; Split from lc_thread.mac
+
+
+
+	CSEG
+; int tss_set(tss_t key, void *val)
+	PUBLIC	_tss_set
+_tss_set:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; key
+	CP	8
+	JR	NC,_tss_set_err
+
+	ADD	A,A		; *2
+	LD	E,A
+	LD	D,0
+	LD	HL,_tss_slots
+	ADD	HL,DE
+	LD	A,(IX+6)	; val low
+	LD	(HL),A
+	INC	HL
+	LD	A,(IX+7)	; val high
+	LD	(HL),A
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+_tss_set_err:
+	LD	HL,4		; thrd_error
+	POP	IX
+	RET
+
+
+	CSEG
 ; ============================================================
 ; lc_ungetc.mac
 ; ============================================================
-	CSEG
 ; lc_ungetc.mac - split from lc_file.mac
 
 
@@ -19402,10 +20177,10 @@ _ungetc_err:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_vprintf.mac
 ; ============================================================
-	CSEG
 ; lc_vprintf.mac - vprintf, split from lc_fprintf.mac
 
 
@@ -19445,10 +20220,10 @@ _vprintf:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_vsprintf.mac
 ; ============================================================
-	CSEG
 ; lc_vsprintf.mac - vsprintf, split from lc_fprintf.mac
 
 
@@ -19494,10 +20269,10 @@ _vsprintf:
 	RET
 
 
+	CSEG
 ; ============================================================
 ; lc_wcstombs.mac
 ; ============================================================
-	CSEG
 ; lc_wcstombs.mac - split from lc_wchar.mac
 
 
@@ -19585,10 +20360,10 @@ _wcstombs_err:
 ; Find last occurrence of c in s
 
 
+	CSEG
 ; ============================================================
 ; lc_wctomb.mac
 ; ============================================================
-	CSEG
 ; lc_wctomb.mac - split from lc_wchar.mac
 
 

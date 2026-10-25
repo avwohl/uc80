@@ -1,0 +1,42 @@
+; rt_cadd.mac - __cadd
+; Split from rt_complex.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+	EXTRN	__fadd
+	EXTRN	__cplx_l
+	EXTRN	__cplx_r
+	EXTRN	__cplx_result
+
+	CSEG
+; ============================================================
+; Complex Addition: __cplx_result = __cplx_l + __cplx_r
+; (a+bi) + (c+di) = (a+c) + (b+d)i
+; ============================================================
+	PUBLIC	__cadd
+__cadd:
+	; Add real parts: result.real = l.real + r.real
+	LD	HL,(__cplx_l)		; l.real low
+	LD	DE,(__cplx_l+2)		; l.real high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_r)		; r.real low
+	LD	DE,(__cplx_r+2)		; r.real high
+	CALL	__fadd
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Add imag parts: result.imag = l.imag + r.imag
+	LD	HL,(__cplx_l+4)		; l.imag low
+	LD	DE,(__cplx_l+6)		; l.imag high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_r+4)		; r.imag low
+	LD	DE,(__cplx_r+6)		; r.imag high
+	CALL	__fadd
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+	END

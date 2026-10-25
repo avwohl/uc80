@@ -1,0 +1,30 @@
+; lc_atomic_flag_clear_explicit.mac - _atomic_flag_clear_explicit, _atomic_flag_clear
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; void atomic_flag_clear(volatile atomic_flag *obj)
+	PUBLIC	_atomic_flag_clear_explicit
+_atomic_flag_clear_explicit:
+	PUBLIC	_atomic_flag_clear
+_atomic_flag_clear:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+
+	DI
+	LD	(HL),0		; Clear flag
+	EI
+
+	POP	IX
+	RET
+
+; ============================================================
+; 1-byte atomic operations
+; ============================================================
+
+	END

@@ -1,0 +1,17 @@
+; rt_fneg.mac - __fneg
+; Split from rt_float.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; Float Negation: DEHL = -DEHL
+; ============================================================
+	PUBLIC	__fneg
+__fneg:
+	LD	A,D
+	XOR	80H
+	LD	D,A
+	RET
+
+	END

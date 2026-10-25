@@ -1,0 +1,30 @@
+; rt_sext64.mac - __sext64
+; Split from rt_arith64.mac
+
+	.Z80
+
+	EXTRN	__acc64
+
+	CSEG
+; ============================================================
+; __sext64: Sign-extend 32-bit DEHL to 64-bit in __acc64
+; Input: DEHL = 32-bit value
+; Output: __acc64 = sign-extended 64-bit value
+; ============================================================
+	PUBLIC	__sext64
+__sext64:
+	LD	(__acc64),HL		; Store low word
+	LD	(__acc64+2),DE		; Store second word
+	; Sign extend from bit 31
+	BIT	7,D
+	JR	Z,__sext64_pos
+	LD	HL,0FFFFH		; Negative: extend with 1s
+	JR	__sext64_store
+__sext64_pos:
+	LD	HL,0			; Positive: extend with 0s
+__sext64_store:
+	LD	(__acc64+4),HL
+	LD	(__acc64+6),HL
+	RET
+
+	END

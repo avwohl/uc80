@@ -1,0 +1,18 @@
+; rt_mod16.mac - __mod16
+; Split from rt_arith16.mac
+
+	.Z80
+
+	EXTRN	__div16
+
+	CSEG
+; ============================================================
+; 16-bit unsigned modulo: HL = DE % HL
+; ============================================================
+	PUBLIC	__mod16
+__mod16:
+	CALL	__div16		; remainder in DE
+	EX	DE,HL
+	RET
+
+	END

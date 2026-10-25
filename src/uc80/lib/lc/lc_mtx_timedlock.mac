@@ -1,0 +1,42 @@
+; lc_mtx_timedlock.mac - _mtx_timedlock
+; Split from lc_thread.mac
+
+	.Z80
+
+	EXTRN	_mtx_trylock
+
+	CSEG
+; int mtx_timedlock(mtx_t *mtx, const struct timespec *ts)
+; Lock with timeout - simplified, just tries a few times then fails
+	PUBLIC	_mtx_timedlock
+_mtx_timedlock:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	B,100		; Try 100 times
+_mtx_timed_loop:
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	CALL	_mtx_trylock
+	POP	BC
+	LD	A,H
+	OR	L
+	JR	Z,_mtx_timed_ok	; Got it
+	DJNZ	_mtx_timed_loop
+
+	; Timeout
+	LD	HL,2		; thrd_timedout
+	JR	_mtx_timed_ret
+
+_mtx_timed_ok:
+	LD	HL,0		; thrd_success
+
+_mtx_timed_ret:
+	POP	BC
+	POP	IX
+	RET
+
+	END

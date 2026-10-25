@@ -1,0 +1,35 @@
+; lc_atomic_fetch_and_1.mac - ___atomic_fetch_and_1
+; Split from lc_atomic.mac
+
+	.Z80
+
+	CSEG
+; unsigned char __atomic_fetch_and_1(volatile void *obj, unsigned char val)
+	PUBLIC	___atomic_fetch_and_1
+___atomic_fetch_and_1:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,(IX+6)
+	LD	C,A
+
+	DI
+	LD	A,(HL)
+	LD	E,A
+	AND	C
+	LD	(HL),A
+	EI
+
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; ============================================================
+; 2-byte atomic operations
+; ============================================================
+
+	END

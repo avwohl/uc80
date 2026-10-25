@@ -1,0 +1,14 @@
+; rt_callhl.mac - __callhl
+; Split from rt_arith16.mac
+
+	.Z80
+
+	CSEG
+; ============================================================
+; Indirect call through HL
+; ============================================================
+	PUBLIC	__callhl
+__callhl:
+	JP	(HL)		; Jump to address in HL
+
+	END

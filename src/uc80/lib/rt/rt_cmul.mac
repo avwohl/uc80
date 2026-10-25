@@ -1,0 +1,82 @@
+; rt_cmul.mac - __cmul
+; Split from rt_complex.mac
+
+	.Z80
+
+	EXTRN	__tmp32
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__fmul
+	EXTRN	__cplx_l
+	EXTRN	__cplx_r
+	EXTRN	__cplx_result
+	EXTRN	__cplx_work
+
+	CSEG
+; ============================================================
+; Complex Multiplication: __cplx_result = __cplx_l * __cplx_r
+; (a+bi) * (c+di) = (ac-bd) + (ad+bc)i
+; Let: a=l.real, b=l.imag, c=r.real, d=r.imag
+; ============================================================
+	PUBLIC	__cmul
+__cmul:
+	; Calculate ac (a*c)
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*c
+	LD	(__cplx_work),HL	; store ac
+	LD	(__cplx_work+2),DE
+
+	; Calculate bd (b*d)
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*d
+	; Store bd in __tmp32 for subtraction
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; result.real = ac - bd
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	CALL	__fsub
+	LD	(__cplx_result),HL
+	LD	(__cplx_result+2),DE
+
+	; Calculate ad (a*d)
+	LD	HL,(__cplx_r+4)		; d low
+	LD	DE,(__cplx_r+6)		; d high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l)		; a low
+	LD	DE,(__cplx_l+2)		; a high
+	CALL	__fmul			; DEHL = a*d
+	LD	(__cplx_work),HL	; store ad
+	LD	(__cplx_work+2),DE
+
+	; Calculate bc (b*c)
+	LD	HL,(__cplx_r)		; c low
+	LD	DE,(__cplx_r+2)		; c high
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__cplx_l+4)		; b low
+	LD	DE,(__cplx_l+6)		; b high
+	CALL	__fmul			; DEHL = b*c
+	; Store bc in __tmp32 for addition
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	; result.imag = ad + bc
+	LD	HL,(__cplx_work)
+	LD	DE,(__cplx_work+2)
+	CALL	__fadd
+	LD	(__cplx_result+4),HL
+	LD	(__cplx_result+6),DE
+	RET
+
+	END

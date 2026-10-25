@@ -1,0 +1,33 @@
+; lc_mtx_init.mac - _mtx_init
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; int mtx_init(mtx_t *mtx, int type)
+; Initialize a mutex
+	PUBLIC	_mtx_init
+_mtx_init:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = mtx
+	; Clear the mutex structure
+	XOR	A
+	LD	(HL),A		; locked = 0
+	INC	HL
+	LD	A,(IX+6)	; type
+	LD	(HL),A
+	INC	HL
+	XOR	A
+	LD	(HL),A		; owner = 0
+	INC	HL
+	LD	(HL),A		; count = 0
+
+	LD	HL,0		; thrd_success
+	POP	IX
+	RET
+
+	END

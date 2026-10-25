@@ -1,0 +1,18 @@
+; lc_thrd_join.mac - _thrd_join
+; Split from lc_thread.mac
+
+	.Z80
+
+	CSEG
+; int thrd_join(thrd_t thr, int *res)
+; Wait for thread to finish - returns thrd_error under CP/M
+	PUBLIC	_thrd_join
+_thrd_join:
+	LD	HL,4		; thrd_error
+	RET
+
+; ============================================================
+; Mutex functions - use DI/EI for synchronization
+; ============================================================
+
+	END
