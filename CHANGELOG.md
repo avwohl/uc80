@@ -8,6 +8,7 @@ observable behaviour of a program uc80 compiles.
 
 ### Added
 
+- ROM target: a warning for each `#pragma uc80 vector`, because a C function has no RETI. Tests for const objects in two C modules and for an assembly module that reads a const array.
 - **Const data in the ROM** (`--target=rom` only): const objects, string literals and const compound literals go to CSEG, so the start-up code does not copy them to RAM. RAM of the four snd-* kernels drops by 33 to 232 bytes; ROM size and T-states stay the same. The CP/M output is byte-identical. See `docs/rom.md`.
 - **Roots and vectors for the ROM target**: `--entry NAME` (repeatable) and `#pragma uc80 keep NAME` keep a function the code never calls; a ROM program with no `main` starts at the first `--entry`; `#pragma uc80 vector 38h NAME` and `66h NAME` make the INT and NMI vectors jump to a C function; `#pragma uc80 public NAME` gives a static name or an unused BSS object a PUBLIC label. BSS objects of the ROM target keep their PUBLIC label. uc_core records `#pragma uc80 ...` lines in `Preprocessor.target_pragmas`.
 - `tests/conftest.py` builds `libc_rom.lib` and `crt0_rom.rel` when a checkout lacks them. The ROM tests fail, not skip, if a library is missing.

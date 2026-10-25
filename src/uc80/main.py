@@ -877,6 +877,12 @@ def main() -> int:
                             "#pragma uc80 vector and an assembly "
                             "__int_handler or __nmi_handler both set the "
                             "same vector")
+                    for _addr, _name in sorted(roots.vectors.items()):
+                        print(f"uc80: warning: #pragma uc80 vector {_addr:02X}h "
+                              f"{_name}: a C function ends with RET, not "
+                              f"RETI, and saves no registers; use it only "
+                              f"for a handler that never returns",
+                              file=sys.stderr)
                     start = None
                     if not (gen.ctx.globals.get("main") is not None
                             or _defines_label(code, mac_files, "_main")):

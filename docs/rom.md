@@ -80,7 +80,7 @@ In whole-program mode the compiler removes each function that no code calls, and
 - A function in a `vector` pragma is kept. The vector becomes `JP _NAME`. The compiler gives an error when a `vector` pragma and an assembly `__int_handler` (or `__nmi_handler`) both set the same vector.
 - The compiler gives an error in three cases: an unknown pragma verb, a vector address that is not 38h or 66h, and a name that the program does not define.
 
-A C function has no interrupt prologue and no `RETI`. It ends with `RET`. Use a `vector` target only for code that handles this itself. Phase 2 of the plan adds real interrupt functions (see [rom_target.md](rom_target.md)).
+A C function has no interrupt prologue and no `RETI`. It ends with `RET`. The compiler prints a warning for each `vector` pragma. Use a `vector` target only for code that handles this itself. Phase 2 of the plan adds real interrupt functions (see [rom_target.md](rom_target.md)).
 
 Objects in the BSS (uninitialised globals) now keep a `PUBLIC` label in the ROM target. The `.sym` file of `ul80` lists them, and `bench/romrun` can read them by name (`m.peek8("_ticks")`). The CP/M target does not change.
 

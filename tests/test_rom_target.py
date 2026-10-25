@@ -481,6 +481,7 @@ void on_nmi(void) { }
 int main(void) { return 0; }
 """)
         assert r.returncode == 0, r.stderr
+        assert "ends with RET, not RETI" in r.stderr
         link_rom(tmp_path)
         img = (tmp_path / "t.bin").read_bytes()
         sy = symbols(tmp_path)
@@ -560,3 +561,70 @@ int main(void)
         assert m.peek8("_counter") == 3
         assert m.peek16("_sink") == 3
         assert symbols(tmp_path)["_TAB"] < 0x8000
+
+    def test_asm_module_reads_a_const_array(self, tmp_path):
+        (tmp_path / "rd.mac").write_text(
+            "\t.Z80\n\tCSEG\n\tPUBLIC\t_sum3\n\tEXTRN\t_tab\n"
+            "_sum3:\n\tLD\tA,(_tab)\n\tLD\tHL,_tab\n\tINC\tHL\n"
+            "\tADD\tA,(HL)\n\tINC\tHL\n\tADD\tA,(HL)\n\tLD\tL,A\n\tLD\tH,0\n"
+            "\tRET\n\tEND\n")
+        r = compile_rom(tmp_path, """
+#pragma uc80 public tab
+const unsigned char tab[3] = {5, 6, 7};
+int sum3(void);
+volatile int sink;
+int main(void) { sink = sum3(); return 0; }
+""", files=[str(tmp_path / "rd.mac")])
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        m = machine(tmp_path)
+        assert m.run(max_tstates=500_000).reason == "halt"
+        assert m.peek16("_sink") == 18
+        assert symbols(tmp_path)["_TAB"] < 0x8000
+
+    def test_const_objects_across_two_c_modules(self, tmp_path):
+        (tmp_path / "b.c").write_text("""
+const int tab[3] = {10, 20, 30};
+const char *const msg = "hi";
+int counter = 4;
+""")
+        (tmp_path / "t.c").write_text("""
+extern const int tab[3];
+extern const char *const msg;
+extern int counter;
+volatile int s1, s2, s3;
+int main(void)
+{
+    s1 = tab[1];
+    s2 = msg[1];
+    s3 = counter + 1;
+    return 0;
+}
+""")
+        objs = []
+        for n in ("b", "t"):
+            r = subprocess.run(
+                uc80_cmd("--target=rom", "--no-whole-program",
+                         str(tmp_path / (n + ".c")), "-o",
+                         str(tmp_path / (n + ".mac"))),
+                capture_output=True, text=True, cwd=str(REPO))
+            assert r.returncode == 0, r.stderr
+        r = subprocess.run(["um80", "b.mac", "-o", "b.rel"], cwd=tmp_path,
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        r = subprocess.run(["um80", "t.mac", "-o", "t.rel"], cwd=tmp_path,
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        r = subprocess.run(
+            ["ul80", "--bin", "-p", "0", "-d", "F800", "--rom-data",
+             "--rom-size", "8000", "--ram-size", "800", "--min-stack", "40",
+             "-o", "t.bin", "-S", "t.sym", str(LIB / "crt0_rom.rel"), "t.rel", "b.rel",
+             str(LIB / "libc_rom.lib"), str(LIB / "runtime.lib")],
+            cwd=tmp_path, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        m = machine(tmp_path)
+        assert m.run(max_tstates=500_000).reason == "halt"
+        assert (m.peek16("_s1"), m.peek16("_s2"), m.peek16("_s3")) == (
+            20, ord("i"), 5)
+        sy = symbols(tmp_path)
+        assert sy["_TAB"] < 0x8000 and sy["_COUNTER"] >= 0xF800
