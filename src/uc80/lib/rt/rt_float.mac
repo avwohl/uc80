@@ -967,38 +967,60 @@ __fcmp_lnz:
 
 	; Compare: left (DEHL) vs right (__tmp32)
 	; Sets Z if equal, C if left < right
-	; Flip sign bits to make unsigned comparison work for signed floats
-
-	; Compare high bytes (with sign bit flipped)
 	LD	A,(__tmp32+3)
-	XOR	80H		; Flip sign for comparison trick
+	XOR	D
+	JP	P,__fcmp_same	; same sign
+
+	; Signs differ: the negative one is smaller.  Flip the sign
+	; bits so an unsigned compare of the high bytes says so.
+	LD	A,(__tmp32+3)
+	XOR	80H
 	LD	B,A		; B = right high byte (sign-flipped)
 	LD	A,D
 	XOR	80H		; A = left high byte (sign-flipped)
-	CP	B		; A - B = left - right, C if left < right
-	JR	NZ,__fcmp_diff
+	CP	B		; C if left < right
+	JR	__fcmp_diff
 
-	; High bytes equal, compare rest
-	LD	A,E
+__fcmp_same:
+	BIT	7,D
+	JR	NZ,__fcmp_neg
+
+	; Both positive: compare the magnitudes, left against right.
+	LD	A,(__tmp32+3)
 	LD	B,A
+	LD	A,D
+	CP	B		; C if left < right
+	JR	NZ,__fcmp_diff
 	LD	A,(__tmp32+2)
-	LD	C,A
-	LD	A,B		; A = left E
-	CP	C		; Compare left vs right
-	JR	NZ,__fcmp_diff
-	LD	A,H
 	LD	B,A
+	LD	A,E
+	CP	B
+	JR	NZ,__fcmp_diff
 	LD	A,(__tmp32+1)
-	LD	C,A
-	LD	A,B		; A = left H
-	CP	C
-	JR	NZ,__fcmp_diff
-	LD	A,L
 	LD	B,A
+	LD	A,H
+	CP	B
+	JR	NZ,__fcmp_diff
 	LD	A,(__tmp32)
-	LD	C,A
-	LD	A,B		; A = left L
-	CP	C
+	LD	B,A
+	LD	A,L
+	CP	B
+	JR	__fcmp_diff
+
+__fcmp_neg:
+	; Both negative: the larger magnitude is the smaller value, so
+	; compare right against left.
+	LD	A,(__tmp32+3)
+	CP	D		; C if |right| < |left|, left < right
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+2)
+	CP	E
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32+1)
+	CP	H
+	JR	NZ,__fcmp_diff
+	LD	A,(__tmp32)
+	CP	L
 
 __fcmp_diff:
 	POP	BC

@@ -70,6 +70,18 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- **`typeof(x)` where `x` was declared with `typeof(type-name)`** was an
+  int (`typeof(unsigned char) a; typeof(a) b;` gave `b` two bytes).  The
+  operator tokens are now normalised before the typeof pass reads them.
+- **Ordering of two negative floats was reversed** (`-44.0 < -1.0` was 0).
+  `__fcmp` now compares the magnitudes the other way round when both signs
+  are negative.
+- **`**qf` of a `float **` read 2 bytes.**  The dereference size of `*p`
+  was the size of `p`'s pointee type, a pointer; it is now the size of
+  what `*p` points to.
+- **An inlined function with a typedef'd parameter or return type**
+  (`typedef signed char I8; I8 f(I8 c) { return c * 8; }`) was not
+  narrowed; the result was 168 and not -88.
 - **A float or double times a power of two was not multiplied.** `float nv =
   1.5f; float r = nv * 4;` gave 1.5 and `double d = 2.5; d = d * 8;` gave
   2.5. The AST optimizer turned `x * 2^n` into `x << n`, a shift of the

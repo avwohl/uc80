@@ -2285,6 +2285,24 @@ class CallGraphAnalyzer:
         return sum(self._plain_uses(getattr(node, f.name, None), name, always)
                    for f in dataclasses.fields(node) if f.name != "pos")
 
+    def _inline_strip_typedef(self, t):
+        """``t`` with file-scope typedef names resolved to their type."""
+        reg = getattr(self, "_inline_typedefs", None) or {}
+        orig = t
+        seen: set[str] = set()
+        while (t is not None and t.kind == "typedef" and t.name in reg
+               and t.name not in seen):
+            seen.add(t.name)
+            t = reg[t.name]
+        if (t is not orig and t is not None and t.kind == "basic"
+                and t.name in ("int", "short")
+                and getattr(self.type_config, "int_size", 2) == 2):
+            # A typedef of a 16-bit int (uint16_t): left alone, as it
+            # always was; the wrapping Cast would only cost code (the
+            # operand is no longer a plain variable for the DE loads).
+            return orig
+        return t
+
     def _inline_expr(self, expr: ast.Expression,
                     func_bodies: dict[str, ast.FunctionDef],
                     inlineable: set[str]) -> ast.Expression:
@@ -2313,6 +2331,7 @@ class CallGraphAnalyzer:
                             continue
                         arg = new_args[i]
                         _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
+                        p_type = self._inline_strip_typedef(p_type)
                         # When inlining, the implicit "convert arg to
                         # parameter type" that gen_call would do at the
                         # callee's IX+ slot has to be made explicit —
@@ -2355,6 +2374,7 @@ class CallGraphAnalyzer:
                     # sees 3024 > 0 instead of -48 > 0.
                     _, fn_type = resolve_type_from_decl(func.decl_specs, func.declarator)
                     rt = fn_type.return_type if fn_type.kind == "function" else None
+                    rt = self._inline_strip_typedef(rt)
                     # Any arithmetic return type: ``long f(int x){return
                     # x;}`` must still yield a long (a variadic argument
                     # pushes 4 bytes), ``unsigned f(...)`` an unsigned.
@@ -2550,6 +2570,19 @@ class CallGraphAnalyzer:
         total_inlined = 0
         max_iterations = 10  # Prevent infinite loops
         self._vol_info = VolatileInfo(unit)
+        # File-scope typedefs: the parameter and return types of an
+        # inlined function (``typedef signed char I8; I8 f(I8 c)``)
+        # must be narrowed like the plain type.
+        self._inline_typedefs = {}
+        for item in unit.items or []:
+            if isinstance(item, ast.Declaration):
+                try:
+                    if decl_storage_class(item.decl_specs) == "typedef":
+                        for nm, full, _i, _f in iter_var_decls(item):
+                            if nm is not None:
+                                self._inline_typedefs[nm] = full
+                except Exception:
+                    pass
 
         for _ in range(max_iterations):
             # Build function body map keyed by IDENT name extracted from
@@ -3646,6 +3679,9 @@ class CodeGenerator:
         scan(unit)
         if not found[0]:
             return
+        # The type of an operand such as ``*(T *)0`` is read from string
+        # operators, so the Token operators go first (idempotent).
+        self._normalize_op_fields(unit)
         saved = (self.ctx.locals, self.ctx.globals)
         self.ctx.locals, self.ctx.globals = {}, {}
         undo: list[list] = []          # per scope: (dict, name, old Symbol)
@@ -18344,9 +18380,9 @@ class CodeGenerator:
             # For p++ or p--, the type is the same as p
             elif expr.op in ("++", "--"):
                 return self._get_deref_size(expr.operand)
-            # For *p, look through to get p's type
-            elif expr.op == "*":
-                return self._get_deref_size(expr.operand)
+            # For *p, the general fallback below takes the type of *p
+            # (a pointer) and sizes what it points to.  Recursing into p
+            # sized the pointer itself: 2 bytes for **qf of a float.
 
         elif isinstance(expr, ast.Cast):
             # Use the cast target type. Run it through _resolve_typename
