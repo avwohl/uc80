@@ -1,0 +1,75 @@
+; lc_strstr.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *strstr(const char *haystack, const char *needle)
+; Find first occurrence of needle in haystack
+; Returns: pointer to start of match, or NULL if not found
+; ============================================================
+	PUBLIC	_strstr
+_strstr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = haystack
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = needle
+	LD	D,(IX+7)
+
+	; Check if needle is empty
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strstr_found	; Empty needle matches at start
+
+_strstr_outer:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strstr_notfound	; End of haystack
+
+	; Try to match needle at current position
+	PUSH	HL		; Save haystack position
+	PUSH	DE		; Save needle start
+
+_strstr_inner:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strstr_match	; End of needle = match!
+
+	LD	B,(HL)		; B = haystack char
+	CP	B
+	JR	NZ,_strstr_nomatch
+
+	INC	HL
+	INC	DE
+	JR	_strstr_inner
+
+_strstr_nomatch:
+	POP	DE		; Restore needle start
+	POP	HL		; Restore haystack position
+	INC	HL		; Try next position
+	JR	_strstr_outer
+
+_strstr_match:
+	POP	DE		; Discard needle start
+	POP	HL		; HL = start of match
+_strstr_found:
+	POP	BC
+	POP	IX
+	RET
+
+_strstr_notfound:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+	END

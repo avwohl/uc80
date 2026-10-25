@@ -1,0 +1,73 @@
+; lc_ldiv.mac - split from lc_stdlib.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__sdiv32
+	EXTRN	__smod32
+	EXTRN	__tmp32
+
+	CSEG
+
+; ============================================================
+; ldiv_t ldiv(long numer, long denom)
+; Compute quotient and remainder for long
+; Returns: pointer to static ldiv_t in HL
+; (ldiv_t.quot at _ldiv_result, ldiv_t.rem at _ldiv_result+4)
+; Runtime uses: DEHL / __tmp32 for 32-bit ops
+; ============================================================
+	PUBLIC	_ldiv
+_ldiv:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Store denom in __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	; Load numer into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Save numer for mod computation
+	PUSH	DE
+	PUSH	HL
+
+	; Compute quotient: DEHL / __tmp32
+	CALL	__sdiv32
+	LD	(_ldiv_result),HL
+	LD	(_ldiv_result+2),DE
+
+	; Restore numer
+	POP	HL
+	POP	DE
+
+	; Compute remainder: DEHL % __tmp32 (denom still in __tmp32)
+	CALL	__smod32
+	LD	(_ldiv_result+4),HL
+	LD	(_ldiv_result+6),DE
+
+	LD	HL,_ldiv_result
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+
+_ldiv_result:	DS	8	; ldiv_t: quot (4), rem (4)
+
+	END

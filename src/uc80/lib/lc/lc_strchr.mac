@@ -1,0 +1,39 @@
+; lc_strchr.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *strchr(const char *s, int c)
+; Find first occurrence of c in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strchr
+_strchr:
+	POP	BC		; return address
+	POP	HL		; HL = s
+	POP	DE		; E = char to find
+	PUSH	DE
+	PUSH	HL
+	PUSH	BC
+_strchr_loop:
+	LD	A,(HL)
+	CP	E
+	RET	Z		; HL points to the char
+	INC	HL
+	OR	A
+	JR	NZ,_strchr_loop
+	LD	H,A		; end of string: NULL
+	LD	L,A
+	RET
+
+; ============================================================
+; void *memcpy(void *dest, const void *src, size_t n)
+; Copy n bytes from src to dest
+
+	END

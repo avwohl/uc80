@@ -1,0 +1,82 @@
+; lc_perror.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__conout
+
+	CSEG
+
+; ============================================================
+; void perror(const char *s)
+; Print error message to stderr
+; ============================================================
+	PUBLIC	_perror
+_perror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Print user string if provided
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_perror_errmsg
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_errmsg
+
+	; Print user string
+_perror_uloop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_colon
+	LD	E,A
+	CALL	__conout	; preserves HL
+	INC	HL
+	JR	_perror_uloop
+
+_perror_colon:
+	; Print ": "
+	LD	E,':'
+	CALL	__conout
+	LD	E,' '
+	CALL	__conout
+
+_perror_errmsg:
+	; Print generic error message (CP/M doesn't have errno)
+	LD	HL,_perror_msg
+_perror_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_nl
+	LD	E,A
+	CALL	__conout	; preserves HL
+	INC	HL
+	JR	_perror_loop
+
+_perror_nl:
+	; Print newline (__conout supplies the CR when ___crlf_mode is set)
+	LD	E,10
+	CALL	__conout
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; Temporary FCB for remove/rename operations
+
+
+
+_perror_msg:
+	DB	'Error',0
+
+	END

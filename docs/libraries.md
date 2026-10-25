@@ -37,3 +37,32 @@ silently-stale-libc problem this flag exists to prevent.
 
 `src/uc80/lib/` is the only library directory. Nothing in uc80 looks anywhere
 else; do not create a top-level `lib/`.
+
+## Library module layout
+
+`libc.lib` holds one module for each public function. A program links only
+the functions that the program calls. For example, a program that calls
+`strlen` does not link `malloc`, and a program that calls `printf("%d")`
+does not link any floating-point code.
+
+Rules for a module in `src/uc80/lib/lc/`:
+
+- A function that other functions share a body with stays in one module
+  (for example the alias entries of `strtod`).
+- Data that two or more modules use is in a separate data module (for
+  example `lc_rand_data.mac`). The data module has the label as PUBLIC.
+  The other modules have the label as EXTRN.
+- Each module has its own copy of the EQU constants that the module uses.
+- `lc_printf_core.mac` holds the printf engine and the state that the
+  `%d`, `%e` and `%g` handlers share. `lc_prt_float.mac` holds the `%f`
+  printer and its data. Only `lc_printf_f.mac` refers to `lc_prt_float.mac`.
+- `lc_qsort.mac` holds `qsort` and `bsearch`. The split did not change the module.
+
+`src/uc80/lib/split_libc.py` made the first version of `lc/` from `libc.mac`.
+Do not run `split_libc.py` again: it overwrites the edits. Edit the
+`lc/*.mac` files and run `uc80 --build-libs`. The build removes a `.rel`
+file that has no `.mac` file, so a module that you rename does not stay in
+the library.
+
+The test `tests/test_libc_link_size.py` checks the image size of
+`printf("%d")` and checks that a `strlen` program does not link `malloc`.

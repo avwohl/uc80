@@ -1,0 +1,48 @@
+; lc_rewind.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_fseek
+
+	CSEG
+
+; ============================================================
+; void rewind(FILE *stream)
+; Rewind to beginning of file
+; ============================================================
+	PUBLIC	_rewind
+_rewind:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Call fseek(stream, 0L, SEEK_SET)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	LD	HL,0
+	PUSH	HL		; whence = SEEK_SET
+	PUSH	HL		; offset high = 0
+	PUSH	HL		; offset low = 0
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	CALL	_fseek
+	POP	HL
+	POP	HL
+	POP	HL
+	POP	HL
+	POP	HL
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

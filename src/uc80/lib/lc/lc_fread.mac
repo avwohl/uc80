@@ -1,0 +1,112 @@
+; lc_fread.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__div16
+	EXTRN	__mul16
+	EXTRN	_fgetc
+
+	CSEG
+
+; ============================================================
+; size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream)
+; Read data from stream
+; ============================================================
+	PUBLIC	_fread
+_fread:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Calculate total bytes = size * nmemb
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; size
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; nmemb
+	CALL	__mul16		; HL = total bytes
+	LD	B,H
+	LD	C,L		; BC = bytes to read
+
+	; If zero, return 0
+	LD	A,B
+	OR	C
+	JR	Z,_fread_done
+
+	; Save dest pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = dest ptr
+	LD	(_fread_ptr),HL
+
+	; Initialize read count
+	LD	HL,0
+	LD	(_fread_cnt),HL
+
+_fread_loop:
+	; Call fgetc(stream)
+	LD	L,(IX+10)
+	LD	H,(IX+11)	; stream
+	PUSH	BC		; Save remaining count
+	PUSH	HL
+	CALL	_fgetc
+	POP	DE		; Clean up arg
+
+	; Check for EOF (returns -1 = 0xFFFF)
+	LD	A,H
+	AND	L
+	INC	A		; If HL=0xFFFF, A becomes 0
+	JR	Z,_fread_eof
+
+	; Store byte
+	LD	A,L
+	LD	HL,(_fread_ptr)
+	LD	(HL),A
+	INC	HL
+	LD	(_fread_ptr),HL
+
+	; Increment count
+	LD	HL,(_fread_cnt)
+	INC	HL
+	LD	(_fread_cnt),HL
+
+	; Decrement BC and continue
+	POP	BC		; Restore remaining count
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,_fread_loop
+	JR	_fread_done
+
+_fread_eof:
+	POP	BC		; Clean up saved count
+
+_fread_done:
+	; Return items read (cnt / size)
+	; __div16 does HL = DE / HL, so DE = cnt, HL = size
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = size (temporarily)
+	LD	A,D
+	OR	E
+	JR	Z,_fread_ret
+	LD	HL,(_fread_cnt)	; HL = cnt
+	EX	DE,HL		; Now DE = cnt, HL = size
+	CALL	__div16		; HL = cnt / size
+
+_fread_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+
+_fread_ptr:	DS	2	; fread dest pointer temp
+_fread_cnt:	DS	2	; fread byte counter temp
+
+	END

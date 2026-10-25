@@ -1,0 +1,33 @@
+; lc_strcpy.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *strcpy(char *dest, const char *src)
+; Copy string from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strcpy
+_strcpy:
+	POP	BC		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	PUSH	HL
+	PUSH	DE
+	PUSH	BC
+	PUSH	DE		; return value
+	XOR	A
+_strcpy_loop:
+	CP	(HL)		; Z at the terminator; LDI keeps Z
+	LDI
+	JR	NZ,_strcpy_loop
+	POP	HL
+	RET
+
+	END

@@ -1,0 +1,103 @@
+; lc_fgets.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_fgetc
+
+	CSEG
+
+; ============================================================
+; char *fgets(char *s, int size, FILE *stream)
+; Read line from stream
+; ============================================================
+	PUBLIC	_fgets
+_fgets:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+8)
+	LD	H,(IX+9)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_fgets_null
+
+	LD	E,(IX+4)	; buffer
+	LD	D,(IX+5)
+	LD	C,(IX+6)	; size
+	LD	B,(IX+7)
+	PUSH	DE		; Save for return
+
+	DEC	BC		; Leave room for null
+	LD	A,B
+	OR	C
+	JR	Z,_fgets_term
+
+_fgets_loop:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL		; Save stream
+	PUSH	HL		; Pass stream as arg
+	CALL	_fgetc
+	POP	BC		; Discard arg
+	; HL = fgetc return value, save it
+	LD	A,H		; Check high byte first
+	LD	B,L		; B = character (save before POP)
+	POP	HL		; Restore stream to HL
+	OR	A
+	JR	NZ,_fgets_eof	; EOF if H != 0 (return was 0xFFxx)
+	LD	A,B		; A = character
+	POP	DE		; Restore dest pointer
+	POP	BC		; Restore count
+
+	LD	(DE),A
+	INC	DE
+	DEC	BC
+
+	CP	0AH		; LF?
+	JR	Z,_fgets_term
+	CP	0DH		; CR?
+	JR	Z,_fgets_term
+
+	LD	A,B
+	OR	C
+	JR	NZ,_fgets_loop
+
+_fgets_term:
+	XOR	A
+	LD	(DE),A
+	POP	HL		; Return buffer
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fgets_eof:
+	; Stack has: [BC_count][DE_dest]
+	; HL = stream (just restored)
+	POP	DE		; Restore dest pointer
+	POP	BC		; Restore count
+	; Check if we read anything
+	LD	A,(IX+4)
+	CP	E
+	JR	NZ,_fgets_term	; Got some data
+	LD	A,(IX+5)
+	CP	D
+	JR	NZ,_fgets_term
+	; No data read - return NULL
+	; Pop saved buffer before going to _fgets_null
+	POP	DE
+_fgets_null:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

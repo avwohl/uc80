@@ -1,0 +1,30 @@
+; lc_isprint.mac - split from lc_ctype.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int isprint(int c)
+	PUBLIC	_isprint
+_isprint:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	' '
+	JR	C,_isprint_no
+	CP	7FH		; DEL
+	JR	NC,_isprint_no
+	LD	HL,1
+	POP	IX
+	RET
+_isprint_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+	END

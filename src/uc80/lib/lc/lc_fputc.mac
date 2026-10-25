@@ -1,0 +1,197 @@
+; lc_fputc.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+BDOS_WRITE	EQU	21	; Write sequential
+BDOS_SETDMA	EQU	26	; Set DMA address
+FILE_BUFPOS	EQU	3	; Current position in buffer
+FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
+FLAG_ERROR	EQU	04H
+
+	EXTRN	__conout
+
+	PUBLIC	_fflush_internal
+
+	CSEG
+
+; ============================================================
+; int fputc(int c, FILE *stream)
+; Put character to stream
+; ============================================================
+	PUBLIC	_fputc
+_fputc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = stream
+
+	; Check for NULL
+	LD	A,H
+	OR	L
+	JP	Z,_fputc_err
+
+	; Check if stdout/stderr
+	LD	A,(HL)
+	CP	3
+	JR	NC,_fputc_file
+
+	; Console output.  Only this branch translates LF -> CR LF; the
+	; _fputc_file branch below writes raw bytes, so "w" and "wb"
+	; streams both stay byte-for-byte what the program handed us.
+	LD	E,(IX+4)
+	CALL	__conout
+	LD	L,(IX+4)
+	LD	H,0
+	JP	_fputc_ret
+
+_fputc_file:
+	; Check if buffer full
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	A,(HL)
+	CP	128
+	JR	C,_fputc_store
+
+	; Buffer full - flush it
+	POP	HL
+	PUSH	HL
+	CALL	_fflush_internal
+	; Check for error
+	LD	A,H
+	OR	L
+	JR	NZ,_fputc_flerr
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+
+_fputc_store:
+	; Store byte in buffer
+	LD	A,(HL)		; A = bufpos
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[bufpos]
+	LD	A,(IX+4)
+	LD	(HL),A		; Store the byte
+
+	; Increment bufpos
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFPOS
+	ADD	HL,DE
+	INC	(HL)		; bufpos++
+
+	POP	HL
+	LD	L,(IX+4)
+	LD	H,0
+	JP	_fputc_ret
+
+_fputc_flerr:
+	POP	HL
+_fputc_err:
+	LD	HL,-1
+_fputc_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; Internal: Flush write buffer
+; HL = FILE*
+; Returns HL=0 success, HL=-1 error
+; ============================================================
+_fflush_internal:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+
+	; Check bufpos
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	A,(HL)
+	OR	A
+	JR	Z,_fflush_ok	; Nothing to flush
+
+	; Pad rest of buffer with Ctrl-Z (CP/M EOF)
+	LD	B,A		; B = bytes written
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[bufpos]
+	LD	A,128
+	SUB	B
+	LD	B,A		; B = bytes to pad
+	JR	Z,_fflush_write
+	LD	A,1AH		; Ctrl-Z
+_fflush_pad:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_fflush_pad
+
+_fflush_write:
+	; Set DMA
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+
+	; Write record
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_WRITE
+	CALL	BDOS
+
+	OR	A
+	JR	NZ,_fflush_err
+
+	; Reset bufpos
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	(HL),0
+
+_fflush_ok:
+	POP	HL
+	LD	HL,0
+	POP	DE
+	POP	BC
+	RET
+
+_fflush_err:
+	POP	HL
+	PUSH	HL
+	INC	HL		; flags
+	LD	A,(HL)
+	OR	FLAG_ERROR
+	LD	(HL),A
+	POP	HL
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	RET
+
+	END

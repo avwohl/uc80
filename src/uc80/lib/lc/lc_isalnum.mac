@@ -1,0 +1,43 @@
+; lc_isalnum.mac - split from lc_ctype.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int isalnum(int c)
+	PUBLIC	_isalnum
+_isalnum:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	; Check digit
+	CP	'0'
+	JR	C,_isalnum_alpha
+	CP	'9'+1
+	JR	C,_isalnum_yes
+_isalnum_alpha:
+	; Check uppercase
+	CP	'A'
+	JR	C,_isalnum_lower
+	CP	'Z'+1
+	JR	C,_isalnum_yes
+_isalnum_lower:
+	CP	'a'
+	JR	C,_isalnum_no
+	CP	'z'+1
+	JR	NC,_isalnum_no
+_isalnum_yes:
+	LD	HL,1
+	POP	IX
+	RET
+_isalnum_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+	END

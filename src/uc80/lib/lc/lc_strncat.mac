@@ -1,0 +1,66 @@
+; lc_strncat.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *strncat(char *dest, const char *src, size_t n)
+; Append at most n chars from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strncat
+_strncat:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+
+	; Find end of dest
+_strncat_find:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strncat_copy
+	INC	DE
+	JR	_strncat_find
+
+_strncat_copy:
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncat_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncat_done
+
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strncat_done	; End of src
+
+	LD	(DE),A
+	INC	HL
+	INC	DE
+	DEC	BC
+	JR	_strncat_loop
+
+_strncat_done:
+	; Null terminate
+	XOR	A
+	LD	(DE),A
+
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	BC
+	POP	IX
+	RET
+
+	END

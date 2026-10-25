@@ -1,0 +1,97 @@
+; lc_mbstowcs.mac - split from lc_wchar.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; size_t mbstowcs(wchar_t *dest, const char *src, size_t n)
+; Convert multibyte string to wide string
+; C locale: copy bytes to wchar_t array
+	PUBLIC	_mbstowcs
+_mbstowcs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = dest
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = src
+	LD	C,(IX+8)
+	LD	B,(IX+9)	; BC = n
+	PUSH	BC		; Save n
+
+	LD	BC,0		; Count = 0
+
+_mbstowcs_loop:
+	; Check if count < n
+	POP	HL		; n
+	PUSH	HL
+	OR	A
+	SBC	HL,BC
+	JR	Z,_mbstowcs_done
+	JR	C,_mbstowcs_done
+
+	; Get source pointer back
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	ADD	HL,BC		; HL = src + count
+	LD	A,(HL)		; Get char
+
+	; Check for null terminator
+	OR	A
+	JR	Z,_mbstowcs_term
+
+	; Store in dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = dest
+	LD	E,A
+	LD	A,H
+	OR	L
+	JR	Z,_mbstowcs_nodest
+	; dest[count] = char
+	PUSH	BC
+	SLA	C
+	RL	B		; BC * 2 for wchar_t offset
+	ADD	HL,BC
+	LD	(HL),E		; Low byte
+	INC	HL
+	XOR	A
+	LD	(HL),A		; High byte = 0
+	POP	BC
+
+_mbstowcs_nodest:
+	INC	BC		; count++
+	JR	_mbstowcs_loop
+
+_mbstowcs_term:
+	; Null terminate dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_mbstowcs_done
+	PUSH	BC
+	SLA	C
+	RL	B
+	ADD	HL,BC
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	POP	BC
+
+_mbstowcs_done:
+	POP	HL		; Discard saved n
+	LD	H,B
+	LD	L,C		; Return count
+	POP	BC
+	POP	IX
+	RET
+
+	END

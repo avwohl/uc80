@@ -1,0 +1,42 @@
+; lc_ferror.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+FLAG_ERROR	EQU	04H
+
+	CSEG
+
+; ============================================================
+; int ferror(FILE *stream)
+; Check error flag
+; ============================================================
+	PUBLIC	_ferror
+_ferror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_ferror_yes
+	INC	HL		; flags
+	LD	A,(HL)
+	AND	FLAG_ERROR
+	JR	Z,_ferror_no
+	LD	HL,1
+	POP	IX
+	RET
+_ferror_no:
+	LD	HL,0
+	POP	IX
+	RET
+_ferror_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+	END

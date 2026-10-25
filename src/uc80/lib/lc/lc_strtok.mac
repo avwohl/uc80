@@ -1,0 +1,120 @@
+; lc_strtok.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *strtok(char *str, const char *delim)
+; Tokenize a string. First call with str, subsequent with NULL.
+; Uses _strtok_next for state, _strtok_tok for token start
+; ============================================================
+	PUBLIC	_strtok
+_strtok:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Get str parameter or use saved position
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	NZ,_strtok_have_str
+	LD	HL,(_strtok_next)
+	LD	A,H
+	OR	L
+	JP	Z,_strtok_null		; No more tokens
+
+_strtok_have_str:
+	; HL = current position, skip leading delimiters
+_strtok_skip:
+	LD	A,(HL)
+	OR	A
+	JP	Z,_strtok_null		; End of string
+
+	; Check if current char is a delimiter
+	LD	B,A			; B = char to check
+	LD	E,(IX+6)
+	LD	D,(IX+7)		; DE = delim
+_strtok_skip_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strtok_token_start	; Not a delimiter
+	CP	B
+	JR	Z,_strtok_skip_found
+	INC	DE
+	JR	_strtok_skip_loop
+_strtok_skip_found:
+	INC	HL
+	JR	_strtok_skip
+
+_strtok_token_start:
+	; HL points to start of token, save it
+	LD	(_strtok_tok),HL
+
+	; Find end of token
+_strtok_scan:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strtok_end_of_str
+
+	; Check if current char is a delimiter
+	LD	B,A
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+_strtok_scan_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strtok_scan_next	; Not a delimiter
+	CP	B
+	JR	Z,_strtok_found_delim
+	INC	DE
+	JR	_strtok_scan_loop
+
+_strtok_scan_next:
+	INC	HL
+	JR	_strtok_scan
+
+_strtok_found_delim:
+	; Null-terminate token
+	LD	(HL),0
+	INC	HL
+	LD	(_strtok_next),HL
+	JR	_strtok_return
+
+_strtok_end_of_str:
+	; No more tokens after this one
+	LD	HL,0
+	LD	(_strtok_next),HL
+
+_strtok_return:
+	LD	HL,(_strtok_tok)
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_strtok_null:
+	LD	HL,0
+	LD	(_strtok_next),HL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+
+
+; strtok state
+_strtok_next:	DS	2	; Next position in string
+_strtok_tok:	DS	2	; Start of current token
+
+	END

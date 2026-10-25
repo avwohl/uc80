@@ -1,0 +1,52 @@
+; lc_exit.mac - split from lc_stdlib.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_atexit_cnt
+	EXTRN	_atexit_tab
+
+	CSEG
+
+; ============================================================
+; void exit(int status)
+; Calls atexit handlers then terminates
+; ============================================================
+	PUBLIC	_exit
+_exit:
+	; Call atexit handlers in reverse order
+	LD	A,(_atexit_cnt)
+	OR	A
+	JR	Z,_exit_done
+
+_exit_loop:
+	DEC	A
+	LD	(_atexit_cnt),A
+	; Get handler address: _atexit_tab + A*2
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL		; HL = A*2
+	LD	DE,_atexit_tab
+	ADD	HL,DE		; HL = address of handler pointer
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = handler address
+	; Call handler
+	PUSH	AF
+	LD	HL,_exit_loop_ret
+	PUSH	HL		; Push return address
+	PUSH	DE		; Push handler address
+	RET			; "Call" the handler
+_exit_loop_ret:
+	POP	AF
+	OR	A
+	JR	NZ,_exit_loop
+
+_exit_done:
+	; Return to CP/M (warm boot)
+	JP	0
+
+	END

@@ -1,0 +1,43 @@
+; lc_strcmp.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int strcmp(const char *s1, const char *s2)
+; Compare two strings
+; Returns: <0 if s1<s2, 0 if s1==s2, >0 if s1>s2
+; ============================================================
+	PUBLIC	_strcmp
+_strcmp:
+	POP	BC		; return address
+	POP	DE		; DE = s1
+	POP	HL		; HL = s2
+	PUSH	HL
+	PUSH	DE
+	PUSH	BC
+_strcmp_loop:
+	LD	A,(DE)
+	CP	(HL)
+	JR	NZ,_strcmp_diff
+	INC	DE
+	INC	HL
+	OR	A
+	JR	NZ,_strcmp_loop
+	LD	H,A		; equal: 0
+	LD	L,A
+	RET
+_strcmp_diff:
+	; Return s1[i] - s2[i] as unsigned chars (-255..255)
+	SUB	(HL)
+	LD	L,A
+	SBC	A,A		; borrow: s1[i] < s2[i]
+	LD	H,A
+	RET
+
+	END

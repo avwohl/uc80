@@ -1,0 +1,16 @@
+; lc_malloc_data.mac - split from lc_malloc.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	PUBLIC	_free_head
+
+
+	DSEG
+
+_free_head:	DW	0
+
+	END

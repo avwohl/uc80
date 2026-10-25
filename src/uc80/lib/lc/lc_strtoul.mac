@@ -1,0 +1,60 @@
+; lc_strtoul.mac - split from lc_atoi.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_strtol_base
+	EXTRN	_strtol_neg
+	EXTRN	_strtol_prefix
+
+	CSEG
+
+; ============================================================
+; unsigned long strtoul(const char *nptr, char **endptr, int base)
+; Convert string to unsigned long (32-bit)
+; Same as strtol but ignores minus sign
+; ============================================================
+	PUBLIC	_strtoul
+_strtoul:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = nptr
+	LD	H,(IX+5)
+	LD	A,(IX+8)	; A = base
+	LD	(_strtol_base),A
+	XOR	A
+	LD	(_strtol_neg),A	; Always unsigned
+
+	; Skip leading whitespace
+_strtoul_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_strtoul_skipnext
+	CP	09H
+	JR	Z,_strtoul_skipnext
+	CP	0AH
+	JR	Z,_strtoul_skipnext
+	CP	0DH
+	JR	Z,_strtoul_skipnext
+	JR	_strtoul_sign
+_strtoul_skipnext:
+	INC	HL
+	JR	_strtoul_skip
+
+_strtoul_sign:
+	; Skip optional + sign, ignore - sign
+	LD	A,(HL)
+	CP	'+'
+	JR	NZ,_strtoul_pref
+	INC	HL
+
+_strtoul_pref:
+	JP	_strtol_prefix	; Share the rest of strtol code
+
+	END

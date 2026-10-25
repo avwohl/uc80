@@ -1,0 +1,80 @@
+; lc_fsetpos.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_fseek
+
+	CSEG
+
+; ============================================================
+; int fsetpos(FILE *stream, const fpos_t *pos)
+; Set file position
+; Returns 0 on success, non-zero on error
+; ============================================================
+	PUBLIC	_fsetpos
+_fsetpos:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Load position from *pos
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = pos pointer
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = position
+	PUSH	BC		; High word
+	PUSH	DE		; Low word
+
+	; Call fseek(stream, pos, SEEK_SET)
+	LD	HL,0
+	PUSH	HL		; whence = SEEK_SET
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	; Stack: stream, whence(0), pos_low, pos_high
+	; fseek expects: stream, offset_low, offset_high, whence
+	; Need to rearrange...
+
+	; Actually let's redo this properly
+	POP	HL		; stream
+	POP	BC		; whence
+	POP	DE		; pos low
+	POP	BC		; pos high
+	; Now push in correct order for fseek(stream, offset, whence)
+	LD	A,0
+	PUSH	AF		; whence = SEEK_SET (use AF as 16-bit 0)
+	INC	SP		; Adjust for 1-byte push
+	DEC	SP
+	LD	HL,0
+	PUSH	HL		; whence = 0
+	PUSH	BC		; offset high
+	PUSH	DE		; offset low
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	CALL	_fseek
+	; Clean up stack (5 words = 10 bytes)
+	LD	HL,10
+	ADD	HL,SP
+	LD	SP,HL
+
+	; fseek returns 0 on success, -1 on error
+	; HL already has return value
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

@@ -1,0 +1,102 @@
+; lc_calloc.mac - split from lc_malloc.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_malloc
+
+	CSEG
+
+; ============================================================
+; void *calloc(size_t nmemb, size_t size)
+; Allocate zeroed memory
+; Arguments: nmemb at IX+4, size at IX+6
+; Returns: pointer to zeroed memory, or NULL
+; ============================================================
+	PUBLIC	_calloc
+_calloc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Calculate total size = nmemb * size
+	LD	L,(IX+4)	; HL = nmemb
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = size
+	LD	D,(IX+7)
+
+	; 16-bit multiply: HL = HL * DE
+	PUSH	BC
+	LD	B,H
+	LD	C,L		; BC = nmemb
+	; Count with the smaller factor (fewer additions)
+	LD	A,B
+	CP	D
+	JR	C,_calloc_ordered
+	JR	NZ,_calloc_swap
+	LD	A,C
+	CP	E
+	JR	C,_calloc_ordered
+_calloc_swap:
+	PUSH	BC
+	LD	B,D
+	LD	C,E
+	POP	DE
+_calloc_ordered:
+	LD	HL,0
+_calloc_mult:
+	LD	A,B
+	OR	C
+	JR	Z,_calloc_mult_done
+	ADD	HL,DE
+	JR	C,_calloc_overflow	; nmemb * size does not fit: NULL
+	DEC	BC
+	JR	_calloc_mult
+_calloc_overflow:
+	POP	BC
+	LD	HL,0
+	POP	IX
+	RET
+_calloc_mult_done:
+	; HL = total size
+	POP	BC
+
+	; Call malloc with size in HL
+	PUSH	HL		; Push size as argument
+	CALL	_malloc
+	POP	DE		; Pop size into DE (we need it for clearing)
+
+	; Check if malloc returned NULL
+	LD	A,H
+	OR	L
+	JR	Z,_calloc_ret	; Return NULL
+
+	; Zero the memory: HL = ptr, DE = size
+	PUSH	HL		; Save return value
+	EX	DE,HL		; HL = size, DE = ptr
+
+	; Zero BC bytes at (DE)
+	LD	B,H
+	LD	C,L		; BC = size
+	EX	DE,HL		; HL = ptr
+
+_calloc_zero:
+	LD	A,B
+	OR	C
+	JR	Z,_calloc_zero_done
+	LD	(HL),0
+	INC	HL
+	DEC	BC
+	JR	_calloc_zero
+
+_calloc_zero_done:
+	POP	HL		; Restore return value
+
+_calloc_ret:
+	POP	IX
+	RET
+
+	END

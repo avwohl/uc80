@@ -1,0 +1,22 @@
+; lc_setvbuf.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int setvbuf(FILE *stream, char *buf, int mode, size_t size)
+; Set stream buffering (limited support on CP/M)
+; ============================================================
+	PUBLIC	_setvbuf
+_setvbuf:
+	; No-op - CP/M uses fixed 128-byte buffers
+	; Always return 0 (success) for compatibility
+	LD	HL,0
+	RET
+
+	END

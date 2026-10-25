@@ -1,0 +1,43 @@
+; lc_memset.mac - split from lc_mem.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; void *memset(void *s, int c, size_t n)
+; Fill n bytes of s with c
+; Returns: s
+; ============================================================
+	PUBLIC	_memset
+_memset:
+	POP	AF		; return address
+	POP	HL		; HL = s
+	POP	DE		; E = fill byte
+	POP	BC		; BC = n
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	PUSH	AF
+	LD	A,B
+	OR	C
+	RET	Z		; HL = s
+	PUSH	HL		; return value
+	LD	(HL),E
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	Z,_memset_done
+	LD	D,H
+	LD	E,L
+	INC	DE
+	LDIR			; copy the first byte along
+_memset_done:
+	POP	HL
+	RET
+
+	END

@@ -1,0 +1,44 @@
+; lc_isxdigit.mac - split from lc_ctype.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int isxdigit(int c)
+	PUBLIC	_isxdigit
+_isxdigit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	; Check digit
+	CP	'0'
+	JR	C,_isxdigit_hex
+	CP	'9'+1
+	JR	C,_isxdigit_yes
+_isxdigit_hex:
+	; Check A-F
+	CP	'A'
+	JR	C,_isxdigit_lower
+	CP	'F'+1
+	JR	C,_isxdigit_yes
+_isxdigit_lower:
+	; Check a-f
+	CP	'a'
+	JR	C,_isxdigit_no
+	CP	'f'+1
+	JR	NC,_isxdigit_no
+_isxdigit_yes:
+	LD	HL,1
+	POP	IX
+	RET
+_isxdigit_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+	END

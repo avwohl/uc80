@@ -1,0 +1,38 @@
+; lc_ungetc.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int ungetc(int c, FILE *stream)
+; Push character back to stream
+; ============================================================
+	PUBLIC	_ungetc
+_ungetc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_ungetc_err
+	INC	HL
+	INC	HL		; unget
+	LD	A,(IX+4)
+	LD	(HL),A
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+_ungetc_err:
+	LD	HL,-1
+	POP	IX
+	RET
+
+	END

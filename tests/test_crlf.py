@@ -39,7 +39,8 @@ CONSOLE_MODULES = [
     "lc_putchar.mac",
     "lc_puts.mac",
     "lc_printf_core.mac",
-    "lc_file.mac",
+    "lc_fputc.mac",
+    "lc_perror.mac",
     "lc_prt_dec32.mac",
     "lc_prt_hex.mac",
     "lc_assert.mac",
@@ -166,7 +167,7 @@ class TestNoHardCodedLineEndings:
 
     def test_perror_no_longer_hard_codes_cr(self):
         """_perror used the decimal spellings LD E,13 / LD E,10."""
-        src = (LC_DIR / "lc_file.mac").read_text()
+        src = (LC_DIR / "lc_perror.mac").read_text()
         assert "\tLD\tE,13\n" not in src
 
 
@@ -174,7 +175,7 @@ class TestFileWritesStayRaw:
     """A "wb" stream must not get CR injected -- nor a "w" one, today."""
 
     def test_only_the_console_branch_of_fputc_is_routed(self):
-        src = (LC_DIR / "lc_file.mac").read_text()
+        src = (LC_DIR / "lc_fputc.mac").read_text()
         console, _, rest = src.partition("_fputc_file:")
         # The console branch above _fputc_file calls __conout...
         assert "CALL\t__conout" in console

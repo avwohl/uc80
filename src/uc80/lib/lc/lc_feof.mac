@@ -1,0 +1,38 @@
+; lc_feof.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+FLAG_EOF	EQU	02H
+
+	CSEG
+
+; ============================================================
+; int feof(FILE *stream)
+; Check EOF flag
+; ============================================================
+	PUBLIC	_feof
+_feof:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_feof_yes
+	INC	HL		; flags
+	LD	A,(HL)
+	AND	FLAG_EOF
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+_feof_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+	END

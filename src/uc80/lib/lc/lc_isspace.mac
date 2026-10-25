@@ -1,0 +1,38 @@
+; lc_isspace.mac - split from lc_ctype.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int isspace(int c)
+	PUBLIC	_isspace
+_isspace:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	' '
+	JR	Z,_isspace_yes
+	CP	09H		; TAB
+	JR	Z,_isspace_yes
+	CP	0AH		; LF
+	JR	Z,_isspace_yes
+	CP	0BH		; VT
+	JR	Z,_isspace_yes
+	CP	0CH		; FF
+	JR	Z,_isspace_yes
+	CP	0DH		; CR
+	JR	Z,_isspace_yes
+	LD	HL,0
+	POP	IX
+	RET
+_isspace_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+	END

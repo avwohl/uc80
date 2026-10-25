@@ -1,0 +1,59 @@
+; lc_rename.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+BDOS_RENAME	EQU	23	; Rename file
+
+	EXTRN	_parse_fcb
+	EXTRN	_tmp_fcb
+
+	CSEG
+
+; ============================================================
+; int rename(const char *oldpath, const char *newpath)
+; Rename a file
+; Returns 0 on success, -1 on error
+; ============================================================
+	PUBLIC	_rename
+_rename:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Parse old pathname into FCB (first 16 bytes)
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = oldpath
+	LD	HL,_tmp_fcb
+	CALL	_parse_fcb
+
+	; Parse new pathname into FCB+16 (destination)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = newpath
+	LD	HL,_tmp_fcb+16
+	CALL	_parse_fcb
+
+	; CP/M rename uses DE pointing to FCB with old name in first 16 bytes
+	; and new name in second 16 bytes
+	LD	DE,_tmp_fcb
+	LD	C,BDOS_RENAME
+	CALL	BDOS
+
+	; A = 0xFF on error
+	CP	0FFH
+	JR	Z,_rename_err
+	LD	HL,0
+	JR	_rename_ret
+_rename_err:
+	LD	HL,-1
+_rename_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

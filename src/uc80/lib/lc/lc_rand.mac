@@ -1,0 +1,33 @@
+; lc_rand.mac - split from lc_stdlib.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__mul16
+	EXTRN	_rand_seed
+
+	CSEG
+
+; ============================================================
+; int rand(void)
+; Returns pseudo-random number 0 to RAND_MAX (32767)
+; Uses 16-bit linear congruential generator
+; seed = (seed * 25173 + 13849) & 0x7FFF
+; ============================================================
+	PUBLIC	_rand
+_rand:
+	LD	HL,(_rand_seed)
+	LD	DE,25173
+	CALL	__mul16		; HL = seed * 25173
+	LD	DE,13849
+	ADD	HL,DE		; HL = seed * 25173 + 13849
+	LD	A,H
+	AND	7FH		; Mask to 0-32767
+	LD	H,A
+	LD	(_rand_seed),HL
+	RET
+
+	END

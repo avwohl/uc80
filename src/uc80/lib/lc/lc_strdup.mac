@@ -1,0 +1,78 @@
+; lc_strdup.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_malloc
+	EXTRN	_strlen
+
+	CSEG
+
+; ============================================================
+; char *strdup(const char *s)
+; Duplicate a string (allocate memory and copy)
+; Returns: pointer to new string, or NULL if allocation fails
+; ============================================================
+	PUBLIC	_strdup
+_strdup:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Get string pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+
+	; Find length (including null terminator)
+	PUSH	HL
+	CALL	_strlen		; HL = length (not including null)
+	INC	HL		; Add 1 for null terminator
+
+	; Allocate memory
+	PUSH	HL		; Push size argument
+	CALL	_malloc		; HL = allocated pointer or NULL
+	POP	DE		; Clean up argument
+
+	; Check if malloc failed
+	LD	A,H
+	OR	L
+	JR	Z,_strdup_done	; Return NULL
+
+	; Copy string to new memory
+	; HL = dest (from malloc)
+	; Stack has source string address
+	EX	DE,HL		; DE = dest
+	POP	HL		; HL = source (was pushed earlier)
+	PUSH	DE		; Save dest to return
+
+	; Copy loop
+_strdup_copy:
+	LD	A,(HL)
+	LD	(DE),A
+	OR	A
+	JR	Z,_strdup_copydone
+	INC	HL
+	INC	DE
+	JR	_strdup_copy
+
+_strdup_copydone:
+	POP	HL		; HL = dest (return value)
+	JR	_strdup_ret
+
+_strdup_done:
+	; NULL result - need to pop saved source
+	POP	DE		; Discard saved source
+	; HL is already 0
+
+_strdup_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

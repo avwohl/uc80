@@ -1,0 +1,68 @@
+; lc_strcspn.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; size_t strcspn(const char *s, const char *reject)
+; Return length of initial segment of s not containing any chars from reject
+; ============================================================
+	PUBLIC	_strcspn
+_strcspn:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = reject
+	LD	D,(IX+7)
+	LD	BC,0		; BC = count
+
+_strcspn_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strcspn_done	; End of s
+
+	; Check if A is in reject string
+	PUSH	HL
+	PUSH	DE
+	POP	HL		; HL = reject
+_strcspn_check:
+	LD	D,(HL)
+	LD	A,D
+	OR	A
+	JR	Z,_strcspn_ok	; End of reject, char not found
+	POP	DE
+	PUSH	DE
+	LD	A,(DE)		; A = current char from s
+	CP	D
+	JR	Z,_strcspn_found	; Found in reject
+	INC	HL
+	JR	_strcspn_check
+
+_strcspn_ok:
+	; Char not in reject, continue
+	POP	HL
+	INC	HL
+	INC	BC
+	JR	_strcspn_loop
+
+_strcspn_found:
+	POP	HL		; Discard saved s pointer
+_strcspn_done:
+	LD	H,B
+	LD	L,C		; HL = count
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

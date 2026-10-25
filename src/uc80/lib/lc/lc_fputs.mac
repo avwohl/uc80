@@ -1,0 +1,74 @@
+; lc_fputs.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_fputc
+
+	CSEG
+
+; ============================================================
+; int fputs(const char *s, FILE *stream)
+; Write string to stream
+; ============================================================
+	PUBLIC	_fputs
+_fputs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_fputs_err
+
+	LD	E,(IX+4)	; string
+	LD	D,(IX+5)
+
+_fputs_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_fputs_ok
+
+	PUSH	DE
+	PUSH	HL
+	; Push args for fputc(char, stream)
+	PUSH	HL		; stream
+	LD	L,A
+	LD	H,0
+	PUSH	HL		; char
+	CALL	_fputc
+	POP	BC
+	POP	BC
+	POP	HL
+	POP	DE
+
+	; Check for error
+	LD	A,H
+	INC	A
+	JR	Z,_fputs_err	; HL was -1
+
+	INC	DE
+	JR	_fputs_loop
+
+_fputs_ok:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fputs_err:
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

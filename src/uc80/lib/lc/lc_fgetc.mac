@@ -1,0 +1,196 @@
+; lc_fgetc.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+BDOS_READ	EQU	20	; Read sequential
+BDOS_SETDMA	EQU	26	; Set DMA address
+FILE_BUFPOS	EQU	3	; Current position in buffer
+FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
+FLAG_EOF	EQU	02H
+
+	CSEG
+
+; ============================================================
+; int fgetc(FILE *stream)
+; Get character from stream
+; ============================================================
+	PUBLIC	_fgetc
+_fgetc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = stream
+
+	; Check for NULL
+	LD	A,H
+	OR	L
+	JP	Z,_fgetc_eof
+
+	; Check if stdin
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_fgetc_file
+
+	; stdin - read from console
+	LD	C,CONIN
+	CALL	BDOS
+	LD	L,A
+	LD	H,0
+	JP	_fgetc_ret
+
+_fgetc_file:
+	; Check for ungetc char first
+	PUSH	HL
+	INC	HL
+	INC	HL		; unget
+	LD	A,(HL)
+	CP	0FFH
+	JR	Z,_fgetc_nobuf
+	; Return unget char
+	LD	B,A
+	LD	A,0FFH
+	LD	(HL),A		; Clear unget
+	POP	HL
+	LD	L,B
+	LD	H,0
+	JP	_fgetc_ret
+
+_fgetc_nobuf:
+	POP	HL
+
+	; Check EOF flag
+	PUSH	HL
+	INC	HL		; flags
+	LD	A,(HL)
+	AND	FLAG_EOF
+	JR	NZ,_fgetc_iseof
+
+	; Check if buffer has data
+	INC	HL		; unget
+	INC	HL		; bufpos
+	LD	B,(HL)
+	INC	HL		; bufcnt
+	LD	A,(HL)
+	CP	B		; bufcnt > bufpos?
+	JR	Z,_fgetc_refill
+	JR	C,_fgetc_refill
+
+	; Get byte from buffer
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE		; HL = buffer start
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[bufpos]
+	LD	A,(HL)
+	; Check for Ctrl-Z (CP/M EOF marker)
+	CP	1AH
+	JR	Z,_fgetc_seteof
+	LD	E,A		; Save char
+
+	; Increment bufpos
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	INC	(HL)
+
+	; Skip CR characters for Unix text compatibility
+	LD	A,E
+	CP	0DH
+	JP	Z,_fgetc_nobuf	; Skip CR, get next char
+
+	POP	HL
+	LD	L,E
+	LD	H,0
+	JP	_fgetc_ret
+
+_fgetc_refill:
+	; Need to read more data
+	POP	HL
+	PUSH	HL
+
+	; Set DMA to buffer
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+
+	; Read record
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_READ
+	CALL	BDOS
+
+	; A = 0 success, non-zero = EOF/error
+	OR	A
+	JR	NZ,_fgetc_seteof
+
+	; Reset buffer position, set count
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	(HL),0		; bufpos = 0
+	INC	HL
+	LD	(HL),128	; bufcnt = 128
+
+	; Get first byte
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	A,(HL)
+	; Check for Ctrl-Z (CP/M EOF marker)
+	CP	1AH
+	JR	Z,_fgetc_seteof
+	LD	E,A
+
+	; Increment bufpos
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	INC	(HL)
+
+	; Skip CR characters for Unix text compatibility
+	LD	A,E
+	CP	0DH
+	JP	Z,_fgetc_nobuf	; Skip CR, get next char
+
+	POP	HL
+	LD	L,E
+	LD	H,0
+	JP	_fgetc_ret
+
+_fgetc_seteof:
+	POP	HL
+	PUSH	HL
+	INC	HL		; flags
+	LD	A,(HL)
+	OR	FLAG_EOF
+	LD	(HL),A
+_fgetc_iseof:
+	POP	HL
+_fgetc_eof:
+	LD	HL,-1
+_fgetc_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

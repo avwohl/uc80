@@ -1,0 +1,39 @@
+; lc_strcat.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *strcat(char *dest, const char *src)
+; Append src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strcat
+_strcat:
+	POP	BC		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	PUSH	HL
+	PUSH	DE
+	PUSH	BC
+	PUSH	DE		; return value
+	EX	DE,HL		; HL = dest, DE = src
+	XOR	A
+	LD	B,A
+	LD	C,A
+	CPIR			; HL = one past the terminator of dest
+	DEC	HL
+	EX	DE,HL		; DE = end of dest, HL = src
+_strcat_loop:
+	CP	(HL)		; A = 0
+	LDI
+	JR	NZ,_strcat_loop
+	POP	HL
+	RET
+
+	END

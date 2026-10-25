@@ -1,0 +1,68 @@
+; lc_fgetpos.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_ftell
+
+	CSEG
+
+; ============================================================
+; int fgetpos(FILE *stream, fpos_t *pos)
+; Get current file position
+; Returns 0 on success, non-zero on error
+; ============================================================
+	PUBLIC	_fgetpos
+_fgetpos:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Call ftell to get position
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; stream
+	PUSH	HL
+	CALL	_ftell
+	POP	BC
+	; DEHL = position (long)
+
+	; Check for error (returns -1 as 0xFFFFFFFF)
+	LD	A,D
+	AND	E
+	AND	H
+	AND	L
+	INC	A
+	JR	Z,_fgetpos_err
+
+	; Store position at *pos
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = pos pointer
+	LD	A,L
+	LD	(BC),A
+	INC	BC
+	LD	A,H
+	LD	(BC),A
+	INC	BC
+	LD	A,E
+	LD	(BC),A
+	INC	BC
+	LD	A,D
+	LD	(BC),A
+
+	LD	HL,0		; Return success
+	JR	_fgetpos_ret
+
+_fgetpos_err:
+	LD	HL,-1
+_fgetpos_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

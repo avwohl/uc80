@@ -1,0 +1,30 @@
+; lc_isdigit.mac - split from lc_ctype.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int isdigit(int c)
+	PUBLIC	_isdigit
+_isdigit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'0'
+	JR	C,_isdigit_no
+	CP	'9'+1
+	JR	NC,_isdigit_no
+	LD	HL,1
+	POP	IX
+	RET
+_isdigit_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+	END
