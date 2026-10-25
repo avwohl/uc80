@@ -1,0 +1,126 @@
+; crt0_rom.mac - C runtime start-up for a Z80 ROM (the --target=rom crt0)
+; uc80 C Compiler
+;
+; Link with ul80 --rom-data and --ram-end (or --ram-size), for example
+;   ul80 --bin -p 0 -d F800 --rom-data --rom-size 8000 --ram-size 800 ...
+; The linker defines __DATA_ROM, __DATA_RAM, __DATA_LEN, __BSS_START,
+; __BSS_END and __RAM_END.  See docs/rom.md.
+;
+; Vectors (CSEG, placed with ORG; the gaps between them are zero bytes):
+;   0000H  DI, IM 1, JP __start
+;   0008H to 0030H  RET (RST 08H to RST 30H)
+;   0038H  EI, RETI; or JP __int_handler when the program defines it
+;   0066H  RETN; or JP __nmi_handler when the program defines it
+; Link with -p 0.  The program code follows the NMI vector at 0068H.
+;
+; Start: set SP, copy the initial data from ROM to RAM, clear the
+; BSS, call main, then loop on HALT with the interrupt state main left.
+
+	.Z80
+
+	CSEG
+	ORG	0000H
+	PUBLIC	__vec_reset
+__vec_reset:
+	DI
+	IM	1
+	JP	__start
+
+	ORG	0008H
+	PUBLIC	__vec_rst08
+__vec_rst08:
+	RET
+	ORG	0010H
+	PUBLIC	__vec_rst10
+__vec_rst10:
+	RET
+	ORG	0018H
+	PUBLIC	__vec_rst18
+__vec_rst18:
+	RET
+	ORG	0020H
+	PUBLIC	__vec_rst20
+__vec_rst20:
+	RET
+	ORG	0028H
+	PUBLIC	__vec_rst28
+__vec_rst28:
+	RET
+	ORG	0030H
+	PUBLIC	__vec_rst30
+__vec_rst30:
+	RET
+
+;@INT_BEGIN
+	ORG	0038H
+	PUBLIC	__vec_int
+__vec_int:
+	EI
+	RETI
+;@USER	ORG	0038H
+;@USER	PUBLIC	__vec_int
+;@USER__vec_int:
+;@USER	JP	__int_handler
+;@INT_END
+
+;@NMI_BEGIN
+	ORG	0066H
+	PUBLIC	__vec_nmi
+__vec_nmi:
+	RETN
+;@USER	ORG	0066H
+;@USER	PUBLIC	__vec_nmi
+;@USER__vec_nmi:
+;@USER	JP	__nmi_handler
+;@NMI_END
+
+	PUBLIC	__start
+
+	EXTRN	_main
+	EXTRN	__DATA_ROM,__DATA_RAM,__DATA_LEN
+	EXTRN	__BSS_START,__BSS_END
+	EXTRN	__RAM_END
+
+__start:
+	LD	SP,__RAM_END
+
+	; Copy the initial data from ROM to RAM (nothing if there is none)
+	LD	BC,__DATA_LEN
+	LD	A,B
+	OR	C
+	JR	Z,__nodata
+	LD	HL,__DATA_ROM
+	LD	DE,__DATA_RAM
+	LDIR
+__nodata:
+
+	; Zero the BSS (COMMON): BC = size, nothing if empty
+	LD	HL,__BSS_END
+	LD	DE,__BSS_START
+	OR	A
+	SBC	HL,DE
+	LD	B,H
+	LD	C,L
+	LD	A,B
+	OR	C
+	JR	Z,__nobss
+	LD	HL,__BSS_START
+	LD	(HL),0
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	Z,__nobss
+	LD	D,H
+	LD	E,L
+	INC	DE
+	LDIR
+__nobss:
+
+	CALL	_main
+
+	; main returned: stop, with the interrupt state main left
+__halt:
+	HALT
+	JR	__halt
+
+	END	__start

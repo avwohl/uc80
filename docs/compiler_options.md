@@ -110,6 +110,11 @@ through the selected widths automatically.
 
 The design notes for this feature are in [configurable_int_sizes.md](configurable_int_sizes.md).
 
+### ROM target
+
+`--target=rom` (or `-ffreestanding`) builds a Z80 ROM image with no CP/M. The option
+`--stack-top EXPR` sets the first value of SP. See [rom.md](rom.md).
+
 ### Separate Compilation
 
 When compiling files separately for separate linking, use `--no-whole-program`:

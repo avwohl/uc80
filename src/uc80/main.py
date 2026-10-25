@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from uc_core.frontend import parse as _frontend_parse
+from uc_core.frontend import UnsupportedConstructError
 from uc_core import ast as ast_module
 from uc_core.preprocessor import Preprocessor, PreprocessorError, Macro
 from uc_core.type_config import TypeConfig, Z80_CPM
@@ -23,6 +24,7 @@ from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
 from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
                       is_asm_begin, is_asm_end)
 from . import volatile_fence
+from . import rom as rom_module
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
@@ -303,6 +305,38 @@ class _BuildLibsAction(argparse.Action):
         parser.exit(0)
 
 
+def _defines_label(code: str, mac_files: list, label: str) -> bool:
+    """True if the generated code or an appended .mac file has PUBLIC label."""
+    pat = re.compile(r"^\s*PUBLIC\s+(?:[^;\n]*,\s*)?" + re.escape(label)
+                     + r"\b", re.I | re.M)
+    return bool(pat.search(code) or any(pat.search(m) for m in mac_files))
+
+
+def _rom_problems(gen, code: str) -> list:
+    """Error messages for what a ROM cannot do: main(argc, argv), and calls
+    to library functions that are not in libc_rom.lib."""
+    problems = []
+    main_sym = gen.ctx.globals.get("main")
+    ptypes = getattr(getattr(main_sym, "sym_type", None), "param_types", None)
+    if ptypes:
+        problems.append(
+            "--target=rom: main() has parameters; a ROM has no command "
+            "line, so declare main(void)")
+    names = rom_module.undefined_in_rom(lib_dir(),
+                                        drop_unreferenced_externs(code))
+    if names:
+        problems.append(
+            "--target=rom: the program calls " + ", ".join(names)
+            + ", which libc_rom.lib does not have. Console and file "
+            "I/O, exit, abort, the heap, the clock and the environment "
+            "need the CP/M BDOS or an operating system. See docs/rom.md")
+    return problems
+
+
+UNSUPPORTED_MESSAGE = ("uc80 does not support '{name}' yet; "
+                       "see docs/rom_target.md")
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -430,6 +464,23 @@ def main() -> int:
         help="Startup code .mac file (default: lib/crt0.mac)"
     )
     parser.add_argument(
+        "--target", choices=["cpm", "rom"], default="cpm",
+        help="cpm (default): a CP/M program. rom: a freestanding Z80 ROM "
+             "image. Selects lib/crt0_rom.mac (vectors, SP, data copy, BSS "
+             "clear), no BDOS, and refuses exit, abort, console and file "
+             "I/O and main(argc, argv). See docs/rom.md"
+    )
+    parser.add_argument(
+        "-ffreestanding", dest="freestanding", action="store_true",
+        help="Same as --target=rom"
+    )
+    parser.add_argument(
+        "--stack-top", metavar="EXPR",
+        help="--target=rom: the initial SP, an assembler expression "
+             "(default: __RAM_END, which ul80 defines from --ram-end or "
+             "--ram-size)"
+    )
+    parser.add_argument(
         "--no-crlf",
         action="store_true",
         help="Do not translate '\\n' to CR LF on console output. The default "
@@ -476,6 +527,9 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+    rom = args.target == "rom" or args.freestanding
+    if args.stack_top and not rom:
+        parser.error("--stack-top needs --target=rom")
 
     # Build TypeConfig from CLI overrides (defaults = Z80_CPM: int16/long32/ptr16)
     type_config = TypeConfig(
@@ -556,6 +610,9 @@ def main() -> int:
                     print(f"  Preprocessing...")
 
                 pp_predefines = {**Z80_CPM_PREDEFINES, **type_config.predefined_macros()}
+                if rom:
+                    del pp_predefines["__CPM__"]
+                    pp_predefines["__UC80_ROM__"] = "1"
                 pp = Preprocessor(include_paths, target_predefines=pp_predefines)
 
                 # Add command-line defines
@@ -587,7 +644,12 @@ def main() -> int:
                     continue
 
             # Front-end: lex + parse via plox-driven c23 grammar.
-            ast = _frontend_parse(source, str(input_path))
+            # Strict: the interrupt and fastcall markers mean something on a
+            # Z80, so the frontend refuses them instead of erasing them.
+            ast = _frontend_parse(
+                source, str(input_path),
+                strict_unsupported=True,
+                unsupported_message=UNSUPPORTED_MESSAGE)
             asts.append(ast)
 
             if args.verbose:
@@ -648,8 +710,16 @@ def main() -> int:
                            printf_features=printf_features,
                            scanf_features=scanf_features,
                            type_config=type_config,
-                           crlf_console=not args.no_crlf)
+                           crlf_console=not args.no_crlf or rom)
         code = gen.generate(merged_ast)
+
+        if rom:
+            problems = _rom_problems(gen, code)
+            if problems:
+                for msg in problems:
+                    print(f"uc80: error: {msg}", file=sys.stderr)
+                return 1
+            code = rom_module.strip_empty_printf_tables(code)
 
         for w in gen.warnings:
             print(f"uc80: warning: {w}", file=sys.stderr)
@@ -677,6 +747,8 @@ def main() -> int:
             # Load startup code
             if args.startup_lib:
                 startup_path = Path(args.startup_lib)
+            elif rom:
+                startup_path = lib_file("crt0_rom.mac")
             else:
                 # Default: crt0.mac from the package's library directory
                 startup_path = lib_file("crt0.mac")
@@ -686,6 +758,13 @@ def main() -> int:
 
                 # Parse and filter startup code
                 startup_lines = []
+                if rom and not args.startup_lib:
+                    startup_lines = rom_module.startup_text(
+                        startup_path,
+                        _defines_label(code, mac_files, "__int_handler"),
+                        _defines_label(code, mac_files, "__nmi_handler"),
+                        args.stack_top)
+                    startup_content = ""
                 for line in startup_content.splitlines():
                     stripped = line.strip().upper()
                     # Skip directives that are already in main output
@@ -709,8 +788,10 @@ def main() -> int:
                         insert_idx = i
                         break
 
-                # Insert startup code
-                lines = lines[:insert_idx] + ['\n; Embedded startup code (crt0)'] + startup_lines + [''] + lines[insert_idx:]
+                # Insert startup code.  The ROM start-up code opens with
+                # the vectors (CSEG with ORG), so it must come first.
+                after = ['']
+                lines = lines[:insert_idx] + ['\n; Embedded startup code (crt0)'] + startup_lines + after + lines[insert_idx:]
                 code = '\n'.join(lines)
 
                 if args.verbose:
@@ -1102,11 +1183,20 @@ def main() -> int:
 
         if args.verbose:
             print(f"  Wrote {output_path}")
+            if rom:
+                stem = output_path.with_suffix("").name
+                print("  ROM link (adjust -d, --rom-size, --ram-size):")
+                print("    um80 " + output_path.name)
+                print("    " + rom_module.link_command(stem))
 
         return 0
 
     except PreprocessorError as e:
         print(f"uc80: {e}", file=sys.stderr)
+        return 1
+
+    except UnsupportedConstructError as e:
+        print(f"uc80: error: {e}", file=sys.stderr)
         return 1
 
     except CodegenError as e:

@@ -1,6 +1,27 @@
 # ROM and freestanding target for uc80
 
-Status: plan. Source: five investigations and three reviews on issue avwohl/uc80#1. Nothing in this plan is built yet.
+Status: part built. Source: five investigations and three reviews on issue avwohl/uc80#1. The user guide for the finished parts is [rom.md](rom.md).
+
+## Status of the plan
+
+Done:
+
+- Phase 0, strict mode: uc80 refuses `__interrupt`, `interrupt`, `__interrupt(1)`, `[[gnu::interrupt]]`, `__attribute__((interrupt))`, `__critical __interrupt` and a bare `__fastcall` with `uc80: error: file:line: ...` and exit code 1. The uc_core frontend has the option (`strict_unsupported`). Tests: `tests/test_strict_unsupported.py`.
+- Phase 1, test harness: `bench/romrun` (see [romrun.md](romrun.md)).
+- Phase 1, ul80 options (`--data-origin`, `--rom-data`, `--bin`, `--fill`, `--rom-size`, `--ram-end`, `--ram-size`, `--min-stack`, `--equ-file`): done in the um80_and_friends repository.
+- Phase 1, `--target=rom` and `-ffreestanding`: done, with `lib/crt0_rom.mac`, the vectors, the error for CP/M-only calls and for `main(argc, argv)`, and `--stack-top`. A user INT or NMI handler in assembly (`__int_handler`, `__nmi_handler`) replaces the default vector stub.
+- Phase 1, runtime and libc state in the BSS: the zero-start variables of `rt/` and `lc/` are in a named COMMON block for each module.
+- Phase 1, `libc_rom.lib`: 93 modules with no BDOS use. The split of `lc_string` and `lc_stdlib` was already done by the libc split.
+- Phase 1, ROM proof: the four snd-* kernels run as ROM images with the CP/M golden output (`bench/rom/sndrom.py`, `tests/test_rom_target.py`). Figures are in [rom.md](rom.md).
+
+Not done (needs `codegen.py` or other work):
+
+- Const objects, string literals and constant compound literals in CSEG.
+- `--entry NAME`, `#pragma uc80 keep`, and a program with no `main`.
+- `#pragma uc80 vector 38h f`, and the watchdog hook of the crt0.
+- The optional per-module BSS block for separate compilation.
+- All of Phase 2 and the later phases.
+
 
 ## 1. Answer to the issue
 

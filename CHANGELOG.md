@@ -8,6 +8,27 @@ observable behaviour of a program uc80 compiles.
 
 ### Added
 
+- **ROM target (Phase 1 of `docs/rom_target.md`): `uc80 --target=rom`** (alias
+  `-ffreestanding`). The compiler embeds `lib/crt0_rom.mac` (reset vector,
+  RST stubs, INT and NMI vectors, SP from `__RAM_END` or `--stack-top`, copy
+  of the initial data from ROM, BSS clear, `HALT` loop after `main`) and
+  refuses `exit`, `abort`, console and file I/O, the heap, `main(argc, argv)`
+  with a clear error. A `__int_handler` or `__nmi_handler` label in an
+  assembly input file becomes the INT or NMI vector. Link with the ROM options
+  of `ul80`. New `libc_rom.lib` (93 libc modules with no BDOS use) is built by
+  `uc80 --build-libs`. See `docs/rom.md`.
+
+- **The four snd-* kernels as ROM images** (`bench/rom/sndrom.py`): real `OUT`
+  and `IN`, debug port output, run in `bench/romrun`; the decoded output is the
+  CP/M golden output. All four fit the 2 KB RAM of the Neo Geo sound CPU.
+  `tests/test_rom_target.py` runs one kernel end to end.
+
+- **Strict mode for the interrupt and fastcall markers.** uc80 asks the uc_core
+  frontend to refuse `__interrupt`, `interrupt`, `__interrupt(1)`,
+  `[[gnu::interrupt]]`, `__attribute__((interrupt))`, `__critical __interrupt`
+  and bare `__fastcall`, with `uc80: error: file:line: uc80 does not support
+  '...' yet` and exit code 1. They were erased without a message before.
+
 - **`bench/romrun`, a Z80 ROM test runner** (Phase 1 of
   `docs/rom_target.md`). The runner starts a raw ROM or Intel HEX image at
   address 0 and logs every port IN and OUT with the full 16-bit address and
@@ -26,6 +47,12 @@ observable behaviour of a program uc80 compiles.
   produces an indexed instruction without the displacement byte.
 
 ### Changed
+
+- **Zero-start runtime and libc variables are in the BSS.** `__tmp32`,
+  `__divrem`, `__div32_dvd`, `__rem32`, the 64-bit, float and complex
+  temporaries, `__sret_buf` and the static variables of libc are in a named
+  COMMON block for each module instead of DSEG. A ROM image does not copy them,
+  and a CP/M `.com` file no longer holds their zero bytes.
 
 - **`bsearch`, `vprintf` and `vsprintf` are their own modules, and `rand` links no runtime multiply.** A `qsort`-only program is 192 bytes smaller, an `fprintf` program about 220 bytes smaller, and a `rand` program about 550 bytes smaller.
 - **Smaller programs: libc is split into one module per function.** The

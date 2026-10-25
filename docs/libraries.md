@@ -22,7 +22,7 @@ git checkout they are build output (`.gitignore` covers `*.lib` and `*.rel`),
 so build them once:
 
 ```bash
-uc80 --build-libs          # assembles libc.lib, runtime.lib and crt0.rel (~40 s)
+uc80 --build-libs          # assembles libc.lib, libc_rom.lib, runtime.lib and crt0.rel (~40 s)
 ```
 
 Re-run that after editing anything in `src/uc80/lib/lc/` or `src/uc80/lib/rt/`.

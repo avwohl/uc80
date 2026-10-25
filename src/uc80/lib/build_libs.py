@@ -192,6 +192,35 @@ def build_runtime():
         return False
     return ok
 
+def build_libc_rom():
+    """Build libc_rom.lib: the libc modules with no BDOS use (uc80.rom).
+
+    The ROM target links this library instead of libc.lib.  The runtime
+    modules come from runtime.lib, which has no BDOS use at all.
+    """
+    import importlib.util
+    from pathlib import Path
+    # rom.py is the next directory up.  Load it by path: a wheel build runs
+    # this script before uc80 is installed.
+    rom_path = Path(SCRIPT_DIR).parent / "rom.py"
+    spec = importlib.util.spec_from_file_location("uc80_rom_select", rom_path)
+    rom = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rom)
+    safe, unsafe = rom.rom_modules(Path(SCRIPT_DIR))
+    rels = sorted(os.path.join(LC_DIR, k.split("/")[1] + ".rel")
+                  for k in safe if k.startswith("lc/"))
+    lib_path = os.path.join(SCRIPT_DIR, "libc_rom.lib")
+    if os.path.exists(lib_path):
+        os.remove(lib_path)
+    ok, output = run(["ulib80", "-c", lib_path] + rels)
+    if ok:
+        print(f"  Created libc_rom.lib ({len(rels)} modules)")
+    else:
+        print("  FAIL creating libc_rom.lib")
+        print(output)
+    return ok
+
+
 def build_libc():
     """Build libc.lib and libc.rel from lib/lc/ modules."""
     print("Building libc...")
@@ -200,6 +229,7 @@ def build_libc():
         print("  Assembly errors - fix before building library")
         return False
     ok = build_lib(os.path.join(SCRIPT_DIR, "libc.lib"), LC_DIR)
+    ok = build_libc_rom() and ok
 
     # Build monolithic .mac and .rel
     mac_path = os.path.join(SCRIPT_DIR, "libc.mac")
