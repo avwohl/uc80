@@ -1,6 +1,6 @@
 # Interrupt functions and hardware access
 
-Back to [rom.md](rom.md). The plan is in [rom_target.md](rom_target.md).
+Back to [rom.md](rom.md). The plan is in [rom_target.md](rom_target.md). A full Neo Geo driver example is in [neogeo_driver.md](neogeo_driver.md).
 
 This page describes how a C program handles interrupts and reaches the hardware of a Z80 board. The text applies to `--target=rom`. The intrinsics and the `__at` objects also work in a CP/M program.
 

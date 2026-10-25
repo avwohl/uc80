@@ -8,6 +8,7 @@ observable behaviour of a program uc80 compiles.
 
 ### Added
 
+- docs/neogeo_driver.md and examples/neogeo_driver.c: a Neo Geo sound driver example (NMI command, timer IRQ, YM busy wait, bank select) with the port table and a test that runs the example in romrun.
 - **Interrupt functions and hardware access** (Phase 2 of `docs/rom_target.md`; see `docs/rom_hardware.md`):
   - `#pragma uc80 interrupt NAME [critical]` and `#pragma uc80 nmi NAME` make a C function an interrupt function: `EI` first (for `interrupt`), `PUSH AF, BC, DE, HL, IY`, the matching pops, then `RETI` or `RETN`. The compiler sets the INT (38h) or NMI (66h) vector, keeps the function, and refuses parameters, a return value and a direct call. The prologue saves the alternate registers only when the call graph reaches code that uses them. `asm_dce` knows that `RETI` and `RETN` end a block.
   - SDCC spellings `void f(void) __interrupt`, `__interrupt(n)`, `__critical __interrupt[(n)]`, `__sfr __at(n) NAME;`, `__sfr __banked __at(n) NAME;`, `T name __at(addr);` and `__critical { }` (prepass `sdcc_compat.py`). Every other SDCC spelling is still an error.

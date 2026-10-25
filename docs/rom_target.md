@@ -26,7 +26,10 @@ Not done (needs `codegen.py` or other work):
 
 - The watchdog hook of the crt0.
 - The optional per-module BSS block for separate compilation.
-- Phase 3: `__naked` and the `__asm ... __endasm` form.
+- Phase 3: `__naked` and the `__asm ... __endasm` form. A real sound driver needs an assembly thunk, so this item comes next.
+- An interrupt form for the RST vectors and for IM 2. The vector pragma gives a plain `RET` function and a warning.
+- The interrupt check cannot see a call through a function pointer.
+- A pointer variable that holds a constant address is not changed to a direct access.
 - Phase 4 and the later phases.
 - An interrupt function does not save the fixed work areas of the runtime (Phase 4 option). The compiler prints a warning instead.
 - A vector in separate compilation (`--no-whole-program`): the compiler prints a warning, and your own start-up code must jump to the handler.
