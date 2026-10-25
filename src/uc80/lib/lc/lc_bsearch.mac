@@ -1,0 +1,113 @@
+; lc_bsearch.mac - bsearch, split from lc_qsort.mac
+	.Z80
+
+	CSEG
+
+; ============================================================
+; void *bsearch(const void *key, const void *base, size_t nmemb,
+;               size_t size, int (*compar)(const void *, const void *))
+; Binary search in a sorted array.  Calls compar(key, element).
+; Stack: key(IX+4), base(IX+6), nmemb(IX+8), size(IX+10), compar(IX+12)
+; Locals: low(IX-4), high(IX-6), mid(IX-8) -- on the stack, so bsearch
+; is reentrant (a comparator can call bsearch or qsort).
+; Returns: pointer to a matching element, or NULL.  Preserves BC and IX.
+; ============================================================
+	PUBLIC	_bsearch
+_bsearch:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	LD	HL,0
+	PUSH	HL			; low = 0      (IX-4)
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	PUSH	HL			; high = nmemb (IX-6)
+	PUSH	HL			; mid          (IX-8)
+
+bs_loop:
+	; if (low >= high) not found
+	LD	L,(IX-4)
+	LD	H,(IX-3)
+	LD	E,(IX-6)
+	LD	D,(IX-5)
+	OR	A
+	SBC	HL,DE
+	JR	NC,bs_nf
+	; mid = (low + high) / 2, with the 17th bit kept
+	ADD	HL,DE			; HL = low again
+	ADD	HL,DE			; CY:HL = low + high
+	RR	H
+	RR	L
+	LD	(IX-8),L
+	LD	(IX-7),H
+	; HL = base + mid*size
+	EX	DE,HL			; DE = mid
+	LD	C,(IX+10)
+	LD	B,(IX+11)		; BC = size
+	LD	HL,0
+bs_mul:
+	SRL	B
+	RR	C
+	JR	NC,bs_mul2
+	ADD	HL,DE
+bs_mul2:
+	LD	A,B
+	OR	C
+	JR	Z,bs_mul3
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	JR	bs_mul
+bs_mul3:
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	ADD	HL,DE			; HL = &base[mid]
+	PUSH	HL			; keep element address
+	PUSH	HL			; b = element
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL			; a = key
+	LD	L,(IX+12)
+	LD	H,(IX+13)
+	CALL	bs_jphl
+	POP	DE
+	POP	DE
+	POP	DE			; DE = element address
+	LD	A,H
+	OR	L
+	JR	Z,bs_found
+	BIT	7,H
+	JR	NZ,bs_left
+	; key > element: low = mid + 1
+	LD	L,(IX-8)
+	LD	H,(IX-7)
+	INC	HL
+	LD	(IX-4),L
+	LD	(IX-3),H
+	JR	bs_loop
+bs_left:
+	; key < element: high = mid
+	LD	L,(IX-8)
+	LD	H,(IX-7)
+	LD	(IX-6),L
+	LD	(IX-5),H
+	JR	bs_loop
+
+bs_found:
+	EX	DE,HL
+	JR	bs_ret
+bs_nf:
+	LD	HL,0
+bs_ret:
+	LD	SP,IX
+	DEC	SP
+	DEC	SP
+	POP	BC
+	POP	IX
+	RET
+
+bs_jphl:
+	JP	(HL)
+
+	END

@@ -113,7 +113,7 @@ class TestChokePointInvariant:
     @pytest.mark.parametrize("entry", ["_printf:", "_vprintf:"])
     def test_console_entry_points_select_the_choke_point(self, entry):
         """printf and vprintf write to the console, so they must say so."""
-        for name in ("lc_printf_core.mac", "lc_fprintf.mac"):
+        for name in ("lc_printf_core.mac", "lc_fprintf.mac", "lc_vprintf.mac"):
             src = (LC_DIR / name).read_text()
             if "\n" + entry not in src:
                 continue

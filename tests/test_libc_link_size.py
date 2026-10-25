@@ -146,3 +146,55 @@ int main(void) {
     run = subprocess.run([str(CPMEMU), str(com)], capture_output=True,
                          text=True, timeout=30)
     assert "Hellox 42 -17 65 4" in run.stdout, run.stdout
+
+
+QSORT_SRC = '''#include <stdlib.h>
+#include <stdio.h>
+#include <stdarg.h>
+static int cmp(const void *a, const void *b)
+{ return *(const int *)a - *(const int *)b; }
+int main(void) {
+    int v[5] = {5, 3, 9, 1, 7};
+    qsort(v, 5, sizeof v[0], cmp);
+    printf("%d %d %d\\n", v[0], v[2], v[4]);
+    int key = 7;
+    int *p = bsearch(&key, v, 5, sizeof v[0], cmp);
+    printf("%d\\n", p ? (int)(p - v) : -1);
+    srand(3);
+    printf("%d\\n", rand());
+    return 0;
+}
+'''
+
+
+def test_qsort_does_not_link_bsearch(tmp_path):
+    _, syms = link(tmp_path, '#include <stdlib.h>\n'
+                   'static int c(const void *a, const void *b){return 0;}\n'
+                   'int main(void){ int v[2]; qsort(v,2,2,c); return 0; }\n')
+    assert "_QSORT" in syms and "_BSEARCH" not in syms
+
+
+def test_rand_does_not_link_runtime_multiply(tmp_path):
+    _, syms = link(tmp_path, '#include <stdlib.h>\n'
+                   'int main(void){ srand(1); return rand() & 1; }\n')
+    assert "_RAND" in syms
+    for name in ("__MUL16", "__DIV16", "__MOD16"):
+        assert name not in syms, name + " linked into a rand-only program"
+
+
+def test_fprintf_does_not_link_vsprintf(tmp_path):
+    _, syms = link(tmp_path, '#include <stdio.h>\n'
+                   'int main(void){ fprintf(stdout, "%d\\n", 5); return 0; }\n')
+    assert "_FPRINTF" in syms
+    for name in ("_VPRINTF", "_VSPRINTF", "_SPRINTF"):
+        assert name not in syms, name + " linked into an fprintf-only program"
+
+
+@pytest.mark.skipif(not CPMEMU.exists(), reason="cpmemu not available")
+def test_qsort_bsearch_rand_run(tmp_path):
+    com, _ = link(tmp_path, QSORT_SRC)
+    run = subprocess.run([str(CPMEMU), str(com)], capture_output=True,
+                         text=True, timeout=30)
+    # seed 3: (3 * 25173 + 13849) & 0x7FFF
+    assert run.stdout.split() == ["1", "5", "9", "3",
+                                  str((3 * 25173 + 13849) & 0x7FFF)], run.stdout

@@ -2719,6 +2719,122 @@ ___atomic_fetch_and_4:
 
 
 ; ============================================================
+; lc_bsearch.mac
+; ============================================================
+	CSEG
+; lc_bsearch.mac - bsearch, split from lc_qsort.mac
+
+	CSEG
+
+; ============================================================
+; void *bsearch(const void *key, const void *base, size_t nmemb,
+;               size_t size, int (*compar)(const void *, const void *))
+; Binary search in a sorted array.  Calls compar(key, element).
+; Stack: key(IX+4), base(IX+6), nmemb(IX+8), size(IX+10), compar(IX+12)
+; Locals: low(IX-4), high(IX-6), mid(IX-8) -- on the stack, so bsearch
+; is reentrant (a comparator can call bsearch or qsort).
+; Returns: pointer to a matching element, or NULL.  Preserves BC and IX.
+; ============================================================
+	PUBLIC	_bsearch
+_bsearch:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	LD	HL,0
+	PUSH	HL			; low = 0      (IX-4)
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	PUSH	HL			; high = nmemb (IX-6)
+	PUSH	HL			; mid          (IX-8)
+
+bs_loop:
+	; if (low >= high) not found
+	LD	L,(IX-4)
+	LD	H,(IX-3)
+	LD	E,(IX-6)
+	LD	D,(IX-5)
+	OR	A
+	SBC	HL,DE
+	JR	NC,bs_nf
+	; mid = (low + high) / 2, with the 17th bit kept
+	ADD	HL,DE			; HL = low again
+	ADD	HL,DE			; CY:HL = low + high
+	RR	H
+	RR	L
+	LD	(IX-8),L
+	LD	(IX-7),H
+	; HL = base + mid*size
+	EX	DE,HL			; DE = mid
+	LD	C,(IX+10)
+	LD	B,(IX+11)		; BC = size
+	LD	HL,0
+bs_mul:
+	SRL	B
+	RR	C
+	JR	NC,bs_mul2
+	ADD	HL,DE
+bs_mul2:
+	LD	A,B
+	OR	C
+	JR	Z,bs_mul3
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	JR	bs_mul
+bs_mul3:
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	ADD	HL,DE			; HL = &base[mid]
+	PUSH	HL			; keep element address
+	PUSH	HL			; b = element
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL			; a = key
+	LD	L,(IX+12)
+	LD	H,(IX+13)
+	CALL	bs_jphl
+	POP	DE
+	POP	DE
+	POP	DE			; DE = element address
+	LD	A,H
+	OR	L
+	JR	Z,bs_found
+	BIT	7,H
+	JR	NZ,bs_left
+	; key > element: low = mid + 1
+	LD	L,(IX-8)
+	LD	H,(IX-7)
+	INC	HL
+	LD	(IX-4),L
+	LD	(IX-3),H
+	JR	bs_loop
+bs_left:
+	; key < element: high = mid
+	LD	L,(IX-8)
+	LD	H,(IX-7)
+	LD	(IX-6),L
+	LD	(IX-5),H
+	JR	bs_loop
+
+bs_found:
+	EX	DE,HL
+	JR	bs_ret
+bs_nf:
+	LD	HL,0
+bs_ret:
+	LD	SP,IX
+	DEC	SP
+	DEC	SP
+	POP	BC
+	POP	IX
+	RET
+
+bs_jphl:
+	JP	(HL)
+
+
+; ============================================================
 ; lc_calloc.mac
 ; ============================================================
 	CSEG
@@ -6388,7 +6504,7 @@ _signbit:
 ; lc_fprintf.mac
 ; ============================================================
 	CSEG
-; lc_fprintf.mac - fprintf, vfprintf, vprintf, vsprintf.
+; lc_fprintf.mac - fprintf, vfprintf (vprintf and vsprintf are in lc_vprintf.mac and lc_vsprintf.mac).
 ;
 ; Each of these carried its own formatter, so a conversion the printf
 ; table knew about was invisible here.  fprintf had no float handler at
@@ -6405,8 +6521,6 @@ _signbit:
 
 	PUBLIC	_fprintf
 	PUBLIC	_vfprintf
-	PUBLIC	_vprintf
-	PUBLIC	_vsprintf
 
 ; int fprintf(FILE *stream, const char *fmt, ...)
 _fprintf:
@@ -6468,76 +6582,6 @@ _vfprintf:
 
 	POP	HL
 	LD	(_printf_sink),HL
-	LD	HL,(_printf_count)
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; int vprintf(const char *fmt, va_list ap)
-_vprintf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	HL,(_printf_sink)
-	PUSH	HL
-	LD	HL,__conout
-	LD	(_printf_sink),HL
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)		; HL = format string
-	LD	E,(IX+6)
-	LD	D,(IX+7)		; DE = va_list
-	PUSH	HL
-	PUSH	DE
-	POP	IX
-	POP	HL
-	LD	C,0
-	CALL	_printf_engine
-
-	POP	HL
-	LD	(_printf_sink),HL
-	LD	HL,(_printf_count)
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; int vsprintf(char *str, const char *fmt, va_list ap)
-_vsprintf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	(_sprintf_out),HL
-
-	LD	HL,(_printf_sink)
-	PUSH	HL
-	LD	HL,_sprintf_sink
-	LD	(_printf_sink),HL
-
-	LD	L,(IX+6)
-	LD	H,(IX+7)		; HL = format string
-	LD	E,(IX+8)
-	LD	D,(IX+9)		; DE = va_list
-	PUSH	HL
-	PUSH	DE
-	POP	IX
-	POP	HL
-	LD	C,0
-	CALL	_printf_engine
-
-	POP	HL
-	LD	(_printf_sink),HL
-	LD	HL,(_sprintf_out)
-	LD	(HL),0			; NUL terminate
 	LD	HL,(_printf_count)
 	POP	DE
 	POP	BC
@@ -13920,7 +13964,7 @@ _puts_newline:
 ; lc_qsort.mac
 ; ============================================================
 	CSEG
-; lc_qsort.mac - qsort, bsearch
+; lc_qsort.mac - qsort (bsearch is in lc_bsearch.mac)
 
 
 	CSEG
@@ -14497,113 +14541,6 @@ qs_swg1:
 	JP	PE,qs_swg1		; P/V set while BC != 0
 	RET
 
-; ============================================================
-; void *bsearch(const void *key, const void *base, size_t nmemb,
-;               size_t size, int (*compar)(const void *, const void *))
-; Binary search in a sorted array.  Calls compar(key, element).
-; Stack: key(IX+4), base(IX+6), nmemb(IX+8), size(IX+10), compar(IX+12)
-; Locals: low(IX-4), high(IX-6), mid(IX-8) -- on the stack, so bsearch
-; is reentrant (a comparator can call bsearch or qsort).
-; Returns: pointer to a matching element, or NULL.  Preserves BC and IX.
-; ============================================================
-	PUBLIC	_bsearch
-_bsearch:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	LD	HL,0
-	PUSH	HL			; low = 0      (IX-4)
-	LD	L,(IX+8)
-	LD	H,(IX+9)
-	PUSH	HL			; high = nmemb (IX-6)
-	PUSH	HL			; mid          (IX-8)
-
-bs_loop:
-	; if (low >= high) not found
-	LD	L,(IX-4)
-	LD	H,(IX-3)
-	LD	E,(IX-6)
-	LD	D,(IX-5)
-	OR	A
-	SBC	HL,DE
-	JR	NC,bs_nf
-	; mid = (low + high) / 2, with the 17th bit kept
-	ADD	HL,DE			; HL = low again
-	ADD	HL,DE			; CY:HL = low + high
-	RR	H
-	RR	L
-	LD	(IX-8),L
-	LD	(IX-7),H
-	; HL = base + mid*size
-	EX	DE,HL			; DE = mid
-	LD	C,(IX+10)
-	LD	B,(IX+11)		; BC = size
-	LD	HL,0
-bs_mul:
-	SRL	B
-	RR	C
-	JR	NC,bs_mul2
-	ADD	HL,DE
-bs_mul2:
-	LD	A,B
-	OR	C
-	JR	Z,bs_mul3
-	EX	DE,HL
-	ADD	HL,HL
-	EX	DE,HL
-	JR	bs_mul
-bs_mul3:
-	LD	E,(IX+6)
-	LD	D,(IX+7)
-	ADD	HL,DE			; HL = &base[mid]
-	PUSH	HL			; keep element address
-	PUSH	HL			; b = element
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	PUSH	HL			; a = key
-	LD	L,(IX+12)
-	LD	H,(IX+13)
-	CALL	bs_jphl
-	POP	DE
-	POP	DE
-	POP	DE			; DE = element address
-	LD	A,H
-	OR	L
-	JR	Z,bs_found
-	BIT	7,H
-	JR	NZ,bs_left
-	; key > element: low = mid + 1
-	LD	L,(IX-8)
-	LD	H,(IX-7)
-	INC	HL
-	LD	(IX-4),L
-	LD	(IX-3),H
-	JR	bs_loop
-bs_left:
-	; key < element: high = mid
-	LD	L,(IX-8)
-	LD	H,(IX-7)
-	LD	(IX-6),L
-	LD	(IX-5),H
-	JR	bs_loop
-
-bs_found:
-	EX	DE,HL
-	JR	bs_ret
-bs_nf:
-	LD	HL,0
-bs_ret:
-	LD	SP,IX
-	DEC	SP
-	DEC	SP
-	POP	BC
-	POP	IX
-	RET
-
-bs_jphl:
-	JP	(HL)
-
 	DSEG
 ; qsort working storage.  qsort saves these QS_NV bytes on its stack on
 ; entry and restores them on exit (see "Reentrancy" above).
@@ -14634,7 +14571,6 @@ QS_NV	EQU	QS_END-QS_VARS
 ; lc_rand.mac - split from lc_stdlib.mac
 
 
-	EXTRN	__mul16
 
 	CSEG
 
@@ -14646,9 +14582,22 @@ QS_NV	EQU	QS_END-QS_VARS
 ; ============================================================
 	PUBLIC	_rand
 _rand:
-	LD	HL,(_rand_seed)
+	PUSH	BC
+	LD	BC,(_rand_seed)
+	LD	HL,0
 	LD	DE,25173
-	CALL	__mul16		; HL = seed * 25173
+rand_lp:			; HL = seed * 25173 by shift and add; no
+	SRL	D		; runtime module (__mul16 pulled ~600 bytes)
+	RR	E
+	JR	NC,rand_sk
+	ADD	HL,BC
+rand_sk:
+	SLA	C
+	RL	B
+	LD	A,D
+	OR	E
+	JR	NZ,rand_lp
+	POP	BC
 	LD	DE,13849
 	ADD	HL,DE		; HL = seed * 25173 + 13849
 	LD	A,H
@@ -19449,6 +19398,98 @@ _ungetc:
 	RET
 _ungetc_err:
 	LD	HL,-1
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_vprintf.mac
+; ============================================================
+	CSEG
+; lc_vprintf.mac - vprintf, split from lc_fprintf.mac
+
+
+	CSEG
+
+	PUBLIC	_vprintf
+; int vprintf(const char *fmt, va_list ap)
+_vprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	HL,(_printf_sink)
+	PUSH	HL
+	LD	HL,__conout
+	LD	(_printf_sink),HL
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)		; HL = format string
+	LD	E,(IX+6)
+	LD	D,(IX+7)		; DE = va_list
+	PUSH	HL
+	PUSH	DE
+	POP	IX
+	POP	HL
+	LD	C,0
+	CALL	_printf_engine
+
+	POP	HL
+	LD	(_printf_sink),HL
+	LD	HL,(_printf_count)
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_vsprintf.mac
+; ============================================================
+	CSEG
+; lc_vsprintf.mac - vsprintf, split from lc_fprintf.mac
+
+
+	CSEG
+
+	PUBLIC	_vsprintf
+; int vsprintf(char *str, const char *fmt, va_list ap)
+_vsprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_sprintf_out),HL
+
+	LD	HL,(_printf_sink)
+	PUSH	HL
+	LD	HL,_sprintf_sink
+	LD	(_printf_sink),HL
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)		; HL = format string
+	LD	E,(IX+8)
+	LD	D,(IX+9)		; DE = va_list
+	PUSH	HL
+	PUSH	DE
+	POP	IX
+	POP	HL
+	LD	C,0
+	CALL	_printf_engine
+
+	POP	HL
+	LD	(_printf_sink),HL
+	LD	HL,(_sprintf_out)
+	LD	(HL),0			; NUL terminate
+	LD	HL,(_printf_count)
+	POP	DE
+	POP	BC
 	POP	IX
 	RET
 

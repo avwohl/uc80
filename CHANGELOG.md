@@ -8,6 +8,7 @@ observable behaviour of a program uc80 compiles.
 
 ### Changed
 
+- **`bsearch`, `vprintf` and `vsprintf` are their own modules, and `rand` links no runtime multiply.** A `qsort`-only program is 192 bytes smaller, an `fprintf` program about 220 bytes smaller, and a `rand` program about 550 bytes smaller.
 - **Smaller programs: libc is split into one module per function.** The
   float printer was part of `lc_printf_core`, so every program that called
   `printf` linked the soft-float code (about 2.8 KB). It is now

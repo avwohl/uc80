@@ -56,7 +56,11 @@ Rules for a module in `src/uc80/lib/lc/`:
 - `lc_printf_core.mac` holds the printf engine and the state that the
   `%d`, `%e` and `%g` handlers share. `lc_prt_float.mac` holds the `%f`
   printer and its data. Only `lc_printf_f.mac` refers to `lc_prt_float.mac`.
-- `lc_qsort.mac` holds `qsort` and `bsearch`. The split did not change the module.
+- `lc_qsort.mac` holds `qsort`. `lc_bsearch.mac` holds `bsearch`.
+- `lc_fprintf.mac` holds `fprintf` and `vfprintf`, which share the stream sink.
+  `lc_vprintf.mac` and `lc_vsprintf.mac` hold `vprintf` and `vsprintf`.
+- `lc_rand.mac` multiplies with a shift and add loop, so `rand` does not link
+  the 16-bit runtime module `rt_arith16` (about 600 bytes).
 
 `src/uc80/lib/split_libc.py` made the first version of `lc/` from `libc.mac`.
 Do not run `split_libc.py` again: it overwrites the edits. Edit the
