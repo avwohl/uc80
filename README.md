@@ -65,6 +65,7 @@ z88dk output. uc80 passes all 220 c-testsuite tests. Numbers are in
 - [Inline assembly](https://github.com/avwohl/uc80/blob/main/docs/inline_assembly.md) - `asm("...")` rules and limits
 - [Binary size and test results](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md) - speed and size against 8 compilers, and external test suite pass rates
 - [C standard compliance](https://github.com/avwohl/uc80/blob/main/docs/ANSI_C_COMPLIANCE.md) - implemented and missing C features
+- [ROM test runner](https://github.com/avwohl/uc80/blob/main/docs/romrun.md) - run a Z80 ROM, log port I/O and T-states, inject IRQ and NMI
 - [Float status](https://github.com/avwohl/uc80/blob/main/docs/FLOAT_STATUS.md) - IEEE 754 single-precision support
 - [CHANGELOG](https://github.com/avwohl/uc80/blob/main/CHANGELOG.md) - release history
 

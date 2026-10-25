@@ -6,6 +6,25 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Added
+
+- **`bench/romrun`, a Z80 ROM test runner** (Phase 1 of
+  `docs/rom_target.md`). The runner starts a raw ROM or Intel HEX image at
+  address 0 and logs every port IN and OUT with the full 16-bit address and
+  the T-state. The runner injects IM 1 interrupts and NMIs (EI delay, RETN),
+  models banked windows, ROM write faults, a YM2610 timer model, scripted
+  port reads and cycle spans between symbols. The core counts T-states
+  exactly; the count matches z88dk-ticks on the benchmark programs. See
+  `docs/romrun.md`.
+
+- **romrun repair pass**: `ram_fill` and `sp` (start state of RAM and SP,
+  so a broken crt0 fails), `peek8`/`peek16`/`peek` and `--dump`,
+  `--dump-ram`, `track=True` (lowest SP and RAM written), `nmi_gate=True`
+  (Neo Geo NMI enable port 08h and disable port 18h) and a golden file of
+  the per-opcode timing sweep against z88dk-ticks
+  (`bench/romrun/golden/ticks_sweep.txt`). The random-stream test no longer
+  produces an indexed instruction without the displacement byte.
+
 ### Changed
 
 - **Faster `qsort`.** `qsort` was a selection sort (n² comparisons, 37
