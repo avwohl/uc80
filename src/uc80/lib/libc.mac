@@ -22000,33 +22000,30 @@ _pd16_lp:
 ; A handler never returns - it falls back into _printf_loop.
 ;
 ; ---------------------------------------------------------------------------
-; ACCURACY NOTE.  rt_float.mac TRUNCATES: __fpack, __fdiv_man and __fmul_man
-; keep 24 mantissa bits and discard the rest, so every operation is biased
-; low by up to one ulp.  That bias is one-sided, which is why a chain of
-; divisions drifts monotonically downward and can cross a decade boundary
-; (a naive "while val >= 10: val /= 10" scaler prints 1e20 as 9.999998e+19).
+; ACCURACY NOTE.  The float runtime (rt_fadd, rt_fdiv, rt_fmul) rounds to
+; nearest, so there is no one-sided bias to correct.  (Before it did, the
+; runtime truncated, and this module added one ulp to the rounding term to
+; make up for that.  A chain of truncating divisions also drifted downward
+; and could cross a decade boundary: "while val >= 10: val /= 10" printed
+; 1e20 as 9.999998e+19.)
 ;
-; This module therefore scales with exactly ONE division: it estimates the
-; decimal exponent from the binary one, confirms it with an exact comparison
-; against the same table constant it is about to divide by, and divides once.
+; This module scales with exactly ONE division: it estimates the decimal
+; exponent from the binary one, confirms it with an exact comparison against
+; the same table constant it is about to divide by, and divides once.
 ; Comparing and dividing by the same constant makes 1 <= val < 10 true by
 ; construction, and makes an exact power of ten come out exactly 1.0.
 ;
 ; What remains is inherent to binary32: 24 bits carry about 7.2 decimal
 ; digits, so the 7th significant digit -- the last one the default "%e"
-; prints -- can differ by one from a correctly-rounded conversion.  Very
-; little of that is left for better scaling to recover: replacing the
-; scaler with exact rational arithmetic and keeping this digit loop only
-; moves precision 6 from 84% to 87%.  Measured against glibc over 4000
-; random normals plus every binade edge: precision 0 to 4 exact except
-; for 2 results in 5854 (both exact ties), 5 about 98%, 6 about 84%, and
-; the result is never off by more than one in the last printed digit.
-; Precision above 8 is meaningless here.  Exact ties round away from
-; zero rather than to even, so "%.0e" of 2.5 is 3e+00 where glibc,
-; rounding to even, prints 2e+00.  A value within one ulp of a decade
-; boundary can round across it: "%e" of 9.9999995 gives 1.000000e+01
-; where glibc gives 9.999999e+00, which is the same one-digit error
-; seen from the other side.
+; prints -- can differ by one from a correctly-rounded conversion.  Measured
+; against glibc over 1500 random values: precision 0 to 2 about 99.5%
+; exact, 4 about 98.5%, 5 about 97.6%, 6 about 84%, and the result is never
+; off by more than one in the last printed digit.  Precision above 8 is
+; meaningless here.  Exact ties round away from zero rather than to even, so
+; "%.0e" of 2.5 is 3e+00 where glibc, rounding to even, prints 2e+00.  A
+; value within one ulp of a decade boundary can round across it: "%e" of
+; 9.9999995 gives 1.000000e+01 where glibc gives 9.999999e+00, which is the
+; same one-digit error seen from the other side.
 ; ---------------------------------------------------------------------------
 
 
@@ -22392,18 +22389,9 @@ _pes_out:
 
 ; ============================================================
 ; _prt_e_round - add the rounding increment for A fraction digits:
-;   0.5 * 0.1^A  +  ulp(val)   [second term only while it is meaningful]
-; The second term un-does rt_float's one-sided truncation bias.  A full
-; ulp, not half of one, is the right correction: __fdiv_man loses one
-; ulp to plain truncation and a second one whenever the dividend
-; mantissa is smaller than the divisor's (@fdiv_norm then shifts a zero
-; bit in), so the expected shortfall is about one ulp.  Measured over
-; 4000 random normals at precision 6: none 71% exact, half an ulp 76%,
-; a full ulp 84%, one and a half 63%.
-; The correction is applied only while one ulp is finer than one unit
-; in the last printed digit.  Past that point the digit being corrected
-; is below what binary32 resolves, and adding the correction would just
-; print the correction: "%.9e" of 1.0 would come out 1.000000119e+00.
+;   0.5 * 0.1^A
+; It was 0.5 * 0.1^A + ulp(val) while rt_float truncated; the runtime rounds
+; to nearest now, and the ulp would round some values up by one digit.
 ; If the sum carries past 10.0 the value must have been all nines, so
 ; the answer is exactly 1.0 with the exponent bumped.
 ; ============================================================
@@ -22426,38 +22414,6 @@ _per_lp:
 _per_hsave:
 	LD	(_prt_e_half),HL
 	LD	(_prt_e_half+2),DE
-	; threshold = 2 * half = one unit in the last printed digit
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	CALL	__fadd
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	; one ulp of the scaled value, built straight from its exponent
-	; field so it is exact
-	CALL	_pe_bexp
-	SUB	23
-	JR	C,_per_noulp
-	JR	Z,_per_noulp
-	LD	B,A
-	SRL	A
-	LD	D,A			; byte3 = exponent >> 1
-	LD	A,B
-	AND	1
-	RRCA				; byte2 bit 7 = exponent & 1
-	LD	E,A
-	LD	HL,0
-	CALL	__fcmp
-	JR	NC,_per_noulp		; one ulp is as coarse as the last
-					; printed digit, so that digit is
-					; below binary32's resolution and
-					; correcting it would only print
-					; the correction itself
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(_prt_e_half)
-	LD	DE,(_prt_e_half+2)
-	CALL	__fadd			; DEHL = half + ulp
-	JR	_per_add
 _per_noulp:
 	LD	HL,(_prt_e_half)
 	LD	DE,(_prt_e_half+2)
@@ -24310,7 +24266,7 @@ _prt_round_add:
 	LD	(__tmp32+2),DE
 	LD	HL,(__fwork)
 	LD	DE,(__fwork+2)
-	CALL	__fadd
+	CALL	_prt_addz
 	LD	(__fwork),HL
 	LD	(__fwork+2),DE
 	POP	HL
@@ -24603,12 +24559,64 @@ _prt_float_done:
 	POP	BC
 	RET
 
+; ============================================================
+; _prt_addz - DEHL = DEHL + (__tmp32), both positive, rounded toward zero.
+; __fadd rounds to nearest.  The pre-round step above adds half a unit of
+; the last printed digit, and the digit loop then cuts the result off, so
+; the sum has to be the largest float that is not above the exact sum.
+; The error of the nearest sum is found with the exact subtractions
+; s - x and d - (s - x); if it is negative, the sum is one float too high.
+; ============================================================
+_prt_addz:
+	LD	(_pz_x),HL
+	LD	(_pz_x+2),DE
+	LD	HL,(__tmp32)
+	LD	(_pz_d),HL
+	LD	HL,(__tmp32+2)
+	LD	(_pz_d+2),HL
+	LD	HL,(_pz_x)
+	CALL	__fadd			; DEHL = s (DE still holds the high word)
+	LD	(_pz_s),HL
+	LD	(_pz_s+2),DE
+	LD	HL,(_pz_x)
+	LD	(__tmp32),HL
+	LD	HL,(_pz_x+2)
+	LD	(__tmp32+2),HL
+	LD	HL,(_pz_s)
+	LD	DE,(_pz_s+2)
+	CALL	__fsub			; s - x
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(_pz_d)
+	LD	DE,(_pz_d+2)
+	CALL	__fsub			; d - (s - x), the error of s
+	LD	A,D
+	LD	HL,(_pz_s)
+	LD	DE,(_pz_s+2)
+	OR	A
+	RET	P			; the error is not negative
+	LD	A,D			; the sum is one float too high
+	OR	E
+	OR	H
+	OR	L
+	RET	Z
+	DEC	HL
+	LD	A,H
+	AND	L
+	INC	A
+	RET	NZ
+	DEC	DE
+	RET
+
 
 	DSEG
 
 _prt_float_sinf:	DB	'INF'
 _prt_float_snan:	DB	'NAN'
 __fwork:	DS	4
+_pz_x:		DS	4
+_pz_d:		DS	4
+_pz_s:		DS	4
 __fint:		DS	4	; %f integer part, as a 32-bit integer
 _pbig_m:	DS	3	; %f >= 2^31: the 24-bit mantissa, shifted out MSB first
 _prt_big:	DS	40	; %f >= 2^31: decimal digits, least significant first
