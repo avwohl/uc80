@@ -24,7 +24,11 @@ Program, before D and E, after D, after D and E, SDCC speed (bytes / T-states):
 - sieve, tak, stanford-perm: no change (253 B / 3.91M, 1055 B / 47.26M, 528 B / 448.5M). Their cost is in the calling convention and in locals in memory (families F, G, H).
 - stanford-towers: 2482 B / 502.89M, then 2481 B / 501.74M.
 
-The mean covers the programs that are OK on both compilers (`bench/report.py` method, uc80 divided by SDCC 4.6.0). We measured it on the merge of `speed-de` and `bugfix-float`. The size ratio falls from 0.992 to 0.982 (96 programs). The T-state ratio against SDCC speed mode falls from 0.629 to 0.623 (78 programs). Without `sort-*` it falls from 0.775 to 0.766. No program that was OK changed status. The largest changes are the snd kernels and `davidly-ttt`. The `bugfix-float` changes make 16 programs smaller and none bigger. These changes are the float-aware rewrites and the power-of-two multiply in the code generator. They change no T-state count of D and E. The row `empire-trefonas` went from HANG to WRONG. It failed before and still fails. The row `battlestar-size` went from BUILD-TIMEOUT to TOO-BIG.
+The mean covers the programs that are OK on both compilers (`bench/report.py` method, uc80 divided by SDCC 4.6.0). We measured it on the merge of `speed-de` and `bugfix-float`. The size ratio falls from 0.992 to 0.982 (96 programs). The T-state ratio against SDCC speed mode falls from 0.629 to 0.623 (78 programs). Without `sort-*` it falls from 0.775 to 0.766.
+
+No program that was OK changed status. The largest changes are the snd kernels and `davidly-ttt`. The `bugfix-float` changes make 16 programs smaller and none bigger. These changes are the float-aware rewrites and the power-of-two multiply in the code generator. They change no T-state count of D and E.
+
+The row `empire-trefonas` went from HANG to WRONG. It failed before and still fails. The row `battlestar-size` went from BUILD-TIMEOUT to TOO-BIG.
 
 What the re-check of the claims in sections 1.2(b), 2.D and 2.E found:
 
