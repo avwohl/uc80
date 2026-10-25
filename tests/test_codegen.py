@@ -149,9 +149,9 @@ class TestExpressionGeneration:
         assert "call\t__sdiv16" in code  # Signed division for int
 
     def test_division_by_two_is_inline(self):
-        """``10 / 2`` (signed): the rounding fix-up and an arithmetic
+        """``x / 2`` (signed int): the rounding fix-up and an arithmetic
         shift, no runtime call."""
-        code = gen("int main(void) { return 10 / 2; }")
+        code = gen("int x; int main(void) { return x / 2; }")
         assert "call\t__sdiv16" not in code
         assert "bit\t7,H" in code and "sra\tH" in code
 

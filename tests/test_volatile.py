@@ -227,8 +227,11 @@ def test_char_increments_are_three_read_modify_writes(mac):
 
 
 def test_64_bit_volatile_accesses_are_kept(mac):
-    assert _function(mac, "ll_store3").count("call\t__store64") == 3
-    assert _function(mac, "ll_read2").count("call\t__load64") == 2
+    # (A call followed by ret is a jp, as in peep_local.)
+    store3 = _function(mac, "ll_store3")
+    assert store3.count("call\t__store64") + store3.count("jp\t__store64") == 3
+    read2 = _function(mac, "ll_read2")
+    assert read2.count("call\t__load64") + read2.count("jp\t__load64") == 2
 
 
 def test_plain_stores_are_still_merged(mac):

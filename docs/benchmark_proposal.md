@@ -24,10 +24,10 @@ What is done:
 
 Result against SDCC 4.6.0 (96 programs for size and 78 for T-states that are OK on both, geometric mean of uc80 divided by SDCC):
 
-- Size: 0.99. The first run gave 2.01 on 61 programs, and the run before the library split gave 1.53. uc80 is smaller on 52 programs and bigger on 44. The library split (families A to C of [codegen_gap.md](codegen_gap.md)) made this gain.
-- T-states against the speed mode of SDCC: 0.63. uc80 is faster. The first run gave 0.87 on 61 programs. Without the `sort-*` programs the mean is 0.77. uc80 is faster on 55 programs and slower on 23.
-- Games (18 games that run on both compilers, whole-run T-states): size 0.80, T-states 1.02. The stdio games are faster on uc80 and the curses games are 37 to 59 percent slower.
-- The "uc80 wins on size" claim is still false as a general claim (ratio 0.99, which is a tie, not a lead), but uc80 is smaller than SDCC 4.6.0 on 52 of 96 programs. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
+- Size: 0.99. The first run gave 2.01 on 61 programs, and the run before the library split gave 1.53. uc80 is smaller on 53 programs and bigger on 43. The library split (families A to C of [codegen_gap.md](codegen_gap.md)) made this gain.
+- T-states against the speed mode of SDCC: 0.62. uc80 is faster. The first run gave 0.87 on 61 programs. Without the `sort-*` programs the mean is 0.77. uc80 is faster on 56 programs and slower on 22.
+- Games (18 games that run on both compilers, whole-run T-states): size 0.80, T-states 1.00. The stdio games are faster on uc80 and the curses games are 30 to 48 percent slower.
+- The "uc80 wins on size" claim is still false as a general claim (ratio 0.99, which is a tie, not a lead), but uc80 is smaller than SDCC 4.6.0 on 53 of 96 programs. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
 
 What is left:
 

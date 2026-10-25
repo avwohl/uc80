@@ -39,6 +39,22 @@ class Uc80ASTOptimizer(ASTOptimizer):
 
     # ---- identities that would lose the type of an operand
 
+    def _invalidate_caches_for_stmt(self, item) -> None:
+        """Also see the side effects inside a declaration initialiser.
+
+        uc_core looks only at the declared name, so ``int b = a++;`` or
+        ``int b = f();`` left the copy ``a <- v`` and the cached
+        expressions alive, and a later read of ``a`` became a read of
+        ``v``.  The initialisers are processed in order, before the
+        name that each one declares is recorded.
+        """
+        if isinstance(item, ast.Declaration):
+            for d in item.declarators or []:
+                init = getattr(d, "init", None)
+                if isinstance(d, ast.InitDeclaratorWithInit) and init is not None:
+                    self._invalidate_caches_for_expr(init)
+        super()._invalidate_caches_for_stmt(item)
+
     def _simplify_identity(self, expr):
         """``x + 0L`` is a long and ``x * 1u`` an unsigned int.  uc_core
         drops only a literal with a U or LL suffix, as on a target whose

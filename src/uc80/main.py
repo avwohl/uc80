@@ -26,6 +26,8 @@ from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
 from . import volatile_fence
 from . import rom as rom_module
 
+from . import peep_local
+
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
 
@@ -143,6 +145,21 @@ def _filter_hand_written_asm(asm_text: str):
         if match:
             defined_labels.add(match.group(1))
     return lines, publics, defined_labels
+
+
+class _Peephole:
+    """upeepz80, then the few rules of peep_local (``stats`` is
+    upeepz80's)."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    @property
+    def stats(self):
+        return self.inner.stats
+
+    def optimize(self, code: str) -> str:
+        return peep_local.optimize(self.inner.optimize(code))
 
 
 def _optimize_outside_asm(peephole, code: str) -> str:
@@ -1157,7 +1174,7 @@ def main() -> int:
             if args.verbose:
                 print(f"  Peephole optimization...")
 
-            peephole = PeepholeOptimizer()
+            peephole = _Peephole(PeepholeOptimizer())
             # Not peephole.optimize(code): inline asm is an optimization
             # barrier and its bytes are never rewritten.
             # Volatile accesses are fenced with labels the matcher cannot

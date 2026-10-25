@@ -9,6 +9,34 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-25: families D and E are done
+
+Families D and E are in the code (branch `speed-de`). [u8_divmod.md](u8_divmod.md) and [byte_paths.md](byte_paths.md) describe the rules. The numbers below come from `bench/run.py` (uc80, size mode: image bytes and T-states). The row "SDCC speed" is SDCC 4.6.0 in speed mode.
+
+Program, before D and E, after D, after D and E, SDCC speed (bytes / T-states):
+
+- snd-cmdq: 3075 B / 14.32M, 2879 B / 14.05M, 2798 B / 13.72M, 4034 B / 9.03M
+- snd-ymreg: 2470 B / 22.22M, 2470 B / 22.22M, 2443 B / 21.21M, 3821 B / 15.26M
+- snd-seq: 3939 B / 15.38M, 3939 B / 15.38M, 3867 B / 14.52M, 5002 B / 12.99M
+- snd-fnum: 2830 B / 18.83M, 2634 B / 13.98M, 2598 B / 13.69M, 3769 B / 17.65M
+- davidly-ttt: 4210 B / 14.38M, 4210 B / 14.38M, 3816 B / 13.12M, 4231 B / 7.96M
+- queens: 952 B / 34.14M, 952 B / 34.14M, 949 B / 34.07M, 679 B / 23.59M
+- sieve, tak, stanford-perm: no change (253 B / 3.91M, 1055 B / 47.26M, 528 B / 448.5M). Their cost is in the calling convention and in locals in memory (families F, G, H).
+- stanford-towers: 2482 B / 502.89M, then 2481 B / 501.74M.
+
+Mean over the programs that are OK on both compilers (`bench/report.py` method, uc80 divided by SDCC 4.6.0): the size ratio falls from 0.992 to 0.988 (96 programs). The T-state ratio against SDCC speed mode falls from 0.629 to 0.623 (78 programs) and from 0.775 to 0.767 without `sort-*`. No program changed status. The largest changes are the snd kernels and `davidly-ttt`. 62 rows changed.
+
+What the re-check of the claims in sections 1.2(b), 2.D and 2.E found:
+
+- D: the fuse step is needed. With `__dv8n` and the fuse, `snd-fnum` falls by 3.5M T, not by 4.5M T. The reciprocal multiply falls by 4.86M T and costs 23 B more than `__dv8n` (the report said 5.50M T and 23 B). `snd-cmdq` is 196 B smaller (the report said 170 B). The dead helpers are not linked when no 16-bit division remains: a test checks this.
+- D: the fuse works on two adjacent block items, not on two parts of one expression. `x / K + x % K` makes two divisions.
+- E: the byte path for `_gen_expr_a` and the byte switch existed. The switch did not accept an int value that is known to be a byte (`cmd >> 4`). `snd-cmdq` gains 10 B and 156K T from that rule, as the report said (11 B and 172K T).
+- E: the dead `ld H,0` before a call is only dead when uc80 compiles the callee. The rule uses this condition. For `snd-cmdq` the rule gains 69 B and 174K T together with `ld L,K` (the report said 26 B and 39K T for the `ld H,0` alone).
+- E: `cp (HL)` gains 480K T and 3 B in `snd-ymreg` (the report said 694K T and 6 B for `ym_write`).
+- E: the three rules of `peep_local` (dead register write, byte to the high half, `call` and `ret` as `jp`) gain 212K T and 5 B in `snd-ymreg`, 149K T and 8 B in `snd-seq`, and only 2 B in `snd-cmdq`. The report said 93K T for `call` and `ret` in `snd-cmdq`. The caller of a function with arguments pops them after the `call`, so a `call` with arguments is never next to a `ret`. Only a call without arguments becomes `jp`. `tak` and `ack`-style recursion gain nothing for the same reason: the gain waits for the register calling convention (family F).
+- E: int locals that hold bytes: `davidly-ttt` gains 374 B and 917K T (the report said 564 B and 1.56M T for char compares through int locals). The loop counter `p` of `MinMax` is not a byte holder, because the compiler has no range analysis.
+- The line numbers in section 1.2(b) are out of date.
+
 ## Status on 2026-10-25: families A, B and C are done
 
 Families A, B and C are in the code (branches `printf-puts` and `libc-split`, merged). The measured result is in [benchmarks_speed.md](benchmarks_speed.md), from the size-mode run of `bench/run.py`.
@@ -131,8 +159,8 @@ Families are in order of gain per effort. Effort figures include the reviewer co
 | A | Move `_prt_float` and its data out of the printf core | Packaging | 0.5 | -2.5 to -2.85 KB per printf program | Yes |
 | B | Fix the `printf` to `puts` rewrite | Bug fix | 0.5 to 1 | -84,400 B over 24 programs (whole-program mode) | Yes |
 | C | Split string/mem, stdlib, atoi, ctype, wchar, malloc, file into one function per module | Packaging | 2 to 3 | -29,922 B (string/mem) and -34,747 B (rest) | Yes |
-| D | Narrow u8 divide and modulo by a constant, and drop dead helpers | Selection | 1.5 to 2 | cmdq -170 B and -146K T; fnum -4.5M T and -223 B | Yes (reviewer confirmed) |
-| E | Byte-width and peephole clean-up | Peephole, new pass or many codegen edits | 5 to 7 | cmdq -55 B and -339K T; ymreg ym_write -694K T; ttt -564 B | Yes, low confidence on effort |
+| D | Narrow u8 divide and modulo by a constant, and drop dead helpers | Selection | 1.5 to 2 | cmdq -170 B and -146K T; fnum -4.5M T and -223 B | Yes (reviewer confirmed). Done: cmdq -196 B and -272K T; fnum -196 B and -4.86M T |
+| E | Byte-width and peephole clean-up | Peephole, new pass or many codegen edits | 5 to 7 | cmdq -55 B and -339K T; ymreg ym_write -694K T; ttt -564 B | Yes, low confidence on effort. Done: cmdq -81 B and -330K T; ymreg -27 B and -1.01M T; seq -72 B and -852K T; ttt -394 B and -1.26M T |
 | F | Register calling convention for internal functions | Calling convention | 12 to 20 | cmdq about -3.0M T; ymreg about -7.4M T; seq -4.4M T; fnum -3.69M T; tak -27.7% | Yes (upper bounds) |
 | G | Register residency for locals (BC, DE, IY) | Register allocation | 8 to 10 (simple), 15 to 20 (full) | cmdq about -1.7M T and -110 B; ymreg -2.48M T; seq about -1.6M T and -250 B (IY); queens -32% | Yes (upper bounds) |
 | H | Block-local CSE, dead-store elimination, inline LDIR | New typed pass | 8 to 12 | towers -17.7%; bubble -42%; sieve DSE -48% (small-loop programs only) | Yes, no snd kernel |
@@ -255,7 +283,7 @@ Speed (T-states). Each row is cumulative, except where the text says it is stand
 | SDCC speed mode | 9.03M | 15.26M | 12.99M | 17.65M |
 | uc80 now | 14.18M | 22.22M | 15.38M | 18.83M |
 | After A to C | 14.18M | 22.22M | 15.38M | 18.83M |
-| After D and E (estimate) | about 13.6M | about 21.5M | about 15M | about 14.3M (D alone measured) |
+| After D and E (measured) | 13.72M | 21.21M | 14.52M | 13.69M |
 | After F on top of D and E (estimate) | about 10.5M | about 14.9M | about 11M | about 10.6M |
 | Analyst chain F, G, H, D, E (not independently reproduced) | 8.40M | 11.68M | 7.85M | 9.03M |
 

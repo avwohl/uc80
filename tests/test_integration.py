@@ -264,7 +264,8 @@ class TestCommaOperatorThroughDriver:
         assert result.returncode == 0, f"Compiler failed: {result.stderr}"
         code = output.read_text()
         # uint16 -> unsigned 32 -> float, exactly once.
-        assert code.count("call\t__uitof") == 1
+        # (A call followed by ret is a jp, as in peep_local.)
+        assert code.count("call\t__uitof") + code.count("jp\t__uitof") == 1
         # A second, bogus signed conversion applied to the float's low
         # word is what produced the wrong FRE value.
         assert "call\t__itof" not in code

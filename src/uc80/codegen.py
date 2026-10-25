@@ -421,6 +421,46 @@ def _ast_has_side_effects(node) -> bool:
                for f in _dc_fields(node))
 
 
+def _ast_writes_names(node, names) -> bool:
+    """True if ``node`` assigns, increments or takes the address of a
+    variable in ``names`` (the variable itself or a member of it).
+
+    Used by the inliner: substituting the caller's argument for a
+    parameter that the body modifies would modify the caller's variable.
+    """
+    from dataclasses import fields as _dc_fields, is_dataclass
+    if node is None:
+        return False
+    if isinstance(node, (list, tuple)):
+        return any(_ast_writes_names(x, names) for x in node)
+    if not is_dataclass(node):
+        return False
+
+    def root(e):
+        while True:
+            if isinstance(e, ast.Identifier):
+                return e.name.text
+            if isinstance(e, ast.Member):
+                e = e.obj
+            elif isinstance(e, ast.Cast):
+                e = e.expr
+            else:
+                return None
+
+    op = getattr(node, "op", None)
+    op = getattr(op, "text", op)
+    if isinstance(op, str):
+        if isinstance(node, (ast.UnaryOp, ast.PostfixOp)) and op in (
+                "++", "--", "&"):
+            if root(node.operand) in names:
+                return True
+        elif isinstance(node, ast.BinaryOp) and op in _ASSIGN_OPS:
+            if root(node.left) in names:
+                return True
+    return any(_ast_writes_names(getattr(node, f.name, None), names)
+               for f in _dc_fields(node))
+
+
 def decl_is_inline(decl_specs) -> bool:
     for spec in decl_specs or []:
         if isinstance(spec, ast.StorageClass):
@@ -2303,6 +2343,16 @@ class CallGraphAnalyzer:
             return orig
         return t
 
+    def _body_writes_params(self, func) -> bool:
+        """True if the body of ``func`` modifies one of its parameters."""
+        names = set()
+        for p in function_params(func):
+            if isinstance(p, ast.ParamDecl):
+                n = declarator_ident(p.declarator)
+                if n:
+                    names.add(n)
+        return bool(names) and _ast_writes_names(func.body, names)
+
     def _inline_expr(self, expr: ast.Expression,
                     func_bodies: dict[str, ast.FunctionDef],
                     inlineable: set[str]) -> ast.Expression:
@@ -2319,7 +2369,8 @@ class CallGraphAnalyzer:
                     and not self._args_touch_volatile(
                         new_args, func_bodies[expr.func.name.text])):
                 func = func_bodies[expr.func.name.text]
-                if self._is_trivial_function(func):
+                if (self._is_trivial_function(func)
+                        and not self._body_writes_params(func)):
                     # Build parameter → argument map via the FnDeclarator.
                     param_map: dict[str, object] = {}
                     params = function_params(func)
@@ -3282,6 +3333,44 @@ class CodegenError(Exception):
             super().__init__(message)
 
 
+class _DivModFuse:
+    """State of one fused ``v1 = x / K; v2 = x % K;`` pair (or the
+    reverse).  The first division keeps the other result in B; the second
+    reads it when nothing between the two statements touched B."""
+
+    _TOUCH_B = re.compile(r"\b(B|BC)\b", re.IGNORECASE)
+    _FLOW = frozenset((
+        "call", "jp", "jr", "djnz", "ret", "reti", "retn", "rst", "exx",
+        "ldir", "lddr", "ldi", "ldd", "cpir", "cpdr", "cpi", "cpd",
+        "inir", "indr", "ini", "ind", "otir", "otdr", "outi", "outd",
+        "halt", "ei", "di"))
+
+    def __init__(self, first, second):
+        self.first = first
+        self.second = second
+        self.mark = None        # lines index after the first's stash
+        self.end = None         # lines index at the end of the first item
+        self.ready = False
+
+    def arm(self, lines) -> None:
+        """The first item is generated: B still holds the other result
+        when the lines after the stash use neither B nor BC and do not
+        branch, call or define a label."""
+        if self.mark is None:
+            return
+        for line in lines[self.mark:]:
+            if not line.startswith("\t"):
+                return
+            text = line.split(";")[0].strip()
+            if not text:
+                continue
+            mnem, _, ops = text.partition("\t")
+            if mnem.lower() in self._FLOW or self._TOUCH_B.search(ops):
+                return
+        self.end = len(lines)
+        self.ready = True
+
+
 class _SavedAddrValue:
     """Codegen-only operand: the value at the address on top of the stack.
 
@@ -3328,6 +3417,11 @@ class CodeGenerator:
         # side of a comma).  Set by gen_expr_discard; only an identity
         # match counts, so nested sub-expressions never see it.
         self._discard_expr = None
+        self._dm = None          # _DivModFuse of the current block pair
+        self._holders = None     # local ints that hold only bytes
+        self._holder_cache = {}
+        self._holder_busy = set()
+        self._decl_counts = {}
         # Wire module-level ``_to_legacy`` to consult this codegen's
         # typedef registry. (Single-threaded codegen, so a module-level
         # pointer is fine; reset in finally/exit if we ever grow re-entry.)
@@ -5693,7 +5787,13 @@ class CodeGenerator:
         if name == "main" and not self.crlf_console:
             self._emit_crlf_mode_init()
 
-        self.gen_compound_stmt(func.body)
+        self._holders = self._scan_byte_holders(func)
+        self._holder_cache = {}
+        self._holder_busy = set()
+        try:
+            self.gen_compound_stmt(func.body)
+        finally:
+            self._holders = None
 
         # The prologue reserved locals_size before a line of the body was
         # generated; the body then handed out the slots.  If it wanted more
@@ -5772,14 +5872,101 @@ class CodeGenerator:
         # the slots stay distinct, which is what an address taken inside
         # the block needs.
         saved_locals = dict(self.ctx.locals)
-        for item in stmt.items:
-            if isinstance(item, ast.Declaration):
-                self.gen_local_decl(item)
-            else:
-                self.gen_statement(item)
+        items = stmt.items
+        i = 0
+        while i < len(items):
+            pair = (self._dm_pair(items[i], items[i + 1])
+                    if i + 1 < len(items) else None)
+            if pair is None:
+                self._gen_block_item(items[i])
+                i += 1
+                continue
+            # ``q = x / K; r = x % K;``: one division for both.
+            saved_dm = self._dm
+            self._dm = _DivModFuse(*pair)
+            try:
+                self._gen_block_item(items[i])
+                self._dm.arm(self.ctx.lines)
+                self._gen_block_item(items[i + 1])
+            finally:
+                self._dm = saved_dm
+            i += 2
         # Restore block_externs on scope exit
         self.ctx.block_externs = saved_block_externs
         self.ctx.locals = saved_locals
+
+    def _gen_block_item(self, item) -> None:
+        if isinstance(item, ast.Declaration):
+            self.gen_local_decl(item)
+        else:
+            self.gen_statement(item)
+
+    def _dm_stmt(self, item):
+        """For a block item ``v = x / K`` or ``v = x % K`` (a statement)
+        or ``T v = x / K`` (a declaration), where v is a plain integer
+        variable of 1 or 2 bytes: (the division expression, v's name,
+        x's name, K).  Else None."""
+        expr = None
+        if isinstance(item, ast.ExpressionStmt):
+            e = item.expr
+            if (isinstance(e, ast.BinaryOp) and e.op == "="
+                    and isinstance(e.left, ast.Identifier)):
+                sym = self._simple_sym(e.left)
+                if sym is None or not self._dm_dest_ok(sym.sym_type):
+                    return None
+                name, expr = e.left.name.text, e.right
+        elif isinstance(item, ast.Declaration):
+            if decl_storage_class(item.decl_specs) is not None:
+                return None
+            decls = list(iter_var_decls(item))
+            if len(decls) != 1 or decls[0][3] or decls[0][2] is None:
+                return None
+            name, full, init, _ = decls[0]
+            if (name is None or isinstance(init, (list, ast.InitializerList,
+                                                  ast.Compound))
+                    or not self._dm_dest_ok(full)):
+                return None
+            expr = init
+        if expr is None:
+            return None
+        expr = self._peel_int_casts(expr)
+        k = self._u8_divmod_info(expr)
+        if k is None or k & (k - 1) == 0:
+            return None
+        x = self._peel_int_casts(expr.left)
+        if not isinstance(x, ast.Identifier):
+            return None
+        xsym = self._simple_sym(x)
+        if xsym is None or getattr(_to_legacy(xsym.sym_type),
+                                   "is_volatile", False):
+            return None
+        return expr, name, x.name.text, k
+
+    def _dm_dest_ok(self, t) -> bool:
+        t = _to_legacy(t)
+        return (isinstance(t, lt.BasicType) and not self._is_float_type(t)
+                and not self._is_bool_type(t)
+                and not getattr(t, "is_volatile", False)
+                and self._type_size(t) in (1, 2))
+
+    def _dm_pair(self, a, b):
+        """(first, second) division expressions when the block items a
+        and b are ``v1 = x / K`` and ``v2 = x % K`` (or the reverse), in
+        either statement or declaration form, with v1, v2 and x three
+        different plain variables."""
+        if getattr(self.ctx, "no_dm_fuse", False):
+            return None
+        da = self._dm_stmt(a)
+        if da is None:
+            return None
+        db = self._dm_stmt(b)
+        if db is None:
+            return None
+        (ea, va, xa, ka), (eb, vb, xb, kb) = da, db
+        if (xa != xb or ka != kb or len({va, vb, xa}) != 3
+                or ea.op == eb.op):
+            return None
+        return ea, eb
 
     def gen_local_decl(self, decl) -> None:
         """Generate code for a local declaration; the code of a volatile
@@ -8231,6 +8418,13 @@ class CodeGenerator:
         if (signed is not None and isinstance(expr, self._SWITCH_CHAR_FORMS)
                 and self._type_size(_to_legacy(t)) == 1):
             lo, hi = (-128, 127) if signed else (0, 255)
+            keys = [(v, lbl) for v, lbl in cases if lo <= v <= hi]
+            self._gen_expr_a(expr)
+        elif self._int_scalar_expr(expr) and self._byte_kind(expr):
+            # An int-typed value known to be 0..255 or -128..127 (such as
+            # ``cmd >> 4`` for a uint8_t cmd): its low byte is the key, and
+            # a case value outside the range can never match.
+            lo, hi = (0, 255) if "u" in self._byte_kind(expr) else (-128, 127)
             keys = [(v, lbl) for v, lbl in cases if lo <= v <= hi]
             self._gen_expr_a(expr)
         else:
@@ -11279,6 +11473,45 @@ class CodeGenerator:
                 # Prefix: result is the new value
                 self.ctx.emit_instr("ex", "DE,HL")
 
+    def _defined_here(self, func) -> bool:
+        """``func`` (a call's callee expression) names a function with a
+        body in this program, so uc80 compiled it: it reads a char
+        parameter from the low byte of the argument word only."""
+        if not isinstance(func, ast.Identifier):
+            return False
+        sym = self.ctx.lookup(func.name.text)
+        return (sym is not None and sym.is_global
+                and func.name.text in self.ctx.function_names
+                and is_function_type(sym.sym_type))
+
+    def _gen_byte_arg(self, call, arg, param_type) -> bool:
+        """The argument for a char parameter of a function defined in
+        this program: the callee reads the low byte of the pushed word
+        and never the high byte, so the value goes to L and H is left as
+        it is (no zero or sign extension).  A constant is ``ld L,K``; an
+        expression a byte path computes (_a_profitable) is evaluated in A.
+        False (nothing emitted) when the argument does not fit."""
+        if param_type is None or not self._defined_here(call.func):
+            return False
+        t = _to_legacy(param_type)
+        if isinstance(t, lt.BasicType) and t.name in self.ctx.typedefs:
+            t = _to_legacy(self.ctx.typedefs[t.name])
+        if self._char_type_signed(t) is None:
+            return False
+        if (not self._int_scalar_expr(arg) or self._is_long_expr(arg)
+                or self._type_size(_to_legacy(self._get_expr_type(arg))) > 2):
+            return False
+        x = self._peel_int_casts(arg)
+        k = self._const_int_operand(x)
+        if k is not None:
+            self.ctx.emit_instr("ld", f"L,{k & 0xFF}")
+            return True
+        if not self._a_profitable(x):
+            return False
+        self._gen_expr_a(x)
+        self.ctx.emit_instr("ld", "L,A")
+        return True
+
     def gen_call(self, expr: ast.Call) -> None:
         """Generate code for function call."""
         # Handle GCC builtins
@@ -11843,6 +12076,9 @@ class CodeGenerator:
                             self.ctx.emit_instr("push", "DE")
                             self.ctx.emit_instr("push", "HL")
                             stack_size += 4
+                        elif self._gen_byte_arg(expr, arg, param_type):
+                            self.ctx.emit_instr("push", "HL")
+                            stack_size += 2
                         else:
                             self.gen_expr(arg)
                             # _Bool parameter normalization (C99 6.3.1.2)
@@ -12172,14 +12408,24 @@ class CodeGenerator:
         char_signed = self._char_type_signed(target_type)
         if (char_signed is not None and not force_long
                 and self._int_scalar_expr(expr.expr)
-                and self._a_structural(self._peel_int_casts(expr.expr))):
+                and self._a_profitable(self._peel_int_casts(expr.expr))):
             self._gen_expr_a(expr.expr)
             self._emit_a_to_hl(char_signed)
             return
 
         # Generate the source expression without forcing long -
-        # the cast itself handles the extension
-        self.gen_expr(expr.expr, force_long=False)
+        # the cast itself handles the extension.  A cast to a char needs
+        # the low byte only, so the integer casts inside the operand
+        # (``(uint8_t)(int8_t)c``) are not evaluated: one extension.
+        src = expr.expr
+        if (char_signed is not None and not force_long
+                and not target_is_float and not source_is_float):
+            src = self._peel_int_casts(src)
+        self.gen_expr(src, force_long=False)
+        # The operand is a char load of the same signedness: H is right.
+        same_char = (src is not expr.expr or char_signed is not None) and \
+            self._char_ext_operand(src) is char_signed and \
+            char_signed is not None and not force_long and not source_is_long
 
         # _Bool normalization: any non-zero value becomes 1 (C99 6.3.1.2)
         if self._is_bool_type(target_type):
@@ -12232,7 +12478,9 @@ class CodeGenerator:
             return
 
         # Handle narrowing conversions first (before widening if force_long)
-        if target_size == 1 and source_size >= 1:
+        if target_size == 1 and source_size >= 1 and same_char:
+            pass
+        elif target_size == 1 and source_size >= 1:
             # Narrowing/same-size to char: ensure H matches target signedness
             if target_signed:
                 # Signed char: sign-extend L to HL
@@ -14614,6 +14862,159 @@ class CodeGenerator:
             e("ld", "H,A")
             self.ctx.emit_label(done)
 
+    def _u8_divmod_info(self, expr, depth: int = 0) -> int | None:
+        """The divisor K when ``expr`` is ``x / K`` or ``x % K`` with a
+        constant K in 1..255 and x known to be 0..255 (_byte_kind: a
+        value-range test, not a type test, so a signed x stays on the
+        signed path).  Then the result is 0..255 and exact in 8 bits.
+        Else None."""
+        if not isinstance(expr, ast.BinaryOp):
+            return None
+        op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if op not in ("/", "%"):
+            return None
+        k = self._const_int_operand(expr.right)
+        if k is None or not 1 <= k <= 255:
+            return None
+        if not (self._int_scalar_expr(expr.left)
+                and self._int_scalar_expr(expr.right)):
+            return None
+        if "u" not in self._byte_kind(expr.left, depth + 1):
+            return None
+        return k
+
+    # A 0..255 dividend over a constant K: the quotient is (x * M) >> S
+    # for M = ceil(2**S / K), when that is exact for every x in 0..255 and
+    # x * M fits in 16 bits.  The multiply is the inline shift-and-add
+    # chain of _gen_mul_const.  It is used when it is faster than the
+    # call of __dv8n (about 330 T-states for x >= K) and the code stays
+    # small; the limits are below.  Measured in docs/codegen_gap.md.
+    _RECIP_MAX_T = 190          # T-states of the quotient alone
+    _RECIP_MAX_T_REM = 300      # quotient and remainder
+
+    def _u8_recip_plan(self, k: int):
+        """(M, S, T-states of the quotient, T-states of quotient and
+        remainder) of the cheapest exact reciprocal multiply for the
+        divisor ``k`` (not a power of two), or None."""
+        cache = self.__dict__.setdefault("_recip_cache", {})
+        if k in cache:
+            return cache[k]
+        best = None
+        for sh in range(8, 17):
+            m = -(-(1 << sh) // k)
+            if 255 * m >= 1 << 16:
+                break
+            if any((x * m) >> sh != x // k for x in range(256)):
+                continue
+            t = sh - 8
+            shift_t = 4 + (0 if t == 0 else 8 if t == 1 else 4 * t + 7)
+            cost = 4 + 7 + self._chain_t(m) + shift_t
+            if best is None or cost < best[2]:
+                best = (m, sh, cost)
+        if best is not None:
+            rem_t = best[2] + 4 + 4 + 4 + 7 + self._chain_t(k) + 8
+            best = best + (rem_t,)
+            if best[2] > self._RECIP_MAX_T or best[3] > self._RECIP_MAX_T_REM:
+                best = None
+        cache[k] = best
+        return best
+
+    def _chain_t(self, n: int) -> int:
+        """T-states of the multiply of HL by the constant n."""
+        tz = (n & -n).bit_length() - 1
+        if n == 1:
+            return 0
+        if n == 1 << tz:
+            return 11 * tz
+        return min(self._mul16_chain_cost(d)[0]
+                   for d in self._mul_digit_forms(n, 16))
+
+    def _emit_u8_recip(self, plan, k: int, mode: str) -> None:
+        """The dividend x is in A.  Reciprocal multiply of ``plan``;
+        ``mode`` is what is left: "q": A = x / k.  "r": A = x % k.
+        "both_q": A = x / k and B = x % k.  "both_r": A = x % k and
+        B = x / k.  Clobbers HL, DE, BC and the flags."""
+        e = self.ctx.emit_instr
+        m, sh = plan[0], plan[1]
+        if mode != "q":
+            e("ld", "C,A")                   # x, for the remainder
+        e("ld", "L,A")
+        e("ld", "H,0")
+        self._gen_mul_const(m)               # HL = x * M
+        e("ld", "A,H")
+        t = sh - 8
+        if t == 1:
+            e("srl", "A")
+        elif t >= 2:
+            for _ in range(t):
+                e("rrca")
+            e("and", str(0xFF >> t))         # A = x / k
+        if mode == "q":
+            return
+        if mode != "r":
+            e("ld", "B,A")                   # the multiply keeps BC
+        e("ld", "L,A")
+        e("ld", "H,0")
+        self._gen_mul_const(k)               # L = (x / k) * k
+        e("ld", "A,C")
+        e("sub", "L")                        # A = x % k
+        if mode == "both_q":
+            e("ld", "C,A")
+            e("ld", "A,B")
+            e("ld", "B,C")
+
+    def _emit_u8_divmod_a(self, expr) -> None:
+        """A = ``x / K`` or ``x % K`` (see _u8_divmod_info).  A power of
+        two is a shift or a mask.  Another K is a reciprocal multiply
+        (_u8_recip_plan) or one call of __dv8n (the byte step of the
+        16-bit divide: A = running remainder 0, E = dividend, C =
+        divisor; out E = quotient, A = remainder).  Clobbers HL, DE, BC
+        and the flags."""
+        e = self.ctx.emit_instr
+        op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        k = self._const_int_operand(expr.right)
+        if k & (k - 1) == 0:
+            n = k.bit_length() - 1
+            self._gen_expr_a(expr.left)
+            if op == "%":
+                if n == 0:
+                    e("xor", "A")
+                elif k < 256:
+                    e("and", str(k - 1))
+            elif n == 1:
+                e("srl", "A")
+            elif n >= 2:
+                for _ in range(n):
+                    e("rrca")
+                e("and", str(0xFF >> n))
+            return
+        dm = self._dm
+        if (dm is not None and expr is dm.second and dm.ready
+                and len(self.ctx.lines) == dm.end):
+            e("ld", "A,B")           # the first division left it here
+            return
+        first = dm is not None and expr is dm.first
+        self._gen_expr_a(expr.left)
+        plan = self._u8_recip_plan(k)
+        if plan is not None:
+            if first:
+                self._emit_u8_recip(plan, k,
+                                    "both_q" if op == "/" else "both_r")
+                dm.mark = len(self.ctx.lines)
+            else:
+                self._emit_u8_recip(plan, k, "q" if op == "/" else "r")
+            return
+        e("ld", "E,A")
+        e("ld", f"C,{k}")
+        e("xor", "A")
+        self._call_runtime("__dv8n")
+        if first:
+            # Keep the other result in B for the second statement.
+            e("ld", "B,E" if op == "%" else "B,A")
+            dm.mark = len(self.ctx.lines)
+        if op == "/":
+            e("ld", "A,E")
+
     def _gen_const_op_16(self, expr: ast.BinaryOp, op: str) -> bool:
         """``x * K``, ``K * x``, ``x / K``, ``x % K``, ``x << K`` and
         ``x >> K`` at 16 bits with a constant K, done inline.
@@ -14656,6 +15057,14 @@ class CodeGenerator:
             return True
 
         # '/' and '%'
+        u8k = self._u8_divmod_info(expr)
+        if u8k is not None and u8k & (u8k - 1):
+            # A 0..255 dividend and a constant divisor 3..255 (not a
+            # power of two): one 8-bit division, no 16-bit helper.
+            self._emit_u8_divmod_a(expr)
+            e("ld", "L,A")
+            e("ld", "H,0")
+            return True
         is_unsigned = (self._is_promoted_unsigned(expr.left)
                        or self._is_promoted_unsigned(expr.right))
         kv = k & 0xFFFF
@@ -14665,7 +15074,9 @@ class CodeGenerator:
             return False
         n = kv.bit_length() - 1
         # An unsigned char operand is never negative.
-        nonneg = is_unsigned or char_signed is False
+        h_zero = (char_signed is False
+                  or "u" in self._byte_kind(expr.left))
+        nonneg = is_unsigned or h_zero
         self.gen_expr(expr.left)
         if op == "/":
             if nonneg:
@@ -14675,8 +15086,7 @@ class CodeGenerator:
         elif n == 0:
             e("ld", "HL,0")
         elif nonneg:
-            self._emit_and16_const((1 << n) - 1,
-                                   h_zero=char_signed is False)
+            self._emit_and16_const((1 << n) - 1, h_zero=h_zero)
         else:
             self._emit_smod16_pow2(n)
         return True
@@ -14926,6 +15336,12 @@ class CodeGenerator:
         s = self._char_ext_operand(expr)
         if s is not None:
             return frozenset("s" if s else "u")
+        if isinstance(expr, ast.Identifier):
+            return self._holder_kind(expr.name.text, depth)
+        if isinstance(expr, _SavedAddrValue):
+            # The char at the saved address of a compound assignment.
+            cs = self._char_type_signed(expr.ctype)
+            return frozenset() if cs is None else frozenset("s" if cs else "u")
         fast = self._bf_fast_pos(expr)
         if fast is not None:
             bf = fast[0]
@@ -14958,11 +15374,157 @@ class CodeGenerator:
                 k = self._const_int_operand(expr.right)
                 if k is not None and 0 <= k <= 15:
                     r = self._byte_kind(expr.left, depth + 1)
+            elif op in ("/", "%"):
+                if self._u8_divmod_info(expr, depth) is not None:
+                    r = {"u"}
             if "s" in r and self._is_promoted_unsigned(expr):
                 # An unsigned value is never negative.
                 r = r - {"s"}
             return frozenset(r)
         return none
+
+    _COMPOUND_OPS = frozenset(("+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
+                               "<<=", ">>="))
+
+    def _scan_byte_holders(self, func) -> dict | None:
+        """The local integer variables of ``func`` that might hold only
+        bytes: {name: [every value assigned to it]}.  A name is left out
+        when it is declared twice or is a parameter, has a storage class
+        or a braced initializer, has its address taken, or is changed by
+        ++, -- or a compound assignment; a function with inline asm has
+        none.  Whether each assigned value is a byte is decided when the
+        variable is used (_holder_kind)."""
+        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+        counts: dict[str, int] = {}
+        writes: dict[str, list] = {}
+        bad: set[str] = set()
+        has_asm = False
+        for p in function_params(func):
+            pn = (declarator_ident(p.declarator)
+                  if isinstance(p, ast.ParamDecl) else None)
+            if pn is not None:
+                counts[pn] = counts.get(pn, 0) + 1
+                bad.add(pn)
+        seen: set[int] = set()
+
+        def ident(x):
+            return x.name.text if isinstance(x, ast.Identifier) else None
+
+        def walk(node):
+            nonlocal has_asm
+            if isinstance(node, (list, tuple)):
+                for x in node:
+                    walk(x)
+                return
+            if not _dc_is(node) or id(node) in seen:
+                return
+            seen.add(id(node))
+            if isinstance(node, ast.AsmDeclaration):
+                has_asm = True
+            elif isinstance(node, ast.Declaration):
+                storage = decl_storage_class(node.decl_specs)
+                for nm, full, init, is_fn in iter_var_decls(node):
+                    if nm is None:
+                        continue
+                    counts[nm] = counts.get(nm, 0) + 1
+                    if storage not in (None, "auto", "register") or is_fn:
+                        bad.add(nm)
+                    elif init is not None:
+                        if isinstance(init, (list, ast.InitializerList,
+                                             ast.Compound)):
+                            bad.add(nm)
+                        else:
+                            writes.setdefault(nm, []).append(init)
+            elif isinstance(node, ast.BinaryOp):
+                nm = ident(node.left)
+                if nm is not None:
+                    op = self._op_of(node)
+                    if op == "=":
+                        writes.setdefault(nm, []).append(node.right)
+                    elif op in self._COMPOUND_OPS:
+                        bad.add(nm)
+            elif isinstance(node, ast.UnaryOp):
+                nm = ident(node.operand)
+                if nm is not None and self._op_of(node) in ("&", "++", "--"):
+                    bad.add(nm)
+            elif isinstance(node, ast.PostfixOp):
+                nm = ident(node.operand)
+                if nm is not None:
+                    bad.add(nm)
+            for f in _dc_fields(node):
+                walk(getattr(node, f.name, None))
+
+        walk(func.body)
+        self._decl_counts = counts
+        if has_asm:
+            return None
+        return {nm: w for nm, w in writes.items()
+                if nm not in bad and counts.get(nm) == 1}
+
+    def _holder_kind(self, name: str, depth: int) -> frozenset:
+        """_byte_kind of the local ``name`` when it can only hold bytes:
+        it is a 2-byte integer, and every value assigned to it (its
+        initializer included) is 0..255 or -128..127.  Empty otherwise.
+        A signed value stored in an unsigned variable becomes large, so
+        only 'u' survives there."""
+        none = frozenset()
+        holders = self._holders
+        if not holders or name not in holders or depth > 6:
+            return none
+        cached = self._holder_cache.get(name)
+        if cached is not None:
+            return cached
+        sym = self.ctx.locals.get(name)
+        if (sym is None or sym.is_param or sym.is_global or sym.is_static):
+            return none
+        t = _to_legacy(sym.sym_type)
+        if not (isinstance(t, lt.BasicType) and not self._is_float_type(t)
+                and not self._is_bool_type(t)
+                and not getattr(t, "is_volatile", False)
+                and self._type_size(t) == 2):
+            return none
+        if name in self._holder_busy:
+            return none
+        kind = {"u", "s"}
+        if not self._is_signed_type(t):
+            kind = {"u"}
+        self._holder_busy.add(name)
+        try:
+            for w in holders[name]:
+                if not self._holder_operands_ready(w):
+                    return none          # not cached: may be ready later
+                kind &= self._byte_kind(w, depth + 1)
+                if not kind:
+                    break
+        finally:
+            self._holder_busy.discard(name)
+        result = frozenset(kind)
+        self._holder_cache[name] = result
+        return result
+
+    def _holder_operands_ready(self, expr) -> bool:
+        """Every name in ``expr`` means the same thing here as where the
+        value is assigned: a local declared once and already in scope, or
+        a name that no local of the function shares."""
+        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+        seen: set[int] = set()
+        stack = [expr]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, (list, tuple)):
+                stack.extend(node)
+                continue
+            if not _dc_is(node) or id(node) in seen:
+                continue
+            seen.add(id(node))
+            if isinstance(node, ast.Identifier):
+                n = node.name.text
+                c = self._decl_counts.get(n, 0)
+                if c > 1 or (c == 1 and n not in self.ctx.locals):
+                    return False
+            for f in _dc_fields(node):
+                stack.append(getattr(node, f.name, None))
+        return True
 
     def _a_simple_sym(self, expr):
         """A _simple_sym whose low byte can be read on its own: a char,
@@ -14995,11 +15557,28 @@ class CodeGenerator:
         return sym is not None and (sym.is_global or sym.uses_shared_storage
                                     or self._ix_in_range(sym.offset))
 
+    def _a_hl_ok(self, expr) -> bool:
+        """``expr`` is a char element, member or ``*p`` whose address
+        _gen_lvalue_address computes without touching A: an 8-bit ALU
+        instruction can then read it as ``(HL)`` while A holds the other
+        operand (no push AF, ld E,(HL), pop AF)."""
+        x = self._peel_int_casts(expr)
+        return (self._int_scalar_expr(expr) and self._a_char_load(x)
+                and self._addr_keeps_a(x))
+
+    def _a_hl_operand(self, expr) -> str:
+        """Emit the address of the char ``expr`` (_a_hl_ok) into HL and
+        return the operand ``(HL)``.  A is left alone."""
+        self._gen_lvalue_address(self._peel_int_casts(expr))
+        return "(HL)"
+
     def _a_structural(self, expr) -> bool:
         """``expr`` (casts peeled) is an operator that _gen_expr_a
         computes in A rather than through gen_expr."""
         if isinstance(expr, ast.BinaryOp):
             op = expr.op.text if hasattr(expr.op, "text") else expr.op
+            if op in ("/", "%"):
+                return self._u8_divmod_info(expr) is not None
             if op not in ("+", "-", "&", "|", "^", "<<", ">>", "*"):
                 return False
             if not (self._int_scalar_expr(expr.left)
@@ -15127,6 +15706,13 @@ class CodeGenerator:
         if fast is not None:
             self._gen_bf_value_a(expr, fast[0], fast[1])
             return
+        if (isinstance(expr, _SavedAddrValue)
+                and self._char_type_signed(expr.ctype) is not None):
+            # The char at the saved address (kept on the stack).
+            e("pop", "HL")
+            e("push", "HL")
+            e("ld", "A,(HL)")
+            return
         if not self._a_structural(expr):
             self.gen_expr(expr)
             e("ld", "A,L")
@@ -15144,6 +15730,9 @@ class CodeGenerator:
                 e("inc", "A")            # 0 when it was not 0, else 1
             return
         op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if op in ("/", "%"):
+            self._emit_u8_divmod_a(expr)
+            return
         left, right = expr.left, expr.right
         shift = None
         if op == "*":
@@ -15208,6 +15797,9 @@ class CodeGenerator:
                     self._a_simple_sym(left)))
             return
         self._gen_expr_a(left)
+        if self._a_hl_ok(right):
+            self._emit_a_alu(op, self._a_hl_operand(right))
+            return
         e("push", "AF")
         self._gen_expr_a(right)
         e("ld", "E,A")
@@ -16193,6 +16785,19 @@ class CodeGenerator:
     _SWAP_CMP = {"<": ">", ">": "<", "<=": ">=", ">=": "<=",
                  "==": "==", "!=": "!="}
 
+    def _byte_operand_first(self, left, right, op: str) -> bool:
+        """A byte comparison: ``left`` is a variable the ALU reads in
+        place and ``right`` is not, and the right operand has no side
+        effect (so the order of evaluation is free): compare the other
+        way round.  Then the complex side is computed in A and the
+        variable is the operand of ``cp``, with no push AF.  Only for
+        == != > <=, which become == != < >=: the other two would need
+        the slower "right < left" sequence after the swap."""
+        return (op in ("==", "!=", ">", "<=")
+                and self._const_int_operand(right) is None
+                and self._a_mem_ok(left) and not self._a_mem_ok(right)
+                and not self._expr_has_side_effects(right))
+
     def _gen_byte_compare(self, expr: ast.BinaryOp, op: str) -> bool:
         """A comparison whose operands are both known to be 0..255, or
         both -128..127 (_byte_kind), done on one byte in A, with the 0/1
@@ -16217,6 +16822,9 @@ class CodeGenerator:
             left, right = right, left
             op = self._SWAP_CMP[op]
             k = self._const_int_operand(right)
+        elif self._byte_operand_first(left, right, op):
+            left, right = right, left
+            op = self._SWAP_CMP[op]
         relational = op not in ("==", "!=")
         if relational and not unsigned and k is None:
             return False
@@ -16236,6 +16844,8 @@ class CodeGenerator:
             operand = str(b)
         elif self._a_mem_ok(right):
             operand = self._a_sym_operand(self._a_simple_sym(right))
+        elif self._a_hl_ok(right):
+            operand = self._a_hl_operand(right)
         else:
             e("push", "AF")
             self._gen_expr_a(right)
@@ -18140,6 +18750,8 @@ class CodeGenerator:
         if k is None and self._const_int_operand(left) is not None:
             left, right, op = right, left, self._SWAP_CMP[op]
             k = self._const_int_operand(right)
+        elif self._byte_operand_first(left, right, op):
+            left, right, op = right, left, self._SWAP_CMP[op]
         rel = op not in ("==", "!=")
         flip = 0x80 if rel and "u" not in common else 0
         self._gen_expr_a(left)
@@ -18151,6 +18763,10 @@ class CodeGenerator:
                 else:
                     e("cp", str(b))
                 return "Z" if op == "==" else "NZ"
+            if flip and k == 0 and op in ("<", ">="):
+                # A signed byte against 0 is a test of bit 7.
+                e("bit", "7,A")
+                return "NZ" if op == "<" else "Z"
             if op in (">", "<="):
                 if b == 0xFF:
                     return "NEVER" if op == ">" else "ALWAYS"
@@ -18179,6 +18795,8 @@ class CodeGenerator:
             operand = "E"
         elif self._a_mem_ok(right):
             operand = self._a_sym_operand(self._a_simple_sym(right))
+        elif self._a_hl_ok(right):
+            operand = self._a_hl_operand(right)
         else:
             e("push", "AF")
             self._gen_expr_a(right)
