@@ -1,0 +1,28 @@
+; lc_strlen.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; size_t strlen(const char *s)
+; ============================================================
+	PUBLIC	_strlen
+_strlen:
+	POP	DE		; return address
+	POP	HL		; HL = s
+	PUSH	HL
+	PUSH	DE
+	XOR	A
+	LD	B,A
+	LD	C,A
+	CPIR			; BC = -(length + 1)
+	LD	HL,-1
+	SBC	HL,BC		; carry is 0 (XOR A; CPIR keeps it)
+	RET
+
+	END

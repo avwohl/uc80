@@ -1,0 +1,20 @@
+; lc_exit_data.mac - split from lc_stdlib.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	PUBLIC	_atexit_cnt
+	PUBLIC	_atexit_tab
+
+
+	DSEG
+
+
+; atexit handler table (max 4 handlers)
+_atexit_cnt:	DB	0	; Number of registered handlers
+_atexit_tab:	DS	8	; 4 function pointers (2 bytes each)
+
+	END

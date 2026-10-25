@@ -1,0 +1,82 @@
+; lc_fclose.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+BDOS_CLOSE	EQU	16	; Close file
+FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FLAG_OPEN	EQU	01H
+FLAG_WRITE	EQU	08H
+
+	EXTRN	_fflush_internal
+
+	CSEG
+
+; ============================================================
+; int fclose(FILE *stream)
+; Close a file
+; ============================================================
+	PUBLIC	_fclose
+_fclose:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = stream
+
+	; Check for NULL or console streams
+	LD	A,H
+	OR	L
+	JR	Z,_fclose_ok
+	LD	A,(HL)
+	CP	3
+	JR	C,_fclose_ok	; stdin/stdout/stderr
+
+	; Check if open
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_OPEN
+	JR	Z,_fclose_ok
+
+	; If write mode, flush buffer
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	JR	Z,_fclose_doclose
+
+	; Flush write buffer
+	DEC	HL
+	PUSH	HL
+	CALL	_fflush_internal
+	POP	HL
+	INC	HL
+
+_fclose_doclose:
+	DEC	HL		; Back to FILE start
+	PUSH	HL
+
+	; Set DMA and close
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL		; DE = FCB
+
+	LD	C,BDOS_CLOSE
+	CALL	BDOS
+
+	; Clear flags
+	POP	HL
+	INC	HL		; flags
+	LD	(HL),0
+
+_fclose_ok:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

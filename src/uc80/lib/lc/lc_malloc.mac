@@ -1,11 +1,15 @@
-; lc_malloc.mac - dynamic memory allocation
+; lc_malloc.mac - split from lc_malloc.mac
 	.Z80
 
-; CP/M BDOS function numbers
 BDOS	EQU	5
 CONOUT	EQU	2
 CONIN	EQU	1
 PRTSTR	EQU	9
+
+	EXTRN	__END__
+	EXTRN	_free_head
+
+	PUBLIC	__malloc_de
 
 	CSEG
 
@@ -29,7 +33,6 @@ PRTSTR	EQU	9
 ; free: insert into the list in address order and merge with the free
 ; neighbours on either side.
 ; ============================================================
-	EXTRN	__END__
 	PUBLIC	_malloc
 _malloc:
 	PUSH	IX
@@ -145,300 +148,9 @@ _mde_oom:
 	LD	HL,0
 	RET
 
-; ============================================================
-; void *calloc(size_t nmemb, size_t size)
-; Allocate zeroed memory
-; Arguments: nmemb at IX+4, size at IX+6
-; Returns: pointer to zeroed memory, or NULL
-; ============================================================
-	PUBLIC	_calloc
-_calloc:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	; Calculate total size = nmemb * size
-	LD	L,(IX+4)	; HL = nmemb
-	LD	H,(IX+5)
-	LD	E,(IX+6)	; DE = size
-	LD	D,(IX+7)
-
-	; 16-bit multiply: HL = HL * DE
-	PUSH	BC
-	LD	B,H
-	LD	C,L		; BC = nmemb
-	; Count with the smaller factor (fewer additions)
-	LD	A,B
-	CP	D
-	JR	C,_calloc_ordered
-	JR	NZ,_calloc_swap
-	LD	A,C
-	CP	E
-	JR	C,_calloc_ordered
-_calloc_swap:
-	PUSH	BC
-	LD	B,D
-	LD	C,E
-	POP	DE
-_calloc_ordered:
-	LD	HL,0
-_calloc_mult:
-	LD	A,B
-	OR	C
-	JR	Z,_calloc_mult_done
-	ADD	HL,DE
-	JR	C,_calloc_overflow	; nmemb * size does not fit: NULL
-	DEC	BC
-	JR	_calloc_mult
-_calloc_overflow:
-	POP	BC
-	LD	HL,0
-	POP	IX
-	RET
-_calloc_mult_done:
-	; HL = total size
-	POP	BC
-
-	; Call malloc with size in HL
-	PUSH	HL		; Push size as argument
-	CALL	_malloc
-	POP	DE		; Pop size into DE (we need it for clearing)
-
-	; Check if malloc returned NULL
-	LD	A,H
-	OR	L
-	JR	Z,_calloc_ret	; Return NULL
-
-	; Zero the memory: HL = ptr, DE = size
-	PUSH	HL		; Save return value
-	EX	DE,HL		; HL = size, DE = ptr
-
-	; Zero BC bytes at (DE)
-	LD	B,H
-	LD	C,L		; BC = size
-	EX	DE,HL		; HL = ptr
-
-_calloc_zero:
-	LD	A,B
-	OR	C
-	JR	Z,_calloc_zero_done
-	LD	(HL),0
-	INC	HL
-	DEC	BC
-	JR	_calloc_zero
-
-_calloc_zero_done:
-	POP	HL		; Restore return value
-
-_calloc_ret:
-	POP	IX
-	RET
-
-; ============================================================
-; void free(void *ptr)
-; Put the block on the free list (sorted by address) and merge it with
-; the free blocks next to it.
-; ============================================================
-	PUBLIC	_free
-_free:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = payload
-	CALL	__free_hl
-	POP	IX
-	RET
-
-; Free the block whose payload is HL (0 is ignored).
-; Clobbers AF, BC, DE, HL, IX.
-__free_hl:
-	LD	A,H
-	OR	L
-	RET	Z
-	DEC	HL
-	DEC	HL
-	EX	DE,HL		; DE = block
-	PUSH	DE
-	POP	IX		; IX = block
-	LD	BC,_free_head	; BC = address of the link that points at HL
-	LD	HL,(_free_head)
-_fre_scan:
-	LD	A,H
-	OR	L
-	JR	Z,_fre_here
-	LD	A,E
-	SUB	L
-	LD	A,D
-	SBC	A,H		; carry if block < candidate
-	JR	C,_fre_here
-	INC	HL
-	INC	HL
-	LD	B,H
-	LD	C,L		; BC = &candidate.next
-	LD	A,(HL)
-	INC	HL
-	LD	H,(HL)
-	LD	L,A		; HL = candidate.next
-	JR	_fre_scan
-_fre_here:
-	; the block goes between the block that owns link BC and HL
-	LD	(IX+2),L
-	LD	(IX+3),H	; block.next = HL
-	LD	A,E
-	LD	(BC),A
-	INC	BC
-	LD	A,D
-	LD	(BC),A
-	DEC	BC		; the link now points at the block
-	LD	A,H
-	OR	L
-	JR	Z,_fre_prev
-	; merge with the next block when it starts where this one ends
-	PUSH	HL		; next
-	LD	L,(IX+0)
-	LD	H,(IX+1)
-	INC	HL
-	INC	HL
-	ADD	HL,DE		; HL = end of this block
-	POP	DE		; DE = next
-	OR	A
-	SBC	HL,DE
-	JR	NZ,_fre_prev
-	LD	H,D
-	LD	L,E		; HL = next block
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = next.size
-	INC	HL		; HL = &next.next
-	PUSH	HL
-	LD	L,(IX+0)
-	LD	H,(IX+1)
-	ADD	HL,DE
-	INC	HL
-	INC	HL
-	LD	(IX+0),L
-	LD	(IX+1),H	; size += next.size + 2
-	POP	HL
-	LD	A,(HL)
-	LD	(IX+2),A
-	INC	HL
-	LD	A,(HL)
-	LD	(IX+3),A	; block.next = next.next
-_fre_prev:
-	; merge into the previous block when it ends where this one starts
-	LD	HL,_free_head
-	OR	A
-	SBC	HL,BC
-	RET	Z		; no previous block: BC is the list head
-	DEC	BC
-	DEC	BC		; BC = previous block
-	LD	H,B
-	LD	L,C
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = prev.size
-	LD	HL,2
-	ADD	HL,DE
-	ADD	HL,BC		; HL = end of the previous block
-	PUSH	IX
-	POP	DE		; DE = this block
-	OR	A
-	SBC	HL,DE
-	RET	NZ
-	LD	L,(IX+0)
-	LD	H,(IX+1)
-	INC	HL
-	INC	HL		; HL = this block's size + 2
-	LD	A,(BC)
-	LD	E,A
-	INC	BC
-	LD	A,(BC)
-	LD	D,A		; DE = prev.size, BC = prev + 1
-	ADD	HL,DE
-	LD	A,H
-	LD	(BC),A
-	DEC	BC
-	LD	A,L
-	LD	(BC),A		; prev.size += size + 2
-	INC	BC
-	INC	BC		; BC = &prev.next
-	LD	A,(IX+2)
-	LD	(BC),A
-	INC	BC
-	LD	A,(IX+3)
-	LD	(BC),A		; prev.next = block.next
-	RET
-
-; ============================================================
-; void *realloc(void *ptr, size_t size)
-; NULL ptr: malloc.  Size 0: free, return NULL.  A block that is
-; already big enough is returned as is; otherwise allocate, copy the old
-; contents and free the old block (the old block stays valid when the
-; allocation fails).
-; ============================================================
-	PUBLIC	_realloc
-_realloc:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = ptr
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; DE = size
-	LD	A,H
-	OR	L
-	JR	NZ,_rea_have
-	CALL	__malloc_de
-	POP	IX
-	RET
-_rea_have:
-	LD	A,D
-	OR	E
-	JR	NZ,_rea_do
-	CALL	__free_hl
-	LD	HL,0
-	POP	IX
-	RET
-_rea_do:
-	DEC	HL
-	DEC	HL
-	LD	C,(HL)
-	INC	HL
-	LD	B,(HL)		; BC = size of the old block
-	INC	HL		; HL = payload
-	PUSH	HL		; old payload
-	PUSH	BC		; old size
-	LD	H,B
-	LD	L,C
-	OR	A
-	SBC	HL,DE		; old size - requested size
-	JR	NC,_rea_same
-	CALL	__malloc_de	; HL = new payload
-	POP	BC		; BC = old size
-	POP	DE		; DE = old payload
-	LD	A,H
-	OR	L
-	JR	Z,_rea_ret	; no memory: the old block is untouched
-	PUSH	HL		; new payload
-	PUSH	DE		; old payload
-	EX	DE,HL		; DE = new, HL = old
-	LDIR
-	POP	HL
-	CALL	__free_hl
-	POP	HL		; new payload
-_rea_ret:
-	POP	IX
-	RET
-_rea_same:
-	POP	BC
-	POP	HL		; old payload
-	POP	IX
-	RET
-
 
 	DSEG
+
 _heap_ptr:	DW	0
-_free_head:	DW	0
 
 	END

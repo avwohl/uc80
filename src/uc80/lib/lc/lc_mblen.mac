@@ -1,0 +1,54 @@
+; lc_mblen.mac - split from lc_wchar.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int mblen(const char *s, size_t n)
+; Determine bytes in multibyte character
+; C locale: always returns 1 for non-null char, 0 for null, -1 if s==NULL
+	PUBLIC	_mblen
+_mblen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_mblen_null	; s == NULL
+
+	; Check if n >= 1
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = n
+	LD	A,B
+	OR	C
+	JR	Z,_mblen_zero	; n == 0
+
+	; Check character
+	LD	A,(HL)
+	OR	A
+	JR	Z,_mblen_zero	; null character
+
+	; Valid single-byte character
+	LD	HL,1
+	POP	IX
+	RET
+
+_mblen_null:
+	; s == NULL: return 0 (stateless encoding)
+	LD	HL,0
+	POP	IX
+	RET
+
+_mblen_zero:
+	LD	HL,0
+	POP	IX
+	RET
+
+	END

@@ -1,0 +1,85 @@
+; lc_ftell.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+
+	CSEG
+
+; ============================================================
+; long ftell(FILE *stream)
+; Return current position (simplified)
+; ============================================================
+	PUBLIC	_ftell
+_ftell:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_ftell_err
+
+	LD	A,(HL)
+	CP	3
+	JR	C,_ftell_err
+
+	; Get record number from FCB
+	LD	DE,FILE_FCB+33
+	ADD	HL,DE
+	LD	E,(HL)		; r0
+	INC	HL
+	LD	D,(HL)		; r1
+
+	; Convert to byte offset (multiply by 128)
+	; Shift DE left 7 times, result in DEHL
+	LD	H,D
+	LD	L,E
+	LD	DE,0
+
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x2
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x4
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x8
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x16
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x32
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x64
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x128
+
+	; Add buffer position
+	; (simplified - not adding bufpos)
+	POP	IX
+	RET
+
+_ftell_err:
+	LD	HL,-1
+	LD	DE,-1
+	POP	IX
+	RET
+
+	END

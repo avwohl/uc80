@@ -1,0 +1,45 @@
+; lc_strrchr.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; Additional string functions
+; ============================================================
+; char *strrchr(const char *s, int c)
+; Find last occurrence of c in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strrchr
+_strrchr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+	LD	C,(IX+6)	; C = char to find
+	LD	DE,0		; DE = last match (NULL initially)
+
+_strrchr_loop:
+	LD	A,(HL)
+	CP	C
+	JR	NZ,_strrchr_nomatch
+	LD	D,H		; Save this match
+	LD	E,L
+_strrchr_nomatch:
+	OR	A		; Check for end of string
+	JR	Z,_strrchr_done
+	INC	HL
+	JR	_strrchr_loop
+
+_strrchr_done:
+	EX	DE,HL		; HL = last match (or NULL)
+	POP	IX
+	RET
+
+	END

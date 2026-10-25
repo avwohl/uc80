@@ -1,0 +1,57 @@
+; lc_div.mac - split from lc_stdlib.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__sdiv16
+	EXTRN	__smod16
+
+	CSEG
+
+; ============================================================
+; div_t div(int numer, int denom)
+; Compute quotient and remainder
+; Returns: pointer to static div_t in HL
+; (div_t.quot at _div_result, div_t.rem at _div_result+2)
+; ============================================================
+	PUBLIC	_div
+_div:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; __sdiv16 and __smod16 compute DE op HL: DE = numer, HL = denom
+	LD	E,(IX+4)	; DE = numer
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = denom
+	LD	H,(IX+7)
+
+	; Compute quotient
+	PUSH	HL
+	PUSH	DE
+	CALL	__sdiv16
+	LD	(_div_result),HL
+	POP	DE
+	POP	HL
+
+	; Compute remainder
+	CALL	__smod16
+	LD	(_div_result+2),HL
+
+	LD	HL,_div_result
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+
+
+; div/ldiv result storage
+_div_result:	DS	4	; div_t: quot (2), rem (2)
+
+	END

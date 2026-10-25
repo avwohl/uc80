@@ -27,6 +27,18 @@ observable behaviour of a program uc80 compiles.
 
 ### Changed
 
+- **`bsearch`, `vprintf` and `vsprintf` are their own modules, and `rand` links no runtime multiply.** A `qsort`-only program is 192 bytes smaller, an `fprintf` program about 220 bytes smaller, and a `rand` program about 550 bytes smaller.
+- **Smaller programs: libc is split into one module per function.** The
+  float printer was part of `lc_printf_core`, so every program that called
+  `printf` linked the soft-float code (about 2.8 KB). It is now
+  `lc_prt_float.mac` and only `%f` links it: a `printf("%d")` program drops
+  from 4343 to 1498 bytes. The modules that held several public functions
+  (`lc_string`, `lc_mem`, `lc_stdlib`, `lc_atoi`, `lc_ctype`, `lc_wchar`,
+  `lc_malloc`, `lc_file`, `lc_misc`, `lc_time`, `lc_puts`) are split so a
+  program links only the functions it calls: `strlen` no longer pulls in
+  `malloc`, and `exit` no longer pulls in `abort`. `uc80 --build-libs`
+  removes the stale `.rel` files of removed modules.
+
 - **Faster `qsort`.** `qsort` was a selection sort (n² comparisons, 37
   billion T-states for 5,000 equal ints) and sorted in descending order.
   It is now a non-recursive quicksort with a median-of-three pivot, a

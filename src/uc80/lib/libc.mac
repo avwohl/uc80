@@ -12,6 +12,68 @@ PRTSTR	EQU	9		; Print string (address in DE, '$' terminated)
 	CSEG
 
 ; ============================================================
+; lc_abort.mac
+; ============================================================
+	CSEG
+; lc_abort.mac - split from lc_stdlib.mac
+
+
+	CSEG
+
+; ============================================================
+; void abort(void)
+; Abnormal program termination
+; ============================================================
+	PUBLIC	_abort
+_abort:
+	; Print abort message
+	LD	DE,_abort_msg
+	LD	C,PRTSTR
+	CALL	BDOS
+	; Exit
+	JP	0
+
+
+	DSEG
+
+
+; abort message
+_abort_msg:	DB	'Aborted',0DH,0AH,'$'
+
+
+; ============================================================
+; lc_abs.mac
+; ============================================================
+	CSEG
+; lc_abs.mac - split from lc_stdlib.mac
+
+
+	CSEG
+
+; ============================================================
+; int abs(int n)
+; Return absolute value
+; ============================================================
+	PUBLIC	_abs
+_abs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	BIT	7,H
+	JR	Z,_abs_done
+	; Negate
+	LD	DE,0
+	EX	DE,HL
+	OR	A
+	SBC	HL,DE
+_abs_done:
+	POP	IX
+	RET
+
+
+; ============================================================
 ; lc_acos.mac
 ; ============================================================
 	CSEG
@@ -773,6 +835,62 @@ _atanh_num:	DS	4
 
 
 ; ============================================================
+; lc_atexit.mac
+; ============================================================
+	CSEG
+; lc_atexit.mac - split from lc_stdlib.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int atexit(void (*func)(void))
+; Register function to be called at exit
+; Returns 0 on success, non-zero on failure
+; ============================================================
+	PUBLIC	_atexit
+_atexit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Check if we have room
+	LD	A,(_atexit_cnt)
+	CP	4		; Max 4 handlers
+	JR	NC,_atexit_fail
+
+	; Get handler address: _atexit_tab + cnt*2
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	LD	DE,_atexit_tab
+	ADD	HL,DE		; HL = slot address
+
+	; Store function pointer
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+
+	; Increment count
+	LD	A,(_atexit_cnt)
+	INC	A
+	LD	(_atexit_cnt),A
+
+	; Return success
+	LD	HL,0
+	POP	IX
+	RET
+
+_atexit_fail:
+	LD	HL,1
+	POP	IX
+	RET
+
+
+; ============================================================
 ; lc_atof.mac
 ; ============================================================
 	CSEG
@@ -1240,7 +1358,7 @@ _strtod_tmp:	DS	4
 ; lc_atoi.mac
 ; ============================================================
 	CSEG
-; lc_atoi.mac - string to integer conversion
+; lc_atoi.mac - split from lc_atoi.mac
 
 
 	CSEG
@@ -1342,6 +1460,16 @@ _atoi_done:
 _atoi_ret:
 	POP	IX
 	RET
+
+
+; ============================================================
+; lc_atol.mac
+; ============================================================
+	CSEG
+; lc_atol.mac - split from lc_atoi.mac
+
+
+	CSEG
 
 ; ============================================================
 ; long atol(const char *nptr)
@@ -1493,326 +1621,13 @@ _atol_ret:
 	POP	IX
 	RET
 
-; ============================================================
-; long strtol(const char *nptr, char **endptr, int base)
-; Convert string to long (32-bit signed)
-; Supports base 0 (auto-detect), 8, 10, 16
-; Returns result in DEHL
-; ============================================================
-	PUBLIC	_strtol
-_strtol:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)	; HL = nptr
-	LD	H,(IX+5)
-	LD	A,(IX+8)	; A = base (low byte only matters)
-	LD	(_strtol_base),A
-	XOR	A
-	LD	(_strtol_neg),A	; Clear negative flag
-
-	; Skip leading whitespace
-_strtol_skip:
-	LD	A,(HL)
-	CP	' '
-	JR	Z,_strtol_skipnext
-	CP	09H
-	JR	Z,_strtol_skipnext
-	CP	0AH
-	JR	Z,_strtol_skipnext
-	CP	0DH
-	JR	Z,_strtol_skipnext
-	JR	_strtol_sign
-_strtol_skipnext:
-	INC	HL
-	JR	_strtol_skip
-
-_strtol_sign:
-	LD	A,(HL)
-	CP	'-'
-	JR	NZ,_strtol_chkplus
-	LD	A,1
-	LD	(_strtol_neg),A
-	INC	HL
-	JR	_strtol_prefix
-_strtol_chkplus:
-	CP	'+'
-	JR	NZ,_strtol_prefix
-	INC	HL
-
-_strtol_prefix:
-	; Check for 0x or 0 prefix if base==0 or base==16/8
-	LD	A,(_strtol_base)
-	OR	A
-	JR	Z,_strtol_auto	; Auto-detect base
-	CP	16
-	JR	Z,_strtol_chk0x
-	JR	_strtol_init
-
-_strtol_auto:
-	LD	A,(HL)
-	CP	'0'
-	JR	NZ,_strtol_base10
-	INC	HL
-	LD	A,(HL)
-	CP	'x'
-	JR	Z,_strtol_hexauto
-	CP	'X'
-	JR	Z,_strtol_hexauto
-	; Octal
-	DEC	HL
-	LD	A,8
-	LD	(_strtol_base),A
-	JR	_strtol_init
-
-_strtol_hexauto:
-	INC	HL		; Skip 'x'
-	LD	A,16
-	LD	(_strtol_base),A
-	JR	_strtol_init
-
-_strtol_base10:
-	LD	A,10
-	LD	(_strtol_base),A
-	JR	_strtol_init
-
-_strtol_chk0x:
-	; For explicit base 16, skip optional 0x prefix
-	LD	A,(HL)
-	CP	'0'
-	JR	NZ,_strtol_init
-	INC	HL
-	LD	A,(HL)
-	CP	'x'
-	JR	Z,_strtol_skip0x
-	CP	'X'
-	JR	Z,_strtol_skip0x
-	DEC	HL
-	JR	_strtol_init
-_strtol_skip0x:
-	INC	HL
-
-_strtol_init:
-	; Initialize result to 0
-	XOR	A
-	LD	(_strtol_acc),A
-	LD	(_strtol_acc+1),A
-	LD	(_strtol_acc+2),A
-	LD	(_strtol_acc+3),A
-
-_strtol_loop:
-	LD	A,(HL)
-	; Convert digit
-	CP	'0'
-	JR	C,_strtol_done
-	CP	'9'+1
-	JR	C,_strtol_digit
-	; Check for hex digits
-	CP	'A'
-	JR	C,_strtol_done
-	CP	'Z'+1
-	JR	C,_strtol_upper
-	CP	'a'
-	JR	C,_strtol_done
-	CP	'z'+1
-	JR	NC,_strtol_done
-	SUB	'a'-10
-	JR	_strtol_gotdig
-
-_strtol_upper:
-	SUB	'A'-10
-	JR	_strtol_gotdig
-
-_strtol_digit:
-	SUB	'0'
-
-_strtol_gotdig:
-	; A = digit value, check against base
-	LD	B,A
-	LD	A,(_strtol_base)
-	CP	B
-	JR	C,_strtol_done	; digit >= base
-	JR	Z,_strtol_done	; digit >= base
-	LD	A,B
-
-	; acc = acc * base + digit
-	PUSH	HL
-	PUSH	AF		; Save digit
-
-	; Multiply acc by base
-	LD	A,(_strtol_base)
-	CALL	_strtol_mult
-
-	; Add digit
-	POP	AF
-	LD	E,A
-	LD	D,0
-	LD	HL,(_strtol_acc)
-	ADD	HL,DE
-	LD	(_strtol_acc),HL
-	JR	NC,_strtol_noc
-	LD	HL,(_strtol_acc+2)
-	INC	HL
-	LD	(_strtol_acc+2),HL
-_strtol_noc:
-	POP	HL
-	INC	HL
-	JR	_strtol_loop
-
-_strtol_done:
-	; Save end pointer if endptr != NULL
-	LD	E,(IX+6)	; DE = endptr
-	LD	D,(IX+7)
-	LD	A,D
-	OR	E
-	JR	Z,_strtol_noend
-	; *endptr = HL
-	EX	DE,HL
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-_strtol_noend:
-
-	; Load result into DEHL
-	LD	HL,(_strtol_acc)
-	LD	DE,(_strtol_acc+2)
-
-	; Apply sign
-	LD	A,(_strtol_neg)
-	OR	A
-	JR	Z,_strtol_ret
-
-	; Negate DEHL
-	PUSH	BC
-	LD	BC,0
-	LD	A,C
-	SUB	L
-	LD	L,A
-	LD	A,C
-	SBC	A,H
-	LD	H,A
-	LD	A,C
-	SBC	A,E
-	LD	E,A
-	LD	A,C
-	SBC	A,D
-	LD	D,A
-	POP	BC
-
-_strtol_ret:
-	POP	BC
-	POP	IX
-	RET
-
-; Internal: multiply _strtol_acc by A
-_strtol_mult:
-	PUSH	BC
-	LD	B,A		; B = multiplier
-
-	; Copy acc to tmp
-	LD	HL,(_strtol_acc)
-	LD	(_strtol_tmp),HL
-	LD	HL,(_strtol_acc+2)
-	LD	(_strtol_tmp+2),HL
-
-	; Clear acc
-	XOR	A
-	LD	(_strtol_acc),A
-	LD	(_strtol_acc+1),A
-	LD	(_strtol_acc+2),A
-	LD	(_strtol_acc+3),A
-
-	; Multiply by shifts and adds
-_strtol_mult_loop:
-	LD	A,B
-	OR	A
-	JR	Z,_strtol_mult_done
-	RRA			; Carry = LSB
-	LD	B,A
-	JR	NC,_strtol_mult_shift
-
-	; Add tmp to acc
-	LD	HL,(_strtol_acc)
-	LD	DE,(_strtol_tmp)
-	ADD	HL,DE
-	LD	(_strtol_acc),HL
-	LD	HL,(_strtol_acc+2)
-	LD	DE,(_strtol_tmp+2)
-	ADC	HL,DE
-	LD	(_strtol_acc+2),HL
-
-_strtol_mult_shift:
-	; tmp = tmp * 2
-	LD	HL,(_strtol_tmp)
-	ADD	HL,HL
-	LD	(_strtol_tmp),HL
-	LD	HL,(_strtol_tmp+2)
-	ADC	HL,HL
-	LD	(_strtol_tmp+2),HL
-	JR	_strtol_mult_loop
-
-_strtol_mult_done:
-	POP	BC
-	RET
-
-; ============================================================
-; unsigned long strtoul(const char *nptr, char **endptr, int base)
-; Convert string to unsigned long (32-bit)
-; Same as strtol but ignores minus sign
-; ============================================================
-	PUBLIC	_strtoul
-_strtoul:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)	; HL = nptr
-	LD	H,(IX+5)
-	LD	A,(IX+8)	; A = base
-	LD	(_strtol_base),A
-	XOR	A
-	LD	(_strtol_neg),A	; Always unsigned
-
-	; Skip leading whitespace
-_strtoul_skip:
-	LD	A,(HL)
-	CP	' '
-	JR	Z,_strtoul_skipnext
-	CP	09H
-	JR	Z,_strtoul_skipnext
-	CP	0AH
-	JR	Z,_strtoul_skipnext
-	CP	0DH
-	JR	Z,_strtoul_skipnext
-	JR	_strtoul_sign
-_strtoul_skipnext:
-	INC	HL
-	JR	_strtoul_skip
-
-_strtoul_sign:
-	; Skip optional + sign, ignore - sign
-	LD	A,(HL)
-	CP	'+'
-	JR	NZ,_strtoul_pref
-	INC	HL
-
-_strtoul_pref:
-	JP	_strtol_prefix	; Share the rest of strtol code
 
 	DSEG
+
 
 ; atol working storage
 _atol_acc:	DS	4
 _atol_tmp:	DS	4
-
-; strtol working storage
-_strtol_acc:	DS	4
-_strtol_tmp:	DS	4
-_strtol_base:	DS	1
-_strtol_neg:	DS	1
 
 
 ; ============================================================
@@ -2904,6 +2719,222 @@ ___atomic_fetch_and_4:
 
 
 ; ============================================================
+; lc_bsearch.mac
+; ============================================================
+	CSEG
+; lc_bsearch.mac - bsearch, split from lc_qsort.mac
+
+	CSEG
+
+; ============================================================
+; void *bsearch(const void *key, const void *base, size_t nmemb,
+;               size_t size, int (*compar)(const void *, const void *))
+; Binary search in a sorted array.  Calls compar(key, element).
+; Stack: key(IX+4), base(IX+6), nmemb(IX+8), size(IX+10), compar(IX+12)
+; Locals: low(IX-4), high(IX-6), mid(IX-8) -- on the stack, so bsearch
+; is reentrant (a comparator can call bsearch or qsort).
+; Returns: pointer to a matching element, or NULL.  Preserves BC and IX.
+; ============================================================
+	PUBLIC	_bsearch
+_bsearch:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	LD	HL,0
+	PUSH	HL			; low = 0      (IX-4)
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	PUSH	HL			; high = nmemb (IX-6)
+	PUSH	HL			; mid          (IX-8)
+
+bs_loop:
+	; if (low >= high) not found
+	LD	L,(IX-4)
+	LD	H,(IX-3)
+	LD	E,(IX-6)
+	LD	D,(IX-5)
+	OR	A
+	SBC	HL,DE
+	JR	NC,bs_nf
+	; mid = (low + high) / 2, with the 17th bit kept
+	ADD	HL,DE			; HL = low again
+	ADD	HL,DE			; CY:HL = low + high
+	RR	H
+	RR	L
+	LD	(IX-8),L
+	LD	(IX-7),H
+	; HL = base + mid*size
+	EX	DE,HL			; DE = mid
+	LD	C,(IX+10)
+	LD	B,(IX+11)		; BC = size
+	LD	HL,0
+bs_mul:
+	SRL	B
+	RR	C
+	JR	NC,bs_mul2
+	ADD	HL,DE
+bs_mul2:
+	LD	A,B
+	OR	C
+	JR	Z,bs_mul3
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	JR	bs_mul
+bs_mul3:
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	ADD	HL,DE			; HL = &base[mid]
+	PUSH	HL			; keep element address
+	PUSH	HL			; b = element
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL			; a = key
+	LD	L,(IX+12)
+	LD	H,(IX+13)
+	CALL	bs_jphl
+	POP	DE
+	POP	DE
+	POP	DE			; DE = element address
+	LD	A,H
+	OR	L
+	JR	Z,bs_found
+	BIT	7,H
+	JR	NZ,bs_left
+	; key > element: low = mid + 1
+	LD	L,(IX-8)
+	LD	H,(IX-7)
+	INC	HL
+	LD	(IX-4),L
+	LD	(IX-3),H
+	JR	bs_loop
+bs_left:
+	; key < element: high = mid
+	LD	L,(IX-8)
+	LD	H,(IX-7)
+	LD	(IX-6),L
+	LD	(IX-5),H
+	JR	bs_loop
+
+bs_found:
+	EX	DE,HL
+	JR	bs_ret
+bs_nf:
+	LD	HL,0
+bs_ret:
+	LD	SP,IX
+	DEC	SP
+	DEC	SP
+	POP	BC
+	POP	IX
+	RET
+
+bs_jphl:
+	JP	(HL)
+
+
+; ============================================================
+; lc_calloc.mac
+; ============================================================
+	CSEG
+; lc_calloc.mac - split from lc_malloc.mac
+
+
+
+	CSEG
+
+; ============================================================
+; void *calloc(size_t nmemb, size_t size)
+; Allocate zeroed memory
+; Arguments: nmemb at IX+4, size at IX+6
+; Returns: pointer to zeroed memory, or NULL
+; ============================================================
+	PUBLIC	_calloc
+_calloc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Calculate total size = nmemb * size
+	LD	L,(IX+4)	; HL = nmemb
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = size
+	LD	D,(IX+7)
+
+	; 16-bit multiply: HL = HL * DE
+	PUSH	BC
+	LD	B,H
+	LD	C,L		; BC = nmemb
+	; Count with the smaller factor (fewer additions)
+	LD	A,B
+	CP	D
+	JR	C,_calloc_ordered
+	JR	NZ,_calloc_swap
+	LD	A,C
+	CP	E
+	JR	C,_calloc_ordered
+_calloc_swap:
+	PUSH	BC
+	LD	B,D
+	LD	C,E
+	POP	DE
+_calloc_ordered:
+	LD	HL,0
+_calloc_mult:
+	LD	A,B
+	OR	C
+	JR	Z,_calloc_mult_done
+	ADD	HL,DE
+	JR	C,_calloc_overflow	; nmemb * size does not fit: NULL
+	DEC	BC
+	JR	_calloc_mult
+_calloc_overflow:
+	POP	BC
+	LD	HL,0
+	POP	IX
+	RET
+_calloc_mult_done:
+	; HL = total size
+	POP	BC
+
+	; Call malloc with size in HL
+	PUSH	HL		; Push size as argument
+	CALL	_malloc
+	POP	DE		; Pop size into DE (we need it for clearing)
+
+	; Check if malloc returned NULL
+	LD	A,H
+	OR	L
+	JR	Z,_calloc_ret	; Return NULL
+
+	; Zero the memory: HL = ptr, DE = size
+	PUSH	HL		; Save return value
+	EX	DE,HL		; HL = size, DE = ptr
+
+	; Zero BC bytes at (DE)
+	LD	B,H
+	LD	C,L		; BC = size
+	EX	DE,HL		; HL = ptr
+
+_calloc_zero:
+	LD	A,B
+	OR	C
+	JR	Z,_calloc_zero_done
+	LD	(HL),0
+	INC	HL
+	DEC	BC
+	JR	_calloc_zero
+
+_calloc_zero_done:
+	POP	HL		; Restore return value
+
+_calloc_ret:
+	POP	IX
+	RET
+
+
+; ============================================================
 ; lc_cbrt.mac
 ; ============================================================
 	CSEG
@@ -3035,6 +3066,62 @@ _cbrt_x:	DS	4
 _cbrt_g:	DS	4
 _cbrt_g2:	DS	4
 _cbrt_t:	DS	4
+
+
+; ============================================================
+; lc_clearerr.mac
+; ============================================================
+	CSEG
+; lc_clearerr.mac - split from lc_file.mac
+
+FLAG_EOF	EQU	02H
+FLAG_ERROR	EQU	04H
+
+	CSEG
+
+; ============================================================
+; void clearerr(FILE *stream)
+; Clear error and EOF flags
+; ============================================================
+	PUBLIC	_clearerr
+_clearerr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_clearerr_ret
+	INC	HL		; flags
+	LD	A,(HL)
+	AND	0FFH - FLAG_EOF - FLAG_ERROR
+	LD	(HL),A
+_clearerr_ret:
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_clock.mac
+; ============================================================
+	CSEG
+; lc_clock.mac - split from lc_time.mac
+
+
+	CSEG
+
+; ============================================================
+; clock_t clock(void)
+; Return CPU time used (stub - returns 0)
+; ============================================================
+	PUBLIC	_clock
+_clock:
+	LD	HL,0
+	LD	DE,0
+	RET
+
+; ============================================================
 
 
 ; ============================================================
@@ -4281,248 +4368,42 @@ _cosh_ep:	DS	4
 
 
 ; ============================================================
-; lc_ctype.mac
+; lc_cputs.mac
 ; ============================================================
 	CSEG
-; lc_ctype.mac - character classification functions
+; lc_cputs.mac - split from lc_puts.mac
+
 
 
 	CSEG
 
 ; ============================================================
-; Character classification functions
-; These are also available as macros in ctype.h but provided
-; as functions for use with function pointers
+; void cputs(const char *s)
+; Output a string (no newline, for internal use)
 ; ============================================================
-
-; int isdigit(int c)
-	PUBLIC	_isdigit
-_isdigit:
+	PUBLIC	_cputs
+_cputs:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	LD	A,(IX+4)
-	CP	'0'
-	JR	C,_isdigit_no
-	CP	'9'+1
-	JR	NC,_isdigit_no
-	LD	HL,1
-	POP	IX
-	RET
-_isdigit_no:
-	LD	HL,0
-	POP	IX
-	RET
+	PUSH	BC
 
-; int isalpha(int c)
-	PUBLIC	_isalpha
-_isalpha:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	; Check uppercase
-	CP	'A'
-	JR	C,_isalpha_lower
-	CP	'Z'+1
-	JR	C,_isalpha_yes
-_isalpha_lower:
-	; Check lowercase
-	CP	'a'
-	JR	C,_isalpha_no
-	CP	'z'+1
-	JR	NC,_isalpha_no
-_isalpha_yes:
-	LD	HL,1
-	POP	IX
-	RET
-_isalpha_no:
-	LD	HL,0
-	POP	IX
-	RET
+	; Get string pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
 
-; int isalnum(int c)
-	PUBLIC	_isalnum
-_isalnum:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	; Check digit
-	CP	'0'
-	JR	C,_isalnum_alpha
-	CP	'9'+1
-	JR	C,_isalnum_yes
-_isalnum_alpha:
-	; Check uppercase
-	CP	'A'
-	JR	C,_isalnum_lower
-	CP	'Z'+1
-	JR	C,_isalnum_yes
-_isalnum_lower:
-	CP	'a'
-	JR	C,_isalnum_no
-	CP	'z'+1
-	JR	NC,_isalnum_no
-_isalnum_yes:
-	LD	HL,1
-	POP	IX
-	RET
-_isalnum_no:
-	LD	HL,0
-	POP	IX
-	RET
+_cputs_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_cputs_done
 
-; int isspace(int c)
-	PUBLIC	_isspace
-_isspace:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	CP	' '
-	JR	Z,_isspace_yes
-	CP	09H		; TAB
-	JR	Z,_isspace_yes
-	CP	0AH		; LF
-	JR	Z,_isspace_yes
-	CP	0BH		; VT
-	JR	Z,_isspace_yes
-	CP	0CH		; FF
-	JR	Z,_isspace_yes
-	CP	0DH		; CR
-	JR	Z,_isspace_yes
-	LD	HL,0
-	POP	IX
-	RET
-_isspace_yes:
-	LD	HL,1
-	POP	IX
-	RET
+	LD	E,A
+	CALL	__conout	; preserves HL
+	INC	HL
+	JR	_cputs_loop
 
-; int isupper(int c)
-	PUBLIC	_isupper
-_isupper:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	CP	'A'
-	JR	C,_isupper_no
-	CP	'Z'+1
-	JR	NC,_isupper_no
-	LD	HL,1
-	POP	IX
-	RET
-_isupper_no:
-	LD	HL,0
-	POP	IX
-	RET
-
-; int islower(int c)
-	PUBLIC	_islower
-_islower:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	CP	'a'
-	JR	C,_islower_no
-	CP	'z'+1
-	JR	NC,_islower_no
-	LD	HL,1
-	POP	IX
-	RET
-_islower_no:
-	LD	HL,0
-	POP	IX
-	RET
-
-; int toupper(int c)
-	PUBLIC	_toupper
-_toupper:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	CP	'a'
-	JR	C,_toupper_ret
-	CP	'z'+1
-	JR	NC,_toupper_ret
-	SUB	'a'-'A'		; Convert to uppercase
-_toupper_ret:
-	LD	L,A
-	LD	H,0
-	POP	IX
-	RET
-
-; int tolower(int c)
-	PUBLIC	_tolower
-_tolower:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	CP	'A'
-	JR	C,_tolower_ret
-	CP	'Z'+1
-	JR	NC,_tolower_ret
-	ADD	A,'a'-'A'	; Convert to lowercase
-_tolower_ret:
-	LD	L,A
-	LD	H,0
-	POP	IX
-	RET
-
-; int isprint(int c)
-	PUBLIC	_isprint
-_isprint:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	CP	' '
-	JR	C,_isprint_no
-	CP	7FH		; DEL
-	JR	NC,_isprint_no
-	LD	HL,1
-	POP	IX
-	RET
-_isprint_no:
-	LD	HL,0
-	POP	IX
-	RET
-
-; int isxdigit(int c)
-	PUBLIC	_isxdigit
-_isxdigit:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	A,(IX+4)
-	; Check digit
-	CP	'0'
-	JR	C,_isxdigit_hex
-	CP	'9'+1
-	JR	C,_isxdigit_yes
-_isxdigit_hex:
-	; Check A-F
-	CP	'A'
-	JR	C,_isxdigit_lower
-	CP	'F'+1
-	JR	C,_isxdigit_yes
-_isxdigit_lower:
-	; Check a-f
-	CP	'a'
-	JR	C,_isxdigit_no
-	CP	'f'+1
-	JR	NC,_isxdigit_no
-_isxdigit_yes:
-	LD	HL,1
-	POP	IX
-	RET
-_isxdigit_no:
-	LD	HL,0
+_cputs_done:
+	POP	BC
 	POP	IX
 	RET
 
@@ -4552,6 +4433,130 @@ _stderr:	DW	_stderr_data
 
 	PUBLIC	_errno
 _errno:	DW	0
+
+
+; ============================================================
+; lc_div.mac
+; ============================================================
+	CSEG
+; lc_div.mac - split from lc_stdlib.mac
+
+
+	EXTRN	__sdiv16
+	EXTRN	__smod16
+
+	CSEG
+
+; ============================================================
+; div_t div(int numer, int denom)
+; Compute quotient and remainder
+; Returns: pointer to static div_t in HL
+; (div_t.quot at _div_result, div_t.rem at _div_result+2)
+; ============================================================
+	PUBLIC	_div
+_div:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; __sdiv16 and __smod16 compute DE op HL: DE = numer, HL = denom
+	LD	E,(IX+4)	; DE = numer
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = denom
+	LD	H,(IX+7)
+
+	; Compute quotient
+	PUSH	HL
+	PUSH	DE
+	CALL	__sdiv16
+	LD	(_div_result),HL
+	POP	DE
+	POP	HL
+
+	; Compute remainder
+	CALL	__smod16
+	LD	(_div_result+2),HL
+
+	LD	HL,_div_result
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+
+
+; div/ldiv result storage
+_div_result:	DS	4	; div_t: quot (2), rem (2)
+
+
+; ============================================================
+; lc_exit.mac
+; ============================================================
+	CSEG
+; lc_exit.mac - split from lc_stdlib.mac
+
+
+
+	CSEG
+
+; ============================================================
+; void exit(int status)
+; Calls atexit handlers then terminates
+; ============================================================
+	PUBLIC	_exit
+_exit:
+	; Call atexit handlers in reverse order
+	LD	A,(_atexit_cnt)
+	OR	A
+	JR	Z,_exit_done
+
+_exit_loop:
+	DEC	A
+	LD	(_atexit_cnt),A
+	; Get handler address: _atexit_tab + A*2
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL		; HL = A*2
+	LD	DE,_atexit_tab
+	ADD	HL,DE		; HL = address of handler pointer
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = handler address
+	; Call handler
+	PUSH	AF
+	LD	HL,_exit_loop_ret
+	PUSH	HL		; Push return address
+	PUSH	DE		; Push handler address
+	RET			; "Call" the handler
+_exit_loop_ret:
+	POP	AF
+	OR	A
+	JR	NZ,_exit_loop
+
+_exit_done:
+	; Return to CP/M (warm boot)
+	JP	0
+
+
+; ============================================================
+; lc_exit_data.mac
+; ============================================================
+	CSEG
+; lc_exit_data.mac - split from lc_stdlib.mac
+
+
+	PUBLIC	_atexit_cnt
+	PUBLIC	_atexit_tab
+
+
+	DSEG
+
+
+; atexit handler table (max 4 handlers)
+_atexit_cnt:	DB	0	; Number of registered handlers
+_atexit_tab:	DS	8	; 4 function pointers (2 bytes each)
 
 
 ; ============================================================
@@ -4906,6 +4911,86 @@ _copysignf:
 
 
 ; ============================================================
+; lc_fclose.mac
+; ============================================================
+	CSEG
+; lc_fclose.mac - split from lc_file.mac
+
+BDOS_CLOSE	EQU	16	; Close file
+FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FLAG_OPEN	EQU	01H
+FLAG_WRITE	EQU	08H
+
+
+	CSEG
+
+; ============================================================
+; int fclose(FILE *stream)
+; Close a file
+; ============================================================
+	PUBLIC	_fclose
+_fclose:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = stream
+
+	; Check for NULL or console streams
+	LD	A,H
+	OR	L
+	JR	Z,_fclose_ok
+	LD	A,(HL)
+	CP	3
+	JR	C,_fclose_ok	; stdin/stdout/stderr
+
+	; Check if open
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_OPEN
+	JR	Z,_fclose_ok
+
+	; If write mode, flush buffer
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	JR	Z,_fclose_doclose
+
+	; Flush write buffer
+	DEC	HL
+	PUSH	HL
+	CALL	_fflush_internal
+	POP	HL
+	INC	HL
+
+_fclose_doclose:
+	DEC	HL		; Back to FILE start
+	PUSH	HL
+
+	; Set DMA and close
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL		; DE = FCB
+
+	LD	C,BDOS_CLOSE
+	CALL	BDOS
+
+	; Clear flags
+	POP	HL
+	INC	HL		; flags
+	LD	(HL),0
+
+_fclose_ok:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
 ; lc_fdim.mac
 ; ============================================================
 	CSEG
@@ -4975,349 +5060,97 @@ _fdim_zero:
 
 
 ; ============================================================
-; lc_file.mac
+; lc_feof.mac
 ; ============================================================
 	CSEG
-; lc_file.mac - file I/O functions
+; lc_feof.mac - split from lc_file.mac
 
-
-
-	EXTRN	__div16
-	EXTRN	__mul16
 
 	CSEG
 
 ; ============================================================
-; CP/M File I/O Implementation
-; Real file operations using BDOS FCB calls
+; int feof(FILE *stream)
+; Check EOF flag
 ; ============================================================
-
-BDOS_OPEN	EQU	15	; Open file
-BDOS_CLOSE	EQU	16	; Close file
-BDOS_DELETE	EQU	19	; Delete file
-BDOS_RENAME	EQU	23	; Rename file
-BDOS_READ	EQU	20	; Read sequential
-BDOS_WRITE	EQU	21	; Write sequential
-BDOS_MAKE	EQU	22	; Make (create) file
-BDOS_SETDMA	EQU	26	; Set DMA address
-BDOS_RREAD	EQU	33	; Read random
-BDOS_RWRITE	EQU	34	; Write random
-BDOS_FSIZE	EQU	35	; Compute file size
-BDOS_SETREC	EQU	36	; Set random record
-
-; FILE structure offsets (170 bytes total)
-FILE_FD		EQU	0	; Slot number (0=stdin,1=stdout,2=stderr,3+=files)
-FILE_FLAGS	EQU	1	; bit0=open,bit1=EOF,bit2=error,bit3=write,bit4=read
-FILE_UNGET	EQU	2	; Ungetc char (0xFF=none)
-FILE_BUFPOS	EQU	3	; Current position in buffer
-FILE_BUFCNT	EQU	4	; Valid bytes in buffer (for read)
-FILE_RESERVED	EQU	5	; Reserved
-FILE_FCB	EQU	6	; FCB starts here (36 bytes)
-FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
-FILE_SIZE	EQU	170	; Total FILE structure size
-
-; Flag bits
-FLAG_OPEN	EQU	01H
-FLAG_EOF	EQU	02H
-FLAG_ERROR	EQU	04H
-FLAG_WRITE	EQU	08H
-FLAG_READ	EQU	10H
-
-; Standard stream file descriptors
-FD_STDIN	EQU	0
-FD_STDOUT	EQU	1
-FD_STDERR	EQU	2
-
-; Number of file slots (besides stdin/stdout/stderr)
-MAX_FILES	EQU	4
-
-; ============================================================
-; FILE *fopen(const char *pathname, const char *mode)
-; Open a file for reading or writing
-; ============================================================
-	PUBLIC	_fopen
-_fopen:
+	PUBLIC	_feof
+_feof:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Find free file slot
-	LD	HL,_file_slots
-	LD	B,MAX_FILES
-_fopen_find:
-	PUSH	HL
-	INC	HL		; Point to flags
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_feof_yes
+	INC	HL		; flags
 	LD	A,(HL)
-	AND	FLAG_OPEN
-	POP	HL
-	JR	Z,_fopen_found
-	LD	DE,FILE_SIZE
-	ADD	HL,DE
-	DJNZ	_fopen_find
-	; No free slot
-	LD	HL,0
-	JP	_fopen_ret
-
-_fopen_found:
-	; HL = FILE structure, save it
-	PUSH	HL
-
-	; Parse mode string
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = mode
-	LD	A,(HL)
-	LD	B,0		; B = mode flags
-	CP	'r'
-	JR	Z,_fopen_read
-	CP	'w'
-	JR	Z,_fopen_write
-	CP	'a'
-	JR	Z,_fopen_append
-	; Invalid mode
-	POP	HL
-	LD	HL,0
-	JP	_fopen_ret
-
-_fopen_read:
-	LD	B,FLAG_READ
-	JR	_fopen_setup
-
-_fopen_write:
-	LD	B,FLAG_WRITE
-	JR	_fopen_setup
-
-_fopen_append:
-	LD	B,FLAG_WRITE	; Append = write mode
-	; (simplified: append not fully supported)
-
-_fopen_setup:
-	; B = mode flags, stack has FILE*
-	POP	HL		; HL = FILE*
-	PUSH	HL
-	PUSH	BC		; Save mode
-
-	; Initialize FILE structure
-	LD	A,3		; fd = 3+ for files
-	LD	(HL),A
-	INC	HL
-	XOR	A
-	LD	(HL),A		; flags = 0 (will set later)
-	INC	HL
-	LD	A,0FFH
-	LD	(HL),A		; unget = none
-	INC	HL
-	XOR	A
-	LD	(HL),A		; bufpos = 0
-	INC	HL
-	LD	(HL),A		; bufcnt = 0
-	INC	HL
-	LD	(HL),A		; reserved = 0
-	INC	HL		; HL now at FCB
-
-	; Clear FCB (36 bytes)
-	PUSH	HL
-	LD	B,36
-_fopen_clr:
-	LD	(HL),A
-	INC	HL
-	DJNZ	_fopen_clr
-	POP	HL		; HL = FCB start
-
-	; Parse pathname into FCB
-	; HL = FCB, pathname at IX+4
-	PUSH	HL
-	LD	E,(IX+4)
-	LD	D,(IX+5)	; DE = pathname
-	CALL	_parse_fcb
-	POP	HL		; HL = FCB
-
-	; Get FILE* back
-	POP	BC		; B = mode flags
-	POP	DE		; DE = FILE*
-	PUSH	DE
-	PUSH	BC
-
-	; Set DMA to FILE's buffer
-	PUSH	HL
-	LD	HL,FILE_BUFFER-FILE_FCB
-	ADD	HL,DE
-	EX	DE,HL		; DE = buffer address
-	LD	C,BDOS_SETDMA
-	CALL	BDOS
-	POP	DE		; DE = FCB
-
-	; Open or create based on mode
-	POP	BC		; B = mode flags
-	POP	HL		; HL = FILE*
-	PUSH	HL
-	PUSH	BC
-
-	LD	A,B
-	AND	FLAG_WRITE
-	JR	Z,_fopen_doopen
-
-	; Write mode - delete existing, create new
-	PUSH	DE
-	LD	C,BDOS_DELETE
-	CALL	BDOS
-	POP	DE
-	LD	C,BDOS_MAKE
-	CALL	BDOS
-	JR	_fopen_check
-
-_fopen_doopen:
-	; Read mode - open existing
-	LD	C,BDOS_OPEN
-	CALL	BDOS
-
-_fopen_check:
-	; A = 0xFF on error
-	CP	0FFH
-	JR	NZ,_fopen_ok
-
-	; Open failed
-	POP	BC
-	POP	HL
-	LD	HL,0
-	JP	_fopen_ret
-
-_fopen_ok:
-	; Set flags and return FILE*
-	POP	BC		; B = mode flags
-	POP	HL		; HL = FILE*
-	PUSH	HL
-	INC	HL		; Point to flags
-	LD	A,B
-	OR	FLAG_OPEN
-	LD	(HL),A
-	POP	HL		; Return FILE*
-	JR	_fopen_ret
-
-_fopen_ret:
-	POP	DE
-	POP	BC
+	AND	FLAG_EOF
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+_feof_yes:
+	LD	HL,1
 	POP	IX
 	RET
 
+
 ; ============================================================
-; Internal: Parse pathname into FCB
-; DE = pathname, HL = FCB
+; lc_ferror.mac
 ; ============================================================
-_parse_fcb:
-	PUSH	BC
-	PUSH	HL
+	CSEG
+; lc_ferror.mac - split from lc_file.mac
 
-	; Check for drive letter
-	LD	A,(DE)
-	INC	DE
-	LD	B,A
-	LD	A,(DE)
-	CP	':'
-	JR	NZ,_parse_nodrive
-	; Has drive letter
-	LD	A,B
-	AND	0DFH		; Uppercase
-	SUB	'A'-1		; A=1, B=2, etc.
-	LD	(HL),A
-	INC	DE		; Skip colon
-	JR	_parse_name
 
-_parse_nodrive:
-	DEC	DE		; Back up
-	XOR	A		; Default drive
-	LD	(HL),A
+	CSEG
 
-_parse_name:
-	INC	HL		; Point to filename
-	LD	B,8		; 8 chars max
-_parse_name_loop:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_parse_pad_name
-	CP	'.'
-	JR	Z,_parse_ext
-	; Store uppercase (only for a-z, leave digits etc. alone)
-	CP	'a'
-	JR	C,_parse_name_store
-	CP	'z'+1
-	JR	NC,_parse_name_store
-	AND	0DFH
-_parse_name_store:
-	LD	(HL),A
-	INC	HL
-	INC	DE
-	DJNZ	_parse_name_loop
-	; Skip to dot or end
-_parse_skip:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_parse_pad_name
-	CP	'.'
-	JR	Z,_parse_ext
-	INC	DE
-	JR	_parse_skip
-
-_parse_pad_name:
-	; Pad remaining name with spaces
-	LD	A,' '
-_parse_pad_n:
-	LD	A,B
-	OR	A
-	JR	Z,_parse_ext_start
-	LD	A,' '
-	LD	(HL),A
-	INC	HL
-	DEC	B
-	JR	_parse_pad_n
-
-_parse_ext:
-	INC	DE		; Skip dot
-	; Pad any remaining name chars
-	JR	_parse_pad_name
-
-_parse_ext_start:
-	; Now at extension position (FCB+9)
-	LD	B,3		; 3 chars max
-_parse_ext_loop:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_parse_pad_ext
-	; Uppercase only a-z
-	CP	'a'
-	JR	C,_parse_ext_store
-	CP	'z'+1
-	JR	NC,_parse_ext_store
-	AND	0DFH
-_parse_ext_store:
-	LD	(HL),A
-	INC	HL
-	INC	DE
-	DJNZ	_parse_ext_loop
-	JR	_parse_done
-
-_parse_pad_ext:
-	LD	A,B
-	OR	A
-	JR	Z,_parse_done
-	LD	A,' '
-	LD	(HL),A
-	INC	HL
-	DEC	B
-	JR	_parse_pad_ext
-
-_parse_done:
-	POP	HL
-	POP	BC
+; ============================================================
+; int ferror(FILE *stream)
+; Check error flag
+; ============================================================
+	PUBLIC	_ferror
+_ferror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_ferror_yes
+	INC	HL		; flags
+	LD	A,(HL)
+	AND	FLAG_ERROR
+	JR	Z,_ferror_no
+	LD	HL,1
+	POP	IX
+	RET
+_ferror_no:
+	LD	HL,0
+	POP	IX
+	RET
+_ferror_yes:
+	LD	HL,1
+	POP	IX
 	RET
 
+
 ; ============================================================
-; int fclose(FILE *stream)
-; Close a file
+; lc_fflush.mac
 ; ============================================================
-	PUBLIC	_fclose
-_fclose:
+	CSEG
+; lc_fflush.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int fflush(FILE *stream)
+; Flush stream buffers
+; ============================================================
+	PUBLIC	_fflush
+_fflush:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
@@ -5325,57 +5158,49 @@ _fclose:
 	PUSH	DE
 
 	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = stream
-
-	; Check for NULL or console streams
+	LD	H,(IX+5)
 	LD	A,H
 	OR	L
-	JR	Z,_fclose_ok
+	JR	Z,_fflush_done_pub
+
+	; Check if file (not console)
 	LD	A,(HL)
 	CP	3
-	JR	C,_fclose_ok	; stdin/stdout/stderr
+	JR	C,_fflush_done_pub
 
-	; Check if open
+	; Check write mode
 	INC	HL
-	LD	A,(HL)
-	AND	FLAG_OPEN
-	JR	Z,_fclose_ok
-
-	; If write mode, flush buffer
 	LD	A,(HL)
 	AND	FLAG_WRITE
-	JR	Z,_fclose_doclose
-
-	; Flush write buffer
 	DEC	HL
-	PUSH	HL
+	JR	Z,_fflush_done_pub
+
 	CALL	_fflush_internal
-	POP	HL
-	INC	HL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
 
-_fclose_doclose:
-	DEC	HL		; Back to FILE start
-	PUSH	HL
-
-	; Set DMA and close
-	LD	DE,FILE_FCB
-	ADD	HL,DE
-	EX	DE,HL		; DE = FCB
-
-	LD	C,BDOS_CLOSE
-	CALL	BDOS
-
-	; Clear flags
-	POP	HL
-	INC	HL		; flags
-	LD	(HL),0
-
-_fclose_ok:
+_fflush_done_pub:
 	LD	HL,0
 	POP	DE
 	POP	BC
 	POP	IX
 	RET
+
+
+; ============================================================
+; lc_fgetc.mac
+; ============================================================
+	CSEG
+; lc_fgetc.mac - split from lc_file.mac
+
+BDOS_READ	EQU	20	; Read sequential
+BDOS_SETDMA	EQU	26	; Set DMA address
+FILE_BUFPOS	EQU	3	; Current position in buffer
+FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
+
+	CSEG
 
 ; ============================================================
 ; int fgetc(FILE *stream)
@@ -5556,181 +5381,82 @@ _fgetc_ret:
 	POP	IX
 	RET
 
+
 ; ============================================================
-; int fputc(int c, FILE *stream)
-; Put character to stream
+; lc_fgetpos.mac
 ; ============================================================
-	PUBLIC	_fputc
-_fputc:
+	CSEG
+; lc_fgetpos.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int fgetpos(FILE *stream, fpos_t *pos)
+; Get current file position
+; Returns 0 on success, non-zero on error
+; ============================================================
+	PUBLIC	_fgetpos
+_fgetpos:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
 	PUSH	BC
 	PUSH	DE
 
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = stream
-
-	; Check for NULL
-	LD	A,H
-	OR	L
-	JP	Z,_fputc_err
-
-	; Check if stdout/stderr
-	LD	A,(HL)
-	CP	3
-	JR	NC,_fputc_file
-
-	; Console output.  Only this branch translates LF -> CR LF; the
-	; _fputc_file branch below writes raw bytes, so "w" and "wb"
-	; streams both stay byte-for-byte what the program handed us.
-	LD	E,(IX+4)
-	CALL	__conout
+	; Call ftell to get position
 	LD	L,(IX+4)
-	LD	H,0
-	JP	_fputc_ret
-
-_fputc_file:
-	; Check if buffer full
+	LD	H,(IX+5)	; stream
 	PUSH	HL
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
-	LD	A,(HL)
-	CP	128
-	JR	C,_fputc_store
+	CALL	_ftell
+	POP	BC
+	; DEHL = position (long)
 
-	; Buffer full - flush it
-	POP	HL
-	PUSH	HL
-	CALL	_fflush_internal
-	; Check for error
+	; Check for error (returns -1 as 0xFFFFFFFF)
+	LD	A,D
+	AND	E
+	AND	H
+	AND	L
+	INC	A
+	JR	Z,_fgetpos_err
+
+	; Store position at *pos
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = pos pointer
+	LD	A,L
+	LD	(BC),A
+	INC	BC
 	LD	A,H
-	OR	L
-	JR	NZ,_fputc_flerr
-	POP	HL
-	PUSH	HL
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
+	LD	(BC),A
+	INC	BC
+	LD	A,E
+	LD	(BC),A
+	INC	BC
+	LD	A,D
+	LD	(BC),A
 
-_fputc_store:
-	; Store byte in buffer
-	LD	A,(HL)		; A = bufpos
-	POP	HL
-	PUSH	HL
-	LD	DE,FILE_BUFFER
-	ADD	HL,DE
-	LD	E,A
-	LD	D,0
-	ADD	HL,DE		; HL = buffer[bufpos]
-	LD	A,(IX+4)
-	LD	(HL),A		; Store the byte
+	LD	HL,0		; Return success
+	JR	_fgetpos_ret
 
-	; Increment bufpos
-	POP	HL
-	PUSH	HL
-	LD	DE,FILE_BUFPOS
-	ADD	HL,DE
-	INC	(HL)		; bufpos++
-
-	POP	HL
-	LD	L,(IX+4)
-	LD	H,0
-	JP	_fputc_ret
-
-_fputc_flerr:
-	POP	HL
-_fputc_err:
+_fgetpos_err:
 	LD	HL,-1
-_fputc_ret:
+_fgetpos_ret:
 	POP	DE
 	POP	BC
 	POP	IX
 	RET
 
+
 ; ============================================================
-; Internal: Flush write buffer
-; HL = FILE*
-; Returns HL=0 success, HL=-1 error
+; lc_fgets.mac
 ; ============================================================
-_fflush_internal:
-	PUSH	BC
-	PUSH	DE
-	PUSH	HL
+	CSEG
+; lc_fgets.mac - split from lc_file.mac
 
-	; Check bufpos
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
-	LD	A,(HL)
-	OR	A
-	JR	Z,_fflush_ok	; Nothing to flush
 
-	; Pad rest of buffer with Ctrl-Z (CP/M EOF)
-	LD	B,A		; B = bytes written
-	POP	HL
-	PUSH	HL
-	LD	DE,FILE_BUFFER
-	ADD	HL,DE
-	LD	E,B
-	LD	D,0
-	ADD	HL,DE		; HL = buffer[bufpos]
-	LD	A,128
-	SUB	B
-	LD	B,A		; B = bytes to pad
-	JR	Z,_fflush_write
-	LD	A,1AH		; Ctrl-Z
-_fflush_pad:
-	LD	(HL),A
-	INC	HL
-	DJNZ	_fflush_pad
 
-_fflush_write:
-	; Set DMA
-	POP	HL
-	PUSH	HL
-	LD	DE,FILE_BUFFER
-	ADD	HL,DE
-	EX	DE,HL
-	LD	C,BDOS_SETDMA
-	CALL	BDOS
-
-	; Write record
-	POP	HL
-	PUSH	HL
-	LD	DE,FILE_FCB
-	ADD	HL,DE
-	EX	DE,HL
-	LD	C,BDOS_WRITE
-	CALL	BDOS
-
-	OR	A
-	JR	NZ,_fflush_err
-
-	; Reset bufpos
-	POP	HL
-	PUSH	HL
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
-	LD	(HL),0
-
-_fflush_ok:
-	POP	HL
-	LD	HL,0
-	POP	DE
-	POP	BC
-	RET
-
-_fflush_err:
-	POP	HL
-	PUSH	HL
-	INC	HL		; flags
-	LD	A,(HL)
-	OR	FLAG_ERROR
-	LD	(HL),A
-	POP	HL
-	LD	HL,-1
-	POP	DE
-	POP	BC
-	RET
+	CSEG
 
 ; ============================================================
 ; char *fgets(char *s, int size, FILE *stream)
@@ -5821,1110 +5547,6 @@ _fgets_null:
 	POP	BC
 	POP	IX
 	RET
-
-; ============================================================
-; int fputs(const char *s, FILE *stream)
-; Write string to stream
-; ============================================================
-	PUBLIC	_fputs
-_fputs:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; stream
-	LD	A,H
-	OR	L
-	JR	Z,_fputs_err
-
-	LD	E,(IX+4)	; string
-	LD	D,(IX+5)
-
-_fputs_loop:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_fputs_ok
-
-	PUSH	DE
-	PUSH	HL
-	; Push args for fputc(char, stream)
-	PUSH	HL		; stream
-	LD	L,A
-	LD	H,0
-	PUSH	HL		; char
-	CALL	_fputc
-	POP	BC
-	POP	BC
-	POP	HL
-	POP	DE
-
-	; Check for error
-	LD	A,H
-	INC	A
-	JR	Z,_fputs_err	; HL was -1
-
-	INC	DE
-	JR	_fputs_loop
-
-_fputs_ok:
-	LD	HL,0
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-_fputs_err:
-	LD	HL,-1
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream)
-; Read data from stream
-; ============================================================
-	PUBLIC	_fread
-_fread:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Calculate total bytes = size * nmemb
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; size
-	LD	E,(IX+8)
-	LD	D,(IX+9)	; nmemb
-	CALL	__mul16		; HL = total bytes
-	LD	B,H
-	LD	C,L		; BC = bytes to read
-
-	; If zero, return 0
-	LD	A,B
-	OR	C
-	JR	Z,_fread_done
-
-	; Save dest pointer
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = dest ptr
-	LD	(_fread_ptr),HL
-
-	; Initialize read count
-	LD	HL,0
-	LD	(_fread_cnt),HL
-
-_fread_loop:
-	; Call fgetc(stream)
-	LD	L,(IX+10)
-	LD	H,(IX+11)	; stream
-	PUSH	BC		; Save remaining count
-	PUSH	HL
-	CALL	_fgetc
-	POP	DE		; Clean up arg
-
-	; Check for EOF (returns -1 = 0xFFFF)
-	LD	A,H
-	AND	L
-	INC	A		; If HL=0xFFFF, A becomes 0
-	JR	Z,_fread_eof
-
-	; Store byte
-	LD	A,L
-	LD	HL,(_fread_ptr)
-	LD	(HL),A
-	INC	HL
-	LD	(_fread_ptr),HL
-
-	; Increment count
-	LD	HL,(_fread_cnt)
-	INC	HL
-	LD	(_fread_cnt),HL
-
-	; Decrement BC and continue
-	POP	BC		; Restore remaining count
-	DEC	BC
-	LD	A,B
-	OR	C
-	JR	NZ,_fread_loop
-	JR	_fread_done
-
-_fread_eof:
-	POP	BC		; Clean up saved count
-
-_fread_done:
-	; Return items read (cnt / size)
-	; __div16 does HL = DE / HL, so DE = cnt, HL = size
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; DE = size (temporarily)
-	LD	A,D
-	OR	E
-	JR	Z,_fread_ret
-	LD	HL,(_fread_cnt)	; HL = cnt
-	EX	DE,HL		; Now DE = cnt, HL = size
-	CALL	__div16		; HL = cnt / size
-
-_fread_ret:
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
-; Write data to stream
-; ============================================================
-	PUBLIC	_fwrite
-	EXTRN	__div16
-_fwrite:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Simple implementation - write byte by byte
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; size
-	LD	E,(IX+8)
-	LD	D,(IX+9)	; nmemb
-	CALL	__mul16		; HL = total bytes
-	LD	B,H
-	LD	C,L		; BC = bytes to write
-
-	LD	A,B
-	OR	C
-	JR	Z,_fwrite_done
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = ptr (source)
-	LD	(_fwrite_ptr),HL
-	LD	HL,0
-	LD	(_fwrite_cnt),HL
-
-_fwrite_loop:
-	LD	A,B
-	OR	C
-	JR	Z,_fwrite_done
-
-	; Get byte from source
-	LD	HL,(_fwrite_ptr)
-	LD	A,(HL)
-	INC	HL
-	LD	(_fwrite_ptr),HL
-
-	; Write to stream
-	PUSH	BC
-	LD	L,(IX+10)
-	LD	H,(IX+11)	; stream
-	PUSH	HL
-	LD	L,A
-	LD	H,0
-	PUSH	HL
-	CALL	_fputc
-	POP	HL
-	POP	HL
-	POP	BC
-
-	; Check error
-	LD	A,H
-	INC	A
-	JR	Z,_fwrite_done	; Error
-
-	LD	HL,(_fwrite_cnt)
-	INC	HL
-	LD	(_fwrite_cnt),HL
-	DEC	BC
-	JR	_fwrite_loop
-
-_fwrite_done:
-	; Return items written (cnt / size)
-	; __div16 does HL = DE / HL, so DE = cnt, HL = size
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; DE = size (temporarily)
-	LD	A,D
-	OR	E
-	JR	Z,_fwrite_ret
-	LD	HL,(_fwrite_cnt)	; HL = cnt
-	EX	DE,HL		; Now DE = cnt, HL = size
-	CALL	__div16		; HL = cnt / size
-_fwrite_ret:
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; int feof(FILE *stream)
-; Check EOF flag
-; ============================================================
-	PUBLIC	_feof
-_feof:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,H
-	OR	L
-	JR	Z,_feof_yes
-	INC	HL		; flags
-	LD	A,(HL)
-	AND	FLAG_EOF
-	LD	L,A
-	LD	H,0
-	POP	IX
-	RET
-_feof_yes:
-	LD	HL,1
-	POP	IX
-	RET
-
-; ============================================================
-; int ferror(FILE *stream)
-; Check error flag
-; ============================================================
-	PUBLIC	_ferror
-_ferror:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,H
-	OR	L
-	JR	Z,_ferror_yes
-	INC	HL		; flags
-	LD	A,(HL)
-	AND	FLAG_ERROR
-	JR	Z,_ferror_no
-	LD	HL,1
-	POP	IX
-	RET
-_ferror_no:
-	LD	HL,0
-	POP	IX
-	RET
-_ferror_yes:
-	LD	HL,1
-	POP	IX
-	RET
-
-; ============================================================
-; void clearerr(FILE *stream)
-; Clear error and EOF flags
-; ============================================================
-	PUBLIC	_clearerr
-_clearerr:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,H
-	OR	L
-	JR	Z,_clearerr_ret
-	INC	HL		; flags
-	LD	A,(HL)
-	AND	0FFH - FLAG_EOF - FLAG_ERROR
-	LD	(HL),A
-_clearerr_ret:
-	POP	IX
-	RET
-
-; ============================================================
-; int ungetc(int c, FILE *stream)
-; Push character back to stream
-; ============================================================
-	PUBLIC	_ungetc
-_ungetc:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; stream
-	LD	A,H
-	OR	L
-	JR	Z,_ungetc_err
-	INC	HL
-	INC	HL		; unget
-	LD	A,(IX+4)
-	LD	(HL),A
-	LD	L,A
-	LD	H,0
-	POP	IX
-	RET
-_ungetc_err:
-	LD	HL,-1
-	POP	IX
-	RET
-
-; ============================================================
-; int fflush(FILE *stream)
-; Flush stream buffers
-; ============================================================
-	PUBLIC	_fflush
-_fflush:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,H
-	OR	L
-	JR	Z,_fflush_done_pub
-
-	; Check if file (not console)
-	LD	A,(HL)
-	CP	3
-	JR	C,_fflush_done_pub
-
-	; Check write mode
-	INC	HL
-	LD	A,(HL)
-	AND	FLAG_WRITE
-	DEC	HL
-	JR	Z,_fflush_done_pub
-
-	CALL	_fflush_internal
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-_fflush_done_pub:
-	LD	HL,0
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; int fseek(FILE *stream, long offset, int whence)
-; Seek to position in file (simplified - sector-based)
-; ============================================================
-	PUBLIC	_fseek
-_fseek:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; stream
-	LD	A,H
-	OR	L
-	JR	Z,_fseek_err
-
-	; Check if file
-	LD	A,(HL)
-	CP	3
-	JR	C,_fseek_err
-
-	; Flush buffer first if write mode
-	PUSH	HL
-	INC	HL
-	LD	A,(HL)
-	AND	FLAG_WRITE
-	JR	Z,_fseek_noflush
-	DEC	HL
-	CALL	_fflush_internal
-	JR	_fseek_doset
-_fseek_noflush:
-	DEC	HL
-_fseek_doset:
-	POP	HL
-	PUSH	HL
-
-	; Get offset (lower 16 bits only for simplicity)
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; offset low word
-
-	; Check whence
-	LD	A,(IX+10)
-	OR	A
-	JR	NZ,_fseek_err_pop	; Only SEEK_SET supported
-
-	; Convert byte offset to record number (divide by 128)
-	; Shift DE right 7 times
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E		; DE = record number
-
-	; Set random record in FCB
-	POP	HL
-	PUSH	HL
-	LD	BC,FILE_FCB+33	; r0, r1 in FCB
-	ADD	HL,BC
-	LD	(HL),E		; r0
-	INC	HL
-	LD	(HL),D		; r1
-	INC	HL
-	LD	(HL),0		; r2
-
-	; Clear buffer
-	POP	HL
-	PUSH	HL
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
-	LD	(HL),0		; bufpos
-	INC	HL
-	LD	(HL),0		; bufcnt
-
-	; Clear EOF flag
-	POP	HL
-	PUSH	HL
-	INC	HL
-	LD	A,(HL)
-	AND	0FFH - FLAG_EOF
-	LD	(HL),A
-
-	POP	HL
-	LD	HL,0
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-_fseek_err_pop:
-	POP	HL
-_fseek_err:
-	LD	HL,-1
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; long ftell(FILE *stream)
-; Return current position (simplified)
-; ============================================================
-	PUBLIC	_ftell
-_ftell:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,H
-	OR	L
-	JR	Z,_ftell_err
-
-	LD	A,(HL)
-	CP	3
-	JR	C,_ftell_err
-
-	; Get record number from FCB
-	LD	DE,FILE_FCB+33
-	ADD	HL,DE
-	LD	E,(HL)		; r0
-	INC	HL
-	LD	D,(HL)		; r1
-
-	; Convert to byte offset (multiply by 128)
-	; Shift DE left 7 times, result in DEHL
-	LD	H,D
-	LD	L,E
-	LD	DE,0
-
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; x2
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; x4
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; x8
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; x16
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; x32
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; x64
-	SLA	L
-	RL	H
-	RL	E
-	RL	D		; x128
-
-	; Add buffer position
-	; (simplified - not adding bufpos)
-	POP	IX
-	RET
-
-_ftell_err:
-	LD	HL,-1
-	LD	DE,-1
-	POP	IX
-	RET
-
-; ============================================================
-; void rewind(FILE *stream)
-; Rewind to beginning of file
-; ============================================================
-	PUBLIC	_rewind
-_rewind:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Call fseek(stream, 0L, SEEK_SET)
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	PUSH	HL
-	LD	HL,0
-	PUSH	HL		; whence = SEEK_SET
-	PUSH	HL		; offset high = 0
-	PUSH	HL		; offset low = 0
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	PUSH	HL		; stream
-	CALL	_fseek
-	POP	HL
-	POP	HL
-	POP	HL
-	POP	HL
-	POP	HL
-
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; int remove(const char *pathname)
-; Delete a file
-; Returns 0 on success, -1 on error
-; ============================================================
-	PUBLIC	_remove
-_remove:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Parse pathname into temporary FCB
-	LD	E,(IX+4)
-	LD	D,(IX+5)	; DE = pathname
-	LD	HL,_tmp_fcb
-	CALL	_parse_fcb
-
-	; Delete the file
-	LD	DE,_tmp_fcb
-	LD	C,BDOS_DELETE
-	CALL	BDOS
-
-	; A = 0xFF on error
-	CP	0FFH
-	JR	Z,_remove_err
-	LD	HL,0
-	JR	_remove_ret
-_remove_err:
-	LD	HL,-1
-_remove_ret:
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; int rename(const char *oldpath, const char *newpath)
-; Rename a file
-; Returns 0 on success, -1 on error
-; ============================================================
-	PUBLIC	_rename
-_rename:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Parse old pathname into FCB (first 16 bytes)
-	LD	E,(IX+4)
-	LD	D,(IX+5)	; DE = oldpath
-	LD	HL,_tmp_fcb
-	CALL	_parse_fcb
-
-	; Parse new pathname into FCB+16 (destination)
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; DE = newpath
-	LD	HL,_tmp_fcb+16
-	CALL	_parse_fcb
-
-	; CP/M rename uses DE pointing to FCB with old name in first 16 bytes
-	; and new name in second 16 bytes
-	LD	DE,_tmp_fcb
-	LD	C,BDOS_RENAME
-	CALL	BDOS
-
-	; A = 0xFF on error
-	CP	0FFH
-	JR	Z,_rename_err
-	LD	HL,0
-	JR	_rename_ret
-_rename_err:
-	LD	HL,-1
-_rename_ret:
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; FILE *tmpfile(void)
-; Create and open a temporary file for writing
-; File is automatically deleted when closed (by using $$$ extension)
-; ============================================================
-	PUBLIC	_tmpfile
-_tmpfile:
-	PUSH	IX
-	PUSH	BC
-	PUSH	DE
-
-	; Generate unique temp name
-	LD	HL,_tmpfile_name
-	CALL	_gen_tmpnam
-
-	; Open with "w+" mode (create new)
-	LD	HL,_tmpfile_name
-	PUSH	HL
-	LD	HL,_tmpfile_mode
-	PUSH	HL
-	CALL	_fopen
-	POP	BC
-	POP	BC
-
-	; Mark this file for delete on close (use $$$ extension)
-	; Actually, CP/M doesn't have auto-delete, so we rely on unique names
-
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-_tmpfile_mode:
-	DB	'w',0
-
-; ============================================================
-; char *tmpnam(char *s)
-; Generate a unique temporary file name
-; If s is NULL, returns pointer to internal static buffer
-; ============================================================
-	PUBLIC	_tmpnam
-_tmpnam:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Get buffer pointer
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,H
-	OR	L
-	JR	NZ,_tmpnam_usebuf
-	; Use internal buffer
-	LD	HL,_tmpnam_buf
-_tmpnam_usebuf:
-	PUSH	HL		; Save destination
-	CALL	_gen_tmpnam
-	POP	HL		; Return destination
-
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; Internal: Generate temp name into HL
-_gen_tmpnam:
-	PUSH	BC
-	PUSH	DE
-	PUSH	HL
-
-	; Format: TMP00000.$$$
-	LD	(HL),'T'
-	INC	HL
-	LD	(HL),'M'
-	INC	HL
-	LD	(HL),'P'
-	INC	HL
-
-	; Get counter and convert to 5 digits
-	LD	DE,(_tmpnam_cnt)
-	INC	DE
-	LD	(_tmpnam_cnt),DE
-
-	; Convert DE to 5 decimal digits
-	LD	BC,10000
-	CALL	_div16
-	ADD	A,'0'
-	LD	(HL),A
-	INC	HL
-	; Remainder in DE
-	LD	BC,1000
-	CALL	_div16
-	ADD	A,'0'
-	LD	(HL),A
-	INC	HL
-	LD	BC,100
-	CALL	_div16
-	ADD	A,'0'
-	LD	(HL),A
-	INC	HL
-	LD	BC,10
-	CALL	_div16
-	ADD	A,'0'
-	LD	(HL),A
-	INC	HL
-	LD	A,E
-	ADD	A,'0'
-	LD	(HL),A
-	INC	HL
-
-	; Add .$$$ extension
-	LD	(HL),'.'
-	INC	HL
-	LD	(HL),'$'
-	INC	HL
-	LD	(HL),'$'
-	INC	HL
-	LD	(HL),'$'
-	INC	HL
-	LD	(HL),0
-
-	POP	HL
-	POP	DE
-	POP	BC
-	RET
-
-; Internal: Divide DE by BC, quotient in A, remainder in DE
-_div16:
-	XOR	A
-_div16_loop:
-	LD	H,D
-	LD	L,E
-	OR	A
-	SBC	HL,BC
-	JR	C,_div16_done
-	EX	DE,HL
-	INC	A
-	JR	_div16_loop
-_div16_done:
-	RET
-
-_tmpnam_cnt:
-	DW	0
-_tmpnam_buf:
-	DS	13		; TMP00000.$$$ + null
-_tmpfile_name:
-	DS	13
-
-; ============================================================
-; FILE *freopen(const char *pathname, const char *mode, FILE *stream)
-; Reopen stream with new file
-; ============================================================
-	PUBLIC	_freopen
-_freopen:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Close current stream
-	LD	L,(IX+8)
-	LD	H,(IX+9)
-	PUSH	HL
-	CALL	_fclose
-	POP	BC
-
-	; Now reopen with new file
-	; Can't use the same FILE slot reliably, so just call fopen
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; pathname
-	PUSH	HL
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; mode
-	PUSH	HL
-	CALL	_fopen
-	POP	BC
-	POP	BC
-
-	; HL = new FILE* or NULL
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; int getc(FILE *stream)
-; Get character from stream (equivalent to fgetc)
-; ============================================================
-	PUBLIC	_getc
-_getc:
-	JP	_fgetc		; Just tail-call fgetc
-
-; ============================================================
-; int putc(int c, FILE *stream)
-; Put character to stream (equivalent to fputc)
-; ============================================================
-	PUBLIC	_putc
-_putc:
-	JP	_fputc		; Just tail-call fputc
-
-; ============================================================
-; int fgetpos(FILE *stream, fpos_t *pos)
-; Get current file position
-; Returns 0 on success, non-zero on error
-; ============================================================
-	PUBLIC	_fgetpos
-_fgetpos:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Call ftell to get position
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; stream
-	PUSH	HL
-	CALL	_ftell
-	POP	BC
-	; DEHL = position (long)
-
-	; Check for error (returns -1 as 0xFFFFFFFF)
-	LD	A,D
-	AND	E
-	AND	H
-	AND	L
-	INC	A
-	JR	Z,_fgetpos_err
-
-	; Store position at *pos
-	LD	C,(IX+6)
-	LD	B,(IX+7)	; BC = pos pointer
-	LD	A,L
-	LD	(BC),A
-	INC	BC
-	LD	A,H
-	LD	(BC),A
-	INC	BC
-	LD	A,E
-	LD	(BC),A
-	INC	BC
-	LD	A,D
-	LD	(BC),A
-
-	LD	HL,0		; Return success
-	JR	_fgetpos_ret
-
-_fgetpos_err:
-	LD	HL,-1
-_fgetpos_ret:
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; int fsetpos(FILE *stream, const fpos_t *pos)
-; Set file position
-; Returns 0 on success, non-zero on error
-; ============================================================
-	PUBLIC	_fsetpos
-_fsetpos:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Load position from *pos
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = pos pointer
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)
-	INC	HL
-	LD	C,(HL)
-	INC	HL
-	LD	B,(HL)		; BCDE = position
-	PUSH	BC		; High word
-	PUSH	DE		; Low word
-
-	; Call fseek(stream, pos, SEEK_SET)
-	LD	HL,0
-	PUSH	HL		; whence = SEEK_SET
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	PUSH	HL		; stream
-	; Stack: stream, whence(0), pos_low, pos_high
-	; fseek expects: stream, offset_low, offset_high, whence
-	; Need to rearrange...
-
-	; Actually let's redo this properly
-	POP	HL		; stream
-	POP	BC		; whence
-	POP	DE		; pos low
-	POP	BC		; pos high
-	; Now push in correct order for fseek(stream, offset, whence)
-	LD	A,0
-	PUSH	AF		; whence = SEEK_SET (use AF as 16-bit 0)
-	INC	SP		; Adjust for 1-byte push
-	DEC	SP
-	LD	HL,0
-	PUSH	HL		; whence = 0
-	PUSH	BC		; offset high
-	PUSH	DE		; offset low
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	PUSH	HL		; stream
-	CALL	_fseek
-	; Clean up stack (5 words = 10 bytes)
-	LD	HL,10
-	ADD	HL,SP
-	LD	SP,HL
-
-	; fseek returns 0 on success, -1 on error
-	; HL already has return value
-
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; void setbuf(FILE *stream, char *buf)
-; Set stream buffer (no-op on CP/M - fixed buffers)
-; ============================================================
-	PUBLIC	_setbuf
-_setbuf:
-	; No-op - CP/M uses fixed 128-byte buffers
-	RET
-
-; ============================================================
-; int setvbuf(FILE *stream, char *buf, int mode, size_t size)
-; Set stream buffering (limited support on CP/M)
-; ============================================================
-	PUBLIC	_setvbuf
-_setvbuf:
-	; No-op - CP/M uses fixed 128-byte buffers
-	; Always return 0 (success) for compatibility
-	LD	HL,0
-	RET
-
-; ============================================================
-; void perror(const char *s)
-; Print error message to stderr
-; ============================================================
-	PUBLIC	_perror
-_perror:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	; Print user string if provided
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,H
-	OR	L
-	JR	Z,_perror_errmsg
-	LD	A,(HL)
-	OR	A
-	JR	Z,_perror_errmsg
-
-	; Print user string
-_perror_uloop:
-	LD	A,(HL)
-	OR	A
-	JR	Z,_perror_colon
-	LD	E,A
-	CALL	__conout	; preserves HL
-	INC	HL
-	JR	_perror_uloop
-
-_perror_colon:
-	; Print ": "
-	LD	E,':'
-	CALL	__conout
-	LD	E,' '
-	CALL	__conout
-
-_perror_errmsg:
-	; Print generic error message (CP/M doesn't have errno)
-	LD	HL,_perror_msg
-_perror_loop:
-	LD	A,(HL)
-	OR	A
-	JR	Z,_perror_nl
-	LD	E,A
-	CALL	__conout	; preserves HL
-	INC	HL
-	JR	_perror_loop
-
-_perror_nl:
-	; Print newline (__conout supplies the CR when ___crlf_mode is set)
-	LD	E,10
-	CALL	__conout
-
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-_perror_msg:
-	DB	'Error',0
-
-; Temporary FCB for remove/rename operations
-_tmp_fcb:
-	DS	36
-
-
-	DSEG
-
-; File slot storage
-_file_slots:	DS	680	; 4 FILE structures * 170 bytes each
-_fread_ptr:	DS	2	; fread dest pointer temp
-_fread_cnt:	DS	2	; fread byte counter temp
-_fwrite_ptr:	DS	2	; fwrite source pointer temp
-_fwrite_cnt:	DS	2	; fwrite byte counter temp
 
 
 ; ============================================================
@@ -7361,6 +5983,312 @@ _fmod_y:	DS	4
 
 
 ; ============================================================
+; lc_fopen.mac
+; ============================================================
+	CSEG
+; lc_fopen.mac - split from lc_file.mac
+
+BDOS_OPEN	EQU	15	; Open file
+BDOS_DELETE	EQU	19	; Delete file
+BDOS_MAKE	EQU	22	; Make (create) file
+FILE_SIZE	EQU	170	; Total FILE structure size
+FLAG_READ	EQU	10H
+MAX_FILES	EQU	4
+
+	PUBLIC	_parse_fcb
+
+	CSEG
+
+; ============================================================
+; FILE *fopen(const char *pathname, const char *mode)
+; Open a file for reading or writing
+; ============================================================
+	PUBLIC	_fopen
+_fopen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Find free file slot
+	LD	HL,_file_slots
+	LD	B,MAX_FILES
+_fopen_find:
+	PUSH	HL
+	INC	HL		; Point to flags
+	LD	A,(HL)
+	AND	FLAG_OPEN
+	POP	HL
+	JR	Z,_fopen_found
+	LD	DE,FILE_SIZE
+	ADD	HL,DE
+	DJNZ	_fopen_find
+	; No free slot
+	LD	HL,0
+	JP	_fopen_ret
+
+_fopen_found:
+	; HL = FILE structure, save it
+	PUSH	HL
+
+	; Parse mode string
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = mode
+	LD	A,(HL)
+	LD	B,0		; B = mode flags
+	CP	'r'
+	JR	Z,_fopen_read
+	CP	'w'
+	JR	Z,_fopen_write
+	CP	'a'
+	JR	Z,_fopen_append
+	; Invalid mode
+	POP	HL
+	LD	HL,0
+	JP	_fopen_ret
+
+_fopen_read:
+	LD	B,FLAG_READ
+	JR	_fopen_setup
+
+_fopen_write:
+	LD	B,FLAG_WRITE
+	JR	_fopen_setup
+
+_fopen_append:
+	LD	B,FLAG_WRITE	; Append = write mode
+	; (simplified: append not fully supported)
+
+_fopen_setup:
+	; B = mode flags, stack has FILE*
+	POP	HL		; HL = FILE*
+	PUSH	HL
+	PUSH	BC		; Save mode
+
+	; Initialize FILE structure
+	LD	A,3		; fd = 3+ for files
+	LD	(HL),A
+	INC	HL
+	XOR	A
+	LD	(HL),A		; flags = 0 (will set later)
+	INC	HL
+	LD	A,0FFH
+	LD	(HL),A		; unget = none
+	INC	HL
+	XOR	A
+	LD	(HL),A		; bufpos = 0
+	INC	HL
+	LD	(HL),A		; bufcnt = 0
+	INC	HL
+	LD	(HL),A		; reserved = 0
+	INC	HL		; HL now at FCB
+
+	; Clear FCB (36 bytes)
+	PUSH	HL
+	LD	B,36
+_fopen_clr:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_fopen_clr
+	POP	HL		; HL = FCB start
+
+	; Parse pathname into FCB
+	; HL = FCB, pathname at IX+4
+	PUSH	HL
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = pathname
+	CALL	_parse_fcb
+	POP	HL		; HL = FCB
+
+	; Get FILE* back
+	POP	BC		; B = mode flags
+	POP	DE		; DE = FILE*
+	PUSH	DE
+	PUSH	BC
+
+	; Set DMA to FILE's buffer
+	PUSH	HL
+	LD	HL,FILE_BUFFER-FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL		; DE = buffer address
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+	POP	DE		; DE = FCB
+
+	; Open or create based on mode
+	POP	BC		; B = mode flags
+	POP	HL		; HL = FILE*
+	PUSH	HL
+	PUSH	BC
+
+	LD	A,B
+	AND	FLAG_WRITE
+	JR	Z,_fopen_doopen
+
+	; Write mode - delete existing, create new
+	PUSH	DE
+	LD	C,BDOS_DELETE
+	CALL	BDOS
+	POP	DE
+	LD	C,BDOS_MAKE
+	CALL	BDOS
+	JR	_fopen_check
+
+_fopen_doopen:
+	; Read mode - open existing
+	LD	C,BDOS_OPEN
+	CALL	BDOS
+
+_fopen_check:
+	; A = 0xFF on error
+	CP	0FFH
+	JR	NZ,_fopen_ok
+
+	; Open failed
+	POP	BC
+	POP	HL
+	LD	HL,0
+	JP	_fopen_ret
+
+_fopen_ok:
+	; Set flags and return FILE*
+	POP	BC		; B = mode flags
+	POP	HL		; HL = FILE*
+	PUSH	HL
+	INC	HL		; Point to flags
+	LD	A,B
+	OR	FLAG_OPEN
+	LD	(HL),A
+	POP	HL		; Return FILE*
+	JR	_fopen_ret
+
+_fopen_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; Internal: Parse pathname into FCB
+; DE = pathname, HL = FCB
+; ============================================================
+_parse_fcb:
+	PUSH	BC
+	PUSH	HL
+
+	; Check for drive letter
+	LD	A,(DE)
+	INC	DE
+	LD	B,A
+	LD	A,(DE)
+	CP	':'
+	JR	NZ,_parse_nodrive
+	; Has drive letter
+	LD	A,B
+	AND	0DFH		; Uppercase
+	SUB	'A'-1		; A=1, B=2, etc.
+	LD	(HL),A
+	INC	DE		; Skip colon
+	JR	_parse_name
+
+_parse_nodrive:
+	DEC	DE		; Back up
+	XOR	A		; Default drive
+	LD	(HL),A
+
+_parse_name:
+	INC	HL		; Point to filename
+	LD	B,8		; 8 chars max
+_parse_name_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_parse_pad_name
+	CP	'.'
+	JR	Z,_parse_ext
+	; Store uppercase (only for a-z, leave digits etc. alone)
+	CP	'a'
+	JR	C,_parse_name_store
+	CP	'z'+1
+	JR	NC,_parse_name_store
+	AND	0DFH
+_parse_name_store:
+	LD	(HL),A
+	INC	HL
+	INC	DE
+	DJNZ	_parse_name_loop
+	; Skip to dot or end
+_parse_skip:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_parse_pad_name
+	CP	'.'
+	JR	Z,_parse_ext
+	INC	DE
+	JR	_parse_skip
+
+_parse_pad_name:
+	; Pad remaining name with spaces
+	LD	A,' '
+_parse_pad_n:
+	LD	A,B
+	OR	A
+	JR	Z,_parse_ext_start
+	LD	A,' '
+	LD	(HL),A
+	INC	HL
+	DEC	B
+	JR	_parse_pad_n
+
+_parse_ext:
+	INC	DE		; Skip dot
+	; Pad any remaining name chars
+	JR	_parse_pad_name
+
+_parse_ext_start:
+	; Now at extension position (FCB+9)
+	LD	B,3		; 3 chars max
+_parse_ext_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_parse_pad_ext
+	; Uppercase only a-z
+	CP	'a'
+	JR	C,_parse_ext_store
+	CP	'z'+1
+	JR	NC,_parse_ext_store
+	AND	0DFH
+_parse_ext_store:
+	LD	(HL),A
+	INC	HL
+	INC	DE
+	DJNZ	_parse_ext_loop
+	JR	_parse_done
+
+_parse_pad_ext:
+	LD	A,B
+	OR	A
+	JR	Z,_parse_done
+	LD	A,' '
+	LD	(HL),A
+	INC	HL
+	DEC	B
+	JR	_parse_pad_ext
+
+_parse_done:
+	POP	HL
+	POP	BC
+	RET
+
+
+	DSEG
+
+
+; File slot storage
+_file_slots:	DS	680	; 4 FILE structures * 170 bytes each
+
+
+; ============================================================
 ; lc_fpclassify.mac
 ; ============================================================
 	CSEG
@@ -7576,7 +6504,7 @@ _signbit:
 ; lc_fprintf.mac
 ; ============================================================
 	CSEG
-; lc_fprintf.mac - fprintf, vfprintf, vprintf, vsprintf.
+; lc_fprintf.mac - fprintf, vfprintf (vprintf and vsprintf are in lc_vprintf.mac and lc_vsprintf.mac).
 ;
 ; Each of these carried its own formatter, so a conversion the printf
 ; table knew about was invisible here.  fprintf had no float handler at
@@ -7593,8 +6521,6 @@ _signbit:
 
 	PUBLIC	_fprintf
 	PUBLIC	_vfprintf
-	PUBLIC	_vprintf
-	PUBLIC	_vsprintf
 
 ; int fprintf(FILE *stream, const char *fmt, ...)
 _fprintf:
@@ -7662,76 +6588,6 @@ _vfprintf:
 	POP	IX
 	RET
 
-; int vprintf(const char *fmt, va_list ap)
-_vprintf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	HL,(_printf_sink)
-	PUSH	HL
-	LD	HL,__conout
-	LD	(_printf_sink),HL
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)		; HL = format string
-	LD	E,(IX+6)
-	LD	D,(IX+7)		; DE = va_list
-	PUSH	HL
-	PUSH	DE
-	POP	IX
-	POP	HL
-	LD	C,0
-	CALL	_printf_engine
-
-	POP	HL
-	LD	(_printf_sink),HL
-	LD	HL,(_printf_count)
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; int vsprintf(char *str, const char *fmt, va_list ap)
-_vsprintf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	(_sprintf_out),HL
-
-	LD	HL,(_printf_sink)
-	PUSH	HL
-	LD	HL,_sprintf_sink
-	LD	(_printf_sink),HL
-
-	LD	L,(IX+6)
-	LD	H,(IX+7)		; HL = format string
-	LD	E,(IX+8)
-	LD	D,(IX+9)		; DE = va_list
-	PUSH	HL
-	PUSH	DE
-	POP	IX
-	POP	HL
-	LD	C,0
-	CALL	_printf_engine
-
-	POP	HL
-	LD	(_printf_sink),HL
-	LD	HL,(_sprintf_out)
-	LD	(HL),0			; NUL terminate
-	LD	HL,(_printf_count)
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
 ; Sink: character in E, out through fputc so the stream's own buffering
 ; and its text/binary handling stay in charge.  _printf_putc has already
 ; saved the registers and counts the byte when we return.
@@ -7754,6 +6610,575 @@ _fprintf_sink:
 	DSEG
 
 _fprintf_stream: DS	2
+
+
+; ============================================================
+; lc_fputc.mac
+; ============================================================
+	CSEG
+; lc_fputc.mac - split from lc_file.mac
+
+BDOS_WRITE	EQU	21	; Write sequential
+
+
+	PUBLIC	_fflush_internal
+
+	CSEG
+
+; ============================================================
+; int fputc(int c, FILE *stream)
+; Put character to stream
+; ============================================================
+	PUBLIC	_fputc
+_fputc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = stream
+
+	; Check for NULL
+	LD	A,H
+	OR	L
+	JP	Z,_fputc_err
+
+	; Check if stdout/stderr
+	LD	A,(HL)
+	CP	3
+	JR	NC,_fputc_file
+
+	; Console output.  Only this branch translates LF -> CR LF; the
+	; _fputc_file branch below writes raw bytes, so "w" and "wb"
+	; streams both stay byte-for-byte what the program handed us.
+	LD	E,(IX+4)
+	CALL	__conout
+	LD	L,(IX+4)
+	LD	H,0
+	JP	_fputc_ret
+
+_fputc_file:
+	; Check if buffer full
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	A,(HL)
+	CP	128
+	JR	C,_fputc_store
+
+	; Buffer full - flush it
+	POP	HL
+	PUSH	HL
+	CALL	_fflush_internal
+	; Check for error
+	LD	A,H
+	OR	L
+	JR	NZ,_fputc_flerr
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+
+_fputc_store:
+	; Store byte in buffer
+	LD	A,(HL)		; A = bufpos
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[bufpos]
+	LD	A,(IX+4)
+	LD	(HL),A		; Store the byte
+
+	; Increment bufpos
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFPOS
+	ADD	HL,DE
+	INC	(HL)		; bufpos++
+
+	POP	HL
+	LD	L,(IX+4)
+	LD	H,0
+	JP	_fputc_ret
+
+_fputc_flerr:
+	POP	HL
+_fputc_err:
+	LD	HL,-1
+_fputc_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; Internal: Flush write buffer
+; HL = FILE*
+; Returns HL=0 success, HL=-1 error
+; ============================================================
+_fflush_internal:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+
+	; Check bufpos
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	A,(HL)
+	OR	A
+	JR	Z,_fflush_ok	; Nothing to flush
+
+	; Pad rest of buffer with Ctrl-Z (CP/M EOF)
+	LD	B,A		; B = bytes written
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[bufpos]
+	LD	A,128
+	SUB	B
+	LD	B,A		; B = bytes to pad
+	JR	Z,_fflush_write
+	LD	A,1AH		; Ctrl-Z
+_fflush_pad:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_fflush_pad
+
+_fflush_write:
+	; Set DMA
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+
+	; Write record
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_WRITE
+	CALL	BDOS
+
+	OR	A
+	JR	NZ,_fflush_err
+
+	; Reset bufpos
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	(HL),0
+
+_fflush_ok:
+	POP	HL
+	LD	HL,0
+	POP	DE
+	POP	BC
+	RET
+
+_fflush_err:
+	POP	HL
+	PUSH	HL
+	INC	HL		; flags
+	LD	A,(HL)
+	OR	FLAG_ERROR
+	LD	(HL),A
+	POP	HL
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	RET
+
+
+; ============================================================
+; lc_fputs.mac
+; ============================================================
+	CSEG
+; lc_fputs.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int fputs(const char *s, FILE *stream)
+; Write string to stream
+; ============================================================
+	PUBLIC	_fputs
+_fputs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_fputs_err
+
+	LD	E,(IX+4)	; string
+	LD	D,(IX+5)
+
+_fputs_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_fputs_ok
+
+	PUSH	DE
+	PUSH	HL
+	; Push args for fputc(char, stream)
+	PUSH	HL		; stream
+	LD	L,A
+	LD	H,0
+	PUSH	HL		; char
+	CALL	_fputc
+	POP	BC
+	POP	BC
+	POP	HL
+	POP	DE
+
+	; Check for error
+	LD	A,H
+	INC	A
+	JR	Z,_fputs_err	; HL was -1
+
+	INC	DE
+	JR	_fputs_loop
+
+_fputs_ok:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fputs_err:
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_fread.mac
+; ============================================================
+	CSEG
+; lc_fread.mac - split from lc_file.mac
+
+
+	EXTRN	__div16
+	EXTRN	__mul16
+
+	CSEG
+
+; ============================================================
+; size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream)
+; Read data from stream
+; ============================================================
+	PUBLIC	_fread
+_fread:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Calculate total bytes = size * nmemb
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; size
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; nmemb
+	CALL	__mul16		; HL = total bytes
+	LD	B,H
+	LD	C,L		; BC = bytes to read
+
+	; If zero, return 0
+	LD	A,B
+	OR	C
+	JR	Z,_fread_done
+
+	; Save dest pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = dest ptr
+	LD	(_fread_ptr),HL
+
+	; Initialize read count
+	LD	HL,0
+	LD	(_fread_cnt),HL
+
+_fread_loop:
+	; Call fgetc(stream)
+	LD	L,(IX+10)
+	LD	H,(IX+11)	; stream
+	PUSH	BC		; Save remaining count
+	PUSH	HL
+	CALL	_fgetc
+	POP	DE		; Clean up arg
+
+	; Check for EOF (returns -1 = 0xFFFF)
+	LD	A,H
+	AND	L
+	INC	A		; If HL=0xFFFF, A becomes 0
+	JR	Z,_fread_eof
+
+	; Store byte
+	LD	A,L
+	LD	HL,(_fread_ptr)
+	LD	(HL),A
+	INC	HL
+	LD	(_fread_ptr),HL
+
+	; Increment count
+	LD	HL,(_fread_cnt)
+	INC	HL
+	LD	(_fread_cnt),HL
+
+	; Decrement BC and continue
+	POP	BC		; Restore remaining count
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,_fread_loop
+	JR	_fread_done
+
+_fread_eof:
+	POP	BC		; Clean up saved count
+
+_fread_done:
+	; Return items read (cnt / size)
+	; __div16 does HL = DE / HL, so DE = cnt, HL = size
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = size (temporarily)
+	LD	A,D
+	OR	E
+	JR	Z,_fread_ret
+	LD	HL,(_fread_cnt)	; HL = cnt
+	EX	DE,HL		; Now DE = cnt, HL = size
+	CALL	__div16		; HL = cnt / size
+
+_fread_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+
+_fread_ptr:	DS	2	; fread dest pointer temp
+_fread_cnt:	DS	2	; fread byte counter temp
+
+
+; ============================================================
+; lc_free.mac
+; ============================================================
+	CSEG
+; lc_free.mac - split from lc_malloc.mac
+
+
+
+	PUBLIC	__free_hl
+
+	CSEG
+
+; ============================================================
+; void free(void *ptr)
+; Put the block on the free list (sorted by address) and merge it with
+; the free blocks next to it.
+; ============================================================
+	PUBLIC	_free
+_free:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = payload
+	CALL	__free_hl
+	POP	IX
+	RET
+
+; Free the block whose payload is HL (0 is ignored).
+; Clobbers AF, BC, DE, HL, IX.
+__free_hl:
+	LD	A,H
+	OR	L
+	RET	Z
+	DEC	HL
+	DEC	HL
+	EX	DE,HL		; DE = block
+	PUSH	DE
+	POP	IX		; IX = block
+	LD	BC,_free_head	; BC = address of the link that points at HL
+	LD	HL,(_free_head)
+_fre_scan:
+	LD	A,H
+	OR	L
+	JR	Z,_fre_here
+	LD	A,E
+	SUB	L
+	LD	A,D
+	SBC	A,H		; carry if block < candidate
+	JR	C,_fre_here
+	INC	HL
+	INC	HL
+	LD	B,H
+	LD	C,L		; BC = &candidate.next
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A		; HL = candidate.next
+	JR	_fre_scan
+_fre_here:
+	; the block goes between the block that owns link BC and HL
+	LD	(IX+2),L
+	LD	(IX+3),H	; block.next = HL
+	LD	A,E
+	LD	(BC),A
+	INC	BC
+	LD	A,D
+	LD	(BC),A
+	DEC	BC		; the link now points at the block
+	LD	A,H
+	OR	L
+	JR	Z,_fre_prev
+	; merge with the next block when it starts where this one ends
+	PUSH	HL		; next
+	LD	L,(IX+0)
+	LD	H,(IX+1)
+	INC	HL
+	INC	HL
+	ADD	HL,DE		; HL = end of this block
+	POP	DE		; DE = next
+	OR	A
+	SBC	HL,DE
+	JR	NZ,_fre_prev
+	LD	H,D
+	LD	L,E		; HL = next block
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = next.size
+	INC	HL		; HL = &next.next
+	PUSH	HL
+	LD	L,(IX+0)
+	LD	H,(IX+1)
+	ADD	HL,DE
+	INC	HL
+	INC	HL
+	LD	(IX+0),L
+	LD	(IX+1),H	; size += next.size + 2
+	POP	HL
+	LD	A,(HL)
+	LD	(IX+2),A
+	INC	HL
+	LD	A,(HL)
+	LD	(IX+3),A	; block.next = next.next
+_fre_prev:
+	; merge into the previous block when it ends where this one starts
+	LD	HL,_free_head
+	OR	A
+	SBC	HL,BC
+	RET	Z		; no previous block: BC is the list head
+	DEC	BC
+	DEC	BC		; BC = previous block
+	LD	H,B
+	LD	L,C
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = prev.size
+	LD	HL,2
+	ADD	HL,DE
+	ADD	HL,BC		; HL = end of the previous block
+	PUSH	IX
+	POP	DE		; DE = this block
+	OR	A
+	SBC	HL,DE
+	RET	NZ
+	LD	L,(IX+0)
+	LD	H,(IX+1)
+	INC	HL
+	INC	HL		; HL = this block's size + 2
+	LD	A,(BC)
+	LD	E,A
+	INC	BC
+	LD	A,(BC)
+	LD	D,A		; DE = prev.size, BC = prev + 1
+	ADD	HL,DE
+	LD	A,H
+	LD	(BC),A
+	DEC	BC
+	LD	A,L
+	LD	(BC),A		; prev.size += size + 2
+	INC	BC
+	INC	BC		; BC = &prev.next
+	LD	A,(IX+2)
+	LD	(BC),A
+	INC	BC
+	LD	A,(IX+3)
+	LD	(BC),A		; prev.next = block.next
+	RET
+
+
+; ============================================================
+; lc_freopen.mac
+; ============================================================
+	CSEG
+; lc_freopen.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; FILE *freopen(const char *pathname, const char *mode, FILE *stream)
+; Reopen stream with new file
+; ============================================================
+	PUBLIC	_freopen
+_freopen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Close current stream
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	PUSH	HL
+	CALL	_fclose
+	POP	BC
+
+	; Now reopen with new file
+	; Can't use the same FILE slot reliably, so just call fopen
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; pathname
+	PUSH	HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; mode
+	PUSH	HL
+	CALL	_fopen
+	POP	BC
+	POP	BC
+
+	; HL = new FILE* or NULL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
 
 
 ; ============================================================
@@ -7886,6 +7311,407 @@ _ldexpf:
 
 
 ; ============================================================
+; lc_fseek.mac
+; ============================================================
+	CSEG
+; lc_fseek.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int fseek(FILE *stream, long offset, int whence)
+; Seek to position in file (simplified - sector-based)
+; ============================================================
+	PUBLIC	_fseek
+_fseek:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_fseek_err
+
+	; Check if file
+	LD	A,(HL)
+	CP	3
+	JR	C,_fseek_err
+
+	; Flush buffer first if write mode
+	PUSH	HL
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	JR	Z,_fseek_noflush
+	DEC	HL
+	CALL	_fflush_internal
+	JR	_fseek_doset
+_fseek_noflush:
+	DEC	HL
+_fseek_doset:
+	POP	HL
+	PUSH	HL
+
+	; Get offset (lower 16 bits only for simplicity)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; offset low word
+
+	; Check whence
+	LD	A,(IX+10)
+	OR	A
+	JR	NZ,_fseek_err_pop	; Only SEEK_SET supported
+
+	; Convert byte offset to record number (divide by 128)
+	; Shift DE right 7 times
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E		; DE = record number
+
+	; Set random record in FCB
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_FCB+33	; r0, r1 in FCB
+	ADD	HL,BC
+	LD	(HL),E		; r0
+	INC	HL
+	LD	(HL),D		; r1
+	INC	HL
+	LD	(HL),0		; r2
+
+	; Clear buffer
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	(HL),0		; bufpos
+	INC	HL
+	LD	(HL),0		; bufcnt
+
+	; Clear EOF flag
+	POP	HL
+	PUSH	HL
+	INC	HL
+	LD	A,(HL)
+	AND	0FFH - FLAG_EOF
+	LD	(HL),A
+
+	POP	HL
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fseek_err_pop:
+	POP	HL
+_fseek_err:
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_fsetpos.mac
+; ============================================================
+	CSEG
+; lc_fsetpos.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int fsetpos(FILE *stream, const fpos_t *pos)
+; Set file position
+; Returns 0 on success, non-zero on error
+; ============================================================
+	PUBLIC	_fsetpos
+_fsetpos:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Load position from *pos
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = pos pointer
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BCDE = position
+	PUSH	BC		; High word
+	PUSH	DE		; Low word
+
+	; Call fseek(stream, pos, SEEK_SET)
+	LD	HL,0
+	PUSH	HL		; whence = SEEK_SET
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	; Stack: stream, whence(0), pos_low, pos_high
+	; fseek expects: stream, offset_low, offset_high, whence
+	; Need to rearrange...
+
+	; Actually let's redo this properly
+	POP	HL		; stream
+	POP	BC		; whence
+	POP	DE		; pos low
+	POP	BC		; pos high
+	; Now push in correct order for fseek(stream, offset, whence)
+	LD	A,0
+	PUSH	AF		; whence = SEEK_SET (use AF as 16-bit 0)
+	INC	SP		; Adjust for 1-byte push
+	DEC	SP
+	LD	HL,0
+	PUSH	HL		; whence = 0
+	PUSH	BC		; offset high
+	PUSH	DE		; offset low
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	CALL	_fseek
+	; Clean up stack (5 words = 10 bytes)
+	LD	HL,10
+	ADD	HL,SP
+	LD	SP,HL
+
+	; fseek returns 0 on success, -1 on error
+	; HL already has return value
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_ftell.mac
+; ============================================================
+	CSEG
+; lc_ftell.mac - split from lc_file.mac
+
+
+	CSEG
+
+; ============================================================
+; long ftell(FILE *stream)
+; Return current position (simplified)
+; ============================================================
+	PUBLIC	_ftell
+_ftell:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_ftell_err
+
+	LD	A,(HL)
+	CP	3
+	JR	C,_ftell_err
+
+	; Get record number from FCB
+	LD	DE,FILE_FCB+33
+	ADD	HL,DE
+	LD	E,(HL)		; r0
+	INC	HL
+	LD	D,(HL)		; r1
+
+	; Convert to byte offset (multiply by 128)
+	; Shift DE left 7 times, result in DEHL
+	LD	H,D
+	LD	L,E
+	LD	DE,0
+
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x2
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x4
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x8
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x16
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x32
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x64
+	SLA	L
+	RL	H
+	RL	E
+	RL	D		; x128
+
+	; Add buffer position
+	; (simplified - not adding bufpos)
+	POP	IX
+	RET
+
+_ftell_err:
+	LD	HL,-1
+	LD	DE,-1
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_fwrite.mac
+; ============================================================
+	CSEG
+; lc_fwrite.mac - split from lc_file.mac
+
+
+	EXTRN	__div16
+	EXTRN	__mul16
+
+	CSEG
+
+; ============================================================
+; size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
+; Write data to stream
+; ============================================================
+	PUBLIC	_fwrite
+_fwrite:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Simple implementation - write byte by byte
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; size
+	LD	E,(IX+8)
+	LD	D,(IX+9)	; nmemb
+	CALL	__mul16		; HL = total bytes
+	LD	B,H
+	LD	C,L		; BC = bytes to write
+
+	LD	A,B
+	OR	C
+	JR	Z,_fwrite_done
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = ptr (source)
+	LD	(_fwrite_ptr),HL
+	LD	HL,0
+	LD	(_fwrite_cnt),HL
+
+_fwrite_loop:
+	LD	A,B
+	OR	C
+	JR	Z,_fwrite_done
+
+	; Get byte from source
+	LD	HL,(_fwrite_ptr)
+	LD	A,(HL)
+	INC	HL
+	LD	(_fwrite_ptr),HL
+
+	; Write to stream
+	PUSH	BC
+	LD	L,(IX+10)
+	LD	H,(IX+11)	; stream
+	PUSH	HL
+	LD	L,A
+	LD	H,0
+	PUSH	HL
+	CALL	_fputc
+	POP	HL
+	POP	HL
+	POP	BC
+
+	; Check error
+	LD	A,H
+	INC	A
+	JR	Z,_fwrite_done	; Error
+
+	LD	HL,(_fwrite_cnt)
+	INC	HL
+	LD	(_fwrite_cnt),HL
+	DEC	BC
+	JR	_fwrite_loop
+
+_fwrite_done:
+	; Return items written (cnt / size)
+	; __div16 does HL = DE / HL, so DE = cnt, HL = size
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = size (temporarily)
+	LD	A,D
+	OR	E
+	JR	Z,_fwrite_ret
+	LD	HL,(_fwrite_cnt)	; HL = cnt
+	EX	DE,HL		; Now DE = cnt, HL = size
+	CALL	__div16		; HL = cnt / size
+_fwrite_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+
+_fwrite_ptr:	DS	2	; fwrite source pointer temp
+_fwrite_cnt:	DS	2	; fwrite byte counter temp
+
+
+; ============================================================
+; lc_getc.mac
+; ============================================================
+	CSEG
+; lc_getc.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int getc(FILE *stream)
+; Get character from stream (equivalent to fgetc)
+; ============================================================
+	PUBLIC	_getc
+_getc:
+	JP	_fgetc		; Just tail-call fgetc
+
+
+; ============================================================
 ; lc_getchar.mac
 ; ============================================================
 	CSEG
@@ -7907,6 +7733,25 @@ _getchar:
 	LD	H,0
 	RET
 
+
+
+; ============================================================
+; lc_getenv.mac
+; ============================================================
+	CSEG
+; lc_getenv.mac - split from lc_misc.mac
+
+
+	CSEG
+
+; ============================================================
+; char *getenv(const char *name)
+; Get environment variable (stub - returns NULL on CP/M)
+; ============================================================
+	PUBLIC	_getenv
+_getenv:
+	LD	HL,0		; Always return NULL
+	RET
 
 
 ; ============================================================
@@ -8020,6 +7865,399 @@ _hypotf:
 	DSEG
 
 _hypot_x2:	DS	4
+
+
+; ============================================================
+; lc_isalnum.mac
+; ============================================================
+	CSEG
+; lc_isalnum.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int isalnum(int c)
+	PUBLIC	_isalnum
+_isalnum:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	; Check digit
+	CP	'0'
+	JR	C,_isalnum_alpha
+	CP	'9'+1
+	JR	C,_isalnum_yes
+_isalnum_alpha:
+	; Check uppercase
+	CP	'A'
+	JR	C,_isalnum_lower
+	CP	'Z'+1
+	JR	C,_isalnum_yes
+_isalnum_lower:
+	CP	'a'
+	JR	C,_isalnum_no
+	CP	'z'+1
+	JR	NC,_isalnum_no
+_isalnum_yes:
+	LD	HL,1
+	POP	IX
+	RET
+_isalnum_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_isalpha.mac
+; ============================================================
+	CSEG
+; lc_isalpha.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int isalpha(int c)
+	PUBLIC	_isalpha
+_isalpha:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	; Check uppercase
+	CP	'A'
+	JR	C,_isalpha_lower
+	CP	'Z'+1
+	JR	C,_isalpha_yes
+_isalpha_lower:
+	; Check lowercase
+	CP	'a'
+	JR	C,_isalpha_no
+	CP	'z'+1
+	JR	NC,_isalpha_no
+_isalpha_yes:
+	LD	HL,1
+	POP	IX
+	RET
+_isalpha_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_isdigit.mac
+; ============================================================
+	CSEG
+; lc_isdigit.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int isdigit(int c)
+	PUBLIC	_isdigit
+_isdigit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'0'
+	JR	C,_isdigit_no
+	CP	'9'+1
+	JR	NC,_isdigit_no
+	LD	HL,1
+	POP	IX
+	RET
+_isdigit_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_islower.mac
+; ============================================================
+	CSEG
+; lc_islower.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int islower(int c)
+	PUBLIC	_islower
+_islower:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'a'
+	JR	C,_islower_no
+	CP	'z'+1
+	JR	NC,_islower_no
+	LD	HL,1
+	POP	IX
+	RET
+_islower_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_isprint.mac
+; ============================================================
+	CSEG
+; lc_isprint.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int isprint(int c)
+	PUBLIC	_isprint
+_isprint:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	' '
+	JR	C,_isprint_no
+	CP	7FH		; DEL
+	JR	NC,_isprint_no
+	LD	HL,1
+	POP	IX
+	RET
+_isprint_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_isspace.mac
+; ============================================================
+	CSEG
+; lc_isspace.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int isspace(int c)
+	PUBLIC	_isspace
+_isspace:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	' '
+	JR	Z,_isspace_yes
+	CP	09H		; TAB
+	JR	Z,_isspace_yes
+	CP	0AH		; LF
+	JR	Z,_isspace_yes
+	CP	0BH		; VT
+	JR	Z,_isspace_yes
+	CP	0CH		; FF
+	JR	Z,_isspace_yes
+	CP	0DH		; CR
+	JR	Z,_isspace_yes
+	LD	HL,0
+	POP	IX
+	RET
+_isspace_yes:
+	LD	HL,1
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_isupper.mac
+; ============================================================
+	CSEG
+; lc_isupper.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int isupper(int c)
+	PUBLIC	_isupper
+_isupper:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'A'
+	JR	C,_isupper_no
+	CP	'Z'+1
+	JR	NC,_isupper_no
+	LD	HL,1
+	POP	IX
+	RET
+_isupper_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_isxdigit.mac
+; ============================================================
+	CSEG
+; lc_isxdigit.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int isxdigit(int c)
+	PUBLIC	_isxdigit
+_isxdigit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	; Check digit
+	CP	'0'
+	JR	C,_isxdigit_hex
+	CP	'9'+1
+	JR	C,_isxdigit_yes
+_isxdigit_hex:
+	; Check A-F
+	CP	'A'
+	JR	C,_isxdigit_lower
+	CP	'F'+1
+	JR	C,_isxdigit_yes
+_isxdigit_lower:
+	; Check a-f
+	CP	'a'
+	JR	C,_isxdigit_no
+	CP	'f'+1
+	JR	NC,_isxdigit_no
+_isxdigit_yes:
+	LD	HL,1
+	POP	IX
+	RET
+_isxdigit_no:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_labs.mac
+; ============================================================
+	CSEG
+; lc_labs.mac - split from lc_stdlib.mac
+
+
+	CSEG
+
+; ============================================================
+; long labs(long n)
+; Return absolute value of long
+; Returns in DEHL
+; ============================================================
+	PUBLIC	_labs
+_labs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DEHL = n
+	BIT	7,D
+	JR	Z,_labs_done
+	; Negate DEHL
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+_labs_done:
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_ldiv.mac
+; ============================================================
+	CSEG
+; lc_ldiv.mac - split from lc_stdlib.mac
+
+
+	EXTRN	__sdiv32
+	EXTRN	__smod32
+	EXTRN	__tmp32
+
+	CSEG
+
+; ============================================================
+; ldiv_t ldiv(long numer, long denom)
+; Compute quotient and remainder for long
+; Returns: pointer to static ldiv_t in HL
+; (ldiv_t.quot at _ldiv_result, ldiv_t.rem at _ldiv_result+4)
+; Runtime uses: DEHL / __tmp32 for 32-bit ops
+; ============================================================
+	PUBLIC	_ldiv
+_ldiv:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	; Store denom in __tmp32
+	LD	A,(IX+8)
+	LD	(__tmp32),A
+	LD	A,(IX+9)
+	LD	(__tmp32+1),A
+	LD	A,(IX+10)
+	LD	(__tmp32+2),A
+	LD	A,(IX+11)
+	LD	(__tmp32+3),A
+
+	; Load numer into DEHL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+
+	; Save numer for mod computation
+	PUSH	DE
+	PUSH	HL
+
+	; Compute quotient: DEHL / __tmp32
+	CALL	__sdiv32
+	LD	(_ldiv_result),HL
+	LD	(_ldiv_result+2),DE
+
+	; Restore numer
+	POP	HL
+	POP	DE
+
+	; Compute remainder: DEHL % __tmp32 (denom still in __tmp32)
+	CALL	__smod32
+	LD	(_ldiv_result+4),HL
+	LD	(_ldiv_result+6),DE
+
+	LD	HL,_ldiv_result
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+
+_ldiv_result:	DS	8	; ldiv_t: quot (4), rem (4)
 
 
 ; ============================================================
@@ -8657,8 +8895,12 @@ _logb_inf:
 ; lc_malloc.mac
 ; ============================================================
 	CSEG
-; lc_malloc.mac - dynamic memory allocation
+; lc_malloc.mac - split from lc_malloc.mac
 
+
+	EXTRN	__END__
+
+	PUBLIC	__malloc_de
 
 	CSEG
 
@@ -8682,7 +8924,6 @@ _logb_inf:
 ; free: insert into the list in address order and merge with the free
 ; neighbours on either side.
 ; ============================================================
-	EXTRN	__END__
 	PUBLIC	_malloc
 _malloc:
 	PUSH	IX
@@ -8798,300 +9039,24 @@ _mde_oom:
 	LD	HL,0
 	RET
 
-; ============================================================
-; void *calloc(size_t nmemb, size_t size)
-; Allocate zeroed memory
-; Arguments: nmemb at IX+4, size at IX+6
-; Returns: pointer to zeroed memory, or NULL
-; ============================================================
-	PUBLIC	_calloc
-_calloc:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
 
-	; Calculate total size = nmemb * size
-	LD	L,(IX+4)	; HL = nmemb
-	LD	H,(IX+5)
-	LD	E,(IX+6)	; DE = size
-	LD	D,(IX+7)
+	DSEG
 
-	; 16-bit multiply: HL = HL * DE
-	PUSH	BC
-	LD	B,H
-	LD	C,L		; BC = nmemb
-	; Count with the smaller factor (fewer additions)
-	LD	A,B
-	CP	D
-	JR	C,_calloc_ordered
-	JR	NZ,_calloc_swap
-	LD	A,C
-	CP	E
-	JR	C,_calloc_ordered
-_calloc_swap:
-	PUSH	BC
-	LD	B,D
-	LD	C,E
-	POP	DE
-_calloc_ordered:
-	LD	HL,0
-_calloc_mult:
-	LD	A,B
-	OR	C
-	JR	Z,_calloc_mult_done
-	ADD	HL,DE
-	JR	C,_calloc_overflow	; nmemb * size does not fit: NULL
-	DEC	BC
-	JR	_calloc_mult
-_calloc_overflow:
-	POP	BC
-	LD	HL,0
-	POP	IX
-	RET
-_calloc_mult_done:
-	; HL = total size
-	POP	BC
+_heap_ptr:	DW	0
 
-	; Call malloc with size in HL
-	PUSH	HL		; Push size as argument
-	CALL	_malloc
-	POP	DE		; Pop size into DE (we need it for clearing)
-
-	; Check if malloc returned NULL
-	LD	A,H
-	OR	L
-	JR	Z,_calloc_ret	; Return NULL
-
-	; Zero the memory: HL = ptr, DE = size
-	PUSH	HL		; Save return value
-	EX	DE,HL		; HL = size, DE = ptr
-
-	; Zero BC bytes at (DE)
-	LD	B,H
-	LD	C,L		; BC = size
-	EX	DE,HL		; HL = ptr
-
-_calloc_zero:
-	LD	A,B
-	OR	C
-	JR	Z,_calloc_zero_done
-	LD	(HL),0
-	INC	HL
-	DEC	BC
-	JR	_calloc_zero
-
-_calloc_zero_done:
-	POP	HL		; Restore return value
-
-_calloc_ret:
-	POP	IX
-	RET
 
 ; ============================================================
-; void free(void *ptr)
-; Put the block on the free list (sorted by address) and merge it with
-; the free blocks next to it.
+; lc_malloc_data.mac
 ; ============================================================
-	PUBLIC	_free
-_free:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = payload
-	CALL	__free_hl
-	POP	IX
-	RET
+	CSEG
+; lc_malloc_data.mac - split from lc_malloc.mac
 
-; Free the block whose payload is HL (0 is ignored).
-; Clobbers AF, BC, DE, HL, IX.
-__free_hl:
-	LD	A,H
-	OR	L
-	RET	Z
-	DEC	HL
-	DEC	HL
-	EX	DE,HL		; DE = block
-	PUSH	DE
-	POP	IX		; IX = block
-	LD	BC,_free_head	; BC = address of the link that points at HL
-	LD	HL,(_free_head)
-_fre_scan:
-	LD	A,H
-	OR	L
-	JR	Z,_fre_here
-	LD	A,E
-	SUB	L
-	LD	A,D
-	SBC	A,H		; carry if block < candidate
-	JR	C,_fre_here
-	INC	HL
-	INC	HL
-	LD	B,H
-	LD	C,L		; BC = &candidate.next
-	LD	A,(HL)
-	INC	HL
-	LD	H,(HL)
-	LD	L,A		; HL = candidate.next
-	JR	_fre_scan
-_fre_here:
-	; the block goes between the block that owns link BC and HL
-	LD	(IX+2),L
-	LD	(IX+3),H	; block.next = HL
-	LD	A,E
-	LD	(BC),A
-	INC	BC
-	LD	A,D
-	LD	(BC),A
-	DEC	BC		; the link now points at the block
-	LD	A,H
-	OR	L
-	JR	Z,_fre_prev
-	; merge with the next block when it starts where this one ends
-	PUSH	HL		; next
-	LD	L,(IX+0)
-	LD	H,(IX+1)
-	INC	HL
-	INC	HL
-	ADD	HL,DE		; HL = end of this block
-	POP	DE		; DE = next
-	OR	A
-	SBC	HL,DE
-	JR	NZ,_fre_prev
-	LD	H,D
-	LD	L,E		; HL = next block
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = next.size
-	INC	HL		; HL = &next.next
-	PUSH	HL
-	LD	L,(IX+0)
-	LD	H,(IX+1)
-	ADD	HL,DE
-	INC	HL
-	INC	HL
-	LD	(IX+0),L
-	LD	(IX+1),H	; size += next.size + 2
-	POP	HL
-	LD	A,(HL)
-	LD	(IX+2),A
-	INC	HL
-	LD	A,(HL)
-	LD	(IX+3),A	; block.next = next.next
-_fre_prev:
-	; merge into the previous block when it ends where this one starts
-	LD	HL,_free_head
-	OR	A
-	SBC	HL,BC
-	RET	Z		; no previous block: BC is the list head
-	DEC	BC
-	DEC	BC		; BC = previous block
-	LD	H,B
-	LD	L,C
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = prev.size
-	LD	HL,2
-	ADD	HL,DE
-	ADD	HL,BC		; HL = end of the previous block
-	PUSH	IX
-	POP	DE		; DE = this block
-	OR	A
-	SBC	HL,DE
-	RET	NZ
-	LD	L,(IX+0)
-	LD	H,(IX+1)
-	INC	HL
-	INC	HL		; HL = this block's size + 2
-	LD	A,(BC)
-	LD	E,A
-	INC	BC
-	LD	A,(BC)
-	LD	D,A		; DE = prev.size, BC = prev + 1
-	ADD	HL,DE
-	LD	A,H
-	LD	(BC),A
-	DEC	BC
-	LD	A,L
-	LD	(BC),A		; prev.size += size + 2
-	INC	BC
-	INC	BC		; BC = &prev.next
-	LD	A,(IX+2)
-	LD	(BC),A
-	INC	BC
-	LD	A,(IX+3)
-	LD	(BC),A		; prev.next = block.next
-	RET
 
-; ============================================================
-; void *realloc(void *ptr, size_t size)
-; NULL ptr: malloc.  Size 0: free, return NULL.  A block that is
-; already big enough is returned as is; otherwise allocate, copy the old
-; contents and free the old block (the old block stays valid when the
-; allocation fails).
-; ============================================================
-	PUBLIC	_realloc
-_realloc:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = ptr
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; DE = size
-	LD	A,H
-	OR	L
-	JR	NZ,_rea_have
-	CALL	__malloc_de
-	POP	IX
-	RET
-_rea_have:
-	LD	A,D
-	OR	E
-	JR	NZ,_rea_do
-	CALL	__free_hl
-	LD	HL,0
-	POP	IX
-	RET
-_rea_do:
-	DEC	HL
-	DEC	HL
-	LD	C,(HL)
-	INC	HL
-	LD	B,(HL)		; BC = size of the old block
-	INC	HL		; HL = payload
-	PUSH	HL		; old payload
-	PUSH	BC		; old size
-	LD	H,B
-	LD	L,C
-	OR	A
-	SBC	HL,DE		; old size - requested size
-	JR	NC,_rea_same
-	CALL	__malloc_de	; HL = new payload
-	POP	BC		; BC = old size
-	POP	DE		; DE = old payload
-	LD	A,H
-	OR	L
-	JR	Z,_rea_ret	; no memory: the old block is untouched
-	PUSH	HL		; new payload
-	PUSH	DE		; old payload
-	EX	DE,HL		; DE = new, HL = old
-	LDIR
-	POP	HL
-	CALL	__free_hl
-	POP	HL		; new payload
-_rea_ret:
-	POP	IX
-	RET
-_rea_same:
-	POP	BC
-	POP	HL		; old payload
-	POP	IX
-	RET
+	PUBLIC	_free_head
 
 
 	DSEG
-_heap_ptr:	DW	0
+
 _free_head:	DW	0
 
 
@@ -9136,71 +9101,255 @@ _math_getarg2:
 
 
 ; ============================================================
-; lc_mem.mac
+; lc_mblen.mac
 ; ============================================================
 	CSEG
-; lc_mem.mac - memory functions
+; lc_mblen.mac - split from lc_wchar.mac
+
+
+	CSEG
+
+; int mblen(const char *s, size_t n)
+; Determine bytes in multibyte character
+; C locale: always returns 1 for non-null char, 0 for null, -1 if s==NULL
+	PUBLIC	_mblen
+_mblen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_mblen_null	; s == NULL
+
+	; Check if n >= 1
+	LD	C,(IX+6)
+	LD	B,(IX+7)	; BC = n
+	LD	A,B
+	OR	C
+	JR	Z,_mblen_zero	; n == 0
+
+	; Check character
+	LD	A,(HL)
+	OR	A
+	JR	Z,_mblen_zero	; null character
+
+	; Valid single-byte character
+	LD	HL,1
+	POP	IX
+	RET
+
+_mblen_null:
+	; s == NULL: return 0 (stateless encoding)
+	LD	HL,0
+	POP	IX
+	RET
+
+_mblen_zero:
+	LD	HL,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_mbstowcs.mac
+; ============================================================
+	CSEG
+; lc_mbstowcs.mac - split from lc_wchar.mac
+
+
+	CSEG
+
+; size_t mbstowcs(wchar_t *dest, const char *src, size_t n)
+; Convert multibyte string to wide string
+; C locale: copy bytes to wchar_t array
+	PUBLIC	_mbstowcs
+_mbstowcs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = dest
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = src
+	LD	C,(IX+8)
+	LD	B,(IX+9)	; BC = n
+	PUSH	BC		; Save n
+
+	LD	BC,0		; Count = 0
+
+_mbstowcs_loop:
+	; Check if count < n
+	POP	HL		; n
+	PUSH	HL
+	OR	A
+	SBC	HL,BC
+	JR	Z,_mbstowcs_done
+	JR	C,_mbstowcs_done
+
+	; Get source pointer back
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	ADD	HL,BC		; HL = src + count
+	LD	A,(HL)		; Get char
+
+	; Check for null terminator
+	OR	A
+	JR	Z,_mbstowcs_term
+
+	; Store in dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = dest
+	LD	E,A
+	LD	A,H
+	OR	L
+	JR	Z,_mbstowcs_nodest
+	; dest[count] = char
+	PUSH	BC
+	SLA	C
+	RL	B		; BC * 2 for wchar_t offset
+	ADD	HL,BC
+	LD	(HL),E		; Low byte
+	INC	HL
+	XOR	A
+	LD	(HL),A		; High byte = 0
+	POP	BC
+
+_mbstowcs_nodest:
+	INC	BC		; count++
+	JR	_mbstowcs_loop
+
+_mbstowcs_term:
+	; Null terminate dest if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_mbstowcs_done
+	PUSH	BC
+	SLA	C
+	RL	B
+	ADD	HL,BC
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+	POP	BC
+
+_mbstowcs_done:
+	POP	HL		; Discard saved n
+	LD	H,B
+	LD	L,C		; Return count
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_mbtowc.mac
+; ============================================================
+	CSEG
+; lc_mbtowc.mac - split from lc_wchar.mac
+
+
+	CSEG
+
+; int mbtowc(wchar_t *pwc, const char *s, size_t n)
+; Convert multibyte to wide character
+; C locale: just copy byte to wchar_t
+	PUBLIC	_mbtowc
+_mbtowc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_null	; s == NULL
+
+	; Check n
+	LD	C,(IX+8)
+	LD	B,(IX+9)	; BC = n
+	LD	A,B
+	OR	C
+	JR	Z,_mbtowc_err	; n == 0
+
+	; Get character
+	LD	A,(HL)
+	OR	A
+	JR	Z,_mbtowc_nul	; null character
+
+	; Store in pwc if not NULL
+	LD	C,A		; Save char
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = pwc
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_ret1
+	; Store as wide char (16-bit)
+	LD	(HL),C
+	INC	HL
+	XOR	A
+	LD	(HL),A
+
+_mbtowc_ret1:
+	LD	HL,1
+	POP	IX
+	RET
+
+_mbtowc_nul:
+	; Store 0 in pwc if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_ret0
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+_mbtowc_ret0:
+	LD	HL,0
+	POP	IX
+	RET
+
+_mbtowc_null:
+	; s == NULL: return 0 (stateless)
+	LD	HL,0
+	POP	IX
+	RET
+
+_mbtowc_err:
+	LD	HL,-1
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_memchr.mac
+; ============================================================
+	CSEG
+; lc_memchr.mac - split from lc_mem.mac
 
 
 	CSEG
 
 ; ============================================================
-; void *memcpy(void *dest, const void *src, size_t n)
-; Copy n bytes from src to dest
-; Returns: dest
+; void *memchr(const void *s, int c, size_t n)
+; Find first occurrence of c in first n bytes of s
+; Returns: pointer to byte, or NULL if not found
 ; ============================================================
-	PUBLIC	_memcpy
-_memcpy:
-	POP	AF		; return address
-	POP	DE		; DE = dest
-	POP	HL		; HL = src
-	POP	BC		; BC = n
-	PUSH	BC
-	PUSH	HL
-	PUSH	DE
-	PUSH	AF
-	PUSH	DE		; return value
-	LD	A,B
-	OR	C
-	JR	Z,_memcpy_done
-	LDIR
-_memcpy_done:
-	POP	HL
-	RET
-
-; ============================================================
-; void *mempcpy(void *dest, const void *src, size_t n)
-; Copy n bytes from src to dest, return dest + n.
-; GNU extension some torture tests reach for.
-; ============================================================
-	PUBLIC	_mempcpy
-_mempcpy:
-	POP	AF		; return address
-	POP	DE		; DE = dest
-	POP	HL		; HL = src
-	POP	BC		; BC = n
-	PUSH	BC
-	PUSH	HL
-	PUSH	DE
-	PUSH	AF
-	LD	A,B
-	OR	C
-	JR	Z,_mempcpy_done
-	LDIR			; DE ends at dest + n
-_mempcpy_done:
-	EX	DE,HL
-	RET
-
-; ============================================================
-; void *memset(void *s, int c, size_t n)
-; Fill n bytes of s with c
-; Returns: s
-; ============================================================
-	PUBLIC	_memset
-_memset:
+	PUBLIC	_memchr
+_memchr:
 	POP	AF		; return address
 	POP	HL		; HL = s
-	POP	DE		; E = fill byte
+	POP	DE		; E = char to find
 	POP	BC		; BC = n
 	PUSH	BC
 	PUSH	DE
@@ -9208,20 +9357,31 @@ _memset:
 	PUSH	AF
 	LD	A,B
 	OR	C
-	RET	Z		; HL = s
-	PUSH	HL		; return value
-	LD	(HL),E
-	DEC	BC
-	LD	A,B
-	OR	C
-	JR	Z,_memset_done
-	LD	D,H
-	LD	E,L
-	INC	DE
-	LDIR			; copy the first byte along
-_memset_done:
-	POP	HL
+	JR	Z,_memchr_notfound
+	LD	A,E
+	CPIR			; stops after the match, or with BC = 0
+	JR	NZ,_memchr_notfound
+	DEC	HL
 	RET
+_memchr_notfound:
+	LD	HL,0
+	RET
+
+; ============================================================
+; int sprintf(char *str, const char *fmt, ...)
+; Format string into buffer
+; Supports %d, %s, %c, %x, %%
+; Returns: number of characters written (excluding null)
+
+
+; ============================================================
+; lc_memcmp.mac
+; ============================================================
+	CSEG
+; lc_memcmp.mac - split from lc_mem.mac
+
+
+	CSEG
 
 ; ============================================================
 ; int memcmp(const void *s1, const void *s2, size_t n)
@@ -9266,6 +9426,50 @@ _memcmp_diff:
 ; Argument: size on stack at IX+4
 ; Returns: pointer to allocated memory, or NULL (0) if failed
 
+
+; ============================================================
+; lc_memcpy.mac
+; ============================================================
+	CSEG
+; lc_memcpy.mac - split from lc_mem.mac
+
+
+	CSEG
+
+; ============================================================
+; void *memcpy(void *dest, const void *src, size_t n)
+; Copy n bytes from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_memcpy
+_memcpy:
+	POP	AF		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	POP	BC		; BC = n
+	PUSH	BC
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF
+	PUSH	DE		; return value
+	LD	A,B
+	OR	C
+	JR	Z,_memcpy_done
+	LDIR
+_memcpy_done:
+	POP	HL
+	RET
+
+
+; ============================================================
+; lc_memmove.mac
+; ============================================================
+	CSEG
+; lc_memmove.mac - split from lc_mem.mac
+
+
+	CSEG
+
 ; ============================================================
 ; void *memmove(void *dest, const void *src, size_t n)
 ; Copy n bytes, handles overlapping regions
@@ -9305,16 +9509,59 @@ _memmove_done:
 	POP	HL
 	RET
 
+
 ; ============================================================
-; void *memchr(const void *s, int c, size_t n)
-; Find first occurrence of c in first n bytes of s
-; Returns: pointer to byte, or NULL if not found
+; lc_mempcpy.mac
 ; ============================================================
-	PUBLIC	_memchr
-_memchr:
+	CSEG
+; lc_mempcpy.mac - split from lc_mem.mac
+
+
+	CSEG
+
+; ============================================================
+; void *mempcpy(void *dest, const void *src, size_t n)
+; Copy n bytes from src to dest, return dest + n.
+; GNU extension some torture tests reach for.
+; ============================================================
+	PUBLIC	_mempcpy
+_mempcpy:
+	POP	AF		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	POP	BC		; BC = n
+	PUSH	BC
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF
+	LD	A,B
+	OR	C
+	JR	Z,_mempcpy_done
+	LDIR			; DE ends at dest + n
+_mempcpy_done:
+	EX	DE,HL
+	RET
+
+
+; ============================================================
+; lc_memset.mac
+; ============================================================
+	CSEG
+; lc_memset.mac - split from lc_mem.mac
+
+
+	CSEG
+
+; ============================================================
+; void *memset(void *s, int c, size_t n)
+; Fill n bytes of s with c
+; Returns: s
+; ============================================================
+	PUBLIC	_memset
+_memset:
 	POP	AF		; return address
 	POP	HL		; HL = s
-	POP	DE		; E = char to find
+	POP	DE		; E = fill byte
 	POP	BC		; BC = n
 	PUSH	BC
 	PUSH	DE
@@ -9322,51 +9569,20 @@ _memchr:
 	PUSH	AF
 	LD	A,B
 	OR	C
-	JR	Z,_memchr_notfound
-	LD	A,E
-	CPIR			; stops after the match, or with BC = 0
-	JR	NZ,_memchr_notfound
-	DEC	HL
+	RET	Z		; HL = s
+	PUSH	HL		; return value
+	LD	(HL),E
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	Z,_memset_done
+	LD	D,H
+	LD	E,L
+	INC	DE
+	LDIR			; copy the first byte along
+_memset_done:
+	POP	HL
 	RET
-_memchr_notfound:
-	LD	HL,0
-	RET
-
-; ============================================================
-; int sprintf(char *str, const char *fmt, ...)
-; Format string into buffer
-; Supports %d, %s, %c, %x, %%
-; Returns: number of characters written (excluding null)
-
-
-; ============================================================
-; lc_misc.mac
-; ============================================================
-	CSEG
-; lc_misc.mac - getenv, system
-
-
-	CSEG
-
-; ============================================================
-; char *getenv(const char *name)
-; Get environment variable (stub - returns NULL on CP/M)
-; ============================================================
-	PUBLIC	_getenv
-_getenv:
-	LD	HL,0		; Always return NULL
-	RET
-
-; ============================================================
-; int system(const char *command)
-; Execute shell command (stub - returns -1 on CP/M)
-; ============================================================
-	PUBLIC	_system
-_system:
-	LD	HL,-1		; Return -1 (failure)
-	RET
-
-; ============================================================
 
 
 ; ============================================================
@@ -9585,6 +9801,86 @@ _na_eq:
 _na_done:
 	POP	IX
 	RET
+
+
+; ============================================================
+; lc_perror.mac
+; ============================================================
+	CSEG
+; lc_perror.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; void perror(const char *s)
+; Print error message to stderr
+; ============================================================
+	PUBLIC	_perror
+_perror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Print user string if provided
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_perror_errmsg
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_errmsg
+
+	; Print user string
+_perror_uloop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_colon
+	LD	E,A
+	CALL	__conout	; preserves HL
+	INC	HL
+	JR	_perror_uloop
+
+_perror_colon:
+	; Print ": "
+	LD	E,':'
+	CALL	__conout
+	LD	E,' '
+	CALL	__conout
+
+_perror_errmsg:
+	; Print generic error message (CP/M doesn't have errno)
+	LD	HL,_perror_msg
+_perror_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_perror_nl
+	LD	E,A
+	CALL	__conout	; preserves HL
+	INC	HL
+	JR	_perror_loop
+
+_perror_nl:
+	; Print newline (__conout supplies the CR when ___crlf_mode is set)
+	LD	E,10
+	CALL	__conout
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; Temporary FCB for remove/rename operations
+
+
+
+_perror_msg:
+	DB	'Error',0
 
 
 ; ============================================================
@@ -10003,7 +10299,6 @@ _phc_left:
 	PUBLIC	_printf_ll_w2
 	PUBLIC	_printf_ll_w3
 	PUBLIC	_prt_float_prec
-	PUBLIC	_prt_float
 	PUBLIC	_printf_putc
 	PUBLIC	_printf_count
 	PUBLIC	__ftmp
@@ -10627,383 +10922,6 @@ _printf_nib_ok:
 	RET
 
 ; ============================================================
-; Internal: print float from __ftmp (IEEE 754 single precision)
-; This is included in core since it's complex and shares state
-; ============================================================
-	EXTRN	__fmul
-	EXTRN	__fsub
-	EXTRN	__ftoi
-	EXTRN	__itof
-	EXTRN	__fadd
-	EXTRN	__tmp32
-
-_prt_float:
-	PUSH	BC
-	PUSH	DE
-	PUSH	IX
-
-	; Load float from __ftmp into HLDE
-	LD	DE,(__ftmp)
-	LD	HL,(__ftmp+2)
-
-	; Sign first, then zero.  The zero test masks the sign bit off, so
-	; testing it first sent -0.0 to _prt_float_zero with the '-' never
-	; emitted: printf("%f", -0.0) printed "0.000000".  C 7.21.6.1 says
-	; the sign of a negative value is always printed, and negative zero
-	; is a negative value.
-	BIT	7,H
-	JR	Z,_prt_float_signdone
-
-	PUSH	HL
-	PUSH	DE
-	LD	E,'-'
-	CALL	_printf_putc
-	POP	DE
-	POP	HL
-	RES	7,H
-
-_prt_float_signdone:
-	; An all-ones exponent is an infinity or a NaN.  Test it here, on
-	; the value as it arrived: the rounding pass below runs the bits
-	; through __fadd, which does not preserve the mantissa that tells
-	; the two apart, so a NaN reaching that point printed as "inf".
-	LD	A,H
-	ADD	A,A
-	LD	B,A
-	LD	A,L
-	RLCA
-	LD	A,B
-	ADC	A,0
-	CP	255
-	JP	Z,_prt_float_inf
-
-	; Check for zero (the sign bit is already cleared)
-	LD	A,H
-	OR	L
-	OR	D
-	OR	E
-	JP	Z,_prt_float_zero
-
-_prt_float_pos:
-	EX	DE,HL
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-
-	; Pre-round
-	PUSH	DE
-	PUSH	HL
-	LD	DE,3F00H
-	LD	HL,0
-	LD	A,(_prt_float_prec)
-	OR	A
-	JR	Z,_prt_round_add
-	LD	B,A
-_prt_round_lp:
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	DE,3DCCH
-	LD	HL,0CCCDH
-	CALL	__fmul
-	DJNZ	_prt_round_lp
-_prt_round_add:
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	CALL	__fadd
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-	POP	HL
-	POP	DE
-
-	; Reload rounded value
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	EX	DE,HL
-
-	; Extract exponent
-	LD	A,H
-	ADD	A,A
-	LD	B,A
-	LD	A,L
-	RLCA
-	LD	A,B
-	ADC	A,0
-	LD	B,A
-
-	CP	255
-	JP	Z,_prt_float_inf
-
-	OR	A
-	JP	Z,_prt_float_zero
-
-	; Above 2^31 the integer no longer fits the int32 that __ftoi
-	; returns -- it saturates at 2147483647 and the fraction loop then
-	; emits bytes that are not even digits.  Such a value is an exact
-	; integer (a float has 24 mantissa bits), so print it exactly.
-	; Compare the BIASED exponent: 127+31 = 158.  Subtracting the bias
-	; first and comparing against 31 would be a signed test written
-	; with an unsigned CP, and every |value| < 1 (negative unbiased
-	; exponent, so 0xFF..0x80 as a byte) would take the big path.
-	LD	A,B
-	CP	158			; unbiased exponent >= 31, i.e. >= 2^31
-	JP	NC,_prt_float_big
-
-	; ---- Integer part ----
-	; __ftoi truncates the pre-rounded value to a 32-bit integer and
-	; _prt_dec32 prints all 32 bits of it, which is what the %ld
-	; handler already does.
-	;
-	; This replaces a hand-rolled mantissa walk that assembled the
-	; integer part in H:L:E and then printed it with the 16-bit
-	; _prt_dec, dropping E: every |value| >= 65536 came out wrong,
-	; and often not even as digits, because the leftover low byte
-	; was emitted as a character.  1000000.0 printed as "3906.00///".
-	; The >= 2^24 path shifted a 16-bit HL left and yielded 0.
-	; sprintf in this same libc has always done it the way below.
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	CALL	__ftoi
-	LD	(__fint),HL
-	LD	(__fint+2),DE
-	CALL	_prt_dec32
-
-	CALL	_prt_float_point
-
-	; frac = value - (float)int
-	LD	HL,(__fint)
-	LD	DE,(__fint+2)
-	CALL	__itof
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	CALL	__fsub
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-
-	LD	A,(_prt_float_prec)
-	LD	B,A
-	OR	A
-	JP	Z,_prt_float_done
-	JP	_prt_float_frac
-
-_prt_float_frac:
-	PUSH	BC
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	DE,4120H
-	LD	HL,0
-	CALL	__fmul
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-	CALL	__ftoi
-	LD	A,L
-	PUSH	AF
-	ADD	A,'0'
-	LD	E,A
-	CALL	_printf_putc
-	POP	AF
-	LD	L,A
-	LD	H,0
-	LD	DE,0
-	CALL	__itof
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	CALL	__fsub
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-	POP	BC
-	DJNZ	_prt_float_frac
-	JP	_prt_float_done
-
-; ============================================================
-; %f for |value| >= 2^31.
-;
-; value = mantissa * 2^(e-23) with a 24-bit mantissa, so it is a whole
-; number and its decimal form is exact.  Feed the mantissa's bits into
-; a decimal accumulator most significant first, then double (e-23) more
-; times.  Doubling a decimal digit string is exact at every step, so the
-; digits printed are the value's own -- unlike scaling by powers of ten
-; in float, which runs out of precision after about seven digits.
-;
-; Entry: HL = high half of |value| (L holds the top mantissa bits),
-;        DE = low half, A = biased exponent.
-; ============================================================
-_prt_float_big:
-	PUSH	AF
-	LD	A,E
-	LD	(_pbig_m),A
-	LD	A,D
-	LD	(_pbig_m+1),A
-	LD	A,L
-	AND	7FH
-	OR	80H			; restore the implicit leading 1
-	LD	(_pbig_m+2),A
-
-	XOR	A
-	LD	HL,_prt_big
-	LD	B,40
-_pbig_clr:
-	LD	(HL),A
-	INC	HL
-	DJNZ	_pbig_clr
-	LD	A,1
-	LD	(_prt_biglen),A
-
-	LD	B,24
-_pbig_bits:
-	PUSH	BC
-	LD	A,(_pbig_m)
-	ADD	A,A
-	LD	(_pbig_m),A
-	LD	A,(_pbig_m+1)
-	ADC	A,A
-	LD	(_pbig_m+1),A
-	LD	A,(_pbig_m+2)
-	ADC	A,A
-	LD	(_pbig_m+2),A
-	LD	A,0
-	ADC	A,0			; A = the bit shifted out of the top
-	CALL	_pbig_dbl
-	POP	BC
-	DJNZ	_pbig_bits
-
-	POP	AF
-	SUB	150			; (e - 127) - 23, straight off the biased form
-	JR	Z,_pbig_print
-	LD	B,A
-_pbig_more:
-	PUSH	BC
-	XOR	A
-	CALL	_pbig_dbl
-	POP	BC
-	DJNZ	_pbig_more
-
-_pbig_print:
-	LD	A,(_prt_biglen)
-	LD	B,A
-	LD	HL,_prt_big
-	LD	D,0
-	LD	E,A
-	ADD	HL,DE
-	DEC	HL			; most significant digit
-_pbig_po:
-	PUSH	BC
-	PUSH	HL
-	LD	A,(HL)
-	ADD	A,'0'
-	LD	E,A
-	CALL	_printf_putc
-	POP	HL
-	DEC	HL
-	POP	BC
-	DJNZ	_pbig_po
-	JP	_prt_float_dot_zeros
-
-; Double the decimal accumulator, adding the carry-in in A.
-_pbig_dbl:
-	LD	C,A
-	LD	HL,_prt_big
-	LD	A,(_prt_biglen)
-	LD	B,A
-_pbig_dl:
-	LD	A,(HL)
-	ADD	A,A
-	ADD	A,C
-	LD	C,0
-	CP	10
-	JR	C,_pbig_nc
-	SUB	10
-	LD	C,1
-_pbig_nc:
-	LD	(HL),A
-	INC	HL
-	DJNZ	_pbig_dl
-	LD	A,C
-	OR	A
-	RET	Z
-	LD	(HL),1
-	LD	A,(_prt_biglen)
-	INC	A
-	LD	(_prt_biglen),A
-	RET
-
-; Emit the decimal point, unless there are no digits to follow it.
-; C 7.21.6.1: for %f the point appears only when the precision is
-; non-zero, or when the # flag asks for it.  printf("%.0f", 2.0) was
-; printing "2." , which no conforming implementation produces and which
-; %e and %g in this same libc already got right.
-_prt_float_point:
-	LD	A,(_prt_float_prec)
-	OR	A
-	JR	NZ,_prt_float_point_yes
-	LD	A,(_printf_alt)
-	OR	A
-	RET	Z
-_prt_float_point_yes:
-	LD	E,'.'
-	JP	_printf_putc
-
-_prt_float_zero:
-	LD	E,'0'
-	CALL	_printf_putc
-_prt_float_dot_zeros:
-	CALL	_prt_float_point
-	LD	A,(_prt_float_prec)
-	LD	B,A
-	OR	A
-	JR	Z,_prt_float_done
-_prt_float_z2:
-	PUSH	BC
-	LD	E,'0'
-	CALL	_printf_putc
-	POP	BC
-	DJNZ	_prt_float_z2
-	JR	_prt_float_done
-
-; HL holds the high word and DE the low word, sign already emitted.  A
-; zero mantissa is an infinity, anything else a NaN; C17 7.21.6.1 p8 wants
-; the uppercase spellings for %F.
-_prt_float_inf:
-	LD	A,L
-	AND	7FH
-	OR	D
-	OR	E
-	LD	HL,_prt_float_sinf
-	JR	Z,_prt_float_spec
-	LD	HL,_prt_float_snan
-_prt_float_spec:
-	LD	B,3
-_prt_float_spec1:
-	LD	A,(HL)
-	PUSH	HL
-	PUSH	BC
-	LD	B,A
-	LD	A,(_printf_upper)
-	OR	A
-	LD	A,B
-	JR	NZ,_prt_float_specu
-	OR	20H			; lowercase unless %F
-_prt_float_specu:
-	LD	E,A
-	CALL	_printf_putc
-	POP	BC
-	POP	HL
-	INC	HL
-	DJNZ	_prt_float_spec1
-
-_prt_float_done:
-	POP	IX
-	POP	DE
-	POP	BC
-	RET
-
-; ============================================================
 ; Internal: print HL as decimal (no padding, simple)
 ; ============================================================
 	PUBLIC	_prt_dec
@@ -11094,8 +11012,6 @@ _printf_plus:	DB	0	; '+' flag
 _printf_space:	DB	0	; ' ' flag
 _printf_neg:	DB	0	; 0 unsigned, 1 negative, 2 signed non-negative
 _printf_pfxlen:	DB	0	; 2 = print 0x
-_prt_float_sinf:	DB	'INF'
-_prt_float_snan:	DB	'NAN'
 
 _printf_ll_w0:	DS	2
 _printf_ll_w1:	DS	2
@@ -11103,11 +11019,6 @@ _printf_ll_w2:	DS	2
 _printf_ll_w3:	DS	2
 _prt_float_prec:	DB	6
 __ftmp:		DS	4
-__fwork:	DS	4
-__fint:		DS	4	; %f integer part, as a 32-bit integer
-_pbig_m:	DS	3	; %f >= 2^31: the 24-bit mantissa, shifted out MSB first
-_prt_big:	DS	40	; %f >= 2^31: decimal digits, least significant first
-_prt_biglen:	DB	1
 
 
 ; ============================================================
@@ -13420,6 +13331,410 @@ _prt64_val:	DS	8
 
 
 ; ============================================================
+; lc_prt_float.mac
+; ============================================================
+	CSEG
+; lc_prt_float.mac - the %f float printer (_prt_float)
+; Only lc_printf_f links this module, with the soft-float runtime it needs.
+; _printf_putc, _printf_upper, __ftmp and _prt_float_prec stay in
+; lc_printf_core because the %e and %g handlers share them.
+
+
+	EXTRN	__fmul
+	EXTRN	__fsub
+	EXTRN	__ftoi
+	EXTRN	__itof
+	EXTRN	__fadd
+	EXTRN	__tmp32
+
+	PUBLIC	_prt_float
+
+	CSEG
+
+; ============================================================
+; Internal: print float from __ftmp (IEEE 754 single precision)
+; This is included in core since it's complex and shares state
+; ============================================================
+
+_prt_float:
+	PUSH	BC
+	PUSH	DE
+	PUSH	IX
+
+	; Load float from __ftmp into HLDE
+	LD	DE,(__ftmp)
+	LD	HL,(__ftmp+2)
+
+	; Sign first, then zero.  The zero test masks the sign bit off, so
+	; testing it first sent -0.0 to _prt_float_zero with the '-' never
+	; emitted: printf("%f", -0.0) printed "0.000000".  C 7.21.6.1 says
+	; the sign of a negative value is always printed, and negative zero
+	; is a negative value.
+	BIT	7,H
+	JR	Z,_prt_float_signdone
+
+	PUSH	HL
+	PUSH	DE
+	LD	E,'-'
+	CALL	_printf_putc
+	POP	DE
+	POP	HL
+	RES	7,H
+
+_prt_float_signdone:
+	; An all-ones exponent is an infinity or a NaN.  Test it here, on
+	; the value as it arrived: the rounding pass below runs the bits
+	; through __fadd, which does not preserve the mantissa that tells
+	; the two apart, so a NaN reaching that point printed as "inf".
+	LD	A,H
+	ADD	A,A
+	LD	B,A
+	LD	A,L
+	RLCA
+	LD	A,B
+	ADC	A,0
+	CP	255
+	JP	Z,_prt_float_inf
+
+	; Check for zero (the sign bit is already cleared)
+	LD	A,H
+	OR	L
+	OR	D
+	OR	E
+	JP	Z,_prt_float_zero
+
+_prt_float_pos:
+	EX	DE,HL
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
+	; Pre-round
+	PUSH	DE
+	PUSH	HL
+	LD	DE,3F00H
+	LD	HL,0
+	LD	A,(_prt_float_prec)
+	OR	A
+	JR	Z,_prt_round_add
+	LD	B,A
+_prt_round_lp:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	DE,3DCCH
+	LD	HL,0CCCDH
+	CALL	__fmul
+	DJNZ	_prt_round_lp
+_prt_round_add:
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fadd
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	POP	HL
+	POP	DE
+
+	; Reload rounded value
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	EX	DE,HL
+
+	; Extract exponent
+	LD	A,H
+	ADD	A,A
+	LD	B,A
+	LD	A,L
+	RLCA
+	LD	A,B
+	ADC	A,0
+	LD	B,A
+
+	CP	255
+	JP	Z,_prt_float_inf
+
+	OR	A
+	JP	Z,_prt_float_zero
+
+	; Above 2^31 the integer no longer fits the int32 that __ftoi
+	; returns -- it saturates at 2147483647 and the fraction loop then
+	; emits bytes that are not even digits.  Such a value is an exact
+	; integer (a float has 24 mantissa bits), so print it exactly.
+	; Compare the BIASED exponent: 127+31 = 158.  Subtracting the bias
+	; first and comparing against 31 would be a signed test written
+	; with an unsigned CP, and every |value| < 1 (negative unbiased
+	; exponent, so 0xFF..0x80 as a byte) would take the big path.
+	LD	A,B
+	CP	158			; unbiased exponent >= 31, i.e. >= 2^31
+	JP	NC,_prt_float_big
+
+	; ---- Integer part ----
+	; __ftoi truncates the pre-rounded value to a 32-bit integer and
+	; _prt_dec32 prints all 32 bits of it, which is what the %ld
+	; handler already does.
+	;
+	; This replaces a hand-rolled mantissa walk that assembled the
+	; integer part in H:L:E and then printed it with the 16-bit
+	; _prt_dec, dropping E: every |value| >= 65536 came out wrong,
+	; and often not even as digits, because the leftover low byte
+	; was emitted as a character.  1000000.0 printed as "3906.00///".
+	; The >= 2^24 path shifted a 16-bit HL left and yielded 0.
+	; sprintf in this same libc has always done it the way below.
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__ftoi
+	LD	(__fint),HL
+	LD	(__fint+2),DE
+	CALL	_prt_dec32
+
+	CALL	_prt_float_point
+
+	; frac = value - (float)int
+	LD	HL,(__fint)
+	LD	DE,(__fint+2)
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fsub
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JP	Z,_prt_float_done
+	JP	_prt_float_frac
+
+_prt_float_frac:
+	PUSH	BC
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	DE,4120H
+	LD	HL,0
+	CALL	__fmul
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	CALL	__ftoi
+	LD	A,L
+	PUSH	AF
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+	POP	AF
+	LD	L,A
+	LD	H,0
+	LD	DE,0
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	LD	HL,(__fwork)
+	LD	DE,(__fwork+2)
+	CALL	__fsub
+	LD	(__fwork),HL
+	LD	(__fwork+2),DE
+	POP	BC
+	DJNZ	_prt_float_frac
+	JP	_prt_float_done
+
+; ============================================================
+; %f for |value| >= 2^31.
+;
+; value = mantissa * 2^(e-23) with a 24-bit mantissa, so it is a whole
+; number and its decimal form is exact.  Feed the mantissa's bits into
+; a decimal accumulator most significant first, then double (e-23) more
+; times.  Doubling a decimal digit string is exact at every step, so the
+; digits printed are the value's own -- unlike scaling by powers of ten
+; in float, which runs out of precision after about seven digits.
+;
+; Entry: HL = high half of |value| (L holds the top mantissa bits),
+;        DE = low half, A = biased exponent.
+; ============================================================
+_prt_float_big:
+	PUSH	AF
+	LD	A,E
+	LD	(_pbig_m),A
+	LD	A,D
+	LD	(_pbig_m+1),A
+	LD	A,L
+	AND	7FH
+	OR	80H			; restore the implicit leading 1
+	LD	(_pbig_m+2),A
+
+	XOR	A
+	LD	HL,_prt_big
+	LD	B,40
+_pbig_clr:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_pbig_clr
+	LD	A,1
+	LD	(_prt_biglen),A
+
+	LD	B,24
+_pbig_bits:
+	PUSH	BC
+	LD	A,(_pbig_m)
+	ADD	A,A
+	LD	(_pbig_m),A
+	LD	A,(_pbig_m+1)
+	ADC	A,A
+	LD	(_pbig_m+1),A
+	LD	A,(_pbig_m+2)
+	ADC	A,A
+	LD	(_pbig_m+2),A
+	LD	A,0
+	ADC	A,0			; A = the bit shifted out of the top
+	CALL	_pbig_dbl
+	POP	BC
+	DJNZ	_pbig_bits
+
+	POP	AF
+	SUB	150			; (e - 127) - 23, straight off the biased form
+	JR	Z,_pbig_print
+	LD	B,A
+_pbig_more:
+	PUSH	BC
+	XOR	A
+	CALL	_pbig_dbl
+	POP	BC
+	DJNZ	_pbig_more
+
+_pbig_print:
+	LD	A,(_prt_biglen)
+	LD	B,A
+	LD	HL,_prt_big
+	LD	D,0
+	LD	E,A
+	ADD	HL,DE
+	DEC	HL			; most significant digit
+_pbig_po:
+	PUSH	BC
+	PUSH	HL
+	LD	A,(HL)
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+	POP	HL
+	DEC	HL
+	POP	BC
+	DJNZ	_pbig_po
+	JP	_prt_float_dot_zeros
+
+; Double the decimal accumulator, adding the carry-in in A.
+_pbig_dbl:
+	LD	C,A
+	LD	HL,_prt_big
+	LD	A,(_prt_biglen)
+	LD	B,A
+_pbig_dl:
+	LD	A,(HL)
+	ADD	A,A
+	ADD	A,C
+	LD	C,0
+	CP	10
+	JR	C,_pbig_nc
+	SUB	10
+	LD	C,1
+_pbig_nc:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_pbig_dl
+	LD	A,C
+	OR	A
+	RET	Z
+	LD	(HL),1
+	LD	A,(_prt_biglen)
+	INC	A
+	LD	(_prt_biglen),A
+	RET
+
+; Emit the decimal point, unless there are no digits to follow it.
+; C 7.21.6.1: for %f the point appears only when the precision is
+; non-zero, or when the # flag asks for it.  printf("%.0f", 2.0) was
+; printing "2." , which no conforming implementation produces and which
+; %e and %g in this same libc already got right.
+_prt_float_point:
+	LD	A,(_prt_float_prec)
+	OR	A
+	JR	NZ,_prt_float_point_yes
+	LD	A,(_printf_alt)
+	OR	A
+	RET	Z
+_prt_float_point_yes:
+	LD	E,'.'
+	JP	_printf_putc
+
+_prt_float_zero:
+	LD	E,'0'
+	CALL	_printf_putc
+_prt_float_dot_zeros:
+	CALL	_prt_float_point
+	LD	A,(_prt_float_prec)
+	LD	B,A
+	OR	A
+	JR	Z,_prt_float_done
+_prt_float_z2:
+	PUSH	BC
+	LD	E,'0'
+	CALL	_printf_putc
+	POP	BC
+	DJNZ	_prt_float_z2
+	JR	_prt_float_done
+
+; HL holds the high word and DE the low word, sign already emitted.  A
+; zero mantissa is an infinity, anything else a NaN; C17 7.21.6.1 p8 wants
+; the uppercase spellings for %F.
+_prt_float_inf:
+	LD	A,L
+	AND	7FH
+	OR	D
+	OR	E
+	LD	HL,_prt_float_sinf
+	JR	Z,_prt_float_spec
+	LD	HL,_prt_float_snan
+_prt_float_spec:
+	LD	B,3
+_prt_float_spec1:
+	LD	A,(HL)
+	PUSH	HL
+	PUSH	BC
+	LD	B,A
+	LD	A,(_printf_upper)
+	OR	A
+	LD	A,B
+	JR	NZ,_prt_float_specu
+	OR	20H			; lowercase unless %F
+_prt_float_specu:
+	LD	E,A
+	CALL	_printf_putc
+	POP	BC
+	POP	HL
+	INC	HL
+	DJNZ	_prt_float_spec1
+
+_prt_float_done:
+	POP	IX
+	POP	DE
+	POP	BC
+	RET
+
+
+	DSEG
+
+_prt_float_sinf:	DB	'INF'
+_prt_float_snan:	DB	'NAN'
+__fwork:	DS	4
+__fint:		DS	4	; %f integer part, as a 32-bit integer
+_pbig_m:	DS	3	; %f >= 2^31: the 24-bit mantissa, shifted out MSB first
+_prt_big:	DS	40	; %f >= 2^31: decimal digits, least significant first
+_prt_biglen:	DB	1
+
+
+; ============================================================
 ; lc_prt_hex.mac
 ; ============================================================
 	CSEG
@@ -13539,6 +13854,25 @@ _prt_hex4_nib:
 
 
 ; ============================================================
+; lc_putc.mac
+; ============================================================
+	CSEG
+; lc_putc.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int putc(int c, FILE *stream)
+; Put character to stream (equivalent to fputc)
+; ============================================================
+	PUBLIC	_putc
+_putc:
+	JP	_fputc		; Just tail-call fputc
+
+
+; ============================================================
 ; lc_putchar.mac
 ; ============================================================
 	CSEG
@@ -13577,7 +13911,7 @@ _putchar:
 ; lc_puts.mac
 ; ============================================================
 	CSEG
-; lc_puts.mac - puts, cputs
+; lc_puts.mac - split from lc_puts.mac
 
 
 
@@ -13625,42 +13959,12 @@ _puts_newline:
 	POP	IX
 	RET
 
-; ============================================================
-; void cputs(const char *s)
-; Output a string (no newline, for internal use)
-; ============================================================
-	PUBLIC	_cputs
-_cputs:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	; Get string pointer
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-
-_cputs_loop:
-	LD	A,(HL)
-	OR	A
-	JR	Z,_cputs_done
-
-	LD	E,A
-	CALL	__conout	; preserves HL
-	INC	HL
-	JR	_cputs_loop
-
-_cputs_done:
-	POP	BC
-	POP	IX
-	RET
-
 
 ; ============================================================
 ; lc_qsort.mac
 ; ============================================================
 	CSEG
-; lc_qsort.mac - qsort, bsearch
+; lc_qsort.mac - qsort (bsearch is in lc_bsearch.mac)
 
 
 	CSEG
@@ -14237,113 +14541,6 @@ qs_swg1:
 	JP	PE,qs_swg1		; P/V set while BC != 0
 	RET
 
-; ============================================================
-; void *bsearch(const void *key, const void *base, size_t nmemb,
-;               size_t size, int (*compar)(const void *, const void *))
-; Binary search in a sorted array.  Calls compar(key, element).
-; Stack: key(IX+4), base(IX+6), nmemb(IX+8), size(IX+10), compar(IX+12)
-; Locals: low(IX-4), high(IX-6), mid(IX-8) -- on the stack, so bsearch
-; is reentrant (a comparator can call bsearch or qsort).
-; Returns: pointer to a matching element, or NULL.  Preserves BC and IX.
-; ============================================================
-	PUBLIC	_bsearch
-_bsearch:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	LD	HL,0
-	PUSH	HL			; low = 0      (IX-4)
-	LD	L,(IX+8)
-	LD	H,(IX+9)
-	PUSH	HL			; high = nmemb (IX-6)
-	PUSH	HL			; mid          (IX-8)
-
-bs_loop:
-	; if (low >= high) not found
-	LD	L,(IX-4)
-	LD	H,(IX-3)
-	LD	E,(IX-6)
-	LD	D,(IX-5)
-	OR	A
-	SBC	HL,DE
-	JR	NC,bs_nf
-	; mid = (low + high) / 2, with the 17th bit kept
-	ADD	HL,DE			; HL = low again
-	ADD	HL,DE			; CY:HL = low + high
-	RR	H
-	RR	L
-	LD	(IX-8),L
-	LD	(IX-7),H
-	; HL = base + mid*size
-	EX	DE,HL			; DE = mid
-	LD	C,(IX+10)
-	LD	B,(IX+11)		; BC = size
-	LD	HL,0
-bs_mul:
-	SRL	B
-	RR	C
-	JR	NC,bs_mul2
-	ADD	HL,DE
-bs_mul2:
-	LD	A,B
-	OR	C
-	JR	Z,bs_mul3
-	EX	DE,HL
-	ADD	HL,HL
-	EX	DE,HL
-	JR	bs_mul
-bs_mul3:
-	LD	E,(IX+6)
-	LD	D,(IX+7)
-	ADD	HL,DE			; HL = &base[mid]
-	PUSH	HL			; keep element address
-	PUSH	HL			; b = element
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	PUSH	HL			; a = key
-	LD	L,(IX+12)
-	LD	H,(IX+13)
-	CALL	bs_jphl
-	POP	DE
-	POP	DE
-	POP	DE			; DE = element address
-	LD	A,H
-	OR	L
-	JR	Z,bs_found
-	BIT	7,H
-	JR	NZ,bs_left
-	; key > element: low = mid + 1
-	LD	L,(IX-8)
-	LD	H,(IX-7)
-	INC	HL
-	LD	(IX-4),L
-	LD	(IX-3),H
-	JR	bs_loop
-bs_left:
-	; key < element: high = mid
-	LD	L,(IX-8)
-	LD	H,(IX-7)
-	LD	(IX-6),L
-	LD	(IX-5),H
-	JR	bs_loop
-
-bs_found:
-	EX	DE,HL
-	JR	bs_ret
-bs_nf:
-	LD	HL,0
-bs_ret:
-	LD	SP,IX
-	DEC	SP
-	DEC	SP
-	POP	BC
-	POP	IX
-	RET
-
-bs_jphl:
-	JP	(HL)
-
 	DSEG
 ; qsort working storage.  qsort saves these QS_NV bytes on its stack on
 ; entry and restores them on exit (see "Reentrancy" above).
@@ -14365,6 +14562,143 @@ QS_BASE:	DS	2	; first element of the array
 QS_LAST:	DS	2	; last element of the array
 QS_END:
 QS_NV	EQU	QS_END-QS_VARS
+
+
+; ============================================================
+; lc_rand.mac
+; ============================================================
+	CSEG
+; lc_rand.mac - split from lc_stdlib.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int rand(void)
+; Returns pseudo-random number 0 to RAND_MAX (32767)
+; Uses 16-bit linear congruential generator
+; seed = (seed * 25173 + 13849) & 0x7FFF
+; ============================================================
+	PUBLIC	_rand
+_rand:
+	PUSH	BC
+	LD	BC,(_rand_seed)
+	LD	HL,0
+	LD	DE,25173
+rand_lp:			; HL = seed * 25173 by shift and add; no
+	SRL	D		; runtime module (__mul16 pulled ~600 bytes)
+	RR	E
+	JR	NC,rand_sk
+	ADD	HL,BC
+rand_sk:
+	SLA	C
+	RL	B
+	LD	A,D
+	OR	E
+	JR	NZ,rand_lp
+	POP	BC
+	LD	DE,13849
+	ADD	HL,DE		; HL = seed * 25173 + 13849
+	LD	A,H
+	AND	7FH		; Mask to 0-32767
+	LD	H,A
+	LD	(_rand_seed),HL
+	RET
+
+
+; ============================================================
+; lc_rand_data.mac
+; ============================================================
+	CSEG
+; lc_rand_data.mac - split from lc_stdlib.mac
+
+
+	PUBLIC	_rand_seed
+
+
+	DSEG
+
+
+; rand seed
+_rand_seed:	DW	1	; Default seed = 1
+
+
+; ============================================================
+; lc_realloc.mac
+; ============================================================
+	CSEG
+; lc_realloc.mac - split from lc_malloc.mac
+
+
+
+	CSEG
+
+; ============================================================
+; void *realloc(void *ptr, size_t size)
+; NULL ptr: malloc.  Size 0: free, return NULL.  A block that is
+; already big enough is returned as is; otherwise allocate, copy the old
+; contents and free the old block (the old block stays valid when the
+; allocation fails).
+; ============================================================
+	PUBLIC	_realloc
+_realloc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = ptr
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = size
+	LD	A,H
+	OR	L
+	JR	NZ,_rea_have
+	CALL	__malloc_de
+	POP	IX
+	RET
+_rea_have:
+	LD	A,D
+	OR	E
+	JR	NZ,_rea_do
+	CALL	__free_hl
+	LD	HL,0
+	POP	IX
+	RET
+_rea_do:
+	DEC	HL
+	DEC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = size of the old block
+	INC	HL		; HL = payload
+	PUSH	HL		; old payload
+	PUSH	BC		; old size
+	LD	H,B
+	LD	L,C
+	OR	A
+	SBC	HL,DE		; old size - requested size
+	JR	NC,_rea_same
+	CALL	__malloc_de	; HL = new payload
+	POP	BC		; BC = old size
+	POP	DE		; DE = old payload
+	LD	A,H
+	OR	L
+	JR	Z,_rea_ret	; no memory: the old block is untouched
+	PUSH	HL		; new payload
+	PUSH	DE		; old payload
+	EX	DE,HL		; DE = new, HL = old
+	LDIR
+	POP	HL
+	CALL	__free_hl
+	POP	HL		; new payload
+_rea_ret:
+	POP	IX
+	RET
+_rea_same:
+	POP	BC
+	POP	HL		; old payload
+	POP	IX
+	RET
 
 
 ; ============================================================
@@ -14489,6 +14823,172 @@ _reduce_done:
 	DSEG
 _trig_x:	DS	4
 _trig_negate:	DS	1
+
+
+; ============================================================
+; lc_remove.mac
+; ============================================================
+	CSEG
+; lc_remove.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; int remove(const char *pathname)
+; Delete a file
+; Returns 0 on success, -1 on error
+; ============================================================
+	PUBLIC	_remove
+_remove:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Parse pathname into temporary FCB
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = pathname
+	LD	HL,_tmp_fcb
+	CALL	_parse_fcb
+
+	; Delete the file
+	LD	DE,_tmp_fcb
+	LD	C,BDOS_DELETE
+	CALL	BDOS
+
+	; A = 0xFF on error
+	CP	0FFH
+	JR	Z,_remove_err
+	LD	HL,0
+	JR	_remove_ret
+_remove_err:
+	LD	HL,-1
+_remove_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_remove_data.mac
+; ============================================================
+	CSEG
+; lc_remove_data.mac - split from lc_file.mac
+
+
+	PUBLIC	_tmp_fcb
+
+	CSEG
+
+
+_tmp_fcb:
+	DS	36
+
+
+; ============================================================
+; lc_rename.mac
+; ============================================================
+	CSEG
+; lc_rename.mac - split from lc_file.mac
+
+BDOS_RENAME	EQU	23	; Rename file
+
+
+	CSEG
+
+; ============================================================
+; int rename(const char *oldpath, const char *newpath)
+; Rename a file
+; Returns 0 on success, -1 on error
+; ============================================================
+	PUBLIC	_rename
+_rename:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Parse old pathname into FCB (first 16 bytes)
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = oldpath
+	LD	HL,_tmp_fcb
+	CALL	_parse_fcb
+
+	; Parse new pathname into FCB+16 (destination)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = newpath
+	LD	HL,_tmp_fcb+16
+	CALL	_parse_fcb
+
+	; CP/M rename uses DE pointing to FCB with old name in first 16 bytes
+	; and new name in second 16 bytes
+	LD	DE,_tmp_fcb
+	LD	C,BDOS_RENAME
+	CALL	BDOS
+
+	; A = 0xFF on error
+	CP	0FFH
+	JR	Z,_rename_err
+	LD	HL,0
+	JR	_rename_ret
+_rename_err:
+	LD	HL,-1
+_rename_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_rewind.mac
+; ============================================================
+	CSEG
+; lc_rewind.mac - split from lc_file.mac
+
+
+
+	CSEG
+
+; ============================================================
+; void rewind(FILE *stream)
+; Rewind to beginning of file
+; ============================================================
+	PUBLIC	_rewind
+_rewind:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Call fseek(stream, 0L, SEEK_SET)
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL
+	LD	HL,0
+	PUSH	HL		; whence = SEEK_SET
+	PUSH	HL		; offset high = 0
+	PUSH	HL		; offset low = 0
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	PUSH	HL		; stream
+	CALL	_fseek
+	POP	HL
+	POP	HL
+	POP	HL
+	POP	HL
+	POP	HL
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
 
 
 ; ============================================================
@@ -15370,6 +15870,46 @@ _scanf_buf:	DS	32	; Working buffer
 
 
 ; ============================================================
+; lc_setbuf.mac
+; ============================================================
+	CSEG
+; lc_setbuf.mac - split from lc_file.mac
+
+
+	CSEG
+
+; ============================================================
+; void setbuf(FILE *stream, char *buf)
+; Set stream buffer (no-op on CP/M - fixed buffers)
+; ============================================================
+	PUBLIC	_setbuf
+_setbuf:
+	; No-op - CP/M uses fixed 128-byte buffers
+	RET
+
+
+; ============================================================
+; lc_setvbuf.mac
+; ============================================================
+	CSEG
+; lc_setvbuf.mac - split from lc_file.mac
+
+
+	CSEG
+
+; ============================================================
+; int setvbuf(FILE *stream, char *buf, int mode, size_t size)
+; Set stream buffering (limited support on CP/M)
+; ============================================================
+	PUBLIC	_setvbuf
+_setvbuf:
+	; No-op - CP/M uses fixed 128-byte buffers
+	; Always return 0 (success) for compatibility
+	LD	HL,0
+	RET
+
+
+; ============================================================
 ; lc_signal.mac
 ; ============================================================
 	CSEG
@@ -16183,137 +16723,14 @@ _sqrt_guess:	DS	4
 
 
 ; ============================================================
-; lc_stdlib.mac
+; lc_srand.mac
 ; ============================================================
 	CSEG
-; lc_stdlib.mac - standard library functions
+; lc_srand.mac - split from lc_stdlib.mac
 
 
-
-	EXTRN	__mul16
-	EXTRN	__sdiv16
-	EXTRN	__smod16
-	EXTRN	__sdiv32
-	EXTRN	__smod32
-	EXTRN	__tmp32
 
 	CSEG
-
-; ============================================================
-; void exit(int status)
-; Calls atexit handlers then terminates
-; ============================================================
-	PUBLIC	_exit
-_exit:
-	; Call atexit handlers in reverse order
-	LD	A,(_atexit_cnt)
-	OR	A
-	JR	Z,_exit_done
-
-_exit_loop:
-	DEC	A
-	LD	(_atexit_cnt),A
-	; Get handler address: _atexit_tab + A*2
-	LD	L,A
-	LD	H,0
-	ADD	HL,HL		; HL = A*2
-	LD	DE,_atexit_tab
-	ADD	HL,DE		; HL = address of handler pointer
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = handler address
-	; Call handler
-	PUSH	AF
-	LD	HL,_exit_loop_ret
-	PUSH	HL		; Push return address
-	PUSH	DE		; Push handler address
-	RET			; "Call" the handler
-_exit_loop_ret:
-	POP	AF
-	OR	A
-	JR	NZ,_exit_loop
-
-_exit_done:
-	; Return to CP/M (warm boot)
-	JP	0
-
-; ============================================================
-; void abort(void)
-; Abnormal program termination
-; ============================================================
-	PUBLIC	_abort
-_abort:
-	; Print abort message
-	LD	DE,_abort_msg
-	LD	C,PRTSTR
-	CALL	BDOS
-	; Exit
-	JP	0
-
-; ============================================================
-; int atexit(void (*func)(void))
-; Register function to be called at exit
-; Returns 0 on success, non-zero on failure
-; ============================================================
-	PUBLIC	_atexit
-_atexit:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	; Check if we have room
-	LD	A,(_atexit_cnt)
-	CP	4		; Max 4 handlers
-	JR	NC,_atexit_fail
-
-	; Get handler address: _atexit_tab + cnt*2
-	LD	L,A
-	LD	H,0
-	ADD	HL,HL
-	LD	DE,_atexit_tab
-	ADD	HL,DE		; HL = slot address
-
-	; Store function pointer
-	LD	E,(IX+4)
-	LD	D,(IX+5)
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-
-	; Increment count
-	LD	A,(_atexit_cnt)
-	INC	A
-	LD	(_atexit_cnt),A
-
-	; Return success
-	LD	HL,0
-	POP	IX
-	RET
-
-_atexit_fail:
-	LD	HL,1
-	POP	IX
-	RET
-
-; ============================================================
-; int rand(void)
-; Returns pseudo-random number 0 to RAND_MAX (32767)
-; Uses 16-bit linear congruential generator
-; seed = (seed * 25173 + 13849) & 0x7FFF
-; ============================================================
-	PUBLIC	_rand
-	EXTRN	__mul16
-_rand:
-	LD	HL,(_rand_seed)
-	LD	DE,25173
-	CALL	__mul16		; HL = seed * 25173
-	LD	DE,13849
-	ADD	HL,DE		; HL = seed * 25173 + 13849
-	LD	A,H
-	AND	7FH		; Mask to 0-32767
-	LD	H,A
-	LD	(_rand_seed),HL
-	RET
 
 ; ============================================================
 ; void srand(unsigned int seed)
@@ -16330,209 +16747,23 @@ _srand:
 	POP	IX
 	RET
 
-; ============================================================
-; int abs(int n)
-; Return absolute value
-; ============================================================
-	PUBLIC	_abs
-_abs:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	BIT	7,H
-	JR	Z,_abs_done
-	; Negate
-	LD	DE,0
-	EX	DE,HL
-	OR	A
-	SBC	HL,DE
-_abs_done:
-	POP	IX
-	RET
 
 ; ============================================================
-; long labs(long n)
-; Return absolute value of long
-; Returns in DEHL
-; ============================================================
-	PUBLIC	_labs
-_labs:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; DEHL = n
-	BIT	7,D
-	JR	Z,_labs_done
-	; Negate DEHL
-	PUSH	BC
-	LD	BC,0
-	LD	A,C
-	SUB	L
-	LD	L,A
-	LD	A,C
-	SBC	A,H
-	LD	H,A
-	LD	A,C
-	SBC	A,E
-	LD	E,A
-	LD	A,C
-	SBC	A,D
-	LD	D,A
-	POP	BC
-_labs_done:
-	POP	IX
-	RET
-
-; ============================================================
-; div_t div(int numer, int denom)
-; Compute quotient and remainder
-; Returns: pointer to static div_t in HL
-; (div_t.quot at _div_result, div_t.rem at _div_result+2)
-; ============================================================
-	PUBLIC	_div
-	EXTRN	__sdiv16
-	EXTRN	__smod16
-_div:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	; __sdiv16 and __smod16 compute DE op HL: DE = numer, HL = denom
-	LD	E,(IX+4)	; DE = numer
-	LD	D,(IX+5)
-	LD	L,(IX+6)	; HL = denom
-	LD	H,(IX+7)
-
-	; Compute quotient
-	PUSH	HL
-	PUSH	DE
-	CALL	__sdiv16
-	LD	(_div_result),HL
-	POP	DE
-	POP	HL
-
-	; Compute remainder
-	CALL	__smod16
-	LD	(_div_result+2),HL
-
-	LD	HL,_div_result
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; ldiv_t ldiv(long numer, long denom)
-; Compute quotient and remainder for long
-; Returns: pointer to static ldiv_t in HL
-; (ldiv_t.quot at _ldiv_result, ldiv_t.rem at _ldiv_result+4)
-; Runtime uses: DEHL / __tmp32 for 32-bit ops
-; ============================================================
-	PUBLIC	_ldiv
-	EXTRN	__sdiv32
-	EXTRN	__smod32
-	EXTRN	__tmp32
-_ldiv:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	; Store denom in __tmp32
-	LD	A,(IX+8)
-	LD	(__tmp32),A
-	LD	A,(IX+9)
-	LD	(__tmp32+1),A
-	LD	A,(IX+10)
-	LD	(__tmp32+2),A
-	LD	A,(IX+11)
-	LD	(__tmp32+3),A
-
-	; Load numer into DEHL
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	E,(IX+6)
-	LD	D,(IX+7)
-
-	; Save numer for mod computation
-	PUSH	DE
-	PUSH	HL
-
-	; Compute quotient: DEHL / __tmp32
-	CALL	__sdiv32
-	LD	(_ldiv_result),HL
-	LD	(_ldiv_result+2),DE
-
-	; Restore numer
-	POP	HL
-	POP	DE
-
-	; Compute remainder: DEHL % __tmp32 (denom still in __tmp32)
-	CALL	__smod32
-	LD	(_ldiv_result+4),HL
-	LD	(_ldiv_result+6),DE
-
-	LD	HL,_ldiv_result
-	POP	BC
-	POP	IX
-	RET
-
-	DSEG
-
-; atexit handler table (max 4 handlers)
-_atexit_cnt:	DB	0	; Number of registered handlers
-_atexit_tab:	DS	8	; 4 function pointers (2 bytes each)
-
-; abort message
-_abort_msg:	DB	'Aborted',0DH,0AH,'$'
-
-; div/ldiv result storage
-_div_result:	DS	4	; div_t: quot (2), rem (2)
-_ldiv_result:	DS	8	; ldiv_t: quot (4), rem (4)
-
-; rand seed
-_rand_seed:	DW	1	; Default seed = 1
-
-
-; ============================================================
-; lc_string.mac
+; lc_strcat.mac
 ; ============================================================
 	CSEG
-; lc_string.mac - string functions
+; lc_strcat.mac - split from lc_string.mac
 
 
 	CSEG
 
 ; ============================================================
-; size_t strlen(const char *s)
-; ============================================================
-	PUBLIC	_strlen
-_strlen:
-	POP	DE		; return address
-	POP	HL		; HL = s
-	PUSH	HL
-	PUSH	DE
-	XOR	A
-	LD	B,A
-	LD	C,A
-	CPIR			; BC = -(length + 1)
-	LD	HL,-1
-	SBC	HL,BC		; carry is 0 (XOR A; CPIR keeps it)
-	RET
-
-
-; ============================================================
-; char *strcpy(char *dest, const char *src)
-; Copy string from src to dest
+; char *strcat(char *dest, const char *src)
+; Append src to dest
 ; Returns: dest
 ; ============================================================
-	PUBLIC	_strcpy
-_strcpy:
+	PUBLIC	_strcat
+_strcat:
 	POP	BC		; return address
 	POP	DE		; DE = dest
 	POP	HL		; HL = src
@@ -16540,64 +16771,67 @@ _strcpy:
 	PUSH	DE
 	PUSH	BC
 	PUSH	DE		; return value
+	EX	DE,HL		; HL = dest, DE = src
 	XOR	A
-_strcpy_loop:
-	CP	(HL)		; Z at the terminator; LDI keeps Z
+	LD	B,A
+	LD	C,A
+	CPIR			; HL = one past the terminator of dest
+	DEC	HL
+	EX	DE,HL		; DE = end of dest, HL = src
+_strcat_loop:
+	CP	(HL)		; A = 0
 	LDI
-	JR	NZ,_strcpy_loop
+	JR	NZ,_strcat_loop
 	POP	HL
 	RET
 
+
 ; ============================================================
-; char *strncpy(char *dest, const char *src, size_t n)
-; Copy at most n chars from src to dest
-; Returns: dest
+; lc_strchr.mac
 ; ============================================================
-	PUBLIC	_strncpy
-_strncpy:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+	CSEG
+; lc_strchr.mac - split from lc_string.mac
+
+
+	CSEG
+
+; ============================================================
+; char *strchr(const char *s, int c)
+; Find first occurrence of c in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strchr
+_strchr:
+	POP	BC		; return address
+	POP	HL		; HL = s
+	POP	DE		; E = char to find
+	PUSH	DE
+	PUSH	HL
 	PUSH	BC
-
-	LD	E,(IX+4)	; DE = dest
-	LD	D,(IX+5)
-	LD	L,(IX+6)	; HL = src
-	LD	H,(IX+7)
-	LD	C,(IX+8)	; BC = n
-	LD	B,(IX+9)
-
-_strncpy_loop:
-	LD	A,B		; Check if n == 0
-	OR	C
-	JR	Z,_strncpy_done
-
-	LD	A,(HL)		; Get source char
-	LD	(DE),A		; Store to dest
-	DEC	BC
-	OR	A
-	JR	Z,_strncpy_pad	; Null found, pad with zeros
+_strchr_loop:
+	LD	A,(HL)
+	CP	E
+	RET	Z		; HL points to the char
 	INC	HL
-	INC	DE
-	JR	_strncpy_loop
-
-_strncpy_pad:
-	; Pad remaining with zeros
-	LD	A,B
-	OR	C
-	JR	Z,_strncpy_done
-	INC	DE
-	XOR	A
-	LD	(DE),A
-	DEC	BC
-	JR	_strncpy_pad
-
-_strncpy_done:
-	LD	L,(IX+4)	; Return dest
-	LD	H,(IX+5)
-	POP	BC
-	POP	IX
+	OR	A
+	JR	NZ,_strchr_loop
+	LD	H,A		; end of string: NULL
+	LD	L,A
 	RET
+
+; ============================================================
+; void *memcpy(void *dest, const void *src, size_t n)
+; Copy n bytes from src to dest
+
+
+; ============================================================
+; lc_strcmp.mac
+; ============================================================
+	CSEG
+; lc_strcmp.mac - split from lc_string.mac
+
+
+	CSEG
 
 ; ============================================================
 ; int strcmp(const char *s1, const char *s2)
@@ -16631,69 +16865,23 @@ _strcmp_diff:
 	LD	H,A
 	RET
 
-; ============================================================
-; int strncmp(const char *s1, const char *s2, size_t n)
-; Compare at most n chars of two strings
-; ============================================================
-	PUBLIC	_strncmp
-_strncmp:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	E,(IX+4)	; DE = s1
-	LD	D,(IX+5)
-	LD	L,(IX+6)	; HL = s2
-	LD	H,(IX+7)
-	LD	C,(IX+8)	; BC = n
-	LD	B,(IX+9)
-
-_strncmp_loop:
-	LD	A,B		; Check if n == 0
-	OR	C
-	JR	Z,_strncmp_equal
-
-	LD	A,(DE)		; Get s1 char
-	PUSH	HL
-	LD	H,(HL)		; H = s2 char
-	SUB	H		; Compare
-	POP	HL
-	JR	NZ,_strncmp_diff
-
-	LD	A,(DE)		; Check if null
-	OR	A
-	JR	Z,_strncmp_equal
-
-	DEC	BC
-	INC	DE
-	INC	HL
-	JR	_strncmp_loop
-
-_strncmp_equal:
-	LD	HL,0
-	POP	BC
-	POP	IX
-	RET
-
-_strncmp_diff:
-	; A = s1[i] - s2[i] (mod 256), CY set if s1[i] < s2[i] as unsigned
-	; char.  HL = CY:A sign-extended = (unsigned char)s1[i] -
-	; (unsigned char)s2[i], -255..255, as C requires.
-	LD	L,A
-	SBC	A,A		; 0FFH if CY, else 0
-	LD	H,A
-	POP	BC
-	POP	IX
-	RET
 
 ; ============================================================
-; char *strcat(char *dest, const char *src)
-; Append src to dest
+; lc_strcpy.mac
+; ============================================================
+	CSEG
+; lc_strcpy.mac - split from lc_string.mac
+
+
+	CSEG
+
+; ============================================================
+; char *strcpy(char *dest, const char *src)
+; Copy string from src to dest
 ; Returns: dest
 ; ============================================================
-	PUBLIC	_strcat
-_strcat:
+	PUBLIC	_strcpy
+_strcpy:
 	POP	BC		; return address
 	POP	DE		; DE = dest
 	POP	HL		; HL = src
@@ -16701,145 +16889,91 @@ _strcat:
 	PUSH	DE
 	PUSH	BC
 	PUSH	DE		; return value
-	EX	DE,HL		; HL = dest, DE = src
 	XOR	A
-	LD	B,A
-	LD	C,A
-	CPIR			; HL = one past the terminator of dest
-	DEC	HL
-	EX	DE,HL		; DE = end of dest, HL = src
-_strcat_loop:
-	CP	(HL)		; A = 0
+_strcpy_loop:
+	CP	(HL)		; Z at the terminator; LDI keeps Z
 	LDI
-	JR	NZ,_strcat_loop
+	JR	NZ,_strcpy_loop
 	POP	HL
 	RET
 
-; ============================================================
-; char *strchr(const char *s, int c)
-; Find first occurrence of c in s
-; Returns: pointer to char, or NULL if not found
-; ============================================================
-	PUBLIC	_strchr
-_strchr:
-	POP	BC		; return address
-	POP	HL		; HL = s
-	POP	DE		; E = char to find
-	PUSH	DE
-	PUSH	HL
-	PUSH	BC
-_strchr_loop:
-	LD	A,(HL)
-	CP	E
-	RET	Z		; HL points to the char
-	INC	HL
-	OR	A
-	JR	NZ,_strchr_loop
-	LD	H,A		; end of string: NULL
-	LD	L,A
-	RET
 
 ; ============================================================
-; void *memcpy(void *dest, const void *src, size_t n)
-; Copy n bytes from src to dest
+; lc_strcspn.mac
+; ============================================================
+	CSEG
+; lc_strcspn.mac - split from lc_string.mac
 
-; Additional string functions
+
+	CSEG
+
 ; ============================================================
-; char *strrchr(const char *s, int c)
-; Find last occurrence of c in s
-; Returns: pointer to char, or NULL if not found
+; size_t strcspn(const char *s, const char *reject)
+; Return length of initial segment of s not containing any chars from reject
 ; ============================================================
-	PUBLIC	_strrchr
-_strrchr:
+	PUBLIC	_strcspn
+_strcspn:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
 
 	LD	L,(IX+4)	; HL = s
 	LD	H,(IX+5)
-	LD	C,(IX+6)	; C = char to find
-	LD	DE,0		; DE = last match (NULL initially)
-
-_strrchr_loop:
-	LD	A,(HL)
-	CP	C
-	JR	NZ,_strrchr_nomatch
-	LD	D,H		; Save this match
-	LD	E,L
-_strrchr_nomatch:
-	OR	A		; Check for end of string
-	JR	Z,_strrchr_done
-	INC	HL
-	JR	_strrchr_loop
-
-_strrchr_done:
-	EX	DE,HL		; HL = last match (or NULL)
-	POP	IX
-	RET
-
-; ============================================================
-; char *strstr(const char *haystack, const char *needle)
-; Find first occurrence of needle in haystack
-; Returns: pointer to start of match, or NULL if not found
-; ============================================================
-	PUBLIC	_strstr
-_strstr:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	L,(IX+4)	; HL = haystack
-	LD	H,(IX+5)
-	LD	E,(IX+6)	; DE = needle
+	LD	E,(IX+6)	; DE = reject
 	LD	D,(IX+7)
+	LD	BC,0		; BC = count
 
-	; Check if needle is empty
-	LD	A,(DE)
-	OR	A
-	JR	Z,_strstr_found	; Empty needle matches at start
-
-_strstr_outer:
+_strcspn_loop:
 	LD	A,(HL)
 	OR	A
-	JR	Z,_strstr_notfound	; End of haystack
+	JR	Z,_strcspn_done	; End of s
 
-	; Try to match needle at current position
-	PUSH	HL		; Save haystack position
-	PUSH	DE		; Save needle start
-
-_strstr_inner:
-	LD	A,(DE)
+	; Check if A is in reject string
+	PUSH	HL
+	PUSH	DE
+	POP	HL		; HL = reject
+_strcspn_check:
+	LD	D,(HL)
+	LD	A,D
 	OR	A
-	JR	Z,_strstr_match	; End of needle = match!
-
-	LD	B,(HL)		; B = haystack char
-	CP	B
-	JR	NZ,_strstr_nomatch
-
+	JR	Z,_strcspn_ok	; End of reject, char not found
+	POP	DE
+	PUSH	DE
+	LD	A,(DE)		; A = current char from s
+	CP	D
+	JR	Z,_strcspn_found	; Found in reject
 	INC	HL
-	INC	DE
-	JR	_strstr_inner
+	JR	_strcspn_check
 
-_strstr_nomatch:
-	POP	DE		; Restore needle start
-	POP	HL		; Restore haystack position
-	INC	HL		; Try next position
-	JR	_strstr_outer
+_strcspn_ok:
+	; Char not in reject, continue
+	POP	HL
+	INC	HL
+	INC	BC
+	JR	_strcspn_loop
 
-_strstr_match:
-	POP	DE		; Discard needle start
-	POP	HL		; HL = start of match
-_strstr_found:
+_strcspn_found:
+	POP	HL		; Discard saved s pointer
+_strcspn_done:
+	LD	H,B
+	LD	L,C		; HL = count
+	POP	DE
 	POP	BC
 	POP	IX
 	RET
 
-_strstr_notfound:
-	LD	HL,0
-	POP	BC
-	POP	IX
-	RET
+
+; ============================================================
+; lc_strdup.mac
+; ============================================================
+	CSEG
+; lc_strdup.mac - split from lc_string.mac
+
+
+
+	CSEG
 
 ; ============================================================
 ; char *strdup(const char *s)
@@ -16905,12 +17039,330 @@ _strdup_ret:
 	POP	IX
 	RET
 
+
 ; ============================================================
-; size_t strcspn(const char *s, const char *reject)
-; Return length of initial segment of s not containing any chars from reject
+; lc_strerror.mac
 ; ============================================================
-	PUBLIC	_strcspn
-_strcspn:
+	CSEG
+; lc_strerror.mac - split from lc_string.mac
+
+
+	CSEG
+
+; ============================================================
+; char *strerror(int errnum)
+; Return string describing error number
+; ============================================================
+	PUBLIC	_strerror
+_strerror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; A = errnum (low byte)
+
+	; Check common error codes
+	OR	A
+	JR	Z,_strerror_ok	; 0 = success
+	CP	2		; ENOENT
+	JR	Z,_strerror_noent
+	CP	5		; EIO
+	JR	Z,_strerror_io
+	CP	12		; ENOMEM
+	JR	Z,_strerror_nomem
+	CP	13		; EACCES
+	JR	Z,_strerror_acces
+	CP	22		; EINVAL
+	JR	Z,_strerror_inval
+	CP	28		; ENOSPC
+	JR	Z,_strerror_nospc
+	CP	38		; ENOSYS
+	JR	Z,_strerror_nosys
+	; Default - unknown error
+	LD	HL,_strerr_unknown
+	JR	_strerror_ret
+
+_strerror_ok:
+	LD	HL,_strerr_ok
+	JR	_strerror_ret
+_strerror_noent:
+	LD	HL,_strerr_noent
+	JR	_strerror_ret
+_strerror_io:
+	LD	HL,_strerr_io
+	JR	_strerror_ret
+_strerror_nomem:
+	LD	HL,_strerr_nomem
+	JR	_strerror_ret
+_strerror_acces:
+	LD	HL,_strerr_acces
+	JR	_strerror_ret
+_strerror_inval:
+	LD	HL,_strerr_inval
+	JR	_strerror_ret
+_strerror_nospc:
+	LD	HL,_strerr_nospc
+	JR	_strerror_ret
+_strerror_nosys:
+	LD	HL,_strerr_nosys
+
+_strerror_ret:
+	POP	IX
+	RET
+
+; ============================================================
+
+
+	DSEG
+
+
+; strerror messages
+_strerr_ok:	DB	'Success',0
+_strerr_noent:	DB	'No such file',0
+_strerr_io:	DB	'I/O error',0
+_strerr_nomem:	DB	'Out of memory',0
+_strerr_acces:	DB	'Permission denied',0
+_strerr_inval:	DB	'Invalid argument',0
+_strerr_nospc:	DB	'No space left',0
+_strerr_nosys:	DB	'Not implemented',0
+_strerr_unknown: DB	'Unknown error',0
+
+
+; ============================================================
+; lc_strlen.mac
+; ============================================================
+	CSEG
+; lc_strlen.mac - split from lc_string.mac
+
+
+	CSEG
+
+; ============================================================
+; size_t strlen(const char *s)
+; ============================================================
+	PUBLIC	_strlen
+_strlen:
+	POP	DE		; return address
+	POP	HL		; HL = s
+	PUSH	HL
+	PUSH	DE
+	XOR	A
+	LD	B,A
+	LD	C,A
+	CPIR			; BC = -(length + 1)
+	LD	HL,-1
+	SBC	HL,BC		; carry is 0 (XOR A; CPIR keeps it)
+	RET
+
+
+; ============================================================
+; lc_strncat.mac
+; ============================================================
+	CSEG
+; lc_strncat.mac - split from lc_string.mac
+
+
+	CSEG
+
+; ============================================================
+; char *strncat(char *dest, const char *src, size_t n)
+; Append at most n chars from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strncat
+_strncat:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+
+	; Find end of dest
+_strncat_find:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strncat_copy
+	INC	DE
+	JR	_strncat_find
+
+_strncat_copy:
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncat_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncat_done
+
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strncat_done	; End of src
+
+	LD	(DE),A
+	INC	HL
+	INC	DE
+	DEC	BC
+	JR	_strncat_loop
+
+_strncat_done:
+	; Null terminate
+	XOR	A
+	LD	(DE),A
+
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_strncmp.mac
+; ============================================================
+	CSEG
+; lc_strncmp.mac - split from lc_string.mac
+
+
+	CSEG
+
+; ============================================================
+; int strncmp(const char *s1, const char *s2, size_t n)
+; Compare at most n chars of two strings
+; ============================================================
+	PUBLIC	_strncmp
+_strncmp:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = s1
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = s2
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncmp_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncmp_equal
+
+	LD	A,(DE)		; Get s1 char
+	PUSH	HL
+	LD	H,(HL)		; H = s2 char
+	SUB	H		; Compare
+	POP	HL
+	JR	NZ,_strncmp_diff
+
+	LD	A,(DE)		; Check if null
+	OR	A
+	JR	Z,_strncmp_equal
+
+	DEC	BC
+	INC	DE
+	INC	HL
+	JR	_strncmp_loop
+
+_strncmp_equal:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+_strncmp_diff:
+	; A = s1[i] - s2[i] (mod 256), CY set if s1[i] < s2[i] as unsigned
+	; char.  HL = CY:A sign-extended = (unsigned char)s1[i] -
+	; (unsigned char)s2[i], -255..255, as C requires.
+	LD	L,A
+	SBC	A,A		; 0FFH if CY, else 0
+	LD	H,A
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_strncpy.mac
+; ============================================================
+	CSEG
+; lc_strncpy.mac - split from lc_string.mac
+
+
+	CSEG
+
+; ============================================================
+; char *strncpy(char *dest, const char *src, size_t n)
+; Copy at most n chars from src to dest
+; Returns: dest
+; ============================================================
+	PUBLIC	_strncpy
+_strncpy:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = dest
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = src
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncpy_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncpy_done
+
+	LD	A,(HL)		; Get source char
+	LD	(DE),A		; Store to dest
+	DEC	BC
+	OR	A
+	JR	Z,_strncpy_pad	; Null found, pad with zeros
+	INC	HL
+	INC	DE
+	JR	_strncpy_loop
+
+_strncpy_pad:
+	; Pad remaining with zeros
+	LD	A,B
+	OR	C
+	JR	Z,_strncpy_done
+	INC	DE
+	XOR	A
+	LD	(DE),A
+	DEC	BC
+	JR	_strncpy_pad
+
+_strncpy_done:
+	LD	L,(IX+4)	; Return dest
+	LD	H,(IX+5)
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_strpbrk.mac
+; ============================================================
+	CSEG
+; lc_strpbrk.mac - split from lc_string.mac
+
+
+	CSEG
+
+; ============================================================
+; char *strpbrk(const char *s, const char *accept)
+; Find first occurrence of any char from accept in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strpbrk
+_strpbrk:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
@@ -16919,48 +17371,97 @@ _strcspn:
 
 	LD	L,(IX+4)	; HL = s
 	LD	H,(IX+5)
-	LD	E,(IX+6)	; DE = reject
-	LD	D,(IX+7)
-	LD	BC,0		; BC = count
 
-_strcspn_loop:
+_strpbrk_loop:
 	LD	A,(HL)
 	OR	A
-	JR	Z,_strcspn_done	; End of s
+	JR	Z,_strpbrk_notfound	; End of s
 
-	; Check if A is in reject string
-	PUSH	HL
-	PUSH	DE
-	POP	HL		; HL = reject
-_strcspn_check:
-	LD	D,(HL)
-	LD	A,D
+	; Check if char is in accept
+	LD	B,A		; B = char to find
+	LD	E,(IX+6)	; DE = accept
+	LD	D,(IX+7)
+
+_strpbrk_check:
+	LD	A,(DE)
 	OR	A
-	JR	Z,_strcspn_ok	; End of reject, char not found
-	POP	DE
-	PUSH	DE
-	LD	A,(DE)		; A = current char from s
-	CP	D
-	JR	Z,_strcspn_found	; Found in reject
-	INC	HL
-	JR	_strcspn_check
+	JR	Z,_strpbrk_next	; End of accept, not found
+	CP	B
+	JR	Z,_strpbrk_found
+	INC	DE
+	JR	_strpbrk_check
 
-_strcspn_ok:
-	; Char not in reject, continue
-	POP	HL
+_strpbrk_next:
 	INC	HL
-	INC	BC
-	JR	_strcspn_loop
+	JR	_strpbrk_loop
 
-_strcspn_found:
-	POP	HL		; Discard saved s pointer
-_strcspn_done:
-	LD	H,B
-	LD	L,C		; HL = count
+_strpbrk_found:
+	; HL points to matching char
 	POP	DE
 	POP	BC
 	POP	IX
 	RET
+
+_strpbrk_notfound:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_strrchr.mac
+; ============================================================
+	CSEG
+; lc_strrchr.mac - split from lc_string.mac
+
+
+	CSEG
+
+; Additional string functions
+; ============================================================
+; char *strrchr(const char *s, int c)
+; Find last occurrence of c in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strrchr
+_strrchr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+	LD	C,(IX+6)	; C = char to find
+	LD	DE,0		; DE = last match (NULL initially)
+
+_strrchr_loop:
+	LD	A,(HL)
+	CP	C
+	JR	NZ,_strrchr_nomatch
+	LD	D,H		; Save this match
+	LD	E,L
+_strrchr_nomatch:
+	OR	A		; Check for end of string
+	JR	Z,_strrchr_done
+	INC	HL
+	JR	_strrchr_loop
+
+_strrchr_done:
+	EX	DE,HL		; HL = last match (or NULL)
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_strspn.mac
+; ============================================================
+	CSEG
+; lc_strspn.mac - split from lc_string.mac
+
+
+	CSEG
 
 ; ============================================================
 ; size_t strspn(const char *s, const char *accept)
@@ -17011,6 +17512,90 @@ _strspn_done:
 	POP	BC
 	POP	IX
 	RET
+
+
+; ============================================================
+; lc_strstr.mac
+; ============================================================
+	CSEG
+; lc_strstr.mac - split from lc_string.mac
+
+
+	CSEG
+
+; ============================================================
+; char *strstr(const char *haystack, const char *needle)
+; Find first occurrence of needle in haystack
+; Returns: pointer to start of match, or NULL if not found
+; ============================================================
+	PUBLIC	_strstr
+_strstr:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = haystack
+	LD	H,(IX+5)
+	LD	E,(IX+6)	; DE = needle
+	LD	D,(IX+7)
+
+	; Check if needle is empty
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strstr_found	; Empty needle matches at start
+
+_strstr_outer:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strstr_notfound	; End of haystack
+
+	; Try to match needle at current position
+	PUSH	HL		; Save haystack position
+	PUSH	DE		; Save needle start
+
+_strstr_inner:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strstr_match	; End of needle = match!
+
+	LD	B,(HL)		; B = haystack char
+	CP	B
+	JR	NZ,_strstr_nomatch
+
+	INC	HL
+	INC	DE
+	JR	_strstr_inner
+
+_strstr_nomatch:
+	POP	DE		; Restore needle start
+	POP	HL		; Restore haystack position
+	INC	HL		; Try next position
+	JR	_strstr_outer
+
+_strstr_match:
+	POP	DE		; Discard needle start
+	POP	HL		; HL = start of match
+_strstr_found:
+	POP	BC
+	POP	IX
+	RET
+
+_strstr_notfound:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_strtok.mac
+; ============================================================
+	CSEG
+; lc_strtok.mac - split from lc_string.mac
+
+
+	CSEG
 
 ; ============================================================
 ; char *strtok(char *str, const char *delim)
@@ -17113,193 +17698,392 @@ _strtok_null:
 	POP	IX
 	RET
 
-; ============================================================
-; char *strpbrk(const char *s, const char *accept)
-; Find first occurrence of any char from accept in s
-; Returns: pointer to char, or NULL if not found
-; ============================================================
-	PUBLIC	_strpbrk
-_strpbrk:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	L,(IX+4)	; HL = s
-	LD	H,(IX+5)
-
-_strpbrk_loop:
-	LD	A,(HL)
-	OR	A
-	JR	Z,_strpbrk_notfound	; End of s
-
-	; Check if char is in accept
-	LD	B,A		; B = char to find
-	LD	E,(IX+6)	; DE = accept
-	LD	D,(IX+7)
-
-_strpbrk_check:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_strpbrk_next	; End of accept, not found
-	CP	B
-	JR	Z,_strpbrk_found
-	INC	DE
-	JR	_strpbrk_check
-
-_strpbrk_next:
-	INC	HL
-	JR	_strpbrk_loop
-
-_strpbrk_found:
-	; HL points to matching char
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-_strpbrk_notfound:
-	LD	HL,0
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; ============================================================
-; char *strerror(int errnum)
-; Return string describing error number
-; ============================================================
-	PUBLIC	_strerror
-_strerror:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	A,(IX+4)	; A = errnum (low byte)
-
-	; Check common error codes
-	OR	A
-	JR	Z,_strerror_ok	; 0 = success
-	CP	2		; ENOENT
-	JR	Z,_strerror_noent
-	CP	5		; EIO
-	JR	Z,_strerror_io
-	CP	12		; ENOMEM
-	JR	Z,_strerror_nomem
-	CP	13		; EACCES
-	JR	Z,_strerror_acces
-	CP	22		; EINVAL
-	JR	Z,_strerror_inval
-	CP	28		; ENOSPC
-	JR	Z,_strerror_nospc
-	CP	38		; ENOSYS
-	JR	Z,_strerror_nosys
-	; Default - unknown error
-	LD	HL,_strerr_unknown
-	JR	_strerror_ret
-
-_strerror_ok:
-	LD	HL,_strerr_ok
-	JR	_strerror_ret
-_strerror_noent:
-	LD	HL,_strerr_noent
-	JR	_strerror_ret
-_strerror_io:
-	LD	HL,_strerr_io
-	JR	_strerror_ret
-_strerror_nomem:
-	LD	HL,_strerr_nomem
-	JR	_strerror_ret
-_strerror_acces:
-	LD	HL,_strerr_acces
-	JR	_strerror_ret
-_strerror_inval:
-	LD	HL,_strerr_inval
-	JR	_strerror_ret
-_strerror_nospc:
-	LD	HL,_strerr_nospc
-	JR	_strerror_ret
-_strerror_nosys:
-	LD	HL,_strerr_nosys
-
-_strerror_ret:
-	POP	IX
-	RET
-
-; ============================================================
-
-; ============================================================
-; char *strncat(char *dest, const char *src, size_t n)
-; Append at most n chars from src to dest
-; Returns: dest
-; ============================================================
-	PUBLIC	_strncat
-_strncat:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-
-	LD	E,(IX+4)	; DE = dest
-	LD	D,(IX+5)
-
-	; Find end of dest
-_strncat_find:
-	LD	A,(DE)
-	OR	A
-	JR	Z,_strncat_copy
-	INC	DE
-	JR	_strncat_find
-
-_strncat_copy:
-	LD	L,(IX+6)	; HL = src
-	LD	H,(IX+7)
-	LD	C,(IX+8)	; BC = n
-	LD	B,(IX+9)
-
-_strncat_loop:
-	LD	A,B		; Check if n == 0
-	OR	C
-	JR	Z,_strncat_done
-
-	LD	A,(HL)
-	OR	A
-	JR	Z,_strncat_done	; End of src
-
-	LD	(DE),A
-	INC	HL
-	INC	DE
-	DEC	BC
-	JR	_strncat_loop
-
-_strncat_done:
-	; Null terminate
-	XOR	A
-	LD	(DE),A
-
-	LD	L,(IX+4)	; Return dest
-	LD	H,(IX+5)
-	POP	BC
-	POP	IX
-	RET
 
 	DSEG
+
 
 ; strtok state
 _strtok_next:	DS	2	; Next position in string
 _strtok_tok:	DS	2	; Start of current token
 
-; strerror messages
-_strerr_ok:	DB	'Success',0
-_strerr_noent:	DB	'No such file',0
-_strerr_io:	DB	'I/O error',0
-_strerr_nomem:	DB	'Out of memory',0
-_strerr_acces:	DB	'Permission denied',0
-_strerr_inval:	DB	'Invalid argument',0
-_strerr_nospc:	DB	'No space left',0
-_strerr_nosys:	DB	'Not implemented',0
-_strerr_unknown: DB	'Unknown error',0
+
+; ============================================================
+; lc_strtol.mac
+; ============================================================
+	CSEG
+; lc_strtol.mac - split from lc_atoi.mac
+
+
+
+	PUBLIC	_strtol_prefix
+
+	CSEG
+
+; ============================================================
+; long strtol(const char *nptr, char **endptr, int base)
+; Convert string to long (32-bit signed)
+; Supports base 0 (auto-detect), 8, 10, 16
+; Returns result in DEHL
+; ============================================================
+	PUBLIC	_strtol
+_strtol:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = nptr
+	LD	H,(IX+5)
+	LD	A,(IX+8)	; A = base (low byte only matters)
+	LD	(_strtol_base),A
+	XOR	A
+	LD	(_strtol_neg),A	; Clear negative flag
+
+	; Skip leading whitespace
+_strtol_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_strtol_skipnext
+	CP	09H
+	JR	Z,_strtol_skipnext
+	CP	0AH
+	JR	Z,_strtol_skipnext
+	CP	0DH
+	JR	Z,_strtol_skipnext
+	JR	_strtol_sign
+_strtol_skipnext:
+	INC	HL
+	JR	_strtol_skip
+
+_strtol_sign:
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_strtol_chkplus
+	LD	A,1
+	LD	(_strtol_neg),A
+	INC	HL
+	JR	_strtol_prefix
+_strtol_chkplus:
+	CP	'+'
+	JR	NZ,_strtol_prefix
+	INC	HL
+
+_strtol_prefix:
+	; Check for 0x or 0 prefix if base==0 or base==16/8
+	LD	A,(_strtol_base)
+	OR	A
+	JR	Z,_strtol_auto	; Auto-detect base
+	CP	16
+	JR	Z,_strtol_chk0x
+	JR	_strtol_init
+
+_strtol_auto:
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_strtol_base10
+	INC	HL
+	LD	A,(HL)
+	CP	'x'
+	JR	Z,_strtol_hexauto
+	CP	'X'
+	JR	Z,_strtol_hexauto
+	; Octal
+	DEC	HL
+	LD	A,8
+	LD	(_strtol_base),A
+	JR	_strtol_init
+
+_strtol_hexauto:
+	INC	HL		; Skip 'x'
+	LD	A,16
+	LD	(_strtol_base),A
+	JR	_strtol_init
+
+_strtol_base10:
+	LD	A,10
+	LD	(_strtol_base),A
+	JR	_strtol_init
+
+_strtol_chk0x:
+	; For explicit base 16, skip optional 0x prefix
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_strtol_init
+	INC	HL
+	LD	A,(HL)
+	CP	'x'
+	JR	Z,_strtol_skip0x
+	CP	'X'
+	JR	Z,_strtol_skip0x
+	DEC	HL
+	JR	_strtol_init
+_strtol_skip0x:
+	INC	HL
+
+_strtol_init:
+	; Initialize result to 0
+	XOR	A
+	LD	(_strtol_acc),A
+	LD	(_strtol_acc+1),A
+	LD	(_strtol_acc+2),A
+	LD	(_strtol_acc+3),A
+
+_strtol_loop:
+	LD	A,(HL)
+	; Convert digit
+	CP	'0'
+	JR	C,_strtol_done
+	CP	'9'+1
+	JR	C,_strtol_digit
+	; Check for hex digits
+	CP	'A'
+	JR	C,_strtol_done
+	CP	'Z'+1
+	JR	C,_strtol_upper
+	CP	'a'
+	JR	C,_strtol_done
+	CP	'z'+1
+	JR	NC,_strtol_done
+	SUB	'a'-10
+	JR	_strtol_gotdig
+
+_strtol_upper:
+	SUB	'A'-10
+	JR	_strtol_gotdig
+
+_strtol_digit:
+	SUB	'0'
+
+_strtol_gotdig:
+	; A = digit value, check against base
+	LD	B,A
+	LD	A,(_strtol_base)
+	CP	B
+	JR	C,_strtol_done	; digit >= base
+	JR	Z,_strtol_done	; digit >= base
+	LD	A,B
+
+	; acc = acc * base + digit
+	PUSH	HL
+	PUSH	AF		; Save digit
+
+	; Multiply acc by base
+	LD	A,(_strtol_base)
+	CALL	_strtol_mult
+
+	; Add digit
+	POP	AF
+	LD	E,A
+	LD	D,0
+	LD	HL,(_strtol_acc)
+	ADD	HL,DE
+	LD	(_strtol_acc),HL
+	JR	NC,_strtol_noc
+	LD	HL,(_strtol_acc+2)
+	INC	HL
+	LD	(_strtol_acc+2),HL
+_strtol_noc:
+	POP	HL
+	INC	HL
+	JR	_strtol_loop
+
+_strtol_done:
+	; Save end pointer if endptr != NULL
+	LD	E,(IX+6)	; DE = endptr
+	LD	D,(IX+7)
+	LD	A,D
+	OR	E
+	JR	Z,_strtol_noend
+	; *endptr = HL
+	EX	DE,HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+_strtol_noend:
+
+	; Load result into DEHL
+	LD	HL,(_strtol_acc)
+	LD	DE,(_strtol_acc+2)
+
+	; Apply sign
+	LD	A,(_strtol_neg)
+	OR	A
+	JR	Z,_strtol_ret
+
+	; Negate DEHL
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+
+_strtol_ret:
+	POP	BC
+	POP	IX
+	RET
+
+; Internal: multiply _strtol_acc by A
+_strtol_mult:
+	PUSH	BC
+	LD	B,A		; B = multiplier
+
+	; Copy acc to tmp
+	LD	HL,(_strtol_acc)
+	LD	(_strtol_tmp),HL
+	LD	HL,(_strtol_acc+2)
+	LD	(_strtol_tmp+2),HL
+
+	; Clear acc
+	XOR	A
+	LD	(_strtol_acc),A
+	LD	(_strtol_acc+1),A
+	LD	(_strtol_acc+2),A
+	LD	(_strtol_acc+3),A
+
+	; Multiply by shifts and adds
+_strtol_mult_loop:
+	LD	A,B
+	OR	A
+	JR	Z,_strtol_mult_done
+	RRA			; Carry = LSB
+	LD	B,A
+	JR	NC,_strtol_mult_shift
+
+	; Add tmp to acc
+	LD	HL,(_strtol_acc)
+	LD	DE,(_strtol_tmp)
+	ADD	HL,DE
+	LD	(_strtol_acc),HL
+	LD	HL,(_strtol_acc+2)
+	LD	DE,(_strtol_tmp+2)
+	ADC	HL,DE
+	LD	(_strtol_acc+2),HL
+
+_strtol_mult_shift:
+	; tmp = tmp * 2
+	LD	HL,(_strtol_tmp)
+	ADD	HL,HL
+	LD	(_strtol_tmp),HL
+	LD	HL,(_strtol_tmp+2)
+	ADC	HL,HL
+	LD	(_strtol_tmp+2),HL
+	JR	_strtol_mult_loop
+
+_strtol_mult_done:
+	POP	BC
+	RET
+
+
+	DSEG
+
+
+; strtol working storage
+_strtol_acc:	DS	4
+_strtol_tmp:	DS	4
+
+
+; ============================================================
+; lc_strtol_data.mac
+; ============================================================
+	CSEG
+; lc_strtol_data.mac - split from lc_atoi.mac
+
+
+	PUBLIC	_strtol_base
+	PUBLIC	_strtol_neg
+
+
+	DSEG
+
+_strtol_base:	DS	1
+_strtol_neg:	DS	1
+
+
+; ============================================================
+; lc_strtoul.mac
+; ============================================================
+	CSEG
+; lc_strtoul.mac - split from lc_atoi.mac
+
+
+
+	CSEG
+
+; ============================================================
+; unsigned long strtoul(const char *nptr, char **endptr, int base)
+; Convert string to unsigned long (32-bit)
+; Same as strtol but ignores minus sign
+; ============================================================
+	PUBLIC	_strtoul
+_strtoul:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = nptr
+	LD	H,(IX+5)
+	LD	A,(IX+8)	; A = base
+	LD	(_strtol_base),A
+	XOR	A
+	LD	(_strtol_neg),A	; Always unsigned
+
+	; Skip leading whitespace
+_strtoul_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_strtoul_skipnext
+	CP	09H
+	JR	Z,_strtoul_skipnext
+	CP	0AH
+	JR	Z,_strtoul_skipnext
+	CP	0DH
+	JR	Z,_strtoul_skipnext
+	JR	_strtoul_sign
+_strtoul_skipnext:
+	INC	HL
+	JR	_strtoul_skip
+
+_strtoul_sign:
+	; Skip optional + sign, ignore - sign
+	LD	A,(HL)
+	CP	'+'
+	JR	NZ,_strtoul_pref
+	INC	HL
+
+_strtoul_pref:
+	JP	_strtol_prefix	; Share the rest of strtol code
+
+
+; ============================================================
+; lc_system.mac
+; ============================================================
+	CSEG
+; lc_system.mac - split from lc_misc.mac
+
+
+	CSEG
+
+; ============================================================
+; int system(const char *command)
+; Execute shell command (stub - returns -1 on CP/M)
+; ============================================================
+	PUBLIC	_system
+_system:
+	LD	HL,-1		; Return -1 (failure)
+	RET
+
+; ============================================================
 
 
 ; ============================================================
@@ -18308,7 +19092,7 @@ _tss_dtors:	DS	16
 ; lc_time.mac
 ; ============================================================
 	CSEG
-; lc_time.mac - time functions
+; lc_time.mac - split from lc_time.mac
 
 
 	CSEG
@@ -18345,271 +19129,379 @@ _time_ret:
 	POP	IX
 	RET
 
-; ============================================================
-; clock_t clock(void)
-; Return CPU time used (stub - returns 0)
-; ============================================================
-	PUBLIC	_clock
-_clock:
-	LD	HL,0
-	LD	DE,0
-	RET
 
 ; ============================================================
-
-
-; ============================================================
-; lc_wchar.mac
+; lc_tmpfile.mac
 ; ============================================================
 	CSEG
-; lc_wchar.mac - multibyte/wide character functions
+; lc_tmpfile.mac - split from lc_file.mac
+
 
 
 	CSEG
 
 ; ============================================================
-; Multibyte/Wide Character Conversion Functions
-; Minimal implementation for C locale (1:1 char mapping)
+; FILE *tmpfile(void)
+; Create and open a temporary file for writing
+; File is automatically deleted when closed (by using $$$ extension)
 ; ============================================================
-
-; int mblen(const char *s, size_t n)
-; Determine bytes in multibyte character
-; C locale: always returns 1 for non-null char, 0 for null, -1 if s==NULL
-	PUBLIC	_mblen
-_mblen:
+	PUBLIC	_tmpfile
+_tmpfile:
 	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
 
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = s
-	LD	A,H
-	OR	L
-	JR	Z,_mblen_null	; s == NULL
+	; Generate unique temp name
+	LD	HL,_tmpfile_name
+	CALL	_gen_tmpnam
 
-	; Check if n >= 1
-	LD	C,(IX+6)
-	LD	B,(IX+7)	; BC = n
-	LD	A,B
-	OR	C
-	JR	Z,_mblen_zero	; n == 0
+	; Open with "w+" mode (create new)
+	LD	HL,_tmpfile_name
+	PUSH	HL
+	LD	HL,_tmpfile_mode
+	PUSH	HL
+	CALL	_fopen
+	POP	BC
+	POP	BC
 
-	; Check character
-	LD	A,(HL)
-	OR	A
-	JR	Z,_mblen_zero	; null character
+	; Mark this file for delete on close (use $$$ extension)
+	; Actually, CP/M doesn't have auto-delete, so we rely on unique names
 
-	; Valid single-byte character
-	LD	HL,1
+	POP	DE
+	POP	BC
 	POP	IX
 	RET
 
-_mblen_null:
-	; s == NULL: return 0 (stateless encoding)
-	LD	HL,0
-	POP	IX
-	RET
 
-_mblen_zero:
-	LD	HL,0
-	POP	IX
-	RET
 
-; int mbtowc(wchar_t *pwc, const char *s, size_t n)
-; Convert multibyte to wide character
-; C locale: just copy byte to wchar_t
-	PUBLIC	_mbtowc
-_mbtowc:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
+_tmpfile_mode:
+	DB	'w',0
 
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = s
-	LD	A,H
-	OR	L
-	JR	Z,_mbtowc_null	; s == NULL
+_tmpfile_name:
+	DS	13
 
-	; Check n
-	LD	C,(IX+8)
-	LD	B,(IX+9)	; BC = n
-	LD	A,B
-	OR	C
-	JR	Z,_mbtowc_err	; n == 0
 
-	; Get character
-	LD	A,(HL)
-	OR	A
-	JR	Z,_mbtowc_nul	; null character
+; ============================================================
+; lc_tmpnam.mac
+; ============================================================
+	CSEG
+; lc_tmpnam.mac - split from lc_file.mac
 
-	; Store in pwc if not NULL
-	LD	C,A		; Save char
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = pwc
-	LD	A,H
-	OR	L
-	JR	Z,_mbtowc_ret1
-	; Store as wide char (16-bit)
-	LD	(HL),C
-	INC	HL
-	XOR	A
-	LD	(HL),A
 
-_mbtowc_ret1:
-	LD	HL,1
-	POP	IX
-	RET
+	PUBLIC	_gen_tmpnam
 
-_mbtowc_nul:
-	; Store 0 in pwc if not NULL
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,H
-	OR	L
-	JR	Z,_mbtowc_ret0
-	XOR	A
-	LD	(HL),A
-	INC	HL
-	LD	(HL),A
-_mbtowc_ret0:
-	LD	HL,0
-	POP	IX
-	RET
+	CSEG
 
-_mbtowc_null:
-	; s == NULL: return 0 (stateless)
-	LD	HL,0
-	POP	IX
-	RET
-
-_mbtowc_err:
-	LD	HL,-1
-	POP	IX
-	RET
-
-; int wctomb(char *s, wchar_t wc)
-; Convert wide character to multibyte
-; C locale: just copy low byte if <= 255
-	PUBLIC	_wctomb
-_wctomb:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = s
-	LD	A,H
-	OR	L
-	JR	Z,_wctomb_null	; s == NULL
-
-	; Get wchar_t
-	LD	C,(IX+6)	; Low byte of wc
-	LD	A,(IX+7)	; High byte
-	OR	A
-	JR	NZ,_wctomb_err	; > 255: invalid for C locale
-
-	; Store character
-	LD	(HL),C
-	LD	HL,1
-	POP	IX
-	RET
-
-_wctomb_null:
-	; s == NULL: return 0 (stateless)
-	LD	HL,0
-	POP	IX
-	RET
-
-_wctomb_err:
-	LD	HL,-1
-	POP	IX
-	RET
-
-; size_t mbstowcs(wchar_t *dest, const char *src, size_t n)
-; Convert multibyte string to wide string
-; C locale: copy bytes to wchar_t array
-	PUBLIC	_mbstowcs
-_mbstowcs:
+; ============================================================
+; char *tmpnam(char *s)
+; Generate a unique temporary file name
+; If s is NULL, returns pointer to internal static buffer
+; ============================================================
+	PUBLIC	_tmpnam
+_tmpnam:
 	PUSH	IX
 	LD	IX,0
 	ADD	IX,SP
 	PUSH	BC
+	PUSH	DE
 
-	LD	E,(IX+4)
-	LD	D,(IX+5)	; DE = dest
-	LD	L,(IX+6)
-	LD	H,(IX+7)	; HL = src
-	LD	C,(IX+8)
-	LD	B,(IX+9)	; BC = n
-	PUSH	BC		; Save n
+	; Get buffer pointer
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	NZ,_tmpnam_usebuf
+	; Use internal buffer
+	LD	HL,_tmpnam_buf
+_tmpnam_usebuf:
+	PUSH	HL		; Save destination
+	CALL	_gen_tmpnam
+	POP	HL		; Return destination
 
-	LD	BC,0		; Count = 0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
 
-_mbstowcs_loop:
-	; Check if count < n
-	POP	HL		; n
+; Internal: Generate temp name into HL
+_gen_tmpnam:
+	PUSH	BC
+	PUSH	DE
 	PUSH	HL
+
+	; Format: TMP00000.$$$
+	LD	(HL),'T'
+	INC	HL
+	LD	(HL),'M'
+	INC	HL
+	LD	(HL),'P'
+	INC	HL
+
+	; Get counter and convert to 5 digits
+	LD	DE,(_tmpnam_cnt)
+	INC	DE
+	LD	(_tmpnam_cnt),DE
+
+	; Convert DE to 5 decimal digits
+	LD	BC,10000
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	; Remainder in DE
+	LD	BC,1000
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	LD	BC,100
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	LD	BC,10
+	CALL	_div16
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+	LD	A,E
+	ADD	A,'0'
+	LD	(HL),A
+	INC	HL
+
+	; Add .$$$ extension
+	LD	(HL),'.'
+	INC	HL
+	LD	(HL),'$'
+	INC	HL
+	LD	(HL),'$'
+	INC	HL
+	LD	(HL),'$'
+	INC	HL
+	LD	(HL),0
+
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; Internal: Divide DE by BC, quotient in A, remainder in DE
+_div16:
+	XOR	A
+_div16_loop:
+	LD	H,D
+	LD	L,E
 	OR	A
 	SBC	HL,BC
-	JR	Z,_mbstowcs_done
-	JR	C,_mbstowcs_done
+	JR	C,_div16_done
+	EX	DE,HL
+	INC	A
+	JR	_div16_loop
+_div16_done:
+	RET
 
-	; Get source pointer back
+
+
+_tmpnam_cnt:
+	DW	0
+
+_tmpnam_buf:
+	DS	13		; TMP00000.$$$ + null
+
+
+; ============================================================
+; lc_tolower.mac
+; ============================================================
+	CSEG
+; lc_tolower.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int tolower(int c)
+	PUBLIC	_tolower
+_tolower:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'A'
+	JR	C,_tolower_ret
+	CP	'Z'+1
+	JR	NC,_tolower_ret
+	ADD	A,'a'-'A'	; Convert to lowercase
+_tolower_ret:
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_toupper.mac
+; ============================================================
+	CSEG
+; lc_toupper.mac - split from lc_ctype.mac
+
+
+	CSEG
+
+; int toupper(int c)
+	PUBLIC	_toupper
+_toupper:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'a'
+	JR	C,_toupper_ret
+	CP	'z'+1
+	JR	NC,_toupper_ret
+	SUB	'a'-'A'		; Convert to uppercase
+_toupper_ret:
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_ungetc.mac
+; ============================================================
+	CSEG
+; lc_ungetc.mac - split from lc_file.mac
+
+
+	CSEG
+
+; ============================================================
+; int ungetc(int c, FILE *stream)
+; Push character back to stream
+; ============================================================
+	PUBLIC	_ungetc
+_ungetc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
 	LD	L,(IX+6)
-	LD	H,(IX+7)
-	ADD	HL,BC		; HL = src + count
-	LD	A,(HL)		; Get char
-
-	; Check for null terminator
-	OR	A
-	JR	Z,_mbstowcs_term
-
-	; Store in dest if not NULL
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = dest
-	LD	E,A
+	LD	H,(IX+7)	; stream
 	LD	A,H
 	OR	L
-	JR	Z,_mbstowcs_nodest
-	; dest[count] = char
-	PUSH	BC
-	SLA	C
-	RL	B		; BC * 2 for wchar_t offset
-	ADD	HL,BC
-	LD	(HL),E		; Low byte
+	JR	Z,_ungetc_err
 	INC	HL
-	XOR	A
-	LD	(HL),A		; High byte = 0
-	POP	BC
+	INC	HL		; unget
+	LD	A,(IX+4)
+	LD	(HL),A
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+_ungetc_err:
+	LD	HL,-1
+	POP	IX
+	RET
 
-_mbstowcs_nodest:
-	INC	BC		; count++
-	JR	_mbstowcs_loop
 
-_mbstowcs_term:
-	; Null terminate dest if not NULL
+; ============================================================
+; lc_vprintf.mac
+; ============================================================
+	CSEG
+; lc_vprintf.mac - vprintf, split from lc_fprintf.mac
+
+
+	CSEG
+
+	PUBLIC	_vprintf
+; int vprintf(const char *fmt, va_list ap)
+_vprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	HL,(_printf_sink)
+	PUSH	HL
+	LD	HL,__conout
+	LD	(_printf_sink),HL
+
 	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	A,H
-	OR	L
-	JR	Z,_mbstowcs_done
-	PUSH	BC
-	SLA	C
-	RL	B
-	ADD	HL,BC
-	XOR	A
-	LD	(HL),A
-	INC	HL
-	LD	(HL),A
-	POP	BC
+	LD	H,(IX+5)		; HL = format string
+	LD	E,(IX+6)
+	LD	D,(IX+7)		; DE = va_list
+	PUSH	HL
+	PUSH	DE
+	POP	IX
+	POP	HL
+	LD	C,0
+	CALL	_printf_engine
 
-_mbstowcs_done:
-	POP	HL		; Discard saved n
-	LD	H,B
-	LD	L,C		; Return count
+	POP	HL
+	LD	(_printf_sink),HL
+	LD	HL,(_printf_count)
+	POP	DE
 	POP	BC
 	POP	IX
 	RET
+
+
+; ============================================================
+; lc_vsprintf.mac
+; ============================================================
+	CSEG
+; lc_vsprintf.mac - vsprintf, split from lc_fprintf.mac
+
+
+	CSEG
+
+	PUBLIC	_vsprintf
+; int vsprintf(char *str, const char *fmt, va_list ap)
+_vsprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_sprintf_out),HL
+
+	LD	HL,(_printf_sink)
+	PUSH	HL
+	LD	HL,_sprintf_sink
+	LD	(_printf_sink),HL
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)		; HL = format string
+	LD	E,(IX+8)
+	LD	D,(IX+9)		; DE = va_list
+	PUSH	HL
+	PUSH	DE
+	POP	IX
+	POP	HL
+	LD	C,0
+	CALL	_printf_engine
+
+	POP	HL
+	LD	(_printf_sink),HL
+	LD	HL,(_sprintf_out)
+	LD	(HL),0			; NUL terminate
+	LD	HL,(_printf_count)
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+; ============================================================
+; lc_wcstombs.mac
+; ============================================================
+	CSEG
+; lc_wcstombs.mac - split from lc_wchar.mac
+
+
+	CSEG
 
 ; size_t wcstombs(char *dest, const wchar_t *src, size_t n)
 ; Convert wide string to multibyte string
@@ -18691,6 +19583,54 @@ _wcstombs_err:
 ; ============================================================
 ; char *strrchr(const char *s, int c)
 ; Find last occurrence of c in s
+
+
+; ============================================================
+; lc_wctomb.mac
+; ============================================================
+	CSEG
+; lc_wctomb.mac - split from lc_wchar.mac
+
+
+	CSEG
+
+; int wctomb(char *s, wchar_t wc)
+; Convert wide character to multibyte
+; C locale: just copy low byte if <= 255
+	PUBLIC	_wctomb
+_wctomb:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_wctomb_null	; s == NULL
+
+	; Get wchar_t
+	LD	C,(IX+6)	; Low byte of wc
+	LD	A,(IX+7)	; High byte
+	OR	A
+	JR	NZ,_wctomb_err	; > 255: invalid for C locale
+
+	; Store character
+	LD	(HL),C
+	LD	HL,1
+	POP	IX
+	RET
+
+_wctomb_null:
+	; s == NULL: return 0 (stateless)
+	LD	HL,0
+	POP	IX
+	RET
+
+_wctomb_err:
+	LD	HL,-1
+	POP	IX
+	RET
 
 
 	END

@@ -1,0 +1,57 @@
+; lc_fflush.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+FLAG_WRITE	EQU	08H
+
+	EXTRN	_fflush_internal
+
+	CSEG
+
+; ============================================================
+; int fflush(FILE *stream)
+; Flush stream buffers
+; ============================================================
+	PUBLIC	_fflush
+_fflush:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_fflush_done_pub
+
+	; Check if file (not console)
+	LD	A,(HL)
+	CP	3
+	JR	C,_fflush_done_pub
+
+	; Check write mode
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	DEC	HL
+	JR	Z,_fflush_done_pub
+
+	CALL	_fflush_internal
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fflush_done_pub:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

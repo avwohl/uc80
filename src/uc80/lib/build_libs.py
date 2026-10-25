@@ -29,6 +29,13 @@ def assemble_dir(src_dir, verbose=True):
         print(f"  No .mac files found in {src_dir}")
         return False
 
+    # A module that was split or renamed leaves its old .rel behind; the
+    # library would then define every symbol twice.
+    wanted = {m.replace(".mac", ".rel") for m in mac_files}
+    for rel_file in glob.glob(os.path.join(src_dir, "*.rel")):
+        if rel_file not in wanted:
+            os.remove(rel_file)
+
     all_ok = True
     for mac_file in mac_files:
         rel_file = mac_file.replace(".mac", ".rel")
@@ -111,6 +118,7 @@ def concat_modules(src_dir, output_path, header_comment):
     out.append('')
     out.append('\tCSEG')
 
+    seen_equs = set()
     for path in mac_files:
         name = os.path.basename(path)
         with open(path) as f:
@@ -136,6 +144,12 @@ def concat_modules(src_dir, output_path, header_comment):
             m = re.match(r'(\w+)\s+EQU\s+', line)
             if m and m.group(1) in SHARED_EQUS:
                 continue
+            # Split modules each carry the EQUs they use; keep one copy of each identical line.
+            if m:
+                key = line.split(';')[0].split()
+                if tuple(key) in seen_equs:
+                    continue
+                seen_equs.add(tuple(key))
             # Skip "; CP/M BDOS function numbers" comment
             if re.match(r'^;\s*CP/M BDOS function numbers', line):
                 continue

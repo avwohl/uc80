@@ -1,0 +1,64 @@
+; lc_strpbrk.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *strpbrk(const char *s, const char *accept)
+; Find first occurrence of any char from accept in s
+; Returns: pointer to char, or NULL if not found
+; ============================================================
+	PUBLIC	_strpbrk
+_strpbrk:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)	; HL = s
+	LD	H,(IX+5)
+
+_strpbrk_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_strpbrk_notfound	; End of s
+
+	; Check if char is in accept
+	LD	B,A		; B = char to find
+	LD	E,(IX+6)	; DE = accept
+	LD	D,(IX+7)
+
+_strpbrk_check:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_strpbrk_next	; End of accept, not found
+	CP	B
+	JR	Z,_strpbrk_found
+	INC	DE
+	JR	_strpbrk_check
+
+_strpbrk_next:
+	INC	HL
+	JR	_strpbrk_loop
+
+_strpbrk_found:
+	; HL points to matching char
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_strpbrk_notfound:
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

@@ -1,0 +1,18 @@
+; lc_strtol_data.mac - split from lc_atoi.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	PUBLIC	_strtol_base
+	PUBLIC	_strtol_neg
+
+
+	DSEG
+
+_strtol_base:	DS	1
+_strtol_neg:	DS	1
+
+	END

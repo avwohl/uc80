@@ -1,0 +1,51 @@
+; lc_freopen.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_fclose
+	EXTRN	_fopen
+
+	CSEG
+
+; ============================================================
+; FILE *freopen(const char *pathname, const char *mode, FILE *stream)
+; Reopen stream with new file
+; ============================================================
+	PUBLIC	_freopen
+_freopen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Close current stream
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	PUSH	HL
+	CALL	_fclose
+	POP	BC
+
+	; Now reopen with new file
+	; Can't use the same FILE slot reliably, so just call fopen
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; pathname
+	PUSH	HL
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; mode
+	PUSH	HL
+	CALL	_fopen
+	POP	BC
+	POP	BC
+
+	; HL = new FILE* or NULL
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

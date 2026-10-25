@@ -1,0 +1,29 @@
+; lc_tolower.mac - split from lc_ctype.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int tolower(int c)
+	PUBLIC	_tolower
+_tolower:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'A'
+	JR	C,_tolower_ret
+	CP	'Z'+1
+	JR	NC,_tolower_ret
+	ADD	A,'a'-'A'	; Convert to lowercase
+_tolower_ret:
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+	END

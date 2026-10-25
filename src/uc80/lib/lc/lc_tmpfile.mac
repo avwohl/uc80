@@ -1,0 +1,54 @@
+; lc_tmpfile.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_fopen
+	EXTRN	_gen_tmpnam
+
+	CSEG
+
+; ============================================================
+; FILE *tmpfile(void)
+; Create and open a temporary file for writing
+; File is automatically deleted when closed (by using $$$ extension)
+; ============================================================
+	PUBLIC	_tmpfile
+_tmpfile:
+	PUSH	IX
+	PUSH	BC
+	PUSH	DE
+
+	; Generate unique temp name
+	LD	HL,_tmpfile_name
+	CALL	_gen_tmpnam
+
+	; Open with "w+" mode (create new)
+	LD	HL,_tmpfile_name
+	PUSH	HL
+	LD	HL,_tmpfile_mode
+	PUSH	HL
+	CALL	_fopen
+	POP	BC
+	POP	BC
+
+	; Mark this file for delete on close (use $$$ extension)
+	; Actually, CP/M doesn't have auto-delete, so we rely on unique names
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+
+_tmpfile_mode:
+	DB	'w',0
+
+_tmpfile_name:
+	DS	13
+
+	END

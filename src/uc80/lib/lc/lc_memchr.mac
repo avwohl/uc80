@@ -1,0 +1,44 @@
+; lc_memchr.mac - split from lc_mem.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; void *memchr(const void *s, int c, size_t n)
+; Find first occurrence of c in first n bytes of s
+; Returns: pointer to byte, or NULL if not found
+; ============================================================
+	PUBLIC	_memchr
+_memchr:
+	POP	AF		; return address
+	POP	HL		; HL = s
+	POP	DE		; E = char to find
+	POP	BC		; BC = n
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	PUSH	AF
+	LD	A,B
+	OR	C
+	JR	Z,_memchr_notfound
+	LD	A,E
+	CPIR			; stops after the match, or with BC = 0
+	JR	NZ,_memchr_notfound
+	DEC	HL
+	RET
+_memchr_notfound:
+	LD	HL,0
+	RET
+
+; ============================================================
+; int sprintf(char *str, const char *fmt, ...)
+; Format string into buffer
+; Supports %d, %s, %c, %x, %%
+; Returns: number of characters written (excluding null)
+
+	END

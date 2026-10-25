@@ -1,0 +1,33 @@
+; lc_abs.mac - split from lc_stdlib.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int abs(int n)
+; Return absolute value
+; ============================================================
+	PUBLIC	_abs
+_abs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	BIT	7,H
+	JR	Z,_abs_done
+	; Negate
+	LD	DE,0
+	EX	DE,HL
+	OR	A
+	SBC	HL,DE
+_abs_done:
+	POP	IX
+	RET
+
+	END

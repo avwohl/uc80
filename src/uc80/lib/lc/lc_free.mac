@@ -1,0 +1,151 @@
+; lc_free.mac - split from lc_malloc.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_free_head
+
+	PUBLIC	__free_hl
+
+	CSEG
+
+; ============================================================
+; void free(void *ptr)
+; Put the block on the free list (sorted by address) and merge it with
+; the free blocks next to it.
+; ============================================================
+	PUBLIC	_free
+_free:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = payload
+	CALL	__free_hl
+	POP	IX
+	RET
+
+; Free the block whose payload is HL (0 is ignored).
+; Clobbers AF, BC, DE, HL, IX.
+__free_hl:
+	LD	A,H
+	OR	L
+	RET	Z
+	DEC	HL
+	DEC	HL
+	EX	DE,HL		; DE = block
+	PUSH	DE
+	POP	IX		; IX = block
+	LD	BC,_free_head	; BC = address of the link that points at HL
+	LD	HL,(_free_head)
+_fre_scan:
+	LD	A,H
+	OR	L
+	JR	Z,_fre_here
+	LD	A,E
+	SUB	L
+	LD	A,D
+	SBC	A,H		; carry if block < candidate
+	JR	C,_fre_here
+	INC	HL
+	INC	HL
+	LD	B,H
+	LD	C,L		; BC = &candidate.next
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,A		; HL = candidate.next
+	JR	_fre_scan
+_fre_here:
+	; the block goes between the block that owns link BC and HL
+	LD	(IX+2),L
+	LD	(IX+3),H	; block.next = HL
+	LD	A,E
+	LD	(BC),A
+	INC	BC
+	LD	A,D
+	LD	(BC),A
+	DEC	BC		; the link now points at the block
+	LD	A,H
+	OR	L
+	JR	Z,_fre_prev
+	; merge with the next block when it starts where this one ends
+	PUSH	HL		; next
+	LD	L,(IX+0)
+	LD	H,(IX+1)
+	INC	HL
+	INC	HL
+	ADD	HL,DE		; HL = end of this block
+	POP	DE		; DE = next
+	OR	A
+	SBC	HL,DE
+	JR	NZ,_fre_prev
+	LD	H,D
+	LD	L,E		; HL = next block
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = next.size
+	INC	HL		; HL = &next.next
+	PUSH	HL
+	LD	L,(IX+0)
+	LD	H,(IX+1)
+	ADD	HL,DE
+	INC	HL
+	INC	HL
+	LD	(IX+0),L
+	LD	(IX+1),H	; size += next.size + 2
+	POP	HL
+	LD	A,(HL)
+	LD	(IX+2),A
+	INC	HL
+	LD	A,(HL)
+	LD	(IX+3),A	; block.next = next.next
+_fre_prev:
+	; merge into the previous block when it ends where this one starts
+	LD	HL,_free_head
+	OR	A
+	SBC	HL,BC
+	RET	Z		; no previous block: BC is the list head
+	DEC	BC
+	DEC	BC		; BC = previous block
+	LD	H,B
+	LD	L,C
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = prev.size
+	LD	HL,2
+	ADD	HL,DE
+	ADD	HL,BC		; HL = end of the previous block
+	PUSH	IX
+	POP	DE		; DE = this block
+	OR	A
+	SBC	HL,DE
+	RET	NZ
+	LD	L,(IX+0)
+	LD	H,(IX+1)
+	INC	HL
+	INC	HL		; HL = this block's size + 2
+	LD	A,(BC)
+	LD	E,A
+	INC	BC
+	LD	A,(BC)
+	LD	D,A		; DE = prev.size, BC = prev + 1
+	ADD	HL,DE
+	LD	A,H
+	LD	(BC),A
+	DEC	BC
+	LD	A,L
+	LD	(BC),A		; prev.size += size + 2
+	INC	BC
+	INC	BC		; BC = &prev.next
+	LD	A,(IX+2)
+	LD	(BC),A
+	INC	BC
+	LD	A,(IX+3)
+	LD	(BC),A		; prev.next = block.next
+	RET
+
+	END

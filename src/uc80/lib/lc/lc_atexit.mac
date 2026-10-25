@@ -1,0 +1,59 @@
+; lc_atexit.mac - split from lc_stdlib.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_atexit_cnt
+	EXTRN	_atexit_tab
+
+	CSEG
+
+; ============================================================
+; int atexit(void (*func)(void))
+; Register function to be called at exit
+; Returns 0 on success, non-zero on failure
+; ============================================================
+	PUBLIC	_atexit
+_atexit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	; Check if we have room
+	LD	A,(_atexit_cnt)
+	CP	4		; Max 4 handlers
+	JR	NC,_atexit_fail
+
+	; Get handler address: _atexit_tab + cnt*2
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	LD	DE,_atexit_tab
+	ADD	HL,DE		; HL = slot address
+
+	; Store function pointer
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+
+	; Increment count
+	LD	A,(_atexit_cnt)
+	INC	A
+	LD	(_atexit_cnt),A
+
+	; Return success
+	LD	HL,0
+	POP	IX
+	RET
+
+_atexit_fail:
+	LD	HL,1
+	POP	IX
+	RET
+
+	END

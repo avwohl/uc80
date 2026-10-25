@@ -1,0 +1,47 @@
+; lc_labs.mac - split from lc_stdlib.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; long labs(long n)
+; Return absolute value of long
+; Returns in DEHL
+; ============================================================
+	PUBLIC	_labs
+_labs:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DEHL = n
+	BIT	7,D
+	JR	Z,_labs_done
+	; Negate DEHL
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+_labs_done:
+	POP	IX
+	RET
+
+	END

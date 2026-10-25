@@ -1,0 +1,169 @@
+; lc_atol.mac - split from lc_atoi.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; long atol(const char *nptr)
+; Convert string to long (32-bit)
+; Returns result in DEHL
+; ============================================================
+	PUBLIC	_atol
+_atol:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	L,(IX+4)	; HL = string pointer
+	LD	H,(IX+5)
+
+	; Skip leading whitespace
+_atol_skip:
+	LD	A,(HL)
+	CP	' '
+	JR	Z,_atol_skipnext
+	CP	09H
+	JR	Z,_atol_skipnext
+	CP	0AH
+	JR	Z,_atol_skipnext
+	CP	0DH
+	JR	Z,_atol_skipnext
+	JR	_atol_sign
+_atol_skipnext:
+	INC	HL
+	JR	_atol_skip
+
+_atol_sign:
+	LD	C,0		; C = sign flag
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_atol_chkplus
+	LD	C,1
+	INC	HL
+	JR	_atol_digits
+_atol_chkplus:
+	CP	'+'
+	JR	NZ,_atol_digits
+	INC	HL
+
+_atol_digits:
+	; Result in __atol_acc (32-bit)
+	XOR	A
+	LD	(_atol_acc),A
+	LD	(_atol_acc+1),A
+	LD	(_atol_acc+2),A
+	LD	(_atol_acc+3),A
+
+_atol_loop:
+	LD	A,(HL)
+	SUB	'0'
+	JR	C,_atol_done
+	CP	10
+	JR	NC,_atol_done
+
+	; acc = acc * 10 + digit
+	PUSH	HL
+	PUSH	BC
+	PUSH	AF		; Save digit
+
+	; Multiply acc by 10 using shifts: x*10 = x*8 + x*2
+	; First, copy acc to tmp
+	LD	HL,(_atol_acc)
+	LD	(_atol_tmp),HL
+	LD	HL,(_atol_acc+2)
+	LD	(_atol_tmp+2),HL
+
+	; acc = acc * 2
+	LD	HL,(_atol_acc)
+	ADD	HL,HL
+	LD	(_atol_acc),HL
+	LD	HL,(_atol_acc+2)
+	ADC	HL,HL
+	LD	(_atol_acc+2),HL
+
+	; tmp = tmp * 8 (shift left 3 more times = total 4)
+	; Actually: acc*2 already done, so tmp*8 means shift tmp left 3 times
+	LD	B,3
+_atol_shift8:
+	LD	HL,(_atol_tmp)
+	ADD	HL,HL
+	LD	(_atol_tmp),HL
+	LD	HL,(_atol_tmp+2)
+	ADC	HL,HL
+	LD	(_atol_tmp+2),HL
+	DJNZ	_atol_shift8
+
+	; acc = acc + tmp (acc*2 + acc*8 = acc*10)
+	LD	HL,(_atol_acc)
+	LD	DE,(_atol_tmp)
+	ADD	HL,DE
+	LD	(_atol_acc),HL
+	LD	HL,(_atol_acc+2)
+	LD	DE,(_atol_tmp+2)
+	ADC	HL,DE
+	LD	(_atol_acc+2),HL
+
+	; Add digit
+	POP	AF
+	LD	E,A
+	LD	D,0
+	LD	HL,(_atol_acc)
+	ADD	HL,DE
+	LD	(_atol_acc),HL
+	JR	NC,_atol_noc
+	LD	HL,(_atol_acc+2)
+	INC	HL
+	LD	(_atol_acc+2),HL
+_atol_noc:
+	POP	BC
+	POP	HL
+	INC	HL
+	JR	_atol_loop
+
+_atol_done:
+	; Load result into DEHL
+	LD	HL,(_atol_acc)
+	LD	DE,(_atol_acc+2)
+
+	; Apply sign
+	LD	A,C
+	OR	A
+	JR	Z,_atol_ret
+
+	; Negate DEHL
+	PUSH	BC
+	LD	BC,0
+	LD	A,C
+	SUB	L
+	LD	L,A
+	LD	A,C
+	SBC	A,H
+	LD	H,A
+	LD	A,C
+	SBC	A,E
+	LD	E,A
+	LD	A,C
+	SBC	A,D
+	LD	D,A
+	POP	BC
+
+_atol_ret:
+	POP	BC
+	POP	IX
+	RET
+
+
+	DSEG
+
+
+; atol working storage
+_atol_acc:	DS	4
+_atol_tmp:	DS	4
+
+	END

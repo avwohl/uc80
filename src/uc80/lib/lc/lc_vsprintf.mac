@@ -1,0 +1,51 @@
+; lc_vsprintf.mac - vsprintf, split from lc_fprintf.mac
+	.Z80
+
+	EXTRN	_printf_engine
+	EXTRN	_printf_sink
+	EXTRN	_printf_count
+	EXTRN	_sprintf_sink
+	EXTRN	_sprintf_out
+
+	CSEG
+
+	PUBLIC	_vsprintf
+; int vsprintf(char *str, const char *fmt, va_list ap)
+_vsprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(_sprintf_out),HL
+
+	LD	HL,(_printf_sink)
+	PUSH	HL
+	LD	HL,_sprintf_sink
+	LD	(_printf_sink),HL
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)		; HL = format string
+	LD	E,(IX+8)
+	LD	D,(IX+9)		; DE = va_list
+	PUSH	HL
+	PUSH	DE
+	POP	IX
+	POP	HL
+	LD	C,0
+	CALL	_printf_engine
+
+	POP	HL
+	LD	(_printf_sink),HL
+	LD	HL,(_sprintf_out)
+	LD	(HL),0			; NUL terminate
+	LD	HL,(_printf_count)
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

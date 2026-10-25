@@ -1,0 +1,52 @@
+; lc_remove.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+BDOS_DELETE	EQU	19	; Delete file
+
+	EXTRN	_parse_fcb
+	EXTRN	_tmp_fcb
+
+	CSEG
+
+; ============================================================
+; int remove(const char *pathname)
+; Delete a file
+; Returns 0 on success, -1 on error
+; ============================================================
+	PUBLIC	_remove
+_remove:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Parse pathname into temporary FCB
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = pathname
+	LD	HL,_tmp_fcb
+	CALL	_parse_fcb
+
+	; Delete the file
+	LD	DE,_tmp_fcb
+	LD	C,BDOS_DELETE
+	CALL	BDOS
+
+	; A = 0xFF on error
+	CP	0FFH
+	JR	Z,_remove_err
+	LD	HL,0
+	JR	_remove_ret
+_remove_err:
+	LD	HL,-1
+_remove_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

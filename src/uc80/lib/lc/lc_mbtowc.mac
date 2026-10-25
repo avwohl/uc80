@@ -1,0 +1,83 @@
+; lc_mbtowc.mac - split from lc_wchar.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int mbtowc(wchar_t *pwc, const char *s, size_t n)
+; Convert multibyte to wide character
+; C locale: just copy byte to wchar_t
+	PUBLIC	_mbtowc
+_mbtowc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_null	; s == NULL
+
+	; Check n
+	LD	C,(IX+8)
+	LD	B,(IX+9)	; BC = n
+	LD	A,B
+	OR	C
+	JR	Z,_mbtowc_err	; n == 0
+
+	; Get character
+	LD	A,(HL)
+	OR	A
+	JR	Z,_mbtowc_nul	; null character
+
+	; Store in pwc if not NULL
+	LD	C,A		; Save char
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = pwc
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_ret1
+	; Store as wide char (16-bit)
+	LD	(HL),C
+	INC	HL
+	XOR	A
+	LD	(HL),A
+
+_mbtowc_ret1:
+	LD	HL,1
+	POP	IX
+	RET
+
+_mbtowc_nul:
+	; Store 0 in pwc if not NULL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	A,H
+	OR	L
+	JR	Z,_mbtowc_ret0
+	XOR	A
+	LD	(HL),A
+	INC	HL
+	LD	(HL),A
+_mbtowc_ret0:
+	LD	HL,0
+	POP	IX
+	RET
+
+_mbtowc_null:
+	; s == NULL: return 0 (stateless)
+	LD	HL,0
+	POP	IX
+	RET
+
+_mbtowc_err:
+	LD	HL,-1
+	POP	IX
+	RET
+
+	END

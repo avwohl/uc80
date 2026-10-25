@@ -1,0 +1,67 @@
+; lc_strncmp.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int strncmp(const char *s1, const char *s2, size_t n)
+; Compare at most n chars of two strings
+; ============================================================
+	PUBLIC	_strncmp
+_strncmp:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+
+	LD	E,(IX+4)	; DE = s1
+	LD	D,(IX+5)
+	LD	L,(IX+6)	; HL = s2
+	LD	H,(IX+7)
+	LD	C,(IX+8)	; BC = n
+	LD	B,(IX+9)
+
+_strncmp_loop:
+	LD	A,B		; Check if n == 0
+	OR	C
+	JR	Z,_strncmp_equal
+
+	LD	A,(DE)		; Get s1 char
+	PUSH	HL
+	LD	H,(HL)		; H = s2 char
+	SUB	H		; Compare
+	POP	HL
+	JR	NZ,_strncmp_diff
+
+	LD	A,(DE)		; Check if null
+	OR	A
+	JR	Z,_strncmp_equal
+
+	DEC	BC
+	INC	DE
+	INC	HL
+	JR	_strncmp_loop
+
+_strncmp_equal:
+	LD	HL,0
+	POP	BC
+	POP	IX
+	RET
+
+_strncmp_diff:
+	; A = s1[i] - s2[i] (mod 256), CY set if s1[i] < s2[i] as unsigned
+	; char.  HL = CY:A sign-extended = (unsigned char)s1[i] -
+	; (unsigned char)s2[i], -255..255, as C requires.
+	LD	L,A
+	SBC	A,A		; 0FFH if CY, else 0
+	LD	H,A
+	POP	BC
+	POP	IX
+	RET
+
+	END

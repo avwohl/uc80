@@ -1,0 +1,34 @@
+; lc_mempcpy.mac - split from lc_mem.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; void *mempcpy(void *dest, const void *src, size_t n)
+; Copy n bytes from src to dest, return dest + n.
+; GNU extension some torture tests reach for.
+; ============================================================
+	PUBLIC	_mempcpy
+_mempcpy:
+	POP	AF		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	POP	BC		; BC = n
+	PUSH	BC
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF
+	LD	A,B
+	OR	C
+	JR	Z,_mempcpy_done
+	LDIR			; DE ends at dest + n
+_mempcpy_done:
+	EX	DE,HL
+	RET
+
+	END

@@ -1,0 +1,54 @@
+; lc_memcmp.mac - split from lc_mem.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; int memcmp(const void *s1, const void *s2, size_t n)
+; Compare n bytes of s1 and s2
+; Returns: <0 if s1<s2, 0 if s1==s2, >0 if s1>s2
+; ============================================================
+	PUBLIC	_memcmp
+_memcmp:
+	POP	AF		; return address
+	POP	DE		; DE = s1
+	POP	HL		; HL = s2
+	POP	BC		; BC = n
+	PUSH	BC
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF
+	LD	A,B
+	OR	C
+	JR	Z,_memcmp_equal
+_memcmp_loop:
+	LD	A,(DE)
+	INC	DE
+	CPI			; compare with (HL), HL++, BC--
+	JR	NZ,_memcmp_diff
+	JP	PE,_memcmp_loop	; BC != 0
+_memcmp_equal:
+	LD	HL,0
+	RET
+_memcmp_diff:
+	; Return s1[i] - s2[i] as unsigned chars (-255..255)
+	DEC	HL
+	SUB	(HL)
+	LD	L,A
+	SBC	A,A
+	LD	H,A
+	RET
+
+; ============================================================
+; void *malloc(size_t size)
+; Allocate memory from heap
+; Simple bump allocator - memory is never freed
+; Argument: size on stack at IX+4
+; Returns: pointer to allocated memory, or NULL (0) if failed
+
+	END

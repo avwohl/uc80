@@ -1,0 +1,49 @@
+; lc_wctomb.mac - split from lc_wchar.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int wctomb(char *s, wchar_t wc)
+; Convert wide character to multibyte
+; C locale: just copy low byte if <= 255
+	PUBLIC	_wctomb
+_wctomb:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = s
+	LD	A,H
+	OR	L
+	JR	Z,_wctomb_null	; s == NULL
+
+	; Get wchar_t
+	LD	C,(IX+6)	; Low byte of wc
+	LD	A,(IX+7)	; High byte
+	OR	A
+	JR	NZ,_wctomb_err	; > 255: invalid for C locale
+
+	; Store character
+	LD	(HL),C
+	LD	HL,1
+	POP	IX
+	RET
+
+_wctomb_null:
+	; s == NULL: return 0 (stateless)
+	LD	HL,0
+	POP	IX
+	RET
+
+_wctomb_err:
+	LD	HL,-1
+	POP	IX
+	RET
+
+	END

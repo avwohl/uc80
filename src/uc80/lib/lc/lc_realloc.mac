@@ -1,0 +1,80 @@
+; lc_realloc.mac - split from lc_malloc.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	__free_hl
+	EXTRN	__malloc_de
+
+	CSEG
+
+; ============================================================
+; void *realloc(void *ptr, size_t size)
+; NULL ptr: malloc.  Size 0: free, return NULL.  A block that is
+; already big enough is returned as is; otherwise allocate, copy the old
+; contents and free the old block (the old block stays valid when the
+; allocation fails).
+; ============================================================
+	PUBLIC	_realloc
+_realloc:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = ptr
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; DE = size
+	LD	A,H
+	OR	L
+	JR	NZ,_rea_have
+	CALL	__malloc_de
+	POP	IX
+	RET
+_rea_have:
+	LD	A,D
+	OR	E
+	JR	NZ,_rea_do
+	CALL	__free_hl
+	LD	HL,0
+	POP	IX
+	RET
+_rea_do:
+	DEC	HL
+	DEC	HL
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)		; BC = size of the old block
+	INC	HL		; HL = payload
+	PUSH	HL		; old payload
+	PUSH	BC		; old size
+	LD	H,B
+	LD	L,C
+	OR	A
+	SBC	HL,DE		; old size - requested size
+	JR	NC,_rea_same
+	CALL	__malloc_de	; HL = new payload
+	POP	BC		; BC = old size
+	POP	DE		; DE = old payload
+	LD	A,H
+	OR	L
+	JR	Z,_rea_ret	; no memory: the old block is untouched
+	PUSH	HL		; new payload
+	PUSH	DE		; old payload
+	EX	DE,HL		; DE = new, HL = old
+	LDIR
+	POP	HL
+	CALL	__free_hl
+	POP	HL		; new payload
+_rea_ret:
+	POP	IX
+	RET
+_rea_same:
+	POP	BC
+	POP	HL		; old payload
+	POP	IX
+	RET
+
+	END

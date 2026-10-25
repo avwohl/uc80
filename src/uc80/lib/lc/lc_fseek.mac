@@ -1,0 +1,125 @@
+; lc_fseek.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+FILE_BUFPOS	EQU	3	; Current position in buffer
+FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FLAG_EOF	EQU	02H
+FLAG_WRITE	EQU	08H
+
+	EXTRN	_fflush_internal
+
+	CSEG
+
+; ============================================================
+; int fseek(FILE *stream, long offset, int whence)
+; Seek to position in file (simplified - sector-based)
+; ============================================================
+	PUBLIC	_fseek
+_fseek:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; stream
+	LD	A,H
+	OR	L
+	JR	Z,_fseek_err
+
+	; Check if file
+	LD	A,(HL)
+	CP	3
+	JR	C,_fseek_err
+
+	; Flush buffer first if write mode
+	PUSH	HL
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	JR	Z,_fseek_noflush
+	DEC	HL
+	CALL	_fflush_internal
+	JR	_fseek_doset
+_fseek_noflush:
+	DEC	HL
+_fseek_doset:
+	POP	HL
+	PUSH	HL
+
+	; Get offset (lower 16 bits only for simplicity)
+	LD	E,(IX+6)
+	LD	D,(IX+7)	; offset low word
+
+	; Check whence
+	LD	A,(IX+10)
+	OR	A
+	JR	NZ,_fseek_err_pop	; Only SEEK_SET supported
+
+	; Convert byte offset to record number (divide by 128)
+	; Shift DE right 7 times
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E
+	SRL	D
+	RR	E		; DE = record number
+
+	; Set random record in FCB
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_FCB+33	; r0, r1 in FCB
+	ADD	HL,BC
+	LD	(HL),E		; r0
+	INC	HL
+	LD	(HL),D		; r1
+	INC	HL
+	LD	(HL),0		; r2
+
+	; Clear buffer
+	POP	HL
+	PUSH	HL
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	(HL),0		; bufpos
+	INC	HL
+	LD	(HL),0		; bufcnt
+
+	; Clear EOF flag
+	POP	HL
+	PUSH	HL
+	INC	HL
+	LD	A,(HL)
+	AND	0FFH - FLAG_EOF
+	LD	(HL),A
+
+	POP	HL
+	LD	HL,0
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+_fseek_err_pop:
+	POP	HL
+_fseek_err:
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

@@ -1,0 +1,50 @@
+; lc_memmove.mac - split from lc_mem.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; void *memmove(void *dest, const void *src, size_t n)
+; Copy n bytes, handles overlapping regions
+; Returns: dest
+; ============================================================
+	PUBLIC	_memmove
+_memmove:
+	POP	AF		; return address
+	POP	DE		; DE = dest
+	POP	HL		; HL = src
+	POP	BC		; BC = n
+	PUSH	BC
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF
+	PUSH	DE		; return value
+	LD	A,B
+	OR	C
+	JR	Z,_memmove_done
+	; src >= dest: copy forward.  src < dest: copy backward from the
+	; ends, which is right whether or not the regions overlap.
+	OR	A
+	SBC	HL,DE
+	ADD	HL,DE
+	JR	NC,_memmove_fwd
+	ADD	HL,BC
+	DEC	HL		; HL = src + n - 1
+	EX	DE,HL
+	ADD	HL,BC
+	DEC	HL		; HL = dest + n - 1
+	EX	DE,HL
+	LDDR
+	JR	_memmove_done
+_memmove_fwd:
+	LDIR
+_memmove_done:
+	POP	HL
+	RET
+
+	END

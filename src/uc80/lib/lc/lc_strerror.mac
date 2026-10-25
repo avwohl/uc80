@@ -1,0 +1,89 @@
+; lc_strerror.mac - split from lc_string.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; ============================================================
+; char *strerror(int errnum)
+; Return string describing error number
+; ============================================================
+	PUBLIC	_strerror
+_strerror:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+
+	LD	A,(IX+4)	; A = errnum (low byte)
+
+	; Check common error codes
+	OR	A
+	JR	Z,_strerror_ok	; 0 = success
+	CP	2		; ENOENT
+	JR	Z,_strerror_noent
+	CP	5		; EIO
+	JR	Z,_strerror_io
+	CP	12		; ENOMEM
+	JR	Z,_strerror_nomem
+	CP	13		; EACCES
+	JR	Z,_strerror_acces
+	CP	22		; EINVAL
+	JR	Z,_strerror_inval
+	CP	28		; ENOSPC
+	JR	Z,_strerror_nospc
+	CP	38		; ENOSYS
+	JR	Z,_strerror_nosys
+	; Default - unknown error
+	LD	HL,_strerr_unknown
+	JR	_strerror_ret
+
+_strerror_ok:
+	LD	HL,_strerr_ok
+	JR	_strerror_ret
+_strerror_noent:
+	LD	HL,_strerr_noent
+	JR	_strerror_ret
+_strerror_io:
+	LD	HL,_strerr_io
+	JR	_strerror_ret
+_strerror_nomem:
+	LD	HL,_strerr_nomem
+	JR	_strerror_ret
+_strerror_acces:
+	LD	HL,_strerr_acces
+	JR	_strerror_ret
+_strerror_inval:
+	LD	HL,_strerr_inval
+	JR	_strerror_ret
+_strerror_nospc:
+	LD	HL,_strerr_nospc
+	JR	_strerror_ret
+_strerror_nosys:
+	LD	HL,_strerr_nosys
+
+_strerror_ret:
+	POP	IX
+	RET
+
+; ============================================================
+
+
+	DSEG
+
+
+; strerror messages
+_strerr_ok:	DB	'Success',0
+_strerr_noent:	DB	'No such file',0
+_strerr_io:	DB	'I/O error',0
+_strerr_nomem:	DB	'Out of memory',0
+_strerr_acces:	DB	'Permission denied',0
+_strerr_inval:	DB	'Invalid argument',0
+_strerr_nospc:	DB	'No space left',0
+_strerr_nosys:	DB	'Not implemented',0
+_strerr_unknown: DB	'Unknown error',0
+
+	END

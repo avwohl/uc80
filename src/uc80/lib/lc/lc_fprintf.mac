@@ -1,4 +1,4 @@
-; lc_fprintf.mac - fprintf, vfprintf, vprintf, vsprintf.
+; lc_fprintf.mac - fprintf, vfprintf (vprintf and vsprintf are in lc_vprintf.mac and lc_vsprintf.mac).
 ;
 ; Each of these carried its own formatter, so a conversion the printf
 ; table knew about was invisible here.  fprintf had no float handler at
@@ -12,19 +12,14 @@
 	.Z80
 
 	EXTRN	_fputc
-	EXTRN	__conout
 	EXTRN	_printf_engine
 	EXTRN	_printf_sink
 	EXTRN	_printf_count
-	EXTRN	_sprintf_sink
-	EXTRN	_sprintf_out
 
 	CSEG
 
 	PUBLIC	_fprintf
 	PUBLIC	_vfprintf
-	PUBLIC	_vprintf
-	PUBLIC	_vsprintf
 
 ; int fprintf(FILE *stream, const char *fmt, ...)
 _fprintf:
@@ -86,76 +81,6 @@ _vfprintf:
 
 	POP	HL
 	LD	(_printf_sink),HL
-	LD	HL,(_printf_count)
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; int vprintf(const char *fmt, va_list ap)
-_vprintf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	HL,(_printf_sink)
-	PUSH	HL
-	LD	HL,__conout
-	LD	(_printf_sink),HL
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)		; HL = format string
-	LD	E,(IX+6)
-	LD	D,(IX+7)		; DE = va_list
-	PUSH	HL
-	PUSH	DE
-	POP	IX
-	POP	HL
-	LD	C,0
-	CALL	_printf_engine
-
-	POP	HL
-	LD	(_printf_sink),HL
-	LD	HL,(_printf_count)
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
-
-; int vsprintf(char *str, const char *fmt, va_list ap)
-_vsprintf:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	PUSH	BC
-	PUSH	DE
-
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	(_sprintf_out),HL
-
-	LD	HL,(_printf_sink)
-	PUSH	HL
-	LD	HL,_sprintf_sink
-	LD	(_printf_sink),HL
-
-	LD	L,(IX+6)
-	LD	H,(IX+7)		; HL = format string
-	LD	E,(IX+8)
-	LD	D,(IX+9)		; DE = va_list
-	PUSH	HL
-	PUSH	DE
-	POP	IX
-	POP	HL
-	LD	C,0
-	CALL	_printf_engine
-
-	POP	HL
-	LD	(_printf_sink),HL
-	LD	HL,(_sprintf_out)
-	LD	(HL),0			; NUL terminate
 	LD	HL,(_printf_count)
 	POP	DE
 	POP	BC

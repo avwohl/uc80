@@ -1,0 +1,21 @@
+; lc_putc.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	EXTRN	_fputc
+
+	CSEG
+
+; ============================================================
+; int putc(int c, FILE *stream)
+; Put character to stream (equivalent to fputc)
+; ============================================================
+	PUBLIC	_putc
+_putc:
+	JP	_fputc		; Just tail-call fputc
+
+	END

@@ -1,0 +1,29 @@
+; lc_toupper.mac - split from lc_ctype.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+
+	CSEG
+
+; int toupper(int c)
+	PUBLIC	_toupper
+_toupper:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(IX+4)
+	CP	'a'
+	JR	C,_toupper_ret
+	CP	'z'+1
+	JR	NC,_toupper_ret
+	SUB	'a'-'A'		; Convert to uppercase
+_toupper_ret:
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+	END

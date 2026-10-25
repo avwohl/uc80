@@ -1,7 +1,6 @@
-; lc_time.mac - time functions
+; lc_time.mac - split from lc_time.mac
 	.Z80
 
-; CP/M BDOS function numbers
 BDOS	EQU	5
 CONOUT	EQU	2
 CONIN	EQU	1
@@ -40,17 +39,5 @@ _time:
 _time_ret:
 	POP	IX
 	RET
-
-; ============================================================
-; clock_t clock(void)
-; Return CPU time used (stub - returns 0)
-; ============================================================
-	PUBLIC	_clock
-_clock:
-	LD	HL,0
-	LD	DE,0
-	RET
-
-; ============================================================
 
 	END

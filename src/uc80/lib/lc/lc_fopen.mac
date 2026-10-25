@@ -1,0 +1,312 @@
+; lc_fopen.mac - split from lc_file.mac
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+CONIN	EQU	1
+PRTSTR	EQU	9
+BDOS_OPEN	EQU	15	; Open file
+BDOS_DELETE	EQU	19	; Delete file
+BDOS_MAKE	EQU	22	; Make (create) file
+BDOS_SETDMA	EQU	26	; Set DMA address
+FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
+FILE_SIZE	EQU	170	; Total FILE structure size
+FLAG_OPEN	EQU	01H
+FLAG_WRITE	EQU	08H
+FLAG_READ	EQU	10H
+MAX_FILES	EQU	4
+
+	PUBLIC	_parse_fcb
+
+	CSEG
+
+; ============================================================
+; FILE *fopen(const char *pathname, const char *mode)
+; Open a file for reading or writing
+; ============================================================
+	PUBLIC	_fopen
+_fopen:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; Find free file slot
+	LD	HL,_file_slots
+	LD	B,MAX_FILES
+_fopen_find:
+	PUSH	HL
+	INC	HL		; Point to flags
+	LD	A,(HL)
+	AND	FLAG_OPEN
+	POP	HL
+	JR	Z,_fopen_found
+	LD	DE,FILE_SIZE
+	ADD	HL,DE
+	DJNZ	_fopen_find
+	; No free slot
+	LD	HL,0
+	JP	_fopen_ret
+
+_fopen_found:
+	; HL = FILE structure, save it
+	PUSH	HL
+
+	; Parse mode string
+	LD	L,(IX+6)
+	LD	H,(IX+7)	; HL = mode
+	LD	A,(HL)
+	LD	B,0		; B = mode flags
+	CP	'r'
+	JR	Z,_fopen_read
+	CP	'w'
+	JR	Z,_fopen_write
+	CP	'a'
+	JR	Z,_fopen_append
+	; Invalid mode
+	POP	HL
+	LD	HL,0
+	JP	_fopen_ret
+
+_fopen_read:
+	LD	B,FLAG_READ
+	JR	_fopen_setup
+
+_fopen_write:
+	LD	B,FLAG_WRITE
+	JR	_fopen_setup
+
+_fopen_append:
+	LD	B,FLAG_WRITE	; Append = write mode
+	; (simplified: append not fully supported)
+
+_fopen_setup:
+	; B = mode flags, stack has FILE*
+	POP	HL		; HL = FILE*
+	PUSH	HL
+	PUSH	BC		; Save mode
+
+	; Initialize FILE structure
+	LD	A,3		; fd = 3+ for files
+	LD	(HL),A
+	INC	HL
+	XOR	A
+	LD	(HL),A		; flags = 0 (will set later)
+	INC	HL
+	LD	A,0FFH
+	LD	(HL),A		; unget = none
+	INC	HL
+	XOR	A
+	LD	(HL),A		; bufpos = 0
+	INC	HL
+	LD	(HL),A		; bufcnt = 0
+	INC	HL
+	LD	(HL),A		; reserved = 0
+	INC	HL		; HL now at FCB
+
+	; Clear FCB (36 bytes)
+	PUSH	HL
+	LD	B,36
+_fopen_clr:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_fopen_clr
+	POP	HL		; HL = FCB start
+
+	; Parse pathname into FCB
+	; HL = FCB, pathname at IX+4
+	PUSH	HL
+	LD	E,(IX+4)
+	LD	D,(IX+5)	; DE = pathname
+	CALL	_parse_fcb
+	POP	HL		; HL = FCB
+
+	; Get FILE* back
+	POP	BC		; B = mode flags
+	POP	DE		; DE = FILE*
+	PUSH	DE
+	PUSH	BC
+
+	; Set DMA to FILE's buffer
+	PUSH	HL
+	LD	HL,FILE_BUFFER-FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL		; DE = buffer address
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+	POP	DE		; DE = FCB
+
+	; Open or create based on mode
+	POP	BC		; B = mode flags
+	POP	HL		; HL = FILE*
+	PUSH	HL
+	PUSH	BC
+
+	LD	A,B
+	AND	FLAG_WRITE
+	JR	Z,_fopen_doopen
+
+	; Write mode - delete existing, create new
+	PUSH	DE
+	LD	C,BDOS_DELETE
+	CALL	BDOS
+	POP	DE
+	LD	C,BDOS_MAKE
+	CALL	BDOS
+	JR	_fopen_check
+
+_fopen_doopen:
+	; Read mode - open existing
+	LD	C,BDOS_OPEN
+	CALL	BDOS
+
+_fopen_check:
+	; A = 0xFF on error
+	CP	0FFH
+	JR	NZ,_fopen_ok
+
+	; Open failed
+	POP	BC
+	POP	HL
+	LD	HL,0
+	JP	_fopen_ret
+
+_fopen_ok:
+	; Set flags and return FILE*
+	POP	BC		; B = mode flags
+	POP	HL		; HL = FILE*
+	PUSH	HL
+	INC	HL		; Point to flags
+	LD	A,B
+	OR	FLAG_OPEN
+	LD	(HL),A
+	POP	HL		; Return FILE*
+	JR	_fopen_ret
+
+_fopen_ret:
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+; ============================================================
+; Internal: Parse pathname into FCB
+; DE = pathname, HL = FCB
+; ============================================================
+_parse_fcb:
+	PUSH	BC
+	PUSH	HL
+
+	; Check for drive letter
+	LD	A,(DE)
+	INC	DE
+	LD	B,A
+	LD	A,(DE)
+	CP	':'
+	JR	NZ,_parse_nodrive
+	; Has drive letter
+	LD	A,B
+	AND	0DFH		; Uppercase
+	SUB	'A'-1		; A=1, B=2, etc.
+	LD	(HL),A
+	INC	DE		; Skip colon
+	JR	_parse_name
+
+_parse_nodrive:
+	DEC	DE		; Back up
+	XOR	A		; Default drive
+	LD	(HL),A
+
+_parse_name:
+	INC	HL		; Point to filename
+	LD	B,8		; 8 chars max
+_parse_name_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_parse_pad_name
+	CP	'.'
+	JR	Z,_parse_ext
+	; Store uppercase (only for a-z, leave digits etc. alone)
+	CP	'a'
+	JR	C,_parse_name_store
+	CP	'z'+1
+	JR	NC,_parse_name_store
+	AND	0DFH
+_parse_name_store:
+	LD	(HL),A
+	INC	HL
+	INC	DE
+	DJNZ	_parse_name_loop
+	; Skip to dot or end
+_parse_skip:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_parse_pad_name
+	CP	'.'
+	JR	Z,_parse_ext
+	INC	DE
+	JR	_parse_skip
+
+_parse_pad_name:
+	; Pad remaining name with spaces
+	LD	A,' '
+_parse_pad_n:
+	LD	A,B
+	OR	A
+	JR	Z,_parse_ext_start
+	LD	A,' '
+	LD	(HL),A
+	INC	HL
+	DEC	B
+	JR	_parse_pad_n
+
+_parse_ext:
+	INC	DE		; Skip dot
+	; Pad any remaining name chars
+	JR	_parse_pad_name
+
+_parse_ext_start:
+	; Now at extension position (FCB+9)
+	LD	B,3		; 3 chars max
+_parse_ext_loop:
+	LD	A,(DE)
+	OR	A
+	JR	Z,_parse_pad_ext
+	; Uppercase only a-z
+	CP	'a'
+	JR	C,_parse_ext_store
+	CP	'z'+1
+	JR	NC,_parse_ext_store
+	AND	0DFH
+_parse_ext_store:
+	LD	(HL),A
+	INC	HL
+	INC	DE
+	DJNZ	_parse_ext_loop
+	JR	_parse_done
+
+_parse_pad_ext:
+	LD	A,B
+	OR	A
+	JR	Z,_parse_done
+	LD	A,' '
+	LD	(HL),A
+	INC	HL
+	DEC	B
+	JR	_parse_pad_ext
+
+_parse_done:
+	POP	HL
+	POP	BC
+	RET
+
+
+	DSEG
+
+
+; File slot storage
+_file_slots:	DS	680	; 4 FILE structures * 170 bytes each
+
+	END
