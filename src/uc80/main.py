@@ -280,15 +280,16 @@ class _BuildLibsAction(argparse.Action):
             # report "Unknown target: --build-libs".
             build_libs.main(["runtime", "libc"])
             # build_libs.py builds the libraries but not the startup module.
-            crt0_mac, crt0_rel = target / "crt0.mac", target / "crt0.rel"
-            if crt0_mac.exists():
-                result = subprocess.run(
-                    ["um80", str(crt0_mac), "-o", str(crt0_rel)],
-                    capture_output=True, text=True)
-                if result.returncode:
-                    print(result.stdout + result.stderr, file=sys.stderr)
-                    parser.exit(1)
-                print("  Assembled crt0.rel")
+            for stem in ("crt0", "crt0_rom"):
+                crt0_mac, crt0_rel = target / f"{stem}.mac", target / f"{stem}.rel"
+                if crt0_mac.exists():
+                    result = subprocess.run(
+                        ["um80", str(crt0_mac), "-o", str(crt0_rel)],
+                        capture_output=True, text=True)
+                    if result.returncode:
+                        print(result.stdout + result.stderr, file=sys.stderr)
+                        parser.exit(1)
+                    print(f"  Assembled {stem}.rel")
         except SystemExit as e:
             if e.code:
                 parser.exit(int(e.code))

@@ -62,12 +62,13 @@ where = ["src"]
 # The library globs are deliberately narrow. build_libs.py also produces
 # libc.rel, runtime.rel and ~92 per-module lc/*.rel and rt/*.rel that
 # nothing links against; a "lib/**/*.rel" glob would put ~105 KB of them in
-# every wheel. Only these three are link inputs.
+# every wheel. Only these four are link inputs.
 uc80 = [
     "lib/**/*.mac",
     "lib/**/*.h",
     "lib/*.lib",
     "lib/crt0.rel",
+    "lib/crt0_rom.rel",
 ]
 
 [project.optional-dependencies]

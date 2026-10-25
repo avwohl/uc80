@@ -49,9 +49,10 @@ def _assemble_libs():
     # it from LIB anyway so any relative path it grows later still works.
     subprocess.run([sys.executable, str(LIB / "build_libs.py")],
                    check=True, cwd=str(LIB))
-    # build_libs.py does not build the startup module.
-    subprocess.run(["um80", str(LIB / "crt0.mac"), "-o", str(LIB / "crt0.rel")],
-                   check=True)
+    # build_libs.py does not build the startup modules (crt0.mac, crt0_rom.mac).
+    for stem in ("crt0", "crt0_rom"):
+        subprocess.run(["um80", str(LIB / f"{stem}.mac"), "-o",
+                        str(LIB / f"{stem}.rel")], check=True)
 
 
 def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
