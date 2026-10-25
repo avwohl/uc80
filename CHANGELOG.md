@@ -6,12 +6,20 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Changed
+
+- `peep_local` rule 3 (`call` then `ret` becomes `jp`) now applies to calls of register-convention functions that take no stack argument, because the caller has nothing to pop. In the stack convention the rule almost never applied.
+- `generate()` has a `register_cc` argument (default True). The unit tests that pin the shape of stack-convention parameters pass `register_cc=False`.
+
 ### Fixed
 
 - `?:` after a side effect in the condition: `int a=v; return (a++ > 0) ? a : 99;` read `a` as `v` (uc80's own `?:` walk skipped the sequence point after the condition). uc80 now uses uc_core's walk and keeps only its typed constant fold (`_fold_ternary`). Needs the uc_core copy-propagation fix.
 
 ### Added
 
+- **Register calling convention, step 1** (family F of `docs/codegen_gap.md`; rules in `docs/calling_convention.md`). In whole-program mode, a function that only direct calls reach takes its first two scalar parameters in registers: parameter 0 in A (byte) or HL (word), parameter 1 in E (byte) or DE (word). Other parameters are pushed as before, and the caller does not pop the register parameters. A function qualifies when its name occurs only as the callee of direct calls, no assembly (inline, file scope, appended `.mac`, library sources) mentions the name, and it is not `main`, variadic, an entry point (`--entry`, `#pragma uc80 keep`, `public`, `vector`), an interrupt function or reachable from one, or a function that returns a wide struct. Every other function keeps the stack convention. The callee stores each parameter that the body names into `??AUTO` or, in a stack frame, pushes it in the prologue (recursion saves the parameter per activation). The pass `regcc.forward_slots` replaces the loads that a register still serves and deletes stores that nothing reads, so a small leaf like `out(port, v)` is `add A,E / ld (a),A / ret` with no IX frame. `--no-register-cc` turns the convention off. Measured against `--no-register-cc`: snd-cmdq 13.72M to 10.72M T-states, snd-ymreg 21.21M to 17.87M, snd-seq 14.52M to 12.34M, snd-fnum 13.69M to 11.06M, stanford-perm -19%, stanford-towers -19%, dhrystone -13.5%, tak -6.6%; 82 of 104 programs change, none gets bigger (total image -19,114 bytes). Geometric mean against SDCC 4.6.0: size 0.9757 to 0.9484, T-states (speed mode) 0.6228 to 0.6020.
+- `bench/ccfuzz.py`: a calling-convention fuzzer. Random programs with many small functions (0 to 4 parameters of char, short, int, long, unsigned, pointer and struct pointer type; recursion and mutual recursion; calls in arguments, conditions, loops and `?:`; function pointer tables; variadic helpers; static and extern definitions) run on the host and on uc80, and the checksums must agree. `tests/test_register_cc.py`.
+- `bench/run.py` honours `UC80_BENCH_RESULTS` (write the rows to another file), and the uc80 adapter honours `UC80_BENCH_FLAGS` (extra uc80 options), for A/B runs.
 - docs/neogeo_driver.md and examples/neogeo_driver.c: a Neo Geo sound driver example (NMI command, timer IRQ, YM busy wait, bank select) with the port table and a test that runs the example in romrun.
 - **Interrupt functions and hardware access** (Phase 2 of `docs/rom_target.md`; see `docs/rom_hardware.md`):
   - `#pragma uc80 interrupt NAME [critical]` and `#pragma uc80 nmi NAME` make a C function an interrupt function: `EI` first (for `interrupt`), `PUSH AF, BC, DE, HL, IY`, the matching pops, then `RETI` or `RETN`. The compiler sets the INT (38h) or NMI (66h) vector, keeps the function, and refuses parameters, a return value and a direct call. The prologue saves the alternate registers only when the call graph reaches code that uses them. `asm_dce` knows that `RETI` and `RETN` end a block.

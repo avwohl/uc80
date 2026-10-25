@@ -28,6 +28,10 @@ Default optimizations (all enabled unless disabled):
   result is unused (whole-program mode only; see the Printf Control section)
 - **Embedded runtime**: Runtime functions included as source, DCE removes unused ones
 
+### Register calling convention
+
+In whole-program mode, a function that only direct calls reach takes its first two scalar parameters in registers (A or HL, then E or DE). The caller pushes no word for these parameters, and a small function needs no IX frame. `--no-register-cc` passes every argument on the stack. [calling_convention.md](calling_convention.md) lists the rules.
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or

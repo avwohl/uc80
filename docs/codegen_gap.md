@@ -9,6 +9,38 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-25: family F, step 1 (register parameters) is done
+
+Step 1 of family F is in the code (branch `regcc`). [calling_convention.md](calling_convention.md) describes the rules. A function that only direct calls reach takes its first two scalar parameters in registers (A or HL, then E or DE). The caller pushes the other parameters and does not pop the register parameters. The callee stores each parameter that the body names into a slot (`??AUTO`, or a push in the prologue of a stack frame). The pass `regcc.forward_slots` then removes the loads that a register still serves and the stores that nothing reads. A small leaf function needs no IX frame. Steps 2 to 4 (non-leaf callees without a store, byte results in A, `jp` for tail calls with stack arguments) are open.
+
+The numbers come from `bench/run.py` (uc80, size mode), with and without `--no-register-cc`, from the same tree. Image bytes / T-states, before and after (SDCC 4.6.0 speed mode in the last column):
+
+- snd-cmdq: 2797 B / 13.72M, 2640 B / 10.72M, 4034 B / 9.03M
+- snd-ymreg: 2442 B / 21.21M, 2363 B / 17.87M, 3821 B / 15.26M
+- snd-seq: 3866 B / 14.52M, 3669 B / 12.34M, 5002 B / 12.99M
+- snd-fnum: 2597 B / 13.69M, 2539 B / 11.06M, 3769 B / 17.65M
+- tak: 1053 B / 47.26M, 961 B / 44.16M
+- stanford-perm: 528 B / 448.5M, 499 B / 361.6M
+- stanford-towers: 2480 B / 501.7M, 2323 B / 407.3M
+- queens: 947 B / 34.07M, 896 B / 33.94M
+- davidly-ttt: 3807 B / 13.12M, 3780 B / 12.97M
+- sieve: 253 B / 3.91M, no change
+
+Other large changes: dhrystone21 -209 B and -13.5% T-states, zx0 -130 B and -15.9%, stanford-puzzle -12.3%, coremark -715 B and -6.4%, embench-slre -508 B and -7.1%, crc -6.0%. Of the 104 uc80 rows that are OK, 82 changed and none got bigger. One got slower: `embench-md5sum` by 373 T-states (0.01%). The total image of the 104 programs falls by 19,114 bytes (630,973 to 611,859).
+
+The means (`bench/report.py` method: uc80 divided by SDCC 4.6.0, programs that are OK on both):
+
+- size minus the empty program: 0.9757 to 0.9484 (96 programs; uc80 smaller on 53, then on 63)
+- whole image: 0.9374 to 0.9117
+- T-states against SDCC speed mode: 0.6228 to 0.6020 (78 programs); without `sort-*`: 0.7662 to 0.7377 (70 programs)
+- T-states against SDCC size mode: 0.6016 to 0.5815; without `sort-*`: 0.7372 to 0.7097
+
+No program changed status. `snd-seq` is now faster than SDCC speed mode (12.34M against 12.99M).
+
+What the analyst figures in section 1.2(a) predicted, and what step 1 gained: cmdq -3.0M T (reviewer plan 3.0M), ymreg -3.3M (analyst what-if -7.4M, which included locals in registers), seq -2.2M (-4.4M), fnum -2.6M (-3.69M). `tak` gains 3.1M, not 13M: the third parameter of `tak` is still on the stack, and the recursion keeps its frame. `queens` gains little, because the cost of `queens` is in locals in memory (family G).
+
+Tests: `tests/test_register_cc.py` (shape, exclusions, same answers in five storage configurations), `bench/ccfuzz.py` (random programs against the host compiler; 2000 programs per step), `bench/difftest.py` and the existing suites.
+
 ## Status on 2026-10-25: families D and E are done
 
 Families D and E are in the code (branch `speed-de`). [u8_divmod.md](u8_divmod.md) and [byte_paths.md](byte_paths.md) describe the rules. The numbers below come from `bench/run.py` (uc80, size mode: image bytes and T-states). The row "SDCC speed" is SDCC 4.6.0 in speed mode.
@@ -228,7 +260,7 @@ The analyst described the fault as a list-wrapped literal. A reviewer found more
   - call sites: `codegen.py:11171-11400`, 11460-11501.
   - returns: `gen_return` at `codegen.py:7445`.
   - tail call: epilogue at `codegen.py:5330-5345`.
-- Phased plan: (1) leaf functions with 1 or 2 scalar parameters (out, in, ym_wait, sine8). The reviewer measured -2.35M T for `out()` alone on cmdq. (2) non-leaf callees with a spill. (3) byte returns in A. (4) `jp` tail call.
+- Phased plan (step 1 is done, see the status above): (1) leaf functions with 1 or 2 scalar parameters (out, in, ym_wait, sine8). The reviewer measured -2.35M T for `out()` alone on cmdq. (2) non-leaf callees with a spill. (3) byte returns in A. (4) `jp` tail call.
 - What a convention change breaks:
   - Hand-written `lib/rt` and `lib/lc` assembly uses the stack convention. Keep the stack convention for every exported function, every address-taken function and every library function.
   - Indirect calls and function pointers need the stack convention.
