@@ -14,6 +14,7 @@ observable behaviour of a program uc80 compiles.
 - `strtod`, `strtof`, `strtold` and `atof` rewritten: the result is correctly rounded (the old code was up to 20 units in the last place off, and `1e-38` or `99999999999` were far wrong), and `inf`, `infinity`, `nan`, `nan(chars)` and hex floats (`0x1p3`) work. The end pointer is the input pointer when no number is read. `errno` is `ERANGE` on overflow and underflow.
 - `strtol` and `strtoul` rewritten: bases 0 and 2 to 36, `0x` prefix only before a hex digit, overflow gives `LONG_MAX`, `LONG_MIN` or `ULONG_MAX` with `errno == ERANGE`, a bad base gives `EINVAL`.
 - `errno` is its own module (`lc_errno`), so `strtol` stays in the ROM library.
+- **Float `+ - / ` and int-to-float round to nearest, ties to even.** `__fadd` and `__fsub` dropped the bit they shifted out (so `x - y` was inexact when the exponents differed by one), `__fdiv` made only 23 bits when the dividend was smaller than the divisor (a result could be 2 units in the last place off), and `__itof`, `__ltof`, `__uitof` truncated (`(float)50066279` was one unit low). `__fadd` also handles infinity and NaN operands, and `x/0` is `+-inf` with the sign of `x`, `0/0` is NaN.
 
 ### Added
 
