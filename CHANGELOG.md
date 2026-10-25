@@ -44,6 +44,12 @@ observable behaviour of a program uc80 compiles.
   fired. It now handles adjacent literals and escapes, `printf("%s\n", s)`,
   only an unused result, and only when no other `printf`-family call is left.
   A hello program drops from 3,968 B to 256 B.
+  `printf("text")` without a newline becomes `cputs("text")`.
+- **Measured result of the library work.** In the size-mode benchmark run
+  the mean size ratio against SDCC 4.6.0 fell from 1.53 to 1.07 (96
+  programs OK on both; uc80 is smaller on 51 and bigger on 45). The T-state
+  ratio is the same (0.63). The four `snd-*` kernels are now smaller than
+  SDCC. See `docs/benchmarks_speed.md` and `docs/codegen_gap.md`.
 - **Faster `qsort`.** `qsort` was a selection sort (n² comparisons, 37
   billion T-states for 5,000 equal ints) and sorted in descending order.
   It is now a non-recursive quicksort with a median-of-three pivot, a

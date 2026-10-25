@@ -1,6 +1,6 @@
 # Benchmark Expansion Proposal
 
-Status: proposal, revised 2026-10-24. Phases 0 to 2, 4, 5 and part of 6 are done in part or in full (see sections 1 and 7). The plan text of the other sections is the original plan. Starting point: issue
+Status: proposal, revised 2026-10-25. Phases 0 to 2, 4, 5 and part of 6 are done in part or in full (see sections 1 and 7). The plan text of the other sections is the original plan. Starting point: issue
 [avwohl/uc80#1](https://github.com/avwohl/uc80/issues/1), "No sdcc comparison in benchmarks".
 The results are in [benchmarks.md](benchmarks.md) and [benchmarks_speed.md](benchmarks_speed.md).
 
@@ -24,10 +24,10 @@ What is done:
 
 Result against SDCC 4.6.0 (96 programs for size and 78 for T-states that are OK on both, geometric mean of uc80 divided by SDCC):
 
-- Size: 1.53. uc80 is bigger. The first run gave 2.01 on 61 programs. uc80 is smaller on 19 programs and bigger on 77.
+- Size: 1.07. uc80 is a little bigger. The first run gave 2.01 on 61 programs, and the run before the library split gave 1.53. uc80 is smaller on 51 programs and bigger on 45. The library split (families A to C of [codegen_gap.md](codegen_gap.md)) made this gain.
 - T-states against the speed mode of SDCC: 0.63. uc80 is faster. The first run gave 0.87 on 61 programs. Without the `sort-*` programs the mean is 0.77. uc80 is faster on 55 programs and slower on 23.
-- Games (18 games that run on both compilers, whole-run T-states): size 1.34, T-states 1.02. The stdio games are faster on uc80 and the curses games are 37 to 59 percent slower.
-- The "uc80 wins on size" claim is false. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
+- Games (18 games that run on both compilers, whole-run T-states): size 0.80, T-states 1.02. The stdio games are faster on uc80 and the curses games are 34 to 59 percent slower.
+- The "uc80 wins on size" claim is still false on the mean (ratio 1.07), but uc80 is smaller than SDCC 4.6.0 on 51 of 96 programs. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
 
 What is left:
 
