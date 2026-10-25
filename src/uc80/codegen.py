@@ -5,6 +5,7 @@ Uses IX as frame pointer, following the calling convention in implementation_pla
 """
 
 from contextlib import contextmanager
+import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum, auto
 import re
@@ -16,6 +17,8 @@ from typing import Callable, Iterator, Optional
 from .asm_dce import (ASM_BEGIN_MARKER, ASM_BEGIN_FILE_MARKER,
                       ASM_END_MARKER, is_asm_begin, is_asm_end)
 from uc_core import ast
+from uc_core.volatility import VolatileInfo, declared_names
+from .volatile_fence import VOL_BEGIN, VOL_END
 # Codegen-internal synthetic resolved types — the parser doesn't
 # produce these (the auto-AST is declarator-shaped), but codegen
 # needs concrete BasicType / PointerType / ArrayType / FunctionType /
@@ -2164,6 +2167,59 @@ class CallGraphAnalyzer:
         # Literals and other expressions don't need substitution
         return expr
 
+    def _args_touch_volatile(self, args, func=None) -> bool:
+        """Must a call with these arguments stay a call?  An argument that
+        accesses a volatile object is evaluated once, before the body.
+        The body may use its parameter twice or not at all, or reach
+        another volatile object first, and each changes the accesses (C23
+        6.7.3).  Inlining is kept only when the body reads no volatile
+        object and uses the parameter exactly once, in a part that always
+        runs.  Names are taken from the whole unit, which can only refuse
+        more."""
+        vol = getattr(self, "_vol_info", None)
+        if vol is None or not vol.any:
+            return False
+        names = vol.all_names()
+        risky = [i for i, a in enumerate(args) if vol.touches(a, names)]
+        if not risky:
+            return False
+        if func is None or not self._is_trivial_function(func):
+            return True
+        body = func.body.items[0].value
+        if vol.touches(body, names):
+            return True
+        params = function_params(func)
+        for i in risky:
+            if i >= len(params) or not isinstance(params[i], ast.ParamDecl):
+                return True
+            name = declarator_ident(params[i].declarator)
+            if name is None or self._plain_uses(body, name) != 1:
+                return True
+        return False
+
+    def _plain_uses(self, node, name: str, always: bool = True) -> int:
+        """How often ``name`` is used in ``node``; a use in a part that
+        may not run (right of && and ||, arms of ?:, sizeof) counts twice."""
+        if isinstance(node, (list, tuple)):
+            return sum(self._plain_uses(x, name, always) for x in node)
+        if not dataclasses.is_dataclass(node) or isinstance(node, type):
+            return 0
+        if isinstance(node, ast.Identifier):
+            if node.name.text != name:
+                return 0
+            return 1 if always else 2
+        if isinstance(node, ast.BinaryOp) and getattr(node.op, "text", node.op) in ("&&", "||"):
+            return (self._plain_uses(node.left, name, always)
+                    + self._plain_uses(node.right, name, False))
+        if isinstance(node, ast.TernaryOp):
+            return (self._plain_uses(node.condition, name, always)
+                    + self._plain_uses(node.true_expr, name, False)
+                    + self._plain_uses(node.false_expr, name, False))
+        if isinstance(node, (ast.SizeofExpr, ast.SizeofType)):
+            return self._plain_uses(getattr(node, "operand", None), name, False)
+        return sum(self._plain_uses(getattr(node, f.name, None), name, always)
+                   for f in dataclasses.fields(node) if f.name != "pos")
+
     def _inline_expr(self, expr: ast.Expression,
                     func_bodies: dict[str, ast.FunctionDef],
                     inlineable: set[str]) -> ast.Expression:
@@ -2176,7 +2232,9 @@ class CallGraphAnalyzer:
             # twice (``x * x`` would run ``k++`` twice) or not at all.
             if (isinstance(expr.func, ast.Identifier)
                     and expr.func.name.text in inlineable
-                    and not _ast_has_side_effects(new_args)):
+                    and not _ast_has_side_effects(new_args)
+                    and not self._args_touch_volatile(
+                        new_args, func_bodies[expr.func.name.text])):
                 func = func_bodies[expr.func.name.text]
                 if self._is_trivial_function(func):
                     # Build parameter → argument map via the FnDeclarator.
@@ -2426,6 +2484,7 @@ class CallGraphAnalyzer:
         """
         total_inlined = 0
         max_iterations = 10  # Prevent infinite loops
+        self._vol_info = VolatileInfo(unit)
 
         for _ in range(max_iterations):
             # Build function body map keyed by IDENT name extracted from
@@ -2675,6 +2734,7 @@ class CallGraphAnalyzer:
         """
         call_args = self._collect_call_args(unit)
         constant_params: dict[str, dict[int, int]] = {}
+        vol = VolatileInfo(unit)      # a volatile parameter is never a constant
 
         # Build function info map
         func_info: dict[str, object] = {}
@@ -2703,8 +2763,13 @@ class CallGraphAnalyzer:
 
             num_params = len(function_params(func))
             param_constants: dict[int, int] = {}
+            vol_names = vol.names_for(func)
 
             for param_idx in range(num_params):
+                p = function_params(func)[param_idx]
+                if (isinstance(p, ast.ParamDecl)
+                        and declarator_ident(p.declarator) in vol_names):
+                    continue
                 # Check if this parameter is the same constant at all call sites
                 first_value: int | None = None
                 all_same = True
@@ -3213,6 +3278,10 @@ class CodeGenerator:
         # Size the current function returns through the hidden pointer at
         # IX+4, or None when it returns in a register.
         self._current_sret_size: int | None = None
+        # Volatile objects of the unit (uc_core.volatility): code that may
+        # access one is bracketed for the peephole, see volatile_fence.py.
+        self._vol: VolatileInfo = VolatileInfo()
+        self._vol_names = self._vol.file_names
 
     def _infer_array_size(self, var_type, init):
         """Infer array size from initializer for unsized arrays."""
@@ -3530,6 +3599,9 @@ class CodeGenerator:
             if self.enable_shared_storage and self.dead_functions_removed > 0:
                 self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
                 self.call_graph_analyzer.build_call_graph(unit)
+
+        self._vol = VolatileInfo(unit)
+        self._vol_names = self._vol.file_names
 
         # Header
         self.ctx.emit(f"; C24 Compiler Output - {self.module_name}")
@@ -5196,6 +5268,7 @@ class CodeGenerator:
 
         self.ctx.current_function = name
         self.ctx.current_return_type = return_type
+        self._vol_names = self._vol.names_for(func)
         self.ctx.locals.clear()
         self.ctx.local_offset = 0
         self.ctx.regs.reset()
@@ -5396,6 +5469,13 @@ class CodeGenerator:
         self.ctx.locals = saved_locals
 
     def gen_local_decl(self, decl) -> None:
+        """Generate code for a local declaration; the code of a volatile
+        object's initializer, or of one that reads a volatile object, is
+        a volatile region (volatile_fence.py)."""
+        with self._vol_region(decl):
+            self._gen_local_decl(decl)
+
+    def _gen_local_decl(self, decl) -> None:
         """Generate code for a local declaration (auto-AST ast.Declaration).
 
         The auto-AST collapses ``T a, b, c;`` into ONE Declaration node
@@ -7360,13 +7440,45 @@ class CodeGenerator:
                 self._gen_store_member_value(sym, elem_type, offset, val)
                 next_index += 1
 
+    @contextmanager
+    def _vol_region(self, *nodes):
+        """Bracket the code generated inside the ``with`` as a volatile
+        region when any of ``nodes`` (expressions, or declarations) may
+        access a volatile object.  See volatile_fence.py."""
+        if not self._vol.any or not any(self._node_touches_volatile(n)
+                                        for n in nodes):
+            yield
+            return
+        self.ctx.emit(VOL_BEGIN)
+        try:
+            yield
+        finally:
+            self.ctx.emit(VOL_END)
+
+    def _node_touches_volatile(self, node) -> bool:
+        if node is None:
+            return False
+        if isinstance(node, ast.Declaration):
+            for d in node.declarators or []:
+                if any(nm in self._vol_names
+                       for nm in declared_names(d)):
+                    return True
+                if self._vol.touches(getattr(d, "init", None),
+                                     self._vol_names):
+                    return True
+            return False
+        if isinstance(node, ast.ExpressionStmt):
+            node = node.expr
+        return self._vol.touches(node, self._vol_names)
+
     def gen_statement(self, stmt) -> None:
         """Generate code for a statement (auto-AST kinds)."""
         if isinstance(stmt, (ast.ReturnStmt, ast.ReturnStmtValue)):
             self.gen_return(stmt)
         elif isinstance(stmt, ast.ExpressionStmt):
             if stmt.expr:
-                self.gen_expr_discard(stmt.expr)
+                with self._vol_region(stmt.expr):
+                    self.gen_expr_discard(stmt.expr)
         elif isinstance(stmt, ast.EmptyStmt):
             pass
         elif isinstance(stmt, ast.CompoundStmt):
@@ -7446,6 +7558,10 @@ class CodeGenerator:
         """Generate code for `return;` (ReturnStmt) or `return expr;`
         (ReturnStmtValue) — auto-AST splits the two."""
         value = stmt.value if isinstance(stmt, ast.ReturnStmtValue) else None
+        with self._vol_region(value):
+            self._gen_return(stmt, value)
+
+    def _gen_return(self, stmt, value) -> None:
         if value is not None:
             ret_type = self.ctx.current_return_type
             # If the return type is a typedef-name, resolve through the
@@ -7543,14 +7659,16 @@ class CodeGenerator:
         end_label = self.ctx.new_label("ENDIF")
 
         if getattr(stmt, "else_branch", None):
-            self._gen_cond_false_jump(stmt.condition, else_label)
+            with self._vol_region(stmt.condition):
+                self._gen_cond_false_jump(stmt.condition, else_label)
             self.gen_statement(stmt.then_branch)
             self.ctx.emit_instr("jp", end_label)
             self.ctx.emit_label(else_label)
             self.gen_statement(getattr(stmt, "else_branch", None))
             self.ctx.emit_label(end_label)
         else:
-            self._gen_cond_false_jump(stmt.condition, end_label)
+            with self._vol_region(stmt.condition):
+                self._gen_cond_false_jump(stmt.condition, end_label)
             self.gen_statement(stmt.then_branch)
             self.ctx.emit_label(end_label)
 
@@ -7563,7 +7681,8 @@ class CodeGenerator:
         self.ctx.continue_labels.append(start_label)
 
         self.ctx.emit_label(start_label)
-        self._gen_cond_false_jump(stmt.condition, end_label)
+        with self._vol_region(stmt.condition):
+            self._gen_cond_false_jump(stmt.condition, end_label)
 
         self.gen_statement(stmt.body)
         self.ctx.emit_instr("jp", start_label)
@@ -7585,12 +7704,13 @@ class CodeGenerator:
         self.gen_statement(stmt.body)
 
         self.ctx.emit_label(cond_label)
-        if self._const_int_operand(stmt.condition) is None:
-            self._gen_branch(stmt.condition, start_label, True)
-        else:
-            self._gen_condition_value(stmt.condition)
-            self._emit_condition_test(stmt.condition)
-            self.ctx.emit_instr("jp", f"NZ,{start_label}")
+        with self._vol_region(stmt.condition):
+            if self._const_int_operand(stmt.condition) is None:
+                self._gen_branch(stmt.condition, start_label, True)
+            else:
+                self._gen_condition_value(stmt.condition)
+                self._emit_condition_test(stmt.condition)
+                self.ctx.emit_instr("jp", f"NZ,{start_label}")
         self.ctx.emit_label(end_label)
 
         self.ctx.break_labels.pop()
@@ -7611,15 +7731,18 @@ class CodeGenerator:
             if isinstance(stmt.init, ast.Declaration):
                 self.gen_local_decl(stmt.init)
             elif isinstance(stmt.init, ast.ExpressionStmt):
-                self.gen_expr_discard(stmt.init.expr)
+                with self._vol_region(stmt.init.expr):
+                    self.gen_expr_discard(stmt.init.expr)
             else:
-                self.gen_expr_discard(stmt.init)
+                with self._vol_region(stmt.init):
+                    self.gen_expr_discard(stmt.init)
 
         self.ctx.emit_label(start_label)
 
         # Condition
         if stmt.condition:
-            self._gen_cond_false_jump(stmt.condition, end_label)
+            with self._vol_region(stmt.condition):
+                self._gen_cond_false_jump(stmt.condition, end_label)
 
         # Body
         self.gen_statement(stmt.body)
@@ -7627,7 +7750,8 @@ class CodeGenerator:
         # Update
         self.ctx.emit_label(update_label)
         if stmt.update:
-            self.gen_expr_discard(stmt.update)
+            with self._vol_region(stmt.update):
+                self.gen_expr_discard(stmt.update)
 
         self.ctx.emit_instr("jp", start_label)
         self.ctx.emit_label(end_label)
@@ -7700,6 +7824,14 @@ class CodeGenerator:
 
         # Evaluate switch expression and dispatch
         fall_label = default_label if default_label else end_label
+        with self._vol_region(stmt.expr):
+            self._gen_switch_dispatch(stmt, cases, fall_label)
+
+        # The case bodies, with the case table of this switch in force.
+        self._gen_switch_body(stmt, cases, default_label, end_label)
+
+    def _gen_switch_dispatch(self, stmt, cases, fall_label) -> None:
+        """Evaluate the controlling expression and jump to a case."""
         if self._is_long_expr(stmt.expr) and not self._is_float_expr(stmt.expr):
             # A 32-bit controlling expression: all four bytes of each case
             # value take part (the 16-bit chains compare HL alone).
@@ -7724,7 +7856,7 @@ class CodeGenerator:
             else:
                 self._gen_switch_compare_chain(cases, fall_label)
 
-        # Save previous switch context (for nested switches)
+    def _gen_switch_body(self, stmt, cases, default_label, end_label) -> None:
         saved_cases = list(getattr(self, '_switch_cases', []))
         saved_default = getattr(self, '_switch_default', None)
 
@@ -10282,6 +10414,11 @@ class CodeGenerator:
             return False
         if self._is_float_type(t) or self._is_long_long_type(t):
             return False
+        if self._is_volatile_type(t) and self._type_size(t) > 1:
+            # Every byte of a volatile object is read and written on each
+            # execution; the carry chains below stop at the first byte
+            # that does not wrap.
+            return False
         discard = expr is self._discard_expr
         prefix = expr.is_prefix
         inc = "inc" if is_inc else "dec"
@@ -10551,7 +10688,10 @@ class CodeGenerator:
 
                 elif is_float:
                     # Float increment/decrement: use __fadd/__fsub with 1.0
-                    if sym.is_global:
+                    fvol = self._is_volatile_type(sym.sym_type)
+                    if fvol and expr.is_prefix:
+                        pass            # the one read is the reload below
+                    elif sym.is_global:
                         self.ctx.emit_instr("ld", f"HL,({sym.label()})")
                         self.ctx.emit_instr("ld", f"DE,({sym.label()}+2)")
                     else:
@@ -10566,7 +10706,14 @@ class CodeGenerator:
                     self.ctx.emit_instr("ld", "HL,16256")  # 0x3F80
                     self.ctx.emit_instr("ld", "(__tmp32+2),HL")
                     # Reload value into DEHL
-                    if sym.is_global:
+                    if fvol and not expr.is_prefix:
+                        # A volatile object is read once: take the copy
+                        # that was just pushed.
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("pop", "DE")
+                        self.ctx.emit_instr("push", "DE")
+                        self.ctx.emit_instr("push", "HL")
+                    elif sym.is_global:
                         self.ctx.emit_instr("ld", f"HL,({sym.label()})")
                         self.ctx.emit_instr("ld", f"DE,({sym.label()}+2)")
                     else:
@@ -15648,6 +15795,16 @@ class CodeGenerator:
             signed = self._is_signed_type(lt_elem)
             if discard:
                 e(inc, "(HL)")
+            elif self._is_volatile_type(lt_elem):
+                # One read and one write of the volatile byte, not the
+                # two reads of inc (HL) plus a separate load.
+                e("ld", "A,(HL)")
+                if not prefix:
+                    e("ld", "E,A")
+                e(inc, "A")
+                e("ld", "(HL),A")
+                e("ld", "L,A" if prefix else "L,E")
+                self._emit_char_to_hl(signed)
             elif prefix:
                 e(inc, "(HL)")
                 e("ld", "L,(HL)")
@@ -16323,6 +16480,8 @@ class CodeGenerator:
         ls = self._src32(lhs)
         if ls is None or ls.const is not None or ls.size != 4:
             return False
+        if ls.sym is not None and self._is_volatile_type(ls.sym.sym_type):
+            return False         # all four bytes are accessed, in order
         if self._is_long_long_expr(expr.right) or self._is_float_expr(expr.right):
             return False
         rs = self._src32(expr.right)
