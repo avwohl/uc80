@@ -26,6 +26,8 @@ uc80 --build-libs          # assembles libc.lib, libc_rom.lib, runtime.lib and c
 ```
 
 Re-run that after editing anything in `src/uc80/lib/lc/` or `src/uc80/lib/rt/`.
+Some modules in `lc/` are made from C files in `src/uc80/lib/csrc/`; see
+[Library modules written in C](libc_c_sources.md).
 
 Set `UC80_LIB_DIR` to use libraries built somewhere else, which is what makes
 uc80 usable when it is installed into a read-only `site-packages`. The
@@ -77,20 +79,26 @@ Rules for the split:
   one uses a non-PUBLIC label of the other, or a `JR` target of the other.
 - A shared work area is in a data module that has its labels PUBLIC:
   `rt_fdata` (`__fop1` to `__fman2`), `rt_cplx_data`, `rt_acc64`,
-  `rt_divrem`, `rt_rem32`, `rt_rem64` and `lc_scanf_data`. The code modules
+  `rt_divrem`, `rt_rem32` and `rt_rem64`. The code modules
   have the labels as EXTRN. A work area that only one function uses is in
   the module of that function (for example `__fdiv_rem` in `rt_fdiv`).
 - Each module that has data has its own `COMMON /name/` block. Two modules
   must not use the same block name, because the linker puts the blocks of one
   name at one address.
-- `lc_scanf.mac` holds `scanf`. `lc_sscanf.mac` and `lc_fscanf.mac` hold the
-  other two entry points. All three jump to `_scanf_loop` in
-  `lc_scanf_core.mac`.
+- The scanf family is in C. `lc_scan_core` is the engine. `lc_scan_str`,
+  `lc_scan_file` and `lc_scan_stdin` read from a string, a `FILE` and the
+  console. `lc_scanf`, `lc_sscanf`, `lc_fscanf` and the `v` versions are
+  short functions that call them. `lc_scan_float` reads the float
+  conversions; a program links it only when it needs it
+  ([scanf and strtol](scanf.md)).
 - `lc_fpclassify`, `lc_isfinite`, `lc_isinf`, `lc_isnan`, `lc_isnormal` and
   `lc_signbit` are six modules. Each of the four `is*` functions has its own
   copy of the 3-instruction return of zero.
-- `lc_strtod.mac` holds `strtod`, `strtof` and `strtold`. `lc_atof.mac`
-  holds `atof`.
+- `lc_strtod` holds `strtod`. `strtof`, `strtold` and `atof` are short
+  modules that call it. The integer conversions `strtol`, `strtoul`,
+  `strtoll` and `strtoull` call `_strtoint` in `lc_strtoint`.
+- `errno` is in `lc_errno`. It is not in `lc_data`, so a ROM program that
+  uses `strtol` can link.
 - The C11 atomic functions (`lc_atomic_*`) and the thread functions
   (`lc_thrd_*`, `lc_mtx_*`, `lc_cnd_*`, `lc_tss_*`) have one module each.
 
@@ -115,3 +123,27 @@ the library.
 
 The test `tests/test_libc_link_size.py` checks the image size of
 `printf("%d")` and checks that a `strlen` program does not link `malloc`.
+
+## Known limits of the C library
+
+These limits are deliberate. The linked documents give the details.
+
+- **Subnormal numbers.** The float runtime treats a subnormal operand as
+  zero and flushes a subnormal result to zero. Functions that only move
+  bits (`frexp`, `ldexp`, `ilogb`, `nextafter`, `strtod`) work with
+  subnormal numbers ([math library](libm.md)).
+- **`errno`.** Only `strtol`, `strtoul`, `strtoll`, `strtoull`, `strtod`,
+  `strtof` and `strtold` set `errno`. The math functions do not set `errno`
+  and raise no floating-point exception.
+- **`long long` and `float`.** A conversion between `long long` and a float
+  uses the low 32 bits of the integer. This is a limit of the code
+  generator, not of the library. `llround` and `llrint` are not affected.
+- **`scanf`.** A `FILE` keeps one pushed-back character. The float
+  conversion collects 126 characters. The console gives CR for the Enter
+  key and Ctrl-Z for the end of the input ([scanf](scanf.md)).
+- **Reentrancy.** The scanf engine, `strtod` and the math functions use
+  static storage for their local variables. They are not reentrant and are
+  not thread safe.
+- **Size.** A program that calls a transcendental function links 1 KB to
+  4 KB more code than with the old assembly library. `sqrt` is smaller than
+  before ([math library](libm.md)).

@@ -9,6 +9,7 @@
 
 	EXTRN	__m_pack
 	EXTRN	__m_unpack
+	EXTRN	__m_poly
 	EXTRN	__m_2prod
 	EXTRN	__m_2sum
 
@@ -409,176 +410,19 @@ _pow_log2:
 	push	HL
 	ld	HL,(__tmp32+2)
 	push	HL
-	ld	HL,43691
-	ld	DE,16042
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
+	ld	HL,6
 	push	HL
-	ld	HL,(__tmp32+2)
+	ld	HL,_pow_ls
 	push	HL
-	ld	HL,0
-	ld	DE,16000
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,52429
-	ld	DE,15948
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,43691
-	ld	DE,15914
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,18725
-	ld	DE,15890
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,15872
-	ld	A,D
-	xor	80H
-	ld	D,A
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+18)
 	ld	DE,(??AUTO_pow+20)
-	call	__fmul
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
+	call	__m_poly
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	push	DE
 	push	HL
 	ld	HL,4
@@ -736,67 +580,19 @@ _pow_log2:
 	push	HL
 	ld	HL,(__tmp32+2)
 	push	HL
-	ld	HL,18725
-	ld	DE,15890
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
+	ld	HL,6
+	push	HL
+	ld	HL,_pow_lq
+	push	HL
 	ld	HL,(??AUTO_pow+34)
 	ld	DE,(??AUTO_pow+36)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,43691
-	ld	DE,15914
-	ld	A,D
-	xor	80H
-	ld	D,A
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+34)
-	ld	DE,(??AUTO_pow+36)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,52429
-	ld	DE,15948
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+34)
-	ld	DE,(??AUTO_pow+36)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,0
-	ld	DE,16000
-	ld	A,D
-	xor	80H
-	ld	D,A
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+34)
-	ld	DE,(??AUTO_pow+36)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,43691
-	ld	DE,16042
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+34)
-	ld	DE,(??AUTO_pow+36)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,0
-	ld	DE,16128
-	ld	A,D
-	xor	80H
-	ld	D,A
-	call	__fadd
+	push	DE
+	push	HL
+	call	__m_poly
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	push	DE
 	push	HL
 	ld	HL,4
@@ -819,8 +615,8 @@ _pow_log2:
 	call	__fmul
 	ld	(??AUTO_pow+94),HL
 	ld	(??AUTO_pow+96),DE
-	ld	HL,(??AUTO_pow+34)
-	ld	DE,(??AUTO_pow+36)
+	ld	HL,(??AUTO_pow+90)
+	ld	DE,(??AUTO_pow+92)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+106)
@@ -1748,173 +1544,19 @@ _powl:
 	call	__fmul
 	ld	(??AUTO_pow+180),HL
 	ld	(??AUTO_pow+182),DE
-	ld	HL,0
-	ld	DE,16128
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
+	ld	HL,6
 	push	HL
-	ld	HL,(__tmp32+2)
+	ld	HL,_pow_ep
 	push	HL
-	ld	HL,43691
-	ld	DE,15914
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,43637
-	ld	DE,15658
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,34982
-	ld	DE,15368
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,41319
-	ld	DE,15030
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,14685
-	ld	DE,14672
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+168)
 	ld	DE,(??AUTO_pow+170)
-	call	__fmul
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+168)
-	ld	DE,(??AUTO_pow+170)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+168)
-	ld	DE,(??AUTO_pow+170)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+168)
-	ld	DE,(??AUTO_pow+170)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+168)
-	ld	DE,(??AUTO_pow+170)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
+	call	__m_poly
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_pow+184),HL
 	ld	(??AUTO_pow+186),DE
 	ld	HL,(??AUTO_pow+176)
@@ -2078,6 +1720,7 @@ _powl:
 	EXTRN	__m_2prod
 	EXTRN	__m_2sum
 	EXTRN	__m_pack
+	EXTRN	__m_poly
 	EXTRN	__m_unpack
 
 ; Global variables
@@ -2212,6 +1855,45 @@ _pow_tl:
 	dw	13006
 	dw	22862
 	dw	45754
+_pow_ls:
+	dw	43691
+	dw	16042
+	dw	0
+	dw	48768
+	dw	52429
+	dw	15948
+	dw	43691
+	dw	48682
+	dw	18725
+	dw	15890
+	dw	0
+	dw	48640
+_pow_lq:
+	dw	0
+	dw	48896
+	dw	43691
+	dw	16042
+	dw	0
+	dw	48768
+	dw	52429
+	dw	15948
+	dw	43691
+	dw	48682
+	dw	18725
+	dw	15890
+_pow_ep:
+	dw	0
+	dw	16128
+	dw	43691
+	dw	15914
+	dw	43637
+	dw	15658
+	dw	34982
+	dw	15368
+	dw	41319
+	dw	15030
+	dw	14685
+	dw	14672
 
 ; Static storage that starts as zero
 	COMMON	/lc_pow/

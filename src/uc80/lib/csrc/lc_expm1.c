@@ -34,8 +34,7 @@ double expm1(double x)
         n = (int)(x * 1.44269504f + (x < 0 ? -0.5f : 0.5f));
         r = (x - (float)n * 0.693359375f) - (float)n * -2.12194440e-4f;
     }
-    y = ((((expm1_p[5] * r + expm1_p[4]) * r + expm1_p[3]) * r + expm1_p[2]) * r
-         + expm1_p[1]) * r + expm1_p[0];
+    y = _m_poly(r, expm1_p, 6);
     y = y * r * r + r;                  /* exp(r) - 1 */
     if (n == 0)
         return y;

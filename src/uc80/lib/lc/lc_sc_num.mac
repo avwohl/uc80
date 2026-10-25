@@ -1,0 +1,78 @@
+; lc_sc_num.mac - _sc_muladd, _sc_negate
+;
+; Arithmetic on a number of 1 to 8 bytes in memory (little endian).  The
+; scanf engine and strtol use it, so that the C code needs no 32-bit or
+; 64-bit multiply routine.
+	.Z80
+
+	CSEG
+
+; ============================================================
+; int _sc_muladd(unsigned char *r, int nb, int mul, int add)
+; r = r * mul + add on nb bytes.  mul is 1 to 36, add is 0 to 255.
+; Returns a value that is not zero when the result did not fit.
+; ============================================================
+	PUBLIC	__sc_muladd
+__sc_muladd:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)	; HL = r
+	LD	B,(IX+6)	; B = the number of bytes
+	LD	E,(IX+10)	; E = the carry into the first byte
+	LD	D,0
+_scm_byte:
+	LD	A,(HL)
+	PUSH	HL
+	PUSH	BC
+	LD	C,(IX+8)	; C = mul
+	LD	B,8
+	EX	DE,HL		; HL = the carry
+	LD	E,A
+	LD	D,0		; DE = the byte, shifted left in each step
+_scm_bit:
+	SRL	C
+	JR	NC,_scm_skip
+	ADD	HL,DE
+_scm_skip:
+	SLA	E
+	RL	D
+	DJNZ	_scm_bit
+	LD	A,L		; the new byte
+	LD	E,H		; the carry into the next byte
+	LD	D,0
+	POP	BC
+	POP	HL
+	LD	(HL),A
+	INC	HL
+	DJNZ	_scm_byte
+	LD	L,E
+	LD	H,0
+	POP	IX
+	RET
+
+; ============================================================
+; void _sc_negate(unsigned char *r, int nb)
+; r = -r on nb bytes (two's complement)
+; ============================================================
+	PUBLIC	__sc_negate
+__sc_negate:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	B,(IX+6)
+	SCF
+_scn_loop:
+	LD	A,(HL)
+	CPL
+	ADC	A,0
+	LD	(HL),A
+	INC	HL
+	DJNZ	_scn_loop
+	POP	IX
+	RET
+
+	END

@@ -27,9 +27,7 @@ double tan(double x)
     u.u &= 0x7FFFFFFFUL;
     n = _m_reduce(u.f, &r);
     z = r * r;
-    y = r + r * z * (((((((tan_p[7] * z + tan_p[6]) * z + tan_p[5]) * z
-                         + tan_p[4]) * z + tan_p[3]) * z + tan_p[2]) * z
-                       + tan_p[1]) * z + tan_p[0]);
+    y = r + r * z * _m_poly(z, tan_p, 8);
     if (n & 1)
         y = -1.0f / y;
     return neg ? -y : y;

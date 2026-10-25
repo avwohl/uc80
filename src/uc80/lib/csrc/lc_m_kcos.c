@@ -10,6 +10,5 @@ float _m_kcos(float r)
 {
     float z = r * r;
 
-    return (1.0f - 0.5f * z) + z * z * (((kcos_p[3] * z + kcos_p[2]) * z
-                                         + kcos_p[1]) * z + kcos_p[0]);
+    return (1.0f - 0.5f * z) + z * z * _m_poly(z, kcos_p, 4);
 }

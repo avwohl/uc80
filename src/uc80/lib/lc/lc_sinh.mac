@@ -9,6 +9,7 @@
 
 	EXTRN	__m_pack
 	EXTRN	__m_expk
+	EXTRN	__m_poly
 	EXTRN	_expm1
 	PUBLIC	_sinh
 
@@ -118,107 +119,19 @@ _sinhl:
 	push	HL
 	ld	HL,(__tmp32+2)
 	push	HL
-	ld	HL,(_sinh_p)
-	ld	DE,(_sinh_p+2)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
+	ld	HL,4
 	push	HL
-	ld	HL,(__tmp32+2)
+	ld	HL,_sinh_p
 	push	HL
-	ld	HL,(_sinh_p+4)
-	ld	DE,(_sinh_p+6)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(_sinh_p+8)
-	ld	DE,(_sinh_p+10)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(_sinh_p+12)
-	ld	DE,(_sinh_p+14)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_sinh+12)
 	ld	DE,(??AUTO_sinh+14)
-	call	__fmul
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sinh+12)
-	ld	DE,(??AUTO_sinh+14)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sinh+12)
-	ld	DE,(??AUTO_sinh+14)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
+	call	__m_poly
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	push	DE
 	push	HL
 	ld	HL,4
@@ -422,6 +335,7 @@ _sinhl:
 ; Implicit external functions
 	EXTRN	__m_expk
 	EXTRN	__m_pack
+	EXTRN	__m_poly
 	EXTRN	_expm1
 
 ; Global variables

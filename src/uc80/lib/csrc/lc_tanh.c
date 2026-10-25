@@ -30,8 +30,7 @@ double tanh(double x)
         y = 1.0f;
     } else if (ax < 0.6f) {
         z = ax * ax;
-        y = ax + ax * z * (((((tanh_p[5] * z + tanh_p[4]) * z + tanh_p[3]) * z
-                             + tanh_p[2]) * z + tanh_p[1]) * z + tanh_p[0]);
+        y = ax + ax * z * _m_poly(z, tanh_p, 6);
     } else {
         t = expm1(-2.0f * ax);
         y = -t / (t + 2.0f);

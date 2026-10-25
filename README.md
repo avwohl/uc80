@@ -69,6 +69,7 @@ z88dk output. uc80 passes all 220 c-testsuite tests. Numbers are in
 - [Build a Z80 ROM](https://github.com/avwohl/uc80/blob/main/docs/rom.md) - `--target=rom`, crt0, vectors, `ul80` ROM link, `libc_rom.lib`, limits
 - [ROM test runner](https://github.com/avwohl/uc80/blob/main/docs/romrun.md) - run a Z80 ROM, log port I/O and T-states, inject IRQ and NMI
 - [Float status](https://github.com/avwohl/uc80/blob/main/docs/FLOAT_STATUS.md) - IEEE 754 single-precision support
+- [Math library](https://github.com/avwohl/uc80/blob/main/docs/libm.md), [scanf and strtol](https://github.com/avwohl/uc80/blob/main/docs/scanf.md), [library modules in C](https://github.com/avwohl/uc80/blob/main/docs/libc_c_sources.md) - accuracy, limits, how the modules are made
 - [CHANGELOG](https://github.com/avwohl/uc80/blob/main/CHANGELOG.md) - release history
 
 ## Related Projects

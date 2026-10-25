@@ -4,8 +4,8 @@
  * floating-point math functions for Z80. All float, double, and
  * long double types are implemented as 32-bit floats.
  *
- * Transcendental functions use polynomial approximations based on
- * the Cephes Math Library algorithms.
+ * Each function is within 2 ulp of the exact result (see docs/libm.md).
+ * The runtime has no subnormal numbers and the functions do not set errno.
  */
 #ifndef _MATH_H
 #define _MATH_H

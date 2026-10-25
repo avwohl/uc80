@@ -8,6 +8,7 @@
 	CSEG
 
 	EXTRN	__m_pack
+	EXTRN	__m_poly
 	EXTRN	__m_2prod
 	PUBLIC	_exp2
 
@@ -233,173 +234,19 @@ _exp2l:
 	call	__fmul
 	ld	(??AUTO_exp2+26),HL
 	ld	(??AUTO_exp2+28),DE
-	ld	HL,0
-	ld	DE,16128
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
+	ld	HL,6
 	push	HL
-	ld	HL,(__tmp32+2)
+	ld	HL,_exp2_p
 	push	HL
-	ld	HL,43691
-	ld	DE,15914
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,43637
-	ld	DE,15658
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,34982
-	ld	DE,15368
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,41319
-	ld	DE,15030
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,14685
-	ld	DE,14672
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_exp2+10)
 	ld	DE,(??AUTO_exp2+12)
-	call	__fmul
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+10)
-	ld	DE,(??AUTO_exp2+12)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+10)
-	ld	DE,(??AUTO_exp2+12)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+10)
-	ld	DE,(??AUTO_exp2+12)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+10)
-	ld	DE,(??AUTO_exp2+12)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
+	call	__m_poly
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_exp2+18),HL
 	ld	(??AUTO_exp2+20),DE
 	ld	HL,(??AUTO_exp2+26)
@@ -528,6 +375,23 @@ _exp2l:
 ; Implicit external functions
 	EXTRN	__m_2prod
 	EXTRN	__m_pack
+	EXTRN	__m_poly
+
+; Global variables
+	DSEG
+_exp2_p:
+	dw	0
+	dw	16128
+	dw	43691
+	dw	15914
+	dw	43637
+	dw	15658
+	dw	34982
+	dw	15368
+	dw	41319
+	dw	15030
+	dw	14685
+	dw	14672
 
 ; Static storage that starts as zero
 	COMMON	/lc_exp2/

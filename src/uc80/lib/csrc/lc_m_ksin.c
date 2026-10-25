@@ -10,6 +10,5 @@ float _m_ksin(float r)
 {
     float z = r * r;
 
-    return r + r * z * (((ksin_p[3] * z + ksin_p[2]) * z + ksin_p[1]) * z
-                        + ksin_p[0]);
+    return r + r * z * _m_poly(z, ksin_p, 4);
 }

@@ -11,9 +11,13 @@
  * because a stream can push back only one character.
  */
 #include <stddef.h>
+#include <string.h>
 #include "scan.h"
 
 #define EOF_ (-1)
+
+extern int _sc_muladd(unsigned char *r, int nb, int mul, int add);
+extern void _sc_negate(unsigned char *r, int nb);
 
 int _sc_getc(struct sc *in)
 {
@@ -75,11 +79,9 @@ static int sc_skip(struct sc *in)
  * Returns 1, 0 for a matching failure, -1 for the end of the input. */
 static int sc_int(struct sc *in, int base, int width, unsigned char *r, int nb)
 {
-    int c, w, neg = 0, any = 0, d, i, xc;
-    unsigned t;
+    int c, w, neg = 0, any = 0, d, xc;
 
-    for (i = 0; i < nb; i++)
-        r[i] = 0;
+    memset(r, 0, nb);
     w = width ? width : 32767;
     c = sc_next(in, &w);
     if (c < 0)
@@ -114,62 +116,44 @@ static int sc_int(struct sc *in, int base, int width, unsigned char *r, int nb)
         if (d >= base)
             break;
         any = 1;
-        t = d;
-        for (i = 0; i < nb; i++) {
-            t += (unsigned)r[i] * base;
-            r[i] = (unsigned char)t;
-            t >>= 8;
-        }
+        _sc_muladd(r, nb, base, d);
         c = sc_next(in, &w);
     }
     _sc_ungetc(in, c);
     if (!any)
         return 0;
-    if (neg) {
-        t = 1;
-        for (i = 0; i < nb; i++) {
-            t += (unsigned char)~r[i];
-            r[i] = (unsigned char)t;
-            t >>= 8;
-        }
-    }
+    if (neg)
+        _sc_negate(r, nb);
     return 1;
 }
 
-/* Parse the scan set after the '['.  Returns the position after the ']'. */
-static const char *sc_set(const char *f, unsigned char *set)
+/* Is c in the scan set whose text follows the '[' at f?  *endp gets the
+ * position after the closing ']'.  A set can start with ^ and can have
+ * ranges (a-z); a ']' that comes first is a member. */
+static int sc_inset(int c, const char *f, const char **endp)
 {
-    int neg = 0, i, c, last, hi;
+    int neg = 0, ok = 0, lo, first = 1;
 
-    for (i = 0; i < 32; i++)
-        set[i] = 0;
     if (*f == '^') {
         neg = 1;
         f++;
     }
-    c = (unsigned char)*f;
     for (;;) {
-        if (c == 0)
+        lo = (unsigned char)*f;
+        if (lo == 0 || (lo == ']' && !first))
             break;
+        first = 0;
         f++;
         if (*f == '-' && f[1] != ']' && f[1] != 0) {
-            last = (unsigned char)f[1];
+            if (c >= lo && c <= (unsigned char)f[1])
+                ok = 1;
             f += 2;
-            for (hi = c; hi <= last; hi++)
-                set[hi >> 3] |= (unsigned char)(1 << (hi & 7));
-        } else {
-            set[c >> 3] |= (unsigned char)(1 << (c & 7));
+        } else if (c == lo) {
+            ok = 1;
         }
-        c = (unsigned char)*f;
-        if (c == ']')
-            break;
     }
-    if (*f == ']')
-        f++;
-    if (neg)
-        for (i = 0; i < 32; i++)
-            set[i] = (unsigned char)~set[i];
-    return f;
+    *endp = (*f == ']') ? f + 1 : f;
+    return ok != neg;
 }
 
 /* Store a signed value of nb bytes. */
@@ -186,15 +170,37 @@ static void sc_store(void *dst, int nb, long v)
     }
 }
 
+/* the size of the target for the length modifiers: none, hh, h, l, ll, j,
+ * z, t, L */
+static const unsigned char sc_size[] = {
+    sizeof(int), 1, sizeof(short), sizeof(long), sizeof(long long),
+    sizeof(long long), sizeof(size_t), sizeof(ptrdiff_t), sizeof(long long)
+};
+
+/* the integer conversions and the base of each (0: read the prefix) */
+static const char sc_int_convs[] = "duoxXpi";
+static const unsigned char sc_base[] = {10, 10, 8, 16, 16, 16, 0};
+static const char sc_float_convs[] = "feEgGaAF";
+
+static char *sc_ap;                     /* the next argument */
+
+static void *sc_arg(void)
+{
+    void *p = *(void **)sc_ap;
+
+    sc_ap += sizeof(void *);
+    return p;
+}
+
 int _scan_run(struct sc *in, const char *fmt, char *ap)
 {
-    int done = 0, fc, c, width, mod, skip, nb, r, base, w, ok, conv;
-    unsigned char *dst;
-    unsigned char set[32];
+    int done = 0, fc, c, width, mod, skip, nb, r, w, conv, count;
+    unsigned char *dst = 0;
     unsigned char num[8];
-    const char *f = fmt;
+    const char *f = fmt, *set = 0, *endp, *p;
 
     in->n = 0;
+    sc_ap = ap;
     while ((fc = (unsigned char)*f++) != 0) {
         if (sc_space(fc)) {
             sc_skip(in);
@@ -224,22 +230,27 @@ int _scan_run(struct sc *in, const char *fmt, char *ap)
         }
         for (;;) {
             fc = *f;
-            if (fc == 'h') {
-                mod = (mod == 'h') ? 'H' : 'h';
-            } else if (fc == 'l') {
-                mod = (mod == 'l') ? 'q' : 'l';
-            } else if (fc == 'j' || fc == 'z' || fc == 't' || fc == 'L' ||
-                       fc == 'q') {
-                mod = fc;
-            } else {
+            if (fc == 'h')
+                mod = (mod == 2) ? 1 : 2;
+            else if (fc == 'l')
+                mod = (mod == 3) ? 4 : 3;
+            else if (fc == 'j')
+                mod = 5;
+            else if (fc == 'z')
+                mod = 6;
+            else if (fc == 't')
+                mod = 7;
+            else if (fc == 'L' || fc == 'q')
+                mod = 8;
+            else
                 break;
-            }
             f++;
         }
         conv = (unsigned char)*f;
         if (conv == 0)
             goto done;
         f++;
+        nb = sc_size[mod];
         if (conv == '%') {
             if (sc_skip(in) < 0)
                 goto input_fail;
@@ -251,71 +262,45 @@ int _scan_run(struct sc *in, const char *fmt, char *ap)
             continue;
         }
         if (conv == 'n') {
-            if (!skip) {
-                dst = *(unsigned char **)ap;
-                ap += sizeof(void *);
-                nb = (mod == 'H') ? 1 : (mod == 'h') ? sizeof(short) :
-                     (mod == 'l') ? sizeof(long) :
-                     (mod == 'q' || mod == 'j' || mod == 'L') ?
-                         sizeof(long long) :
-                     (mod == 'z') ? sizeof(size_t) :
-                     (mod == 't') ? sizeof(ptrdiff_t) : sizeof(int);
-                sc_store(dst, nb, in->n);
-            }
+            if (!skip)
+                sc_store(sc_arg(), nb, in->n);
             continue;
         }
-        if (conv == 'c') {
-            w = width ? width : 1;
-            if (!skip) {
-                dst = *(unsigned char **)ap;
-                ap += sizeof(void *);
-            }
-            c = _sc_getc(in);
-            if (c < 0)
+        if (conv == 'c' || conv == 's' || conv == '[') {
+            if (conv == '[') {
+                set = f;
+                sc_inset(-2, f, &f);
+            } else if (conv == 's' && sc_skip(in) < 0) {
                 goto input_fail;
-            for (;;) {
-                if (!skip)
-                    *dst++ = (unsigned char)c;
-                if (--w <= 0)
-                    break;
-                c = _sc_getc(in);
-                if (c < 0)
-                    break;
             }
             if (!skip)
-                done++;
-            continue;
-        }
-        if (conv == '[') {
-            f = sc_set(f, set);
-            if (!skip) {
-                dst = *(unsigned char **)ap;
-                ap += sizeof(void *);
-            }
-            w = width ? width : 32767;
-            ok = 0;
+                dst = sc_arg();
+            w = width ? width : (conv == 'c' ? 1 : 32767);
+            count = 0;
             for (;;) {
                 if (w <= 0)
                     break;
                 c = _sc_getc(in);
                 if (c < 0)
                     break;
-                if (!(set[c >> 3] & (1 << (c & 7)))) {
+                if (conv == 's' ? sc_space(c) :
+                    (conv == '[' && !sc_inset(c, set, &endp))) {
                     _sc_ungetc(in, c);
                     break;
                 }
                 w--;
-                ok++;
+                count++;
                 if (!skip)
                     *dst++ = (unsigned char)c;
             }
-            if (!ok) {
+            if (!count) {
                 if (c < 0)
                     goto input_fail;
                 goto done;
             }
             if (!skip) {
-                *dst = 0;
+                if (conv != 'c')
+                    *dst = 0;
                 done++;
             }
             continue;
@@ -323,62 +308,25 @@ int _scan_run(struct sc *in, const char *fmt, char *ap)
         /* all other conversions skip white space first */
         if (sc_skip(in) < 0)
             goto input_fail;
-        if (conv == 's') {
-            if (!skip) {
-                dst = *(unsigned char **)ap;
-                ap += sizeof(void *);
-            }
-            w = width ? width : 32767;
-            while (w > 0) {
-                c = _sc_getc(in);
-                if (c < 0)
-                    break;
-                if (sc_space(c)) {
-                    _sc_ungetc(in, c);
-                    break;
-                }
-                w--;
-                if (!skip)
-                    *dst++ = (unsigned char)c;
-            }
-            if (!skip) {
-                *dst = 0;
-                done++;
-            }
-            continue;
-        }
-        if (conv == 'd' || conv == 'i' || conv == 'u' || conv == 'o' ||
-            conv == 'x' || conv == 'X' || conv == 'p') {
-            base = (conv == 'd' || conv == 'u') ? 10 :
-                   (conv == 'i') ? 0 : (conv == 'o') ? 8 : 16;
-            nb = (conv == 'p') ? sizeof(void *) :
-                 (mod == 'H') ? 1 : (mod == 'h') ? sizeof(short) :
-                 (mod == 'l') ? sizeof(long) :
-                 (mod == 'q' || mod == 'j' || mod == 'L') ?
-                     sizeof(long long) :
-                 (mod == 'z') ? sizeof(size_t) :
-                 (mod == 't') ? sizeof(ptrdiff_t) : sizeof(int);
-            r = sc_int(in, base, width, num, nb);
+        p = strchr(sc_int_convs, conv);
+        if (p) {
+            if (conv == 'p')
+                nb = sizeof(void *);
+            r = sc_int(in, sc_base[p - sc_int_convs], width, num, nb);
             if (r < 0)
                 goto input_fail;
             if (r == 0)
                 goto done;
             if (!skip) {
-                dst = *(unsigned char **)ap;
-                ap += sizeof(void *);
-                for (w = 0; w < nb; w++)
-                    dst[w] = num[w];
+                dst = sc_arg();
+                memcpy(dst, num, nb);
                 done++;
             }
             continue;
         }
-        if (conv == 'f' || conv == 'e' || conv == 'g' || conv == 'a' ||
-            conv == 'F' || conv == 'E' || conv == 'G' || conv == 'A') {
-            if (!skip) {
-                dst = *(unsigned char **)ap;
-                ap += sizeof(void *);
-            }
-            r = _sc_float(in, width, skip ? (void *)0 : (void *)dst);
+        if (strchr(sc_float_convs, conv)) {
+            dst = skip ? 0 : (unsigned char *)sc_arg();
+            r = _sc_float(in, width, dst);
             if (r < 0)
                 goto input_fail;
             if (r == 0)

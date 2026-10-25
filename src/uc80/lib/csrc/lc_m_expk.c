@@ -15,8 +15,7 @@ float _m_expk(float x, int *np)
     n = (int)(x * 1.44269504f + (x < 0 ? -0.5f : 0.5f));
     /* 0.693359375 has 9 bits, so n * 0.693359375 is exact */
     r = (x - (float)n * 0.693359375f) - (float)n * -2.12194440e-4f;
-    y = ((((expk_p[5] * r + expk_p[4]) * r + expk_p[3]) * r + expk_p[2]) * r
-         + expk_p[1]) * r + expk_p[0];
+    y = _m_poly(r, expk_p, 6);
     y = y * r * r + r;
     *np = n;
     return y + 1.0f;

@@ -9,6 +9,10 @@
  * for a base that is not 0 or 2 to 36.
  */
 #include <errno.h>
+#include <string.h>
+
+extern int _sc_muladd(unsigned char *r, int nb, int mul, int add);
+extern void _sc_negate(unsigned char *r, int nb);
 
 static int digit_value(unsigned char c)
 {
@@ -26,10 +30,8 @@ void _strtoint(const char *nptr, char **endptr, int base,
 {
     const char *s = nptr;
     int neg = 0, ovf = 0, any = 0, i, d;
-    unsigned t;
 
-    for (i = 0; i < nb; i++)
-        r[i] = 0;
+    memset(r, 0, nb);
     while (*s == ' ' || (*s >= 9 && *s <= 13))
         s++;
     if (*s == '-' || *s == '+') {
@@ -55,16 +57,8 @@ void _strtoint(const char *nptr, char **endptr, int base,
             break;
         any = 1;
         s++;
-        if (!ovf) {
-            t = d;
-            for (i = 0; i < nb; i++) {
-                t += (unsigned)r[i] * base;
-                r[i] = (unsigned char)t;
-                t >>= 8;
-            }
-            if (t)
-                ovf = 1;
-        }
+        if (!ovf && _sc_muladd(r, nb, base, d))
+            ovf = 1;
     }
     if (endptr)
         *endptr = (char *)(any ? s : nptr);
@@ -101,12 +95,6 @@ void _strtoint(const char *nptr, char **endptr, int base,
             r[i] = 0xff;
         return;
     }
-    if (neg) {
-        t = 1;
-        for (i = 0; i < nb; i++) {
-            t += (unsigned char)~r[i];
-            r[i] = (unsigned char)t;
-            t >>= 8;
-        }
-    }
+    if (neg)
+        _sc_negate(r, nb);
 }

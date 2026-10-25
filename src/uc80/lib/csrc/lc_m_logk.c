@@ -24,9 +24,7 @@ float _m_logk(float x, int *np, float *fp)
     }
     f = m - 1.0f;
     z = f * f;
-    y = ((((((((logk_p[8] * f + logk_p[7]) * f + logk_p[6]) * f + logk_p[5])
-             * f + logk_p[4]) * f + logk_p[3]) * f + logk_p[2]) * f
-          + logk_p[1]) * f + logk_p[0]) * f * z;
+    y = _m_poly(f, logk_p, 9) * f * z;
     y = y - 0.5f * z;
     *np = e;
     *fp = f;

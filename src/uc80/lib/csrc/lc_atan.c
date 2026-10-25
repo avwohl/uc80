@@ -41,8 +41,7 @@ double atan(double x)
         base_lo = 0.0f;
     }
     z = t * t;
-    y = t + t * z * (((((atan_p[5] * z + atan_p[4]) * z + atan_p[3]) * z
-                       + atan_p[2]) * z + atan_p[1]) * z + atan_p[0]);
+    y = t + t * z * _m_poly(z, atan_p, 6);
     y = (y + base_lo) + base_hi;
     return M_NEG(u) ? -y : y;
 }

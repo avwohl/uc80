@@ -25,8 +25,7 @@ double sinh(double x)
     ax = neg ? -x : x;
     if (ax <= 1.0f) {
         z = ax * ax;
-        y = ax + ax * z * (((sinh_p[3] * z + sinh_p[2]) * z + sinh_p[1]) * z
-                            + sinh_p[0]);
+        y = ax + ax * z * _m_poly(z, sinh_p, 4);
     } else if (ax <= 22.0f) {
         t = expm1(ax);
         y = 0.5f * (t + t / (t + 1.0f));

@@ -2,6 +2,11 @@
  * product f*ln2 is split in a main part and a small correction. */
 #include "m.h"
 
+static const float exp2_p[] = {
+    0.5f, 0.166666672f, 0.0416664667f, 0.00833336078f, 0.00139335997f,
+    0.000198577953f
+};
+
 /* ALIAS: exp2 = exp2f exp2l */
 double exp2(double x)
 {
@@ -29,8 +34,7 @@ double exp2(double x)
     r = _m_2prod(f, 0.693147182f, &pe);
     c = pe + f * -1.90465421e-9f;
     z = r * r;
-    y = ((((0.000198577953f * r + 0.00139335997f) * r + 0.00833336078f) * r
-          + 0.0416664667f) * r + 0.166666672f) * r + 0.5f;
+    y = _m_poly(r, exp2_p, 6);
     y = y * z + r;
     y = (y + 1.0f) + (y + 1.0f) * c;
     u.f = y;

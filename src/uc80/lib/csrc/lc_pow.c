@@ -80,6 +80,18 @@ static const float pow_tl[32] = {
     -2.16938609e-08f
 };
 
+/* the series of log(1+f) after f - f*f/2, of log(1+u) - u, and exp(r) */
+static const float pow_ls[] = {
+    0.333333343f, -0.25f, 0.200000003f, -0.166666672f, 0.142857149f, -0.125f
+};
+static const float pow_lq[] = {
+    -0.5f, 0.333333343f, -0.25f, 0.200000003f, -0.166666672f, 0.142857149f
+};
+static const float pow_ep[] = {
+    0.5f, 0.166666672f, 0.0416664667f, 0.00833336078f, 0.00139335997f,
+    0.000198577953f
+};
+
 /* 1 if y is an even integer, 2 if odd, 0 if not an integer (y finite) */
 static int pow_isint(m_u b)
 {
@@ -120,8 +132,7 @@ static float pow_log2(float x, float *lo)
             n++;
         z1 = _m_2prod(f, f, &z2);
         sh = _m_2sum(f, -0.5f * z1, &se);
-        c = f * z1 * (((((-0.125f * f + 0.142857149f) * f - 0.166666672f) * f
-                        + 0.200000003f) * f - 0.25f) * f + 0.333333343f);
+        c = f * z1 * _m_poly(f, pow_ls, 6);
         s_lo = se + (c - 0.5f * z2);
     } else {
         j = (int)((mant >> 18) & 31);
@@ -130,8 +141,7 @@ static float pow_log2(float x, float *lo)
         p = _m_2prod(m, r, &pe);
         sh = p - 1.0f;                  /* u = sh + pe */
         uh = sh;
-        q = uh * uh * (-0.5f + uh * (0.333333343f + uh * (-0.25f + uh *
-            (0.200000003f + uh * (-0.166666672f + uh * 0.142857149f)))));
+        q = uh * uh * _m_poly(uh, pow_lq, 6);
         s_lo = (pe - pe * uh) + q;
         th = pow_th[j];
         tl = pow_tl[j];
@@ -226,8 +236,7 @@ double pow(double x, double y)
     rl = re + f * -1.90465421e-9f + fl * 0.693147182f;
     /* exp(rh + rl) = 1 + rh + (rl + rh*rl + rh*rh*P(rh)) */
     z = rh * rh;
-    p = ((((0.000198577953f * rh + 0.00139335997f) * rh + 0.00833336078f) * rh
-          + 0.0416664667f) * rh + 0.166666672f) * rh + 0.5f;
+    p = _m_poly(rh, pow_ep, 6);
     tail = z * p + rh * rl;
     s1 = _m_2sum(1.0f, rh, &e1);
     r.f = s1 + ((e1 + rl) + tail);

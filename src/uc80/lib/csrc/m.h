@@ -48,6 +48,8 @@ float _m_round(float x, int mode);
 long long _m_toll(float r);
 /* exp(x) = y * 2^n for |x| < 104, y in [0.7, 1.42]; *np gets n */
 float _m_expk(float x, int *np);
+/* c[0] + c[1]*x + ... + c[n-1]*x^(n-1) by Horner's rule */
+float _m_poly(float x, const float *c, int n);
 /* Error-free transformations: p + *e = a * b and s + *e = a + b exactly */
 float _m_2prod(float a, float b, float *e);
 float _m_2sum(float a, float b, float *e);

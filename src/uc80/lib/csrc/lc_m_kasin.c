@@ -11,6 +11,5 @@ float _m_kasin(float t)
 {
     float z = t * t;
 
-    return t + t * z * (((((kasin_p[5] * z + kasin_p[4]) * z + kasin_p[3]) * z
-                          + kasin_p[2]) * z + kasin_p[1]) * z + kasin_p[0]);
+    return t + t * z * _m_poly(z, kasin_p, 6);
 }
