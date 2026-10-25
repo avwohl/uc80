@@ -62,6 +62,8 @@ float _m_kasin(float t);
 /* x = n * pi/2 + r for ax >= 0, |r| <= pi/4 (a little more at the edge);
  * returns n modulo 4 and sets *r */
 int _m_reduce(float ax, float *r);
+/* the Payne-Hanek part of _m_reduce, for ax >= 6000 (assembly) */
+int _m_phred(float ax, float *r);
 /* sin and cos of |r| <= pi/4 + a little */
 float _m_ksin(float r);
 float _m_kcos(float r);

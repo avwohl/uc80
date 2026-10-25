@@ -1,0 +1,276 @@
+; lc_m_phred.mac - _m_phred, the Payne-Hanek argument reduction for _m_reduce
+;
+; int _m_phred(float ax, float *rp)
+; For a finite ax of 6000 or more.  ax = n * pi/2 + r with |r| <= pi/4.
+; Returns n modulo 4 and sets *rp to r.
+;
+; ax = M * 2^(e-150) with a 24-bit M.  A window of 104 bits of 2/pi,
+; which starts at the place of the exponent, is multiplied by M modulo
+; 2^104.  The top two bits of the product are the quadrant, the other 102
+; bits are the fraction of ax * 2/pi.  The method adds 1/2 to get the
+; nearest integer and takes the absolute value of the rest.  The top 32 bits
+; of the rest, from its leading one, become a float that is multiplied by
+; pi/2 (in two parts).
+	.Z80
+
+	CSEG
+
+	EXTRN	__uitof
+	EXTRN	__fmul
+	EXTRN	__fadd
+	EXTRN	__tmp32
+
+	PUBLIC	__m_phred
+__m_phred:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	(_mph_rp),HL
+	; the mantissa with the implied bit
+	LD	A,(IX+4)
+	LD	(_mph_m),A
+	LD	A,(IX+5)
+	LD	(_mph_m+1),A
+	LD	A,(IX+6)
+	OR	80H
+	LD	(_mph_m+2),A
+	; e = the biased exponent; s = e - 152 is the number of the first bit
+	LD	A,(IX+6)
+	RLA
+	LD	A,(IX+7)
+	RLA
+	LD	L,A
+	LD	H,0
+	LD	DE,-152
+	ADD	HL,DE		; HL = s
+	LD	A,L
+	AND	7
+	LD	C,A		; C = s mod 8, the shift count
+	SRA	H
+	RR	L
+	SRA	H
+	RR	L
+	SRA	H
+	RR	L		; HL = s div 8, from -2 to 12
+	LD	DE,_mph_tp+2
+	ADD	HL,DE
+	; copy 14 bytes of 2/pi and shift them left by C bits
+	LD	DE,_mph_w
+	PUSH	BC
+	LD	BC,14
+	LDIR
+	POP	BC
+	INC	C
+	JR	_mph_sh1
+_mph_shl:
+	LD	HL,_mph_w+13
+	LD	B,14
+	OR	A
+_mph_shb:
+	RL	(HL)
+	DEC	HL
+	DJNZ	_mph_shb
+_mph_sh1:
+	DEC	C
+	JR	NZ,_mph_shl
+	; acc = 0
+	LD	HL,_mph_a
+	LD	DE,_mph_a+1
+	LD	BC,12
+	LD	(HL),0
+	LDIR
+	; acc = M * window mod 2^104, from the top bit of M
+	LD	C,24
+_mph_mul:
+	LD	HL,_mph_m
+	SLA	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	PUSH	AF
+	LD	HL,_mph_a+12
+	LD	B,13
+	OR	A
+_mph_dbl:
+	RL	(HL)
+	DEC	HL
+	DJNZ	_mph_dbl
+	POP	AF
+	JR	NC,_mph_nob
+	LD	HL,_mph_a+12
+	LD	DE,_mph_w+12
+	LD	B,13
+	OR	A
+_mph_add:
+	LD	A,(DE)
+	ADC	A,(HL)
+	LD	(HL),A
+	DEC	DE
+	DEC	HL
+	DJNZ	_mph_add
+_mph_nob:
+	DEC	C
+	JR	NZ,_mph_mul
+	; add 1/2: the nearest integer is the quadrant
+	LD	A,(_mph_a)
+	ADD	A,20H
+	LD	B,A
+	RLCA
+	RLCA
+	AND	3
+	LD	C,A		; C = n
+	LD	A,B
+	AND	3FH
+	LD	(_mph_a),A	; the fraction plus 1/2
+	LD	B,0		; B = 0: the rest is positive
+	BIT	5,A
+	JR	NZ,_mph_pos
+	; the rest is negative: take 2^104 - the fraction
+	INC	B
+	LD	HL,_mph_a+12
+	LD	E,13
+	OR	A
+_mph_neg:
+	LD	A,0
+	SBC	A,(HL)
+	LD	(HL),A
+	DEC	HL
+	DEC	E
+	JR	NZ,_mph_neg
+_mph_pos:
+	LD	A,(_mph_a)
+	AND	1FH
+	LD	(_mph_a),A
+	LD	A,B
+	LD	(_mph_neg_flag),A
+	LD	A,C
+	LD	(_mph_n),A
+	; find the leading one: shift left until bit 7 of the top byte is set
+	LD	C,0		; C = the number of shifts
+_mph_lead:
+	LD	A,(_mph_a)
+	BIT	7,A
+	JR	NZ,_mph_found
+	LD	HL,_mph_a+12
+	LD	B,13
+	OR	A
+_mph_nrm:
+	RL	(HL)
+	DEC	HL
+	DJNZ	_mph_nrm
+	INC	C
+	LD	A,C
+	CP	104
+	JR	C,_mph_lead
+	; the rest is zero
+	LD	HL,0
+	LD	D,H
+	LD	E,L
+	JR	_mph_out
+_mph_found:
+	LD	A,C
+	LD	(_mph_c),A
+	LD	A,(_mph_a)
+	LD	D,A
+	LD	A,(_mph_a+1)
+	LD	E,A
+	LD	A,(_mph_a+2)
+	LD	H,A
+	LD	A,(_mph_a+3)
+	LD	L,A
+	CALL	__uitof		; the top 32 bits as a float
+	; multiply by 2^(-30-c): add (-30-c) << 7 to the high half
+	LD	A,(_mph_c)
+	ADD	A,30
+	LD	C,A
+	LD	B,0
+	PUSH	HL
+	LD	HL,0
+	OR	A
+	SBC	HL,BC		; HL = -30 - c
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,HL
+	ADD	HL,DE
+	EX	DE,HL
+	POP	HL
+	LD	(_mph_df),HL
+	LD	(_mph_df+2),DE
+	; r = df * 1.57079637 + df * -4.37113883e-08
+	LD	HL,0FDBH
+	LD	(__tmp32),HL
+	LD	HL,3FC9H
+	LD	(__tmp32+2),HL
+	LD	HL,(_mph_df)
+	LD	DE,(_mph_df+2)
+	CALL	__fmul
+	PUSH	DE
+	PUSH	HL
+	LD	HL,0BD2EH
+	LD	(__tmp32),HL
+	LD	HL,0B33BH
+	LD	(__tmp32+2),HL
+	LD	HL,(_mph_df)
+	LD	DE,(_mph_df+2)
+	CALL	__fmul
+	POP	BC
+	LD	(__tmp32),BC
+	POP	BC
+	LD	(__tmp32+2),BC
+	CALL	__fadd
+	LD	A,(_mph_neg_flag)
+	OR	A
+	JR	Z,_mph_out
+	SET	7,D
+_mph_out:
+	PUSH	DE
+	PUSH	HL
+	LD	HL,(_mph_rp)
+	POP	DE
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	INC	HL
+	POP	DE
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	A,(_mph_n)
+	LD	L,A
+	LD	H,0
+	POP	IX
+	RET
+
+; the first 272 bits of 2/pi, with two zero bytes before them
+_mph_tp:
+	DB	0,0
+	DB	0A2H,0F9H,083H,06EH,04EH,044H,015H,029H,0FCH,027H,057H,0D1H
+	DB	0F5H,034H,0DDH,0C0H,0DBH,062H,095H,099H,03CH,043H,090H,041H
+	DB	0FEH,051H,063H,0ABH,0DEH,0BBH,0C5H,061H,0B7H,024H
+
+	COMMON	/lc_m_phred/
+_mph_m:
+	DS	3
+_mph_w:
+	DS	14
+_mph_a:
+	DS	13
+_mph_neg_flag:
+	DS	1
+_mph_n:
+	DS	1
+_mph_c:
+	DS	1
+_mph_df:
+	DS	4
+_mph_rp:
+	DS	2
+
+	END
