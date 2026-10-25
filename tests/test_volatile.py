@@ -147,7 +147,7 @@ EXPECT = {
     "ptr_read2": ("(HL)", 2, 0),
     "ptr_selfassign": ("(HL)", 1, 1),
     "ptr_word2": ("(HL)", 4, 0),        # a word read is two byte reads
-    "cast_store2": ("(HL)", 0, 2),
+    "cast_store2": ("___abs0040uc", 0, 2),   # a name at address 40h
     "qv_store2": ("_qv", 2, 0),         # the volatile pointer is read twice
     "local_rw": ("AUTO", 2, 2),
     "local_init": ("AUTO", 2, 1),

@@ -24,6 +24,11 @@ ASM_BEGIN_MARKER = "; __UC80_ASM_BEGIN__"
 ASM_BEGIN_FILE_MARKER = "; __UC80_ASM_BEGIN__ FILE-SCOPE"
 ASM_END_MARKER = "; __UC80_ASM_END__"
 
+# The ROM target puts const data in CSEG.  This comment line, followed by
+# `cseg`, opens that region; it ends at the next segment directive.  Without
+# the marker the DCE would read the data labels as code blocks.
+ROM_DATA_MARKER = "; __UC80_ROMDATA__"
+
 
 def is_asm_begin(line: str) -> bool:
     """True if `line` opens an inline-asm region (either kind)."""
@@ -54,6 +59,7 @@ class DataBlock:
     label: str
     lines: list[str] = field(default_factory=list)
     is_public: bool = False
+    rom: bool = False  # in the CSEG data region of the ROM target
 
 
 class AssemblyDCE:
@@ -68,13 +74,19 @@ class AssemblyDCE:
         self.header_lines: list[str] = []
         self.footer_lines: list[str] = []
         self.dseg_lines: list[str] = []
+        self.rom_lines: list[str] = []     # CSEG data region (ROM target)
+        self.common_labels: set[str] = set()
+        self.keep_labels: set[str] = set()
+        self.export_common = False
         self.common_lines: list[str] = []  # COMMON segment lines (BSS)
         self.current_segment = "CSEG"
         self._explicit_entry = False  # True when caller provides entry points
         self._asm_counter = 0  # Names the synthetic file-scope asm blocks
 
     def eliminate_dead_code(self, asm_text: str, entry_points: set[str] | None = None,
-                            extra_entry_points: set[str] | None = None) -> str:
+                            extra_entry_points: set[str] | None = None,
+                            keep_labels: set[str] | None = None,
+                            export_common: bool = False) -> str:
         """Remove unreachable code and data from assembly.
 
         Args:
@@ -90,6 +102,8 @@ class AssemblyDCE:
         Returns:
             Assembly with dead code and data removed.
         """
+        self.keep_labels = set(keep_labels or ())
+        self.export_common = export_common
         self._parse_assembly(asm_text)
 
         # Determine entry points
@@ -104,6 +118,7 @@ class AssemblyDCE:
             entry_points.update(self.public_labels)
         if extra_entry_points:
             entry_points |= extra_entry_points
+        entry_points |= self.keep_labels
 
         # Find reachable code blocks
         reachable_code = self._find_reachable(entry_points)
@@ -123,6 +138,8 @@ class AssemblyDCE:
         in_dseg = False
         in_common = False
         in_asm = False
+        in_rom = False
+        rom_pending = False
 
         for line in lines:
             stripped = line.strip()
@@ -169,8 +186,17 @@ class AssemblyDCE:
                         current_block = None
                 continue
 
+            # The CSEG data region of the ROM target (see ROM_DATA_MARKER)
+            if stripped == ROM_DATA_MARKER:
+                if current_block:
+                    self.blocks[current_block.label] = current_block
+                    current_block = None
+                rom_pending = True
+                continue
+
             # Track segment changes
             if upper == 'DSEG':
+                in_rom = False
                 in_dseg = True
                 in_common = False
                 self.current_segment = "DSEG"
@@ -179,6 +205,14 @@ class AssemblyDCE:
                     current_block = None
                 continue
             elif upper == 'CSEG':
+                if rom_pending:
+                    rom_pending = False
+                    in_rom = True
+                    in_dseg = False
+                    in_common = False
+                    self.current_segment = "CSEG"
+                    continue
+                in_rom = False
                 in_dseg = False
                 in_common = False
                 self.current_segment = "CSEG"
@@ -186,6 +220,7 @@ class AssemblyDCE:
                     self.header_lines.append(line)
                 continue
             elif upper.startswith('COMMON'):
+                in_rom = False
                 in_common = True
                 in_dseg = False
                 self.current_segment = "COMMON"
@@ -198,6 +233,14 @@ class AssemblyDCE:
             # Collect COMMON content separately (BSS - always preserved)
             if in_common:
                 self.common_lines.append(line)
+                m = re.match(r'^(\@?\?*\w+):', line)
+                if m:
+                    self.common_labels.add(m.group(1))
+                continue
+
+            # Collect the ROM data region separately
+            if in_rom:
+                self.rom_lines.append(line)
                 continue
 
             # Collect DSEG content separately
@@ -280,15 +323,16 @@ class AssemblyDCE:
         if current_block:
             self.blocks[current_block.label] = current_block
 
-        # Parse DSEG into data blocks
-        self._parse_data_blocks()
+        # Parse DSEG (and the ROM data region) into data blocks
+        self._parse_data_blocks(self.dseg_lines, False)
+        self._parse_data_blocks(self.rom_lines, True)
 
-    def _parse_data_blocks(self) -> None:
-        """Parse DSEG lines into individual data blocks."""
+    def _parse_data_blocks(self, data_lines: list[str], rom: bool) -> None:
+        """Parse DSEG lines (or the ROM data region) into data blocks."""
         current_data: DataBlock | None = None
         pending_public: set[str] = set()
 
-        for line in self.dseg_lines:
+        for line in data_lines:
             stripped = line.strip()
 
             # Track PUBLIC declarations in DSEG
@@ -321,7 +365,8 @@ class AssemblyDCE:
                 current_data = DataBlock(
                     label=label,
                     lines=block_lines,
-                    is_public=is_pub
+                    is_public=is_pub,
+                    rom=rom
                 )
                 pending_public.discard(label)
                 continue
@@ -368,6 +413,9 @@ class AssemblyDCE:
             for data_label in self.data_blocks:
                 if self.data_blocks[data_label].is_public:
                     referenced.add(data_label)
+
+        # Objects the user asked to keep (#pragma uc80 keep / public)
+        referenced |= self.keep_labels & set(self.data_blocks)
 
         # Iteratively find data referenced from other data (fixpoint)
         changed = True
@@ -512,7 +560,10 @@ class AssemblyDCE:
                 continue
             # Unconditional terminators
             # RET alone is unconditional, RET Z/NZ/C/NC/PE/PO/P/M are conditional
-            if stripped == 'RET':
+            # RETI and RETN end a block as well: an interrupt function
+            # ends in one of them, and the function after it is not
+            # reached by falling through.
+            if stripped in ('RET', 'RETI', 'RETN'):
                 return True
             # JP (HL) or JP (IX) or JP (IY) are unconditional
             if stripped.startswith('JP\t(') or stripped.startswith('JP ('):
@@ -551,6 +602,11 @@ class AssemblyDCE:
 
         # Compute surviving labels for filtering PUBLIC/EXTRN
         surviving = reachable_code | referenced_data
+        # A COMMON (BSS) label has no block of its own; its PUBLIC survives
+        # when the user asked to keep it.
+        surviving |= self.keep_labels & self.common_labels
+        if self.export_common:
+            surviving |= self.common_labels & self.public_labels
         # EQU constants are always preserved (they're in header_lines),
         # so their PUBLIC declarations should survive too
         for line in self.header_lines:
@@ -591,13 +647,23 @@ class AssemblyDCE:
             if label in reachable_code:
                 lines.extend(block.lines)
 
+        # ROM data (CSEG) - only include referenced data blocks
+        rom_blocks = [b for lb, b in self.data_blocks.items()
+                      if b.rom and lb in referenced_data]
+        if rom_blocks:
+            lines.append("")
+            lines.append("\tCSEG")
+            for data_block in rom_blocks:
+                lines.extend(data_block.lines)
+
         # DSEG - only include referenced data blocks
-        if self.data_blocks and referenced_data:
+        ram_blocks = [b for lb, b in self.data_blocks.items()
+                      if not b.rom and lb in referenced_data]
+        if ram_blocks:
             lines.append("")
             lines.append("\tDSEG")
-            for label, data_block in self.data_blocks.items():
-                if label in referenced_data:
-                    lines.extend(data_block.lines)
+            for data_block in ram_blocks:
+                lines.extend(data_block.lines)
 
         # COMMON segment (BSS) - always preserved
         if self.common_lines:
@@ -613,7 +679,9 @@ class AssemblyDCE:
 
 
 def eliminate_dead_code(asm_text: str, entry_points: set[str] | None = None,
-                        extra_entry_points: set[str] | None = None) -> str:
+                        extra_entry_points: set[str] | None = None,
+                        keep_labels: set[str] | None = None,
+                        export_common: bool = False) -> str:
     """Remove unreachable code from assembly.
 
     Args:
@@ -621,9 +689,14 @@ def eliminate_dead_code(asm_text: str, entry_points: set[str] | None = None,
         entry_points: Set of entry point labels. If None, uses _main and all PUBLIC.
         extra_entry_points: Extra entry points added on top of the chosen set,
             without switching to explicit-entry mode.
+        keep_labels: Labels of functions or objects that stay whatever
+            refers to them (entry points, and data or BSS the user named).
+        export_common: Keep the PUBLIC declaration of every BSS (COMMON)
+            label, so the link map and assembly can name it.
 
     Returns:
         Assembly with dead code removed.
     """
     dce = AssemblyDCE()
-    return dce.eliminate_dead_code(asm_text, entry_points, extra_entry_points)
+    return dce.eliminate_dead_code(asm_text, entry_points, extra_entry_points,
+                                   keep_labels, export_common)

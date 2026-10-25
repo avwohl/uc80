@@ -39,8 +39,7 @@ KERNELS = {
 
 # name: (data origin, RAM size, RAM range for the model, min stack)
 LAYOUTS = {
-    # ROM 0000-7FFF, RAM 8000-FFFF: room for the const tables, which are
-    # still in DSEG (copied to RAM) until the codegen part of Phase 1.
+    # ROM 0000-7FFF, RAM 8000-FFFF: a roomy layout for any program.
     "dev": dict(data=0x8000, ram=(0x8000, 0xFFFF), rom_size=0x8000),
     # The Neo Geo sound CPU: ROM 0000-7FFF, RAM F800-FFFF (2 KB).
     "neogeo": dict(data=0xF800, ram=(0xF800, 0xFFFF), rom_size=0x8000),

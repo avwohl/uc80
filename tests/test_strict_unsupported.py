@@ -28,7 +28,9 @@ def compile_c(tmp_path, text):
 REFUSED = [
     ("__interrupt", "__interrupt void isr(void) { }\nint main(void) { return 0; }\n"),
     ("interrupt", "interrupt void isr(void) { }\nint main(void) { return 0; }\n"),
-    ("__interrupt(1)", "void isr(void) __interrupt(1) { }\nint main(void) { return 0; }\n"),
+    # (The SDCC postfix form "void isr(void) __interrupt(1) { }" is accepted
+    # since the interrupt functions exist; see tests/test_rom_isr.py.)
+    ("__interrupt(1)", "__interrupt(1) void isr(void) { }\nint main(void) { return 0; }\n"),
     ("[[gnu::interrupt]]", "[[gnu::interrupt]] void isr(void) { }\nint main(void) { return 0; }\n"),
     ("__attribute__((interrupt))",
      "void isr(void) __attribute__((interrupt));\n"

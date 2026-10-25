@@ -14,19 +14,33 @@ Done:
 - Phase 1, `libc_rom.lib`: 93 modules with no BDOS use. The split of `lc_string` and `lc_stdlib` was already done by the libc split.
 - Phase 1, ROM proof: the four snd-* kernels run as ROM images with the CP/M golden output (`bench/rom/sndrom.py`, `tests/test_rom_target.py`). Figures are in [rom.md](rom.md).
 
+- Phase 1, const data in CSEG (ROM target only): const objects, string literals and const compound literals stay in the ROM. RAM of the four snd-* kernels dropped by 33 to 230 bytes (see [rom.md](rom.md)). The CP/M output is byte-identical.
+- Phase 1, dead-code roots: `--entry NAME`, `#pragma uc80 keep NAME`, a ROM program with no `main` (the crt0 calls the first `--entry`), `#pragma uc80 vector 38h NAME` and `66h NAME`, and `#pragma uc80 public NAME` (a PUBLIC label for a static name, and a kept BSS object). BSS objects of the ROM target keep their PUBLIC label.
+
+- Phase 2, interrupt functions: `#pragma uc80 interrupt NAME [critical]` and `#pragma uc80 nmi NAME`. Register save (AF, BC, DE, HL, IY, and the alternate set when the call graph reaches an EXX user), `RETI` or `RETN`, the vector, and the errors for parameters, a return value and a direct call. `asm_dce` knows `RETI` and `RETN`. No peephole rule can match across the prologue or the epilogue (barrier regions in `main.py`). See [rom_hardware.md](rom_hardware.md).
+- Phase 2, hardware access: `<z80.h>` has `z80_out`, `z80_in`, `z80_out16`, `z80_in16`, `z80_di`, `z80_ei`, `z80_irq_save`, `z80_irq_restore`, the critical-section pair, and `z80_load16`. Objects can have a fixed address (`__at`, `[[uc80::at]]`, and volatile integer objects at a constant address). The option `--isr-safe` and two warnings are new: one for work areas at fixed RAM and one for the alternate registers.
+- Phase 3 (the parts that serve the Neo Geo driver): the SDCC spellings `__interrupt`, `__interrupt(n)`, `__critical __interrupt[(n)]`, `__critical { }`, `__sfr __at`, `__sfr __banked __at` and `T x __at(addr)`, with a prepass in `src/uc80/sdcc_compat.py`. `__naked`, `__asm`, `__sdcccall` and `__preserves_regs` stay errors.
+- Phase 2 proof: `bench/rom/isrproof.py` (an NMI command queue, a YM2610 timer interrupt that drives the sequencer, a bank select with `z80_in16`).
+
 Not done (needs `codegen.py` or other work):
 
-- Const objects, string literals and constant compound literals in CSEG.
-- `--entry NAME`, `#pragma uc80 keep`, and a program with no `main`.
-- `#pragma uc80 vector 38h f`, and the watchdog hook of the crt0.
+- The watchdog hook of the crt0.
 - The optional per-module BSS block for separate compilation.
-- All of Phase 2 and the later phases.
+- Phase 3: `__naked` and the `__asm ... __endasm` form. A real sound driver needs an assembly thunk, so this item comes next.
+- An interrupt form for the RST vectors and for IM 2. The vector pragma gives a plain `RET` function and a warning.
+- The interrupt check cannot see a call through a function pointer.
+- A pointer variable that holds a constant address is not changed to a direct access.
+- Phase 4 and the later phases.
+- An interrupt function does not save the fixed work areas of the runtime (Phase 4 option). The compiler prints a warning instead.
+- A vector in separate compilation (`--no-whole-program`): the compiler prints a warning, and your own start-up code must jump to the handler.
 
 Notes for the codegen work that follows:
 
 - `src/uc80/rom.py` strips the empty printf dispatch tables from the assembly text. The codegen change must replace this post-processing.
 - The user INT and NMI handler substitution works in whole-program mode only.
-- A global that C code defines has no PUBLIC label in whole-program mode. An assembly ISR must use an extern declaration and `PUBLIC _name` in the .mac file. Phase 2 ISRs that share C globals must remove this limit.
+- A C object that only assembly uses is removed in whole-program mode, unless the C source names the object in `#pragma uc80 public`.
+- A C function at a vector (`#pragma uc80 vector`) has no register save and no `RETI`. Use `#pragma uc80 interrupt` or `nmi` for a real interrupt function.
+- The compiler puts a compound literal in ROM only when the literal is const and no code writes the literal. A local pointer that points to a compound array literal (`const int *p = (const int[]){1, 2};` in a function) stops with an internal error. This defect is older than this change.
 
 
 ## 1. Answer to the issue
