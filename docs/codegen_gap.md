@@ -16,7 +16,7 @@ Families A, B and C are in the code (branches `printf-puts` and `libc-split`, me
 - A: `_prt_float` is in `lib/lc/lc_prt_float.mac`. Only `%f`, `%e` and `%g` link the module.
 - B: `printf("text\n")` and `printf("%s\n", s)` become `puts`, and `printf("text")` becomes `cputs`. The rewrite needs an unused result and no other `printf`-family call. [compiler_options.md](compiler_options.md) has the rules.
 - C: libc has one module for each public function (176 modules in `libc.mac`). `bsearch`, `vprintf` and `vsprintf` are separate, and `rand` links no runtime multiply.
-- Result against SDCC 4.6.0 (96 programs that are OK on both): the mean size ratio fell from 1.53 to 1.07. uc80 is smaller on 51 programs and bigger on 45. The staged estimate in section 1.1 was 1.014, so the measured result is a little worse than the estimate.
+- Result against SDCC 4.6.0 (96 programs that are OK on both): the mean size ratio fell from 1.53 to 0.99. uc80 is smaller on 52 programs and bigger on 44. The staged estimate in section 1.1 was 1.014, so the measured result is a little better than the estimate.
 - Snd kernels (image bytes): snd-cmdq 5866 to 3027, snd-ymreg 5267 to 2422, snd-seq 6658 to 3891, snd-fnum 5549 to 2782. All four are now smaller than SDCC (3926, 3685, 4873 and 3653).
 - T-states against SDCC 4.6.0 (speed mode) did not change: the mean is 0.63 (0.77 without `sort-*`). The families D to H are open. The speed gap on small integer loops is still there.
 - The programs `micro*` grew by 6 bytes (8601 to 8607) because the code generator now keeps the access to a volatile object (the `volatile-fix` branch).
