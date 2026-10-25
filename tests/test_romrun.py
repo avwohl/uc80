@@ -712,3 +712,37 @@ def test_cli_feed_syntax():
     assert (m.feed.read(0, 0), m.feed.read(0, 0), m.feed.read(0, 0)) == (1, 2, 2)
     assert m.feed.read(4, 99) == 0x80 and m.feed.read(4, 100) == 0
     assert m.feed.read(9, 10) == 1 and m.feed.read(9, 60) == 2
+
+
+# --- um80 + ul80 -> ROM -> runner ---------------------------------------------------
+
+DEMO = os.path.join(os.path.dirname(__file__), "..", "bench", "romrun",
+                    "examples", "demo.mac")
+
+
+@pytest.mark.skipif(not (shutil.which("um80") and shutil.which("ul80")),
+                    reason="um80 or ul80 missing")
+def test_assemble_link_and_run_the_demo_rom(tmp_path):
+    import subprocess
+    shutil.copy(DEMO, tmp_path / "demo.mac")
+    subprocess.run(["um80", "demo.mac"], cwd=tmp_path, check=True,
+                   capture_output=True)
+    subprocess.run(["ul80", "-p", "0", "-s", "-o", "demo.bin", "demo.rel"],
+                   cwd=tmp_path, check=True, capture_output=True)
+    m = Machine()
+    m.load_rom(str(tmp_path / "demo.bin"))
+    m.load_symbols(str(tmp_path / "demo.sym"))
+    YM2610(m)
+    m.feed.queue(0x00, [0x21])
+    m.add_nmi_at(5000)
+    isr = m.measure("isr", "isr")
+    nmi = m.measure("nmi", "nmi")
+    res = m.run(100_000)
+    assert res.reason == "budget"
+    # timer A period: (1024 - 0x3F0) * 72 / 2 = 576 T-states
+    assert 160 <= m.cpu.mem[0xF800] <= 175
+    assert m.cpu.mem[0xF801] == 0x21                # the NMI read the command
+    outs = [(p, v) for _, k, p, v in m.port_log if k == "OUT" and p & 0xFF == 0x0C]
+    assert outs == [(0x210C, 0x21)]
+    assert nmi.count == 1 and nmi.total == 70
+    assert isr.count == m.cpu.mem[0xF800] and isr.min == 105

@@ -31,14 +31,10 @@ def gen_stream(rng: random.Random, n: int) -> bytes:
         out += bytes([op, rng.randrange(256), rng.randrange(0x80, 0xF0)])
     for pre in (0xDD, 0xFD):
         out += bytes([pre, 0x21, rng.randrange(256), rng.randrange(0x80, 0xF0)])
-    out += bytes([0xF1 - 0xF1 + 0x3E, rng.randrange(256)])  # LD A,n
+    out += bytes([0x3E, rng.randrange(256)])  # LD A,n
     for _ in range(n):
         out += one(rng)
     return bytes(out)
-
-
-BAD_BASE = {0x76, 0xC3, 0xC9, 0xE9, 0xCD, 0xD9 + 0x100, 0x10, 0x18, 0xDB,
-            0xD3}
 
 
 def one(rng: random.Random) -> bytes:
@@ -138,13 +134,6 @@ def ed(rng: random.Random) -> bytes:
         if z == 3:
             return bytes([0xED, o, rng.randrange(256), rng.randrange(0x80, 0xF0)])
         return bytes([0xED, o])
-
-
-def patch_jumps(code: bytearray) -> bytearray:
-    """Make JP cc,nn / CALL cc,nn / JR nn jump to the next instruction."""
-    # walk the stream: lengths are known from the generator only for the
-    # placeholders; the placeholders carry 0000 and are patched by position.
-    return code
 
 
 CCJ = (0xC2, 0xCA, 0xD2, 0xDA, 0xE2, 0xEA, 0xF2, 0xFA, 0xC4, 0xCC, 0xD4, 0xDC,

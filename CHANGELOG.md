@@ -6,6 +6,17 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Added
+
+- **`bench/romrun`, a Z80 ROM test runner** (Phase 1 of
+  `docs/rom_target.md`). The runner starts a raw ROM or Intel HEX image at
+  address 0 and logs every port IN and OUT with the full 16-bit address and
+  the T-state. The runner injects IM 1 interrupts and NMIs (EI delay, RETN),
+  models banked windows, ROM write faults, a YM2610 timer model, scripted
+  port reads and cycle spans between symbols. The core counts T-states
+  exactly; the count matches z88dk-ticks on the benchmark programs. See
+  `docs/romrun.md`.
+
 ### Changed
 
 - **Faster `qsort`.** `qsort` was a selection sort (n² comparisons, 37

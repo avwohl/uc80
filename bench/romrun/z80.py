@@ -135,7 +135,6 @@ class Gen:
 
     def __init__(self, ix: str | None):
         self.ix = ix            # None, "IX" or "IY"
-        self.mem_used = False   # the opcode used (IX+d)
 
     # operands
     def hl(self) -> str:
@@ -150,7 +149,6 @@ class Gen:
         """Compute `ad` for the (HL) / (IX+d) operand."""
         if not self.ix:
             return ["ad=(H<<8)|L"]
-        self.mem_used = True
         return ["d=mem[PC]; PC=(PC+1)&65535",
                 f"ad=({self.ix}+(d^128)-128)&65535"]
 
@@ -202,7 +200,6 @@ class Gen:
         if ix and not self.uses_hl(op):
             return None
         pre = 4 if ix else 0
-        mem_op = False   # the opcode names (HL)
 
         if x == 0:
             if z == 0:
@@ -385,10 +382,6 @@ class Gen:
         return False
 
 
-def _cycles_stmt(c) -> str:
-    return f"return {c}"
-
-
 def _emit(name: str, body: list[str], out: list[str]) -> None:
     out.append(f"    def {name}():")
     out.append("        nonlocal " + ", ".join(
@@ -398,14 +391,10 @@ def _emit(name: str, body: list[str], out: list[str]) -> None:
     out.append("")
 
 
-def _op_function(name, lines, cycles, out, extra_mem=0):
-    body = list(lines)
-    # a handler that returns early already did "return N" in its lines
-    if isinstance(cycles, int):
-        body.append(f"return {cycles}")
-    else:
-        body.append(f"return {cycles}")
-    _emit(name, body, out)
+def _op_function(name, lines, cycles, out):
+    """One handler.  A line may return early; the last line returns the
+    T-states of the common path."""
+    _emit(name, list(lines) + [f"return {cycles}"], out)
 
 
 def _gen_cb(out: list[str]) -> None:
@@ -573,13 +562,10 @@ def _build_source() -> str:
         gi = Gen(ixn)
         pf = ixn.lower()
         for op in range(256):
-            gi.mem_used = False
             r = gi.gen(op)
             if r is None:
                 continue
             lines, cyc = r
-            if isinstance(cyc, int) and (gi.mem_used) and op != 0:
-                pass
             _op_function(f"{pf}_{op:02X}", lines, cyc, out)
         _gen_ddcb(ixn, out)
     _gen_cb(out)
@@ -730,23 +716,24 @@ def _tail(out: list[str]) -> None:
 
     def run(skip_bp):
         nonlocal T, PC, R, IPC
-        if skip_bp:
-            pc = PC
-            IPC = pc
-            PC = (pc + 1) & 65535
-            R += 1
-            T += OPS[mem[pc]]()
+        dpc = PC if skip_bp else -1     # a breakpoint handled at (dpc, dt)
+        dt = T
         while True:
+            pc = PC
+            if bp[pc] and (pc != dpc or T != dt):
+                dpc = pc
+                dt = T
+                s = BPHIT(pc)
+                if s is not None:
+                    return s
+                if PC != pc or T != dt:     # the hook changed the state
+                    continue
             if T >= EV:
                 s = service()
                 if s is not None:
                     return s
-            pc = PC
-            if bp[pc]:
-                s = BPHIT(pc)
-                if s is not None:
-                    return s
-                pc = PC
+                if PC != pc:                # an interrupt moved PC
+                    continue
             PC = (pc + 1) & 65535
             IPC = pc
             R += 1
