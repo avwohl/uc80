@@ -24,10 +24,22 @@ Default optimizations (all enabled unless disabled):
 - **Assembly DCE**: Dead code elimination at assembly level
 - **Peephole optimization**: Pattern-based instruction replacement
 - **Printf auto-detection**: Scans format strings to link only needed handlers;
-  rewrites `printf("...\n")` to `puts("...")` when no format specifiers are used
+  rewrites `printf("...\n")` and `printf("%s\n", s)` to `puts` when the
+  result is unused (whole-program mode only; see the Printf Control section)
 - **Embedded runtime**: Runtime functions included as source, DCE removes unused ones
 
 ### Printf Control
+
+In whole-program mode, an expression statement `printf("text\n");` or
+`printf("%s\n", s);` becomes `puts("text");` or `puts(s);`. A program with no
+other `printf` call then does not link the printf core (a hello program drops
+from about 3.9 KB to 256 B). The compiler rewrites only when no other `printf`-family call is left in the
+program. The compiler does not rewrite a call when the
+result is used, when the literal holds `%` (other than the exact `%s\n`
+form), `\0` or a non-ASCII character, when the literal has no final newline,
+when the program defines its own `printf` or `puts`, or with
+`--no-whole-program`. `printf("text")` without a newline stays a `printf`
+call because libc has no small routine that writes a string without a newline.
 
 The compiler auto-detects which printf format specifiers your program uses
 and links only the needed handlers. That inference needs the whole program, so

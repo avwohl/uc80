@@ -3586,6 +3586,13 @@ class CodeGenerator:
                 self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
                 self.call_graph_analyzer.build_call_graph(unit)
 
+        # Remember what the program defines: dead-function removal drops
+        # unreferenced definitions, and the printf-to-puts rewrite must still
+        # see that the program has its own printf or puts.
+        self._defined_function_names = {
+            function_name(d) for d in unit.items
+            if isinstance(d, ast.FunctionDef)}
+
         # Dead function elimination
         if self.enable_dead_elimination and self.call_graph_analyzer:
             original_count = sum(1 for d in unit.items
@@ -3730,9 +3737,13 @@ class CodeGenerator:
                 self.printf_features = detected
                 # If no format specifiers used, convert printf("...\n") to puts("...")
                 # (only safe in whole-program mode where we see all callers).
-                if not detected and self.whole_program:
-                    if self._rewrite_printf_to_puts(unit):
-                        self._needs_puts_extern = True
+                if self.whole_program and self._rewrite_printf_to_puts(unit):
+                    self._needs_puts_extern = True
+                    # The rewrite removed calls: detect again so the
+                    # feature set (and so the linked printf code) shrinks.
+                    detected = self._auto_detect_printf_features(unit)
+                    if detected is not None:
+                        self.printf_features = detected
             else:
                 # Non-literal format string somewhere — must include every handler.
                 self.printf_features = {"all"}
@@ -4867,59 +4878,129 @@ class CodeGenerator:
                     features.add('spec:' + spec)
 
     def _rewrite_printf_to_puts(self, unit: ast.TranslationUnit) -> bool:
-        """Rewrite printf("...\n") to puts("...") when no format specifiers are used.
+        """Rewrite printf("text\\n") and printf("%s\\n", s) to puts(...).
 
-        Only called in whole-program mode when auto-detection found no specifiers.
-        This eliminates the printf dependency entirely.
-        Returns True if any rewrites were made.
+        Only called in whole-program mode with auto-detected printf features.
+        A rewritten program that has no other printf call does not link the
+        printf core (and the float printer and soft-float code it drags in).
+
+        The rewrite is made only when
+          - the call is a whole expression statement (printf returns a
+            count and puts returns 0, so a used result is never rewritten),
+          - the format is plain string literals (adjacent literals are
+            joined), without an encoding prefix,
+          - the decoded format is "<text>\\n" where <text> holds no '%' and
+            no NUL (printf stops at a NUL, puts adds a newline), or exactly
+            "%s\\n" with a second argument,
+          - the unit defines neither printf nor puts itself.
+        The emitted puts string is the decoded text re-encoded with octal
+        escapes, so the bytes are exactly what printf would have printed.
+        The rewrite is made only if it removes every printf-family call of
+        the program.  Returns True if the calls were rewritten.
         """
-        rewrote = False
+        import dataclasses
+        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
 
-        def rewrite_expr(expr: ast.Expression) -> ast.Expression:
-            nonlocal rewrote
-            if isinstance(expr, (ast.Call, ast.CallNoArgs)):
-                if (isinstance(expr.func, ast.Identifier) and
-                    expr.func.name.text == 'printf' and
-                    len(expr.args) == 1 and
-                    isinstance(expr.args[0], ast.StringLiteral)):
-                    s = expr.args[0].value
-                    if s.endswith('\n'):
-                        # printf("...\n") → puts("...")
-                        new_str = ast.StringLiteral(value=s[:-1], pos=expr.args[0].pos)
-                        new_id = ast.Identifier(name='puts', pos=expr.func.pos)
-                        rewrote = True
-                        return ast.Call(func=new_id, args=[new_str], pos=expr.pos)
-                    # printf("...") without \n — leave as printf
-            return expr
+        # Names recorded before dead-function removal.
+        if getattr(self, '_defined_function_names', set()) & {'printf', 'puts'}:
+            return False
+        for decl in unit.items:
+            if (isinstance(decl, ast.FunctionDef)
+                    and function_name(decl) in ('printf', 'puts')):
+                return False
 
-        def rewrite_stmt(stmt):
-            if isinstance(stmt, ast.ExpressionStmt):
-                stmt.expr = rewrite_expr(stmt.expr)
-            elif isinstance(stmt, ast.CompoundStmt):
-                for s in stmt.items:
-                    rewrite_stmt(s)
-            elif isinstance(stmt, (ast.IfStmt, ast.IfStmtElse)):
-                rewrite_stmt(stmt.then_branch)
-                if getattr(stmt, "else_branch", None):
-                    rewrite_stmt(getattr(stmt, "else_branch", None))
-            elif isinstance(stmt, ast.WhileStmt):
-                rewrite_stmt(stmt.body)
-            elif isinstance(stmt, ast.DoWhileStmt):
-                rewrite_stmt(stmt.body)
-            elif isinstance(stmt, ast.ForStmt):
-                rewrite_stmt(stmt.body)
-            elif isinstance(stmt, ast.SwitchStmt):
-                rewrite_stmt(stmt.body)
-            elif isinstance(stmt, ast.CaseStmt):
-                rewrite_stmt(stmt.stmt)
-            elif isinstance(stmt, ast.LabelStmt):
-                rewrite_stmt(stmt.stmt)
+        def literal_pieces(arg):
+            if isinstance(arg, ast.StringLiteral):
+                return [arg]
+            if (isinstance(arg, list) and arg
+                    and all(isinstance(p, ast.StringLiteral) for p in arg)):
+                return arg
+            return None
+
+        def encode(text: str) -> str:
+            out = ['"']
+            for ch in text:
+                o = ord(ch)
+                if ch in '"\\':
+                    out.append('\\' + ch)
+                elif 32 <= o < 127 and ch != '?':
+                    out.append(ch)
+                else:
+                    out.append('\\%03o' % o)
+            out.append('"')
+            return ''.join(out)
+
+        def rewrite_call(expr):
+            if not (isinstance(expr, ast.Call)
+                    and isinstance(expr.func, ast.Identifier)
+                    and expr.func.name.text == 'printf'
+                    and expr.args):
+                return expr
+            pieces = literal_pieces(expr.args[0])
+            if pieces is None:
+                return expr
+            if any(not p.value.text.startswith('"') for p in pieces):
+                return expr
+            fmt = "".join(_decode_string_literal(p.value.text) for p in pieces)
+            if (not fmt.endswith('\n') or any(ord(c) > 126 for c in fmt)):
+                return expr
+            body = fmt[:-1]
+            first = pieces[0]
+            if len(expr.args) == 1:
+                if '%' in body or '\0' in body:
+                    return expr
+                tok = dataclasses.replace(first.value, text=encode(body))
+                new_args = [[dataclasses.replace(first, value=tok)]]
+            elif len(expr.args) == 2 and body == '%s':
+                new_args = [expr.args[1]]
+            else:
+                return expr
+            new_name = dataclasses.replace(expr.func.name, text='puts')
+            return dataclasses.replace(
+                expr, func=dataclasses.replace(expr.func, name=new_name),
+                args=new_args)
+
+        family = {'printf', 'fprintf', 'sprintf', 'snprintf', 'vprintf',
+                  'vfprintf', 'vsprintf', '__builtin_printf',
+                  '__builtin_fprintf', '__builtin_sprintf',
+                  '__builtin_snprintf', '__builtin_vprintf',
+                  '__builtin_vfprintf', '__builtin_vsprintf'}
+        total_calls = 0
+        stmts: list = []
+        seen: set[int] = set()
+
+        def walk(node):
+            nonlocal total_calls
+            if isinstance(node, (list, tuple)):
+                for item in node:
+                    walk(item)
+                return
+            if not _dc_is(node) or id(node) in seen:
+                return
+            seen.add(id(node))
+            if (isinstance(node, (ast.Call, ast.CallNoArgs))
+                    and isinstance(node.func, ast.Identifier)
+                    and node.func.name.text in family):
+                total_calls += 1
+            if isinstance(node, ast.ExpressionStmt):
+                new = rewrite_call(node.expr)
+                if new is not node.expr:
+                    stmts.append((node, new))
+            for f in _dc_fields(node):
+                walk(getattr(node, f.name, None))
 
         for decl in unit.items:
             if isinstance(decl, ast.FunctionDef) and decl.body:
-                rewrite_stmt(decl.body)
+                walk(decl.body)
 
-        return rewrote
+        # Rewrite only when no printf-family call is left: puts costs about
+        # 60 bytes of library code, which a program that still links the
+        # printf core does not win back.
+        if not stmts or len(stmts) != total_calls:
+            return False
+        for node, new in stmts:
+            node.expr = new
+        return True
 
     def _rewrite_scanf_formats_for_int32(self, unit: ast.TranslationUnit) -> None:
         """When int_size == 4, rewrite literal scanf format strings so that

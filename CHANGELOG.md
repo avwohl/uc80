@@ -39,6 +39,11 @@ observable behaviour of a program uc80 compiles.
   `malloc`, and `exit` no longer pulls in `abort`. `uc80 --build-libs`
   removes the stale `.rel` files of removed modules.
 
+- **`printf("text\n")` becomes `puts("text")` again.** The rewrite in
+  whole-program mode had stopped matching after the AST change and never
+  fired. It now handles adjacent literals and escapes, `printf("%s\n", s)`,
+  only an unused result, and only when no other `printf`-family call is left.
+  A hello program drops from 3,968 B to 256 B.
 - **Faster `qsort`.** `qsort` was a selection sort (n² comparisons, 37
   billion T-states for 5,000 equal ints) and sorted in descending order.
   It is now a non-recursive quicksort with a median-of-three pivot, a
