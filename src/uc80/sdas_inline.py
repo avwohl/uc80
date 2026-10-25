@@ -145,7 +145,8 @@ class _Block:
                 if il in _INDIRECT:
                     return f"({il.upper()})"
                 if il in ("ix", "iy"):
-                    return f"({il.upper()}+0)"
+                    return (f"({il.upper()})" if op == "jp"
+                            else f"({il.upper()}+0)")
                 e = X.parse(inner, "sdas")
                 if (isinstance(e, X.Bin) and e.op in ("+", "-")
                         and isinstance(e.left, X.Sym)

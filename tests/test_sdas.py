@@ -429,6 +429,116 @@ def test_cpm_program_linked_by_sdldz80_prints_the_same(
     assert want and got == want
 
 
+def _all_forms_source():
+    """A MACRO-80 module with every Z80 instruction form, operand shapes
+    and expressions that uc80 and the hand-written modules use, and JR and
+    DJNZ that um80 must change to JP."""
+    R8="a b c d e h l".split(); R16="bc de hl sp".split(); CC="nz z nc c po pe p m".split()
+    L=[]
+    add=L.append
+    for d in R8:
+        for s in R8: add(f"ld {d},{s}")
+        add(f"ld {d},12H"); add(f"ld {d},(hl)"); add(f"ld (hl),{d}")
+        add(f"ld {d},(ix+5)"); add(f"ld {d},(iy-3)"); add(f"ld (ix+5),{d}"); add(f"ld (iy-3),{d}")
+    add("ld (hl),34H"); add("ld (ix+7),99H"); add("ld (iy+127),0FFH"); add("ld (iy-128),1")
+    add("ld a,(bc)"); add("ld a,(de)"); add("ld (bc),a"); add("ld (de),a")
+    add("ld a,(1234H)"); add("ld (1234H),a"); add("ld a,i"); add("ld a,r"); add("ld i,a"); add("ld r,a")
+    for r in R16+["ix","iy"]:
+        add(f"ld {r},1234H"); add(f"ld {r},_sym+3")
+    add("ld hl,(1234H)"); add("ld (1234H),hl")
+    for r in ["bc","de","sp","ix","iy"]:
+        add(f"ld {r},(1234H)"); add(f"ld (1234H),{r}")
+    add("ld sp,hl"); add("ld sp,ix"); add("ld sp,iy")
+    for r in ["af","bc","de","hl","ix","iy"]: add(f"push {r}"); add(f"pop {r}")
+    for x in ["de,hl","af,af'","(sp),hl","(sp),ix","(sp),iy"]: add(f"ex {x}")
+    for x in "exx ldi ldir ldd lddr cpi cpir cpd cpdr daa cpl neg ccf scf nop halt di ei rlca rla rrca rra rld rrd reti retn ini inir ind indr outi otir outd otdr ret".split(): add(x)
+    for op in ["add","adc","sub","sbc","and","xor","or","cp"]:
+        pre = "a," if op in("add","adc","sbc") else ""
+        for s in R8: add(f"{op} {pre}{s}")
+        add(f"{op} {pre}56H"); add(f"{op} {pre}(hl)"); add(f"{op} {pre}(ix+2)"); add(f"{op} {pre}(iy-2)")
+        if pre==""   : add(f"{op} a,5") if op in ("sub","and","xor","or","cp") else None
+    for r in R16: add(f"add hl,{r}"); add(f"adc hl,{r}"); add(f"sbc hl,{r}")
+    for r in ["bc","de","ix","sp"]: add(f"add ix,{r}")
+    for r in ["bc","de","iy","sp"]: add(f"add iy,{r}")
+    for r in R8+R16+["ix","iy"]: add(f"inc {r}"); add(f"dec {r}")
+    add("inc (hl)"); add("dec (hl)"); add("inc (ix+1)"); add("dec (iy-1)")
+    for n in (0,1,2): add(f"im {n}")
+    for op in "rlc rl rrc rr sla sra srl".split():
+        for s in R8: add(f"{op} {s}")
+        add(f"{op} (hl)"); add(f"{op} (ix+3)"); add(f"{op} (iy-3)")
+    for op in ["bit","res","set"]:
+        for b in range(8):
+            add(f"{op} {b},a"); add(f"{op} {b},(hl)"); add(f"{op} {b},(ix+4)")
+    add("jp 1234H"); add("jp _lab"); add("jp (hl)"); add("jp (ix)"); add("jp (iy)")
+    for c in CC: add(f"jp {c},_lab"); add(f"call {c},_lab"); add(f"ret {c}")
+    for c in ["nz","z","nc","c"]: add(f"jr {c},_lab")
+    add("jr _lab"); add("djnz _lab"); add("call _lab"); add("call 4321H")
+    for n in range(0,0x40,8): add(f"rst {n:02X}H")
+    add("in a,(23H)"); add("out (23H),a")
+    for r in R8: add(f"in {r},(c)"); add(f"out (c),{r}")
+    # expressions
+    add("ld a,1+2*3"); add("ld hl,(_sym+1)*2" ); add("ld a,LOW _sym"); add("ld a,HIGH _sym"); add("ld hl,_sym-1"); add("ld a,'A'"); add("ld a,'A'+1"); add("ld hl,_sym SHR 1") 
+    add("ld a,0FFH AND 0FH"); add("ld hl,100H OR 5"); add("ld a,-1"); add("ld a,NOT 0 AND 0FFH")
+    add("db 1,2,3"); add("db 'abc',0"); add("db 'it''s',0DH,0AH"); add("dw 1234H,_lab,_lab+2"); add("ds 3")
+    add("dw $+4"); add("jr $"); add("jr $+4")
+    far = ["\tjr nz,_far", "\tdjnz _far", "\tjr _far"] + ["\tnop"] * 200
+    src = (["\t.z80", "\tcseg", "_sym\tequ 0123H", "_lab:"]
+           + ["\t" + x for x in L] + far + ["_far:\tret", "\tend"])
+    return "\n".join(src) + "\n"
+
+
+@needs_sdas
+@pytest.mark.skipif(not (shutil.which("um80") and shutil.which("ul80")),
+                    reason="needs um80 and ul80")
+def test_every_instruction_form_assembles_to_the_bytes_of_um80(tmp_path):
+    """The oracle test: um80 and ul80 on the MACRO-80 text, and the
+    translator, sdasz80 and sdldz80 on the same text, give the same
+    bytes."""
+    (tmp_path / "t.mac").write_text(_all_forms_source())
+    for cmd in (["um80", "t.mac", "-o", "u.rel"],
+                ["ul80", "--bin", "-p", "0", "-o", "u.bin", "u.rel"]):
+        r = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+    (tmp_path / "t.s").write_text(sdas.translate(
+        (tmp_path / "t.mac").read_text(), module="t"))
+    ok, msg = sdas.assemble(tmp_path / "t.s", flags=())
+    assert ok, msg
+    for cmd in (["sdldz80", "-n", "-i", "t.ihx", "t.rel"],
+                ["sdobjcopy", "-I", "ihex", "-O", "binary", "t.ihx", "t.bin"]):
+        r = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+    want = (tmp_path / "u.bin").read_bytes()
+    got = (tmp_path / "t.bin").read_bytes()
+    assert len(got) > 1000
+    assert want.startswith(got) and set(want[len(got):]) <= {0xFF}
+
+
+@pytest.mark.skipif(not (shutil.which("um80") and shutil.which("ul80")),
+                    reason="needs um80 and ul80")
+def test_sdas_block_translation_round_trips_every_instruction_form(tmp_path):
+    """MACRO-80 -> sdas (sdas.py) -> MACRO-80 (the __asm block translator)
+    -> um80 gives the bytes of um80 on the first text."""
+    from uc80 import sdas_inline
+    mac = _all_forms_source()
+    text = sdas.translate(mac, module="t")
+    body = [ln for ln in text.splitlines()
+            if not re.match(r"\s*\.(area|module|globl)", ln)
+            and not ln.startswith(";")]
+    back = "\n".join(sdas_inline.sdas_block_to_m80("\n".join(body)))
+    (tmp_path / "a.mac").write_text(mac)
+    (tmp_path / "b.mac").write_text("\t.z80\n\tcseg\n" + back + "\n\tend\n")
+    images = []
+    for stem in "ab":
+        for cmd in (["um80", f"{stem}.mac", "-o", f"{stem}.rel"],
+                    ["ul80", "--bin", "-p", "0", "-o", f"{stem}.bin",
+                     f"{stem}.rel"]):
+            r = subprocess.run(cmd, cwd=tmp_path, capture_output=True,
+                               text=True)
+            assert r.returncode == 0, r.stdout + r.stderr
+        images.append((tmp_path / f"{stem}.bin").read_bytes())
+    assert images[0] == images[1] and len(images[0]) > 1000
+
+
 # ---- the compiler option --------------------------------------------------
 
 def run_uc80(args, cwd):
