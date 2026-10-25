@@ -22,6 +22,10 @@ from uc_core import ast
 from uc_core.volatility import VolatileInfo, declared_names
 from uc_core.volatility import children as _children
 from .volatile_fence import VOL_BEGIN, VOL_END
+from . import absaddr
+from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
+                             z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
+                             ISR_ALT_SAVE, ISR_ALT_RESTORE)
 # Codegen-internal synthetic resolved types — the parser doesn't
 # produce these (the auto-AST is declarator-shaped), but codegen
 # needs concrete BasicType / PointerType / ArrayType / FunctionType /
@@ -1397,6 +1401,11 @@ class CallGraphAnalyzer:
     # Functions the user names as roots (--entry, #pragma uc80 keep): live
     # whatever the call graph says, and treated as entered from anywhere.
     extra_roots: set[str] = field(default_factory=set)
+    # Interrupt functions, and --isr-safe: the functions they reach keep
+    # their locals on the stack (see can_use_shared_storage).
+    isr_roots: set[str] = field(default_factory=set)
+    isr_reentrant: set[str] = field(default_factory=set)  # EI first
+    isr_safe: bool = False
 
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
@@ -2003,11 +2012,30 @@ class CallGraphAnalyzer:
         if self.is_recursive(func):
             return False
 
+        # An interrupt can arrive while a function runs, so ??AUTO is not
+        # safe for a function an interrupt function reaches when --isr-safe
+        # is on.  An interrupt function that starts with EI can also
+        # interrupt itself, so it never uses ??AUTO.
+        if func in self.isr_reentrant:
+            return False
+        if self.isr_safe and func in self.isr_reachable():
+            return False
+
         # Must have local storage to share
         if self.func_storage.get(func, 0) == 0:
             return False
 
         return True
+
+    def isr_reachable(self) -> set:
+        """The functions an interrupt function calls, directly or not."""
+        cached = getattr(self, "_isr_reach", None)
+        if cached is None:
+            cached = set()
+            for r in self.isr_roots:
+                cached |= self._get_reachable(r, set())
+            self._isr_reach = cached
+        return cached
 
     def allocate_shared_storage(self) -> None:
         """Allocate shared storage using graph coloring.
@@ -3434,7 +3462,7 @@ class _Src32:
         self.signed = signed
 
 
-class CodeGenerator:
+class CodeGenerator(Z80IntrinsicsMixin):
     """Z80 code generator."""
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
@@ -3447,8 +3475,20 @@ class CodeGenerator:
                  crlf_console: bool = True,
                  rom_data: bool = False,
                  keep_names: "set[str] | None" = None,
-                 public_names: "set[str] | None" = None):
+                 public_names: "set[str] | None" = None,
+                 isr_funcs: "dict[str, str] | None" = None,
+                 isr_safe: bool = False,
+                 absolute: "dict[str, int] | None" = None):
         self.module_name = module_name
+        # Objects at a fixed address (SDCC __at, [[uc80::at]]): name ->
+        # address.  They get an EQU, not storage.
+        self.absolute = dict(absolute or {})
+        # Interrupt functions: name -> "int" (EI first, RETI), "int_crit"
+        # (EI before RETI) or "nmi" (RETN).  See docs/rom.md.
+        self.isr_funcs = dict(isr_funcs or {})
+        # --isr-safe: a function an interrupt function can reach keeps its
+        # locals on the stack, never in the shared ??AUTO area.
+        self.isr_safe = isr_safe
         # --target=rom: const objects, string literals and constant
         # compound literals go to CSEG (the ROM), not DSEG (copied to RAM).
         self.rom_data = rom_data
@@ -3943,14 +3983,114 @@ class CodeGenerator:
                 escaped = self._escape_string(value)
                 self.ctx.emit_instr("db", f"'{escaped}',0")
 
+    def _emit_absolute_symbols(self, unit) -> None:
+        """An EQU for each object at a fixed address, next to the header,
+        so every use of the name is a plain address."""
+        defined = set()
+        for decl in unit.items:
+            if not isinstance(decl, ast.Declaration):
+                continue
+            if decl_storage_class(decl.decl_specs) == "typedef":
+                continue
+            for nm, _full, init, is_fn in iter_var_decls(decl):
+                if nm in self.absolute and not is_fn:
+                    if init is not None:
+                        raise CodegenError(
+                            f"'{nm}' is at a fixed address and has no "
+                            f"storage, so it cannot have an initial value",
+                            decl)
+                    defined.add(nm)
+        for nm in sorted(set(self.absolute) - defined):
+            raise CodegenError(
+                f"'{nm}' is given an address with __at, but the program "
+                f"has no declaration of an object '{nm}'")
+        self.ctx.emit("; Objects at fixed addresses (no storage)")
+        for nm in sorted(self.absolute):
+            sym = self.ctx.globals.get(nm)
+            label = sym.label() if sym else f"_{nm}"
+            # The names that absaddr.py made from *(volatile T *)K stay
+            # local to the module: every module that uses K makes its own.
+            if not nm.startswith("__abs"):
+                self.ctx.emit_instr("public", label)
+            self.ctx.emit(f"{label}\tEQU\t{self.absolute[nm]}")
+        self.ctx.emit()
+
+    def _warn_isr_shared_storage(self) -> None:
+        """A function that an interrupt function and other code both call
+        keeps its locals in ??AUTO, one copy for both: an interrupt that
+        arrives while the other code is in the function overwrites them."""
+        cga = self.call_graph_analyzer
+        from_isr = cga.isr_reachable()
+        roots = ({"main"} & set(cga.call_graph)) | (
+            set(cga.address_taken) - set(self.isr_funcs))
+        other = set()
+        for r in roots:
+            other.add(r)
+            other |= cga._get_reachable(r, set())
+        for f in sorted(from_isr & other):
+            if f in cga.storage_offsets and f not in self.isr_funcs:
+                self.warnings.append(
+                    f"'{f}' is called from an interrupt function and from "
+                    f"other code, and keeps its locals in shared storage; "
+                    f"an interrupt inside '{f}' overwrites them. Compile "
+                    f"with --isr-safe to keep them on the stack.")
+
+    def _check_isr_functions(self, unit) -> None:
+        """An interrupt function is entered by the hardware: it takes no
+        argument, returns nothing, and no C code calls it."""
+        defs = {}
+        for d in unit.items:
+            if isinstance(d, ast.FunctionDef) and d.body is not None:
+                nm = function_name(d)
+                if nm in self.isr_funcs:
+                    defs[nm] = d
+        for nm in sorted(self.isr_funcs):
+            d = defs.get(nm)
+            if d is None:
+                raise CodegenError(
+                    f"'{nm}' is named as an interrupt function but the "
+                    f"program does not define it")
+            _, fn_type = resolve_type_from_decl(d.decl_specs, d.declarator)
+            ret = fn_type.return_type if fn_type.kind == "function" else None
+            if ret is None or not (ret.kind == "basic" and ret.name == "void"):
+                raise CodegenError(
+                    f"interrupt function '{nm}' must return void; the "
+                    f"hardware ignores a return value", d)
+            ptypes = [t for t in (fn_type.param_types or ())
+                      if not (t.kind == "basic" and t.name == "void")]
+            if ptypes or fn_type.is_variadic:
+                raise CodegenError(
+                    f"interrupt function '{nm}' must take no parameters; "
+                    f"the hardware passes none", d)
+        graph = CallGraphAnalyzer(whole_program=self.whole_program,
+                                  type_config=self.type_config)
+        graph.build_call_graph(unit)
+        for caller, callees in sorted(graph.call_graph.items()):
+            for nm in sorted(set(callees) & set(self.isr_funcs)):
+                raise CodegenError(
+                    f"'{caller}' calls the interrupt function '{nm}'; "
+                    f"an interrupt function ends with RETI or RETN, so "
+                    f"only the hardware may enter it. Put the shared code "
+                    f"in an ordinary function.")
+
     def _new_analyzer(self) -> "CallGraphAnalyzer":
         return CallGraphAnalyzer(whole_program=self.whole_program,
                                  type_config=self.type_config,
-                                 extra_roots=set(self.keep_names))
+                                 extra_roots=set(self.keep_names),
+                                 isr_roots=set(self.isr_funcs),
+                                 isr_reentrant={n for n, k in
+                                                self.isr_funcs.items()
+                                                if k == "int"},
+                                 isr_safe=self.isr_safe)
 
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
         self._annotate_typeof(unit)
+        # *(volatile T *)K: a name at address K, so the global-variable
+        # code paths apply (LD A,(K), LD (K),A, LD HL,(K)).
+        self.absolute.update(absaddr.rewrite(unit, self._const_int_operand))
+        if self.isr_funcs:
+            self._check_isr_functions(unit)
         # Build call graph for optimizations
         needs_call_graph = (self.enable_shared_storage or self.enable_dead_elimination or
                            self.enable_inlining or self.enable_const_propagation)
@@ -4089,6 +4229,9 @@ class CodeGenerator:
                 sym.label_override = f"{name}_{count}"
             lower_seen[key] = count + 1
 
+        if self.absolute:
+            self._emit_absolute_symbols(unit)
+
         # Shared storage allocation.  It runs here, rather than straight
         # after the call graph is built, because the region a function
         # needs includes a slot per aggregate-returning call it makes, and
@@ -4111,6 +4254,8 @@ class CodeGenerator:
                 self._type_scope_restore(type_scope)
             self.call_graph_analyzer.compute_active_together()
             self.call_graph_analyzer.allocate_shared_storage()
+            if self.isr_funcs and not self.isr_safe:
+                self._warn_isr_shared_storage()
 
         # Auto-detect printf features if not explicitly specified.
         # Run in both whole-program and separate-compilation modes so that the
@@ -4206,6 +4351,8 @@ class CodeGenerator:
             for nm, full, init, is_fn in iter_var_decls(d):
                 if nm is None or is_fn:
                     continue
+                if nm in self.absolute:
+                    continue          # an EQU, not storage
                 full_unconverted = full
                 full = _to_legacy(full)
                 if isinstance(full, lt.FunctionType):
@@ -5833,6 +5980,10 @@ class CodeGenerator:
             self.ctx.emit(f"; Function {name}")
         self.ctx.emit_label(func_label)
 
+        isr_kind = self.isr_funcs.get(name)
+        if isr_kind is not None:
+            self._emit_isr_prologue(name, isr_kind)
+
         frame_start = len(self.ctx.lines)
         self.ctx.emit_instr("push", "IX")
         self.ctx.emit_instr("ld", "IX,0")
@@ -5933,6 +6084,8 @@ class CodeGenerator:
                 f"automatic storage but its body used {handed_out}")
 
         epilogue_label = f"@{name}_ret"
+        if isr_kind is not None:
+            self.ctx.emit(BARRIER_BEGIN)
         self.ctx.emit_label(epilogue_label)
 
         if self._frame_is_unused(frame_start, frame_size):
@@ -5949,7 +6102,10 @@ class CodeGenerator:
                            for ln in self.ctx.lines[frame_start:])):
                 self.ctx.emit_instr("ld", "SP,IX")
             self.ctx.emit_instr("pop", "IX")
-        self.ctx.emit_instr("ret")
+        if isr_kind is not None:
+            self._emit_isr_epilogue(name, isr_kind)
+        else:
+            self.ctx.emit_instr("ret")
         self.ctx.emit()
 
         self.ctx.current_function = None
@@ -5958,6 +6114,36 @@ class CodeGenerator:
         self._current_sret_size = None
         self._sret_slot_addrs = {}
         self._type_scope_restore(type_scope)
+
+    def _emit_isr_prologue(self, name: str, kind: str) -> None:
+        """Entry of an interrupt function: EI first for "int" (SDCC
+        __interrupt), then the registers the hardware does not save.  IX
+        is saved by the frame code that follows, or never touched.  The
+        alternate registers are saved only when main.py finds that the
+        function reaches code that uses them (isr_check.py)."""
+        e = self.ctx.emit_instr
+        self.ctx.emit(BARRIER_BEGIN)
+        if kind == "int":
+            e("ei")
+        for reg in ("AF", "BC", "DE", "HL", "IY"):
+            e("push", reg)
+        self.ctx.emit(f"{ISR_ALT_SAVE} {name}")
+        self.ctx.emit(BARRIER_END)
+
+    def _emit_isr_epilogue(self, name: str, kind: str) -> None:
+        """Exit of an interrupt function (inside the barrier region that
+        gen_function opened at the epilogue label)."""
+        e = self.ctx.emit_instr
+        self.ctx.emit(f"{ISR_ALT_RESTORE} {name}")
+        for reg in ("IY", "HL", "DE", "BC", "AF"):
+            e("pop", reg)
+        if kind == "nmi":
+            e("retn")
+        else:
+            if kind == "int_crit":
+                e("ei")
+            e("reti")
+        self.ctx.emit(BARRIER_END)
 
     _IX_USE = re.compile(r"(?<![A-Za-z0-9_@$.?])ix(?![A-Za-z0-9_@$.?])",
                          re.IGNORECASE)
@@ -11640,6 +11826,9 @@ class CodeGenerator:
         """Generate code for function call."""
         # Handle GCC builtins
         if isinstance(expr.func, ast.Identifier):
+            if expr.func.name.text in Z80_BUILTINS:
+                self._gen_z80_builtin(expr, expr.func.name.text)
+                return
             if expr.func.name.text == '__builtin_expect':
                 # __builtin_expect(x, c) returns x — it's a hint for
                 # branch prediction. ``c`` is normally a constant, but
@@ -14075,6 +14264,8 @@ class CodeGenerator:
                 fname = expr.func.name.text
                 if fname in _BUILTIN_RET:
                     return _BUILTIN_RET[fname]
+                if fname in Z80_BUILTINS:
+                    return z80_builtin_type(fname)
                 sym = self.ctx.lookup(fname)
                 if sym and isinstance(sym.sym_type, lt.FunctionType):
                     return sym.sym_type.return_type
@@ -15755,6 +15946,7 @@ class CodeGenerator:
             return False
         x = self._peel_int_casts(expr)
         return (self._const_int_operand(x) is not None
+                or self._z80_in_call(x)
                 or self._a_simple_sym(x) is not None
                 or self._a_char_load(x)
                 or self._bf_fast_pos(x) is not None
@@ -15836,6 +16028,9 @@ class CodeGenerator:
             e("pop", "HL")
             e("push", "HL")
             e("ld", "A,(HL)")
+            return
+        if self._z80_in_call(expr):
+            self._gen_z80_in(expr, to_hl=False)
             return
         if not self._a_structural(expr):
             self.gen_expr(expr)
@@ -16256,7 +16451,33 @@ class CodeGenerator:
             if base is None:
                 return None
             return (base[0], base[1], base[2] + k * size)
+        # *(T *)K and ((T *)K)[i]: an object at a constant address, as a
+        # hardware register is.  Its "label" is the number itself.
+        if isinstance(expr, ast.UnaryOp):
+            op = expr.op.text if hasattr(expr.op, "text") else expr.op
+            if op == "*":
+                k = self._const_address(expr.operand)
+                if k is not None:
+                    return ("label", str(k), 0)
+        if isinstance(expr, ast.Index):
+            base_k = self._const_address(expr.array)
+            i = self._const_int_operand(expr.index)
+            if base_k is not None and i is not None:
+                size = self._get_index_elem_size(expr.array)
+                if size > 0:
+                    return ("label", str((base_k + i * size) & 0xFFFF), 0)
         return None
+
+    def _const_address(self, expr):
+        """K when ``expr`` is a pointer made from the integer constant K by
+        a cast, such as ``(volatile unsigned char *)0xF900``; else None."""
+        if not isinstance(expr, ast.Cast):
+            return None
+        t = _to_legacy(self._resolve_typename(expr.target_type))
+        if not isinstance(t, lt.PointerType):
+            return None
+        k = self._const_int_operand(expr.expr)
+        return None if k is None else k & 0xFFFF
 
     def _gen_loc_address(self, loc) -> None:
         """HL = the address of a _direct_loc object.  A stack object

@@ -560,7 +560,10 @@ class AssemblyDCE:
                 continue
             # Unconditional terminators
             # RET alone is unconditional, RET Z/NZ/C/NC/PE/PO/P/M are conditional
-            if stripped == 'RET':
+            # RETI and RETN end a block as well: an interrupt function
+            # ends in one of them, and the function after it is not
+            # reached by falling through.
+            if stripped in ('RET', 'RETI', 'RETN'):
                 return True
             # JP (HL) or JP (IX) or JP (IY) are unconditional
             if stripped.startswith('JP\t(') or stripped.startswith('JP ('):

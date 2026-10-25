@@ -25,6 +25,9 @@ from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
 from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
                       is_asm_begin, is_asm_end)
 from . import volatile_fence
+from . import sdcc_compat
+from . import isr_check
+from .z80_intrinsics import BARRIER_BEGIN, BARRIER_END
 from . import rom as rom_module
 
 from . import peep_local
@@ -177,13 +180,23 @@ def _optimize_outside_asm(peephole, code: str) -> str:
     change to the external upeepz80 package.
     """
     lines = code.split("\n")
-    if not any(is_asm_begin(line) for line in lines):
+
+    def opens(line):
+        return is_asm_begin(line) or line.strip() == BARRIER_BEGIN
+
+    def closes(line):
+        return is_asm_end(line) or line.strip() == BARRIER_END
+
+    # Port I/O, interrupt control and the interrupt prologue and epilogue
+    # (z80_intrinsics.py, codegen.py) are fenced the same way: the lines
+    # between BARRIER_BEGIN and BARRIER_END reach the assembler as written.
+    if not any(opens(line) for line in lines):
         return peephole.optimize(code)
     out: list[str] = []
     buf: list[str] = []
     in_asm = False
     for line in lines:
-        if not in_asm and is_asm_begin(line):
+        if not in_asm and opens(line):
             out.append(peephole.optimize("\n".join(buf)))
             buf = []
             in_asm = True
@@ -191,7 +204,7 @@ def _optimize_outside_asm(peephole, code: str) -> str:
             continue
         if in_asm:
             out.append(line)
-            if is_asm_end(line):
+            if closes(line):
                 in_asm = False
             continue
         buf.append(line)
@@ -336,6 +349,7 @@ class _Roots:
     keep: set        # function and object names to keep
     public: set      # names that get a PUBLIC label even if static
     vectors: dict    # {0x38: name, 0x66: name}
+    isrs: dict = None  # interrupt functions: name -> "int", "int_crit", "nmi"
 
 
 _VECTORS = {0x38: "INT (38h)", 0x66: "NMI (66h)"}
@@ -354,12 +368,31 @@ def _parse_address(text: str):
         return None
 
 
-def _roots_from_options(entries: list, pragmas: list) -> _Roots:
+def _roots_from_options(entries: list, pragmas: list,
+                        sdcc_isrs: list = ()) -> _Roots:
     """The names --entry and #pragma uc80 keep/public/vector pin down.
     Raises CodegenError for a pragma it does not understand: a vector
     that is silently dropped is a ROM that does not start."""
-    roots = _Roots(keep=set(entries), public=set(), vectors={})
+    roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={})
     ident = re.compile(r"^[A-Za-z_]\w*$")
+
+    def add_isr(kind, name, where):
+        addr = 0x66 if kind == "nmi" else 0x38
+        if roots.isrs.get(name, kind) != kind:
+            raise CodegenError(
+                f"{where}: '{name}' is already an interrupt function of "
+                f"another kind")
+        if addr in roots.vectors and roots.vectors[addr] != name:
+            raise CodegenError(
+                f"{where}: the {_VECTORS[addr]} vector is already set to "
+                f"{roots.vectors[addr]}")
+        roots.isrs[name] = kind
+        roots.vectors[addr] = name
+        roots.keep.add(name)
+        roots.public.add(name)
+
+    for kind, name, fname, line in sdcc_isrs:
+        add_isr(kind, name, f"{fname}:{line}: __interrupt")
     for verb, words, fname, line in pragmas:
         where = f"{fname}:{line}: #pragma uc80 {verb}"
         if verb in ("keep", "public"):
@@ -380,9 +413,21 @@ def _roots_from_options(entries: list, pragmas: list) -> _Roots:
                     f"to {roots.vectors[addr]}")
             roots.vectors[addr] = words[1]
             roots.keep.add(words[1])
+        elif verb in ("interrupt", "nmi"):
+            ok = (len(words) == 1 or (verb == "interrupt" and len(words) == 2
+                                      and words[1] == "critical"))
+            if not ok or not ident.match(words[0]):
+                raise CodegenError(
+                    f"{where}: expected '#pragma uc80 interrupt NAME', "
+                    f"'#pragma uc80 interrupt NAME critical' or "
+                    f"'#pragma uc80 nmi NAME'")
+            kind = ("nmi" if verb == "nmi" else
+                    "int_crit" if len(words) == 2 else "int")
+            add_isr(kind, words[0], where)
         else:
             raise CodegenError(
-                f"{where}: unknown verb; uc80 knows keep, public and vector")
+                f"{where}: unknown verb; uc80 knows keep, public, vector, "
+                f"interrupt and nmi")
     return roots
 
 
@@ -562,6 +607,14 @@ def main() -> int:
              "function the start-up code calls"
     )
     parser.add_argument(
+        "--isr-safe", action="store_true",
+        help="Functions that an interrupt function (#pragma uc80 interrupt, "
+             "nmi, or SDCC __interrupt) reaches keep their locals on the "
+             "stack, never in the shared ??AUTO area. Use it when main "
+             "code and an interrupt function call the same function. "
+             "See docs/rom.md"
+    )
+    parser.add_argument(
         "--no-crlf",
         action="store_true",
         help="Do not translate '\\n' to CR LF on console output. The default "
@@ -649,6 +702,7 @@ def main() -> int:
     # Compile
     try:
         asts = []
+        sdcc_found = sdcc_compat.Found()
         mac_files = []  # Assembly files to append
         printf_features: set[str] | None = None  # From #pragma printf
         scanf_features: set[str] | None = None   # From #pragma scanf
@@ -730,10 +784,15 @@ def main() -> int:
             # Front-end: lex + parse via plox-driven c23 grammar.
             # Strict: the interrupt and fastcall markers mean something on a
             # Z80, so the frontend refuses them instead of erasing them.
+            # SDCC spellings uc80 accepts (docs/rom.md): the prepass turns
+            # them into the uc80 forms and records them.  Anything else
+            # that looks like SDCC stays an error.
+            source = sdcc_compat.prepass(source, str(input_path), sdcc_found)
             ast = _frontend_parse(
                 source, str(input_path),
                 strict_unsupported=True,
                 unsupported_message=UNSUPPORTED_MESSAGE)
+            sdcc_compat.rewrite_sfr(ast, sdcc_found.sfrs, str(input_path))
             asts.append(ast)
 
             if args.verbose:
@@ -788,7 +847,8 @@ def main() -> int:
         if scanf_features is not None:
             scanf_features = _close_format_features(scanf_features)
 
-        roots = _roots_from_options(args.entry, target_pragmas)
+        roots = _roots_from_options(args.entry, target_pragmas,
+                                    sdcc_found.isrs)
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                            enable_inlining, enable_const_propagation, whole_program,
                            embed_runtime=embed_runtime,
@@ -798,7 +858,10 @@ def main() -> int:
                            crlf_console=not args.no_crlf or rom,
                            rom_data=rom,
                            keep_names=roots.keep,
-                           public_names=roots.public)
+                           public_names=roots.public,
+                           isr_funcs=roots.isrs,
+                           isr_safe=args.isr_safe,
+                           absolute=sdcc_found.absolute)
         code = gen.generate(merged_ast)
 
         def label_of(name):
@@ -878,6 +941,8 @@ def main() -> int:
                             "__int_handler or __nmi_handler both set the "
                             "same vector")
                     for _addr, _name in sorted(roots.vectors.items()):
+                        if _name in roots.isrs:
+                            continue
                         print(f"uc80: warning: #pragma uc80 vector {_addr:02X}h "
                               f"{_name}: a C function ends with RET, not "
                               f"RETI, and saves no registers; use it only "
@@ -1256,6 +1321,17 @@ def main() -> int:
             if args.verbose:
                 print(f"  Appended {len(mac_files)} assembly file(s)")
 
+        # Interrupt functions: do they reach code that uses the alternate
+        # registers, or a routine with work areas at fixed addresses?
+        if roots.isrs:
+            isr_labels = {n: label_of(n) for n in roots.isrs}
+            reports = isr_check.analyze(
+                code, isr_labels, lib_dir() if lib_dir().is_dir() else None)
+            code = isr_check.resolve_alt_markers(
+                code, {r.name for r in reports if r.alt_chain})
+            for msg in isr_check.format_reports(reports):
+                print(f"uc80: warning: {msg}", file=sys.stderr)
+
         # Assembly-level dead code elimination (after runtime embedding, before peephole)
         if not args.no_asm_dce and (embed_runtime or mac_files):
             if args.verbose:
@@ -1308,6 +1384,9 @@ def main() -> int:
 
         # The volatile markers and fence labels are for the passes above only.
         code = volatile_fence.strip(code)
+        if BARRIER_BEGIN in code:
+            code = "\n".join(ln for ln in code.split("\n")
+                             if ln.strip() not in (BARRIER_BEGIN, BARRIER_END))
 
         # Drop EXTRNs nothing uses: ul80 links the library module for each
         # one.  Done last, so appended .mac files count as uses and names
@@ -1331,7 +1410,7 @@ def main() -> int:
         print(f"uc80: {e}", file=sys.stderr)
         return 1
 
-    except UnsupportedConstructError as e:
+    except (UnsupportedConstructError, sdcc_compat.SdccCompatError) as e:
         print(f"uc80: error: {e}", file=sys.stderr)
         return 1
 
