@@ -1389,6 +1389,21 @@ def main() -> int:
             for msg in isr_check.format_reports(reports):
                 print(f"uc80: warning: {msg}", file=sys.stderr)
 
+        # C code linked next to nullsound (docs/rom_interop.md): its NMI
+        # handler owns the alternate registers, so an entry function must
+        # not reach code that uses EXX or EX AF,AF'.
+        if (getattr(args, "asm_syntax", None) == "sdas"
+                and args.sdas_style == "ngdevkit" and args.entry):
+            ent = {n: label_of(n) for n in args.entry}
+            for rep in isr_check.analyze(
+                    code, ent, lib_dir() if lib_dir().is_dir() else None):
+                if rep.alt_chain:
+                    print(f"uc80: warning: entry function '{rep.name}' "
+                          f"reaches code that uses the alternate registers "
+                          f"({' -> '.join(rep.alt_chain)}); nullsound's NMI "
+                          f"handler keeps its state there",
+                          file=sys.stderr)
+
         # Assembly-level dead code elimination (after runtime embedding, before peephole)
         if not args.no_asm_dce and (embed_runtime or mac_files):
             if args.verbose:
@@ -1467,6 +1482,23 @@ def main() -> int:
                       f"uc80: the MACRO-80 text is in {keep}", file=sys.stderr)
                 return 1
             sdas_origin = sdas.code_origin_of(code)
+            if args.sdas_style == "ngdevkit" and rom:
+                nm = sdas.area_names(args.sdas_style, args.sdas_areas)
+                cur, init_data = None, False
+                for ln in code.splitlines():
+                    f = ln.split()
+                    if len(f) >= 2 and f[0] == ".area":
+                        cur = f[1]
+                    elif cur == nm.rom_init and f and f[0] in (
+                            ".db", ".dw", ".ds"):
+                        init_data = True
+                if init_data:
+                    print("uc80: warning: initialised global data in the "
+                          "ngdevkit style: nothing next to nullsound copies "
+                          f"the {nm.rom_init} image to {nm.ram_init}; the "
+                          "variables start with undefined values (set them "
+                          "in a command, or see docs/rom_interop.md)",
+                          file=sys.stderr)
         output_path.write_text(code)
 
         if args.verbose and args.asm_syntax == "sdas":

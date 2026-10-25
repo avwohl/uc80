@@ -14,7 +14,7 @@ uc80 stays the compiler. Its own tools (`um80`, `ul80`) stay the default. The sd
 
 ## SDCC `__asm` blocks
 
-The compiler reads `__asm ... __endasm;` at statement level and at file level. The text in the block is sdas syntax, as in SDCC. The compiler turns the block into an `asm("...")` statement (see [inline_assembly.md](inline_assembly.md)) with MACRO-80 text.
+The compiler reads `__asm ... __endasm;` at statement level and at file level. The text in the block is sdas syntax, as in SDCC. The compiler turns the block into an `asm("...")` statement (see [inline_assembly.md](inline_assembly.md)) with MACRO-80 text. A block can be the body of `if`, `else`, `for`, `while` or `do` with no braces. The compiler then adds braces (`{ asm("..."); }`). The grammar of uc80 does not accept `asm` as a sub-statement.
 
 ```c
 unsigned char r;
@@ -106,7 +106,7 @@ __DATA_LEN   l_<ram_init>        __BSS_START  s_<bss>
 __BSS_END    s_<bss>+l_<bss>
 ```
 
-`sdldz80` accepts `-g` only for a symbol that a module uses. A CP/M program that links `malloc` also needs `-g __END__=s__DATA+l__DATA`.
+`sdldz80` accepts `-g` only for a symbol that a module uses. A program that links `malloc` needs `link_flags(..., heap=True)`. The flags then also hold `-g __END__=s__DATA+l__DATA` (the start of the heap). Without the flag, the linker says `No definition of symbol __END__` or `Undefined Global __END__`. The use of `malloc` can be indirect, for example in a libc function that calls it.
 
 The vectors are in an absolute area. The area stops at the marker `;@RELOC` in `crt0_rom.mac`. The marker gives the origin of the code that follows (68h, or 69h when a C function is the NMI vector). The translator writes the origin in the first line of the `.s` file as `code-origin`. `-b _CODE=0x68` uses it. An `--startup-lib` file has no marker, and an `ORG` in it makes absolute code up to the next segment directive.
 
@@ -191,10 +191,10 @@ Verified in the nullsound sources:
 - The main loop calls a command with `push bc; push hl; ret`. The return address is `_ret_from_cmd`. The loop has pushed HL before the call. The loop saves no other register. A command can change A, BC, DE and HL.
 - IX and IY are not live in the main loop. A uc80 function saves and restores IX (its frame pointer) and does not use IY.
 - The NMI handler uses AF', BC', DE' and HL' at any time. C code must not use them. uc80 code does not use them, except the code of the float runtime. Do not call float, `double` or 64-bit arithmetic from a command.
-- The INT handler at 38h keeps all registers.
+- The INT handler at 38h keeps all registers. It calls `ym2610_restore_port_context`. That routine repairs the YM2610 address latch only when the interrupted code used `ym2610_write_port_a` or `ym2610_write_port_b`. So C code must write the YM2610 only through these nullsound routines (with a shim). A raw `OUT` or a port intrinsic in C can race with the timer interrupt.
 - A command runs in the main loop, never in the NMI. The NMI can interrupt the command.
 - The stack top is FFFDh. The nullsound data in the MVS build uses 1942 bytes from F800h. The data of the C module (5 bytes in the example) and the stack use the rest, about 100 bytes. Keep both small.
-- The post-init hook is the word at FFFEh. Entry 2 of the table is the hook that nullsound calls after the driver start (command 02h, "eye catcher"). Use it to set the variables of the C code. No code clears `DATA` and no code copies initial data. So the C module has no initialised global.
+- The post-init hook is the word at FFFEh. Entry 2 of the table is the hook that nullsound calls after the driver start (command 02h, "eye catcher"). Use it to set the variables of the C code. No code clears `DATA` and no code copies initial data. So the C module has no initialised global. In the ngdevkit style, `uc80` prints a warning when the module has one.
 
 The entry of a C command without a parameter is a plain `jp _cmd_key_on`. A command has no parameter: the 68k sends one byte.
 
@@ -217,7 +217,11 @@ The shim in `ns_user.s` reads `reg` at SP+2 and `val` at SP+4, loads B and C, an
 2. Three NMIs with command 04h. nullsound acknowledges each command with 84h on port 0Ch. The main loop calls `cmd_key_on` in C. The function takes a note from a const table with a division by 12. It writes the YM2610 registers A4h, A0h and 28h through `ym2610_write_port_a`. Then it answers 41h, 42h and 43h.
 3. An NMI with command 05h. The C function `cmd_key_off` writes register 28h and answers 82h.
 
-The script compares the port log with the expected sequence. nullsound writes register 1Ch all the time in its main loop. The script ignores these writes and the acknowledgements of nullsound. The test `tests/test_rom_interop.py` runs this with zero RAM and with two random RAM patterns. It also checks the RAM variables and the stack.
+The script compares the port log with the expected sequence. It rebuilds the register writes from the address latch of the YM2610. It ignores the writes to register 1Ch (nullsound writes it all the time in its main loop), the writes to register 27h (the INT handler), and the acknowledgements 84h and 85h of nullsound. Only the traffic of the C commands remains, so the check is on the C commands and not on nullsound.
+
+Command 04h before command 02h would see undefined `DATA`, because no code clears `DATA`. The proof always sends 02h first. The test `tests/test_rom_interop.py` runs this with zero RAM and with two random RAM patterns. It also checks the RAM variables and the stack.
+
+`python3 bench/rom/nullsound.py --irq-period 997` also tests the INT handler. Command 06h (in `ns_user.s`) starts YM2610 timer B, and `timer_tempo` executes `EI`. Then romrun injects an interrupt every 997 T-states. About 4900 interrupts come and some of them (13 in the run) land inside a C command. The expected YM2610 sequence stays the same. With a period of 311 T-states the main loop of nullsound gets no time to run the command, because the INT handler is too slow. The test uses the periods 997 and 1213.
 
 This proves the build, the link, the register contract and the two call directions. It does not run nullsound music. The ADPCM, SSG and FM sections of nullsound are not tested, and the YM2610 model of romrun makes no sound.
 
@@ -225,6 +229,6 @@ This proves the build, the link, the register contract and the two call directio
 
 - The output is for ROMs. A CP/M program in sdas syntax links and runs (the tests do this), but the CP/M target is not a goal.
 - Another track changes the convention for calls in uc80. Check each shim after that change.
-- uc80 does not warn when a C function that you link next to nullsound reaches code with `EXX`. Check this by hand (`grep -il exx` on the library modules). The Phase 4 diagnostic of [rom_target.md](rom_target.md) is not done.
-- A C module with initialised globals needs `-b INITIALIZER=...` and `-b INITIALIZED=...` and a copy loop that you write. nullsound has no such code.
+- In the ngdevkit style, `uc80` warns when an `--entry` function reaches code with `EXX` or `EX AF,AF'` (the call graph of `isr_check`). The warning does not see code that only the linker adds, for example a library that you link later.
+- A C module with initialised globals (uc80 warns) needs `-b INITIALIZER=...` and `-b INITIALIZED=...` and a copy loop that you write. nullsound has no such code.
 - Tests: `tests/test_sdas.py`, `tests/test_sdcc_compat.py` (the `__asm` block), `tests/test_rom_interop.py`. They skip when the SDCC tools are missing.

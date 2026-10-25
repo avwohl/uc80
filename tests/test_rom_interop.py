@@ -333,3 +333,59 @@ def test_nullsound_calls_c_commands_that_write_the_ym2610(
 def test_nullsound_sources_are_pinned():
     assert len(nullsound.COMMIT) == 40
     assert all(len(h) == 64 for h in nullsound.FILES.values())
+
+
+@pytest.mark.parametrize("period", [997, 1213])
+def test_nullsound_int_handler_runs_inside_the_c_commands(
+        nullsound_rom, period):
+    """Command 06h starts YM2610 timer B (EI), then a timer interrupt
+    comes every `period` T-states.  Some interrupts land inside the C
+    commands.  The effective YM2610 register writes (rebuilt from the
+    address latch) are still the expected ones: the INT handler keeps all
+    registers and nullsound restores the YM2610 address latch of
+    ym2610_write_port_a."""
+    _src, work = nullsound_rom
+    info = nullsound.execute(work, irq_period=period)
+    assert nullsound.irqs_inside_c_commands(info) >= 5
+    assert nullsound.check(info) == []
+    assert len(info["machine"].rom_writes) == 0
+
+
+ALT_ASM = ("\t.Z80\n\tCSEG\n\tPUBLIC\t_alt_user\n_alt_user:\n"
+           "\texx\n\tld\tbc,0ffffh\n\texx\n\tret\n\tend\n")
+
+
+@pytest.mark.parametrize("style,warns", [("ngdevkit", True), ("sdcc", False)])
+def test_entry_that_reaches_exx_warns_next_to_nullsound(
+        tmp_path, style, warns):
+    """nullsound's NMI handler owns the alternate registers: an --entry
+    function that reaches EXX code gets a warning in the ngdevkit style."""
+    (tmp_path / "alt.mac").write_text(ALT_ASM)
+    (tmp_path / "t.c").write_text(
+        "void alt_user(void);\nvoid cmd(void) { alt_user(); }\n")
+    r = subprocess.run(
+        [sys.executable, "-m", "uc80.main", "--target=rom",
+         "--asm-syntax=sdas", f"--sdas-style={style}", "--no-embed-startup",
+         "--entry", "cmd", str(tmp_path / "t.c"), str(tmp_path / "alt.mac"),
+         "-o", str(tmp_path / "t.s")],
+        capture_output=True, text=True, cwd=str(REPO))
+    assert r.returncode == 0, r.stderr
+    assert ("alternate registers" in r.stderr) == warns
+    if warns:
+        assert "'cmd'" in r.stderr and "_alt_user" in r.stderr
+
+
+@pytest.mark.parametrize("src,warns", [
+    ("int x = 5;\nint y;\nvoid cmd(void) { y = x; }\n", True),
+    ("static const int t[2] = {1, 2};\nint y;\n"
+     "void cmd(void) { y = t[1]; }\n", False),
+])
+def test_initialised_global_warns_in_the_ngdevkit_style(tmp_path, src, warns):
+    (tmp_path / "t.c").write_text(src)
+    r = subprocess.run(
+        [sys.executable, "-m", "uc80.main", "--target=rom",
+         "--asm-syntax=sdas", "--sdas-style=ngdevkit", "--no-embed-startup",
+         "--entry", "cmd", str(tmp_path / "t.c"), "-o", str(tmp_path / "t.s")],
+        capture_output=True, text=True, cwd=str(REPO))
+    assert r.returncode == 0, r.stderr
+    assert ("initialised global data" in r.stderr) == warns

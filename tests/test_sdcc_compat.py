@@ -201,3 +201,27 @@ def test_naked_stays_an_error_next_to_an_asm_block():
     with pytest.raises(sc.SdccCompatError) as e:
         run("void f(void) __naked { __asm\n ret\n __endasm; }\n")
     assert "__naked" in str(e.value)
+
+
+def test_unbraced_asm_body_gets_braces():
+    out, found = run("void g(int i) { for (;;) __asm halt __endasm;\n"
+                     " if (i) __asm nop __endasm; else __asm nop __endasm;\n"
+                     " while (i) __asm nop __endasm; }\n")
+    assert found.asm_blocks == 4
+    assert out.count("{ asm(") == 4
+    assert out.count("); }") == 4
+
+
+def test_unbraced_asm_body_compiles():
+    import os, subprocess, sys, tempfile
+    src = ("void g(int i) { for (;;) __asm halt __endasm;\n"
+           " if (i) __asm nop __endasm; else __asm nop __endasm; }\n"
+           "int main(void) { g(0); return 0; }\n")
+    with tempfile.TemporaryDirectory() as d:
+        c, o = os.path.join(d, "a.c"), os.path.join(d, "a.mac")
+        open(c, "w").write(src)
+        r = subprocess.run([sys.executable, "-m", "uc80.main",
+                            "--target=rom", c, "-o", o],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr
+        assert "HALT" in open(o).read()

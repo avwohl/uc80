@@ -87,7 +87,8 @@ def area_names(style="sdcc", overrides: str = "") -> AreaNames:
 
 
 def link_flags(style="sdcc", code_origin=0x68, ram_origin=0xF800,
-               ram_end=0, overrides: str = "", target="rom") -> list:
+               ram_end=0, overrides: str = "", target="rom",
+               heap=False) -> list:
     """The sdldz80 flags for a program that uc80 built.  The linker defines
     the symbols that the uc80 start-up code needs.  Add ``-i out.ihx`` and
     the modules.
@@ -96,16 +97,20 @@ def link_flags(style="sdcc", code_origin=0x68, ram_origin=0xF800,
     vectors (0068h); ram_origin is the first RAM address; ram_end is the
     first value of SP, 0 for 10000h.  target "cpm" (--target=cpm):
     code_origin is 0100h; the data follows the code in the image.  A
-    program that links malloc also needs ``-g __END__=s_BSS+l_BSS`` (the
-    start of the heap; BSS is the bss area name).  sdldz80 refuses a
-    ``-g`` for a symbol that no module has used, so the flags carry only
-    the symbols that every program uses.
+    program that links malloc needs heap=True: the flags then also define
+    ``__END__`` as ``s_<bss>+l_<bss>`` (the start of the heap; <bss> is the
+    bss area name, _DATA in the sdcc style).  sdldz80 refuses a ``-g`` for
+    a symbol that no module has used, so heap=True is only for a program
+    that links lc_malloc (the linker says "Undefined Global __END__"
+    otherwise); the flags without heap carry only the symbols that every
+    program uses.
     """
     a = area_names(style, overrides)
+    extra = ["-g", f"__END__=s_{a.bss}+l_{a.bss}"] if heap else []
     if target == "cpm":
         return ["-n", "-b", f"{a.code}=0x{code_origin:X}",
                 "-g", f"__bss_start=s_{a.bss}",
-                "-g", f"__bss_end=s_{a.bss}+l_{a.bss}"]
+                "-g", f"__bss_end=s_{a.bss}+l_{a.bss}"] + extra
     return ["-n", "-b", f"{a.code}=0x{code_origin:X}",
             "-b", f"{a.ram_init}=0x{ram_origin:X}",
             "-g", f"__RAM_END=0x{ram_end:X}",
@@ -113,7 +118,7 @@ def link_flags(style="sdcc", code_origin=0x68, ram_origin=0xF800,
             "-g", f"__DATA_RAM=s_{a.ram_init}",
             "-g", f"__DATA_LEN=l_{a.ram_init}",
             "-g", f"__BSS_START=s_{a.bss}",
-            "-g", f"__BSS_END=s_{a.bss}+l_{a.bss}"]
+            "-g", f"__BSS_END=s_{a.bss}+l_{a.bss}"] + extra
 
 
 # ---- the instruction set ------------------------------------------------

@@ -196,7 +196,7 @@ def expected_writes(count_before: int, n_keyon: int):
     return seq
 
 
-def execute(work: Path, ram_fill="random", seed=1):
+def execute(work: Path, ram_fill="random", seed=1, irq_period=0):
     """Run ns.bin in romrun.  Sends the commands as NMIs with the 68k
     command byte on port 0.  Returns a dict with the port log and the
     machine."""
@@ -210,11 +210,36 @@ def execute(work: Path, ram_fill="random", seed=1):
     plan = [(200_000, 0x02),        # start the driver, run the C hook
             (3_000_000, 0x04), (3_600_000, 0x04), (4_200_000, 0x04),
             (4_800_000, 0x05)]
+    if irq_period:
+        plan.insert(1, (1_000_000, 0x06))   # start the timer: EI
     m.feed.steps(0x00, plan)
     for t, _cmd in plan:
         m.add_nmi_at(t)
+    entries = []        # T-states at which a C command starts
+    if irq_period:
+        # Timer interrupts all the time: the INT handler at 38h of
+        # nullsound (timer.s) must keep every register of the C code.
+        m.add_irq_every(irq_period, start=1_100_003)
+        for name in ("cmd_key_on", "cmd_key_off"):
+            m._add_bp(m.addr(name), lambda mm, pc: entries.append(mm.cpu.get()["T"]))
     res = m.run(max_tstates=6_000_000)
-    return dict(machine=m, result=res, plan=plan)
+    return dict(machine=m, result=res, plan=plan, entries=entries,
+                irq_period=irq_period)
+
+
+def irqs_inside_c_commands(info) -> int:
+    """How many interrupts the CPU took after a C command began and before
+    its reply to the 68k (port 0Ch, value 40h or more, or 80h or more)."""
+    m = info["machine"]
+    replies = [t for (t, k, p, v) in m.port_log
+               if k == "OUT" and (p & 0xFF) == PORT_TO_68K and v >= 0x40
+               and v not in (0x84, 0x85)]
+    n = 0
+    for t0 in info["entries"]:
+        t1 = min([t for t in replies if t >= t0], default=t0)
+        n += sum(1 for (kind, t) in m.accepted
+                 if kind == "irq" and t0 <= t <= t1)
+    return n
 
 
 def check(run_info) -> list:
@@ -229,32 +254,37 @@ def check(run_info) -> list:
     if len(t_hook) != 1:
         bad.append(f"the hook reply 20h came {len(t_hook)} times, not once")
     # 2. the sequence of the C commands, from the first key-on NMI on
-    t_first = plan[1][0]
+    t_first = min(t for (t, c) in plan if c == 0x04)
     seq = []
     for (t, k, p, v) in log:
         p &= 0xFF
         if (k == "OUT" and t >= t_first
                 and p in (PORT_YM_A_ADDR, PORT_YM_A_VALUE, PORT_TO_68K)):
             seq.append((p, v))
-    # The main loop of nullsound writes register 1Ch (ADPCM-A flags) all
-    # the time, and nullsound writes 84h or 85h to the 68k port when it
-    # takes the command.  Take these away: they are not from the C code.
-    pairs, i = [], 0
-    while i < len(seq):
-        if seq[i][0] == PORT_YM_A_ADDR and i + 1 < len(seq):
-            if seq[i][1] != 0x1C:
-                pairs += seq[i:i + 2]
-            i += 2
-        else:
-            if not (seq[i][0] == PORT_TO_68K and seq[i][1] in (0x84, 0x85)):
-                pairs.append(seq[i])
-            i += 1
+    # Rebuild the register writes from the address latch of the YM2610:
+    # an interrupt between the address write and the data write of the C
+    # code adds writes of its own, and nullsound restores the latch.  Take
+    # away what is not from the C code: the main loop of nullsound writes
+    # register 1Ch (ADPCM-A flags) all the time, the INT handler writes
+    # register 27h (timer flags), and nullsound writes 84h or 85h to the
+    # 68k port when it takes a command.
+    pairs, latch = [], None
+    for (p, v) in seq:
+        if p == PORT_YM_A_ADDR:
+            latch = v
+        elif p == PORT_YM_A_VALUE:
+            if latch not in (0x1C, 0x27):
+                pairs += [(PORT_YM_A_ADDR, latch), (PORT_YM_A_VALUE, v)]
+        elif not (v in (0x84, 0x85)):
+            pairs.append((p, v))
     seq = pairs
     want = expected_writes(0, 3)
     want += [(PORT_YM_A_ADDR, 0x28), (PORT_YM_A_VALUE, 0x01),
              (PORT_TO_68K, 0x80 | 2)]
     if seq != want:
         bad.append("port sequence differs:\n  got  %r\n  want %r" % (seq, want))
+    if run_info.get("irq_period") and irqs_inside_c_commands(run_info) < 5:
+        bad.append("fewer than 5 interrupts came inside the C commands")
     if run_info["result"].reason not in ("budget", "idle"):
         bad.append("stop reason " + run_info["result"].reason)
     return bad
@@ -262,6 +292,8 @@ def check(run_info) -> list:
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--irq-period", type=int, default=0, metavar="T",
+                    help="also inject an interrupt every T T-states")
     ap.add_argument("--keep", metavar="DIR", help="keep the build files here")
     ap.add_argument("--cache", metavar="DIR", default=str(CACHE),
                     help="where the nullsound sources are kept")
@@ -281,12 +313,16 @@ def main(argv=None):
     build_user(src, work)
     print(link(lib, work).strip())
     print(check_bounds(src, work).strip() or "check-bounds.py: ok")
-    info = execute(work)
+    info = execute(work, irq_period=args.irq_period)
     bad = check(info)
     m = info["machine"]
     print("nullsound %s: %d port events, stop %s, image %d bytes"
           % (COMMIT[:12], len(m.port_log), info["result"].reason,
              (work / "ns.bin").stat().st_size))
+    if args.irq_period:
+        print("interrupts taken: %d, inside the C commands: %d"
+              % (sum(1 for k, _ in m.accepted if k == "irq"),
+                 irqs_inside_c_commands(info)))
     for b in bad:
         print("FAIL " + b)
     if not bad:

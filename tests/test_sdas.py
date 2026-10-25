@@ -391,7 +391,8 @@ CPMEMU = Path.home() / "src" / "cpmemu" / "src" / "cpmemu"
                          and shutil.which("ul80")),
                     reason="needs cpmemu, um80 and ul80")
 @pytest.mark.parametrize("name", ["tak", "sieve", "fannkuch",
-                                  "sort-ran-20", "dhrystone21"])
+                                  "sort-ran-20", "dhrystone21",
+                                  "stanford-tree", "hamurabi"])
 def test_cpm_program_linked_by_sdldz80_prints_the_same(
         name, bench_macs, cpm_libs, tmp_path):
     by_name = dict(bench_macs)
@@ -411,11 +412,14 @@ def test_cpm_program_linked_by_sdldz80_prints_the_same(
                                 module="t", flat_data=True))
     ok, msg = sdas.assemble(s)
     assert ok, msg
-    flags = sdas.link_flags("sdcc", 0x100, target="cpm")
-    r = subprocess.run(["sdldz80", *flags, "-i", "t.ihx", "t.rel",
-                        "-l", str(cpm_libs / "uc80_lc.lib"),
-                        "-l", str(cpm_libs / "uc80_rt.lib")],
-                       cwd=tmp_path, capture_output=True, text=True)
+    for heap in (False, True):      # a program that links malloc needs heap
+        flags = sdas.link_flags("sdcc", 0x100, target="cpm", heap=heap)
+        r = subprocess.run(["sdldz80", *flags, "-i", "t.ihx", "t.rel",
+                            "-l", str(cpm_libs / "uc80_lc.lib"),
+                            "-l", str(cpm_libs / "uc80_rt.lib")],
+                           cwd=tmp_path, capture_output=True, text=True)
+        if r.returncode == 0 or "__END__" not in r.stdout + r.stderr:
+            break
     assert r.returncode == 0 and "Undefined" not in r.stdout + r.stderr, \
         r.stdout + r.stderr
     subprocess.run(["sdobjcopy", "-I", "ihex", "-O", "binary", "t.ihx",
@@ -427,6 +431,15 @@ def test_cpm_program_linked_by_sdldz80_prints_the_same(
                          capture_output=True, timeout=120,
                          stdin=subprocess.DEVNULL).stdout
     assert want and got == want
+
+
+def test_link_flags_heap_defines_end_after_the_bss_area():
+    for target in ("cpm", "rom"):
+        plain = sdas.link_flags("sdcc", 0x100, target=target)
+        heap = sdas.link_flags("sdcc", 0x100, target=target, heap=True)
+        assert "__END__=s__DATA+l__DATA" in heap
+        assert not any("__END__" in f for f in plain)
+        assert heap[:len(plain)] == plain
 
 
 def _all_forms_source():

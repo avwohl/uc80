@@ -24,6 +24,7 @@ cmd_jmptable::
         jp      snd_command_03_reset_driver              ; 03
         jp      _cmd_key_on                              ; 04 (C)
         jp      _cmd_key_off                             ; 05 (C)
+        jp      _ns_timer_on                             ; 06 (asm)
         init_unused_cmd_jmptable
 
 ;;; void ns_ym_a(unsigned char reg, unsigned char val)
@@ -41,3 +42,12 @@ _ns_ym_a::
         inc     hl
         ld      c, (hl)
         jp      ym2610_write_port_a
+
+;;; Command 06h (the interrupt proof only): start the YM2610 timer B the way
+;;; a song does.  timer_tempo ends with EI, so from now on the INT handler at
+;;; 38h (timer.s) runs between the instructions of the C commands.
+_ns_timer_on::
+        ld      hl, #ns_tempo
+        jp      timer_tempo
+ns_tempo:
+        .db     0x80

@@ -142,7 +142,11 @@ def _asm_blocks(source: str, filename: str, found: Found) -> str:
         lit = (text.replace("\\", "\\\\").replace('"', '\\"')
                .replace("\n", "\\n").replace("\t", "\\t"))
         out.append(source[pos:m.start()])
-        out.append(f'asm("{lit}");' + "\n" * nl)
+        stmt = f'asm("{lit}");'
+        # the grammar has no asm as an unbraced sub-statement
+        if re.search(r"(?:\)|\belse|\bdo)\s*$", "".join(out)[-200:]):
+            stmt = "{ " + stmt + " }"
+        out.append(stmt + "\n" * nl)
         pos = tail
     out.append(source[pos:])
     return "".join(out)
