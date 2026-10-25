@@ -210,6 +210,58 @@ void tick(void) { ticks = bump(ticks); }
         assert m.run(max_tstates=200_000).reason == "halt"
         assert m.peek8("_ticks") == 5
 
+    def test_locals_early_return_and_frame_pointer(self, tmp_path):
+        """An interrupt function with a stack frame and an early return
+        leaves IX, SP and the interrupted code's locals alone."""
+        build(tmp_path, """
+#include <stdint.h>
+volatile uint8_t ticks, skipped;
+volatile uint16_t out_a, out_b;
+#pragma uc80 interrupt isr
+void isr(void)
+{
+    uint8_t buf[12];
+    uint8_t i;
+    for (i = 0; i < 12; i++)
+        buf[i] = (uint8_t) (i * ticks);
+    if (ticks & 1) {
+        skipped++;
+        ticks++;
+        return;
+    }
+    ticks += buf[11] & 1;
+    ticks++;
+}
+int main(void)
+{
+    uint16_t a = 1, b = 2;
+    uint8_t loc[8];
+    for (uint8_t i = 0; i < 8; i++)
+        loc[i] = (uint8_t) (i + 1);
+    __asm__("\\tei");
+    for (uint16_t k = 0; k < 3000; k++) {
+        a = (uint16_t) (a * 5 + loc[k & 7]);
+        b = (uint16_t) (b + a + (loc[(k + 3) & 7] ^ (uint8_t) k));
+    }
+    __asm__("\\tdi");
+    out_a = a;
+    out_b = b;
+    return 0;
+}
+""")
+        a, b = 1, 2
+        loc = list(range(1, 9))
+        for k in range(3000):
+            a = (a * 5 + loc[k & 7]) & 0xFFFF
+            b = (b + a + (loc[(k + 3) & 7] ^ (k & 0xFF))) & 0xFFFF
+        m = machine(tmp_path)
+        m.add_irq_every(9000, start=9000)     # the handler takes about 4000
+        res = m.run(max_tstates=20_000_000)
+        assert res.reason == "halt"
+        assert (m.peek16("_out_a"), m.peek16("_out_b")) == (a, b)
+        assert m.peek8("_skipped") > 0 and m.peek8("_ticks") > 10
+        assert m.min_sp is not None and m.rom_writes == []
+
     def test_isr_cycle_cost(self, tmp_path):
         """T-states from the vector to the end of an empty interrupt
         function: the cost of the register save and RETI."""

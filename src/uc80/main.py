@@ -869,6 +869,13 @@ def main() -> int:
             return sym.label() if sym else f"_{name}"
 
         keep_labels = {label_of(n) for n in roots.keep}
+        if rom and roots.vectors and (not embed_startup or args.startup_lib):
+            for _addr, _name in sorted(roots.vectors.items()):
+                print(f"uc80: warning: the {_VECTORS[_addr]} vector is not "
+                      f"set to '{_name}': only the start-up code that uc80 "
+                      f"embeds (whole-program mode, no --startup-lib) sets "
+                      f"the vectors; make your own start-up code jump to "
+                      f"{label_of(_name)}", file=sys.stderr)
         for n in sorted(roots.keep):
             if (n not in gen.ctx.globals
                     and not _defines_label(code, mac_files, label_of(n))):

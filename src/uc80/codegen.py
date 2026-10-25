@@ -16451,33 +16451,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if base is None:
                 return None
             return (base[0], base[1], base[2] + k * size)
-        # *(T *)K and ((T *)K)[i]: an object at a constant address, as a
-        # hardware register is.  Its "label" is the number itself.
-        if isinstance(expr, ast.UnaryOp):
-            op = expr.op.text if hasattr(expr.op, "text") else expr.op
-            if op == "*":
-                k = self._const_address(expr.operand)
-                if k is not None:
-                    return ("label", str(k), 0)
-        if isinstance(expr, ast.Index):
-            base_k = self._const_address(expr.array)
-            i = self._const_int_operand(expr.index)
-            if base_k is not None and i is not None:
-                size = self._get_index_elem_size(expr.array)
-                if size > 0:
-                    return ("label", str((base_k + i * size) & 0xFFFF), 0)
         return None
-
-    def _const_address(self, expr):
-        """K when ``expr`` is a pointer made from the integer constant K by
-        a cast, such as ``(volatile unsigned char *)0xF900``; else None."""
-        if not isinstance(expr, ast.Cast):
-            return None
-        t = _to_legacy(self._resolve_typename(expr.target_type))
-        if not isinstance(t, lt.PointerType):
-            return None
-        k = self._const_int_operand(expr.expr)
-        return None if k is None else k & 0xFFFF
 
     def _gen_loc_address(self, loc) -> None:
         """HL = the address of a _direct_loc object.  A stack object

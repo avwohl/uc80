@@ -1,6 +1,6 @@
 # Build a Z80 ROM with uc80
 
-Back to the [README](../README.md). The plan and the open work are in [rom_target.md](rom_target.md).
+Back to the [README](../README.md). The plan and the open work are in [rom_target.md](rom_target.md). Interrupt functions, port input and output, and objects at a fixed address are in [rom_hardware.md](rom_hardware.md).
 
 uc80 can build a Z80 ROM image that has no operating system. The program has no CP/M and no BDOS. The reset vector starts the program at address 0. The ROM options of `ul80` place the code in ROM and the variables in RAM. The ROM test runner (see [romrun.md](romrun.md)) runs the image.
 
@@ -22,6 +22,7 @@ Run `uc80 --build-libs` once after a checkout. The command builds `libc_rom.lib`
 
 - `--target=rom`: build for a ROM. `--target=cpm` is the default.
 - `-ffreestanding`: the same as `--target=rom`.
+- `--isr-safe`: keep the locals of each function that an interrupt function reaches on the stack (see [rom_hardware.md](rom_hardware.md)).
 - `--stack-top EXPR`: the first value of SP, an assembler expression such as `0FF00H`. The default value is the symbol `__RAM_END`. The command `ul80` sets `__RAM_END` from `--ram-size` or `--ram-end`. Only the ROM target accepts `--stack-top`.
 
 With the ROM target the compiler:
@@ -54,7 +55,7 @@ The link must use `--rom-data` and `--data-origin` (`-d`), because `__DATA_ROM`,
 
 ### Your own interrupt handlers
 
-C code cannot yet make an interrupt handler, because the compiler emits no `RETI` and no register save. Write the handler in assembly. Give the assembly file to the compiler as a second input file:
+Write an interrupt handler in C with `#pragma uc80 interrupt NAME` or `#pragma uc80 nmi NAME` (see [rom_hardware.md](rom_hardware.md)). The compiler saves the registers, ends the function with `RETI` or `RETN`, and sets the vector. You can also write the handler in assembly. Give the assembly file to the compiler as a second input file:
 
 ```
 uc80 --target=rom main.c isr.mac -o main.mac
@@ -80,7 +81,7 @@ In whole-program mode the compiler removes each function that no code calls, and
 - A function in a `vector` pragma is kept. The vector becomes `JP _NAME`. The compiler gives an error when a `vector` pragma and an assembly `__int_handler` (or `__nmi_handler`) both set the same vector.
 - The compiler gives an error in three cases: an unknown pragma verb, a vector address that is not 38h or 66h, and a name that the program does not define.
 
-A C function has no interrupt prologue and no `RETI`. It ends with `RET`. The compiler prints a warning for each `vector` pragma. Use a `vector` target only for code that handles this itself. Phase 2 of the plan adds real interrupt functions (see [rom_target.md](rom_target.md)).
+A C function in a `vector` pragma has no interrupt prologue and no `RETI`. It ends with `RET`. The compiler prints a warning for each such `vector` pragma. Use a `vector` target only for code that handles this itself. For a real interrupt function, use `#pragma uc80 interrupt NAME` or `#pragma uc80 nmi NAME`: these set the vector for you and print no warning.
 
 Objects in the BSS (uninitialised globals) now keep a `PUBLIC` label in the ROM target. The `.sym` file of `ul80` lists them, and `bench/romrun` can read them by name (`m.peek8("_ticks")`). The CP/M target does not change.
 
@@ -137,15 +138,18 @@ This change also makes the CP/M images that use these modules smaller, because t
 
 ## Limits today
 
-- No interrupt handler in C. The compiler refuses `__interrupt` and the other spellings (see Refused spellings). No port intrinsics. Use an assembly file for `IN` and `OUT`, as `bench/rom/z80io.mac` does.
+- The compiler sets the vectors only in whole-program mode with the embedded start-up code. With `--no-whole-program` or `--startup-lib`, the compiler prints a warning and your own start-up code must jump to the interrupt function.
+- A call of an interrupt function from C is an error. A handler cannot take arguments or return a value.
 - The heap and `sprintf` are not available.
-- The helpers of the runtime keep their temporaries at fixed RAM addresses. A routine that an interrupt handler and the main program both call can fail. Do not call long division, 64-bit arithmetic or float in a handler.
-- Float code uses the alternate registers (`EXX`).
+- The helpers of the runtime keep their temporaries at fixed RAM addresses. A routine that an interrupt handler and the main program both call can fail. The compiler prints a warning with the call chain when a handler reaches such a routine. Do not call long division, 64-bit arithmetic or float in a handler that the main program shares them with.
+- The float runtime of uc80 does not use the alternate registers. Assembly code can. The prologue of a handler saves the alternate registers when the handler reaches code that uses them.
 - Each C object that the program defines is one object of one module. A second C file does not get its own BSS block (the plan lists this as optional).
 
 ## Refused spellings
 
-uc80 refuses the interrupt and fastcall markers. Older versions dropped the markers without a message. The compiler prints `uc80: error: file:line: uc80 does not support '__interrupt' yet; see docs/rom_target.md` and exits with 1. uc80 refuses these spellings: `__interrupt`, `interrupt`, `__interrupt(1)`, `[[gnu::interrupt]]`, `__attribute__((interrupt))`, `__critical __interrupt` and a bare `__fastcall`. A name that only contains the word (`interrupt_count`, `struct interrupt`) is fine.
+uc80 refuses the interrupt and fastcall markers that it does not support. Older versions dropped the markers without a message. The compiler prints `uc80: error: file:line: uc80 does not support '__interrupt' yet; see docs/rom_target.md` and exits with 1. uc80 refuses these spellings: `interrupt`, `__interrupt` before the declarator, `[[gnu::interrupt]]`, `__attribute__((interrupt))` and a bare `__fastcall`. A name that only contains the word (`interrupt_count`, `struct interrupt`) is fine.
+
+uc80 accepts the SDCC forms `void f(void) __interrupt`, `__interrupt(n)`, `__critical __interrupt` and `__critical { }`, because it has interrupt functions now. [rom_hardware.md](rom_hardware.md) lists them with the SDCC forms that stay errors.
 
 ## Proof: the snd-* kernels as ROM images
 
@@ -174,3 +178,7 @@ snd-fnum        1121          83       14         2       12     18       9 478 
 - The T-states cover the code between `TIMER_START` and `TIMER_STOP` and include the real `OUT` and `IN` calls. The CP/M figures of [rom_target.md](rom_target.md) use a C model of the ports, so the two sets do not compare.
 
 The test `tests/test_rom_target.py` builds and runs `snd-cmdq` end to end. The test skips when `um80`, a `ul80` with the ROM options, or `libc_rom.lib` is missing.
+
+## Proof: interrupts and ports
+
+`bench/rom/isrproof.py` runs three more ROMs in `bench/romrun`: the snd-cmdq kernel with a real NMI, the snd-seq kernel driven by a YM2610 timer interrupt, and a bank select with `z80_in16`. Each port log equals the expected sequence. [rom_hardware.md](rom_hardware.md) has the figures.
