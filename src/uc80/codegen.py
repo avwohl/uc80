@@ -3269,6 +3269,10 @@ class CodeGenerator:
         # match counts, so nested sub-expressions never see it.
         self._discard_expr = None
         self._dm = None          # _DivModFuse of the current block pair
+        self._holders = None     # local ints that hold only bytes
+        self._holder_cache = {}
+        self._holder_busy = set()
+        self._decl_counts = {}
         # Wire module-level ``_to_legacy`` to consult this codegen's
         # typedef registry. (Single-threaded codegen, so a module-level
         # pointer is fine; reset in finally/exit if we ever grow re-entry.)
@@ -5513,7 +5517,13 @@ class CodeGenerator:
         if name == "main" and not self.crlf_console:
             self._emit_crlf_mode_init()
 
-        self.gen_compound_stmt(func.body)
+        self._holders = self._scan_byte_holders(func)
+        self._holder_cache = {}
+        self._holder_busy = set()
+        try:
+            self.gen_compound_stmt(func.body)
+        finally:
+            self._holders = None
 
         # The prologue reserved locals_size before a line of the body was
         # generated; the body then handed out the slots.  If it wanted more
@@ -8138,6 +8148,13 @@ class CodeGenerator:
         if (signed is not None and isinstance(expr, self._SWITCH_CHAR_FORMS)
                 and self._type_size(_to_legacy(t)) == 1):
             lo, hi = (-128, 127) if signed else (0, 255)
+            keys = [(v, lbl) for v, lbl in cases if lo <= v <= hi]
+            self._gen_expr_a(expr)
+        elif self._int_scalar_expr(expr) and self._byte_kind(expr):
+            # An int-typed value known to be 0..255 or -128..127 (such as
+            # ``cmd >> 4`` for a uint8_t cmd): its low byte is the key, and
+            # a case value outside the range can never match.
+            lo, hi = (0, 255) if "u" in self._byte_kind(expr) else (-128, 127)
             keys = [(v, lbl) for v, lbl in cases if lo <= v <= hi]
             self._gen_expr_a(expr)
         else:
@@ -11178,6 +11195,45 @@ class CodeGenerator:
                 # Prefix: result is the new value
                 self.ctx.emit_instr("ex", "DE,HL")
 
+    def _defined_here(self, func) -> bool:
+        """``func`` (a call's callee expression) names a function with a
+        body in this program, so uc80 compiled it: it reads a char
+        parameter from the low byte of the argument word only."""
+        if not isinstance(func, ast.Identifier):
+            return False
+        sym = self.ctx.lookup(func.name.text)
+        return (sym is not None and sym.is_global
+                and func.name.text in self.ctx.function_names
+                and is_function_type(sym.sym_type))
+
+    def _gen_byte_arg(self, call, arg, param_type) -> bool:
+        """The argument for a char parameter of a function defined in
+        this program: the callee reads the low byte of the pushed word
+        and never the high byte, so the value goes to L and H is left as
+        it is (no zero or sign extension).  A constant is ``ld L,K``; an
+        expression a byte path computes (_a_profitable) is evaluated in A.
+        False (nothing emitted) when the argument does not fit."""
+        if param_type is None or not self._defined_here(call.func):
+            return False
+        t = _to_legacy(param_type)
+        if isinstance(t, lt.BasicType) and t.name in self.ctx.typedefs:
+            t = _to_legacy(self.ctx.typedefs[t.name])
+        if self._char_type_signed(t) is None:
+            return False
+        if (not self._int_scalar_expr(arg) or self._is_long_expr(arg)
+                or self._type_size(_to_legacy(self._get_expr_type(arg))) > 2):
+            return False
+        x = self._peel_int_casts(arg)
+        k = self._const_int_operand(x)
+        if k is not None:
+            self.ctx.emit_instr("ld", f"L,{k & 0xFF}")
+            return True
+        if not self._a_profitable(x):
+            return False
+        self._gen_expr_a(x)
+        self.ctx.emit_instr("ld", "L,A")
+        return True
+
     def gen_call(self, expr: ast.Call) -> None:
         """Generate code for function call."""
         # Handle GCC builtins
@@ -11742,6 +11798,9 @@ class CodeGenerator:
                             self.ctx.emit_instr("push", "DE")
                             self.ctx.emit_instr("push", "HL")
                             stack_size += 4
+                        elif self._gen_byte_arg(expr, arg, param_type):
+                            self.ctx.emit_instr("push", "HL")
+                            stack_size += 2
                         else:
                             self.gen_expr(arg)
                             # _Bool parameter normalization (C99 6.3.1.2)
@@ -12071,14 +12130,24 @@ class CodeGenerator:
         char_signed = self._char_type_signed(target_type)
         if (char_signed is not None and not force_long
                 and self._int_scalar_expr(expr.expr)
-                and self._a_structural(self._peel_int_casts(expr.expr))):
+                and self._a_profitable(self._peel_int_casts(expr.expr))):
             self._gen_expr_a(expr.expr)
             self._emit_a_to_hl(char_signed)
             return
 
         # Generate the source expression without forcing long -
-        # the cast itself handles the extension
-        self.gen_expr(expr.expr, force_long=False)
+        # the cast itself handles the extension.  A cast to a char needs
+        # the low byte only, so the integer casts inside the operand
+        # (``(uint8_t)(int8_t)c``) are not evaluated: one extension.
+        src = expr.expr
+        if (char_signed is not None and not force_long
+                and not target_is_float and not source_is_float):
+            src = self._peel_int_casts(src)
+        self.gen_expr(src, force_long=False)
+        # The operand is a char load of the same signedness: H is right.
+        same_char = (src is not expr.expr or char_signed is not None) and \
+            self._char_ext_operand(src) is char_signed and \
+            char_signed is not None and not force_long and not source_is_long
 
         # _Bool normalization: any non-zero value becomes 1 (C99 6.3.1.2)
         if self._is_bool_type(target_type):
@@ -12131,7 +12200,9 @@ class CodeGenerator:
             return
 
         # Handle narrowing conversions first (before widening if force_long)
-        if target_size == 1 and source_size >= 1:
+        if target_size == 1 and source_size >= 1 and same_char:
+            pass
+        elif target_size == 1 and source_size >= 1:
             # Narrowing/same-size to char: ensure H matches target signedness
             if target_signed:
                 # Signed char: sign-extend L to HL
@@ -14988,6 +15059,8 @@ class CodeGenerator:
         s = self._char_ext_operand(expr)
         if s is not None:
             return frozenset("s" if s else "u")
+        if isinstance(expr, ast.Identifier):
+            return self._holder_kind(expr.name.text, depth)
         if isinstance(expr, _SavedAddrValue):
             # The char at the saved address of a compound assignment.
             cs = self._char_type_signed(expr.ctype)
@@ -15033,6 +15106,149 @@ class CodeGenerator:
             return frozenset(r)
         return none
 
+    _COMPOUND_OPS = frozenset(("+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
+                               "<<=", ">>="))
+
+    def _scan_byte_holders(self, func) -> dict | None:
+        """The local integer variables of ``func`` that might hold only
+        bytes: {name: [every value assigned to it]}.  A name is left out
+        when it is declared twice or is a parameter, has a storage class
+        or a braced initializer, has its address taken, or is changed by
+        ++, -- or a compound assignment; a function with inline asm has
+        none.  Whether each assigned value is a byte is decided when the
+        variable is used (_holder_kind)."""
+        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+        counts: dict[str, int] = {}
+        writes: dict[str, list] = {}
+        bad: set[str] = set()
+        has_asm = False
+        for p in function_params(func):
+            pn = (declarator_ident(p.declarator)
+                  if isinstance(p, ast.ParamDecl) else None)
+            if pn is not None:
+                counts[pn] = counts.get(pn, 0) + 1
+                bad.add(pn)
+        seen: set[int] = set()
+
+        def ident(x):
+            return x.name.text if isinstance(x, ast.Identifier) else None
+
+        def walk(node):
+            nonlocal has_asm
+            if isinstance(node, (list, tuple)):
+                for x in node:
+                    walk(x)
+                return
+            if not _dc_is(node) or id(node) in seen:
+                return
+            seen.add(id(node))
+            if isinstance(node, ast.AsmDeclaration):
+                has_asm = True
+            elif isinstance(node, ast.Declaration):
+                storage = decl_storage_class(node.decl_specs)
+                for nm, full, init, is_fn in iter_var_decls(node):
+                    if nm is None:
+                        continue
+                    counts[nm] = counts.get(nm, 0) + 1
+                    if storage not in (None, "auto", "register") or is_fn:
+                        bad.add(nm)
+                    elif init is not None:
+                        if isinstance(init, (list, ast.InitializerList,
+                                             ast.Compound)):
+                            bad.add(nm)
+                        else:
+                            writes.setdefault(nm, []).append(init)
+            elif isinstance(node, ast.BinaryOp):
+                nm = ident(node.left)
+                if nm is not None:
+                    op = self._op_of(node)
+                    if op == "=":
+                        writes.setdefault(nm, []).append(node.right)
+                    elif op in self._COMPOUND_OPS:
+                        bad.add(nm)
+            elif isinstance(node, ast.UnaryOp):
+                nm = ident(node.operand)
+                if nm is not None and self._op_of(node) in ("&", "++", "--"):
+                    bad.add(nm)
+            elif isinstance(node, ast.PostfixOp):
+                nm = ident(node.operand)
+                if nm is not None:
+                    bad.add(nm)
+            for f in _dc_fields(node):
+                walk(getattr(node, f.name, None))
+
+        walk(func.body)
+        self._decl_counts = counts
+        if has_asm:
+            return None
+        return {nm: w for nm, w in writes.items()
+                if nm not in bad and counts.get(nm) == 1}
+
+    def _holder_kind(self, name: str, depth: int) -> frozenset:
+        """_byte_kind of the local ``name`` when it can only hold bytes:
+        it is a 2-byte integer, and every value assigned to it (its
+        initializer included) is 0..255 or -128..127.  Empty otherwise.
+        A signed value stored in an unsigned variable becomes large, so
+        only 'u' survives there."""
+        none = frozenset()
+        holders = self._holders
+        if not holders or name not in holders or depth > 6:
+            return none
+        cached = self._holder_cache.get(name)
+        if cached is not None:
+            return cached
+        sym = self.ctx.locals.get(name)
+        if (sym is None or sym.is_param or sym.is_global or sym.is_static):
+            return none
+        t = _to_legacy(sym.sym_type)
+        if not (isinstance(t, lt.BasicType) and not self._is_float_type(t)
+                and not self._is_bool_type(t)
+                and not getattr(t, "is_volatile", False)
+                and self._type_size(t) == 2):
+            return none
+        if name in self._holder_busy:
+            return none
+        kind = {"u", "s"}
+        if not self._is_signed_type(t):
+            kind = {"u"}
+        self._holder_busy.add(name)
+        try:
+            for w in holders[name]:
+                if not self._holder_operands_ready(w):
+                    return none          # not cached: may be ready later
+                kind &= self._byte_kind(w, depth + 1)
+                if not kind:
+                    break
+        finally:
+            self._holder_busy.discard(name)
+        result = frozenset(kind)
+        self._holder_cache[name] = result
+        return result
+
+    def _holder_operands_ready(self, expr) -> bool:
+        """Every name in ``expr`` means the same thing here as where the
+        value is assigned: a local declared once and already in scope, or
+        a name that no local of the function shares."""
+        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+        seen: set[int] = set()
+        stack = [expr]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, (list, tuple)):
+                stack.extend(node)
+                continue
+            if not _dc_is(node) or id(node) in seen:
+                continue
+            seen.add(id(node))
+            if isinstance(node, ast.Identifier):
+                n = node.name.text
+                c = self._decl_counts.get(n, 0)
+                if c > 1 or (c == 1 and n not in self.ctx.locals):
+                    return False
+            for f in _dc_fields(node):
+                stack.append(getattr(node, f.name, None))
+        return True
+
     def _a_simple_sym(self, expr):
         """A _simple_sym whose low byte can be read on its own: a char,
         or a non-volatile 16-bit variable (little-endian: the low byte is
@@ -15063,6 +15279,21 @@ class CodeGenerator:
         sym = self._a_simple_sym(expr)
         return sym is not None and (sym.is_global or sym.uses_shared_storage
                                     or self._ix_in_range(sym.offset))
+
+    def _a_hl_ok(self, expr) -> bool:
+        """``expr`` is a char element, member or ``*p`` whose address
+        _gen_lvalue_address computes without touching A: an 8-bit ALU
+        instruction can then read it as ``(HL)`` while A holds the other
+        operand (no push AF, ld E,(HL), pop AF)."""
+        x = self._peel_int_casts(expr)
+        return (self._int_scalar_expr(expr) and self._a_char_load(x)
+                and self._addr_keeps_a(x))
+
+    def _a_hl_operand(self, expr) -> str:
+        """Emit the address of the char ``expr`` (_a_hl_ok) into HL and
+        return the operand ``(HL)``.  A is left alone."""
+        self._gen_lvalue_address(self._peel_int_casts(expr))
+        return "(HL)"
 
     def _a_structural(self, expr) -> bool:
         """``expr`` (casts peeled) is an operator that _gen_expr_a
@@ -15268,6 +15499,9 @@ class CodeGenerator:
                     self._a_simple_sym(left)))
             return
         self._gen_expr_a(left)
+        if self._a_hl_ok(right):
+            self._emit_a_alu(op, self._a_hl_operand(right))
+            return
         e("push", "AF")
         self._gen_expr_a(right)
         e("ld", "E,A")
@@ -16253,6 +16487,19 @@ class CodeGenerator:
     _SWAP_CMP = {"<": ">", ">": "<", "<=": ">=", ">=": "<=",
                  "==": "==", "!=": "!="}
 
+    def _byte_operand_first(self, left, right, op: str) -> bool:
+        """A byte comparison: ``left`` is a variable the ALU reads in
+        place and ``right`` is not, and the right operand has no side
+        effect (so the order of evaluation is free): compare the other
+        way round.  Then the complex side is computed in A and the
+        variable is the operand of ``cp``, with no push AF.  Only for
+        == != > <=, which become == != < >=: the other two would need
+        the slower "right < left" sequence after the swap."""
+        return (op in ("==", "!=", ">", "<=")
+                and self._const_int_operand(right) is None
+                and self._a_mem_ok(left) and not self._a_mem_ok(right)
+                and not self._expr_has_side_effects(right))
+
     def _gen_byte_compare(self, expr: ast.BinaryOp, op: str) -> bool:
         """A comparison whose operands are both known to be 0..255, or
         both -128..127 (_byte_kind), done on one byte in A, with the 0/1
@@ -16277,6 +16524,9 @@ class CodeGenerator:
             left, right = right, left
             op = self._SWAP_CMP[op]
             k = self._const_int_operand(right)
+        elif self._byte_operand_first(left, right, op):
+            left, right = right, left
+            op = self._SWAP_CMP[op]
         relational = op not in ("==", "!=")
         if relational and not unsigned and k is None:
             return False
@@ -16296,6 +16546,8 @@ class CodeGenerator:
             operand = str(b)
         elif self._a_mem_ok(right):
             operand = self._a_sym_operand(self._a_simple_sym(right))
+        elif self._a_hl_ok(right):
+            operand = self._a_hl_operand(right)
         else:
             e("push", "AF")
             self._gen_expr_a(right)
@@ -18200,6 +18452,8 @@ class CodeGenerator:
         if k is None and self._const_int_operand(left) is not None:
             left, right, op = right, left, self._SWAP_CMP[op]
             k = self._const_int_operand(right)
+        elif self._byte_operand_first(left, right, op):
+            left, right, op = right, left, self._SWAP_CMP[op]
         rel = op not in ("==", "!=")
         flip = 0x80 if rel and "u" not in common else 0
         self._gen_expr_a(left)
@@ -18211,6 +18465,10 @@ class CodeGenerator:
                 else:
                     e("cp", str(b))
                 return "Z" if op == "==" else "NZ"
+            if flip and k == 0 and op in ("<", ">="):
+                # A signed byte against 0 is a test of bit 7.
+                e("bit", "7,A")
+                return "NZ" if op == "<" else "Z"
             if op in (">", "<="):
                 if b == 0xFF:
                     return "NEVER" if op == ">" else "ALWAYS"
@@ -18239,6 +18497,8 @@ class CodeGenerator:
             operand = "E"
         elif self._a_mem_ok(right):
             operand = self._a_sym_operand(self._a_simple_sym(right))
+        elif self._a_hl_ok(right):
+            operand = self._a_hl_operand(right)
         else:
             e("push", "AF")
             self._gen_expr_a(right)
