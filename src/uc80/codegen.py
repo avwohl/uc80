@@ -406,6 +406,46 @@ def _ast_has_side_effects(node) -> bool:
                for f in _dc_fields(node))
 
 
+def _ast_writes_names(node, names) -> bool:
+    """True if ``node`` assigns, increments or takes the address of a
+    variable in ``names`` (the variable itself or a member of it).
+
+    Used by the inliner: substituting the caller's argument for a
+    parameter that the body modifies would modify the caller's variable.
+    """
+    from dataclasses import fields as _dc_fields, is_dataclass
+    if node is None:
+        return False
+    if isinstance(node, (list, tuple)):
+        return any(_ast_writes_names(x, names) for x in node)
+    if not is_dataclass(node):
+        return False
+
+    def root(e):
+        while True:
+            if isinstance(e, ast.Identifier):
+                return e.name.text
+            if isinstance(e, ast.Member):
+                e = e.obj
+            elif isinstance(e, ast.Cast):
+                e = e.expr
+            else:
+                return None
+
+    op = getattr(node, "op", None)
+    op = getattr(op, "text", op)
+    if isinstance(op, str):
+        if isinstance(node, (ast.UnaryOp, ast.PostfixOp)) and op in (
+                "++", "--", "&"):
+            if root(node.operand) in names:
+                return True
+        elif isinstance(node, ast.BinaryOp) and op in _ASSIGN_OPS:
+            if root(node.left) in names:
+                return True
+    return any(_ast_writes_names(getattr(node, f.name, None), names)
+               for f in _dc_fields(node))
+
+
 def decl_is_inline(decl_specs) -> bool:
     for spec in decl_specs or []:
         if isinstance(spec, ast.StorageClass):
@@ -2220,6 +2260,16 @@ class CallGraphAnalyzer:
         return sum(self._plain_uses(getattr(node, f.name, None), name, always)
                    for f in dataclasses.fields(node) if f.name != "pos")
 
+    def _body_writes_params(self, func) -> bool:
+        """True if the body of ``func`` modifies one of its parameters."""
+        names = set()
+        for p in function_params(func):
+            if isinstance(p, ast.ParamDecl):
+                n = declarator_ident(p.declarator)
+                if n:
+                    names.add(n)
+        return bool(names) and _ast_writes_names(func.body, names)
+
     def _inline_expr(self, expr: ast.Expression,
                     func_bodies: dict[str, ast.FunctionDef],
                     inlineable: set[str]) -> ast.Expression:
@@ -2236,7 +2286,8 @@ class CallGraphAnalyzer:
                     and not self._args_touch_volatile(
                         new_args, func_bodies[expr.func.name.text])):
                 func = func_bodies[expr.func.name.text]
-                if self._is_trivial_function(func):
+                if (self._is_trivial_function(func)
+                        and not self._body_writes_params(func)):
                     # Build parameter → argument map via the FnDeclarator.
                     param_map: dict[str, object] = {}
                     params = function_params(func)
@@ -2248,6 +2299,8 @@ class CallGraphAnalyzer:
                             continue
                         arg = new_args[i]
                         _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
+                        # A typedef name (u8, int8_t) narrows like its type.
+                        p_type = self._resolve_typedef(p_type)
                         # When inlining, the implicit "convert arg to
                         # parameter type" that gen_call would do at the
                         # callee's IX+ slot has to be made explicit —
@@ -2290,6 +2343,8 @@ class CallGraphAnalyzer:
                     # sees 3024 > 0 instead of -48 > 0.
                     _, fn_type = resolve_type_from_decl(func.decl_specs, func.declarator)
                     rt = fn_type.return_type if fn_type.kind == "function" else None
+                    if rt is not None:
+                        rt = self._resolve_typedef(rt)
                     # Any arithmetic return type: ``long f(int x){return
                     # x;}`` must still yield a long (a variadic argument
                     # pushes 4 bytes), ``unsigned f(...)`` an unsigned.

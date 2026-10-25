@@ -116,6 +116,15 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- **Three miscompiles in the inliner and the copy propagation.** (1) A
+  small function that changed its by-value parameter (`v++`, `*p++`,
+  `v += 3`) changed the variable of the caller when the call was inlined;
+  the function is now not inlined. (2) An inlined call did not narrow the
+  argument when the parameter type, or the return type, was a typedef name
+  such as `u8` or `s8`. (3) Copy propagation ignored `++` and calls in the
+  initialiser of a declaration, so `int a = v; int b = a++; return a;`
+  returned `v`. `tests/test_repair_miscompiles.py` runs all three.
+
 - **Every access to a volatile object now happens as written (C23
   6.7.3).** `volatile unsigned char ymaddr; ymaddr = 0x28; ymaddr = 0x28;
   ymaddr = 1;` compiled to one store, and `g = 1; x = g;` to one store and
