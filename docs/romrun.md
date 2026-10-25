@@ -282,8 +282,11 @@ The core has these checks.
    exactly 3 T-states for each ADC A,H they run (the error of ticks).
    Examples: davidly-sieve 53 856 222 T-states, coremark 42 437 558,
    embench-nettle-sha256 6 696 872, binary-trees 195 885 861.
-4. `zexdoc` and `zexall` under the CP/M mode (see the next section for
-   the status).
+4. `zexdoc` under the CP/M mode. Two tests finished and passed:
+   `<adc,sbc> hl,<bc,de,hl,sp>` and `aluop a,nn`. The full run is about
+   46 billion T-states, which takes more than an hour on the core. The
+   full run of `zexdoc` and `zexall` has not finished. The first run of
+   all of the tests is an open item.
 5. `tests/test_romrun.py`: 117 tests for the T-state table, port log,
    interrupt model, ROM write faults, banks, feeds, YM2610, HEX loader,
    spans and the command line.
