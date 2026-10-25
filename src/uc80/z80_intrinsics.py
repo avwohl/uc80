@@ -127,7 +127,7 @@ class Z80IntrinsicsMixin:
                 e("ei")
                 self.ctx.emit_label(lab)
         elif short in ("in", "in16"):
-            self._gen_z80_in(expr, to_hl=True)
+            self._gen_z80_in(expr, to_hl=not discard)
         elif short in ("out", "out16"):
             wide = short == "out16"
             k = self._z80_port_const(args[0], 65536 if wide else 256)
