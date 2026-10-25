@@ -9,6 +9,9 @@ you want in the library:
     python3 gen_c_modules.py            # all modules
     python3 gen_c_modules.py lc_strtol  # one module
 
+Aliases: the comment "/* ALIAS: floor = floorf floorl */" in a C file adds the
+entry points floorf and floorl at the address of floor.
+
 Label rule: libc.mac is the concatenation of all modules, so every label
 that is not PUBLIC must be unique over all modules.  This script gives each
 compiler-made label (@WHILE1, ??AUTO, ...) the module name as a suffix, and a
@@ -44,6 +47,24 @@ def generate(name):
     # Compiler labels: @NAMEn and ??AUTO get a module suffix.
     text = re.sub(r"(@[A-Za-z_]+\d+)\b", lambda m: m.group(1) + "_" + suffix, text)
     text = re.sub(r"\?\?AUTO\b", "??AUTO_" + suffix, text)
+    # "/* ALIAS: name = other1 other2 */" gives the function NAME more entry
+    # points at the same address (floor, floorf, floorl).
+    src = open(c_file).read()
+    for m in re.finditer(r"/\*\s*ALIAS:\s*(\w+)\s*=\s*([\w ]+?)\s*\*/", src):
+        fn, others = m.group(1), m.group(2).split()
+        label = f"_{fn}:"
+        lines = text.split("\n")
+        for i, ln in enumerate(lines):
+            if ln.strip() == label:
+                add = []
+                for o in others:
+                    add.append(f"\tPUBLIC\t_{o}")
+                    add.append(f"_{o}:")
+                lines[i + 1:i + 1] = add
+                break
+        else:
+            raise SystemExit(f"{name}: ALIAS target {fn} not found")
+        text = "\n".join(lines)
     # Static storage that starts as zero goes into a named COMMON block, so
     # that a ROM image does not hold its zero bytes (docs/rom.md).
     text = re.sub(r"; BSS - uninitialized static storage[^\n]*\n"

@@ -78,8 +78,15 @@ double ceil(double x);
 double floor(double x);
 double trunc(double x);
 double round(double x);
+double rint(double x);
+double nearbyint(double x);
+long lround(double x);
+long lrint(double x);
+long long llround(double x);
+long long llrint(double x);
 double fmod(double x, double y);
 double remainder(double x, double y);
+double remquo(double x, double y, int *quo);
 
 /* Floating-point manipulation */
 double fabs(double x);
@@ -89,12 +96,16 @@ double ldexp(double x, int exp);
 double modf(double x, double *iptr);
 double nan(const char *tagp);
 double nextafter(double x, double y);
+double nexttoward(double x, long double y);
 double fdim(double x, double y);
 double fma(double x, double y, double z);
 double fmax(double x, double y);
 double fmin(double x, double y);
 
 /* Classification macros (C99) */
+/* ilogb returns these for 0 and for a NaN, and INT_MAX for an infinity */
+#define FP_ILOGB0    (-32767 - 1)
+#define FP_ILOGBNAN  (-32767 - 1)
 #define FP_NAN       0
 #define FP_INFINITE  1
 #define FP_ZERO      2
@@ -173,6 +184,24 @@ float fdimf(float x, float y);
 float fmaf(float x, float y, float z);
 
 /* Long double versions (same as double on Z80) */
+float nexttowardf(float x, long double y);
+long double rintl(long double x);
+long double nearbyintl(long double x);
+long lroundl(long double x);
+long lrintl(long double x);
+long long llroundl(long double x);
+long long llrintl(long double x);
+long double remquol(long double x, long double y, int *quo);
+long double nextafterl(long double x, long double y);
+long double nexttowardl(long double x, long double y);
+long double frexpl(long double x, int *exp);
+long double ldexpl(long double x, int exp);
+long double modfl(long double x, long double *iptr);
+long double scalbnl(long double x, int n);
+long double scalblnl(long double x, long n);
+int ilogbl(long double x);
+long double logbl(long double x);
+long double remainderl(long double x, long double y);
 long double sinl(long double x);
 long double cosl(long double x);
 long double tanl(long double x);
