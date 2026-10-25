@@ -12,6 +12,8 @@ A prepass on the preprocessed text (before the parser) rewrites:
     T name __at(0xF800);                      absolute symbol, no storage
     [[uc80::at(0xF800)]] T name;              the same, C23 attribute
     __critical { ... }                        interrupts off for the block
+    __asm ... __endasm;                       inline assembly (sdas syntax),
+                                              statement or file level
 
 and records the result.  The text is changed in place, and every newline
 stays, so the line numbers of later messages stay right.  Every other
@@ -24,6 +26,8 @@ import re
 from dataclasses import dataclass, field
 
 from uc_core import ast
+
+from . import sdas_inline
 from uc_core._const import int_value
 
 
@@ -41,6 +45,7 @@ class Found:
     isrs: list = field(default_factory=list)      # (kind, name, file, line)
     sfrs: dict = field(default_factory=dict)      # name -> (port, banked)
     absolute: dict = field(default_factory=dict)  # name -> address
+    asm_blocks: int = 0                           # __asm blocks, all files
 
 
 _TOKEN = re.compile(
@@ -89,8 +94,63 @@ def _parse_int(text, filename, line, what):
             f"not '{text.strip()}'") from None
 
 
+_ASM_SCAN = re.compile(
+    r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|//[^\n]*|/\*.*?\*/"
+    r"|\b__asm\b|\b__endasm\b", re.S)
+
+
+def _asm_blocks(source: str, filename: str, found: Found) -> str:
+    """Replace each ``__asm ... __endasm;`` by ``asm("...");`` with the
+    block in MACRO-80 syntax.  The line count stays the same."""
+    if "__asm" not in source and "__endasm" not in source:
+        return source
+    out, pos = [], 0
+    for m in _ASM_SCAN.finditer(source):
+        if m.start() < pos:
+            continue            # inside a block that was handled
+        word = m.group()
+        if word == "__endasm":
+            raise SdccCompatError(
+                filename, source.count("\n", 0, m.start()) + 1,
+                "'__endasm' without '__asm'")
+        if word != "__asm":
+            continue
+        line0 = source.count("\n", 0, m.start()) + 1
+        end = re.compile(r"\b__endasm\b").search(source, m.end())
+        if end is None:
+            raise SdccCompatError(filename, line0,
+                                  "'__asm' has no '__endasm'")
+        body = source[m.end():end.start()]
+        # the block may start on the line of __asm: its first line
+        # counts as line 1, the rest follow
+        first = line0
+        try:
+            lines = sdas_inline.sdas_block_to_m80(
+                body.strip("\n"), found.asm_blocks)
+        except sdas_inline.InlineAsmError as e:
+            skip = len(body) - len(body.lstrip("\n"))
+            raise SdccCompatError(
+                filename, first + skip + e.line - 1,
+                f"__asm: {e.message}") from None
+        found.asm_blocks += 1
+        tail = end.end()
+        t = re.compile(r"[ \t]*;").match(source, tail)
+        if t:
+            tail = t.end()
+        nl = source.count("\n", m.start(), tail)
+        text = "\n".join(lines) + "\n"
+        lit = (text.replace("\\", "\\\\").replace('"', '\\"')
+               .replace("\n", "\\n").replace("\t", "\\t"))
+        out.append(source[pos:m.start()])
+        out.append(f'asm("{lit}");' + "\n" * nl)
+        pos = tail
+    out.append(source[pos:])
+    return "".join(out)
+
+
 def prepass(source: str, filename: str, found: Found) -> str:
     """Rewrite ``source`` and add what it declares to ``found``."""
+    source = _asm_blocks(source, filename, found)
     if not re.search(r"__interrupt|__critical|__sfr|__at\b|uc80::at|"
                      r"__naked|__banked|__sdcccall|__preserves_regs|"
                      r"__using", source):

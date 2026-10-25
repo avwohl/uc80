@@ -26,6 +26,7 @@ from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
                       is_asm_begin, is_asm_end)
 from . import volatile_fence
 from . import sdcc_compat
+from . import sdas
 from . import isr_check
 from .z80_intrinsics import BARRIER_BEGIN, BARRIER_END
 from . import rom as rom_module
@@ -464,7 +465,7 @@ def main() -> int:
     )
     parser.add_argument(
         "input",
-        nargs='+',
+        nargs='*',
         help="Input C source file(s) or .mac assembly file(s)"
     )
     # Query/maintenance flags. These act the moment argparse sees them and
@@ -600,6 +601,30 @@ def main() -> int:
              "--ram-size)"
     )
     parser.add_argument(
+        "--asm-syntax", choices=["m80", "sdas"], default="m80",
+        help="m80 (default): MACRO-80 text for um80 and ul80. sdas: write "
+             "sdas text (a .s file) for sdasz80 and sdldz80, to link with "
+             "SDCC code or with nullsound. See docs/rom_interop.md"
+    )
+    parser.add_argument(
+        "--sdas-style", choices=sorted(sdas.STYLES), default="sdcc",
+        help="--asm-syntax=sdas: the area names. sdcc (default): _CODE, "
+             "_INITIALIZER, _INITIALIZED, _DATA. ngdevkit: CODE, "
+             "INITIALIZER, INITIALIZED, DATA (the names of nullsound)"
+    )
+    parser.add_argument(
+        "--sdas-areas", metavar="ROLE=NAME,...", default="",
+        help="--asm-syntax=sdas: change single area names. Roles: code, "
+             "rom_init, ram_init, bss, absolute"
+    )
+    parser.add_argument(
+        "--build-sdas-libs", metavar="DIR",
+        help="Translate and assemble runtime and libc with sdasz80 into "
+             "DIR/uc80_rt.lib and DIR/uc80_lc.lib, then exit. Uses "
+             "--sdas-style, and --target (the CP/M libraries differ from "
+             "the ROM libraries in the place of the initial data)"
+    )
+    parser.add_argument(
         "--entry", metavar="NAME", action="append", default=[],
         help="Keep function NAME and everything it calls, even if no code "
              "calls NAME (repeatable; the same as #pragma uc80 keep NAME). "
@@ -661,7 +686,31 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+    if not args.input and not args.build_sdas_libs:
+        parser.error("the following arguments are required: input")
+    if args.build_sdas_libs:
+        try:
+            names = sdas.area_names(args.sdas_style, args.sdas_areas)
+        except ValueError as e:
+            parser.error(str(e))
+        if not sdas.tools_available():
+            print("uc80: error: --build-sdas-libs needs sdasz80 and sdar "
+                  "(SDCC) on PATH", file=sys.stderr)
+            return 1
+        res = sdas.build_library(
+            args.build_sdas_libs, names,
+            flat_data=not (args.target == "rom" or args.freestanding))
+        for lib in res["libs"]:
+            print(f"  Built {lib}")
+        for name, msg in res["failed"]:
+            print(f"uc80: error: {name}: {msg}", file=sys.stderr)
+        return 1 if res["failed"] else 0
     rom = args.target == "rom" or args.freestanding
+    if args.asm_syntax == "sdas":
+        try:
+            sdas.area_names(args.sdas_style, args.sdas_areas)
+        except ValueError as e:
+            parser.error(str(e))
     if args.stack_top and not rom:
         parser.error("--stack-top needs --target=rom")
 
@@ -690,7 +739,8 @@ def main() -> int:
         output_path = Path(args.output)
     else:
         # Use first input file's name for output
-        output_path = input_paths[0].with_suffix(".mac")
+        output_path = input_paths[0].with_suffix(
+            ".s" if args.asm_syntax == "sdas" else ".mac")
 
     # Set up include paths
     include_paths = list(args.include)
@@ -1401,9 +1451,25 @@ def main() -> int:
         code = drop_unreferenced_externs(code)
 
         # Write output
+        sdas_origin = None
+        if args.asm_syntax == "sdas":
+            try:
+                code = sdas.translate(
+                    code, style=sdas.area_names(args.sdas_style,
+                                                args.sdas_areas),
+                    module=module_name, filename=str(input_paths[0].name),
+                    flat_data=not rom)
+            except sdas.SdasError as e:
+                print(f"uc80: error: --asm-syntax=sdas: {e}", file=sys.stderr)
+                return 1
+            sdas_origin = sdas.code_origin_of(code)
         output_path.write_text(code)
 
-        if args.verbose:
+        if args.verbose and args.asm_syntax == "sdas":
+            print(f"  Wrote {output_path}")
+            print(sdas.build_help(output_path.name, args.sdas_style,
+                                  args.sdas_areas, sdas_origin, rom))
+        elif args.verbose:
             print(f"  Wrote {output_path}")
             if rom:
                 stem = output_path.with_suffix("").name

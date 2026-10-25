@@ -7,6 +7,7 @@ See docs/rom.md ("Proof: interrupts and ports").
 
     python3 bench/rom/isrproof.py            # all three
     python3 bench/rom/isrproof.py nmi seq bank
+    python3 bench/rom/isrproof.py --sdas     # uc80 --asm-syntax=sdas, sdldz80
 
 nmi   The snd-cmdq kernel with a real NMI.  The NMI handler (#pragma uc80
       nmi) reads the command byte from port 0 and queues it; the main
@@ -34,9 +35,11 @@ sys.path.insert(0, str(BENCH))
 sys.path.insert(0, str(HERE))
 
 from romrun import Machine, YM2610  # noqa: E402
-from sndrom import KERNELS, LAYOUTS, run, tools_missing  # noqa: E402
+from sndrom import (KERNELS, LAYOUTS, run, tools_missing,  # noqa: E402
+                    sdas_compile_link, sdas_libs, sdas_tools_missing)
 
 NEOGEO = LAYOUTS["neogeo"]
+SDAS_LIBS = None        # a directory: build with sdasz80 and sdldz80
 
 
 def build_source(work: Path, c_name: str, text: str, layout="neogeo",
@@ -46,6 +49,8 @@ def build_source(work: Path, c_name: str, text: str, layout="neogeo",
     work.mkdir(parents=True, exist_ok=True)
     (work / c_name).write_text('#include "bench.h"\n' + text)
     (work / "z80io.mac").write_text((HERE / "z80io.mac").read_text())
+    if SDAS_LIBS:
+        return sdas_compile_link(work, c_name, layout, SDAS_LIBS)
     lay = LAYOUTS[layout]
     lib = Path(run(["uc80", "--print-lib-dir"], work)[1].strip())
     steps = [
@@ -391,13 +396,18 @@ PROOFS = {"nmi": prove_nmi, "seq": prove_seq, "bank": prove_bank}
 
 
 def main(argv=None):
-    names = (argv if argv is not None else sys.argv[1:]) or list(PROOFS)
-    missing = tools_missing()
+    global SDAS_LIBS
+    args = list(argv if argv is not None else sys.argv[1:])
+    sdas = "--sdas" in args
+    args = [a for a in args if a != "--sdas"]
+    names = args or list(PROOFS)
+    missing = sdas_tools_missing() if sdas else tools_missing()
     if missing:
         print("missing tools: " + " ".join(missing), file=sys.stderr)
         return 2
     bad = 0
     work = Path(tempfile.mkdtemp(prefix="isrproof-"))
+    SDAS_LIBS = sdas_libs(work / "sdaslib") if sdas else None
     for name in names:
         r = PROOFS[name](work)
         flag = "OK" if r["ok"] else "FAILED"

@@ -7,6 +7,7 @@ See docs/rom.md.
     python3 bench/rom/sndrom.py                 # all four kernels, dev layout
     python3 bench/rom/sndrom.py --layout neogeo # RAM F800-FFFF (2 KB)
     python3 bench/rom/sndrom.py snd-cmdq --keep DIR
+    python3 bench/rom/sndrom.py --sdas          # sdasz80 and sdldz80 build
 
 A kernel is compiled with `uc80 --target=rom` (bench/rom/snd.h replaces the
 CP/M snd.h, bench/rom/z80io.mac gives out () and in ()), assembled with um80
@@ -14,6 +15,10 @@ and linked with `ul80 --bin --rom-data`.  The run starts at address 0 with
 random RAM and a poisoned SP.  The host model SndPorts catches the ports: it
 keeps the ring of the last 256 writes and the busy count of the CP/M snd.h,
 so the decoded output is the CP/M golden output (bench/golden/snd-*.txt).
+
+With --sdas the kernel goes through `uc80 --asm-syntax=sdas`, sdasz80 and
+sdldz80 (docs/rom_interop.md) instead of um80 and ul80.  The run and the
+checks are the same.
 """
 
 import argparse
@@ -105,6 +110,89 @@ def run(cmd, cwd):
     return r.returncode, r.stdout + r.stderr
 
 
+def sdas_tools_missing():
+    return [t for t in ("uc80", "sdasz80", "sdldz80", "sdar", "sdobjcopy")
+            if not shutil.which(t)]
+
+
+def sdas_libs(libdir: Path, style="sdcc") -> Path:
+    """Build the sdas runtime and libc archives in libdir once."""
+    if not (libdir / "uc80_lc.lib").exists():
+        sys.path.insert(0, str(BENCH.parent / "src"))
+        from uc80 import sdas
+        libdir.mkdir(parents=True, exist_ok=True)
+        res = sdas.build_library(libdir, style)
+        if res["failed"]:
+            raise RuntimeError("sdas library build failed: %r"
+                               % res["failed"][:3])
+    return libdir
+
+
+def noi_to_sym(noi: Path, sym: Path):
+    """Write a ul80 style .sym file ("ADDR NAME") from an sdld .noi."""
+    out = []
+    for line in noi.read_text().splitlines():
+        p = line.split()
+        if len(p) == 3 and p[0] == "DEF":
+            out.append("%04X %s" % (int(p[2], 16) & 0xFFFF, p[1]))
+    sym.write_text("\n".join(out) + "\n")
+
+
+def sdas_compile_link(work: Path, c_name: str, layout="dev", libs=None,
+                      style="sdcc"):
+    """uc80 --asm-syntax=sdas, sdasz80, sdldz80 and sdobjcopy for c_name
+    and z80io.mac, which are in `work`.  Like build(), returns a dict."""
+    from uc80 import sdas  # noqa: E402 (the path is set by sdas_libs)
+    lay = LAYOUTS[layout]
+    libs = Path(libs)
+    log = []
+    rc, out = run(["uc80", "--target=rom", "--asm-syntax=sdas",
+                   "--sdas-style", style, "-I", str(HERE), "-I", str(BENCH),
+                   c_name, "z80io.mac", "-o", "k.s"], work)
+    log.append(out)
+    if rc:
+        return dict(ok=False, log="\n".join(log))
+    origin = sdas.code_origin_of((work / "k.s").read_text()) or 0x68
+    flags = sdas.link_flags(style, origin, lay["data"], 0)
+    steps = [
+        ["sdasz80", "-g", "-l", "-o", "k.s"],
+        ["sdldz80", *flags, "-i", "-j", "-m", "k.ihx", "k.rel",
+         "-l", str(libs / "uc80_lc.lib"), "-l", str(libs / "uc80_rt.lib")],
+        ["sdobjcopy", "-I", "ihex", "-O", "binary", "k.ihx", "k.bin"],
+    ]
+    for cmd in steps:
+        rc, out = run(cmd, work)
+        log.append(out)
+        if rc != 0:
+            return dict(ok=False, log="\n".join(log))
+    noi_to_sym(work / "k.noi", work / "k.sym")
+    syms = {}
+    for line in (work / "k.sym").read_text().split("\n"):
+        p = line.split()
+        if len(p) == 2:
+            syms[p[1]] = int(p[0], 16)
+    a = sdas.area_names(style)
+    info = dict(ok=True, log="\n".join(log), bin=work / "k.bin",
+                sym=work / "k.sym", layout=layout, compiler=log[0])
+    info["rom"] = syms.get("s_" + a.rom_init, 0) + syms.get(
+        "l_" + a.rom_init, 0)
+    info["init_data"] = syms.get("l_" + a.rom_init, 0)
+    info["data"] = syms.get("l_" + a.ram_init, 0)
+    info["bss"] = syms.get("l_" + a.bss, 0)
+    info["ram"] = info["data"] + info["bss"]
+    return info
+
+
+def build_sdas(kernel, work: Path, layout="dev", libs=None, style="sdcc"):
+    """Like build(), with uc80 --asm-syntax=sdas, sdasz80 and sdldz80."""
+    src_dir = BENCH / "programs" / kernel
+    c_name = KERNELS[kernel]
+    text = (src_dir / c_name).read_text()
+    (work / c_name).write_text('#include "bench.h"\n' + text)
+    shutil.copy(HERE / "z80io.mac", work / "z80io.mac")
+    return sdas_compile_link(work, c_name, layout, libs, style)
+
+
 def build(kernel, work: Path, layout="dev", min_stack=0x100):
     """Compile, assemble and link one kernel in `work`.  Returns the paths
     and the ROM and RAM figures of the ul80 summary line."""
@@ -173,17 +261,26 @@ def main(argv=None):
     ap.add_argument("kernel", nargs="*", help="snd-cmdq ... (default: all)")
     ap.add_argument("--layout", choices=sorted(LAYOUTS), default="dev")
     ap.add_argument("--keep", metavar="DIR", help="keep the build files here")
+    ap.add_argument("--sdas", action="store_true",
+                    help="build with sdasz80 and sdldz80 (docs/rom_interop.md)")
+    ap.add_argument("--sdas-style", default="sdcc",
+                    choices=["sdcc", "ngdevkit"])
     args = ap.parse_args(argv)
-    missing = tools_missing()
+    missing = sdas_tools_missing() if args.sdas else tools_missing()
     if missing:
         print("missing tools: " + " ".join(missing), file=sys.stderr)
         return 2
     names = args.kernel or list(KERNELS)
     bad = 0
+    libs = None
+    if args.sdas:
+        libs = sdas_libs(Path(args.keep or tempfile.mkdtemp(
+            prefix="sdaslib-")) / "sdaslib", args.sdas_style)
     for k in names:
         work = Path(args.keep or tempfile.mkdtemp(prefix="sndrom-")) / k
         work.mkdir(parents=True, exist_ok=True)
-        info = build(k, work, args.layout)
+        info = (build_sdas(k, work, args.layout, libs, args.sdas_style)
+                if args.sdas else build(k, work, args.layout))
         if not info["ok"]:
             print(f"{k}: BUILD FAILED\n{info['log']}")
             bad += 1

@@ -68,10 +68,12 @@ __vec_int:
 	PUBLIC	__vec_nmi
 __vec_nmi:
 	RETN
+;@RELOC 68H
 ;@USER	ORG	0066H
 ;@USER	PUBLIC	__vec_nmi
 ;@USER__vec_nmi:
 ;@USER	JP	__nmi_handler
+;@USER;@RELOC 69H
 ;@NMI_END
 
 	PUBLIC	__start
