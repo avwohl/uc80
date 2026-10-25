@@ -55,8 +55,18 @@ does not carry.
 
 - One access by an instruction that reads and writes (`inc (HL)`, for
   a `char`) is one read-modify-write, not a separate read and write.
+- A used value of `x++`, `--x` and the other forms on a volatile `char` or
+  `float` is one read and one write: the code loads the object once, and
+  keeps the old value in a register or on the stack.
+- A write to a volatile bit-field is a read-modify-write of the byte or
+  word that holds the field. So `bf += 2` on a volatile bit-field reads
+  that storage unit twice: once for the value and once for the write. C
+  leaves the size of such an access to the implementation (6.7.3).
 - The width of an access is the width of the object. A `uint16_t` volatile
   object is read with `ld HL,(addr)`, which reads the low byte first.
+- The check is by name. A local variable that has the name of a volatile
+  global keeps its stores. A struct member that has the name of a volatile
+  member of another struct counts as volatile. This costs speed only.
 - The region test is by name. A function that only copies a pointer to a
   volatile object (`q = p`) has the code of that statement bracketed.
   That costs speed, not correctness.

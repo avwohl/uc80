@@ -10688,7 +10688,10 @@ class CodeGenerator:
 
                 elif is_float:
                     # Float increment/decrement: use __fadd/__fsub with 1.0
-                    if sym.is_global:
+                    fvol = self._is_volatile_type(sym.sym_type)
+                    if fvol and expr.is_prefix:
+                        pass            # the one read is the reload below
+                    elif sym.is_global:
                         self.ctx.emit_instr("ld", f"HL,({sym.label()})")
                         self.ctx.emit_instr("ld", f"DE,({sym.label()}+2)")
                     else:
@@ -10703,7 +10706,14 @@ class CodeGenerator:
                     self.ctx.emit_instr("ld", "HL,16256")  # 0x3F80
                     self.ctx.emit_instr("ld", "(__tmp32+2),HL")
                     # Reload value into DEHL
-                    if sym.is_global:
+                    if fvol and not expr.is_prefix:
+                        # A volatile object is read once: take the copy
+                        # that was just pushed.
+                        self.ctx.emit_instr("pop", "HL")
+                        self.ctx.emit_instr("pop", "DE")
+                        self.ctx.emit_instr("push", "DE")
+                        self.ctx.emit_instr("push", "HL")
+                    elif sym.is_global:
                         self.ctx.emit_instr("ld", f"HL,({sym.label()})")
                         self.ctx.emit_instr("ld", f"DE,({sym.label()}+2)")
                     else:
@@ -15785,6 +15795,16 @@ class CodeGenerator:
             signed = self._is_signed_type(lt_elem)
             if discard:
                 e(inc, "(HL)")
+            elif self._is_volatile_type(lt_elem):
+                # One read and one write of the volatile byte, not the
+                # two reads of inc (HL) plus a separate load.
+                e("ld", "A,(HL)")
+                if not prefix:
+                    e("ld", "E,A")
+                e(inc, "A")
+                e("ld", "(HL),A")
+                e("ld", "L,A" if prefix else "L,E")
+                self._emit_char_to_hl(signed)
             elif prefix:
                 e(inc, "(HL)")
                 e("ld", "L,(HL)")

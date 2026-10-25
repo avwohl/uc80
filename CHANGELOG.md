@@ -86,7 +86,13 @@ observable behaviour of a program uc80 compiles.
     fences the bracketed code with labels that the peephole matcher does
     not match across (`src/uc80/volatile_fence.py`);
   - `++` and `+=` on a 32-bit volatile object read and wrote the high word
-    only after a carry. They now access all four bytes.
+    only after a carry. They now access all four bytes;
+  - `x++`, `--x` and the like on a volatile `float` or `double` read the
+    object twice, and on a volatile `char` reached through a pointer, an
+    array or a member (value used) they read it twice. Each is now one read
+    and one write;
+  - `v * 2` on a volatile object is no longer rewritten to `v << 1`, which
+    gave wrong code for a `float`.
   Code that uses no volatile object compiles to the same assembly as
   before. Details are in [docs/volatile.md](docs/volatile.md).
 

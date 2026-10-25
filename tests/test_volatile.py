@@ -50,6 +50,14 @@ unsigned char x, plain;
 unsigned int y;
 int r;
 volatile int gi, gj;
+volatile float fl;
+volatile double db;
+float fv;
+volatile long long lg;
+long long llk;
+struct B { volatile unsigned f:3; volatile unsigned h:5; } bb;
+volatile unsigned char *vsp;
+struct SP { volatile unsigned char a; } *sp;
 
 void store3(void) { g = 1; g = 2; g = 3; }
 void static2(void) { sg = 1; sg = 2; }
@@ -92,6 +100,19 @@ void long_selfadd(void) { L = L + 1; }
 void long_or(void) { L |= 0xFF; }
 void unrolled(void) { for (volatile int i = 0; i < 3; i++) r += 1; }
 void tdunrolled(void) { for (vb i = 0; i < 3; i++) r += 1; }
+void float_inc(void) { fl++; }
+void float_dec(void) { --fl; }
+void float_postval(void) { fv = fl++; }
+void float_preval(void) { fv = ++fl; }
+void double_inc(void) { db++; }
+void post_arr(void) { x = arr[1]++; }
+void post_ptr(void) { x = (*vp)--; }
+void pre_ptr(void) { x = ++*vp; }
+void post_member(void) { x = sp->a++; }
+void bf_store3(void) { bb.f = 1; bb.f = 1; bb.f = 2; }
+void bf_read2(void) { y = bb.f; y = bb.f; }
+void ll_store3(void) { lg = 1; lg = 1; lg = 2; }
+void ll_read2(void) { llk = lg; llk = lg; }
 int main(void) { return 0; }
 """
 
@@ -134,6 +155,19 @@ EXPECT = {
     "long_add": ("_L", 2, 2),
     "long_selfadd": ("_L", 2, 2),
     "long_or": ("_L", 2, 2),
+    # A float or a char is read once and written once by ++ and --.
+    "float_inc": ("_fl", 2, 2),
+    "float_dec": ("_fl", 2, 2),
+    "float_postval": ("_fl", 2, 2),
+    "float_preval": ("_fl", 2, 2),
+    "double_inc": ("_db", 2, 2),
+    "post_arr": ("(HL)", 1, 1),
+    "post_ptr": ("(HL)", 1, 1),
+    "pre_ptr": ("(HL)", 1, 1),
+    "post_member": ("(HL)", 1, 1),
+    # A bit-field store is a read-modify-write of its byte.
+    "bf_store3": ("(HL)", 3, 3),
+    "bf_read2": ("_bb", 2, 0),
 }
 
 _MEM = r"\((?:{})(?:\+\d+)?\)"
@@ -190,6 +224,11 @@ def test_char_increments_are_three_read_modify_writes(mac):
     body = _function(mac, "ginc3")
     assert sum(1 for l in body if l == "inc\t(HL)") == 3
     assert sum(1 for l in body if l == "ld\tHL,_g") == 3
+
+
+def test_64_bit_volatile_accesses_are_kept(mac):
+    assert _function(mac, "ll_store3").count("call\t__store64") == 3
+    assert _function(mac, "ll_read2").count("call\t__load64") == 2
 
 
 def test_plain_stores_are_still_merged(mac):
@@ -322,11 +361,23 @@ volatile unsigned int w;
 volatile unsigned long L;
 volatile unsigned char arr[4];
 volatile unsigned char *vp = arr;
+volatile float fl;
+float fv;
 unsigned char x;
 unsigned int y;
 
 int main(void)
 {
+    fl = 1.5f; fv = fl++;
+    printf("f=%d %d\n", (int)(fv * 2), (int)(fl * 2));
+    fv = ++fl;
+    printf("f=%d %d\n", (int)(fv * 2), (int)(fl * 2));
+    arr[0] = 5; x = arr[0]++;
+    printf("c=%u %u\n", x, arr[0]);
+    x = ++*vp;
+    printf("c=%u %u\n", x, arr[0]);
+    x = (*vp)--;
+    printf("c=%u %u\n", x, arr[0]);
     g = 1; g = 2; g = 3;
     printf("g=%u\n", g);
     g |= 4; g |= 8; g ^= 1;
@@ -366,5 +417,5 @@ def test_end_to_end(tmp_path):
     out = [l.strip() for l in run.stdout.decode("latin-1").replace("\r", "")
            .splitlines() if l.strip() and not l.startswith(
                ("CPU mode", "Loaded", "Program exit"))]
-    assert out == ["g=3", "g=14", "w=12 y=7", "L=131072", "arr=10 9 9",
+    assert out == ["f=3 5", "f=7 7", "c=5 6", "c=7 7", "c=7 6", "g=3", "g=14", "w=12 y=7", "L=131072", "arr=10 9 9",
                    "x=1", "y=10"]
