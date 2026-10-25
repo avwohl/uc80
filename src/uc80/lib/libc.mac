@@ -30138,6 +30138,8 @@ __scan_file:
 
 ; Function _sc_float (uses shared storage)
 __sc_float:
+	PUBLIC	__sc_float_on
+__sc_float_on:
 	push	IX
 	ld	IX,0
 	add	IX,SP

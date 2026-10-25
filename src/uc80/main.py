@@ -25,6 +25,7 @@ from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
                       is_asm_begin, is_asm_end)
 from . import volatile_fence
 from . import rom as rom_module
+from . import scan_hook
 
 from . import peep_local
 
@@ -730,6 +731,9 @@ def main() -> int:
                            type_config=type_config,
                            crlf_console=not args.no_crlf or rom)
         code = gen.generate(merged_ast)
+        if scan_hook.needs_float_scanf(merged_ast, scanf_features):
+            code = scan_hook.add_float_reference(code, module_name,
+                                                 _tail_insert_index)
 
         if rom:
             problems = _rom_problems(gen, code)

@@ -7,6 +7,9 @@
  *
  * Returns 1 for a number, 0 for a matching failure, -1 at the end of the
  * input.  dst is the float to store into; it is NULL for %*f.
+ *
+ * The program refers to _sc_float_on (see scan_hook.py in uc80) to link this
+ * module instead of lc_scan_fdefault, which defines _sc_float too.
  */
 #include <stdlib.h>
 #include "scan.h"
@@ -18,6 +21,7 @@ static int sf_lower(int c)
     return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
 }
 
+/* ALIAS: _sc_float = _sc_float_on */
 int _sc_float(struct sc *in, int width, void *dst)
 {
     char buf[BUFSZ + 1];
