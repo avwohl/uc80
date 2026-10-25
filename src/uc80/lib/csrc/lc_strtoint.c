@@ -64,35 +64,21 @@ void _strtoint(const char *nptr, char **endptr, int base,
         *endptr = (char *)(any ? s : nptr);
     if (!any)
         return;
-    if (is_signed) {
+    if (!ovf && is_signed && r[nb - 1] >= 0x80) {
         /* The magnitude may be 2^(8*nb-1) when the number is negative. */
-        if (!neg) {
-            if (!ovf && r[nb - 1] < 0x80)
-                return;
-            ovf = 1;
-        } else if (!ovf) {
-            if (r[nb - 1] < 0x80) {
-                ovf = 0;
-            } else if (r[nb - 1] == 0x80) {
-                ovf = 0;
-                for (i = 0; i < nb - 1; i++)
-                    if (r[i])
-                        ovf = 1;
-            } else {
-                ovf = 1;
-            }
+        ovf = 1;
+        if (neg && r[nb - 1] == 0x80) {
+            ovf = 0;
+            for (i = 0; i < nb - 1; i++)
+                if (r[i])
+                    ovf = 1;
         }
-        if (ovf) {
-            errno = ERANGE;
-            for (i = 0; i < nb; i++)
-                r[i] = neg ? 0 : 0xff;
-            r[nb - 1] = neg ? 0x80 : 0x7f;
-            return;
-        }
-    } else if (ovf) {
+    }
+    if (ovf) {
         errno = ERANGE;
-        for (i = 0; i < nb; i++)
-            r[i] = 0xff;
+        memset(r, (is_signed && neg) ? 0 : 0xff, nb);
+        if (is_signed)
+            r[nb - 1] = neg ? 0x80 : 0x7f;
         return;
     }
     if (neg)

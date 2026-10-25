@@ -11,6 +11,7 @@ import sys
 
 import pytest
 
+from ._clib import CPMEMU as CPMEMU_PATH
 from ._clib import LIB_DIR, REPO, build_and_run, skip_without_tools
 
 pytestmark = skip_without_tools
@@ -77,3 +78,52 @@ int main(void)
 }
 """)
     assert out.split("\n") == ["3 12 250 -125", ""]
+
+
+A_C = """#include <stdio.h>
+int fa(const char *s)
+{
+    int i = -1;
+    sscanf(s, "%d", &i);
+    return i;
+}
+"""
+B_C = """#include <stdio.h>
+int fa(const char *);
+int main(void)
+{
+    float f = -1;
+    int r = sscanf("2.5", "%f", &f);
+    printf("%d %d %d\\n", r, (int)(f * 10), fa("77"));
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("order", ["ab", "ba"])
+def test_float_scanf_in_one_of_two_units(tmp_path, order):
+    """The unit with the float format gets the reference, the other has none,
+    and the link works in either order (separate compilation)."""
+    rels = {}
+    for name, src in (("a", A_C), ("b", B_C)):
+        (tmp_path / (name + ".c")).write_text(src)
+        r = subprocess.run([sys.executable, "-m", "uc80.main", "--no-whole-program",
+                            str(tmp_path / (name + ".c")), "-o",
+                            str(tmp_path / (name + ".mac"))],
+                           capture_output=True, text=True, cwd=str(REPO))
+        assert r.returncode == 0, r.stderr
+        subprocess.run(["um80", str(tmp_path / (name + ".mac")), "-o",
+                        str(tmp_path / (name + ".rel"))], check=True,
+                       capture_output=True)
+        rels[name] = str(tmp_path / (name + ".rel"))
+    mac_a = (tmp_path / "a.mac").read_text()
+    mac_b = (tmp_path / "b.mac").read_text()
+    assert "__sc_float_on" not in mac_a
+    assert "__sc_float_on" in mac_b
+    com = tmp_path / "p.com"
+    subprocess.run(["ul80", str(LIB_DIR / "crt0.rel"), *[rels[c] for c in order],
+                    str(LIB_DIR / "libc.lib"), str(LIB_DIR / "runtime.lib"),
+                    "-o", str(com)], check=True, capture_output=True)
+    run = subprocess.run([str(CPMEMU_PATH), str(com)], capture_output=True,
+                         timeout=60)
+    assert "1 25 77" in run.stdout.decode("latin-1")
