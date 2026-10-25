@@ -9,7 +9,7 @@ double frexp(double x, int *ep)
     int e;
 
     u.f = x;
-    if (M_EXP(u) == 255 || M_ABSBITS(u) == 0) {
+    if (M_SPEC(u) || M_ISZERO(u)) {
         *ep = 0;
         return x;
     }

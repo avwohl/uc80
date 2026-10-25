@@ -10,8 +10,8 @@ double acos(double x)
     float y;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         u.u = M_NAN;
         return u.f;

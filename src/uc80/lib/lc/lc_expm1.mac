@@ -27,42 +27,24 @@ _expm1l:
 	ld	(??AUTO_expm1+2),DE
 	ld	A,(??AUTO_expm1+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_expm1+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_expm1
-	ld	HL,(??AUTO_expm1)
-	ld	DE,(??AUTO_expm1+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_expm1+2)
+	and	128
+	jr z,@ENDIF2_expm1
+	ld	A,(??AUTO_expm1+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_expm1+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_expm1)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_expm1
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -148,34 +130,7 @@ _expm1l:
 @ENDIF13_expm1:
 	ld	A,(??AUTO_expm1+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_expm1+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	103
-	ld	A,D
-	sbc	A,128
+	cp	51
 	jr nc,@ENDIF18_expm1
 	ld	L,(IX+4)
 	ld	H,(IX+5)

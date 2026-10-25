@@ -34,46 +34,30 @@ _ldexpl:
 	ld	(??AUTO_scalbn+2),DE
 	ld	A,(??AUTO_scalbn+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S4_scalbn
 	ld	A,(??AUTO_scalbn+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S3_scalbn
-	ld	HL,(??AUTO_scalbn)
-	ld	DE,(??AUTO_scalbn+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S3_scalbn
+@AND_S4_scalbn:
+	ld	A,(??AUTO_scalbn+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_scalbn+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_scalbn+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_scalbn)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF2_scalbn
 @OR_S3_scalbn:
 	ld	L,(IX+4)
@@ -105,11 +89,11 @@ _ldexpl:
 	sub	89
 	ld	A,D
 	sbc	A,130
-	jr c,@ENDIF5_scalbn
+	jr c,@ENDIF6_scalbn
 	ld	HL,600
 	ld	(IX+8),L
 	ld	(IX+9),H
-@ENDIF5_scalbn:
+@ENDIF6_scalbn:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	A,H
@@ -119,11 +103,11 @@ _ldexpl:
 	sub	168
 	ld	A,D
 	sbc	A,125
-	jr nc,@ENDIF7_scalbn
+	jr nc,@ENDIF8_scalbn
 	ld	HL,-600
 	ld	(IX+8),L
 	ld	(IX+9),H
-@ENDIF7_scalbn:
+@ENDIF8_scalbn:
 	ld	HL,(??AUTO_scalbn+8)
 	ld	E,(IX+8)
 	ld	D,(IX+9)

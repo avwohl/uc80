@@ -27,42 +27,24 @@ _log1pl:
 	ld	(??AUTO_log1p+2),DE
 	ld	A,(??AUTO_log1p+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_log1p+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_log1p
-	ld	HL,(??AUTO_log1p)
-	ld	DE,(??AUTO_log1p+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_log1p+2)
+	and	128
+	jr z,@ENDIF2_log1p
+	ld	A,(??AUTO_log1p+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log1p+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log1p)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S5_log1p
 	ld	A,(??AUTO_log1p+3)
 	and	128
@@ -146,34 +128,7 @@ _log1pl:
 @ENDIF12_log1p:
 	ld	A,(??AUTO_log1p+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_log1p+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	103
-	ld	A,D
-	sbc	A,128
+	cp	51
 	jr nc,@ENDIF17_log1p
 	ld	L,(IX+4)
 	ld	H,(IX+5)

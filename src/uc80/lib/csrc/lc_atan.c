@@ -18,13 +18,13 @@ double atan(double x)
     float ax, t, z, y, base_hi, base_lo;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         ax = 1.57079637f;               /* atan(+-inf) = +-pi/2 */
         return M_NEG(u) ? -ax : ax;
     }
-    if (M_EXP(u) < 114)
+    if (M_TINY(u))
         return x;                       /* |x| < 2^-13 */
     ax = M_NEG(u) ? -x : x;
     if (ax > 2.41421356f) {

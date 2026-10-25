@@ -39,82 +39,46 @@ _remquol:
 	ld	(HL),0
 	ld	A,(??AUTO_remquo+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_remquo+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@AND_S4_remquo
-	ld	HL,(??AUTO_remquo)
-	ld	DE,(??AUTO_remquo+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_remquo+2)
+	and	128
+	jr z,@AND_S4_remquo
+	ld	A,(??AUTO_remquo+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_remquo+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S3_remquo
 @AND_S4_remquo:
 	ld	A,(??AUTO_remquo+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_remquo+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_remquo
-	ld	HL,(??AUTO_remquo+4)
-	ld	DE,(??AUTO_remquo+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_remquo+6)
+	and	128
+	jr z,@ENDIF2_remquo
+	ld	A,(??AUTO_remquo+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_remquo+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_remquo
 @OR_S3_remquo:
 	ld	HL,0
@@ -127,46 +91,30 @@ _remquol:
 @ENDIF2_remquo:
 	ld	A,(??AUTO_remquo+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S8_remquo
 	ld	A,(??AUTO_remquo+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S7_remquo
-	ld	HL,(??AUTO_remquo+4)
-	ld	DE,(??AUTO_remquo+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S7_remquo
+@AND_S8_remquo:
+	ld	A,(??AUTO_remquo+7)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_remquo+6)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF6_remquo
 @OR_S7_remquo:
 	ld	HL,0
@@ -179,54 +127,38 @@ _remquol:
 @ENDIF6_remquo:
 	ld	A,(??AUTO_remquo+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S12_remquo
 	ld	A,(??AUTO_remquo+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S10_remquo
-	ld	HL,(??AUTO_remquo)
-	ld	DE,(??AUTO_remquo+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S11_remquo
+@AND_S12_remquo:
+	ld	A,(??AUTO_remquo+3)
 	and	127
-	or	B
-	jr nz,@ENDIF9_remquo
-@OR_S10_remquo:
+	push	AF
+	ld	A,(??AUTO_remquo+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
+	jr nz,@ENDIF10_remquo
+@OR_S11_remquo:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	jp	@remquo_ret
-@ENDIF9_remquo:
+@ENDIF10_remquo:
 	ld	A,(??AUTO_remquo+3)
 	and	128
 	add	A,255
@@ -276,22 +208,22 @@ _remquol:
 	sub	L
 	ld	A,D
 	sbc	A,H
-	jp	PO,@CMP_NV13_remquo
+	jp	PO,@CMP_NV15_remquo
 	xor	128
-@CMP_NV13_remquo:
-	jp	P,@ENDIF12_remquo
+@CMP_NV15_remquo:
+	jp	P,@ENDIF14_remquo
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	jp	@remquo_ret
-@ENDIF12_remquo:
+@ENDIF14_remquo:
 	ld	HL,(??AUTO_remquo+30)
 	dec	HL
 	ld	DE,(??AUTO_remquo+28)
 	or	A
 	sbc	HL,DE
-	jr nz,@ELSE14_remquo
+	jr nz,@ELSE16_remquo
 	ld	HL,(??AUTO_remquo+12)
 	ld	DE,(??AUTO_remquo+14)
 	ld	A,(??AUTO_remquo+16)
@@ -302,13 +234,13 @@ _remquol:
 	sbc	A,E
 	ld	A,(??AUTO_remquo+19)
 	sbc	A,D
-	jr c,@ENDIF17_remquo
+	jr c,@ENDIF19_remquo
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	jp	@remquo_ret
-@ENDIF17_remquo:
+@ENDIF19_remquo:
 	ld	HL,(??AUTO_remquo+16)
 	ld	DE,(??AUTO_remquo+18)
 	add	HL,HL
@@ -332,8 +264,8 @@ _remquol:
 	ld	(??AUTO_remquo+26),DE
 	ld	HL,1
 	ld	(??AUTO_remquo+34),HL
-	jp	@ENDIF15_remquo
-@ELSE14_remquo:
+	jp	@ENDIF17_remquo
+@ELSE16_remquo:
 	ld	HL,(??AUTO_remquo+12)
 	ld	DE,(??AUTO_remquo+14)
 	ld	(??AUTO_remquo+20),HL
@@ -343,7 +275,7 @@ _remquol:
 	or	A
 	sbc	HL,DE
 	ld	(??AUTO_remquo+32),HL
-@FOR18_remquo:
+@FOR20_remquo:
 	ld	HL,(??AUTO_remquo+32)
 	ld	A,H
 	xor	128
@@ -352,49 +284,7 @@ _remquol:
 	sub	1
 	ld	A,D
 	sbc	A,128
-	jr c,@ENDFOR20_remquo
-	ld	HL,(??AUTO_remquo+24)
-	ld	DE,(??AUTO_remquo+26)
-	add	HL,HL
-	rl	E
-	rl	D
-	ld	(??AUTO_remquo+24),HL
-	ld	(??AUTO_remquo+26),DE
-	ld	HL,(??AUTO_remquo+20)
-	ld	DE,(??AUTO_remquo+22)
-	ld	BC,(??AUTO_remquo+16)
-	or	A
-	sbc	HL,BC
-	ex	DE,HL
-	ld	BC,(??AUTO_remquo+18)
-	sbc	HL,BC
-	jr c,@ENDIF22_remquo
-	ld	HL,(??AUTO_remquo+20)
-	ld	BC,(??AUTO_remquo+16)
-	or	A
-	sbc	HL,BC
-	ld	(??AUTO_remquo+20),HL
-	ld	HL,(??AUTO_remquo+22)
-	ld	BC,(??AUTO_remquo+18)
-	sbc	HL,BC
-	ld	(??AUTO_remquo+22),HL
-	ld	A,(??AUTO_remquo+24)
-	or	1
-	ld	(??AUTO_remquo+24),A
-@ENDIF22_remquo:
-	ld	HL,(??AUTO_remquo+20)
-	ld	DE,(??AUTO_remquo+22)
-	add	HL,HL
-	rl	E
-	rl	D
-	ld	(??AUTO_remquo+20),HL
-	ld	(??AUTO_remquo+22),DE
-@FORUPD19_remquo:
-	ld	HL,(??AUTO_remquo+32)
-	dec	HL
-	ld	(??AUTO_remquo+32),HL
-	jr @FOR18_remquo
-@ENDFOR20_remquo:
+	jr c,@ENDFOR22_remquo
 	ld	HL,(??AUTO_remquo+24)
 	ld	DE,(??AUTO_remquo+26)
 	add	HL,HL
@@ -429,6 +319,48 @@ _remquol:
 	add	HL,HL
 	rl	E
 	rl	D
+	ld	(??AUTO_remquo+20),HL
+	ld	(??AUTO_remquo+22),DE
+@FORUPD21_remquo:
+	ld	HL,(??AUTO_remquo+32)
+	dec	HL
+	ld	(??AUTO_remquo+32),HL
+	jr @FOR20_remquo
+@ENDFOR22_remquo:
+	ld	HL,(??AUTO_remquo+24)
+	ld	DE,(??AUTO_remquo+26)
+	add	HL,HL
+	rl	E
+	rl	D
+	ld	(??AUTO_remquo+24),HL
+	ld	(??AUTO_remquo+26),DE
+	ld	HL,(??AUTO_remquo+20)
+	ld	DE,(??AUTO_remquo+22)
+	ld	BC,(??AUTO_remquo+16)
+	or	A
+	sbc	HL,BC
+	ex	DE,HL
+	ld	BC,(??AUTO_remquo+18)
+	sbc	HL,BC
+	jr c,@ENDIF26_remquo
+	ld	HL,(??AUTO_remquo+20)
+	ld	BC,(??AUTO_remquo+16)
+	or	A
+	sbc	HL,BC
+	ld	(??AUTO_remquo+20),HL
+	ld	HL,(??AUTO_remquo+22)
+	ld	BC,(??AUTO_remquo+18)
+	sbc	HL,BC
+	ld	(??AUTO_remquo+22),HL
+	ld	A,(??AUTO_remquo+24)
+	or	1
+	ld	(??AUTO_remquo+24),A
+@ENDIF26_remquo:
+	ld	HL,(??AUTO_remquo+20)
+	ld	DE,(??AUTO_remquo+22)
+	add	HL,HL
+	rl	E
+	rl	D
 	ld	A,(??AUTO_remquo+16)
 	sub	L
 	ld	A,(??AUTO_remquo+17)
@@ -437,7 +369,7 @@ _remquol:
 	sbc	A,E
 	ld	A,(??AUTO_remquo+19)
 	sbc	A,D
-	jr c,@OR_S27_remquo
+	jr c,@OR_S29_remquo
 	ld	HL,(??AUTO_remquo+20)
 	ld	DE,(??AUTO_remquo+22)
 	add	HL,HL
@@ -455,11 +387,11 @@ _remquol:
 	ld	A,H
 	or	L
 	or	C
-	jr nz,@ENDIF26_remquo
+	jr nz,@ENDIF28_remquo
 	ld	A,(??AUTO_remquo+24)
 	and	1
-	jr z,@ENDIF26_remquo
-@OR_S27_remquo:
+	jr z,@ENDIF28_remquo
+@OR_S29_remquo:
 	ld	HL,(??AUTO_remquo+16)
 	ld	DE,(??AUTO_remquo+18)
 	ld	BC,(??AUTO_remquo+20)
@@ -476,15 +408,15 @@ _remquol:
 	ld	(??AUTO_remquo+24),HL
 	ld	A,H
 	or	L
-	jr	NZ,@INC28_remquo
+	jr	NZ,@INC30_remquo
 	ld	HL,(??AUTO_remquo+24+2)
 	inc	HL
 	ld	(??AUTO_remquo+24+2),HL
-@INC28_remquo:
+@INC30_remquo:
 	ld	HL,1
 	ld	(??AUTO_remquo+34),HL
-@ENDIF26_remquo:
-@ENDIF15_remquo:
+@ENDIF28_remquo:
+@ENDIF17_remquo:
 	ld	HL,(??AUTO_remquo+24)
 	ld	DE,(??AUTO_remquo+26)
 	ld	A,H
@@ -505,7 +437,7 @@ _remquol:
 	ld	E,A
 	pop	AF
 	cp	E
-	jr z,@ENDIF30_remquo
+	jr z,@ENDIF32_remquo
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	ld	E,(HL)
@@ -520,7 +452,7 @@ _remquol:
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
-@ENDIF30_remquo:
+@ENDIF32_remquo:
 	ld	HL,(??AUTO_remquo+36)
 	ld	DE,(??AUTO_remquo+34)
 	ld	A,H
@@ -536,7 +468,7 @@ _remquol:
 	or	L
 	or	E
 	or	D
-	jr nz,@ENDIF32_remquo
+	jr nz,@ENDIF34_remquo
 	ld	HL,(??AUTO_remquo)
 	ld	DE,(??AUTO_remquo+2)
 	ld	HL,0
@@ -549,11 +481,11 @@ _remquol:
 	ld	HL,(??AUTO_remquo+8)
 	ld	DE,(??AUTO_remquo+10)
 	jr @remquo_ret
-@ENDIF32_remquo:
-@WHILE33_remquo:
+@ENDIF34_remquo:
+@WHILE35_remquo:
 	ld	A,(??AUTO_remquo+22)
 	and	128
-	jr nz,@ENDWHILE34_remquo
+	jr nz,@ENDWHILE36_remquo
 	ld	HL,(??AUTO_remquo+20)
 	ld	DE,(??AUTO_remquo+22)
 	add	HL,HL
@@ -564,8 +496,8 @@ _remquol:
 	ld	HL,(??AUTO_remquo+30)
 	dec	HL
 	ld	(??AUTO_remquo+30),HL
-	jr @WHILE33_remquo
-@ENDWHILE34_remquo:
+	jr @WHILE35_remquo
+@ENDWHILE36_remquo:
 	ld	HL,(??AUTO_remquo+30)
 	push	HL
 	ld	HL,(??AUTO_remquo+20)

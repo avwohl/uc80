@@ -11,8 +11,8 @@ double asin(double x)
     float ax, y;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         u.u = M_NAN;
         return u.f;
@@ -22,7 +22,7 @@ double asin(double x)
         u.u = M_NAN;
         return u.f;
     }
-    if (M_EXP(u) < 114)
+    if (M_TINY(u))
         return x;
     if (ax > 0.5f) {
         y = _m_kasin(sqrt(0.5f * (1.0f - ax)));

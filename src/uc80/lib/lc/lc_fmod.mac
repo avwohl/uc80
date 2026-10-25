@@ -34,42 +34,24 @@ _fmodl:
 	ld	(??AUTO_fmod+6),DE
 	ld	A,(??AUTO_fmod+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmod+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_fmod
-	ld	HL,(??AUTO_fmod+4)
-	ld	DE,(??AUTO_fmod+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmod+6)
+	and	128
+	jr z,@ENDIF2_fmod
+	ld	A,(??AUTO_fmod+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmod+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_fmod
 	ld	L,(IX+8)
 	ld	H,(IX+9)
@@ -79,46 +61,28 @@ _fmodl:
 @ENDIF2_fmod:
 	ld	A,(??AUTO_fmod+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmod+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF4_fmod
+	ld	A,(??AUTO_fmod+2)
+	and	128
+	jr z,@ENDIF4_fmod
 	ld	HL,0
 	ld	(??AUTO_fmod+8),HL
 	ld	HL,32704
 	ld	(??AUTO_fmod+10),HL
-	ld	HL,(??AUTO_fmod)
-	ld	DE,(??AUTO_fmod+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmod+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmod+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@TERN_E5_fmod
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -131,22 +95,24 @@ _fmodl:
 @TERN_END6_fmod:
 	jp	@fmod_ret
 @ENDIF4_fmod:
-	ld	HL,(??AUTO_fmod+4)
-	ld	DE,(??AUTO_fmod+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_fmod+7)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmod+6)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF8_fmod
 	ld	HL,0
 	ld	(??AUTO_fmod+8),HL
@@ -158,46 +124,30 @@ _fmodl:
 @ENDIF8_fmod:
 	ld	A,(??AUTO_fmod+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S12_fmod
 	ld	A,(??AUTO_fmod+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S11_fmod
-	ld	HL,(??AUTO_fmod)
-	ld	DE,(??AUTO_fmod+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S11_fmod
+@AND_S12_fmod:
+	ld	A,(??AUTO_fmod+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmod+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF10_fmod
 @OR_S11_fmod:
 	ld	L,(IX+4)
@@ -240,27 +190,27 @@ _fmodl:
 	sub	E
 	ld	A,H
 	sbc	A,D
-	jp	PO,@CMP_NV14_fmod
+	jp	PO,@CMP_NV15_fmod
 	xor	128
-@CMP_NV14_fmod:
-	jp	P,@ENDIF13_fmod
+@CMP_NV15_fmod:
+	jp	P,@ENDIF14_fmod
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	jp	@fmod_ret
-@ENDIF13_fmod:
-@WHILE15_fmod:
+@ENDIF14_fmod:
+@WHILE16_fmod:
 	ld	HL,(??AUTO_fmod+20)
 	ld	DE,(??AUTO_fmod+22)
 	ld	A,E
 	sub	L
 	ld	A,D
 	sbc	A,H
-	jp	PO,@CMP_NV17_fmod
+	jp	PO,@CMP_NV18_fmod
 	xor	128
-@CMP_NV17_fmod:
-	jp	P,@ENDWHILE16_fmod
+@CMP_NV18_fmod:
+	jp	P,@ENDWHILE17_fmod
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	ld	BC,(??AUTO_fmod+16)
@@ -269,7 +219,7 @@ _fmodl:
 	ex	DE,HL
 	ld	BC,(??AUTO_fmod+18)
 	sbc	HL,BC
-	jr c,@ENDIF19_fmod
+	jr c,@ENDIF20_fmod
 	ld	HL,(??AUTO_fmod+12)
 	ld	BC,(??AUTO_fmod+16)
 	or	A
@@ -279,7 +229,7 @@ _fmodl:
 	ld	BC,(??AUTO_fmod+18)
 	sbc	HL,BC
 	ld	(??AUTO_fmod+14),HL
-@ENDIF19_fmod:
+@ENDIF20_fmod:
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	add	HL,HL
@@ -290,8 +240,8 @@ _fmodl:
 	ld	HL,(??AUTO_fmod+20)
 	dec	HL
 	ld	(??AUTO_fmod+20),HL
-	jr @WHILE15_fmod
-@ENDWHILE16_fmod:
+	jr @WHILE16_fmod
+@ENDWHILE17_fmod:
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	ld	BC,(??AUTO_fmod+16)
@@ -300,7 +250,7 @@ _fmodl:
 	ex	DE,HL
 	ld	BC,(??AUTO_fmod+18)
 	sbc	HL,BC
-	jr c,@ENDIF21_fmod
+	jr c,@ENDIF22_fmod
 	ld	HL,(??AUTO_fmod+12)
 	ld	BC,(??AUTO_fmod+16)
 	or	A
@@ -310,14 +260,14 @@ _fmodl:
 	ld	BC,(??AUTO_fmod+18)
 	sbc	HL,BC
 	ld	(??AUTO_fmod+14),HL
-@ENDIF21_fmod:
+@ENDIF22_fmod:
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	ld	A,H
 	or	L
 	or	E
 	or	D
-	jr nz,@ENDIF23_fmod
+	jr nz,@ENDIF24_fmod
 	ld	HL,(??AUTO_fmod)
 	ld	DE,(??AUTO_fmod+2)
 	ld	HL,0
@@ -330,11 +280,11 @@ _fmodl:
 	ld	HL,(??AUTO_fmod+8)
 	ld	DE,(??AUTO_fmod+10)
 	jr @fmod_ret
-@ENDIF23_fmod:
-@WHILE24_fmod:
+@ENDIF24_fmod:
+@WHILE25_fmod:
 	ld	A,(??AUTO_fmod+14)
 	and	128
-	jr nz,@ENDWHILE25_fmod
+	jr nz,@ENDWHILE26_fmod
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	add	HL,HL
@@ -345,8 +295,8 @@ _fmodl:
 	ld	HL,(??AUTO_fmod+20)
 	dec	HL
 	ld	(??AUTO_fmod+20),HL
-	jr @WHILE24_fmod
-@ENDWHILE25_fmod:
+	jr @WHILE25_fmod
+@ENDWHILE26_fmod:
 	ld	HL,(??AUTO_fmod+20)
 	push	HL
 	ld	HL,(??AUTO_fmod+12)

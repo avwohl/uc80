@@ -27,42 +27,24 @@ _atanhl:
 	ld	(??AUTO_atanh+2),DE
 	ld	A,(??AUTO_atanh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atanh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_atanh
-	ld	HL,(??AUTO_atanh)
-	ld	DE,(??AUTO_atanh+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_atanh+2)
+	and	128
+	jr z,@ENDIF2_atanh
+	ld	A,(??AUTO_atanh+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atanh+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atanh)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_atanh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -171,34 +153,7 @@ _atanhl:
 @ENDIF13_atanh:
 	ld	A,(??AUTO_atanh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atanh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF18_atanh
 	ld	L,(IX+4)
 	ld	H,(IX+5)

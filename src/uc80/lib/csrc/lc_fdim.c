@@ -8,9 +8,9 @@ double fdim(double x, double y)
 
     a.f = x;
     b.f = y;
-    if (M_EXP(a) == 255 && M_MANT(a))
+    if M_ISNAN(a)
         return x;
-    if (M_EXP(b) == 255 && M_MANT(b))
+    if M_ISNAN(b)
         return y;
     if (x > y)
         return x - y;

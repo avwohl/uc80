@@ -9,7 +9,7 @@ double scalbn(double x, int n)
     int e;
 
     u.f = x;
-    if (M_EXP(u) == 255 || M_ABSBITS(u) == 0)
+    if (M_SPEC(u) || M_ISZERO(u))
         return x;
     m = _m_unpack(x, &e);
     if (n > 600)

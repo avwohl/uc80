@@ -14,8 +14,8 @@ double expm1(double x)
     float r, y, e;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         return M_NEG(u) ? -1.0f : x;
     }
@@ -25,7 +25,7 @@ double expm1(double x)
     }
     if (x < -17.4f)
         return -1.0f;
-    if (M_EXP(u) < 103)
+    if (M_TINY25(u))
         return x;                       /* |x| < 2^-24 */
     if (x > -0.34657f && x < 0.34657f) {
         n = 0;

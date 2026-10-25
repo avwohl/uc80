@@ -13,15 +13,15 @@ double remquo(double x, double y, int *quo)
     a.f = x;
     b.f = y;
     *quo = 0;
-    if ((M_EXP(a) == 255 && M_MANT(a)) || (M_EXP(b) == 255 && M_MANT(b))) {
+    if (M_ISNAN(a) || M_ISNAN(b)) {
         r.u = M_NAN;
         return r.f;
     }
-    if (M_EXP(a) == 255 || M_ABSBITS(b) == 0) {
+    if (M_SPEC(a) || M_ISZERO(b)) {
         r.u = M_NAN;                    /* x is inf, or y is 0 */
         return r.f;
     }
-    if (M_EXP(b) == 255 || M_ABSBITS(a) == 0)
+    if (M_SPEC(b) || M_ISZERO(a))
         return x;                       /* y is inf, or x is 0 */
     neg = M_NEG(a) != 0;
     mx = _m_unpack(x, &ex);

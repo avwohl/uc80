@@ -8,13 +8,13 @@ double cos(double x)
     float r, y;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         u.u = M_NAN;                    /* cos(+-inf) */
         return u.f;
     }
-    if (M_EXP(u) < 114)
+    if (M_TINY(u))
         return 1.0f;                    /* |x| < 2^-13 */
     u.u &= 0x7FFFFFFFUL;
     switch (_m_reduce(u.f, &r)) {

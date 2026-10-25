@@ -38,82 +38,46 @@ _nexttowardl:
 	ld	(??AUTO_nextafter+6),DE
 	ld	A,(??AUTO_nextafter+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_nextafter+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@AND_S4_nextafter
-	ld	HL,(??AUTO_nextafter)
-	ld	DE,(??AUTO_nextafter+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_nextafter+2)
+	and	128
+	jr z,@AND_S4_nextafter
+	ld	A,(??AUTO_nextafter+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_nextafter+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_nextafter)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S3_nextafter
 @AND_S4_nextafter:
 	ld	A,(??AUTO_nextafter+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_nextafter+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_nextafter
-	ld	HL,(??AUTO_nextafter+4)
-	ld	DE,(??AUTO_nextafter+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_nextafter+6)
+	and	128
+	jr z,@ENDIF2_nextafter
+	ld	A,(??AUTO_nextafter+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_nextafter+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_nextafter+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_nextafter
 @OR_S3_nextafter:
 	ld	HL,0

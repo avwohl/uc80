@@ -11,10 +11,10 @@ double cbrt(double x)
     m_u u, v;
     unsigned long mant;
     int e, q, r, i;
-    float m, z, y, yh, yl, p, pe, ph, pl, q3, qe, res, w;
+    float m, z, y, p, pe, q3, qe, res, w;
 
     u.f = x;
-    if (M_EXP(u) == 255 || M_ABSBITS(u) == 0)
+    if (M_SPEC(u) || M_ISZERO(u))
         return x;
     mant = _m_unpack(x, &e);
     e -= 127;
@@ -35,12 +35,8 @@ double cbrt(double x)
         z = z * (4.0f - m * z * z * z) * 0.33333334f;
     y = m * z * z;
     /* y*y = p + pe, p*y = q3 + qe, all exact */
-    M_SPLIT(y, yh, yl);
-    p = y * y;
-    pe = ((yh * yh - p) + 2.0f * yh * yl) + yl * yl;
-    M_SPLIT(p, ph, pl);
-    q3 = p * y;
-    qe = ((ph * yh - q3) + ph * yl + pl * yh) + pl * yl;
+    p = _m_2prod(y, y, &pe);
+    q3 = _m_2prod(p, y, &qe);
     res = ((q3 - m) + qe) + pe * y;
     w = z * z * 0.33333334f;
     y = y - res * w;

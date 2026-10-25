@@ -8,6 +8,7 @@
 	CSEG
 
 	EXTRN	__m_pack
+	EXTRN	__m_2prod
 	PUBLIC	_exp2
 
 ; Function exp2 (uses shared storage)
@@ -27,42 +28,24 @@ _exp2l:
 	ld	(??AUTO_exp2+2),DE
 	ld	A,(??AUTO_exp2+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_exp2+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_exp2
-	ld	HL,(??AUTO_exp2)
-	ld	DE,(??AUTO_exp2+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_exp2+2)
+	and	128
+	jr z,@ENDIF2_exp2
+	ld	A,(??AUTO_exp2+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_exp2+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_exp2)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_exp2
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -141,34 +124,7 @@ _exp2l:
 @ENDIF13_exp2:
 	ld	A,(??AUTO_exp2+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_exp2+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	103
-	ld	A,D
-	sbc	A,128
+	cp	51
 	jr nc,@ENDIF18_exp2
 	ld	HL,0
 	ld	DE,16256
@@ -233,190 +189,24 @@ _exp2l:
 	call	__fsub
 	ld	(??AUTO_exp2+6),HL
 	ld	(??AUTO_exp2+8),DE
+	ld	HL,??AUTO_exp2+22
+	push	HL
 	ld	HL,29208
 	ld	DE,16177
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_exp2+6)
 	ld	DE,(??AUTO_exp2+8)
-	call	__fmul
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_exp2+10),HL
 	ld	(??AUTO_exp2+12),DE
-@DO24_exp2:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+6)
-	ld	DE,(??AUTO_exp2+8)
-	call	__fmul
-	ld	(??AUTO_exp2+38),HL
-	ld	(??AUTO_exp2+40),DE
-	ld	HL,(??AUTO_exp2+6)
-	ld	DE,(??AUTO_exp2+8)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+38)
-	ld	DE,(??AUTO_exp2+40)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+38)
-	ld	DE,(??AUTO_exp2+40)
-	call	__fsub
-	ld	(??AUTO_exp2+22),HL
-	ld	(??AUTO_exp2+24),DE
-	ld	HL,(??AUTO_exp2+22)
-	ld	DE,(??AUTO_exp2+24)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+6)
-	ld	DE,(??AUTO_exp2+8)
-	call	__fsub
-	ld	(??AUTO_exp2+26),HL
-	ld	(??AUTO_exp2+28),DE
-@DOCOND25_exp2:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO24_exp2
-@ENDDO26_exp2:
-	ld	HL,0
-	ld	DE,14342
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+26)
-	ld	DE,(??AUTO_exp2+28)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,28672
-	ld	DE,16177
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+26)
-	ld	DE,(??AUTO_exp2+28)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,14342
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+22)
-	ld	DE,(??AUTO_exp2+24)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_exp2+10)
-	ld	DE,(??AUTO_exp2+12)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,28672
-	ld	DE,16177
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+22)
-	ld	DE,(??AUTO_exp2+24)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_exp2+30),HL
-	ld	(??AUTO_exp2+32),DE
 	ld	HL,58120
 	ld	DE,12546
 	ld	A,D
@@ -429,8 +219,8 @@ _exp2l:
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+30)
-	ld	DE,(??AUTO_exp2+32)
+	ld	HL,(??AUTO_exp2+22)
+	ld	DE,(??AUTO_exp2+24)
 	call	__fadd
 	ld	(??AUTO_exp2+14),HL
 	ld	(??AUTO_exp2+16),DE
@@ -441,8 +231,8 @@ _exp2l:
 	ld	HL,(??AUTO_exp2+10)
 	ld	DE,(??AUTO_exp2+12)
 	call	__fmul
-	ld	(??AUTO_exp2+34),HL
-	ld	(??AUTO_exp2+36),DE
+	ld	(??AUTO_exp2+26),HL
+	ld	(??AUTO_exp2+28),DE
 	ld	HL,0
 	ld	DE,16128
 	ld	(__tmp32),HL
@@ -612,8 +402,8 @@ _exp2l:
 	call	__fadd
 	ld	(??AUTO_exp2+18),HL
 	ld	(??AUTO_exp2+20),DE
-	ld	HL,(??AUTO_exp2+34)
-	ld	DE,(??AUTO_exp2+36)
+	ld	HL,(??AUTO_exp2+26)
+	ld	DE,(??AUTO_exp2+28)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_exp2+18)
@@ -736,12 +526,13 @@ _exp2l:
 	EXTRN	__tmp32
 
 ; Implicit external functions
+	EXTRN	__m_2prod
 	EXTRN	__m_pack
 
 ; Static storage that starts as zero
 	COMMON	/lc_exp2/
 ; Shared automatic storage
 ??AUTO_exp2:
-	ds	42
+	ds	30
 
 	END

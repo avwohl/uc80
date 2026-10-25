@@ -9,9 +9,9 @@ int ilogb(double x)
     int e;
 
     u.f = x;
-    if (M_EXP(u) == 255)
-        return M_MANT(u) ? (-32767 - 1) : 32767;
-    if (M_ABSBITS(u) == 0)
+    if (M_SPEC(u))
+        return M_NANM(u) ? (-32767 - 1) : 32767;
+    if (M_ISZERO(u))
         return -32767 - 1;
     _m_unpack(x, &e);
     return e - 127;

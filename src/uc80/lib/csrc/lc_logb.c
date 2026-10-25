@@ -8,13 +8,13 @@ double logb(double x)
     int e;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;           /* NaN */
         u.u = M_INF;            /* logb(+-inf) is +inf */
         return u.f;
     }
-    if (M_ABSBITS(u) == 0) {
+    if (M_ISZERO(u)) {
         u.u = 0xFF800000UL;
         return u.f;
     }

@@ -7,24 +7,20 @@
 double fma(double x, double y, double z)
 {
     m_u a, b, c;
-    float xh, xl, yh, yl, p, pe, s, bb, es;
+    float p, pe, s, es;
 
     a.f = x;
     b.f = y;
     c.f = z;
-    if (M_EXP(a) == 255 || M_EXP(b) == 255 || M_EXP(c) == 255)
+    if (M_SPEC(a) || M_SPEC(b) || M_SPEC(c))
         return x * y + z;
-    if (M_ABSBITS(a) == 0 || M_ABSBITS(b) == 0)
+    if (M_ISZERO(a) || M_ISZERO(b))
         return x * y + z;
     p = x * y;
     c.f = p;
-    if (M_EXP(c) == 255 || M_EXP(c) < 30)
+    if (M_SPEC(c) || M_EXP(c) < 30)
         return p + z;                   /* overflow, or no room for the error */
-    M_SPLIT(x, xh, xl);
-    M_SPLIT(y, yh, yl);
-    pe = ((xh * yh - p) + xh * yl + xl * yh) + xl * yl;
-    s = p + z;
-    bb = s - p;
-    es = (p - (s - bb)) + (z - bb);     /* the exact error of p + z */
+    p = _m_2prod(x, y, &pe);
+    s = _m_2sum(p, z, &es);             /* the exact error of p + z */
     return s + (es + pe);
 }

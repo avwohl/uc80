@@ -12,8 +12,8 @@ double acosh(double x)
     float t;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u) || !M_NEG(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u) || !M_NEG(u))
             return x;
         u.u = M_NAN;
         return u.f;

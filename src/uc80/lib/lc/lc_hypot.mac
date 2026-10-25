@@ -8,6 +8,8 @@
 	CSEG
 
 	EXTRN	__m_unpack
+	EXTRN	__m_2prod
+	EXTRN	__m_2sum
 	EXTRN	_sqrt
 	EXTRN	_scalbn
 	PUBLIC	_hypot
@@ -84,56 +86,19 @@ _hypotl:
 @ENDIF2_hypot:
 	ld	A,(??AUTO_hypot+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S7_hypot
 	ld	A,(??AUTO_hypot+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S6_hypot
+	and	128
+	jr nz,@OR_S6_hypot
+@AND_S7_hypot:
 	ld	A,(??AUTO_hypot+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_hypot+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF5_hypot
+	ld	A,(??AUTO_hypot+6)
+	and	128
+	jr z,@ENDIF5_hypot
 @OR_S6_hypot:
 	ld	HL,(??AUTO_hypot+4)
 	ld	DE,(??AUTO_hypot+6)
@@ -156,7 +121,7 @@ _hypotl:
 	ex	DE,HL
 	pop	BC
 	sbc	HL,BC
-	jr nc,@ENDIF8_hypot
+	jr nc,@ENDIF9_hypot
 	ld	HL,??AUTO_hypot+0
 	push	HL
 	ld	HL,??AUTO_hypot+8
@@ -178,19 +143,19 @@ _hypotl:
 	pop	HL
 	ld	BC,4
 	ldir
-@ENDIF8_hypot:
+@ENDIF9_hypot:
 	ld	HL,(??AUTO_hypot+4)
 	ld	DE,(??AUTO_hypot+6)
 	ld	A,H
 	or	L
 	or	E
 	or	D
-	jr nz,@ENDIF10_hypot
+	jr nz,@ENDIF11_hypot
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
 	jp	@hypot_ret
-@ENDIF10_hypot:
-	ld	HL,??AUTO_hypot+80
+@ENDIF11_hypot:
+	ld	HL,??AUTO_hypot+56
 	push	HL
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
@@ -200,7 +165,7 @@ _hypotl:
 	pop	BC
 	pop	BC
 	pop	BC
-	ld	HL,??AUTO_hypot+82
+	ld	HL,??AUTO_hypot+58
 	push	HL
 	ld	HL,(??AUTO_hypot+4)
 	ld	DE,(??AUTO_hypot+6)
@@ -210,8 +175,8 @@ _hypotl:
 	pop	BC
 	pop	BC
 	pop	BC
-	ld	HL,(??AUTO_hypot+80)
-	ld	DE,(??AUTO_hypot+82)
+	ld	HL,(??AUTO_hypot+56)
+	ld	DE,(??AUTO_hypot+58)
 	or	A
 	sbc	HL,DE
 	ld	A,H
@@ -221,15 +186,15 @@ _hypotl:
 	sub	31
 	ld	A,D
 	sbc	A,128
-	jr c,@ENDIF12_hypot
+	jr c,@ENDIF13_hypot
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
 	jp	@hypot_ret
-@ENDIF12_hypot:
-	ld	HL,(??AUTO_hypot+80)
+@ENDIF13_hypot:
+	ld	HL,(??AUTO_hypot+56)
 	ld	DE,65409
 	add	HL,DE
-	ld	(??AUTO_hypot+84),HL
+	ld	(??AUTO_hypot+60),HL
 	ex	DE,HL
 	ld	HL,0
 	or	A
@@ -245,7 +210,7 @@ _hypotl:
 	pop	BC
 	ld	(??AUTO_hypot),HL
 	ld	(??AUTO_hypot+2),DE
-	ld	HL,(??AUTO_hypot+84)
+	ld	HL,(??AUTO_hypot+60)
 	ex	DE,HL
 	ld	HL,0
 	or	A
@@ -286,445 +251,121 @@ _hypotl:
 	ld	L,A
 	ld	A,H
 	or	L
-	jr nz,@ENDIF14_hypot
+	jr nz,@ENDIF15_hypot
 	ld	HL,0
 	ld	(??AUTO_hypot+4),HL
 	ld	(??AUTO_hypot+6),HL
-@ENDIF14_hypot:
-@DO15_hypot:
+@ENDIF15_hypot:
+	ld	HL,??AUTO_hypot+20
+	push	HL
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,2048
-	ld	DE,17792
-	call	__fmul
-	ld	(??AUTO_hypot+86),HL
-	ld	(??AUTO_hypot+88),DE
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+86)
-	ld	DE,(??AUTO_hypot+88)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+86)
-	ld	DE,(??AUTO_hypot+88)
-	call	__fsub
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_hypot+12),HL
 	ld	(??AUTO_hypot+14),DE
-	ld	HL,(??AUTO_hypot+12)
-	ld	DE,(??AUTO_hypot+14)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot)
-	ld	DE,(??AUTO_hypot+2)
-	call	__fsub
+	ld	HL,??AUTO_hypot+24
+	push	HL
+	ld	HL,(??AUTO_hypot+4)
+	ld	DE,(??AUTO_hypot+6)
+	push	DE
+	push	HL
+	ld	HL,(??AUTO_hypot+4)
+	ld	DE,(??AUTO_hypot+6)
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_hypot+16),HL
 	ld	(??AUTO_hypot+18),DE
-@DOCOND16_hypot:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO15_hypot
-@ENDDO17_hypot:
-@DO18_hypot:
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,2048
-	ld	DE,17792
-	call	__fmul
-	ld	(??AUTO_hypot+90),HL
-	ld	(??AUTO_hypot+92),DE
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+90)
-	ld	DE,(??AUTO_hypot+92)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+90)
-	ld	DE,(??AUTO_hypot+92)
-	call	__fsub
-	ld	(??AUTO_hypot+20),HL
-	ld	(??AUTO_hypot+22),DE
-	ld	HL,(??AUTO_hypot+20)
-	ld	DE,(??AUTO_hypot+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	call	__fsub
-	ld	(??AUTO_hypot+24),HL
-	ld	(??AUTO_hypot+26),DE
-@DOCOND19_hypot:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO18_hypot
-@ENDDO20_hypot:
-	ld	HL,(??AUTO_hypot)
-	ld	DE,(??AUTO_hypot+2)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot)
-	ld	DE,(??AUTO_hypot+2)
-	call	__fmul
+	ld	HL,??AUTO_hypot+32
+	push	HL
+	ld	HL,(??AUTO_hypot+16)
+	ld	DE,(??AUTO_hypot+18)
+	push	DE
+	push	HL
+	ld	HL,(??AUTO_hypot+12)
+	ld	DE,(??AUTO_hypot+14)
+	push	DE
+	push	HL
+	call	__m_2sum
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_hypot+28),HL
 	ld	(??AUTO_hypot+30),DE
-	ld	HL,(??AUTO_hypot+16)
-	ld	DE,(??AUTO_hypot+18)
+	ld	HL,(??AUTO_hypot+24)
+	ld	DE,(??AUTO_hypot+26)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+16)
-	ld	DE,(??AUTO_hypot+18)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+28)
-	ld	DE,(??AUTO_hypot+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+12)
-	ld	DE,(??AUTO_hypot+14)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+12)
-	ld	DE,(??AUTO_hypot+14)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,16384
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+12)
-	ld	DE,(??AUTO_hypot+14)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+16)
-	ld	DE,(??AUTO_hypot+18)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
+	ld	HL,(??AUTO_hypot+20)
+	ld	DE,(??AUTO_hypot+22)
 	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
+	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
+	ld	HL,(??AUTO_hypot+32)
+	ld	DE,(??AUTO_hypot+34)
 	call	__fadd
 	ld	(??AUTO_hypot+36),HL
 	ld	(??AUTO_hypot+38),DE
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	call	__fmul
-	ld	(??AUTO_hypot+32),HL
-	ld	(??AUTO_hypot+34),DE
-	ld	HL,(??AUTO_hypot+24)
-	ld	DE,(??AUTO_hypot+26)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+24)
-	ld	DE,(??AUTO_hypot+26)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+32)
-	ld	DE,(??AUTO_hypot+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+20)
-	ld	DE,(??AUTO_hypot+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+20)
-	ld	DE,(??AUTO_hypot+22)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,16384
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+20)
-	ld	DE,(??AUTO_hypot+22)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+24)
-	ld	DE,(??AUTO_hypot+26)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_hypot+40),HL
-	ld	(??AUTO_hypot+42),DE
-	ld	HL,(??AUTO_hypot+32)
-	ld	DE,(??AUTO_hypot+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_hypot+28)
 	ld	DE,(??AUTO_hypot+30)
-	call	__fadd
-	ld	(??AUTO_hypot+44),HL
-	ld	(??AUTO_hypot+46),DE
-	ld	HL,(??AUTO_hypot+44)
-	ld	DE,(??AUTO_hypot+46)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+28)
-	ld	DE,(??AUTO_hypot+30)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+32)
-	ld	DE,(??AUTO_hypot+34)
-	call	__fadd
-	ld	(??AUTO_hypot+48),HL
-	ld	(??AUTO_hypot+50),DE
-	ld	HL,(??AUTO_hypot+40)
-	ld	DE,(??AUTO_hypot+42)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+36)
-	ld	DE,(??AUTO_hypot+38)
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+48)
-	ld	DE,(??AUTO_hypot+50)
-	call	__fadd
-	ld	(??AUTO_hypot+52),HL
-	ld	(??AUTO_hypot+54),DE
-	ld	HL,(??AUTO_hypot+44)
-	ld	DE,(??AUTO_hypot+46)
 	push	DE
 	push	HL
 	call	_sqrt
 	pop	BC
 	pop	BC
-	ld	(??AUTO_hypot+60),HL
-	ld	(??AUTO_hypot+62),DE
-@DO21_hypot:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	call	__fmul
-	ld	(??AUTO_hypot+94),HL
-	ld	(??AUTO_hypot+96),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+94)
-	ld	DE,(??AUTO_hypot+96)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+94)
-	ld	DE,(??AUTO_hypot+96)
-	call	__fsub
-	ld	(??AUTO_hypot+64),HL
-	ld	(??AUTO_hypot+66),DE
-	ld	HL,(??AUTO_hypot+64)
-	ld	DE,(??AUTO_hypot+66)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	call	__fsub
-	ld	(??AUTO_hypot+68),HL
-	ld	(??AUTO_hypot+70),DE
-@DOCOND22_hypot:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO21_hypot
-@ENDDO23_hypot:
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	call	__fmul
-	ld	(??AUTO_hypot+72),HL
-	ld	(??AUTO_hypot+74),DE
-	ld	HL,(??AUTO_hypot+68)
-	ld	DE,(??AUTO_hypot+70)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+68)
-	ld	DE,(??AUTO_hypot+70)
-	call	__fmul
+	ld	(??AUTO_hypot+44),HL
+	ld	(??AUTO_hypot+46),DE
+	ld	HL,??AUTO_hypot+52
+	push	HL
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
+	push	DE
+	push	HL
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	ld	(??AUTO_hypot+48),HL
+	ld	(??AUTO_hypot+50),DE
+	ld	HL,(??AUTO_hypot+52)
+	ld	DE,(??AUTO_hypot+54)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(__tmp32)
 	push	HL
 	ld	HL,(__tmp32+2)
 	push	HL
-	ld	HL,(??AUTO_hypot+72)
-	ld	DE,(??AUTO_hypot+74)
+	ld	HL,(??AUTO_hypot+48)
+	ld	DE,(??AUTO_hypot+50)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+64)
-	ld	DE,(??AUTO_hypot+66)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+64)
-	ld	DE,(??AUTO_hypot+66)
-	call	__fmul
+	ld	HL,(??AUTO_hypot+28)
+	ld	DE,(??AUTO_hypot+30)
+	call	__fsub
 	push	DE
 	push	HL
 	ld	HL,4
@@ -747,129 +388,34 @@ _hypotl:
 	call	__fsub
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,16384
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+64)
-	ld	DE,(??AUTO_hypot+66)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+68)
-	ld	DE,(??AUTO_hypot+70)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
+	ld	HL,(??AUTO_hypot+36)
+	ld	DE,(??AUTO_hypot+38)
 	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_hypot+76),HL
-	ld	(??AUTO_hypot+78),DE
-	ld	HL,(??AUTO_hypot+76)
-	ld	DE,(??AUTO_hypot+78)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+72)
-	ld	DE,(??AUTO_hypot+74)
+	ld	(??AUTO_hypot+40),HL
+	ld	(??AUTO_hypot+42),DE
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_hypot+44)
 	ld	DE,(??AUTO_hypot+46)
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+52)
-	ld	DE,(??AUTO_hypot+54)
-	call	__fadd
-	ld	(??AUTO_hypot+56),HL
-	ld	(??AUTO_hypot+58),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+56)
-	ld	DE,(??AUTO_hypot+58)
+	ld	HL,(??AUTO_hypot+40)
+	ld	DE,(??AUTO_hypot+42)
 	call	__fdiv
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
 	call	__fadd
-	ld	(??AUTO_hypot+60),HL
-	ld	(??AUTO_hypot+62),DE
-	ld	HL,(??AUTO_hypot+84)
-	push	HL
+	ld	(??AUTO_hypot+44),HL
+	ld	(??AUTO_hypot+46),DE
 	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
+	push	HL
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
 	push	DE
 	push	HL
 	call	_scalbn
@@ -884,11 +430,12 @@ _hypotl:
 ; Runtime library functions
 	EXTRN	__fadd
 	EXTRN	__fdiv
-	EXTRN	__fmul
 	EXTRN	__fsub
 	EXTRN	__tmp32
 
 ; Implicit external functions
+	EXTRN	__m_2prod
+	EXTRN	__m_2sum
 	EXTRN	__m_unpack
 	EXTRN	_scalbn
 	EXTRN	_sqrt
@@ -897,6 +444,6 @@ _hypotl:
 	COMMON	/lc_hypot/
 ; Shared automatic storage
 ??AUTO_hypot:
-	ds	98
+	ds	62
 
 	END

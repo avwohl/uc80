@@ -29,30 +29,11 @@ _asinhl:
 	ld	(??AUTO_asinh+2),DE
 	ld	A,(??AUTO_asinh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_asinh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_asinh
+	ld	A,(??AUTO_asinh+2)
+	and	128
+	jr z,@ENDIF2_asinh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
@@ -61,34 +42,7 @@ _asinhl:
 @ENDIF2_asinh:
 	ld	A,(??AUTO_asinh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_asinh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF4_asinh
 	ld	L,(IX+4)
 	ld	H,(IX+5)

@@ -15,7 +15,7 @@ float _m_round(float x, int mode)
     neg = M_NEG(u) != 0;
     if (e < 0) {
         /* |x| < 1 */
-        if (M_ABSBITS(u) == 0)
+        if (M_ISZERO(u))
             return x;
         up = 0;
         if (mode == 1)

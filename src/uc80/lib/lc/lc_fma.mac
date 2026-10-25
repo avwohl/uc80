@@ -7,6 +7,8 @@
 
 	CSEG
 
+	EXTRN	__m_2prod
+	EXTRN	__m_2sum
 	PUBLIC	_fma
 
 ; Function fma (uses shared storage)
@@ -38,82 +40,27 @@ _fmal:
 	ld	(??AUTO_fma+10),DE
 	ld	A,(??AUTO_fma+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S4_fma
 	ld	A,(??AUTO_fma+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S3_fma
+	and	128
+	jr nz,@OR_S3_fma
+@AND_S4_fma:
 	ld	A,(??AUTO_fma+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S5_fma
 	ld	A,(??AUTO_fma+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S3_fma
+	and	128
+	jr nz,@OR_S3_fma
+@AND_S5_fma:
 	ld	A,(??AUTO_fma+11)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fma+10)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_fma
+	ld	A,(??AUTO_fma+10)
+	and	128
+	jr z,@ENDIF2_fma
 @OR_S3_fma:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
@@ -135,41 +82,45 @@ _fmal:
 	call	__fadd
 	jp	@fma_ret
 @ENDIF2_fma:
-	ld	HL,(??AUTO_fma)
-	ld	DE,(??AUTO_fma+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_fma+3)
 	and	127
-	or	B
-	jr z,@OR_S6_fma
-	ld	HL,(??AUTO_fma+4)
-	ld	DE,(??AUTO_fma+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	push	AF
+	ld	A,(??AUTO_fma+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fma+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fma)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
+	jr z,@OR_S8_fma
+	ld	A,(??AUTO_fma+7)
 	and	127
-	or	B
-	jr nz,@ENDIF5_fma
-@OR_S6_fma:
+	push	AF
+	ld	A,(??AUTO_fma+6)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fma+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fma+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
+	jr nz,@ENDIF7_fma
+@OR_S8_fma:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	E,(IX+10)
@@ -189,7 +140,7 @@ _fmal:
 	ld	D,(IX+15)
 	call	__fadd
 	jp	@fma_ret
-@ENDIF5_fma:
+@ENDIF7_fma:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	E,(IX+10)
@@ -201,38 +152,20 @@ _fmal:
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	call	__fmul
-	ld	(??AUTO_fma+28),HL
-	ld	(??AUTO_fma+30),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
+	ld	(??AUTO_fma+12),HL
+	ld	(??AUTO_fma+14),DE
+	ld	HL,(??AUTO_fma+12)
+	ld	DE,(??AUTO_fma+14)
 	ld	(??AUTO_fma+8),HL
 	ld	(??AUTO_fma+10),DE
 	ld	A,(??AUTO_fma+11)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S12_fma
 	ld	A,(??AUTO_fma+10)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S9_fma
+	and	128
+	jr nz,@OR_S11_fma
+@AND_S12_fma:
 	ld	A,(??AUTO_fma+11)
 	and	127
 	ld	L,A
@@ -263,325 +196,72 @@ _fmal:
 	sub	30
 	ld	A,D
 	sbc	A,128
-	jr nc,@ENDIF8_fma
-@OR_S9_fma:
+	jr nc,@ENDIF10_fma
+@OR_S11_fma:
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	ld	E,(IX+14)
 	ld	D,(IX+15)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
+	ld	HL,(??AUTO_fma+12)
+	ld	DE,(??AUTO_fma+14)
 	call	__fadd
 	jp	@fma_ret
-@ENDIF8_fma:
-@DO10_fma:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
+@ENDIF10_fma:
+	ld	HL,??AUTO_fma+16
+	push	HL
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	E,(IX+10)
+	ld	D,(IX+11)
+	push	DE
+	push	HL
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
-	call	__fmul
-	ld	(??AUTO_fma+48),HL
-	ld	(??AUTO_fma+50),DE
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	E,(IX+6)
-	ld	D,(IX+7)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+48)
-	ld	DE,(??AUTO_fma+50)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+48)
-	ld	DE,(??AUTO_fma+50)
-	call	__fsub
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_fma+12),HL
 	ld	(??AUTO_fma+14),DE
+	ld	HL,??AUTO_fma+24
+	push	HL
+	ld	L,(IX+12)
+	ld	H,(IX+13)
+	ld	E,(IX+14)
+	ld	D,(IX+15)
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_fma+12)
 	ld	DE,(??AUTO_fma+14)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	E,(IX+6)
-	ld	D,(IX+7)
-	call	__fsub
-	ld	(??AUTO_fma+16),HL
-	ld	(??AUTO_fma+18),DE
-@DOCOND11_fma:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO10_fma
-@ENDDO12_fma:
-@DO13_fma:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	call	__fmul
-	ld	(??AUTO_fma+52),HL
-	ld	(??AUTO_fma+54),DE
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+52)
-	ld	DE,(??AUTO_fma+54)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+52)
-	ld	DE,(??AUTO_fma+54)
-	call	__fsub
+	push	DE
+	push	HL
+	call	__m_2sum
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_fma+20),HL
 	ld	(??AUTO_fma+22),DE
-	ld	HL,(??AUTO_fma+20)
-	ld	DE,(??AUTO_fma+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	call	__fsub
-	ld	(??AUTO_fma+24),HL
-	ld	(??AUTO_fma+26),DE
-@DOCOND14_fma:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO13_fma
-@ENDDO15_fma:
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_fma+20)
-	ld	DE,(??AUTO_fma+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+12)
-	ld	DE,(??AUTO_fma+14)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_fma+24)
-	ld	DE,(??AUTO_fma+26)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+12)
-	ld	DE,(??AUTO_fma+14)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_fma+20)
-	ld	DE,(??AUTO_fma+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_fma+16)
 	ld	DE,(??AUTO_fma+18)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
 	ld	HL,(??AUTO_fma+24)
 	ld	DE,(??AUTO_fma+26)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+16)
-	ld	DE,(??AUTO_fma+18)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_fma+32),HL
-	ld	(??AUTO_fma+34),DE
-	ld	L,(IX+12)
-	ld	H,(IX+13)
-	ld	E,(IX+14)
-	ld	D,(IX+15)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
-	call	__fadd
-	ld	(??AUTO_fma+36),HL
-	ld	(??AUTO_fma+38),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+36)
-	ld	DE,(??AUTO_fma+38)
-	call	__fsub
-	ld	(??AUTO_fma+40),HL
-	ld	(??AUTO_fma+42),DE
-	ld	HL,(??AUTO_fma+40)
-	ld	DE,(??AUTO_fma+42)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+12)
-	ld	H,(IX+13)
-	ld	E,(IX+14)
-	ld	D,(IX+15)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_fma+40)
-	ld	DE,(??AUTO_fma+42)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+36)
-	ld	DE,(??AUTO_fma+38)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_fma+44),HL
-	ld	(??AUTO_fma+46),DE
-	ld	HL,(??AUTO_fma+32)
-	ld	DE,(??AUTO_fma+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+44)
-	ld	DE,(??AUTO_fma+46)
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+36)
-	ld	DE,(??AUTO_fma+38)
+	ld	HL,(??AUTO_fma+20)
+	ld	DE,(??AUTO_fma+22)
 	call	__fadd
 @fma_ret:
 	pop	IX
@@ -591,13 +271,16 @@ _fmal:
 ; Runtime library functions
 	EXTRN	__fadd
 	EXTRN	__fmul
-	EXTRN	__fsub
 	EXTRN	__tmp32
+
+; Implicit external functions
+	EXTRN	__m_2prod
+	EXTRN	__m_2sum
 
 ; Static storage that starts as zero
 	COMMON	/lc_fma/
 ; Shared automatic storage
 ??AUTO_fma:
-	ds	56
+	ds	28
 
 	END

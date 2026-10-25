@@ -9,9 +9,9 @@ double fmin(double x, double y)
 
     a.f = x;
     b.f = y;
-    if (M_EXP(a) == 255 && M_MANT(a))
+    if M_ISNAN(a)
         return y;
-    if (M_EXP(b) == 255 && M_MANT(b))
+    if M_ISNAN(b)
         return x;
     if (x < y)
         return x;

@@ -27,42 +27,24 @@ _logl:
 	ld	(??AUTO_log+2),DE
 	ld	A,(??AUTO_log+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_log+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_log
-	ld	HL,(??AUTO_log)
-	ld	DE,(??AUTO_log+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_log+2)
+	and	128
+	jr z,@ENDIF2_log
+	ld	A,(??AUTO_log+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S5_log
 	ld	A,(??AUTO_log+3)
 	and	128
@@ -82,22 +64,24 @@ _logl:
 	ld	DE,(??AUTO_log+2)
 	jp	@log_ret
 @ENDIF2_log:
-	ld	HL,(??AUTO_log)
-	ld	DE,(??AUTO_log+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_log+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF7_log
 	ld	HL,0
 	ld	(??AUTO_log),HL

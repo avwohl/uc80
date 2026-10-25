@@ -15,8 +15,8 @@ double modf(double x, double *iptr)
     }
     ip = _m_round(x, 0);
     *iptr = ip;
-    if (M_EXP(u) == 255)
-        f.u = M_MANT(u) ? u.u : (u.u & 0x80000000UL);   /* inf: +-0 */
+    if (M_SPEC(u))
+        f.u = M_NANM(u) ? u.u : (u.u & 0x80000000UL);   /* inf: +-0 */
     else {
         f.f = x - ip;
         if (f.u << 1 == 0)

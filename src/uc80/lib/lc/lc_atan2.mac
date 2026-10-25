@@ -34,82 +34,46 @@ _atan2l:
 	ld	(??AUTO_atan2+6),DE
 	ld	A,(??AUTO_atan2+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@AND_S4_atan2
-	ld	HL,(??AUTO_atan2)
-	ld	DE,(??AUTO_atan2+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_atan2+2)
+	and	128
+	jr z,@AND_S4_atan2
+	ld	A,(??AUTO_atan2+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atan2+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S3_atan2
 @AND_S4_atan2:
 	ld	A,(??AUTO_atan2+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_atan2
-	ld	HL,(??AUTO_atan2+4)
-	ld	DE,(??AUTO_atan2+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_atan2+6)
+	and	128
+	jr z,@ENDIF2_atan2
+	ld	A,(??AUTO_atan2+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atan2+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_atan2
 @OR_S3_atan2:
 	ld	L,(IX+4)
@@ -378,22 +342,24 @@ _atan2l:
 @TERN_END18_atan2:
 	ld	(??AUTO_atan2+12),HL
 	ld	(??AUTO_atan2+14),DE
-	ld	HL,(??AUTO_atan2)
-	ld	DE,(??AUTO_atan2+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_atan2+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atan2+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF20_atan2
 	ld	HL,(??AUTO_atan2+28)
 	ld	A,H
@@ -426,56 +392,18 @@ _atan2l:
 @ENDIF20_atan2:
 	ld	A,(??AUTO_atan2+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF26_atan2
+	ld	A,(??AUTO_atan2+2)
+	and	128
+	jr z,@ENDIF26_atan2
 	ld	A,(??AUTO_atan2+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ELSE27_atan2
+	ld	A,(??AUTO_atan2+6)
+	and	128
+	jr z,@ELSE27_atan2
 	ld	HL,(??AUTO_atan2+28)
 	ld	A,H
 	or	L
@@ -512,22 +440,24 @@ _atan2l:
 @TERN_END32_atan2:
 	jp	@atan2_ret
 @ENDIF26_atan2:
-	ld	HL,(??AUTO_atan2+4)
-	ld	DE,(??AUTO_atan2+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_atan2+7)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atan2+6)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF34_atan2
 	ld	HL,4059
 	ld	DE,16329
@@ -551,30 +481,11 @@ _atan2l:
 @ENDIF34_atan2:
 	ld	A,(??AUTO_atan2+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF38_atan2
+	ld	A,(??AUTO_atan2+6)
+	and	128
+	jr z,@ENDIF38_atan2
 	ld	HL,(??AUTO_atan2+28)
 	ld	A,H
 	or	L

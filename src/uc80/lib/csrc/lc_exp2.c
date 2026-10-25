@@ -7,11 +7,11 @@ double exp2(double x)
 {
     m_u u;
     int n;
-    float f, r, c, y, fh, fl, pe, z;
+    float f, r, c, y, pe, z;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         return M_NEG(u) ? 0.0f : x;
     }
@@ -21,17 +21,12 @@ double exp2(double x)
     }
     if (x < -150.0f)
         return 0.0f;
-    if (M_EXP(u) < 103)
+    if (M_TINY25(u))
         return 1.0f;
     n = (int)(x + (x < 0 ? -0.5f : 0.5f));
     f = x - (float)n;
-    /* r + c = f * ln2, where ln2 = 0.693147182 - 1.90465421e-9; the
-     * rounding error of the float product comes from the split of both
-     * factors (ln2h + ln2l = 0.693147182) */
-    r = f * 0.693147182f;
-    M_SPLIT(f, fh, fl);
-    pe = ((fh * 0.693115234f - r) + fh * 3.19480896e-05f + fl * 0.693115234f)
-         + fl * 3.19480896e-05f;
+    /* r + c = f * ln2, where ln2 = 0.693147182 - 1.90465421e-9 */
+    r = _m_2prod(f, 0.693147182f, &pe);
     c = pe + f * -1.90465421e-9f;
     z = r * r;
     y = ((((0.000198577953f * r + 0.00139335997f) * r + 0.00833336078f) * r

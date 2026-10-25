@@ -71,22 +71,24 @@ __m_round:
 	ld	HL,(??AUTO_m_round+20)
 	bit	7,H
 	jp	Z,@ELSE3_m_round
-	ld	HL,(??AUTO_m_round)
-	ld	DE,(??AUTO_m_round+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_m_round+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_m_round+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_m_round+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_m_round)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF6_m_round
 	ld	L,(IX+4)
 	ld	H,(IX+5)

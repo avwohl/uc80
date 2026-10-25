@@ -11,8 +11,8 @@ double atanh(double x)
     int neg;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         u.u = M_NAN;
         return u.f;
@@ -27,7 +27,7 @@ double atanh(double x)
         u.u = M_INF | (u.u & 0x80000000UL);
         return u.f;
     }
-    if (M_EXP(u) < 114)
+    if (M_TINY(u))
         return x;
     if (ax < 0.5f)
         y = 0.5f * log1p(2.0f * ax + 2.0f * ax * ax / (1.0f - ax));

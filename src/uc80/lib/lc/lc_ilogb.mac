@@ -27,42 +27,24 @@ _ilogbl:
 	ld	(??AUTO_ilogb+2),DE
 	ld	A,(??AUTO_ilogb+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_ilogb+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_ilogb
-	ld	HL,(??AUTO_ilogb)
-	ld	DE,(??AUTO_ilogb+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_ilogb+2)
+	and	128
+	jr z,@ENDIF2_ilogb
+	ld	A,(??AUTO_ilogb+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_ilogb+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_ilogb)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@TERN_E3_ilogb
 	ld	HL,-32768
 	jr @ilogb_ret
@@ -71,22 +53,24 @@ _ilogbl:
 @TERN_END4_ilogb:
 	jr @ilogb_ret
 @ENDIF2_ilogb:
-	ld	HL,(??AUTO_ilogb)
-	ld	DE,(??AUTO_ilogb+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_ilogb+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_ilogb+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_ilogb+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_ilogb)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF6_ilogb
 	ld	HL,-32768
 	jr @ilogb_ret

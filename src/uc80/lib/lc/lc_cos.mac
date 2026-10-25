@@ -29,42 +29,24 @@ _cosl:
 	ld	(??AUTO_cos+2),DE
 	ld	A,(??AUTO_cos+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_cos+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_cos
-	ld	HL,(??AUTO_cos)
-	ld	DE,(??AUTO_cos+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_cos+2)
+	and	128
+	jr z,@ENDIF2_cos
+	ld	A,(??AUTO_cos+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_cos+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_cos)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_cos
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -82,34 +64,7 @@ _cosl:
 @ENDIF2_cos:
 	ld	A,(??AUTO_cos+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_cos+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF6_cos
 	ld	HL,0
 	ld	DE,16256

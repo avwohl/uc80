@@ -15,13 +15,13 @@ double tan(double x)
     int n, neg;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         u.u = M_NAN;
         return u.f;
     }
-    if (M_EXP(u) < 114)
+    if (M_TINY(u))
         return x;
     neg = M_NEG(u);
     u.u &= 0x7FFFFFFFUL;

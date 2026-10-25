@@ -13,7 +13,7 @@ extern double scalbn(double x, int n);
 double hypot(double x, double y)
 {
     m_u a, b, t;
-    float ah, al, bh, bl, pa, pb, ea, eb, s, es, lo, r, h, hh, hl, p, pe;
+    float pa, pb, ea, eb, s, es, lo, r, h, p, pe;
     int ex, ey, k;
 
     a.f = x;
@@ -24,7 +24,7 @@ double hypot(double x, double y)
         t.u = M_INF;
         return t.f;
     }
-    if ((M_EXP(a) == 255) || (M_EXP(b) == 255))
+    if ((M_SPEC(a)) || (M_SPEC(b)))
         return a.f + b.f;               /* a NaN */
     if (a.u < b.u) {
         t = a;
@@ -43,19 +43,12 @@ double hypot(double x, double y)
     b.f = scalbn(b.f, -k);
     if (M_EXP(b) == 0)
         b.u = 0;
-    M_SPLIT(a.f, ah, al);
-    M_SPLIT(b.f, bh, bl);
-    pa = a.f * a.f;
-    ea = ((ah * ah - pa) + 2.0f * ah * al) + al * al;
-    pb = b.f * b.f;
-    eb = ((bh * bh - pb) + 2.0f * bh * bl) + bl * bl;
-    s = pa + pb;
-    es = (pa - s) + pb;                 /* pa >= pb: exact */
+    pa = _m_2prod(a.f, a.f, &ea);
+    pb = _m_2prod(b.f, b.f, &eb);
+    s = _m_2sum(pa, pb, &es);
     lo = (ea + eb) + es;
     h = sqrt(s);
-    M_SPLIT(h, hh, hl);
-    p = h * h;
-    pe = ((hh * hh - p) + 2.0f * hh * hl) + hl * hl;
+    p = _m_2prod(h, h, &pe);
     r = ((s - p) - pe) + lo;
     h = h + r / (h + h);
     return scalbn(h, k);

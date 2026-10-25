@@ -295,3 +295,57 @@ int main(void)
         if not same(gn, exp_n):
             bad.append(("nextafter", x, y, "%08x" % gn, exp_n))
     assert not bad, bad[:6]
+
+
+def test_fma_rounds_once(tmp_path):
+    from fractions import Fraction
+    rng = random.Random(4)
+    triples = []
+    for _ in range(150):
+        e = rng.randint(100, 150)
+        x = (rng.getrandbits(1) << 31) | (e << 23) | rng.getrandbits(23)
+        y = (rng.getrandbits(1) << 31) | (rng.randint(100, 150) << 23) \
+            | rng.getrandbits(23)
+        # z close to -x*y so that the sum cancels, or unrelated
+        p = decode_f32(x) * decode_f32(y)
+        z = encode_f32(-p * (1 + rng.choice([0, 2.0 ** -23, -2.0 ** -22,
+                                             2.0 ** -20, 0.5, 1e-9])))
+        triples.append((x, y, z if rng.random() < 0.7 else
+                        encode_f32(rng.uniform(-1e3, 1e3))))
+    triples += [(0x3F800000, 0x3F800000, 0x3F800000),
+                (0x40000000, 0x40400000, 0xC0C00000),
+                (0x7F800000, 0x3F800000, 0x3F800000),
+                (0x7FC00000, 0x3F800000, 0x3F800000),
+                (0x3F800000, 0x7F800000, 0xFF800000)]
+    table_ = ",".join("{0x%08xUL,0x%08xUL,0x%08xUL}" % t for t in triples)
+    out = build_and_run(tmp_path, PROLOGUE + r"""
+static const unsigned long T[][3] = {%s};
+int main(void)
+{
+    int i;
+    for (i = 0; i < sizeof T / sizeof T[0]; i++)
+        printf("%%lx\n", bits(fma(fr(T[i][0]), fr(T[i][1]), fr(T[i][2]))));
+    return 0;
+}
+""" % table_)
+    lines = [ln for ln in out.split("\n") if ln]
+    assert len(lines) == len(triples)
+    bad = []
+    for (a, b, c), line in zip(triples, lines):
+        x, y, z = decode_f32(a), decode_f32(b), decode_f32(c)
+        got = int(line, 16)
+        if any(map(math.isnan, (x, y, z))):
+            ok = math.isnan(decode_f32(got))
+        elif any(map(math.isinf, (x, y, z))):
+            ok = got in (0x7F800000, 0xFF800000, 0x7FC00000) or \
+                same(got, x * y + z if not math.isnan(x * y + z) else math.nan)
+        else:
+            exact = Fraction(x) * Fraction(y) + Fraction(z)
+            exp = encode_f32(float(exact))
+            ok = abs(got - exp) <= (1 if exact != 0 else 0) and \
+                (exp & 0x7F800000) != 0
+            if exact == 0:
+                ok = (got & 0x7FFFFFFF) == 0
+        if not ok:
+            bad.append((x, y, z, "%08x" % got))
+    assert not bad, (len(bad), bad[:4])

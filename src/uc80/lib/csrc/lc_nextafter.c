@@ -9,7 +9,7 @@ double nextafter(double x, double y)
 
     a.f = x;
     b.f = y;
-    if ((M_EXP(a) == 255 && M_MANT(a)) || (M_EXP(b) == 255 && M_MANT(b))) {
+    if (M_ISNAN(a) || M_ISNAN(b)) {
         a.u = M_NAN;
         return a.f;
     }

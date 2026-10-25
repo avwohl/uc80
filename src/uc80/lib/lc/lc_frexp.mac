@@ -27,46 +27,30 @@ _frexpl:
 	ld	(??AUTO_frexp+2),DE
 	ld	A,(??AUTO_frexp+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S4_frexp
 	ld	A,(??AUTO_frexp+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S3_frexp
-	ld	HL,(??AUTO_frexp)
-	ld	DE,(??AUTO_frexp+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S3_frexp
+@AND_S4_frexp:
+	ld	A,(??AUTO_frexp+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_frexp+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_frexp+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_frexp)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF2_frexp
 @OR_S3_frexp:
 	ld	L,(IX+8)

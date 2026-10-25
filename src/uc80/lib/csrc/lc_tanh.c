@@ -17,12 +17,12 @@ double tanh(double x)
     int neg;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         return M_NEG(u) ? -1.0f : 1.0f;
     }
-    if (M_EXP(u) < 114)
+    if (M_TINY(u))
         return x;
     neg = M_NEG(u) != 0;
     ax = neg ? -x : x;

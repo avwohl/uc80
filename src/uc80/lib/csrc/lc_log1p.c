@@ -10,8 +10,8 @@ double log1p(double x)
     float u;
 
     a.f = x;
-    if (M_EXP(a) == 255) {
-        if (M_MANT(a) || !M_NEG(a))
+    if (M_SPEC(a)) {
+        if (M_NANM(a) || !M_NEG(a))
             return x;
         a.u = M_NAN;
         return a.f;
@@ -24,7 +24,7 @@ double log1p(double x)
         a.u = 0xFF800000UL;
         return a.f;
     }
-    if (M_EXP(a) < 103)
+    if (M_TINY25(a))
         return x;                       /* |x| < 2^-24 */
     u = 1.0f + x;
     if (u == 1.0f)

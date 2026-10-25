@@ -121,42 +121,24 @@ _modfl:
 	ld	(HL),D
 	ld	A,(??AUTO_modf+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_modf+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ELSE3_modf
-	ld	HL,(??AUTO_modf)
-	ld	DE,(??AUTO_modf+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_modf+2)
+	and	128
+	jr z,@ELSE3_modf
+	ld	A,(??AUTO_modf+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_modf+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_modf)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@TERN_E5_modf
 	ld	HL,(??AUTO_modf)
 	ld	DE,(??AUTO_modf+2)

@@ -104,42 +104,24 @@ _acosl:
 	ld	(??AUTO_acos+2),DE
 	ld	A,(??AUTO_acos+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_acos+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_acos
-	ld	HL,(??AUTO_acos)
-	ld	DE,(??AUTO_acos+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_acos+2)
+	and	128
+	jr z,@ENDIF2_acos
+	ld	A,(??AUTO_acos+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_acos+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_acos)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_acos
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -488,42 +470,24 @@ _acoshl:
 	ld	(??AUTO_acosh+2),DE
 	ld	A,(??AUTO_acosh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_acosh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_acosh
-	ld	HL,(??AUTO_acosh)
-	ld	DE,(??AUTO_acosh+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_acosh+2)
+	and	128
+	jr z,@ENDIF2_acosh
+	ld	A,(??AUTO_acosh+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_acosh+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_acosh)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S5_acosh
 	ld	A,(??AUTO_acosh+3)
 	and	128
@@ -869,42 +833,24 @@ _asinl:
 	ld	(??AUTO_asin+2),DE
 	ld	A,(??AUTO_asin+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_asin+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_asin
-	ld	HL,(??AUTO_asin)
-	ld	DE,(??AUTO_asin+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_asin+2)
+	and	128
+	jr z,@ENDIF2_asin
+	ld	A,(??AUTO_asin+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_asin+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_asin)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_asin
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -968,34 +914,7 @@ _asinl:
 @ENDIF8_asin:
 	ld	A,(??AUTO_asin+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_asin+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF13_asin
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -1194,30 +1113,11 @@ _asinhl:
 	ld	(??AUTO_asinh+2),DE
 	ld	A,(??AUTO_asinh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_asinh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_asinh
+	ld	A,(??AUTO_asinh+2)
+	and	128
+	jr z,@ENDIF2_asinh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
@@ -1226,34 +1126,7 @@ _asinhl:
 @ENDIF2_asinh:
 	ld	A,(??AUTO_asinh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_asinh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF4_asinh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -1572,42 +1445,24 @@ _atanl:
 	ld	(??AUTO_atan+2),DE
 	ld	A,(??AUTO_atan+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_atan
-	ld	HL,(??AUTO_atan)
-	ld	DE,(??AUTO_atan+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_atan+2)
+	and	128
+	jr z,@ENDIF2_atan
+	ld	A,(??AUTO_atan+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atan+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_atan
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -1636,34 +1491,7 @@ _atanl:
 @ENDIF2_atan:
 	ld	A,(??AUTO_atan+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF8_atan
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -2138,82 +1966,46 @@ _atan2l:
 	ld	(??AUTO_atan2+6),DE
 	ld	A,(??AUTO_atan2+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@AND_S4_atan2
-	ld	HL,(??AUTO_atan2)
-	ld	DE,(??AUTO_atan2+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_atan2+2)
+	and	128
+	jr z,@AND_S4_atan2
+	ld	A,(??AUTO_atan2+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atan2+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S3_atan2
 @AND_S4_atan2:
 	ld	A,(??AUTO_atan2+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_atan2
-	ld	HL,(??AUTO_atan2+4)
-	ld	DE,(??AUTO_atan2+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_atan2+6)
+	and	128
+	jr z,@ENDIF2_atan2
+	ld	A,(??AUTO_atan2+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atan2+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_atan2
 @OR_S3_atan2:
 	ld	L,(IX+4)
@@ -2482,22 +2274,24 @@ _atan2l:
 @TERN_END18_atan2:
 	ld	(??AUTO_atan2+12),HL
 	ld	(??AUTO_atan2+14),DE
-	ld	HL,(??AUTO_atan2)
-	ld	DE,(??AUTO_atan2+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_atan2+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atan2+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF20_atan2
 	ld	HL,(??AUTO_atan2+28)
 	ld	A,H
@@ -2530,56 +2324,18 @@ _atan2l:
 @ENDIF20_atan2:
 	ld	A,(??AUTO_atan2+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF26_atan2
+	ld	A,(??AUTO_atan2+2)
+	and	128
+	jr z,@ENDIF26_atan2
 	ld	A,(??AUTO_atan2+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ELSE27_atan2
+	ld	A,(??AUTO_atan2+6)
+	and	128
+	jr z,@ELSE27_atan2
 	ld	HL,(??AUTO_atan2+28)
 	ld	A,H
 	or	L
@@ -2616,22 +2372,24 @@ _atan2l:
 @TERN_END32_atan2:
 	jp	@atan2_ret
 @ENDIF26_atan2:
-	ld	HL,(??AUTO_atan2+4)
-	ld	DE,(??AUTO_atan2+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_atan2+7)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atan2+6)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atan2+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF34_atan2
 	ld	HL,4059
 	ld	DE,16329
@@ -2655,30 +2413,11 @@ _atan2l:
 @ENDIF34_atan2:
 	ld	A,(??AUTO_atan2+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atan2+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF38_atan2
+	ld	A,(??AUTO_atan2+6)
+	and	128
+	jr z,@ENDIF38_atan2
 	ld	HL,(??AUTO_atan2+28)
 	ld	A,H
 	or	L
@@ -2964,42 +2703,24 @@ _atanhl:
 	ld	(??AUTO_atanh+2),DE
 	ld	A,(??AUTO_atanh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atanh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_atanh
-	ld	HL,(??AUTO_atanh)
-	ld	DE,(??AUTO_atanh+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_atanh+2)
+	and	128
+	jr z,@ENDIF2_atanh
+	ld	A,(??AUTO_atanh+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_atanh+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_atanh)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_atanh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -3108,34 +2829,7 @@ _atanhl:
 @ENDIF13_atanh:
 	ld	A,(??AUTO_atanh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_atanh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF18_atanh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -5417,46 +5111,30 @@ _cbrtl:
 	ld	(??AUTO_cbrt+2),DE
 	ld	A,(??AUTO_cbrt+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S4_cbrt
 	ld	A,(??AUTO_cbrt+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S3_cbrt
-	ld	HL,(??AUTO_cbrt)
-	ld	DE,(??AUTO_cbrt+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S3_cbrt
+@AND_S4_cbrt:
+	ld	A,(??AUTO_cbrt+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_cbrt+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_cbrt+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_cbrt)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF2_cbrt
 @OR_S3_cbrt:
 	ld	L,(IX+4)
@@ -5497,7 +5175,7 @@ _cbrtl:
 	sbc	HL,DE
 	ld	(??AUTO_cbrt+16),HL
 	bit	7,H
-	jr z,@ENDIF5_cbrt
+	jr z,@ENDIF6_cbrt
 	inc	HL
 	inc	HL
 	inc	HL
@@ -5505,7 +5183,7 @@ _cbrtl:
 	ld	HL,(??AUTO_cbrt+14)
 	dec	HL
 	ld	(??AUTO_cbrt+14),HL
-@ENDIF5_cbrt:
+@ENDIF6_cbrt:
 	ld	HL,(??AUTO_cbrt+8)
 	ld	DE,(??AUTO_cbrt+10)
 	ld	A,E
@@ -5526,17 +5204,17 @@ _cbrtl:
 	ld	(??AUTO_cbrt+22),DE
 	ld	HL,0
 	ld	(??AUTO_cbrt+18),HL
-@FOR6_cbrt:
+@FOR7_cbrt:
 	ld	HL,(??AUTO_cbrt+18)
 	ld	DE,(??AUTO_cbrt+16)
 	ld	A,L
 	sub	E
 	ld	A,H
 	sbc	A,D
-	jp	PO,@CMP_NV9_cbrt
+	jp	PO,@CMP_NV10_cbrt
 	xor	128
-@CMP_NV9_cbrt:
-	jp	P,@ENDFOR8_cbrt
+@CMP_NV10_cbrt:
+	jp	P,@ENDFOR9_cbrt
 	ld	HL,(??AUTO_cbrt+20)
 	ld	DE,(??AUTO_cbrt+22)
 	ld	(__tmp32),HL
@@ -5546,12 +5224,12 @@ _cbrtl:
 	call	__fadd
 	ld	(??AUTO_cbrt+20),HL
 	ld	(??AUTO_cbrt+22),DE
-@FORUPD7_cbrt:
+@FORUPD8_cbrt:
 	ld	HL,(??AUTO_cbrt+18)
 	inc	HL
 	ld	(??AUTO_cbrt+18),HL
-	jr @FOR6_cbrt
-@ENDFOR8_cbrt:
+	jr @FOR7_cbrt
+@ENDFOR9_cbrt:
 	ld	HL,(??AUTO_cbrt+20)
 	ld	DE,(??AUTO_cbrt+22)
 	ld	(??AUTO_cbrt+4),HL
@@ -5583,7 +5261,7 @@ _cbrtl:
 	ld	(??AUTO_cbrt+26),DE
 	ld	HL,0
 	ld	(??AUTO_cbrt+18),HL
-@FOR10_cbrt:
+@FOR11_cbrt:
 	ld	HL,(??AUTO_cbrt+18)
 	ld	A,H
 	xor	128
@@ -5592,7 +5270,7 @@ _cbrtl:
 	sub	4
 	ld	A,D
 	sbc	A,128
-	jp	NC,@ENDFOR12_cbrt
+	jp	NC,@ENDFOR13_cbrt
 	ld	HL,43691
 	ld	DE,16042
 	ld	(__tmp32),HL
@@ -5650,12 +5328,12 @@ _cbrtl:
 	call	__fmul
 	ld	(??AUTO_cbrt+24),HL
 	ld	(??AUTO_cbrt+26),DE
-@FORUPD11_cbrt:
+@FORUPD12_cbrt:
 	ld	HL,(??AUTO_cbrt+18)
 	inc	HL
 	ld	(??AUTO_cbrt+18),HL
-	jp	@FOR10_cbrt
-@ENDFOR12_cbrt:
+	jp	@FOR11_cbrt
+@ENDFOR13_cbrt:
 	ld	HL,(??AUTO_cbrt+24)
 	ld	DE,(??AUTO_cbrt+26)
 	ld	(__tmp32),HL
@@ -5670,357 +5348,53 @@ _cbrtl:
 	call	__fmul
 	ld	(??AUTO_cbrt+28),HL
 	ld	(??AUTO_cbrt+30),DE
-@DO13_cbrt:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
+	ld	HL,??AUTO_cbrt+36
+	push	HL
 	ld	HL,(??AUTO_cbrt+28)
 	ld	DE,(??AUTO_cbrt+30)
-	call	__fmul
-	ld	(??AUTO_cbrt+72),HL
-	ld	(??AUTO_cbrt+74),DE
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_cbrt+28)
 	ld	DE,(??AUTO_cbrt+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+72)
-	ld	DE,(??AUTO_cbrt+74)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+72)
-	ld	DE,(??AUTO_cbrt+74)
-	call	__fsub
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_cbrt+32),HL
 	ld	(??AUTO_cbrt+34),DE
+	ld	HL,??AUTO_cbrt+44
+	push	HL
+	ld	HL,(??AUTO_cbrt+28)
+	ld	DE,(??AUTO_cbrt+30)
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_cbrt+32)
 	ld	DE,(??AUTO_cbrt+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+28)
-	ld	DE,(??AUTO_cbrt+30)
-	call	__fsub
-	ld	(??AUTO_cbrt+36),HL
-	ld	(??AUTO_cbrt+38),DE
-@DOCOND14_cbrt:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO13_cbrt
-@ENDDO15_cbrt:
-	ld	HL,(??AUTO_cbrt+28)
-	ld	DE,(??AUTO_cbrt+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+28)
-	ld	DE,(??AUTO_cbrt+30)
-	call	__fmul
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_cbrt+40),HL
 	ld	(??AUTO_cbrt+42),DE
-	ld	HL,(??AUTO_cbrt+36)
-	ld	DE,(??AUTO_cbrt+38)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+36)
-	ld	DE,(??AUTO_cbrt+38)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_cbrt+40)
-	ld	DE,(??AUTO_cbrt+42)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_cbrt+32)
-	ld	DE,(??AUTO_cbrt+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+32)
-	ld	DE,(??AUTO_cbrt+34)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,16384
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+32)
-	ld	DE,(??AUTO_cbrt+34)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+36)
-	ld	DE,(??AUTO_cbrt+38)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_cbrt+44),HL
-	ld	(??AUTO_cbrt+46),DE
-@DO16_cbrt:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+40)
-	ld	DE,(??AUTO_cbrt+42)
-	call	__fmul
-	ld	(??AUTO_cbrt+76),HL
-	ld	(??AUTO_cbrt+78),DE
-	ld	HL,(??AUTO_cbrt+40)
-	ld	DE,(??AUTO_cbrt+42)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+76)
-	ld	DE,(??AUTO_cbrt+78)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+76)
-	ld	DE,(??AUTO_cbrt+78)
-	call	__fsub
-	ld	(??AUTO_cbrt+48),HL
-	ld	(??AUTO_cbrt+50),DE
-	ld	HL,(??AUTO_cbrt+48)
-	ld	DE,(??AUTO_cbrt+50)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+40)
-	ld	DE,(??AUTO_cbrt+42)
-	call	__fsub
-	ld	(??AUTO_cbrt+52),HL
-	ld	(??AUTO_cbrt+54),DE
-@DOCOND17_cbrt:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO16_cbrt
-@ENDDO18_cbrt:
-	ld	HL,(??AUTO_cbrt+28)
-	ld	DE,(??AUTO_cbrt+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+40)
-	ld	DE,(??AUTO_cbrt+42)
-	call	__fmul
-	ld	(??AUTO_cbrt+56),HL
-	ld	(??AUTO_cbrt+58),DE
-	ld	HL,(??AUTO_cbrt+56)
-	ld	DE,(??AUTO_cbrt+58)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_cbrt+32)
-	ld	DE,(??AUTO_cbrt+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+48)
-	ld	DE,(??AUTO_cbrt+50)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_cbrt+36)
-	ld	DE,(??AUTO_cbrt+38)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+48)
-	ld	DE,(??AUTO_cbrt+50)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_cbrt+32)
-	ld	DE,(??AUTO_cbrt+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+52)
-	ld	DE,(??AUTO_cbrt+54)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_cbrt+36)
-	ld	DE,(??AUTO_cbrt+38)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+52)
-	ld	DE,(??AUTO_cbrt+54)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_cbrt+60),HL
-	ld	(??AUTO_cbrt+62),DE
 	ld	HL,(??AUTO_cbrt+20)
 	ld	DE,(??AUTO_cbrt+22)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+56)
-	ld	DE,(??AUTO_cbrt+58)
+	ld	HL,(??AUTO_cbrt+40)
+	ld	DE,(??AUTO_cbrt+42)
 	call	__fsub
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+60)
-	ld	DE,(??AUTO_cbrt+62)
+	ld	HL,(??AUTO_cbrt+44)
+	ld	DE,(??AUTO_cbrt+46)
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -6032,8 +5406,8 @@ _cbrtl:
 	ld	DE,(??AUTO_cbrt+30)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+44)
-	ld	DE,(??AUTO_cbrt+46)
+	ld	HL,(??AUTO_cbrt+36)
+	ld	DE,(??AUTO_cbrt+38)
 	call	__fmul
 	push	DE
 	push	HL
@@ -6055,8 +5429,8 @@ _cbrtl:
 	inc	SP
 	inc	SP
 	call	__fadd
-	ld	(??AUTO_cbrt+64),HL
-	ld	(??AUTO_cbrt+66),DE
+	ld	(??AUTO_cbrt+48),HL
+	ld	(??AUTO_cbrt+50),DE
 	ld	HL,(??AUTO_cbrt+24)
 	ld	DE,(??AUTO_cbrt+26)
 	ld	(__tmp32),HL
@@ -6069,14 +5443,14 @@ _cbrtl:
 	ld	HL,43691
 	ld	DE,16042
 	call	__fmul
-	ld	(??AUTO_cbrt+68),HL
-	ld	(??AUTO_cbrt+70),DE
-	ld	HL,(??AUTO_cbrt+68)
-	ld	DE,(??AUTO_cbrt+70)
+	ld	(??AUTO_cbrt+52),HL
+	ld	(??AUTO_cbrt+54),DE
+	ld	HL,(??AUTO_cbrt+52)
+	ld	DE,(??AUTO_cbrt+54)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_cbrt+64)
-	ld	DE,(??AUTO_cbrt+66)
+	ld	HL,(??AUTO_cbrt+48)
+	ld	DE,(??AUTO_cbrt+50)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -6118,7 +5492,7 @@ _cbrtl:
 	ld	(??AUTO_cbrt+6),DE
 	ld	A,(??AUTO_cbrt+3)
 	and	128
-	jr z,@ENDIF20_cbrt
+	jr z,@ENDIF15_cbrt
 	ld	HL,(??AUTO_cbrt+4)
 	ld	DE,(??AUTO_cbrt+6)
 	ld	A,D
@@ -6126,7 +5500,7 @@ _cbrtl:
 	ld	D,A
 	ld	(??AUTO_cbrt+4),HL
 	ld	(??AUTO_cbrt+6),DE
-@ENDIF20_cbrt:
+@ENDIF15_cbrt:
 	ld	HL,(??AUTO_cbrt+4)
 	ld	DE,(??AUTO_cbrt+6)
 @cbrt_ret:
@@ -6148,7 +5522,7 @@ _cbrtl:
 	COMMON	/lc_cbrt/
 ; Shared automatic storage
 ??AUTO_cbrt:
-	ds	80
+	ds	56
 
 
 	CSEG
@@ -7461,42 +6835,24 @@ _cosl:
 	ld	(??AUTO_cos+2),DE
 	ld	A,(??AUTO_cos+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_cos+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_cos
-	ld	HL,(??AUTO_cos)
-	ld	DE,(??AUTO_cos+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_cos+2)
+	and	128
+	jr z,@ENDIF2_cos
+	ld	A,(??AUTO_cos+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_cos+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_cos)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_cos
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -7514,34 +6870,7 @@ _cosl:
 @ENDIF2_cos:
 	ld	A,(??AUTO_cos+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_cos+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF6_cos
 	ld	HL,0
 	ld	DE,16256
@@ -7672,42 +7001,24 @@ _coshl:
 	ld	(??AUTO_cosh+2),DE
 	ld	A,(??AUTO_cosh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_cosh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_cosh
-	ld	HL,(??AUTO_cosh)
-	ld	DE,(??AUTO_cosh+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_cosh+2)
+	and	128
+	jr z,@ENDIF2_cosh
+	ld	A,(??AUTO_cosh+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_cosh+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_cosh)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_cosh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -7728,34 +7039,7 @@ _coshl:
 @ENDIF2_cosh:
 	ld	A,(??AUTO_cosh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_cosh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF6_cosh
 	ld	HL,0
 	ld	DE,16256
@@ -8204,42 +7488,24 @@ _expl:
 	ld	(??AUTO_exp+2),DE
 	ld	A,(??AUTO_exp+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_exp+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_exp
-	ld	HL,(??AUTO_exp)
-	ld	DE,(??AUTO_exp+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_exp+2)
+	and	128
+	jr z,@ENDIF2_exp
+	ld	A,(??AUTO_exp+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_exp+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_exp)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_exp
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -8315,38 +7581,11 @@ _expl:
 	jr z,@ENDIF13_exp
 	ld	HL,0
 	ld	DE,0
-	jp	@exp_ret
+	jr @exp_ret
 @ENDIF13_exp:
 	ld	A,(??AUTO_exp+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_exp+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	103
-	ld	A,D
-	sbc	A,128
+	cp	51
 	jr nc,@ENDIF18_exp
 	ld	HL,0
 	ld	DE,16256
@@ -8459,42 +7698,24 @@ _exp2l:
 	ld	(??AUTO_exp2+2),DE
 	ld	A,(??AUTO_exp2+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_exp2+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_exp2
-	ld	HL,(??AUTO_exp2)
-	ld	DE,(??AUTO_exp2+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_exp2+2)
+	and	128
+	jr z,@ENDIF2_exp2
+	ld	A,(??AUTO_exp2+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_exp2+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_exp2)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_exp2
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -8573,34 +7794,7 @@ _exp2l:
 @ENDIF13_exp2:
 	ld	A,(??AUTO_exp2+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_exp2+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	103
-	ld	A,D
-	sbc	A,128
+	cp	51
 	jr nc,@ENDIF18_exp2
 	ld	HL,0
 	ld	DE,16256
@@ -8665,190 +7859,24 @@ _exp2l:
 	call	__fsub
 	ld	(??AUTO_exp2+6),HL
 	ld	(??AUTO_exp2+8),DE
+	ld	HL,??AUTO_exp2+22
+	push	HL
 	ld	HL,29208
 	ld	DE,16177
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_exp2+6)
 	ld	DE,(??AUTO_exp2+8)
-	call	__fmul
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_exp2+10),HL
 	ld	(??AUTO_exp2+12),DE
-@DO24_exp2:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+6)
-	ld	DE,(??AUTO_exp2+8)
-	call	__fmul
-	ld	(??AUTO_exp2+38),HL
-	ld	(??AUTO_exp2+40),DE
-	ld	HL,(??AUTO_exp2+6)
-	ld	DE,(??AUTO_exp2+8)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+38)
-	ld	DE,(??AUTO_exp2+40)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+38)
-	ld	DE,(??AUTO_exp2+40)
-	call	__fsub
-	ld	(??AUTO_exp2+22),HL
-	ld	(??AUTO_exp2+24),DE
-	ld	HL,(??AUTO_exp2+22)
-	ld	DE,(??AUTO_exp2+24)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+6)
-	ld	DE,(??AUTO_exp2+8)
-	call	__fsub
-	ld	(??AUTO_exp2+26),HL
-	ld	(??AUTO_exp2+28),DE
-@DOCOND25_exp2:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO24_exp2
-@ENDDO26_exp2:
-	ld	HL,0
-	ld	DE,14342
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+26)
-	ld	DE,(??AUTO_exp2+28)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,28672
-	ld	DE,16177
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+26)
-	ld	DE,(??AUTO_exp2+28)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,14342
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+22)
-	ld	DE,(??AUTO_exp2+24)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_exp2+10)
-	ld	DE,(??AUTO_exp2+12)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,28672
-	ld	DE,16177
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+22)
-	ld	DE,(??AUTO_exp2+24)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_exp2+30),HL
-	ld	(??AUTO_exp2+32),DE
 	ld	HL,58120
 	ld	DE,12546
 	ld	A,D
@@ -8861,8 +7889,8 @@ _exp2l:
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_exp2+30)
-	ld	DE,(??AUTO_exp2+32)
+	ld	HL,(??AUTO_exp2+22)
+	ld	DE,(??AUTO_exp2+24)
 	call	__fadd
 	ld	(??AUTO_exp2+14),HL
 	ld	(??AUTO_exp2+16),DE
@@ -8873,8 +7901,8 @@ _exp2l:
 	ld	HL,(??AUTO_exp2+10)
 	ld	DE,(??AUTO_exp2+12)
 	call	__fmul
-	ld	(??AUTO_exp2+34),HL
-	ld	(??AUTO_exp2+36),DE
+	ld	(??AUTO_exp2+26),HL
+	ld	(??AUTO_exp2+28),DE
 	ld	HL,0
 	ld	DE,16128
 	ld	(__tmp32),HL
@@ -9044,8 +8072,8 @@ _exp2l:
 	call	__fadd
 	ld	(??AUTO_exp2+18),HL
 	ld	(??AUTO_exp2+20),DE
-	ld	HL,(??AUTO_exp2+34)
-	ld	DE,(??AUTO_exp2+36)
+	ld	HL,(??AUTO_exp2+26)
+	ld	DE,(??AUTO_exp2+28)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_exp2+18)
@@ -9173,7 +8201,7 @@ _exp2l:
 	COMMON	/lc_exp2/
 ; Shared automatic storage
 ??AUTO_exp2:
-	ds	42
+	ds	30
 
 
 	CSEG
@@ -9207,42 +8235,24 @@ _expm1l:
 	ld	(??AUTO_expm1+2),DE
 	ld	A,(??AUTO_expm1+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_expm1+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_expm1
-	ld	HL,(??AUTO_expm1)
-	ld	DE,(??AUTO_expm1+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_expm1+2)
+	and	128
+	jr z,@ENDIF2_expm1
+	ld	A,(??AUTO_expm1+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_expm1+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_expm1)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_expm1
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -9328,34 +8338,7 @@ _expm1l:
 @ENDIF13_expm1:
 	ld	A,(??AUTO_expm1+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_expm1+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	103
-	ld	A,D
-	sbc	A,128
+	cp	51
 	jr nc,@ENDIF18_expm1
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -9997,42 +8980,24 @@ _fdiml:
 	ld	(??AUTO_fdim+6),DE
 	ld	A,(??AUTO_fdim+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fdim+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_fdim
-	ld	HL,(??AUTO_fdim)
-	ld	DE,(??AUTO_fdim+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fdim+2)
+	and	128
+	jr z,@ENDIF2_fdim
+	ld	A,(??AUTO_fdim+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fdim+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fdim)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_fdim
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -10042,42 +9007,24 @@ _fdiml:
 @ENDIF2_fdim:
 	ld	A,(??AUTO_fdim+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fdim+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF4_fdim
-	ld	HL,(??AUTO_fdim+4)
-	ld	DE,(??AUTO_fdim+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fdim+6)
+	and	128
+	jr z,@ENDIF4_fdim
+	ld	A,(??AUTO_fdim+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fdim+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fdim+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_fdim
 	ld	L,(IX+8)
 	ld	H,(IX+9)
@@ -10716,82 +9663,27 @@ _fmal:
 	ld	(??AUTO_fma+10),DE
 	ld	A,(??AUTO_fma+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S4_fma
 	ld	A,(??AUTO_fma+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S3_fma
+	and	128
+	jr nz,@OR_S3_fma
+@AND_S4_fma:
 	ld	A,(??AUTO_fma+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S5_fma
 	ld	A,(??AUTO_fma+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S3_fma
+	and	128
+	jr nz,@OR_S3_fma
+@AND_S5_fma:
 	ld	A,(??AUTO_fma+11)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fma+10)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_fma
+	ld	A,(??AUTO_fma+10)
+	and	128
+	jr z,@ENDIF2_fma
 @OR_S3_fma:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
@@ -10813,41 +9705,45 @@ _fmal:
 	call	__fadd
 	jp	@fma_ret
 @ENDIF2_fma:
-	ld	HL,(??AUTO_fma)
-	ld	DE,(??AUTO_fma+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_fma+3)
 	and	127
-	or	B
-	jr z,@OR_S6_fma
-	ld	HL,(??AUTO_fma+4)
-	ld	DE,(??AUTO_fma+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	push	AF
+	ld	A,(??AUTO_fma+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fma+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fma)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
+	jr z,@OR_S8_fma
+	ld	A,(??AUTO_fma+7)
 	and	127
-	or	B
-	jr nz,@ENDIF5_fma
-@OR_S6_fma:
+	push	AF
+	ld	A,(??AUTO_fma+6)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fma+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fma+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
+	jr nz,@ENDIF7_fma
+@OR_S8_fma:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	E,(IX+10)
@@ -10867,7 +9763,7 @@ _fmal:
 	ld	D,(IX+15)
 	call	__fadd
 	jp	@fma_ret
-@ENDIF5_fma:
+@ENDIF7_fma:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	E,(IX+10)
@@ -10879,38 +9775,20 @@ _fmal:
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	call	__fmul
-	ld	(??AUTO_fma+28),HL
-	ld	(??AUTO_fma+30),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
+	ld	(??AUTO_fma+12),HL
+	ld	(??AUTO_fma+14),DE
+	ld	HL,(??AUTO_fma+12)
+	ld	DE,(??AUTO_fma+14)
 	ld	(??AUTO_fma+8),HL
 	ld	(??AUTO_fma+10),DE
 	ld	A,(??AUTO_fma+11)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S12_fma
 	ld	A,(??AUTO_fma+10)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S9_fma
+	and	128
+	jr nz,@OR_S11_fma
+@AND_S12_fma:
 	ld	A,(??AUTO_fma+11)
 	and	127
 	ld	L,A
@@ -10941,325 +9819,72 @@ _fmal:
 	sub	30
 	ld	A,D
 	sbc	A,128
-	jr nc,@ENDIF8_fma
-@OR_S9_fma:
+	jr nc,@ENDIF10_fma
+@OR_S11_fma:
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	ld	E,(IX+14)
 	ld	D,(IX+15)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
+	ld	HL,(??AUTO_fma+12)
+	ld	DE,(??AUTO_fma+14)
 	call	__fadd
 	jp	@fma_ret
-@ENDIF8_fma:
-@DO10_fma:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
+@ENDIF10_fma:
+	ld	HL,??AUTO_fma+16
+	push	HL
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	E,(IX+10)
+	ld	D,(IX+11)
+	push	DE
+	push	HL
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
-	call	__fmul
-	ld	(??AUTO_fma+48),HL
-	ld	(??AUTO_fma+50),DE
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	E,(IX+6)
-	ld	D,(IX+7)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+48)
-	ld	DE,(??AUTO_fma+50)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+48)
-	ld	DE,(??AUTO_fma+50)
-	call	__fsub
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_fma+12),HL
 	ld	(??AUTO_fma+14),DE
+	ld	HL,??AUTO_fma+24
+	push	HL
+	ld	L,(IX+12)
+	ld	H,(IX+13)
+	ld	E,(IX+14)
+	ld	D,(IX+15)
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_fma+12)
 	ld	DE,(??AUTO_fma+14)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	E,(IX+6)
-	ld	D,(IX+7)
-	call	__fsub
-	ld	(??AUTO_fma+16),HL
-	ld	(??AUTO_fma+18),DE
-@DOCOND11_fma:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO10_fma
-@ENDDO12_fma:
-@DO13_fma:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	call	__fmul
-	ld	(??AUTO_fma+52),HL
-	ld	(??AUTO_fma+54),DE
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+52)
-	ld	DE,(??AUTO_fma+54)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+52)
-	ld	DE,(??AUTO_fma+54)
-	call	__fsub
+	push	DE
+	push	HL
+	call	__m_2sum
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_fma+20),HL
 	ld	(??AUTO_fma+22),DE
-	ld	HL,(??AUTO_fma+20)
-	ld	DE,(??AUTO_fma+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	call	__fsub
-	ld	(??AUTO_fma+24),HL
-	ld	(??AUTO_fma+26),DE
-@DOCOND14_fma:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO13_fma
-@ENDDO15_fma:
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_fma+20)
-	ld	DE,(??AUTO_fma+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+12)
-	ld	DE,(??AUTO_fma+14)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_fma+24)
-	ld	DE,(??AUTO_fma+26)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+12)
-	ld	DE,(??AUTO_fma+14)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_fma+20)
-	ld	DE,(??AUTO_fma+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_fma+16)
 	ld	DE,(??AUTO_fma+18)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
 	ld	HL,(??AUTO_fma+24)
 	ld	DE,(??AUTO_fma+26)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+16)
-	ld	DE,(??AUTO_fma+18)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_fma+32),HL
-	ld	(??AUTO_fma+34),DE
-	ld	L,(IX+12)
-	ld	H,(IX+13)
-	ld	E,(IX+14)
-	ld	D,(IX+15)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
-	call	__fadd
-	ld	(??AUTO_fma+36),HL
-	ld	(??AUTO_fma+38),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+36)
-	ld	DE,(??AUTO_fma+38)
-	call	__fsub
-	ld	(??AUTO_fma+40),HL
-	ld	(??AUTO_fma+42),DE
-	ld	HL,(??AUTO_fma+40)
-	ld	DE,(??AUTO_fma+42)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+12)
-	ld	H,(IX+13)
-	ld	E,(IX+14)
-	ld	D,(IX+15)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_fma+40)
-	ld	DE,(??AUTO_fma+42)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+36)
-	ld	DE,(??AUTO_fma+38)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+28)
-	ld	DE,(??AUTO_fma+30)
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_fma+44),HL
-	ld	(??AUTO_fma+46),DE
-	ld	HL,(??AUTO_fma+32)
-	ld	DE,(??AUTO_fma+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+44)
-	ld	DE,(??AUTO_fma+46)
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_fma+36)
-	ld	DE,(??AUTO_fma+38)
+	ld	HL,(??AUTO_fma+20)
+	ld	DE,(??AUTO_fma+22)
 	call	__fadd
 @fma_ret:
 	pop	IX
@@ -11269,14 +9894,15 @@ _fmal:
 ; Runtime library functions
 	EXTRN	__fadd
 	EXTRN	__fmul
-	EXTRN	__fsub
 	EXTRN	__tmp32
+
+; Implicit external functions
 
 ; Static storage that starts as zero
 	COMMON	/lc_fma/
 ; Shared automatic storage
 ??AUTO_fma:
-	ds	56
+	ds	28
 
 
 	CSEG
@@ -11316,42 +9942,24 @@ _fmaxl:
 	ld	(??AUTO_fmax+6),DE
 	ld	A,(??AUTO_fmax+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmax+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_fmax
-	ld	HL,(??AUTO_fmax)
-	ld	DE,(??AUTO_fmax+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmax+2)
+	and	128
+	jr z,@ENDIF2_fmax
+	ld	A,(??AUTO_fmax+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmax+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmax)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_fmax
 	ld	L,(IX+8)
 	ld	H,(IX+9)
@@ -11361,42 +9969,24 @@ _fmaxl:
 @ENDIF2_fmax:
 	ld	A,(??AUTO_fmax+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmax+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF4_fmax
-	ld	HL,(??AUTO_fmax+4)
-	ld	DE,(??AUTO_fmax+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmax+6)
+	and	128
+	jr z,@ENDIF4_fmax
+	ld	A,(??AUTO_fmax+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmax+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmax+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_fmax
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -11529,42 +10119,24 @@ _fminl:
 	ld	(??AUTO_fmin+6),DE
 	ld	A,(??AUTO_fmin+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmin+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_fmin
-	ld	HL,(??AUTO_fmin)
-	ld	DE,(??AUTO_fmin+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmin+2)
+	and	128
+	jr z,@ENDIF2_fmin
+	ld	A,(??AUTO_fmin+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmin+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmin)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_fmin
 	ld	L,(IX+8)
 	ld	H,(IX+9)
@@ -11574,42 +10146,24 @@ _fminl:
 @ENDIF2_fmin:
 	ld	A,(??AUTO_fmin+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmin+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF4_fmin
-	ld	HL,(??AUTO_fmin+4)
-	ld	DE,(??AUTO_fmin+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmin+6)
+	and	128
+	jr z,@ENDIF4_fmin
+	ld	A,(??AUTO_fmin+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmin+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmin+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_fmin
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -11740,42 +10294,24 @@ _fmodl:
 	ld	(??AUTO_fmod+6),DE
 	ld	A,(??AUTO_fmod+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmod+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_fmod
-	ld	HL,(??AUTO_fmod+4)
-	ld	DE,(??AUTO_fmod+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmod+6)
+	and	128
+	jr z,@ENDIF2_fmod
+	ld	A,(??AUTO_fmod+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmod+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_fmod
 	ld	L,(IX+8)
 	ld	H,(IX+9)
@@ -11785,46 +10321,28 @@ _fmodl:
 @ENDIF2_fmod:
 	ld	A,(??AUTO_fmod+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmod+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF4_fmod
+	ld	A,(??AUTO_fmod+2)
+	and	128
+	jr z,@ENDIF4_fmod
 	ld	HL,0
 	ld	(??AUTO_fmod+8),HL
 	ld	HL,32704
 	ld	(??AUTO_fmod+10),HL
-	ld	HL,(??AUTO_fmod)
-	ld	DE,(??AUTO_fmod+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmod+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmod+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@TERN_E5_fmod
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -11837,22 +10355,24 @@ _fmodl:
 @TERN_END6_fmod:
 	jp	@fmod_ret
 @ENDIF4_fmod:
-	ld	HL,(??AUTO_fmod+4)
-	ld	DE,(??AUTO_fmod+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_fmod+7)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmod+6)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF8_fmod
 	ld	HL,0
 	ld	(??AUTO_fmod+8),HL
@@ -11864,46 +10384,30 @@ _fmodl:
 @ENDIF8_fmod:
 	ld	A,(??AUTO_fmod+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S12_fmod
 	ld	A,(??AUTO_fmod+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S11_fmod
-	ld	HL,(??AUTO_fmod)
-	ld	DE,(??AUTO_fmod+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S11_fmod
+@AND_S12_fmod:
+	ld	A,(??AUTO_fmod+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmod+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmod)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF10_fmod
 @OR_S11_fmod:
 	ld	L,(IX+4)
@@ -11946,27 +10450,27 @@ _fmodl:
 	sub	E
 	ld	A,H
 	sbc	A,D
-	jp	PO,@CMP_NV14_fmod
+	jp	PO,@CMP_NV15_fmod
 	xor	128
-@CMP_NV14_fmod:
-	jp	P,@ENDIF13_fmod
+@CMP_NV15_fmod:
+	jp	P,@ENDIF14_fmod
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	jp	@fmod_ret
-@ENDIF13_fmod:
-@WHILE15_fmod:
+@ENDIF14_fmod:
+@WHILE16_fmod:
 	ld	HL,(??AUTO_fmod+20)
 	ld	DE,(??AUTO_fmod+22)
 	ld	A,E
 	sub	L
 	ld	A,D
 	sbc	A,H
-	jp	PO,@CMP_NV17_fmod
+	jp	PO,@CMP_NV18_fmod
 	xor	128
-@CMP_NV17_fmod:
-	jp	P,@ENDWHILE16_fmod
+@CMP_NV18_fmod:
+	jp	P,@ENDWHILE17_fmod
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	ld	BC,(??AUTO_fmod+16)
@@ -11975,7 +10479,7 @@ _fmodl:
 	ex	DE,HL
 	ld	BC,(??AUTO_fmod+18)
 	sbc	HL,BC
-	jr c,@ENDIF19_fmod
+	jr c,@ENDIF20_fmod
 	ld	HL,(??AUTO_fmod+12)
 	ld	BC,(??AUTO_fmod+16)
 	or	A
@@ -11985,7 +10489,7 @@ _fmodl:
 	ld	BC,(??AUTO_fmod+18)
 	sbc	HL,BC
 	ld	(??AUTO_fmod+14),HL
-@ENDIF19_fmod:
+@ENDIF20_fmod:
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	add	HL,HL
@@ -11996,8 +10500,8 @@ _fmodl:
 	ld	HL,(??AUTO_fmod+20)
 	dec	HL
 	ld	(??AUTO_fmod+20),HL
-	jr @WHILE15_fmod
-@ENDWHILE16_fmod:
+	jr @WHILE16_fmod
+@ENDWHILE17_fmod:
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	ld	BC,(??AUTO_fmod+16)
@@ -12006,7 +10510,7 @@ _fmodl:
 	ex	DE,HL
 	ld	BC,(??AUTO_fmod+18)
 	sbc	HL,BC
-	jr c,@ENDIF21_fmod
+	jr c,@ENDIF22_fmod
 	ld	HL,(??AUTO_fmod+12)
 	ld	BC,(??AUTO_fmod+16)
 	or	A
@@ -12016,14 +10520,14 @@ _fmodl:
 	ld	BC,(??AUTO_fmod+18)
 	sbc	HL,BC
 	ld	(??AUTO_fmod+14),HL
-@ENDIF21_fmod:
+@ENDIF22_fmod:
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	ld	A,H
 	or	L
 	or	E
 	or	D
-	jr nz,@ENDIF23_fmod
+	jr nz,@ENDIF24_fmod
 	ld	HL,(??AUTO_fmod)
 	ld	DE,(??AUTO_fmod+2)
 	ld	HL,0
@@ -12036,11 +10540,11 @@ _fmodl:
 	ld	HL,(??AUTO_fmod+8)
 	ld	DE,(??AUTO_fmod+10)
 	jr @fmod_ret
-@ENDIF23_fmod:
-@WHILE24_fmod:
+@ENDIF24_fmod:
+@WHILE25_fmod:
 	ld	A,(??AUTO_fmod+14)
 	and	128
-	jr nz,@ENDWHILE25_fmod
+	jr nz,@ENDWHILE26_fmod
 	ld	HL,(??AUTO_fmod+12)
 	ld	DE,(??AUTO_fmod+14)
 	add	HL,HL
@@ -12051,8 +10555,8 @@ _fmodl:
 	ld	HL,(??AUTO_fmod+20)
 	dec	HL
 	ld	(??AUTO_fmod+20),HL
-	jr @WHILE24_fmod
-@ENDWHILE25_fmod:
+	jr @WHILE25_fmod
+@ENDWHILE26_fmod:
 	ld	HL,(??AUTO_fmod+20)
 	push	HL
 	ld	HL,(??AUTO_fmod+12)
@@ -13180,46 +11684,30 @@ _frexpl:
 	ld	(??AUTO_frexp+2),DE
 	ld	A,(??AUTO_frexp+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S4_frexp
 	ld	A,(??AUTO_frexp+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S3_frexp
-	ld	HL,(??AUTO_frexp)
-	ld	DE,(??AUTO_frexp+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S3_frexp
+@AND_S4_frexp:
+	ld	A,(??AUTO_frexp+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_frexp+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_frexp+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_frexp)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF2_frexp
 @OR_S3_frexp:
 	ld	L,(IX+8)
@@ -13932,56 +12420,19 @@ _hypotl:
 @ENDIF2_hypot:
 	ld	A,(??AUTO_hypot+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S7_hypot
 	ld	A,(??AUTO_hypot+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S6_hypot
+	and	128
+	jr nz,@OR_S6_hypot
+@AND_S7_hypot:
 	ld	A,(??AUTO_hypot+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_hypot+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF5_hypot
+	ld	A,(??AUTO_hypot+6)
+	and	128
+	jr z,@ENDIF5_hypot
 @OR_S6_hypot:
 	ld	HL,(??AUTO_hypot+4)
 	ld	DE,(??AUTO_hypot+6)
@@ -14004,7 +12455,7 @@ _hypotl:
 	ex	DE,HL
 	pop	BC
 	sbc	HL,BC
-	jr nc,@ENDIF8_hypot
+	jr nc,@ENDIF9_hypot
 	ld	HL,??AUTO_hypot+0
 	push	HL
 	ld	HL,??AUTO_hypot+8
@@ -14026,19 +12477,19 @@ _hypotl:
 	pop	HL
 	ld	BC,4
 	ldir
-@ENDIF8_hypot:
+@ENDIF9_hypot:
 	ld	HL,(??AUTO_hypot+4)
 	ld	DE,(??AUTO_hypot+6)
 	ld	A,H
 	or	L
 	or	E
 	or	D
-	jr nz,@ENDIF10_hypot
+	jr nz,@ENDIF11_hypot
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
 	jp	@hypot_ret
-@ENDIF10_hypot:
-	ld	HL,??AUTO_hypot+80
+@ENDIF11_hypot:
+	ld	HL,??AUTO_hypot+56
 	push	HL
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
@@ -14048,7 +12499,7 @@ _hypotl:
 	pop	BC
 	pop	BC
 	pop	BC
-	ld	HL,??AUTO_hypot+82
+	ld	HL,??AUTO_hypot+58
 	push	HL
 	ld	HL,(??AUTO_hypot+4)
 	ld	DE,(??AUTO_hypot+6)
@@ -14058,8 +12509,8 @@ _hypotl:
 	pop	BC
 	pop	BC
 	pop	BC
-	ld	HL,(??AUTO_hypot+80)
-	ld	DE,(??AUTO_hypot+82)
+	ld	HL,(??AUTO_hypot+56)
+	ld	DE,(??AUTO_hypot+58)
 	or	A
 	sbc	HL,DE
 	ld	A,H
@@ -14069,15 +12520,15 @@ _hypotl:
 	sub	31
 	ld	A,D
 	sbc	A,128
-	jr c,@ENDIF12_hypot
+	jr c,@ENDIF13_hypot
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
 	jp	@hypot_ret
-@ENDIF12_hypot:
-	ld	HL,(??AUTO_hypot+80)
+@ENDIF13_hypot:
+	ld	HL,(??AUTO_hypot+56)
 	ld	DE,65409
 	add	HL,DE
-	ld	(??AUTO_hypot+84),HL
+	ld	(??AUTO_hypot+60),HL
 	ex	DE,HL
 	ld	HL,0
 	or	A
@@ -14093,7 +12544,7 @@ _hypotl:
 	pop	BC
 	ld	(??AUTO_hypot),HL
 	ld	(??AUTO_hypot+2),DE
-	ld	HL,(??AUTO_hypot+84)
+	ld	HL,(??AUTO_hypot+60)
 	ex	DE,HL
 	ld	HL,0
 	or	A
@@ -14134,445 +12585,121 @@ _hypotl:
 	ld	L,A
 	ld	A,H
 	or	L
-	jr nz,@ENDIF14_hypot
+	jr nz,@ENDIF15_hypot
 	ld	HL,0
 	ld	(??AUTO_hypot+4),HL
 	ld	(??AUTO_hypot+6),HL
-@ENDIF14_hypot:
-@DO15_hypot:
+@ENDIF15_hypot:
+	ld	HL,??AUTO_hypot+20
+	push	HL
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,2048
-	ld	DE,17792
-	call	__fmul
-	ld	(??AUTO_hypot+86),HL
-	ld	(??AUTO_hypot+88),DE
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_hypot)
 	ld	DE,(??AUTO_hypot+2)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+86)
-	ld	DE,(??AUTO_hypot+88)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+86)
-	ld	DE,(??AUTO_hypot+88)
-	call	__fsub
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_hypot+12),HL
 	ld	(??AUTO_hypot+14),DE
-	ld	HL,(??AUTO_hypot+12)
-	ld	DE,(??AUTO_hypot+14)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot)
-	ld	DE,(??AUTO_hypot+2)
-	call	__fsub
+	ld	HL,??AUTO_hypot+24
+	push	HL
+	ld	HL,(??AUTO_hypot+4)
+	ld	DE,(??AUTO_hypot+6)
+	push	DE
+	push	HL
+	ld	HL,(??AUTO_hypot+4)
+	ld	DE,(??AUTO_hypot+6)
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_hypot+16),HL
 	ld	(??AUTO_hypot+18),DE
-@DOCOND16_hypot:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO15_hypot
-@ENDDO17_hypot:
-@DO18_hypot:
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,2048
-	ld	DE,17792
-	call	__fmul
-	ld	(??AUTO_hypot+90),HL
-	ld	(??AUTO_hypot+92),DE
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+90)
-	ld	DE,(??AUTO_hypot+92)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+90)
-	ld	DE,(??AUTO_hypot+92)
-	call	__fsub
-	ld	(??AUTO_hypot+20),HL
-	ld	(??AUTO_hypot+22),DE
-	ld	HL,(??AUTO_hypot+20)
-	ld	DE,(??AUTO_hypot+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	call	__fsub
-	ld	(??AUTO_hypot+24),HL
-	ld	(??AUTO_hypot+26),DE
-@DOCOND19_hypot:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO18_hypot
-@ENDDO20_hypot:
-	ld	HL,(??AUTO_hypot)
-	ld	DE,(??AUTO_hypot+2)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot)
-	ld	DE,(??AUTO_hypot+2)
-	call	__fmul
+	ld	HL,??AUTO_hypot+32
+	push	HL
+	ld	HL,(??AUTO_hypot+16)
+	ld	DE,(??AUTO_hypot+18)
+	push	DE
+	push	HL
+	ld	HL,(??AUTO_hypot+12)
+	ld	DE,(??AUTO_hypot+14)
+	push	DE
+	push	HL
+	call	__m_2sum
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_hypot+28),HL
 	ld	(??AUTO_hypot+30),DE
-	ld	HL,(??AUTO_hypot+16)
-	ld	DE,(??AUTO_hypot+18)
+	ld	HL,(??AUTO_hypot+24)
+	ld	DE,(??AUTO_hypot+26)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+16)
-	ld	DE,(??AUTO_hypot+18)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+28)
-	ld	DE,(??AUTO_hypot+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+12)
-	ld	DE,(??AUTO_hypot+14)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+12)
-	ld	DE,(??AUTO_hypot+14)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,16384
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+12)
-	ld	DE,(??AUTO_hypot+14)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+16)
-	ld	DE,(??AUTO_hypot+18)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
+	ld	HL,(??AUTO_hypot+20)
+	ld	DE,(??AUTO_hypot+22)
 	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
+	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
+	ld	HL,(??AUTO_hypot+32)
+	ld	DE,(??AUTO_hypot+34)
 	call	__fadd
 	ld	(??AUTO_hypot+36),HL
 	ld	(??AUTO_hypot+38),DE
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+4)
-	ld	DE,(??AUTO_hypot+6)
-	call	__fmul
-	ld	(??AUTO_hypot+32),HL
-	ld	(??AUTO_hypot+34),DE
-	ld	HL,(??AUTO_hypot+24)
-	ld	DE,(??AUTO_hypot+26)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+24)
-	ld	DE,(??AUTO_hypot+26)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+32)
-	ld	DE,(??AUTO_hypot+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+20)
-	ld	DE,(??AUTO_hypot+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+20)
-	ld	DE,(??AUTO_hypot+22)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,16384
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+20)
-	ld	DE,(??AUTO_hypot+22)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+24)
-	ld	DE,(??AUTO_hypot+26)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_hypot+40),HL
-	ld	(??AUTO_hypot+42),DE
-	ld	HL,(??AUTO_hypot+32)
-	ld	DE,(??AUTO_hypot+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_hypot+28)
 	ld	DE,(??AUTO_hypot+30)
-	call	__fadd
-	ld	(??AUTO_hypot+44),HL
-	ld	(??AUTO_hypot+46),DE
-	ld	HL,(??AUTO_hypot+44)
-	ld	DE,(??AUTO_hypot+46)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+28)
-	ld	DE,(??AUTO_hypot+30)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+32)
-	ld	DE,(??AUTO_hypot+34)
-	call	__fadd
-	ld	(??AUTO_hypot+48),HL
-	ld	(??AUTO_hypot+50),DE
-	ld	HL,(??AUTO_hypot+40)
-	ld	DE,(??AUTO_hypot+42)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+36)
-	ld	DE,(??AUTO_hypot+38)
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+48)
-	ld	DE,(??AUTO_hypot+50)
-	call	__fadd
-	ld	(??AUTO_hypot+52),HL
-	ld	(??AUTO_hypot+54),DE
-	ld	HL,(??AUTO_hypot+44)
-	ld	DE,(??AUTO_hypot+46)
 	push	DE
 	push	HL
 	call	_sqrt
 	pop	BC
 	pop	BC
-	ld	(??AUTO_hypot+60),HL
-	ld	(??AUTO_hypot+62),DE
-@DO21_hypot:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	call	__fmul
-	ld	(??AUTO_hypot+94),HL
-	ld	(??AUTO_hypot+96),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+94)
-	ld	DE,(??AUTO_hypot+96)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+94)
-	ld	DE,(??AUTO_hypot+96)
-	call	__fsub
-	ld	(??AUTO_hypot+64),HL
-	ld	(??AUTO_hypot+66),DE
-	ld	HL,(??AUTO_hypot+64)
-	ld	DE,(??AUTO_hypot+66)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	call	__fsub
-	ld	(??AUTO_hypot+68),HL
-	ld	(??AUTO_hypot+70),DE
-@DOCOND22_hypot:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO21_hypot
-@ENDDO23_hypot:
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	call	__fmul
-	ld	(??AUTO_hypot+72),HL
-	ld	(??AUTO_hypot+74),DE
-	ld	HL,(??AUTO_hypot+68)
-	ld	DE,(??AUTO_hypot+70)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+68)
-	ld	DE,(??AUTO_hypot+70)
-	call	__fmul
+	ld	(??AUTO_hypot+44),HL
+	ld	(??AUTO_hypot+46),DE
+	ld	HL,??AUTO_hypot+52
+	push	HL
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
+	push	DE
+	push	HL
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	ld	(??AUTO_hypot+48),HL
+	ld	(??AUTO_hypot+50),DE
+	ld	HL,(??AUTO_hypot+52)
+	ld	DE,(??AUTO_hypot+54)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(__tmp32)
 	push	HL
 	ld	HL,(__tmp32+2)
 	push	HL
-	ld	HL,(??AUTO_hypot+72)
-	ld	DE,(??AUTO_hypot+74)
+	ld	HL,(??AUTO_hypot+48)
+	ld	DE,(??AUTO_hypot+50)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+64)
-	ld	DE,(??AUTO_hypot+66)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+64)
-	ld	DE,(??AUTO_hypot+66)
-	call	__fmul
+	ld	HL,(??AUTO_hypot+28)
+	ld	DE,(??AUTO_hypot+30)
+	call	__fsub
 	push	DE
 	push	HL
 	ld	HL,4
@@ -14595,129 +12722,34 @@ _hypotl:
 	call	__fsub
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,16384
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+64)
-	ld	DE,(??AUTO_hypot+66)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+68)
-	ld	DE,(??AUTO_hypot+70)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
+	ld	HL,(??AUTO_hypot+36)
+	ld	DE,(??AUTO_hypot+38)
 	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_hypot+76),HL
-	ld	(??AUTO_hypot+78),DE
-	ld	HL,(??AUTO_hypot+76)
-	ld	DE,(??AUTO_hypot+78)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_hypot+72)
-	ld	DE,(??AUTO_hypot+74)
+	ld	(??AUTO_hypot+40),HL
+	ld	(??AUTO_hypot+42),DE
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_hypot+44)
 	ld	DE,(??AUTO_hypot+46)
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+52)
-	ld	DE,(??AUTO_hypot+54)
-	call	__fadd
-	ld	(??AUTO_hypot+56),HL
-	ld	(??AUTO_hypot+58),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+56)
-	ld	DE,(??AUTO_hypot+58)
+	ld	HL,(??AUTO_hypot+40)
+	ld	DE,(??AUTO_hypot+42)
 	call	__fdiv
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
 	call	__fadd
-	ld	(??AUTO_hypot+60),HL
-	ld	(??AUTO_hypot+62),DE
-	ld	HL,(??AUTO_hypot+84)
-	push	HL
+	ld	(??AUTO_hypot+44),HL
+	ld	(??AUTO_hypot+46),DE
 	ld	HL,(??AUTO_hypot+60)
-	ld	DE,(??AUTO_hypot+62)
+	push	HL
+	ld	HL,(??AUTO_hypot+44)
+	ld	DE,(??AUTO_hypot+46)
 	push	DE
 	push	HL
 	call	_scalbn
@@ -14732,7 +12764,6 @@ _hypotl:
 ; Runtime library functions
 	EXTRN	__fadd
 	EXTRN	__fdiv
-	EXTRN	__fmul
 	EXTRN	__fsub
 	EXTRN	__tmp32
 
@@ -14742,7 +12773,7 @@ _hypotl:
 	COMMON	/lc_hypot/
 ; Shared automatic storage
 ??AUTO_hypot:
-	ds	98
+	ds	62
 
 
 	CSEG
@@ -14776,42 +12807,24 @@ _ilogbl:
 	ld	(??AUTO_ilogb+2),DE
 	ld	A,(??AUTO_ilogb+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_ilogb+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_ilogb
-	ld	HL,(??AUTO_ilogb)
-	ld	DE,(??AUTO_ilogb+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_ilogb+2)
+	and	128
+	jr z,@ENDIF2_ilogb
+	ld	A,(??AUTO_ilogb+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_ilogb+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_ilogb)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@TERN_E3_ilogb
 	ld	HL,-32768
 	jr @ilogb_ret
@@ -14820,22 +12833,24 @@ _ilogbl:
 @TERN_END4_ilogb:
 	jr @ilogb_ret
 @ENDIF2_ilogb:
-	ld	HL,(??AUTO_ilogb)
-	ld	DE,(??AUTO_ilogb+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_ilogb+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_ilogb+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_ilogb+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_ilogb)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF6_ilogb
 	ld	HL,-32768
 	jr @ilogb_ret
@@ -15661,42 +13676,24 @@ _logl:
 	ld	(??AUTO_log+2),DE
 	ld	A,(??AUTO_log+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_log+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_log
-	ld	HL,(??AUTO_log)
-	ld	DE,(??AUTO_log+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_log+2)
+	and	128
+	jr z,@ENDIF2_log
+	ld	A,(??AUTO_log+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S5_log
 	ld	A,(??AUTO_log+3)
 	and	128
@@ -15716,22 +13713,24 @@ _logl:
 	ld	DE,(??AUTO_log+2)
 	jp	@log_ret
 @ENDIF2_log:
-	ld	HL,(??AUTO_log)
-	ld	DE,(??AUTO_log+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_log+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF7_log
 	ld	HL,0
 	ld	(??AUTO_log),HL
@@ -15868,42 +13867,24 @@ _log10l:
 	ld	(??AUTO_log10+2),DE
 	ld	A,(??AUTO_log10+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_log10+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_log10
-	ld	HL,(??AUTO_log10)
-	ld	DE,(??AUTO_log10+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_log10+2)
+	and	128
+	jr z,@ENDIF2_log10
+	ld	A,(??AUTO_log10+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log10+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log10)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S5_log10
 	ld	A,(??AUTO_log10+3)
 	and	128
@@ -15923,22 +13904,24 @@ _log10l:
 	ld	DE,(??AUTO_log10+2)
 	jp	@log10_ret
 @ENDIF2_log10:
-	ld	HL,(??AUTO_log10)
-	ld	DE,(??AUTO_log10+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_log10+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log10+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log10+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log10)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF7_log10
 	ld	HL,0
 	ld	(??AUTO_log10),HL
@@ -16105,42 +14088,24 @@ _log1pl:
 	ld	(??AUTO_log1p+2),DE
 	ld	A,(??AUTO_log1p+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_log1p+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_log1p
-	ld	HL,(??AUTO_log1p)
-	ld	DE,(??AUTO_log1p+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_log1p+2)
+	and	128
+	jr z,@ENDIF2_log1p
+	ld	A,(??AUTO_log1p+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log1p+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log1p)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S5_log1p
 	ld	A,(??AUTO_log1p+3)
 	and	128
@@ -16224,34 +14189,7 @@ _log1pl:
 @ENDIF12_log1p:
 	ld	A,(??AUTO_log1p+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_log1p+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	103
-	ld	A,D
-	sbc	A,128
+	cp	51
 	jr nc,@ENDIF17_log1p
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -16394,42 +14332,24 @@ _log2l:
 	ld	(??AUTO_log2+2),DE
 	ld	A,(??AUTO_log2+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_log2+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_log2
-	ld	HL,(??AUTO_log2)
-	ld	DE,(??AUTO_log2+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_log2+2)
+	and	128
+	jr z,@ENDIF2_log2
+	ld	A,(??AUTO_log2+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log2+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log2)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S5_log2
 	ld	A,(??AUTO_log2+3)
 	and	128
@@ -16449,22 +14369,24 @@ _log2l:
 	ld	DE,(??AUTO_log2+2)
 	jp	@log2_ret
 @ENDIF2_log2:
-	ld	HL,(??AUTO_log2)
-	ld	DE,(??AUTO_log2+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_log2+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_log2+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log2+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_log2)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF7_log2
 	ld	HL,0
 	ld	(??AUTO_log2),HL
@@ -16607,42 +14529,24 @@ _logbl:
 	ld	(??AUTO_logb+2),DE
 	ld	A,(??AUTO_logb+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_logb+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_logb
-	ld	HL,(??AUTO_logb)
-	ld	DE,(??AUTO_logb+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_logb+2)
+	and	128
+	jr z,@ENDIF2_logb
+	ld	A,(??AUTO_logb+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_logb+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_logb)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_logb
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -16658,22 +14562,24 @@ _logbl:
 	ld	DE,(??AUTO_logb+2)
 	jr @logb_ret
 @ENDIF2_logb:
-	ld	HL,(??AUTO_logb)
-	ld	DE,(??AUTO_logb+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_logb+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_logb+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_logb+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_logb)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF6_logb
 	ld	HL,0
 	ld	(??AUTO_logb),HL
@@ -16813,6 +14719,423 @@ _lroundl:
 	EXTRN	__ftoi
 
 ; Implicit external functions
+
+
+	CSEG
+; ============================================================
+; lc_m_2prod.mac
+; ============================================================
+; lc_m_2prod.mac - GENERATED from csrc/lc_m_2prod.c by gen_c_modules.py
+; Do not edit this file: edit the C file and run the script.
+; Target: Z80
+; Generated by uc80
+
+
+	CSEG
+
+	PUBLIC	__m_2prod
+
+; Function _m_2prod (uses shared storage)
+__m_2prod:
+	push	IX
+	ld	IX,0
+	add	IX,SP
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	E,(IX+10)
+	ld	D,(IX+11)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	E,(IX+6)
+	ld	D,(IX+7)
+	call	__fmul
+	ld	(??AUTO_m_2prod+16),HL
+	ld	(??AUTO_m_2prod+18),DE
+@DO1_m_2prod:
+	ld	HL,2048
+	ld	DE,17792
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	E,(IX+6)
+	ld	D,(IX+7)
+	call	__fmul
+	ld	(??AUTO_m_2prod+20),HL
+	ld	(??AUTO_m_2prod+22),DE
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	E,(IX+6)
+	ld	D,(IX+7)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2prod+20)
+	ld	DE,(??AUTO_m_2prod+22)
+	call	__fsub
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2prod+20)
+	ld	DE,(??AUTO_m_2prod+22)
+	call	__fsub
+	ld	(??AUTO_m_2prod+0),HL
+	ld	(??AUTO_m_2prod+2),DE
+	ld	HL,(??AUTO_m_2prod+0)
+	ld	DE,(??AUTO_m_2prod+2)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	E,(IX+6)
+	ld	D,(IX+7)
+	call	__fsub
+	ld	(??AUTO_m_2prod+4),HL
+	ld	(??AUTO_m_2prod+6),DE
+@DOCOND2_m_2prod:
+	ld	HL,0
+	ld	A,H
+	or	L
+	jp	NZ,@DO1_m_2prod
+@ENDDO3_m_2prod:
+@DO4_m_2prod:
+	ld	HL,2048
+	ld	DE,17792
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	E,(IX+10)
+	ld	D,(IX+11)
+	call	__fmul
+	ld	(??AUTO_m_2prod+24),HL
+	ld	(??AUTO_m_2prod+26),DE
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	E,(IX+10)
+	ld	D,(IX+11)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2prod+24)
+	ld	DE,(??AUTO_m_2prod+26)
+	call	__fsub
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2prod+24)
+	ld	DE,(??AUTO_m_2prod+26)
+	call	__fsub
+	ld	(??AUTO_m_2prod+8),HL
+	ld	(??AUTO_m_2prod+10),DE
+	ld	HL,(??AUTO_m_2prod+8)
+	ld	DE,(??AUTO_m_2prod+10)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	E,(IX+10)
+	ld	D,(IX+11)
+	call	__fsub
+	ld	(??AUTO_m_2prod+12),HL
+	ld	(??AUTO_m_2prod+14),DE
+@DOCOND5_m_2prod:
+	ld	HL,0
+	ld	A,H
+	or	L
+	jp	NZ,@DO4_m_2prod
+@ENDDO6_m_2prod:
+	ld	HL,(??AUTO_m_2prod+16)
+	ld	DE,(??AUTO_m_2prod+18)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(__tmp32)
+	push	HL
+	ld	HL,(__tmp32+2)
+	push	HL
+	ld	HL,(??AUTO_m_2prod+8)
+	ld	DE,(??AUTO_m_2prod+10)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2prod+0)
+	ld	DE,(??AUTO_m_2prod+2)
+	call	__fmul
+	push	DE
+	push	HL
+	ld	HL,4
+	add	HL,SP
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	inc	HL
+	ld	(__tmp32+2),DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ld	(__tmp32),DE
+	pop	HL
+	pop	DE
+	inc	SP
+	inc	SP
+	inc	SP
+	inc	SP
+	call	__fsub
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(__tmp32)
+	push	HL
+	ld	HL,(__tmp32+2)
+	push	HL
+	ld	HL,(??AUTO_m_2prod+12)
+	ld	DE,(??AUTO_m_2prod+14)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2prod+0)
+	ld	DE,(??AUTO_m_2prod+2)
+	call	__fmul
+	push	DE
+	push	HL
+	ld	HL,4
+	add	HL,SP
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	inc	HL
+	ld	(__tmp32+2),DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ld	(__tmp32),DE
+	pop	HL
+	pop	DE
+	inc	SP
+	inc	SP
+	inc	SP
+	inc	SP
+	call	__fadd
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(__tmp32)
+	push	HL
+	ld	HL,(__tmp32+2)
+	push	HL
+	ld	HL,(??AUTO_m_2prod+8)
+	ld	DE,(??AUTO_m_2prod+10)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2prod+4)
+	ld	DE,(??AUTO_m_2prod+6)
+	call	__fmul
+	push	DE
+	push	HL
+	ld	HL,4
+	add	HL,SP
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	inc	HL
+	ld	(__tmp32+2),DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ld	(__tmp32),DE
+	pop	HL
+	pop	DE
+	inc	SP
+	inc	SP
+	inc	SP
+	inc	SP
+	call	__fadd
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(__tmp32)
+	push	HL
+	ld	HL,(__tmp32+2)
+	push	HL
+	ld	HL,(??AUTO_m_2prod+12)
+	ld	DE,(??AUTO_m_2prod+14)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2prod+4)
+	ld	DE,(??AUTO_m_2prod+6)
+	call	__fmul
+	push	DE
+	push	HL
+	ld	HL,4
+	add	HL,SP
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	inc	HL
+	ld	(__tmp32+2),DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ld	(__tmp32),DE
+	pop	HL
+	pop	DE
+	inc	SP
+	inc	SP
+	inc	SP
+	inc	SP
+	call	__fadd
+	push	DE
+	push	HL
+	ld	L,(IX+12)
+	ld	H,(IX+13)
+	ex	DE,HL
+	pop	HL
+	ex	DE,HL
+	ld	(HL),E
+	inc	HL
+	ld	(HL),D
+	inc	HL
+	pop	DE
+	ld	(HL),E
+	inc	HL
+	ld	(HL),D
+	ld	HL,(??AUTO_m_2prod+16)
+	ld	DE,(??AUTO_m_2prod+18)
+@_m_2prod_ret:
+	pop	IX
+	ret
+
+
+; Runtime library functions
+	EXTRN	__fadd
+	EXTRN	__fmul
+	EXTRN	__fsub
+	EXTRN	__tmp32
+
+; Static storage that starts as zero
+	COMMON	/lc_m_2prod/
+; Shared automatic storage
+??AUTO_m_2prod:
+	ds	28
+
+
+	CSEG
+; ============================================================
+; lc_m_2sum.mac
+; ============================================================
+; lc_m_2sum.mac - GENERATED from csrc/lc_m_2sum.c by gen_c_modules.py
+; Do not edit this file: edit the C file and run the script.
+; Target: Z80
+; Generated by uc80
+
+
+	CSEG
+
+	PUBLIC	__m_2sum
+
+; Function _m_2sum (uses shared storage)
+__m_2sum:
+	push	IX
+	ld	IX,0
+	add	IX,SP
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	E,(IX+10)
+	ld	D,(IX+11)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	E,(IX+6)
+	ld	D,(IX+7)
+	call	__fadd
+	ld	(??AUTO_m_2sum+0),HL
+	ld	(??AUTO_m_2sum+2),DE
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	E,(IX+6)
+	ld	D,(IX+7)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2sum+0)
+	ld	DE,(??AUTO_m_2sum+2)
+	call	__fsub
+	ld	(??AUTO_m_2sum+4),HL
+	ld	(??AUTO_m_2sum+6),DE
+	ld	HL,(??AUTO_m_2sum+4)
+	ld	DE,(??AUTO_m_2sum+6)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	E,(IX+10)
+	ld	D,(IX+11)
+	call	__fsub
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(__tmp32)
+	push	HL
+	ld	HL,(__tmp32+2)
+	push	HL
+	ld	HL,(??AUTO_m_2sum+4)
+	ld	DE,(??AUTO_m_2sum+6)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_m_2sum+0)
+	ld	DE,(??AUTO_m_2sum+2)
+	call	__fsub
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	E,(IX+6)
+	ld	D,(IX+7)
+	call	__fsub
+	push	DE
+	push	HL
+	ld	HL,4
+	add	HL,SP
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	inc	HL
+	ld	(__tmp32+2),DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ld	(__tmp32),DE
+	pop	HL
+	pop	DE
+	inc	SP
+	inc	SP
+	inc	SP
+	inc	SP
+	call	__fadd
+	push	DE
+	push	HL
+	ld	L,(IX+12)
+	ld	H,(IX+13)
+	ex	DE,HL
+	pop	HL
+	ex	DE,HL
+	ld	(HL),E
+	inc	HL
+	ld	(HL),D
+	inc	HL
+	pop	DE
+	ld	(HL),E
+	inc	HL
+	ld	(HL),D
+	ld	HL,(??AUTO_m_2sum+0)
+	ld	DE,(??AUTO_m_2sum+2)
+@_m_2sum_ret:
+	pop	IX
+	ret
+
+
+; Runtime library functions
+	EXTRN	__fadd
+	EXTRN	__fsub
+	EXTRN	__tmp32
+
+; Static storage that starts as zero
+	COMMON	/lc_m_2sum/
+; Shared automatic storage
+??AUTO_m_2sum:
+	ds	8
 
 
 	CSEG
@@ -19569,22 +17892,24 @@ __m_round:
 	ld	HL,(??AUTO_m_round+20)
 	bit	7,H
 	jp	Z,@ELSE3_m_round
-	ld	HL,(??AUTO_m_round)
-	ld	DE,(??AUTO_m_round+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	A,(??AUTO_m_round+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_m_round+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_m_round+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_m_round)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF6_m_round
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -21012,42 +19337,24 @@ _modfl:
 	ld	(HL),D
 	ld	A,(??AUTO_modf+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_modf+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ELSE3_modf
-	ld	HL,(??AUTO_modf)
-	ld	DE,(??AUTO_modf+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_modf+2)
+	and	128
+	jr z,@ELSE3_modf
+	ld	A,(??AUTO_modf+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_modf+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_modf)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@TERN_E5_modf
 	ld	HL,(??AUTO_modf)
 	ld	DE,(??AUTO_modf+2)
@@ -21526,82 +19833,46 @@ _nexttowardl:
 	ld	(??AUTO_nextafter+6),DE
 	ld	A,(??AUTO_nextafter+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_nextafter+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@AND_S4_nextafter
-	ld	HL,(??AUTO_nextafter)
-	ld	DE,(??AUTO_nextafter+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_nextafter+2)
+	and	128
+	jr z,@AND_S4_nextafter
+	ld	A,(??AUTO_nextafter+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_nextafter+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_nextafter)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S3_nextafter
 @AND_S4_nextafter:
 	ld	A,(??AUTO_nextafter+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_nextafter+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_nextafter
-	ld	HL,(??AUTO_nextafter+4)
-	ld	DE,(??AUTO_nextafter+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_nextafter+6)
+	and	128
+	jr z,@ENDIF2_nextafter
+	ld	A,(??AUTO_nextafter+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_nextafter+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_nextafter+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_nextafter
 @OR_S3_nextafter:
 	ld	HL,0
@@ -22148,12 +20419,12 @@ _pow_log2:
 	ld	(??AUTO_pow+20),DE
 	ld	HL,0
 	ld	DE,0
-	ld	(??AUTO_pow+74),HL
-	ld	(??AUTO_pow+76),DE
+	ld	(??AUTO_pow+66),HL
+	ld	(??AUTO_pow+68),DE
 	ld	HL,0
 	ld	DE,0
-	ld	(??AUTO_pow+78),HL
-	ld	(??AUTO_pow+80),DE
+	ld	(??AUTO_pow+70),HL
+	ld	(??AUTO_pow+72),DE
 	ld	HL,0
 	ld	DE,15616
 	ld	A,D
@@ -22217,275 +20488,52 @@ _pow_log2:
 	inc	HL
 	ld	(??AUTO_pow+10),HL
 @ENDIF27_pow:
-@DO31_pow:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
+	ld	HL,??AUTO_pow+26
+	push	HL
 	ld	HL,(??AUTO_pow+18)
 	ld	DE,(??AUTO_pow+20)
-	call	__fmul
-	ld	(??AUTO_pow+142),HL
-	ld	(??AUTO_pow+144),DE
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_pow+18)
 	ld	DE,(??AUTO_pow+20)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+142)
-	ld	DE,(??AUTO_pow+144)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+142)
-	ld	DE,(??AUTO_pow+144)
-	call	__fsub
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_pow+22),HL
 	ld	(??AUTO_pow+24),DE
-	ld	HL,(??AUTO_pow+22)
-	ld	DE,(??AUTO_pow+24)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	call	__fsub
-	ld	(??AUTO_pow+26),HL
-	ld	(??AUTO_pow+28),DE
-@DOCOND32_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO31_pow
-@ENDDO33_pow:
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	call	__fmul
-	ld	(??AUTO_pow+30),HL
-	ld	(??AUTO_pow+32),DE
-	ld	HL,(??AUTO_pow+26)
-	ld	DE,(??AUTO_pow+28)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+26)
-	ld	DE,(??AUTO_pow+28)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+30)
-	ld	DE,(??AUTO_pow+32)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+22)
-	ld	DE,(??AUTO_pow+24)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+22)
-	ld	DE,(??AUTO_pow+24)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
+	ld	HL,??AUTO_pow+38
 	push	HL
 	ld	HL,0
-	ld	DE,16384
+	ld	DE,16128
+	ld	A,D
+	xor	80H
+	ld	D,A
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+22)
 	ld	DE,(??AUTO_pow+24)
 	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+26)
-	ld	DE,(??AUTO_pow+28)
-	call	__fmul
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
+	ld	HL,(??AUTO_pow+18)
+	ld	DE,(??AUTO_pow+20)
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
+	call	__m_2sum
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_pow+34),HL
 	ld	(??AUTO_pow+36),DE
-@DO34_pow:
-	ld	HL,0
-	ld	DE,16128
-	ld	A,D
-	xor	80H
-	ld	D,A
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+30)
-	ld	DE,(??AUTO_pow+32)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	call	__fadd
-	ld	(??AUTO_pow+42),HL
-	ld	(??AUTO_pow+44),DE
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+42)
-	ld	DE,(??AUTO_pow+44)
-	call	__fsub
-	ld	(??AUTO_pow+146),HL
-	ld	(??AUTO_pow+148),DE
-	ld	HL,(??AUTO_pow+146)
-	ld	DE,(??AUTO_pow+148)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+42)
-	ld	DE,(??AUTO_pow+44)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+18)
-	ld	DE,(??AUTO_pow+20)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+146)
-	ld	DE,(??AUTO_pow+148)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,16128
-	ld	A,D
-	xor	80H
-	ld	D,A
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+30)
-	ld	DE,(??AUTO_pow+32)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_pow+46),HL
-	ld	(??AUTO_pow+48),DE
-@DOCOND35_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO34_pow
-@ENDDO36_pow:
-	ld	HL,(??AUTO_pow+30)
-	ld	DE,(??AUTO_pow+32)
+	ld	HL,(??AUTO_pow+22)
+	ld	DE,(??AUTO_pow+24)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+18)
@@ -22687,27 +20735,27 @@ _pow_log2:
 	inc	SP
 	inc	SP
 	call	__fmul
-	ld	(??AUTO_pow+38),HL
-	ld	(??AUTO_pow+40),DE
+	ld	(??AUTO_pow+30),HL
+	ld	(??AUTO_pow+32),DE
 	ld	HL,0
 	ld	DE,16128
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+34)
-	ld	DE,(??AUTO_pow+36)
+	ld	HL,(??AUTO_pow+26)
+	ld	DE,(??AUTO_pow+28)
 	call	__fmul
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_pow+30)
+	ld	DE,(??AUTO_pow+32)
+	call	__fsub
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+38)
 	ld	DE,(??AUTO_pow+40)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+46)
-	ld	DE,(??AUTO_pow+48)
 	call	__fadd
-	ld	(??AUTO_pow+50),HL
-	ld	(??AUTO_pow+52),DE
+	ld	(??AUTO_pow+42),HL
+	ld	(??AUTO_pow+44),DE
 	jp	@ENDIF19_pow
 @ELSE18_pow:
 	ld	HL,(??AUTO_pow+4)
@@ -22769,259 +20817,54 @@ _pow_log2:
 	ld	HL,0
 	ld	DE,16256
 	call	__fadd
-	ld	(??AUTO_pow+38),HL
-	ld	(??AUTO_pow+40),DE
-	ld	HL,(??AUTO_pow+38)
-	ld	DE,(??AUTO_pow+40)
+	ld	(??AUTO_pow+30),HL
+	ld	(??AUTO_pow+32),DE
+	ld	HL,(??AUTO_pow+30)
+	ld	DE,(??AUTO_pow+32)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,0
 	ld	DE,16256
 	call	__fdiv
-	ld	(??AUTO_pow+110),HL
-	ld	(??AUTO_pow+112),DE
-@DO37_pow:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+14)
-	ld	DE,(??AUTO_pow+16)
-	call	__fmul
-	ld	(??AUTO_pow+150),HL
-	ld	(??AUTO_pow+152),DE
-	ld	HL,(??AUTO_pow+14)
-	ld	DE,(??AUTO_pow+16)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+150)
-	ld	DE,(??AUTO_pow+152)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+150)
-	ld	DE,(??AUTO_pow+152)
-	call	__fsub
-	ld	(??AUTO_pow+122),HL
-	ld	(??AUTO_pow+124),DE
-	ld	HL,(??AUTO_pow+122)
-	ld	DE,(??AUTO_pow+124)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+14)
-	ld	DE,(??AUTO_pow+16)
-	call	__fsub
-	ld	(??AUTO_pow+126),HL
-	ld	(??AUTO_pow+128),DE
-@DOCOND38_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO37_pow
-@ENDDO39_pow:
-@DO40_pow:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+110)
-	ld	DE,(??AUTO_pow+112)
-	call	__fmul
-	ld	(??AUTO_pow+154),HL
-	ld	(??AUTO_pow+156),DE
-	ld	HL,(??AUTO_pow+110)
-	ld	DE,(??AUTO_pow+112)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+154)
-	ld	DE,(??AUTO_pow+156)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+154)
-	ld	DE,(??AUTO_pow+156)
-	call	__fsub
-	ld	(??AUTO_pow+130),HL
-	ld	(??AUTO_pow+132),DE
-	ld	HL,(??AUTO_pow+130)
-	ld	DE,(??AUTO_pow+132)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+110)
-	ld	DE,(??AUTO_pow+112)
-	call	__fsub
-	ld	(??AUTO_pow+134),HL
-	ld	(??AUTO_pow+136),DE
-@DOCOND41_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO40_pow
-@ENDDO42_pow:
-	ld	HL,(??AUTO_pow+110)
-	ld	DE,(??AUTO_pow+112)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+14)
-	ld	DE,(??AUTO_pow+16)
-	call	__fmul
-	ld	(??AUTO_pow+114),HL
-	ld	(??AUTO_pow+116),DE
-	ld	HL,(??AUTO_pow+114)
-	ld	DE,(??AUTO_pow+116)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
+	ld	(??AUTO_pow+98),HL
+	ld	(??AUTO_pow+100),DE
+	ld	HL,??AUTO_pow+106
 	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+130)
-	ld	DE,(??AUTO_pow+132)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+122)
-	ld	DE,(??AUTO_pow+124)
-	call	__fmul
+	ld	HL,(??AUTO_pow+98)
+	ld	DE,(??AUTO_pow+100)
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+134)
-	ld	DE,(??AUTO_pow+136)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+122)
-	ld	DE,(??AUTO_pow+124)
-	call	__fmul
+	ld	HL,(??AUTO_pow+14)
+	ld	DE,(??AUTO_pow+16)
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+130)
-	ld	DE,(??AUTO_pow+132)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+126)
-	ld	DE,(??AUTO_pow+128)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+134)
-	ld	DE,(??AUTO_pow+136)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+126)
-	ld	DE,(??AUTO_pow+128)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_pow+118),HL
-	ld	(??AUTO_pow+120),DE
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	ld	(??AUTO_pow+102),HL
+	ld	(??AUTO_pow+104),DE
 	ld	HL,0
 	ld	DE,16256
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+114)
-	ld	DE,(??AUTO_pow+116)
+	ld	HL,(??AUTO_pow+102)
+	ld	DE,(??AUTO_pow+104)
 	call	__fsub
-	ld	(??AUTO_pow+98),HL
-	ld	(??AUTO_pow+100),DE
-	ld	HL,(??AUTO_pow+118)
-	ld	DE,(??AUTO_pow+120)
-	ld	(??AUTO_pow+102),HL
-	ld	(??AUTO_pow+104),DE
-	ld	HL,(??AUTO_pow+98)
-	ld	DE,(??AUTO_pow+100)
+	ld	(??AUTO_pow+34),HL
+	ld	(??AUTO_pow+36),DE
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
+	ld	(??AUTO_pow+90),HL
+	ld	(??AUTO_pow+92),DE
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+98)
-	ld	DE,(??AUTO_pow+100)
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -23033,8 +20876,8 @@ _pow_log2:
 	ld	DE,15890
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+98)
-	ld	DE,(??AUTO_pow+100)
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -23046,8 +20889,8 @@ _pow_log2:
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+98)
-	ld	DE,(??AUTO_pow+100)
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -23056,8 +20899,8 @@ _pow_log2:
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+98)
-	ld	DE,(??AUTO_pow+100)
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -23069,8 +20912,8 @@ _pow_log2:
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+98)
-	ld	DE,(??AUTO_pow+100)
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -23079,8 +20922,8 @@ _pow_log2:
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+98)
-	ld	DE,(??AUTO_pow+100)
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -23110,31 +20953,27 @@ _pow_log2:
 	inc	SP
 	inc	SP
 	call	__fmul
-	ld	(??AUTO_pow+106),HL
-	ld	(??AUTO_pow+108),DE
-	ld	HL,(??AUTO_pow+98)
-	ld	DE,(??AUTO_pow+100)
-	ld	(??AUTO_pow+42),HL
-	ld	(??AUTO_pow+44),DE
-	ld	HL,(??AUTO_pow+98)
-	ld	DE,(??AUTO_pow+100)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+118)
-	ld	DE,(??AUTO_pow+120)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+118)
-	ld	DE,(??AUTO_pow+120)
-	call	__fsub
+	ld	(??AUTO_pow+94),HL
+	ld	(??AUTO_pow+96),DE
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+106)
 	ld	DE,(??AUTO_pow+108)
+	call	__fmul
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_pow+106)
+	ld	DE,(??AUTO_pow+108)
+	call	__fsub
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_pow+94)
+	ld	DE,(??AUTO_pow+96)
 	call	__fadd
-	ld	(??AUTO_pow+50),HL
-	ld	(??AUTO_pow+52),DE
+	ld	(??AUTO_pow+42),HL
+	ld	(??AUTO_pow+44),DE
 	ld	HL,(??AUTO_pow+12)
 	add	HL,HL
 	add	HL,HL
@@ -23149,8 +20988,8 @@ _pow_log2:
 	ld	H,(HL)
 	ld	L,A
 	ex	DE,HL
-	ld	(??AUTO_pow+74),HL
-	ld	(??AUTO_pow+76),DE
+	ld	(??AUTO_pow+66),HL
+	ld	(??AUTO_pow+68),DE
 	ld	HL,(??AUTO_pow+12)
 	add	HL,HL
 	add	HL,HL
@@ -23165,205 +21004,33 @@ _pow_log2:
 	ld	H,(HL)
 	ld	L,A
 	ex	DE,HL
-	ld	(??AUTO_pow+78),HL
-	ld	(??AUTO_pow+80),DE
+	ld	(??AUTO_pow+70),HL
+	ld	(??AUTO_pow+72),DE
 @ENDIF19_pow:
-@DO43_pow:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+42)
-	ld	DE,(??AUTO_pow+44)
-	call	__fmul
-	ld	(??AUTO_pow+158),HL
-	ld	(??AUTO_pow+160),DE
-	ld	HL,(??AUTO_pow+42)
-	ld	DE,(??AUTO_pow+44)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+158)
-	ld	DE,(??AUTO_pow+160)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+158)
-	ld	DE,(??AUTO_pow+160)
-	call	__fsub
-	ld	(??AUTO_pow+22),HL
-	ld	(??AUTO_pow+24),DE
-	ld	HL,(??AUTO_pow+22)
-	ld	DE,(??AUTO_pow+24)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+42)
-	ld	DE,(??AUTO_pow+44)
-	call	__fsub
-	ld	(??AUTO_pow+26),HL
-	ld	(??AUTO_pow+28),DE
-@DOCOND44_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO43_pow
-@ENDDO45_pow:
+	ld	HL,??AUTO_pow+50
+	push	HL
+	ld	HL,43579
+	ld	DE,16312
+	push	DE
+	push	HL
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	ld	(??AUTO_pow+46),HL
+	ld	(??AUTO_pow+48),DE
 	ld	HL,43579
 	ld	DE,16312
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+42)
 	ld	DE,(??AUTO_pow+44)
-	call	__fmul
-	ld	(??AUTO_pow+54),HL
-	ld	(??AUTO_pow+56),DE
-	ld	HL,40960
-	ld	DE,14648
-	ld	A,D
-	xor	80H
-	ld	D,A
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+26)
-	ld	DE,(??AUTO_pow+28)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,45056
-	ld	DE,16312
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+26)
-	ld	DE,(??AUTO_pow+28)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,40960
-	ld	DE,14648
-	ld	A,D
-	xor	80H
-	ld	D,A
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+22)
-	ld	DE,(??AUTO_pow+24)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+54)
-	ld	DE,(??AUTO_pow+56)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,45056
-	ld	DE,16312
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+22)
-	ld	DE,(??AUTO_pow+24)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_pow+58),HL
-	ld	(??AUTO_pow+60),DE
-	ld	HL,43579
-	ld	DE,16312
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+50)
-	ld	DE,(??AUTO_pow+52)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -23375,60 +21042,65 @@ _pow_log2:
 	ld	DE,12965
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+42)
-	ld	DE,(??AUTO_pow+44)
+	ld	HL,(??AUTO_pow+34)
+	ld	DE,(??AUTO_pow+36)
 	call	__fmul
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_pow+50)
+	ld	DE,(??AUTO_pow+52)
+	call	__fadd
+	push	DE
+	push	HL
+	ld	HL,4
+	add	HL,SP
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	inc	HL
+	ld	(__tmp32+2),DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ld	(__tmp32),DE
+	pop	HL
+	pop	DE
+	inc	SP
+	inc	SP
+	inc	SP
+	inc	SP
+	call	__fadd
+	ld	(??AUTO_pow+54),HL
+	ld	(??AUTO_pow+56),DE
+	ld	HL,(??AUTO_pow+46)
+	ld	DE,(??AUTO_pow+48)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_pow+54)
+	ld	DE,(??AUTO_pow+56)
+	call	__fadd
+	ld	(??AUTO_pow+58),HL
+	ld	(??AUTO_pow+60),DE
+	ld	HL,(??AUTO_pow+46)
+	ld	DE,(??AUTO_pow+48)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+58)
 	ld	DE,(??AUTO_pow+60)
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
+	call	__fsub
+	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
+	ld	HL,(??AUTO_pow+54)
+	ld	DE,(??AUTO_pow+56)
+	call	__fsub
 	ld	(??AUTO_pow+62),HL
 	ld	(??AUTO_pow+64),DE
-	ld	HL,(??AUTO_pow+54)
-	ld	DE,(??AUTO_pow+56)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+62)
-	ld	DE,(??AUTO_pow+64)
-	call	__fadd
-	ld	(??AUTO_pow+66),HL
-	ld	(??AUTO_pow+68),DE
-	ld	HL,(??AUTO_pow+54)
-	ld	DE,(??AUTO_pow+56)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
+	ld	HL,??AUTO_pow+78
+	push	HL
 	ld	HL,(??AUTO_pow+66)
 	ld	DE,(??AUTO_pow+68)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+62)
-	ld	DE,(??AUTO_pow+64)
-	call	__fsub
-	ld	(??AUTO_pow+70),HL
-	ld	(??AUTO_pow+72),DE
-@DO46_pow:
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_pow+10)
 	ld	A,H
 	rlca
@@ -23436,164 +21108,36 @@ _pow_log2:
 	ld	E,A
 	ld	D,A
 	call	__itof
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
+	push	DE
+	push	HL
+	call	__m_2sum
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	ld	(??AUTO_pow+74),HL
+	ld	(??AUTO_pow+76),DE
+	ld	HL,??AUTO_pow+86
+	push	HL
+	ld	HL,(??AUTO_pow+58)
+	ld	DE,(??AUTO_pow+60)
+	push	DE
+	push	HL
 	ld	HL,(??AUTO_pow+74)
 	ld	DE,(??AUTO_pow+76)
-	call	__fadd
+	push	DE
+	push	HL
+	call	__m_2sum
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
 	ld	(??AUTO_pow+82),HL
 	ld	(??AUTO_pow+84),DE
-	ld	HL,(??AUTO_pow+10)
-	ld	A,H
-	rlca
-	sbc	A,A
-	ld	E,A
-	ld	D,A
-	call	__itof
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+82)
-	ld	DE,(??AUTO_pow+84)
-	call	__fsub
-	ld	(??AUTO_pow+162),HL
-	ld	(??AUTO_pow+164),DE
-	ld	HL,(??AUTO_pow+162)
-	ld	DE,(??AUTO_pow+164)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+74)
-	ld	DE,(??AUTO_pow+76)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+162)
-	ld	DE,(??AUTO_pow+164)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+82)
-	ld	DE,(??AUTO_pow+84)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+10)
-	ld	A,H
-	rlca
-	sbc	A,A
-	ld	E,A
-	ld	D,A
-	call	__itof
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_pow+86),HL
-	ld	(??AUTO_pow+88),DE
-@DOCOND47_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO46_pow
-@ENDDO48_pow:
-@DO49_pow:
-	ld	HL,(??AUTO_pow+66)
-	ld	DE,(??AUTO_pow+68)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+82)
-	ld	DE,(??AUTO_pow+84)
-	call	__fadd
-	ld	(??AUTO_pow+90),HL
-	ld	(??AUTO_pow+92),DE
-	ld	HL,(??AUTO_pow+82)
-	ld	DE,(??AUTO_pow+84)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+90)
-	ld	DE,(??AUTO_pow+92)
-	call	__fsub
-	ld	(??AUTO_pow+166),HL
-	ld	(??AUTO_pow+168),DE
-	ld	HL,(??AUTO_pow+166)
-	ld	DE,(??AUTO_pow+168)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+66)
-	ld	DE,(??AUTO_pow+68)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+166)
-	ld	DE,(??AUTO_pow+168)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+90)
-	ld	DE,(??AUTO_pow+92)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+82)
-	ld	DE,(??AUTO_pow+84)
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_pow+94),HL
-	ld	(??AUTO_pow+96),DE
-@DOCOND50_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO49_pow
-@ENDDO51_pow:
-	ld	HL,(??AUTO_pow+94)
-	ld	DE,(??AUTO_pow+96)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+86)
 	ld	DE,(??AUTO_pow+88)
-	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+78)
@@ -23604,28 +21148,33 @@ _pow_log2:
 	ld	HL,(??AUTO_pow+70)
 	ld	DE,(??AUTO_pow+72)
 	call	__fadd
-	ld	(??AUTO_pow+62),HL
-	ld	(??AUTO_pow+64),DE
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
 	ld	HL,(??AUTO_pow+62)
 	ld	DE,(??AUTO_pow+64)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+90)
-	ld	DE,(??AUTO_pow+92)
 	call	__fadd
-	ld	(??AUTO_pow+138),HL
-	ld	(??AUTO_pow+140),DE
-	ld	HL,(??AUTO_pow+90)
-	ld	DE,(??AUTO_pow+92)
+	ld	(??AUTO_pow+54),HL
+	ld	(??AUTO_pow+56),DE
+	ld	HL,(??AUTO_pow+54)
+	ld	DE,(??AUTO_pow+56)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+138)
-	ld	DE,(??AUTO_pow+140)
+	ld	HL,(??AUTO_pow+82)
+	ld	DE,(??AUTO_pow+84)
+	call	__fadd
+	ld	(??AUTO_pow+110),HL
+	ld	(??AUTO_pow+112),DE
+	ld	HL,(??AUTO_pow+82)
+	ld	DE,(??AUTO_pow+84)
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	HL,(??AUTO_pow+110)
+	ld	DE,(??AUTO_pow+112)
 	call	__fsub
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+62)
-	ld	DE,(??AUTO_pow+64)
+	ld	HL,(??AUTO_pow+54)
+	ld	DE,(??AUTO_pow+56)
 	call	__fsub
 	push	DE
 	push	HL
@@ -23642,8 +21191,8 @@ _pow_log2:
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
-	ld	HL,(??AUTO_pow+138)
-	ld	DE,(??AUTO_pow+140)
+	ld	HL,(??AUTO_pow+110)
+	ld	DE,(??AUTO_pow+112)
 @pow_log2_ret:
 	pop	IX
 	ret
@@ -23663,33 +21212,35 @@ _powl:
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
-	ld	(??AUTO_pow+170),HL
-	ld	(??AUTO_pow+172),DE
+	ld	(??AUTO_pow+114),HL
+	ld	(??AUTO_pow+116),DE
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	E,(IX+10)
 	ld	D,(IX+11)
-	ld	(??AUTO_pow+174),HL
-	ld	(??AUTO_pow+176),DE
-	ld	HL,(??AUTO_pow+174)
-	ld	DE,(??AUTO_pow+176)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	ld	(??AUTO_pow+118),HL
+	ld	(??AUTO_pow+120),DE
+	ld	A,(??AUTO_pow+121)
 	and	127
-	or	B
-	jr z,@OR_S54_pow
-	ld	HL,(??AUTO_pow+170)
-	ld	DE,(??AUTO_pow+172)
+	push	AF
+	ld	A,(??AUTO_pow+120)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_pow+119)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_pow+118)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
+	jr z,@OR_S33_pow
+	ld	HL,(??AUTO_pow+114)
+	ld	DE,(??AUTO_pow+116)
 	ld	A,L
 	or	H
 	ld	B,A
@@ -23700,92 +21251,56 @@ _powl:
 	ld	A,D
 	xor	63
 	or	B
-	jr nz,@ENDIF53_pow
-@OR_S54_pow:
+	jr nz,@ENDIF32_pow
+@OR_S33_pow:
 	ld	HL,0
 	ld	DE,16256
 	jp	@pow_ret
-@ENDIF53_pow:
-	ld	A,(??AUTO_pow+173)
+@ENDIF32_pow:
+	ld	A,(??AUTO_pow+117)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_pow+172)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
+	cp	127
+	jr nz,@AND_S37_pow
+	ld	A,(??AUTO_pow+116)
+	and	128
+	jr z,@AND_S37_pow
+	ld	A,(??AUTO_pow+116)
+	and	127
+	push	AF
+	ld	A,(??AUTO_pow+115)
+	ld	E,A
+	pop	AF
 	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr nz,@AND_S58_pow
-	ld	HL,(??AUTO_pow+170)
-	ld	DE,(??AUTO_pow+172)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	127
-	or	B
-	jr nz,@OR_S57_pow
-@AND_S58_pow:
-	ld	A,(??AUTO_pow+177)
-	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_pow+176)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
+	push	AF
+	ld	A,(??AUTO_pow+114)
+	ld	E,A
+	pop	AF
 	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr nz,@ENDIF56_pow
-	ld	HL,(??AUTO_pow+174)
-	ld	DE,(??AUTO_pow+176)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	or	A
+	jr nz,@OR_S36_pow
+@AND_S37_pow:
+	ld	A,(??AUTO_pow+121)
 	and	127
-	or	B
-	jr z,@ENDIF56_pow
-@OR_S57_pow:
+	cp	127
+	jr nz,@ENDIF35_pow
+	ld	A,(??AUTO_pow+120)
+	and	128
+	jr z,@ENDIF35_pow
+	ld	A,(??AUTO_pow+120)
+	and	127
+	push	AF
+	ld	A,(??AUTO_pow+119)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_pow+118)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
+	jr z,@ENDIF35_pow
+@OR_S36_pow:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	E,(IX+10)
@@ -23798,42 +21313,23 @@ _powl:
 	ld	D,(IX+7)
 	call	__fadd
 	jp	@pow_ret
-@ENDIF56_pow:
-	ld	A,(??AUTO_pow+177)
+@ENDIF35_pow:
+	ld	A,(??AUTO_pow+121)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_pow+176)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jp	NZ,@ENDIF60_pow
-	ld	HL,(??AUTO_pow+170)
-	ld	DE,(??AUTO_pow+172)
+	cp	127
+	jp	NZ,@ENDIF39_pow
+	ld	A,(??AUTO_pow+120)
+	and	128
+	jp	Z,@ENDIF39_pow
+	ld	HL,(??AUTO_pow+114)
+	ld	DE,(??AUTO_pow+116)
 	ld	A,D
 	and	127
 	ld	D,A
-	ld	(??AUTO_pow+178),HL
-	ld	(??AUTO_pow+180),DE
-	ld	HL,(??AUTO_pow+178)
-	ld	DE,(??AUTO_pow+180)
+	ld	(??AUTO_pow+122),HL
+	ld	(??AUTO_pow+124),DE
+	ld	HL,(??AUTO_pow+122)
+	ld	DE,(??AUTO_pow+124)
 	ld	A,L
 	or	H
 	ld	B,A
@@ -23844,29 +21340,29 @@ _powl:
 	ld	A,D
 	xor	63
 	or	B
-	jr nz,@ENDIF62_pow
+	jr nz,@ENDIF41_pow
 	ld	HL,0
 	ld	DE,16256
 	jp	@pow_ret
-@ENDIF62_pow:
+@ENDIF41_pow:
 	ld	HL,0
 	ld	DE,16256
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+178)
-	ld	DE,(??AUTO_pow+180)
+	ld	HL,(??AUTO_pow+122)
+	ld	DE,(??AUTO_pow+124)
 	call	__fcmp
-	jr z,@FCMP_F66_pow
-	jr nc,@FCMP_T65_pow
-@FCMP_F66_pow:
+	jr z,@FCMP_F45_pow
+	jr nc,@FCMP_T44_pow
+@FCMP_F45_pow:
 	ld	HL,0
-	jr @FCMP_E67_pow
-@FCMP_T65_pow:
+	jr @FCMP_E46_pow
+@FCMP_T44_pow:
 	ld	HL,1
-@FCMP_E67_pow:
+@FCMP_E46_pow:
 	ld	DE,0
 	push	HL
-	ld	A,(??AUTO_pow+177)
+	ld	A,(??AUTO_pow+121)
 	and	128
 	sub	1
 	sbc	A,A
@@ -23876,20 +21372,20 @@ _powl:
 	pop	DE
 	or	A
 	sbc	HL,DE
-	jr nz,@ENDIF64_pow
+	jr nz,@ENDIF43_pow
 	ld	HL,0
-	ld	(??AUTO_pow+178),HL
+	ld	(??AUTO_pow+122),HL
 	ld	HL,32640
-	ld	(??AUTO_pow+180),HL
-	ld	HL,(??AUTO_pow+178)
-	ld	DE,(??AUTO_pow+180)
+	ld	(??AUTO_pow+124),HL
+	ld	HL,(??AUTO_pow+122)
+	ld	DE,(??AUTO_pow+124)
 	jp	@pow_ret
-@ENDIF64_pow:
+@ENDIF43_pow:
 	ld	HL,0
 	ld	DE,0
 	jp	@pow_ret
-@ENDIF60_pow:
-	ld	HL,??AUTO_pow+174
+@ENDIF39_pow:
+	ld	HL,??AUTO_pow+118
 	inc hl
 	inc hl
 	ld	E,(HL)
@@ -23907,98 +21403,65 @@ _powl:
 	call	_pow_isint
 	pop	DE
 	pop	DE
-	ld	(??AUTO_pow+182),HL
+	ld	(??AUTO_pow+126),HL
 	ld	HL,0
-	ld	(??AUTO_pow+184),HL
-	ld	A,(??AUTO_pow+173)
+	ld	(??AUTO_pow+128),HL
+	ld	A,(??AUTO_pow+117)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_pow+172)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S70_pow
-	ld	HL,(??AUTO_pow+170)
-	ld	DE,(??AUTO_pow+172)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
-	and	127
-	or	B
-	jp	NZ,@ENDIF69_pow
-@OR_S70_pow:
-	ld	A,(??AUTO_pow+173)
+	cp	127
+	jr nz,@AND_S50_pow
+	ld	A,(??AUTO_pow+116)
 	and	128
-	jr z,@AND_F71_pow
-	ld	HL,(??AUTO_pow+182)
+	jr nz,@OR_S49_pow
+@AND_S50_pow:
+	ld	A,(??AUTO_pow+117)
+	and	127
+	push	AF
+	ld	A,(??AUTO_pow+116)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_pow+115)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_pow+114)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
+	jp	NZ,@ENDIF48_pow
+@OR_S49_pow:
+	ld	A,(??AUTO_pow+117)
+	and	128
+	jr z,@AND_F51_pow
+	ld	HL,(??AUTO_pow+126)
 	ld	A,L
 	xor	2
 	or	H
-	jr nz,@AND_F71_pow
+	jr nz,@AND_F51_pow
 	ld	HL,1
-	jr @AND_E72_pow
-@AND_F71_pow:
+	jr @AND_E52_pow
+@AND_F51_pow:
 	ld	HL,0
-@AND_E72_pow:
-	ld	(??AUTO_pow+184),HL
-	ld	A,(??AUTO_pow+173)
+@AND_E52_pow:
+	ld	(??AUTO_pow+128),HL
+	ld	A,(??AUTO_pow+117)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_pow+172)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
+	jr nz,@AND_F55_pow
+	ld	A,(??AUTO_pow+116)
+	and	128
+	jr z,@AND_F55_pow
 	ld	HL,1
-	jr z,@CMP_E75_pow
-	dec	L
-@CMP_E75_pow:
+	jr @AND_E56_pow
+@AND_F55_pow:
+	ld	HL,0
+@AND_E56_pow:
 	push	HL
-	ld	A,(??AUTO_pow+177)
+	ld	A,(??AUTO_pow+121)
 	and	128
 	sub	1
 	sbc	A,A
@@ -24008,67 +21471,67 @@ _powl:
 	pop	DE
 	or	A
 	sbc	HL,DE
-	jr nz,@ELSE73_pow
+	jr nz,@ELSE53_pow
 	ld	HL,0
-	ld	(??AUTO_pow+178),HL
+	ld	(??AUTO_pow+122),HL
 	ld	HL,32640
-	ld	(??AUTO_pow+180),HL
-	jr @ENDIF74_pow
-@ELSE73_pow:
+	ld	(??AUTO_pow+124),HL
+	jr @ENDIF54_pow
+@ELSE53_pow:
 	ld	HL,0
-	ld	(??AUTO_pow+178),HL
-	ld	(??AUTO_pow+180),HL
-@ENDIF74_pow:
-	ld	HL,(??AUTO_pow+184)
+	ld	(??AUTO_pow+122),HL
+	ld	(??AUTO_pow+124),HL
+@ENDIF54_pow:
+	ld	HL,(??AUTO_pow+128)
 	ld	A,H
 	or	L
-	jr z,@ENDIF77_pow
-	ld	HL,(??AUTO_pow+178)
-	ld	DE,(??AUTO_pow+180)
+	jr z,@ENDIF58_pow
+	ld	HL,(??AUTO_pow+122)
+	ld	DE,(??AUTO_pow+124)
 	ld	A,D
 	or	128
 	ld	D,A
-	ld	(??AUTO_pow+178),HL
-	ld	(??AUTO_pow+180),DE
-@ENDIF77_pow:
-	ld	HL,(??AUTO_pow+178)
-	ld	DE,(??AUTO_pow+180)
+	ld	(??AUTO_pow+122),HL
+	ld	(??AUTO_pow+124),DE
+@ENDIF58_pow:
+	ld	HL,(??AUTO_pow+122)
+	ld	DE,(??AUTO_pow+124)
 	jp	@pow_ret
-@ENDIF69_pow:
-	ld	A,(??AUTO_pow+173)
+@ENDIF48_pow:
+	ld	A,(??AUTO_pow+117)
 	and	128
-	jr z,@ENDIF79_pow
-	ld	HL,(??AUTO_pow+182)
+	jr z,@ENDIF60_pow
+	ld	HL,(??AUTO_pow+126)
 	ld	A,H
 	or	L
-	jr nz,@ENDIF81_pow
+	jr nz,@ENDIF62_pow
 	ld	HL,0
-	ld	(??AUTO_pow+178),HL
+	ld	(??AUTO_pow+122),HL
 	ld	HL,32704
-	ld	(??AUTO_pow+180),HL
-	ld	HL,(??AUTO_pow+178)
-	ld	DE,(??AUTO_pow+180)
+	ld	(??AUTO_pow+124),HL
+	ld	HL,(??AUTO_pow+122)
+	ld	DE,(??AUTO_pow+124)
 	jp	@pow_ret
-@ENDIF81_pow:
-	ld	HL,(??AUTO_pow+182)
+@ENDIF62_pow:
+	ld	HL,(??AUTO_pow+126)
 	ld	A,L
 	xor	2
 	or	H
 	ld	HL,1
-	jr z,@CMP_E82_pow
+	jr z,@CMP_E63_pow
 	dec	L
-@CMP_E82_pow:
-	ld	(??AUTO_pow+184),HL
-	ld	HL,(??AUTO_pow+170)
-	ld	DE,(??AUTO_pow+172)
+@CMP_E63_pow:
+	ld	(??AUTO_pow+128),HL
+	ld	HL,(??AUTO_pow+114)
+	ld	DE,(??AUTO_pow+116)
 	ld	A,D
 	and	127
 	ld	D,A
-	ld	(??AUTO_pow+170),HL
-	ld	(??AUTO_pow+172),DE
-@ENDIF79_pow:
-	ld	HL,(??AUTO_pow+170)
-	ld	DE,(??AUTO_pow+172)
+	ld	(??AUTO_pow+114),HL
+	ld	(??AUTO_pow+116),DE
+@ENDIF60_pow:
+	ld	HL,(??AUTO_pow+114)
+	ld	DE,(??AUTO_pow+116)
 	ld	A,L
 	or	H
 	ld	B,A
@@ -24079,20 +21542,20 @@ _powl:
 	ld	A,D
 	xor	63
 	or	B
-	jr nz,@ENDIF84_pow
+	jr nz,@ENDIF65_pow
 	ld	HL,0
-	ld	(??AUTO_pow+178),HL
+	ld	(??AUTO_pow+122),HL
 	ld	HL,16256
-	ld	(??AUTO_pow+180),HL
+	ld	(??AUTO_pow+124),HL
 	jp	@L_pow_sign
-@ENDIF84_pow:
-	ld	A,(??AUTO_pow+177)
+@ENDIF65_pow:
+	ld	A,(??AUTO_pow+121)
 	and	127
 	ld	L,A
 	ld	H,0
 	add	HL,HL
 	push	HL
-	ld	A,(??AUTO_pow+176)
+	ld	A,(??AUTO_pow+120)
 	ld	L,A
 	ld	H,0
 	srl	L
@@ -24116,25 +21579,25 @@ _powl:
 	sub	218
 	ld	A,D
 	sbc	A,128
-	jr c,@ENDIF86_pow
+	jr c,@ENDIF67_pow
 	ld	HL,0
 	ld	DE,16256
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+170)
-	ld	DE,(??AUTO_pow+172)
+	ld	HL,(??AUTO_pow+114)
+	ld	DE,(??AUTO_pow+116)
 	call	__fcmp
-	jr z,@FCMP_F90_pow
-	jr nc,@FCMP_T89_pow
-@FCMP_F90_pow:
+	jr z,@FCMP_F71_pow
+	jr nc,@FCMP_T70_pow
+@FCMP_F71_pow:
 	ld	HL,0
-	jr @FCMP_E91_pow
-@FCMP_T89_pow:
+	jr @FCMP_E72_pow
+@FCMP_T70_pow:
 	ld	HL,1
-@FCMP_E91_pow:
+@FCMP_E72_pow:
 	ld	DE,0
 	push	HL
-	ld	A,(??AUTO_pow+177)
+	ld	A,(??AUTO_pow+121)
 	and	128
 	sub	1
 	sbc	A,A
@@ -24144,302 +21607,91 @@ _powl:
 	pop	DE
 	or	A
 	sbc	HL,DE
-	jr nz,@TERN_E87_pow
+	jr nz,@TERN_E68_pow
 	ld	HL,0
 	ld	DE,32640
-	jr @TERN_END88_pow
-@TERN_E87_pow:
+	jr @TERN_END69_pow
+@TERN_E68_pow:
 	ld	HL,0
 	ld	DE,0
-@TERN_END88_pow:
-	ld	(??AUTO_pow+178),HL
-	ld	(??AUTO_pow+180),DE
+@TERN_END69_pow:
+	ld	(??AUTO_pow+122),HL
+	ld	(??AUTO_pow+124),DE
 	jp	@L_pow_sign
-@ENDIF86_pow:
-	ld	HL,??AUTO_pow+192
+@ENDIF67_pow:
+	ld	HL,??AUTO_pow+136
 	push	HL
-	ld	HL,(??AUTO_pow+170)
-	ld	DE,(??AUTO_pow+172)
+	ld	HL,(??AUTO_pow+114)
+	ld	DE,(??AUTO_pow+116)
 	push	DE
 	push	HL
 	call	_pow_log2
 	pop	BC
 	pop	BC
 	pop	BC
-	ld	(??AUTO_pow+188),HL
-	ld	(??AUTO_pow+190),DE
-@DO92_pow:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	call	__fmul
-	ld	(??AUTO_pow+272),HL
-	ld	(??AUTO_pow+274),DE
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+272)
-	ld	DE,(??AUTO_pow+274)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+272)
-	ld	DE,(??AUTO_pow+274)
-	call	__fsub
-	ld	(??AUTO_pow+256),HL
-	ld	(??AUTO_pow+258),DE
-	ld	HL,(??AUTO_pow+256)
-	ld	DE,(??AUTO_pow+258)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	call	__fsub
-	ld	(??AUTO_pow+260),HL
-	ld	(??AUTO_pow+262),DE
-@DOCOND93_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO92_pow
-@ENDDO94_pow:
-@DO95_pow:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+188)
-	ld	DE,(??AUTO_pow+190)
-	call	__fmul
-	ld	(??AUTO_pow+276),HL
-	ld	(??AUTO_pow+278),DE
-	ld	HL,(??AUTO_pow+188)
-	ld	DE,(??AUTO_pow+190)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+276)
-	ld	DE,(??AUTO_pow+278)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+276)
-	ld	DE,(??AUTO_pow+278)
-	call	__fsub
-	ld	(??AUTO_pow+264),HL
-	ld	(??AUTO_pow+266),DE
-	ld	HL,(??AUTO_pow+264)
-	ld	DE,(??AUTO_pow+266)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+188)
-	ld	DE,(??AUTO_pow+190)
-	call	__fsub
-	ld	(??AUTO_pow+268),HL
-	ld	(??AUTO_pow+270),DE
-@DOCOND96_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO95_pow
-@ENDDO97_pow:
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	E,(IX+10)
-	ld	D,(IX+11)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+188)
-	ld	DE,(??AUTO_pow+190)
-	call	__fmul
-	ld	(??AUTO_pow+196),HL
-	ld	(??AUTO_pow+198),DE
-	ld	HL,(??AUTO_pow+196)
-	ld	DE,(??AUTO_pow+198)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
+	ld	(??AUTO_pow+132),HL
+	ld	(??AUTO_pow+134),DE
+	ld	HL,??AUTO_pow+144
 	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+256)
-	ld	DE,(??AUTO_pow+258)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+264)
-	ld	DE,(??AUTO_pow+266)
-	call	__fmul
+	ld	HL,(??AUTO_pow+132)
+	ld	DE,(??AUTO_pow+134)
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+256)
-	ld	DE,(??AUTO_pow+258)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+268)
-	ld	DE,(??AUTO_pow+270)
-	call	__fmul
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	E,(IX+10)
+	ld	D,(IX+11)
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+260)
-	ld	DE,(??AUTO_pow+262)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+264)
-	ld	DE,(??AUTO_pow+266)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+260)
-	ld	DE,(??AUTO_pow+262)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+268)
-	ld	DE,(??AUTO_pow+270)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_pow+200),HL
-	ld	(??AUTO_pow+202),DE
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	ld	(??AUTO_pow+140),HL
+	ld	(??AUTO_pow+142),DE
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	E,(IX+10)
 	ld	D,(IX+11)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+192)
-	ld	DE,(??AUTO_pow+194)
+	ld	HL,(??AUTO_pow+136)
+	ld	DE,(??AUTO_pow+138)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+200)
-	ld	DE,(??AUTO_pow+202)
+	ld	HL,(??AUTO_pow+144)
+	ld	DE,(??AUTO_pow+146)
 	call	__fadd
-	ld	(??AUTO_pow+200),HL
-	ld	(??AUTO_pow+202),DE
+	ld	(??AUTO_pow+144),HL
+	ld	(??AUTO_pow+146),DE
 	ld	HL,0
 	ld	DE,17154
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+196)
-	ld	DE,(??AUTO_pow+198)
+	ld	HL,(??AUTO_pow+140)
+	ld	DE,(??AUTO_pow+142)
 	call	__fcmp
-	jr z,@FCMP_F101_pow
-	jr nc,@FCMP_T100_pow
-@FCMP_F101_pow:
+	jr z,@FCMP_F76_pow
+	jr nc,@FCMP_T75_pow
+@FCMP_F76_pow:
 	ld	HL,0
-	jr @FCMP_E102_pow
-@FCMP_T100_pow:
+	jr @FCMP_E77_pow
+@FCMP_T75_pow:
 	ld	HL,1
-@FCMP_E102_pow:
+@FCMP_E77_pow:
 	ld	DE,0
 	ld	A,H
 	or	L
-	jr z,@ENDIF99_pow
+	jr z,@ENDIF74_pow
 	ld	HL,0
-	ld	(??AUTO_pow+178),HL
+	ld	(??AUTO_pow+122),HL
 	ld	HL,32640
-	ld	(??AUTO_pow+180),HL
+	ld	(??AUTO_pow+124),HL
 	jp	@L_pow_sign
-@ENDIF99_pow:
+@ENDIF74_pow:
 	ld	HL,0
 	ld	DE,17184
 	ld	A,D
@@ -24447,83 +21699,83 @@ _powl:
 	ld	D,A
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+196)
-	ld	DE,(??AUTO_pow+198)
+	ld	HL,(??AUTO_pow+140)
+	ld	DE,(??AUTO_pow+142)
 	call	__fcmp
-	jr c,@FCMP_T105_pow
-@FCMP_F106_pow:
+	jr c,@FCMP_T80_pow
+@FCMP_F81_pow:
 	ld	HL,0
-	jr @FCMP_E107_pow
-@FCMP_T105_pow:
+	jr @FCMP_E82_pow
+@FCMP_T80_pow:
 	ld	HL,1
-@FCMP_E107_pow:
+@FCMP_E82_pow:
 	ld	DE,0
 	ld	A,H
 	or	L
-	jr z,@ENDIF104_pow
+	jr z,@ENDIF79_pow
 	ld	HL,0
-	ld	(??AUTO_pow+178),HL
-	ld	(??AUTO_pow+180),HL
+	ld	(??AUTO_pow+122),HL
+	ld	(??AUTO_pow+124),HL
 	jp	@L_pow_sign
-@ENDIF104_pow:
-	ld	HL,(??AUTO_pow+200)
-	ld	DE,(??AUTO_pow+202)
+@ENDIF79_pow:
+	ld	HL,(??AUTO_pow+144)
+	ld	DE,(??AUTO_pow+146)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+196)
-	ld	DE,(??AUTO_pow+198)
+	ld	HL,(??AUTO_pow+140)
+	ld	DE,(??AUTO_pow+142)
 	call	__fadd
-	ld	(??AUTO_pow+204),HL
-	ld	(??AUTO_pow+206),DE
-	ld	HL,(??AUTO_pow+196)
-	ld	DE,(??AUTO_pow+198)
+	ld	(??AUTO_pow+148),HL
+	ld	(??AUTO_pow+150),DE
+	ld	HL,(??AUTO_pow+140)
+	ld	DE,(??AUTO_pow+142)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+204)
-	ld	DE,(??AUTO_pow+206)
+	ld	HL,(??AUTO_pow+148)
+	ld	DE,(??AUTO_pow+150)
 	call	__fsub
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+200)
-	ld	DE,(??AUTO_pow+202)
+	ld	HL,(??AUTO_pow+144)
+	ld	DE,(??AUTO_pow+146)
 	call	__fsub
-	ld	(??AUTO_pow+208),HL
-	ld	(??AUTO_pow+210),DE
+	ld	(??AUTO_pow+152),HL
+	ld	(??AUTO_pow+154),DE
 	ld	HL,0
 	ld	DE,0
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+204)
-	ld	DE,(??AUTO_pow+206)
+	ld	HL,(??AUTO_pow+148)
+	ld	DE,(??AUTO_pow+150)
 	call	__fcmp
-	jr c,@FCMP_T110_pow
-@FCMP_F111_pow:
+	jr c,@FCMP_T85_pow
+@FCMP_F86_pow:
 	ld	HL,0
-	jr @FCMP_E112_pow
-@FCMP_T110_pow:
+	jr @FCMP_E87_pow
+@FCMP_T85_pow:
 	ld	HL,1
-@FCMP_E112_pow:
+@FCMP_E87_pow:
 	ld	DE,0
 	ld	A,H
 	or	L
-	jr z,@TERN_E108_pow
+	jr z,@TERN_E83_pow
 	ld	HL,0
 	ld	DE,16128
 	ld	A,D
 	xor	80H
 	ld	D,A
-	jr @TERN_END109_pow
-@TERN_E108_pow:
+	jr @TERN_END84_pow
+@TERN_E83_pow:
 	ld	HL,0
 	ld	DE,16128
-@TERN_END109_pow:
+@TERN_END84_pow:
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+204)
-	ld	DE,(??AUTO_pow+206)
+	ld	HL,(??AUTO_pow+148)
+	ld	DE,(??AUTO_pow+150)
 	call	__fadd
 	call	__ftoi
-	ld	(??AUTO_pow+186),HL
+	ld	(??AUTO_pow+130),HL
 	ld	A,H
 	rlca
 	sbc	A,A
@@ -24532,273 +21784,53 @@ _powl:
 	call	__itof
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+204)
-	ld	DE,(??AUTO_pow+206)
+	ld	HL,(??AUTO_pow+148)
+	ld	DE,(??AUTO_pow+150)
 	call	__fsub
-	ld	(??AUTO_pow+212),HL
-	ld	(??AUTO_pow+214),DE
-@DO113_pow:
-	ld	HL,(??AUTO_pow+208)
-	ld	DE,(??AUTO_pow+210)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+212)
-	ld	DE,(??AUTO_pow+214)
-	call	__fadd
-	ld	(??AUTO_pow+216),HL
-	ld	(??AUTO_pow+218),DE
-	ld	HL,(??AUTO_pow+212)
-	ld	DE,(??AUTO_pow+214)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+216)
-	ld	DE,(??AUTO_pow+218)
-	call	__fsub
-	ld	(??AUTO_pow+280),HL
-	ld	(??AUTO_pow+282),DE
-	ld	HL,(??AUTO_pow+280)
-	ld	DE,(??AUTO_pow+282)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+208)
-	ld	DE,(??AUTO_pow+210)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
+	ld	(??AUTO_pow+156),HL
+	ld	(??AUTO_pow+158),DE
+	ld	HL,??AUTO_pow+164
 	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+280)
-	ld	DE,(??AUTO_pow+282)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+216)
-	ld	DE,(??AUTO_pow+218)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+212)
-	ld	DE,(??AUTO_pow+214)
-	call	__fsub
+	ld	HL,(??AUTO_pow+152)
+	ld	DE,(??AUTO_pow+154)
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_pow+220),HL
-	ld	(??AUTO_pow+222),DE
-@DOCOND114_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO113_pow
-@ENDDO115_pow:
-@DO116_pow:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+216)
-	ld	DE,(??AUTO_pow+218)
-	call	__fmul
-	ld	(??AUTO_pow+284),HL
-	ld	(??AUTO_pow+286),DE
-	ld	HL,(??AUTO_pow+216)
-	ld	DE,(??AUTO_pow+218)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+284)
-	ld	DE,(??AUTO_pow+286)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+284)
-	ld	DE,(??AUTO_pow+286)
-	call	__fsub
-	ld	(??AUTO_pow+212),HL
-	ld	(??AUTO_pow+214),DE
-	ld	HL,(??AUTO_pow+212)
-	ld	DE,(??AUTO_pow+214)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+216)
-	ld	DE,(??AUTO_pow+218)
-	call	__fsub
-	ld	(??AUTO_pow+236),HL
-	ld	(??AUTO_pow+238),DE
-@DOCOND117_pow:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO116_pow
-@ENDDO118_pow:
+	ld	HL,(??AUTO_pow+156)
+	ld	DE,(??AUTO_pow+158)
+	push	DE
+	push	HL
+	call	__m_2sum
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	ld	(??AUTO_pow+160),HL
+	ld	(??AUTO_pow+162),DE
+	ld	HL,??AUTO_pow+172
+	push	HL
+	ld	HL,29208
+	ld	DE,16177
+	push	DE
+	push	HL
+	ld	HL,(??AUTO_pow+160)
+	ld	DE,(??AUTO_pow+162)
+	push	DE
+	push	HL
+	call	__m_2prod
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	ld	(??AUTO_pow+168),HL
+	ld	(??AUTO_pow+170),DE
 	ld	HL,29208
 	ld	DE,16177
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+216)
-	ld	DE,(??AUTO_pow+218)
-	call	__fmul
-	ld	(??AUTO_pow+224),HL
-	ld	(??AUTO_pow+226),DE
-	ld	HL,0
-	ld	DE,14342
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+236)
-	ld	DE,(??AUTO_pow+238)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,28672
-	ld	DE,16177
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+236)
-	ld	DE,(??AUTO_pow+238)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,14342
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+212)
-	ld	DE,(??AUTO_pow+214)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,28672
-	ld	DE,16177
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+212)
-	ld	DE,(??AUTO_pow+214)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_pow+228),HL
-	ld	(??AUTO_pow+230),DE
-	ld	HL,29208
-	ld	DE,16177
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+220)
-	ld	DE,(??AUTO_pow+222)
+	ld	HL,(??AUTO_pow+164)
+	ld	DE,(??AUTO_pow+166)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -24813,13 +21845,13 @@ _powl:
 	ld	D,A
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+216)
-	ld	DE,(??AUTO_pow+218)
+	ld	HL,(??AUTO_pow+160)
+	ld	DE,(??AUTO_pow+162)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+228)
-	ld	DE,(??AUTO_pow+230)
+	ld	HL,(??AUTO_pow+172)
+	ld	DE,(??AUTO_pow+174)
 	call	__fadd
 	push	DE
 	push	HL
@@ -24841,17 +21873,17 @@ _powl:
 	inc	SP
 	inc	SP
 	call	__fadd
-	ld	(??AUTO_pow+232),HL
-	ld	(??AUTO_pow+234),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
+	ld	(??AUTO_pow+176),HL
+	ld	(??AUTO_pow+178),DE
+	ld	HL,(??AUTO_pow+168)
+	ld	DE,(??AUTO_pow+170)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
+	ld	HL,(??AUTO_pow+168)
+	ld	DE,(??AUTO_pow+170)
 	call	__fmul
-	ld	(??AUTO_pow+236),HL
-	ld	(??AUTO_pow+238),DE
+	ld	(??AUTO_pow+180),HL
+	ld	(??AUTO_pow+182),DE
 	ld	HL,0
 	ld	DE,16128
 	ld	(__tmp32),HL
@@ -24896,8 +21928,8 @@ _powl:
 	ld	DE,14672
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
+	ld	HL,(??AUTO_pow+168)
+	ld	DE,(??AUTO_pow+170)
 	call	__fmul
 	push	DE
 	push	HL
@@ -24921,8 +21953,8 @@ _powl:
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
+	ld	HL,(??AUTO_pow+168)
+	ld	DE,(??AUTO_pow+170)
 	call	__fmul
 	push	DE
 	push	HL
@@ -24946,8 +21978,8 @@ _powl:
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
+	ld	HL,(??AUTO_pow+168)
+	ld	DE,(??AUTO_pow+170)
 	call	__fmul
 	push	DE
 	push	HL
@@ -24971,8 +22003,8 @@ _powl:
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
+	ld	HL,(??AUTO_pow+168)
+	ld	DE,(??AUTO_pow+170)
 	call	__fmul
 	push	DE
 	push	HL
@@ -24996,8 +22028,8 @@ _powl:
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
+	ld	HL,(??AUTO_pow+168)
+	ld	DE,(??AUTO_pow+170)
 	call	__fmul
 	push	DE
 	push	HL
@@ -25019,14 +22051,14 @@ _powl:
 	inc	SP
 	inc	SP
 	call	__fadd
-	ld	(??AUTO_pow+240),HL
-	ld	(??AUTO_pow+242),DE
-	ld	HL,(??AUTO_pow+232)
-	ld	DE,(??AUTO_pow+234)
+	ld	(??AUTO_pow+184),HL
+	ld	(??AUTO_pow+186),DE
+	ld	HL,(??AUTO_pow+176)
+	ld	DE,(??AUTO_pow+178)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
+	ld	HL,(??AUTO_pow+168)
+	ld	DE,(??AUTO_pow+170)
 	call	__fmul
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
@@ -25034,12 +22066,12 @@ _powl:
 	push	HL
 	ld	HL,(__tmp32+2)
 	push	HL
-	ld	HL,(??AUTO_pow+236)
-	ld	DE,(??AUTO_pow+238)
+	ld	HL,(??AUTO_pow+180)
+	ld	DE,(??AUTO_pow+182)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+240)
-	ld	DE,(??AUTO_pow+242)
+	ld	HL,(??AUTO_pow+184)
+	ld	DE,(??AUTO_pow+186)
 	call	__fmul
 	push	DE
 	push	HL
@@ -25061,106 +22093,52 @@ _powl:
 	inc	SP
 	inc	SP
 	call	__fadd
-	ld	(??AUTO_pow+244),HL
-	ld	(??AUTO_pow+246),DE
-@DO119_pow:
-	ld	HL,0
-	ld	DE,16256
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
-	call	__fadd
-	ld	(??AUTO_pow+248),HL
-	ld	(??AUTO_pow+250),DE
-	ld	HL,0
-	ld	DE,16256
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+248)
-	ld	DE,(??AUTO_pow+250)
-	call	__fsub
-	ld	(??AUTO_pow+288),HL
-	ld	(??AUTO_pow+290),DE
-	ld	HL,(??AUTO_pow+288)
-	ld	DE,(??AUTO_pow+290)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+224)
-	ld	DE,(??AUTO_pow+226)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
+	ld	(??AUTO_pow+188),HL
+	ld	(??AUTO_pow+190),DE
+	ld	HL,??AUTO_pow+196
 	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_pow+288)
-	ld	DE,(??AUTO_pow+290)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+248)
-	ld	DE,(??AUTO_pow+250)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,0
-	ld	DE,16256
-	call	__fsub
+	ld	HL,(??AUTO_pow+168)
+	ld	DE,(??AUTO_pow+170)
 	push	DE
 	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_pow+252),HL
-	ld	(??AUTO_pow+254),DE
-@DOCOND120_pow:
 	ld	HL,0
-	ld	A,H
-	or	L
-	jp	NZ,@DO119_pow
-@ENDDO121_pow:
-	ld	HL,(??AUTO_pow+232)
-	ld	DE,(??AUTO_pow+234)
+	ld	DE,16256
+	push	DE
+	push	HL
+	call	__m_2sum
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	pop	BC
+	ld	(??AUTO_pow+192),HL
+	ld	(??AUTO_pow+194),DE
+	ld	HL,(??AUTO_pow+176)
+	ld	DE,(??AUTO_pow+178)
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+252)
-	ld	DE,(??AUTO_pow+254)
+	ld	HL,(??AUTO_pow+196)
+	ld	DE,(??AUTO_pow+198)
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+244)
-	ld	DE,(??AUTO_pow+246)
+	ld	HL,(??AUTO_pow+188)
+	ld	DE,(??AUTO_pow+190)
 	call	__fadd
 	ld	(__tmp32),HL
 	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_pow+248)
-	ld	DE,(??AUTO_pow+250)
+	ld	HL,(??AUTO_pow+192)
+	ld	DE,(??AUTO_pow+194)
 	call	__fadd
-	ld	(??AUTO_pow+178),HL
-	ld	(??AUTO_pow+180),DE
-	ld	A,(??AUTO_pow+181)
+	ld	(??AUTO_pow+122),HL
+	ld	(??AUTO_pow+124),DE
+	ld	A,(??AUTO_pow+125)
 	and	127
 	ld	L,A
 	ld	H,0
 	add	HL,HL
 	push	HL
-	ld	A,(??AUTO_pow+180)
+	ld	A,(??AUTO_pow+124)
 	ld	L,A
 	ld	H,0
 	srl	L
@@ -25177,11 +22155,11 @@ _powl:
 	ld	A,L
 	or	E
 	ld	L,A
-	ld	DE,(??AUTO_pow+186)
+	ld	DE,(??AUTO_pow+130)
 	add	HL,DE
 	push	HL
-	ld	HL,(??AUTO_pow+178)
-	ld	DE,(??AUTO_pow+180)
+	ld	HL,(??AUTO_pow+122)
+	ld	DE,(??AUTO_pow+124)
 	ld	A,E
 	and	127
 	ld	E,A
@@ -25198,23 +22176,23 @@ _powl:
 	pop	BC
 	pop	BC
 	pop	BC
-	ld	(??AUTO_pow+178),HL
-	ld	(??AUTO_pow+180),DE
+	ld	(??AUTO_pow+122),HL
+	ld	(??AUTO_pow+124),DE
 @L_pow_sign:
-	ld	HL,(??AUTO_pow+184)
+	ld	HL,(??AUTO_pow+128)
 	ld	A,H
 	or	L
-	jr z,@ENDIF123_pow
-	ld	HL,(??AUTO_pow+178)
-	ld	DE,(??AUTO_pow+180)
+	jr z,@ENDIF89_pow
+	ld	HL,(??AUTO_pow+122)
+	ld	DE,(??AUTO_pow+124)
 	ld	A,D
 	or	128
 	ld	D,A
-	ld	(??AUTO_pow+178),HL
-	ld	(??AUTO_pow+180),DE
-@ENDIF123_pow:
-	ld	HL,(??AUTO_pow+178)
-	ld	DE,(??AUTO_pow+180)
+	ld	(??AUTO_pow+122),HL
+	ld	(??AUTO_pow+124),DE
+@ENDIF89_pow:
+	ld	HL,(??AUTO_pow+122)
+	ld	DE,(??AUTO_pow+124)
 @pow_ret:
 	pop	IX
 	ret
@@ -25371,7 +22349,7 @@ _pow_tl:
 	COMMON	/lc_pow/
 ; Shared automatic storage
 ??AUTO_pow:
-	ds	292
+	ds	200
 
 
 	CSEG
@@ -30159,82 +27137,46 @@ _remquol:
 	ld	(HL),0
 	ld	A,(??AUTO_remquo+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_remquo+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@AND_S4_remquo
-	ld	HL,(??AUTO_remquo)
-	ld	DE,(??AUTO_remquo+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_remquo+2)
+	and	128
+	jr z,@AND_S4_remquo
+	ld	A,(??AUTO_remquo+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_remquo+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@OR_S3_remquo
 @AND_S4_remquo:
 	ld	A,(??AUTO_remquo+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_remquo+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_remquo
-	ld	HL,(??AUTO_remquo+4)
-	ld	DE,(??AUTO_remquo+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_remquo+6)
+	and	128
+	jr z,@ENDIF2_remquo
+	ld	A,(??AUTO_remquo+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_remquo+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_remquo
 @OR_S3_remquo:
 	ld	HL,0
@@ -30247,46 +27189,30 @@ _remquol:
 @ENDIF2_remquo:
 	ld	A,(??AUTO_remquo+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S8_remquo
 	ld	A,(??AUTO_remquo+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S7_remquo
-	ld	HL,(??AUTO_remquo+4)
-	ld	DE,(??AUTO_remquo+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S7_remquo
+@AND_S8_remquo:
+	ld	A,(??AUTO_remquo+7)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_remquo+6)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF6_remquo
 @OR_S7_remquo:
 	ld	HL,0
@@ -30299,54 +27225,38 @@ _remquol:
 @ENDIF6_remquo:
 	ld	A,(??AUTO_remquo+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S12_remquo
 	ld	A,(??AUTO_remquo+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S10_remquo
-	ld	HL,(??AUTO_remquo)
-	ld	DE,(??AUTO_remquo+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S11_remquo
+@AND_S12_remquo:
+	ld	A,(??AUTO_remquo+3)
 	and	127
-	or	B
-	jr nz,@ENDIF9_remquo
-@OR_S10_remquo:
+	push	AF
+	ld	A,(??AUTO_remquo+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_remquo)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
+	jr nz,@ENDIF10_remquo
+@OR_S11_remquo:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	jp	@remquo_ret
-@ENDIF9_remquo:
+@ENDIF10_remquo:
 	ld	A,(??AUTO_remquo+3)
 	and	128
 	add	A,255
@@ -30396,22 +27306,22 @@ _remquol:
 	sub	L
 	ld	A,D
 	sbc	A,H
-	jp	PO,@CMP_NV13_remquo
+	jp	PO,@CMP_NV15_remquo
 	xor	128
-@CMP_NV13_remquo:
-	jp	P,@ENDIF12_remquo
+@CMP_NV15_remquo:
+	jp	P,@ENDIF14_remquo
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	jp	@remquo_ret
-@ENDIF12_remquo:
+@ENDIF14_remquo:
 	ld	HL,(??AUTO_remquo+30)
 	dec	HL
 	ld	DE,(??AUTO_remquo+28)
 	or	A
 	sbc	HL,DE
-	jr nz,@ELSE14_remquo
+	jr nz,@ELSE16_remquo
 	ld	HL,(??AUTO_remquo+12)
 	ld	DE,(??AUTO_remquo+14)
 	ld	A,(??AUTO_remquo+16)
@@ -30422,13 +27332,13 @@ _remquol:
 	sbc	A,E
 	ld	A,(??AUTO_remquo+19)
 	sbc	A,D
-	jr c,@ENDIF17_remquo
+	jr c,@ENDIF19_remquo
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	jp	@remquo_ret
-@ENDIF17_remquo:
+@ENDIF19_remquo:
 	ld	HL,(??AUTO_remquo+16)
 	ld	DE,(??AUTO_remquo+18)
 	add	HL,HL
@@ -30452,8 +27362,8 @@ _remquol:
 	ld	(??AUTO_remquo+26),DE
 	ld	HL,1
 	ld	(??AUTO_remquo+34),HL
-	jp	@ENDIF15_remquo
-@ELSE14_remquo:
+	jp	@ENDIF17_remquo
+@ELSE16_remquo:
 	ld	HL,(??AUTO_remquo+12)
 	ld	DE,(??AUTO_remquo+14)
 	ld	(??AUTO_remquo+20),HL
@@ -30463,7 +27373,7 @@ _remquol:
 	or	A
 	sbc	HL,DE
 	ld	(??AUTO_remquo+32),HL
-@FOR18_remquo:
+@FOR20_remquo:
 	ld	HL,(??AUTO_remquo+32)
 	ld	A,H
 	xor	128
@@ -30472,49 +27382,7 @@ _remquol:
 	sub	1
 	ld	A,D
 	sbc	A,128
-	jr c,@ENDFOR20_remquo
-	ld	HL,(??AUTO_remquo+24)
-	ld	DE,(??AUTO_remquo+26)
-	add	HL,HL
-	rl	E
-	rl	D
-	ld	(??AUTO_remquo+24),HL
-	ld	(??AUTO_remquo+26),DE
-	ld	HL,(??AUTO_remquo+20)
-	ld	DE,(??AUTO_remquo+22)
-	ld	BC,(??AUTO_remquo+16)
-	or	A
-	sbc	HL,BC
-	ex	DE,HL
-	ld	BC,(??AUTO_remquo+18)
-	sbc	HL,BC
-	jr c,@ENDIF22_remquo
-	ld	HL,(??AUTO_remquo+20)
-	ld	BC,(??AUTO_remquo+16)
-	or	A
-	sbc	HL,BC
-	ld	(??AUTO_remquo+20),HL
-	ld	HL,(??AUTO_remquo+22)
-	ld	BC,(??AUTO_remquo+18)
-	sbc	HL,BC
-	ld	(??AUTO_remquo+22),HL
-	ld	A,(??AUTO_remquo+24)
-	or	1
-	ld	(??AUTO_remquo+24),A
-@ENDIF22_remquo:
-	ld	HL,(??AUTO_remquo+20)
-	ld	DE,(??AUTO_remquo+22)
-	add	HL,HL
-	rl	E
-	rl	D
-	ld	(??AUTO_remquo+20),HL
-	ld	(??AUTO_remquo+22),DE
-@FORUPD19_remquo:
-	ld	HL,(??AUTO_remquo+32)
-	dec	HL
-	ld	(??AUTO_remquo+32),HL
-	jr @FOR18_remquo
-@ENDFOR20_remquo:
+	jr c,@ENDFOR22_remquo
 	ld	HL,(??AUTO_remquo+24)
 	ld	DE,(??AUTO_remquo+26)
 	add	HL,HL
@@ -30549,6 +27417,48 @@ _remquol:
 	add	HL,HL
 	rl	E
 	rl	D
+	ld	(??AUTO_remquo+20),HL
+	ld	(??AUTO_remquo+22),DE
+@FORUPD21_remquo:
+	ld	HL,(??AUTO_remquo+32)
+	dec	HL
+	ld	(??AUTO_remquo+32),HL
+	jr @FOR20_remquo
+@ENDFOR22_remquo:
+	ld	HL,(??AUTO_remquo+24)
+	ld	DE,(??AUTO_remquo+26)
+	add	HL,HL
+	rl	E
+	rl	D
+	ld	(??AUTO_remquo+24),HL
+	ld	(??AUTO_remquo+26),DE
+	ld	HL,(??AUTO_remquo+20)
+	ld	DE,(??AUTO_remquo+22)
+	ld	BC,(??AUTO_remquo+16)
+	or	A
+	sbc	HL,BC
+	ex	DE,HL
+	ld	BC,(??AUTO_remquo+18)
+	sbc	HL,BC
+	jr c,@ENDIF26_remquo
+	ld	HL,(??AUTO_remquo+20)
+	ld	BC,(??AUTO_remquo+16)
+	or	A
+	sbc	HL,BC
+	ld	(??AUTO_remquo+20),HL
+	ld	HL,(??AUTO_remquo+22)
+	ld	BC,(??AUTO_remquo+18)
+	sbc	HL,BC
+	ld	(??AUTO_remquo+22),HL
+	ld	A,(??AUTO_remquo+24)
+	or	1
+	ld	(??AUTO_remquo+24),A
+@ENDIF26_remquo:
+	ld	HL,(??AUTO_remquo+20)
+	ld	DE,(??AUTO_remquo+22)
+	add	HL,HL
+	rl	E
+	rl	D
 	ld	A,(??AUTO_remquo+16)
 	sub	L
 	ld	A,(??AUTO_remquo+17)
@@ -30557,7 +27467,7 @@ _remquol:
 	sbc	A,E
 	ld	A,(??AUTO_remquo+19)
 	sbc	A,D
-	jr c,@OR_S27_remquo
+	jr c,@OR_S29_remquo
 	ld	HL,(??AUTO_remquo+20)
 	ld	DE,(??AUTO_remquo+22)
 	add	HL,HL
@@ -30575,11 +27485,11 @@ _remquol:
 	ld	A,H
 	or	L
 	or	C
-	jr nz,@ENDIF26_remquo
+	jr nz,@ENDIF28_remquo
 	ld	A,(??AUTO_remquo+24)
 	and	1
-	jr z,@ENDIF26_remquo
-@OR_S27_remquo:
+	jr z,@ENDIF28_remquo
+@OR_S29_remquo:
 	ld	HL,(??AUTO_remquo+16)
 	ld	DE,(??AUTO_remquo+18)
 	ld	BC,(??AUTO_remquo+20)
@@ -30596,15 +27506,15 @@ _remquol:
 	ld	(??AUTO_remquo+24),HL
 	ld	A,H
 	or	L
-	jr	NZ,@INC28_remquo
+	jr	NZ,@INC30_remquo
 	ld	HL,(??AUTO_remquo+24+2)
 	inc	HL
 	ld	(??AUTO_remquo+24+2),HL
-@INC28_remquo:
+@INC30_remquo:
 	ld	HL,1
 	ld	(??AUTO_remquo+34),HL
-@ENDIF26_remquo:
-@ENDIF15_remquo:
+@ENDIF28_remquo:
+@ENDIF17_remquo:
 	ld	HL,(??AUTO_remquo+24)
 	ld	DE,(??AUTO_remquo+26)
 	ld	A,H
@@ -30625,7 +27535,7 @@ _remquol:
 	ld	E,A
 	pop	AF
 	cp	E
-	jr z,@ENDIF30_remquo
+	jr z,@ENDIF32_remquo
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	ld	E,(HL)
@@ -30640,7 +27550,7 @@ _remquol:
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
-@ENDIF30_remquo:
+@ENDIF32_remquo:
 	ld	HL,(??AUTO_remquo+36)
 	ld	DE,(??AUTO_remquo+34)
 	ld	A,H
@@ -30656,7 +27566,7 @@ _remquol:
 	or	L
 	or	E
 	or	D
-	jr nz,@ENDIF32_remquo
+	jr nz,@ENDIF34_remquo
 	ld	HL,(??AUTO_remquo)
 	ld	DE,(??AUTO_remquo+2)
 	ld	HL,0
@@ -30669,11 +27579,11 @@ _remquol:
 	ld	HL,(??AUTO_remquo+8)
 	ld	DE,(??AUTO_remquo+10)
 	jr @remquo_ret
-@ENDIF32_remquo:
-@WHILE33_remquo:
+@ENDIF34_remquo:
+@WHILE35_remquo:
 	ld	A,(??AUTO_remquo+22)
 	and	128
-	jr nz,@ENDWHILE34_remquo
+	jr nz,@ENDWHILE36_remquo
 	ld	HL,(??AUTO_remquo+20)
 	ld	DE,(??AUTO_remquo+22)
 	add	HL,HL
@@ -30684,8 +27594,8 @@ _remquol:
 	ld	HL,(??AUTO_remquo+30)
 	dec	HL
 	ld	(??AUTO_remquo+30),HL
-	jr @WHILE33_remquo
-@ENDWHILE34_remquo:
+	jr @WHILE35_remquo
+@ENDWHILE36_remquo:
 	ld	HL,(??AUTO_remquo+30)
 	push	HL
 	ld	HL,(??AUTO_remquo+20)
@@ -31036,46 +27946,30 @@ _ldexpl:
 	ld	(??AUTO_scalbn+2),DE
 	ld	A,(??AUTO_scalbn+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
+	cp	127
+	jr nz,@AND_S4_scalbn
 	ld	A,(??AUTO_scalbn+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr z,@OR_S3_scalbn
-	ld	HL,(??AUTO_scalbn)
-	ld	DE,(??AUTO_scalbn+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
+	and	128
+	jr nz,@OR_S3_scalbn
+@AND_S4_scalbn:
+	ld	A,(??AUTO_scalbn+3)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_scalbn+2)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_scalbn+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_scalbn)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr nz,@ENDIF2_scalbn
 @OR_S3_scalbn:
 	ld	L,(IX+4)
@@ -31107,11 +28001,11 @@ _ldexpl:
 	sub	89
 	ld	A,D
 	sbc	A,130
-	jr c,@ENDIF5_scalbn
+	jr c,@ENDIF6_scalbn
 	ld	HL,600
 	ld	(IX+8),L
 	ld	(IX+9),H
-@ENDIF5_scalbn:
+@ENDIF6_scalbn:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	A,H
@@ -31121,11 +28015,11 @@ _ldexpl:
 	sub	168
 	ld	A,D
 	sbc	A,125
-	jr nc,@ENDIF7_scalbn
+	jr nc,@ENDIF8_scalbn
 	ld	HL,-600
 	ld	(IX+8),L
 	ld	(IX+9),H
-@ENDIF7_scalbn:
+@ENDIF8_scalbn:
 	ld	HL,(??AUTO_scalbn+8)
 	ld	E,(IX+8)
 	ld	D,(IX+9)
@@ -34923,42 +31817,24 @@ _sinl:
 	ld	(??AUTO_sin+2),DE
 	ld	A,(??AUTO_sin+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_sin+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_sin
-	ld	HL,(??AUTO_sin)
-	ld	DE,(??AUTO_sin+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_sin+2)
+	and	128
+	jr z,@ENDIF2_sin
+	ld	A,(??AUTO_sin+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_sin+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_sin)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_sin
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -34976,34 +31852,7 @@ _sinl:
 @ENDIF2_sin:
 	ld	A,(??AUTO_sin+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_sin+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF6_sin
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -35152,30 +32001,11 @@ _sinhl:
 	ld	(??AUTO_sinh+2),DE
 	ld	A,(??AUTO_sinh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_sinh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_sinh
+	ld	A,(??AUTO_sinh+2)
+	and	128
+	jr z,@ENDIF2_sinh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	E,(IX+6)
@@ -35184,34 +32014,7 @@ _sinhl:
 @ENDIF2_sinh:
 	ld	A,(??AUTO_sinh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_sinh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF4_sinh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -35793,532 +32596,280 @@ _sprintf_out:	DS	2	; next byte of the caller's buffer
 ; ============================================================
 ; lc_sqrt.mac
 ; ============================================================
-; lc_sqrt.mac - GENERATED from csrc/lc_sqrt.c by gen_c_modules.py
-; Do not edit this file: edit the C file and run the script.
-; Target: Z80
-; Generated by uc80
-
+; lc_sqrt.mac - sqrt, sqrtf, sqrtl
+;
+; Correctly rounded square root with integer arithmetic.  The mantissa is
+; shifted so that the exponent is even, the digit-by-digit method gives a
+; 26-bit root, and the last bits and the remainder round to nearest even.
 
 	CSEG
 
+; ============================================================
+; double sqrt(double x)
+; ============================================================
 	PUBLIC	_sqrt
-
-; Function sqrt (uses shared storage)
-_sqrt:
 	PUBLIC	_sqrtf
-_sqrtf:
 	PUBLIC	_sqrtl
+_sqrt:
+_sqrtf:
 _sqrtl:
-	push	IX
-	ld	IX,0
-	add	IX,SP
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	E,(IX+6)
-	ld	D,(IX+7)
-	ld	(??AUTO_sqrt),HL
-	ld	(??AUTO_sqrt+2),DE
-	ld	HL,(??AUTO_sqrt)
-	ld	DE,(??AUTO_sqrt+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
-	and	255
-	or	B
-	ld	B,A
-	ld	A,D
-	and	127
-	or	B
-	jr nz,@ENDIF2_sqrt
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	E,(IX+6)
-	ld	D,(IX+7)
-	jp	@sqrt_ret
-@ENDIF2_sqrt:
-	ld	A,(??AUTO_sqrt+3)
-	and	128
-	jr nz,@OR_S5_sqrt
-	ld	A,(??AUTO_sqrt+3)
-	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_sqrt+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr nz,@ENDIF4_sqrt
-@OR_S5_sqrt:
-	ld	A,(??AUTO_sqrt+3)
-	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_sqrt+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
-	jr nz,@ENDIF7_sqrt
-	ld	A,(??AUTO_sqrt+3)
-	and	128
-	jr nz,@ENDIF7_sqrt
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	E,(IX+6)
-	ld	D,(IX+7)
-	jp	@sqrt_ret
-@ENDIF7_sqrt:
-	ld	HL,0
-	ld	(??AUTO_sqrt+4),HL
-	ld	HL,32704
-	ld	(??AUTO_sqrt+6),HL
-	ld	HL,(??AUTO_sqrt+4)
-	ld	DE,(??AUTO_sqrt+6)
-	jp	@sqrt_ret
-@ENDIF4_sqrt:
-	ld	HL,??AUTO_sqrt+12
-	push	HL
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	E,(IX+6)
-	ld	D,(IX+7)
-	push	DE
-	push	HL
-	call	__m_unpack
-	pop	BC
-	pop	BC
-	pop	BC
-	ld	(??AUTO_sqrt+8),HL
-	ld	(??AUTO_sqrt+10),DE
-	ld	HL,(??AUTO_sqrt+12)
-	ld	DE,65409
-	add	HL,DE
-	ld	(??AUTO_sqrt+12),HL
-	ld	HL,(??AUTO_sqrt+8)
-	ld	DE,(??AUTO_sqrt+10)
-	ld	A,E
-	and	127
-	ld	E,A
-	ld	D,0
-	ld	A,E
-	or	128
-	ld	E,A
-	ld	A,D
-	or	63
-	ld	D,A
-	ld	(??AUTO_sqrt+4),HL
-	ld	(??AUTO_sqrt+6),DE
-	ld	HL,(??AUTO_sqrt+4)
-	ld	DE,(??AUTO_sqrt+6)
-	ld	(??AUTO_sqrt+16),HL
-	ld	(??AUTO_sqrt+18),DE
-	ld	A,(??AUTO_sqrt+12)
-	and	1
-	jr z,@ENDIF9_sqrt
-	ld	HL,(??AUTO_sqrt+16)
-	ld	DE,(??AUTO_sqrt+18)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+16)
-	ld	DE,(??AUTO_sqrt+18)
-	call	__fadd
-	ld	(??AUTO_sqrt+16),HL
-	ld	(??AUTO_sqrt+18),DE
-	ld	HL,(??AUTO_sqrt+12)
-	dec	HL
-	ld	(??AUTO_sqrt+12),HL
-@ENDIF9_sqrt:
-	ld	HL,(??AUTO_sqrt+16)
-	ld	DE,(??AUTO_sqrt+18)
-	ld	(??AUTO_sqrt+4),HL
-	ld	(??AUTO_sqrt+6),DE
-	ld	HL,(??AUTO_sqrt+4)
-	ld	DE,(??AUTO_sqrt+6)
-	srl	D
-	rr	E
-	rr	H
-	rr	L
-	ld	A,134
-	sub	L
-	ld	L,A
-	ld	A,90
-	sbc	A,H
-	ld	H,A
-	ld	A,55
-	sbc	A,E
-	ld	E,A
-	ld	A,95
-	sbc	A,D
-	ld	D,A
-	ld	(??AUTO_sqrt+4),HL
-	ld	(??AUTO_sqrt+6),DE
-	ld	HL,(??AUTO_sqrt+4)
-	ld	DE,(??AUTO_sqrt+6)
-	ld	(??AUTO_sqrt+20),HL
-	ld	(??AUTO_sqrt+22),DE
-	ld	HL,0
-	ld	(??AUTO_sqrt+14),HL
-@FOR10_sqrt:
-	ld	HL,(??AUTO_sqrt+14)
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	3
-	ld	A,D
-	sbc	A,128
-	jr nc,@ENDFOR12_sqrt
-	ld	HL,0
-	ld	DE,16128
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+16)
-	ld	DE,(??AUTO_sqrt+18)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+20)
-	ld	DE,(??AUTO_sqrt+22)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+20)
-	ld	DE,(??AUTO_sqrt+22)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,0
-	ld	DE,16320
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+20)
-	ld	DE,(??AUTO_sqrt+22)
-	call	__fmul
-	ld	(??AUTO_sqrt+20),HL
-	ld	(??AUTO_sqrt+22),DE
-@FORUPD11_sqrt:
-	ld	HL,(??AUTO_sqrt+14)
-	inc	HL
-	ld	(??AUTO_sqrt+14),HL
-	jr @FOR10_sqrt
-@ENDFOR12_sqrt:
-	ld	HL,(??AUTO_sqrt+20)
-	ld	DE,(??AUTO_sqrt+22)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+16)
-	ld	DE,(??AUTO_sqrt+18)
-	call	__fmul
-	ld	(??AUTO_sqrt+24),HL
-	ld	(??AUTO_sqrt+26),DE
-@DO13_sqrt:
-	ld	HL,2048
-	ld	DE,17792
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+24)
-	ld	DE,(??AUTO_sqrt+26)
-	call	__fmul
-	ld	(??AUTO_sqrt+48),HL
-	ld	(??AUTO_sqrt+50),DE
-	ld	HL,(??AUTO_sqrt+24)
-	ld	DE,(??AUTO_sqrt+26)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+48)
-	ld	DE,(??AUTO_sqrt+50)
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+48)
-	ld	DE,(??AUTO_sqrt+50)
-	call	__fsub
-	ld	(??AUTO_sqrt+28),HL
-	ld	(??AUTO_sqrt+30),DE
-	ld	HL,(??AUTO_sqrt+28)
-	ld	DE,(??AUTO_sqrt+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+24)
-	ld	DE,(??AUTO_sqrt+26)
-	call	__fsub
-	ld	(??AUTO_sqrt+32),HL
-	ld	(??AUTO_sqrt+34),DE
-@DOCOND14_sqrt:
-	ld	HL,0
-	ld	A,H
-	or	L
-	jr nz,@DO13_sqrt
-@ENDDO15_sqrt:
-	ld	HL,(??AUTO_sqrt+24)
-	ld	DE,(??AUTO_sqrt+26)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+24)
-	ld	DE,(??AUTO_sqrt+26)
-	call	__fmul
-	ld	(??AUTO_sqrt+36),HL
-	ld	(??AUTO_sqrt+38),DE
-	ld	HL,(??AUTO_sqrt+32)
-	ld	DE,(??AUTO_sqrt+34)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+32)
-	ld	DE,(??AUTO_sqrt+34)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_sqrt+36)
-	ld	DE,(??AUTO_sqrt+38)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_sqrt+28)
-	ld	DE,(??AUTO_sqrt+30)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+28)
-	ld	DE,(??AUTO_sqrt+30)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,0
-	ld	DE,16384
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+28)
-	ld	DE,(??AUTO_sqrt+30)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+32)
-	ld	DE,(??AUTO_sqrt+34)
-	call	__fmul
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fadd
-	ld	(??AUTO_sqrt+40),HL
-	ld	(??AUTO_sqrt+42),DE
-	ld	HL,(??AUTO_sqrt+40)
-	ld	DE,(??AUTO_sqrt+42)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(__tmp32)
-	push	HL
-	ld	HL,(__tmp32+2)
-	push	HL
-	ld	HL,(??AUTO_sqrt+36)
-	ld	DE,(??AUTO_sqrt+38)
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+16)
-	ld	DE,(??AUTO_sqrt+18)
-	call	__fsub
-	push	DE
-	push	HL
-	ld	HL,4
-	add	HL,SP
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	inc	HL
-	ld	(__tmp32+2),DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ld	(__tmp32),DE
-	pop	HL
-	pop	DE
-	inc	SP
-	inc	SP
-	inc	SP
-	inc	SP
-	call	__fsub
-	ld	(??AUTO_sqrt+44),HL
-	ld	(??AUTO_sqrt+46),DE
-	ld	HL,0
-	ld	DE,16128
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+20)
-	ld	DE,(??AUTO_sqrt+22)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+44)
-	ld	DE,(??AUTO_sqrt+46)
-	call	__fmul
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	HL,(??AUTO_sqrt+24)
-	ld	DE,(??AUTO_sqrt+26)
-	call	__fadd
-	ld	(??AUTO_sqrt+24),HL
-	ld	(??AUTO_sqrt+26),DE
-	ld	HL,(??AUTO_sqrt+24)
-	ld	DE,(??AUTO_sqrt+26)
-	ld	(??AUTO_sqrt+4),HL
-	ld	(??AUTO_sqrt+6),DE
-	ld	HL,(??AUTO_sqrt+12)
-	bit	7,H
-	jr	Z,@SDP16_sqrt
-	inc	HL
-@SDP16_sqrt:
-	sra	H
-	rr	L
-	ld	A,H
-	rlca
-	sbc	A,A
-	ld	E,A
-	ld	D,A
-	add	HL,HL
-	add	HL,HL
-	add	HL,HL
-	add	HL,HL
-	add	HL,HL
-	add	HL,HL
-	add	HL,HL
-	ex	DE,HL
-	ld	HL,0
-	push	DE
-	push	HL
-	ld	HL,(??AUTO_sqrt+4)
-	ld	DE,(??AUTO_sqrt+6)
-	pop	BC
-	add	HL,BC
-	ex	DE,HL
-	pop	BC
-	adc	HL,BC
-	ex	DE,HL
-	ld	(??AUTO_sqrt+4),HL
-	ld	(??AUTO_sqrt+6),DE
-	ld	HL,(??AUTO_sqrt+4)
-	ld	DE,(??AUTO_sqrt+6)
-@sqrt_ret:
-	pop	IX
-	ret
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
 
+	; B = the biased exponent
+	LD	A,D
+	AND	7FH
+	ADD	A,A
+	LD	B,A
+	LD	A,E
+	RLCA
+	LD	A,B
+	ADC	A,0
+	LD	B,A
+	JR	Z,_sqrt_z	; zero or subnormal
+	CP	255
+	JR	Z,_sqrt_sp	; inf or NaN
+	BIT	7,D
+	JR	NZ,_sqrt_nan	; negative
+	LD	A,E
+	OR	80H		; the implied bit
+	LD	E,A
+	LD	D,0		; DEHL = the mantissa, 24 bits
+	LD	C,0		; C = 0: normal number
+_sqrt_go:
+	; B = exponent, C = 64 for a subnormal number
+	LD	A,B
+	SRL	A
+	ADD	A,63
+	SUB	C
+	LD	(_sqrt_e),A	; the exponent of a root with 25 bits
+	BIT	0,B
+	JR	Z,_sqrt_ev
+	ADD	HL,HL		; the unbiased exponent is even: mantissa * 2
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+_sqrt_ev:
+	LD	B,6
+_sqrt_sh6:
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	DJNZ	_sqrt_sh6
+	LD	(_sqrt_s),HL
+	LD	(_sqrt_s+2),DE
+	LD	HL,0
+	LD	(_sqrt_r),HL
+	LD	(_sqrt_r+2),HL
+	LD	(_sqrt_q),HL
+	LD	(_sqrt_q+2),HL
+	EXX
+	LD	B,26		; B' = loop counter
+	EXX
+_sqrt_lp:
+	; C = the next two bits of S, S = S << 2
+	LD	A,(_sqrt_s+3)
+	RLCA
+	RLCA
+	AND	3
+	LD	C,A
+	LD	HL,(_sqrt_s)
+	LD	DE,(_sqrt_s+2)
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	LD	(_sqrt_s),HL
+	LD	(_sqrt_s+2),DE
+	; R = R << 2 | C
+	LD	HL,(_sqrt_r)
+	LD	DE,(_sqrt_r+2)
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	LD	A,L
+	OR	C
+	LD	L,A
+	LD	(_sqrt_r),HL
+	LD	(_sqrt_r+2),DE
+	; DE:HL = T = Q << 2 | 1
+	LD	HL,(_sqrt_q)
+	LD	DE,(_sqrt_q+2)
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	INC	HL
+	; R - T
+	LD	BC,(_sqrt_r)
+	LD	A,C
+	SUB	L
+	LD	C,A
+	LD	A,B
+	SBC	A,H
+	LD	B,A
+	PUSH	BC
+	LD	HL,(_sqrt_r+2)
+	SBC	HL,DE		; carry if R < T
+	POP	BC
+	JR	C,_sqrt_no
+	LD	(_sqrt_r),BC
+	LD	(_sqrt_r+2),HL
+	SCF
+	JR	_sqrt_q2
+_sqrt_no:
+	OR	A
+_sqrt_q2:
+	; Q = Q * 2 + carry
+	LD	HL,(_sqrt_q)
+	LD	DE,(_sqrt_q+2)
+	ADC	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	LD	(_sqrt_q),HL
+	LD	(_sqrt_q+2),DE
+	EXX
+	DEC	B
+	EXX
+	JP	NZ,_sqrt_lp
 
-; Runtime library functions
-	EXTRN	__fadd
-	EXTRN	__fmul
-	EXTRN	__fsub
-	EXTRN	__tmp32
+	; C = 1 when the remainder is not zero
+	LD	BC,(_sqrt_r)
+	LD	A,B
+	OR	C
+	LD	BC,(_sqrt_r+2)
+	OR	B
+	OR	C
+	ADD	A,255
+	SBC	A,A
+	AND	1
+	LD	C,A
+	LD	HL,(_sqrt_q)
+	LD	DE,(_sqrt_q+2)
+	; Q has 25 or 26 bits
+	BIT	1,D
+	JR	NZ,_sqrt_26
+	LD	A,L
+	AND	1
+	ADD	A,A
+	LD	B,A		; bit 1 of B = the round bit
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	LD	D,0		; exponent increment
+	JR	_sqrt_rnd
+_sqrt_26:
+	LD	A,L
+	AND	3
+	LD	B,A		; bit 1 = the round bit, bit 0 = sticky
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	LD	D,1
+_sqrt_rnd:
+	BIT	1,B
+	JR	Z,_sqrt_pack
+	LD	A,B
+	AND	1
+	OR	C
+	LD	B,A
+	LD	A,L
+	AND	1
+	OR	B
+	JR	Z,_sqrt_pack	; a tie goes to the even mantissa
+	INC	HL
+	LD	A,H
+	OR	L
+	JR	NZ,_sqrt_pack
+	INC	E
+	JR	NZ,_sqrt_pack
+	LD	E,80H		; the mantissa carried to 2^24
+	INC	D
+_sqrt_pack:
+	LD	A,(_sqrt_e)
+	ADD	A,D
+	SRL	A
+	LD	D,A
+	JR	C,_sqrt_ret
+	RES	7,E
+_sqrt_ret:
+	POP	IX
+	RET
 
-; Implicit external functions
+_sqrt_nan:
+	LD	DE,7FC0H
+	LD	HL,0
+	JR	_sqrt_ret
 
-; Static storage that starts as zero
+_sqrt_sp:
+	; exponent 255: inf or NaN.  A NaN and +inf are the result, -inf is NaN.
+	LD	A,E
+	AND	7FH
+	OR	H
+	OR	L
+	JR	NZ,_sqrt_ret	; a NaN
+	BIT	7,D
+	JR	NZ,_sqrt_nan
+	JR	_sqrt_ret
+
+_sqrt_z:
+	; exponent 0: zero, or a subnormal number
+	LD	A,E
+	AND	7FH
+	OR	H
+	OR	L
+	JR	Z,_sqrt_ret	; +-0
+	BIT	7,D
+	JR	NZ,_sqrt_nan
+	LD	A,E
+	AND	7FH
+	LD	E,A
+	LD	D,0
+	LD	B,129
+_sqrt_nl:
+	ADD	HL,HL
+	RL	E
+	DEC	B
+	BIT	7,E
+	JR	Z,_sqrt_nl
+	LD	C,64
+	JP	_sqrt_go
+
 	COMMON	/lc_sqrt/
-; Shared automatic storage
-??AUTO_sqrt:
-	ds	52
+_sqrt_s:
+	DS	4
+_sqrt_r:
+	DS	4
+_sqrt_q:
+	DS	4
+_sqrt_e:
+	DS	1
 
 
 	CSEG
@@ -40157,42 +36708,24 @@ _tanl:
 	ld	(??AUTO_tan+2),DE
 	ld	A,(??AUTO_tan+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_tan+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_tan
-	ld	HL,(??AUTO_tan)
-	ld	DE,(??AUTO_tan+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_tan+2)
+	and	128
+	jr z,@ENDIF2_tan
+	ld	A,(??AUTO_tan+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_tan+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_tan)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_tan
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -40210,34 +36743,7 @@ _tanl:
 @ENDIF2_tan:
 	ld	A,(??AUTO_tan+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_tan+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF6_tan
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -40650,42 +37156,24 @@ _tanhl:
 	ld	(??AUTO_tanh+2),DE
 	ld	A,(??AUTO_tanh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_tanh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_tanh
-	ld	HL,(??AUTO_tanh)
-	ld	DE,(??AUTO_tanh+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_tanh+2)
+	and	128
+	jr z,@ENDIF2_tanh
+	ld	A,(??AUTO_tanh+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_tanh+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_tanh)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_tanh
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -40710,34 +37198,7 @@ _tanhl:
 @ENDIF2_tanh:
 	ld	A,(??AUTO_tanh+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_tanh+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	114
-	ld	A,D
-	sbc	A,128
+	cp	57
 	jr nc,@ENDIF8_tanh
 	ld	L,(IX+4)
 	ld	H,(IX+5)

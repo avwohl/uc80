@@ -9,13 +9,13 @@ double log2(double x)
     float f, y, z;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u) || !M_NEG(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u) || !M_NEG(u))
             return x;
         u.u = M_NAN;
         return u.f;
     }
-    if (M_ABSBITS(u) == 0) {
+    if (M_ISZERO(u)) {
         u.u = 0xFF800000UL;
         return u.f;
     }

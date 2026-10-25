@@ -104,8 +104,8 @@ static float pow_log2(float x, float *lo)
     m_u u;
     unsigned long mant;
     int e, n, j;
-    float m, f, fh, fl, z1, z2, c, sh, se, s_lo, ph, pl, low, lh, ll, th, tl;
-    float a_h, a_l, b_h, b_l, uh, ul, q, r, p, pe, mh, ml, rh, rl, hi;
+    float m, f, z1, z2, c, sh, se, s_lo, ph, pl, low, lh, ll, th, tl;
+    float a_h, a_l, b_h, b_l, uh, q, r, p, pe, hi;
 
     mant = _m_unpack(x, &e);
     n = e - 127;
@@ -118,10 +118,8 @@ static float pow_log2(float x, float *lo)
         /* near 1: ln(1+f) = f - f*f/2 + f*f*f*(1/3 - f/4 + ...) */
         if (m > 1.41421356f)
             n++;
-        M_SPLIT(f, fh, fl);
-        z1 = f * f;
-        z2 = ((fh * fh - z1) + 2.0f * fh * fl) + fl * fl;
-        M_2SUM(f, -0.5f * z1, sh, se);
+        z1 = _m_2prod(f, f, &z2);
+        sh = _m_2sum(f, -0.5f * z1, &se);
         c = f * z1 * (((((-0.125f * f + 0.142857149f) * f - 0.166666672f) * f
                         + 0.200000003f) * f - 0.25f) * f + 0.333333343f);
         s_lo = se + (c - 0.5f * z2);
@@ -129,30 +127,23 @@ static float pow_log2(float x, float *lo)
         j = (int)((mant >> 18) & 31);
         c = 1.0f + ((float)j + 0.5f) * 0.03125f;
         r = 1.0f / c;
-        M_SPLIT(m, mh, ml);
-        M_SPLIT(r, rh, rl);
-        p = m * r;
-        pe = ((mh * rh - p) + mh * rl + ml * rh) + ml * rl;
-        uh = p - 1.0f;
-        ul = pe;
+        p = _m_2prod(m, r, &pe);
+        sh = p - 1.0f;                  /* u = sh + pe */
+        uh = sh;
         q = uh * uh * (-0.5f + uh * (0.333333343f + uh * (-0.25f + uh *
             (0.200000003f + uh * (-0.166666672f + uh * 0.142857149f)))));
-        sh = uh;
-        s_lo = (ul - ul * uh) + q;
+        s_lo = (pe - pe * uh) + q;
         th = pow_th[j];
         tl = pow_tl[j];
     }
     /* (sh + s_lo) * log2(e), log2(e) = 1.44269502 + 1.92596303e-8 */
-    M_SPLIT(sh, fh, fl);
-    ph = sh * 1.44269502f;
-    pl = ((fh * 1.44287109f - ph) + fh * -0.000176072121f + fl * 1.44287109f)
-         + fl * -0.000176072121f;
+    ph = _m_2prod(sh, 1.44269502f, &pl);
     low = pl + sh * 1.92596303e-8f + s_lo * 1.44269502f;
     lh = ph + low;
     ll = low - (lh - ph);
     /* + n + table */
-    M_2SUM((float)n, th, a_h, a_l);
-    M_2SUM(a_h, lh, b_h, b_l);
+    a_h = _m_2sum((float)n, th, &a_l);
+    b_h = _m_2sum(a_h, lh, &b_l);
     low = ((a_l + b_l) + tl) + ll;
     hi = b_h + low;
     *lo = low - (hi - b_h);
@@ -165,15 +156,14 @@ double pow(double x, double y)
     m_u a, b, r;
     int yint, neg, n;
     float lh, ll, ph, pl, th, tl, fh, f, fl, rh, re, rl, z, p, tail, s1, e1;
-    float yh, yl, lhh, lhl;
 
     a.f = x;
     b.f = y;
-    if (M_ABSBITS(b) == 0 || a.u == 0x3F800000UL)
+    if (M_ISZERO(b) || a.u == 0x3F800000UL)
         return 1.0f;
-    if ((M_EXP(a) == 255 && M_MANT(a)) || (M_EXP(b) == 255 && M_MANT(b)))
+    if (M_ISNAN(a) || M_ISNAN(b))
         return x + y;                   /* a NaN */
-    if (M_EXP(b) == 255) {
+    if (M_SPEC(b)) {
         /* y = +-inf */
         r.u = a.u & 0x7FFFFFFFUL;
         if (r.u == 0x3F800000UL)
@@ -186,10 +176,10 @@ double pow(double x, double y)
     }
     yint = pow_isint(b);
     neg = 0;
-    if (M_EXP(a) == 255 || M_ABSBITS(a) == 0) {
+    if (M_SPEC(a) || M_ISZERO(a)) {
         /* x = +-inf or +-0 */
         neg = M_NEG(a) && yint == 2;
-        if ((M_EXP(a) == 255) == (M_NEG(b) == 0))
+        if ((M_SPEC(a)) == (M_NEG(b) == 0))
             r.u = M_INF;
         else
             r.u = 0;
@@ -216,10 +206,7 @@ double pow(double x, double y)
     }
     /* t = y * log2(x) */
     lh = pow_log2(a.f, &ll);
-    M_SPLIT(y, yh, yl);
-    M_SPLIT(lh, lhh, lhl);
-    ph = y * lh;
-    pl = ((yh * lhh - ph) + yh * lhl + yl * lhh) + yl * lhl;
+    ph = _m_2prod(y, lh, &pl);
     pl = pl + y * ll;
     if (ph > 130.0f) {
         r.u = M_INF;
@@ -233,19 +220,16 @@ double pow(double x, double y)
     tl = pl - (th - ph);
     n = (int)(th + (th < 0.0f ? -0.5f : 0.5f));
     fh = th - (float)n;
-    M_2SUM(fh, tl, f, fl);
+    f = _m_2sum(fh, tl, &fl);
     /* r = f * ln2, ln2 = 0.693147182 - 1.90465421e-9 */
-    M_SPLIT(f, fh, z);
-    rh = f * 0.693147182f;
-    re = ((fh * 0.693115234f - rh) + fh * 3.19480896e-05f + z * 0.693115234f)
-         + z * 3.19480896e-05f;
+    rh = _m_2prod(f, 0.693147182f, &re);
     rl = re + f * -1.90465421e-9f + fl * 0.693147182f;
     /* exp(rh + rl) = 1 + rh + (rl + rh*rl + rh*rh*P(rh)) */
     z = rh * rh;
     p = ((((0.000198577953f * rh + 0.00139335997f) * rh + 0.00833336078f) * rh
           + 0.0416664667f) * rh + 0.166666672f) * rh + 0.5f;
     tail = z * p + rh * rl;
-    M_2SUM(1.0f, rh, s1, e1);
+    s1 = _m_2sum(1.0f, rh, &e1);
     r.f = s1 + ((e1 + rl) + tail);
     r.f = _m_pack(0, M_MANT(r) | 0x800000UL, M_EXP(r) + n);
 sign:

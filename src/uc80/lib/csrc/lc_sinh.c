@@ -17,9 +17,9 @@ double sinh(double x)
     int n, neg;
 
     u.f = x;
-    if (M_EXP(u) == 255)
+    if (M_SPEC(u))
         return x;                       /* NaN, +-inf */
-    if (M_EXP(u) < 114)
+    if (M_TINY(u))
         return x;
     neg = M_NEG(u) != 0;
     ax = neg ? -x : x;

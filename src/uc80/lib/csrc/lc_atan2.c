@@ -14,7 +14,7 @@ double atan2(double y, double x)
 
     a.f = y;
     b.f = x;
-    if ((M_EXP(a) == 255 && M_MANT(a)) || (M_EXP(b) == 255 && M_MANT(b)))
+    if (M_ISNAN(a) || M_ISNAN(b))
         return x + y;                   /* a NaN */
     /* no subnormal arithmetic: scale two small arguments up, and take a
      * subnormal next to a large one as zero */
@@ -33,22 +33,22 @@ double atan2(double y, double x)
     xneg = M_NEG(b) != 0;
     ay = yneg ? -y : y;
     ax = xneg ? -x : x;
-    if (M_ABSBITS(a) == 0) {
+    if (M_ISZERO(a)) {
         v = xneg ? 3.14159274f : 0.0f;  /* y = +-0: +-0 or +-pi */
         return yneg ? -v : v;
     }
-    if (M_EXP(a) == 255) {
-        if (M_EXP(b) == 255)
+    if (M_SPEC(a)) {
+        if (M_SPEC(b))
             v = xneg ? 2.35619450f : 0.785398185f;  /* 3pi/4, pi/4 */
         else
             v = 1.57079637f;
         return yneg ? -v : v;
     }
-    if (M_ABSBITS(b) == 0) {
+    if (M_ISZERO(b)) {
         v = 1.57079637f;                /* x = +-0 */
         return yneg ? -v : v;
     }
-    if (M_EXP(b) == 255) {
+    if (M_SPEC(b)) {
         v = xneg ? 3.14159274f : 0.0f;  /* y finite */
         return yneg ? -v : v;
     }

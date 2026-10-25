@@ -9,13 +9,13 @@ double sin(double x)
     int n;
 
     u.f = x;
-    if (M_EXP(u) == 255) {
-        if (M_MANT(u))
+    if (M_SPEC(u)) {
+        if (M_NANM(u))
             return x;
         u.u = M_NAN;                    /* sin(+-inf) */
         return u.f;
     }
-    if (M_EXP(u) < 114)
+    if (M_TINY(u))
         return x;                       /* |x| < 2^-13 */
     n = M_NEG(u);
     u.u &= 0x7FFFFFFFUL;

@@ -16,11 +16,21 @@ typedef union {
     unsigned char b[4];
 } m_u;
 
-/* biased exponent (0 to 255) and sign of a value in a union */
+/* Parts of a value in a union.  The tests use the bytes: a 32-bit shift or
+ * mask costs several times more code on the Z80 than a byte test. */
 #define M_EXP(v) ((int)((((v).b[3] & 0x7F) << 1) | ((v).b[2] >> 7)))
 #define M_NEG(v) ((v).b[3] & 0x80)
 #define M_MANT(v) ((v).u & 0x7FFFFFUL)
 #define M_ABSBITS(v) ((v).u & 0x7FFFFFFFUL)
+/* exponent 255: an infinity or a NaN */
+#define M_SPEC(v) (((v).b[3] & 0x7F) == 0x7F && ((v).b[2] & 0x80))
+/* not zero if the mantissa bits are not zero */
+#define M_NANM(v) (((v).b[2] & 0x7F) | (v).b[1] | (v).b[0])
+#define M_ISNAN(v) (M_SPEC(v) && M_NANM(v))
+#define M_ISZERO(v) (!(((v).b[3] & 0x7F) | (v).b[2] | (v).b[1] | (v).b[0]))
+/* |x| < 2^-13, and |x| < 2^-25 */
+#define M_TINY(v) (((v).b[3] & 0x7F) < 57)
+#define M_TINY25(v) (((v).b[3] & 0x7F) < 51)
 
 #define M_INF 0x7F800000UL
 #define M_NAN 0x7FC00000UL
@@ -38,6 +48,9 @@ float _m_round(float x, int mode);
 long long _m_toll(float r);
 /* exp(x) = y * 2^n for |x| < 104, y in [0.7, 1.42]; *np gets n */
 float _m_expk(float x, int *np);
+/* Error-free transformations: p + *e = a * b and s + *e = a + b exactly */
+float _m_2prod(float a, float b, float *e);
+float _m_2sum(float a, float b, float *e);
 /* x > 0 and finite: x = m * 2^n with m in [sqrt(1/2), sqrt(2)]; sets
  * *np = n and *fp = f = m - 1 (exact); the return value y is such that
  * log(m) = f + y with |y| about f*f/2 */

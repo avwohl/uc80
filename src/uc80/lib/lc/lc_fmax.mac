@@ -32,42 +32,24 @@ _fmaxl:
 	ld	(??AUTO_fmax+6),DE
 	ld	A,(??AUTO_fmax+3)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmax+2)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF2_fmax
-	ld	HL,(??AUTO_fmax)
-	ld	DE,(??AUTO_fmax+2)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmax+2)
+	and	128
+	jr z,@ENDIF2_fmax
+	ld	A,(??AUTO_fmax+2)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmax+1)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmax)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF2_fmax
 	ld	L,(IX+8)
 	ld	H,(IX+9)
@@ -77,42 +59,24 @@ _fmaxl:
 @ENDIF2_fmax:
 	ld	A,(??AUTO_fmax+7)
 	and	127
-	ld	L,A
-	ld	H,0
-	add	HL,HL
-	push	HL
-	ld	A,(??AUTO_fmax+6)
-	ld	L,A
-	ld	H,0
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	srl	L
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld l,a
-	xor	255
-	or	H
+	cp	127
 	jr nz,@ENDIF4_fmax
-	ld	HL,(??AUTO_fmax+4)
-	ld	DE,(??AUTO_fmax+6)
-	ld	A,L
-	and	255
-	ld	B,A
-	ld	A,H
-	and	255
-	or	B
-	ld	B,A
-	ld	A,E
+	ld	A,(??AUTO_fmax+6)
+	and	128
+	jr z,@ENDIF4_fmax
+	ld	A,(??AUTO_fmax+6)
 	and	127
-	or	B
+	push	AF
+	ld	A,(??AUTO_fmax+5)
+	ld	E,A
+	pop	AF
+	or	E
+	push	AF
+	ld	A,(??AUTO_fmax+4)
+	ld	E,A
+	pop	AF
+	or	E
+	or	A
 	jr z,@ENDIF4_fmax
 	ld	L,(IX+4)
 	ld	H,(IX+5)

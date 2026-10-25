@@ -14,9 +14,9 @@ double asinh(double x)
     int neg;
 
     u.f = x;
-    if (M_EXP(u) == 255)
+    if (M_SPEC(u))
         return x;
-    if (M_EXP(u) < 114)
+    if (M_TINY(u))
         return x;
     neg = M_NEG(u) != 0;
     ax = neg ? -x : x;
