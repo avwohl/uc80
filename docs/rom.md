@@ -1,6 +1,6 @@
 # Build a Z80 ROM with uc80
 
-Back to the [README](../README.md). The plan and the open work are in [rom_target.md](rom_target.md). Interrupt functions, port input and output, and objects at a fixed address are in [rom_hardware.md](rom_hardware.md).
+Back to the [README](../README.md). The plan and the open work are in [rom_target.md](rom_target.md). Interrupt functions, port input and output, and objects at a fixed address are in [rom_hardware.md](rom_hardware.md). The use of uc80 code with the SDCC tools and with nullsound is in [rom_interop.md](rom_interop.md).
 
 uc80 can build a Z80 ROM image that has no operating system. The program has no CP/M and no BDOS. The reset vector starts the program at address 0. The ROM options of `ul80` place the code in ROM and the variables in RAM. The ROM test runner (see [romrun.md](romrun.md)) runs the image.
 

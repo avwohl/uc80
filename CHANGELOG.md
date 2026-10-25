@@ -12,6 +12,13 @@ observable behaviour of a program uc80 compiles.
 
 ### Added
 
+- **Interop with SDCC and nullsound** (Phase 5 of `docs/rom_target.md`; see `docs/rom_interop.md`):
+  - SDCC `__asm ... __endasm;` blocks, at statement level and at file level. The prepass in `sdcc_compat.py` turns the sdas text of a block into an `asm("...")` statement with MACRO-80 text (`#imm`, `N(ix)`, `.db`, `.dw`, `.ds`, `.ascii`, `.globl`, `1$` labels, `0x` numbers). A directive or an operand it cannot translate is an error with the line number.
+  - `--asm-syntax=sdas` (with `--sdas-style=sdcc|ngdevkit` and `--sdas-areas`): the compiler writes sdas text for `sdasz80` and `sdldz80`. New module `src/uc80/sdas.py` (with `asmexpr.py` and `sdas_inline.py`). The default output does not change. The translator keeps the `JR` range rule of um80 (a far `JR` becomes `JP`), splits DSEG into an image area and a RAM area, and maps the vector area to an absolute area (marker `;@RELOC` in `crt0_rom.mac`).
+  - `uc80 --build-sdas-libs DIR` translates and assembles the runtime and libc into `uc80_rt.lib` and `uc80_lc.lib` for `sdldz80 -l`.
+  - `bench/rom/sndrom.py --sdas` and `bench/rom/isrproof.py --sdas`: the snd-* kernels and the interrupt proofs link with `sdldz80` to the same images, sizes and T-states as the `ul80` build.
+  - `bench/rom/nullsound.py`: builds nullsound (ngdevkit commit pinned, sha256 checked, fetched into `bench/_cache`, not vendored) and links it with C commands from uc80 (`ns_cmds.c`, `ns_user.s`). The ROM runs in romrun and the YM2610 writes equal the expected sequence.
+  - Tests: `tests/test_sdas.py` (every library module and every benchmark program translate and assemble, the instruction-size table equals `sdasz80`), `tests/test_sdcc_compat.py`, `tests/test_rom_interop.py`. They skip without the SDCC tools.
 - docs/neogeo_driver.md and examples/neogeo_driver.c: a Neo Geo sound driver example (NMI command, timer IRQ, YM busy wait, bank select) with the port table and a test that runs the example in romrun.
 - **Interrupt functions and hardware access** (Phase 2 of `docs/rom_target.md`; see `docs/rom_hardware.md`):
   - `#pragma uc80 interrupt NAME [critical]` and `#pragma uc80 nmi NAME` make a C function an interrupt function: `EI` first (for `interrupt`), `PUSH AF, BC, DE, HL, IY`, the matching pops, then `RETI` or `RETN`. The compiler sets the INT (38h) or NMI (66h) vector, keeps the function, and refuses parameters, a return value and a direct call. The prologue saves the alternate registers only when the call graph reaches code that uses them. `asm_dce` knows that `RETI` and `RETN` end a block.

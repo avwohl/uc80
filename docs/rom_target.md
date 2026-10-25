@@ -19,18 +19,22 @@ Done:
 
 - Phase 2, interrupt functions: `#pragma uc80 interrupt NAME [critical]` and `#pragma uc80 nmi NAME`. Register save (AF, BC, DE, HL, IY, and the alternate set when the call graph reaches an EXX user), `RETI` or `RETN`, the vector, and the errors for parameters, a return value and a direct call. `asm_dce` knows `RETI` and `RETN`. No peephole rule can match across the prologue or the epilogue (barrier regions in `main.py`). See [rom_hardware.md](rom_hardware.md).
 - Phase 2, hardware access: `<z80.h>` has `z80_out`, `z80_in`, `z80_out16`, `z80_in16`, `z80_di`, `z80_ei`, `z80_irq_save`, `z80_irq_restore`, the critical-section pair, and `z80_load16`. Objects can have a fixed address (`__at`, `[[uc80::at]]`, and volatile integer objects at a constant address). The option `--isr-safe` and two warnings are new: one for work areas at fixed RAM and one for the alternate registers.
-- Phase 3 (the parts that serve the Neo Geo driver): the SDCC spellings `__interrupt`, `__interrupt(n)`, `__critical __interrupt[(n)]`, `__critical { }`, `__sfr __at`, `__sfr __banked __at` and `T x __at(addr)`, with a prepass in `src/uc80/sdcc_compat.py`. `__naked`, `__asm`, `__sdcccall` and `__preserves_regs` stay errors.
+- Phase 3 (the parts that serve the Neo Geo driver): the SDCC spellings `__interrupt`, `__interrupt(n)`, `__critical __interrupt[(n)]`, `__critical { }`, `__sfr __at`, `__sfr __banked __at` and `T x __at(addr)`, with a prepass in `src/uc80/sdcc_compat.py`. `__naked`, `__sdcccall` and `__preserves_regs` stay errors.
 - Phase 2 proof: `bench/rom/isrproof.py` (an NMI command queue, a YM2610 timer interrupt that drives the sequencer, a bank select with `z80_in16`).
+- Phase 3, `__asm ... __endasm;` blocks (statement level and file level): the prepass turns the sdas text of a block into an `asm("...")` statement with MACRO-80 text. A directive or an operand that it cannot translate is an error with the line number. See [rom_interop.md](rom_interop.md).
+- Phase 5, translator to sdas: `uc80 --asm-syntax=sdas` writes a `.s` file (`src/uc80/sdas.py`). The runtime and libc are translated and packed for `sdldz80` (`uc80 --build-sdas-libs DIR`). Measured, not estimated: the four snd-* kernels and the three interrupt proofs link with `sdldz80` to the same image bytes, the same RAM figures and the same T-states as the `ul80` build. All 105 programs of the benchmark set translate and assemble with no error. The work took more than the estimate of one small test, because of the range check of `JR` (um80 changes a far `JR` to `JP`, sdasz80 does not), the vector area, the initial data and the symbol names. See [rom_interop.md](rom_interop.md).
+- Phase 5, proof with nullsound: nullsound (ngdevkit commit 5106cbd1414a) is built with `sdasz80` as its Makefile does. A table entry jumps to C functions from uc80, one C function calls `ym2610_write_port_a` through an assembly shim, and the ROM runs in romrun with an NMI that carries the command byte. The YM2610 register writes equal the expected sequence (`bench/rom/nullsound.py`, `tests/test_rom_interop.py`). The area names that ngdevkit links are `CODE` and `DATA` (not `_CODE`, `_DATA`), so the translator has the style `ngdevkit`. The register contract is verified from the nullsound sources.
 
 Not done (needs `codegen.py` or other work):
 
 - The watchdog hook of the crt0.
 - The optional per-module BSS block for separate compilation.
-- Phase 3: `__naked` and the `__asm ... __endasm` form. A real sound driver needs an assembly thunk, so this item comes next.
+- Phase 3: `__naked`. An assembly thunk can be a `.s` or `.mac` file, or an `__asm` block in a normal function.
 - An interrupt form for the RST vectors and for IM 2. The vector pragma gives a plain `RET` function and a warning.
 - The interrupt check cannot see a call through a function pointer.
 - A pointer variable that holds a constant address is not changed to a direct access.
-- Phase 4 and the later phases.
+- Phase 4 and the later phases. The diagnostic for a C function with `EXX` code next to nullsound is open.
+- Phase 5: the optional `sdcccall0` attribute, initialised globals next to nullsound (no start-up code copies them), and the CP/M target as a goal for the sdas output.
 - An interrupt function does not save the fixed work areas of the runtime (Phase 4 option). The compiler prints a warning instead.
 - A vector in separate compilation (`--no-whole-program`): the compiler prints a warning, and your own start-up code must jump to the handler.
 

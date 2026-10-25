@@ -113,6 +113,12 @@ def fetch(cache: Path = CACHE) -> Path:
     return root
 
 
+def load_syms(path) -> dict:
+    """{NAME: address} of a .sym file (upper-case names)."""
+    from romrun.machine import load_symbols
+    return load_symbols(str(path))
+
+
 def run(cmd, cwd, check=True):
     r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
     out = r.stdout + r.stderr

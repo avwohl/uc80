@@ -32,3 +32,63 @@ def pytest_configure(config):
                                env=dict(os.environ))
     except OSError:
         pass
+
+
+# ---- helpers for the sdas tests ---------------------------------------------
+
+def shared_dir(tmp_path_factory, name):
+    """A directory that all pytest-xdist workers of one session share."""
+    import pathlib
+    base = tmp_path_factory.getbasetemp()
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        base = base.parent          # one directory for the whole session
+    d = pathlib.Path(base) / name
+    d.mkdir(exist_ok=True)
+    return d
+
+
+class SharedLock:
+    """Hold an exclusive lock on a file in a directory: build in the
+    directory once, whatever the number of workers."""
+
+    def __init__(self, d):
+        self.path = d / ".lock"
+
+    def __enter__(self):
+        self.fh = open(self.path, "w")
+        fcntl.flock(self.fh, fcntl.LOCK_EX)
+
+    def __exit__(self, *a):
+        self.fh.close()
+
+
+HAVE_SDAS = all(shutil.which(t) for t in ("sdasz80", "sdldz80", "sdar",
+                                          "sdobjcopy"))
+
+
+def _sdas_libs(tmp_path_factory, name, **kw):
+    import pytest
+    from uc80 import sdas
+    if not HAVE_SDAS:
+        pytest.skip("needs SDCC sdas tools")
+    d = shared_dir(tmp_path_factory, name)
+    with SharedLock(d):
+        if not (d / "uc80_lc.lib").exists():
+            res = sdas.build_library(d, "sdcc", **kw)
+            assert res["failed"] == [], res["failed"][:3]
+    return d
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def rom_libs(tmp_path_factory):
+    """uc80_rt.lib and uc80_lc.lib for a ROM (sdasz80), built once."""
+    return _sdas_libs(tmp_path_factory, "sdaslib_rom")
+
+
+@pytest.fixture(scope="session")
+def cpm_libs(tmp_path_factory):
+    """The same for a CP/M program (the data is in the image)."""
+    return _sdas_libs(tmp_path_factory, "sdaslib_cpm", flat_data=True)

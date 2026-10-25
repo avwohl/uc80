@@ -134,7 +134,7 @@ _NO_HASH = {"jp", "jr", "call", "djnz", "rst", "im", "bit", "set", "res",
             "ret", "in", "out"}
 
 _IGNORED = {".Z80", "TITLE", "SUBTTL", "PAGE", ".LIST", ".XLIST", ".LALL",
-            ".SALL", ".SFCOND", ".LFCOND", ".PRINTX", ".RADIX"}
+            ".SALL", ".SFCOND", ".LFCOND", ".PRINTX"}
 _DIRECTIVES = (_IGNORED | {
     "CSEG", "DSEG", "ASEG", "COMMON", "ORG", "PUBLIC", "ENTRY", "GLOBAL",
     "EXTRN", "EXT", "EXTERNAL", "EQU", "DEFL", "SET", "DB", "DEFB", "DEFM",
@@ -467,6 +467,7 @@ class _Translator:
         a = self.areas
         self.out.append(Rec(f"; sdas text made by uc80 from {self.filename}"
                             if self.comments else ""))
+        mod = re.sub(r"[^A-Za-z0-9_]", "_", mod) or "uc80"
         self.out.append(Rec(f"\t.module\t{mod}"))
         for name in (a.code, a.rom_init, a.ram_init, a.bss):
             self.area_line(name)
@@ -730,6 +731,20 @@ def translate(text: str, *, style="sdcc", module="uc80",
     .com file, which is loaded as it is)."""
     return _Translator(text, style, module, filename, comments,
                        flat_data).run()
+
+
+def area_sizes(text: str, *, style="sdcc", flat_data=False) -> dict:
+    """The size in bytes that the translator computes for each area of
+    ``text`` (MACRO-80).  sdasz80 reports the same figures: the test
+    suite compares the two, to check the table of instruction sizes that
+    the JR range check uses."""
+    t = _Translator(text, style, "m", "m", False, flat_data)
+    t.run()
+    sizes = {}
+    for r in t.out:
+        if r.where:
+            sizes[r.where] = max(sizes.get(r.where, 0), r.addr + r.size)
+    return sizes
 
 
 def code_origin_of(sdas_text: str):

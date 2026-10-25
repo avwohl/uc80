@@ -34,6 +34,8 @@ Rules for the assembly text:
 - The C grammar makes `asm` a block item, not a statement, so an unbraced
   `if (c) asm("nop");` is a syntax error. Write `if (c) { asm("nop"); }`.
 
+The SDCC form `__asm ... __endasm;` (sdas syntax in the block) also works. The compiler turns the block into this `asm` statement. See [rom_interop.md](rom_interop.md).
+
 Extended asm, which has an operand or clobber list, for example
 `asm("ld hl,%0" : : "r"(x))`, is not supported. `asm goto` is not supported.
 Both stop the compilation with an error message. Pass values through global

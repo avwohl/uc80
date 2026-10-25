@@ -29,6 +29,7 @@ static const unsigned short fnum[12] = {
 
 static unsigned char key_count;    /* number of key-on commands */
 static unsigned char last_note;
+#pragma uc80 public key_count, last_note        /* for the test: PUBLIC */
 
 /* Command 02h: nullsound runs this after the driver start (the hook of
  * snd_command_02_eye_catcher_music).  The code sets the variables. */

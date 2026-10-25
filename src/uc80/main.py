@@ -1460,7 +1460,11 @@ def main() -> int:
                     module=module_name, filename=str(input_paths[0].name),
                     flat_data=not rom)
             except sdas.SdasError as e:
-                print(f"uc80: error: --asm-syntax=sdas: {e}", file=sys.stderr)
+                # keep the MACRO-80 text: the line number is a line of it
+                keep = output_path.with_suffix(".mac")
+                keep.write_text(code)
+                print(f"uc80: error: --asm-syntax=sdas: {e}\n"
+                      f"uc80: the MACRO-80 text is in {keep}", file=sys.stderr)
                 return 1
             sdas_origin = sdas.code_origin_of(code)
         output_path.write_text(code)

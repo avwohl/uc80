@@ -138,6 +138,13 @@ def noi_to_sym(noi: Path, sym: Path):
     sym.write_text("\n".join(out) + "\n")
 
 
+def sdas_link_flags(style="sdcc", layout="neogeo", origin=0x68):
+    """The sdldz80 flags for a ROM of the layout (see uc80.sdas)."""
+    sys.path.insert(0, str(BENCH.parent / "src"))
+    from uc80 import sdas
+    return sdas.link_flags(style, origin, LAYOUTS[layout]["data"], 0)
+
+
 def sdas_compile_link(work: Path, c_name: str, layout="dev", libs=None,
                       style="sdcc"):
     """uc80 --asm-syntax=sdas, sdasz80, sdldz80 and sdobjcopy for c_name

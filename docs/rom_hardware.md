@@ -146,11 +146,13 @@ __sfr __at(0x10) PORT;                     8-bit port, IN and OUT
 __sfr __banked __at(0x1234) PORT;          16-bit port (BC), IN and OUT
 T name __at(0xF800);                       object at a fixed address
 __critical { ... }                         critical section
+__asm ... __endasm;                        inline assembly in sdas syntax
 ```
 
 - A read of a port name becomes `IN`. A write becomes `OUT`. `PORT |= x` becomes `IN`, `OR`, `OUT`. `PORT++` becomes `IN`, `INC`, `OUT`.
 - The address of a port is an error.
 - `__interrupt(n)` does not make a vector. The compiler sets the vector as for the pragma.
+- An `__asm` block becomes an `asm("...")` statement with MACRO-80 text. [rom_interop.md](rom_interop.md) lists the forms.
 
 Every other SDCC form stays an error: `__naked`, `__banked` on a function, `__sdcccall`, `__preserves_regs`, `__using`, a bare `__critical`, `[[gnu::interrupt]]`, `__attribute__((interrupt))`, `__interrupt` before the declarator, and a bare `__fastcall`. The compiler never drops one of them without a message.
 
