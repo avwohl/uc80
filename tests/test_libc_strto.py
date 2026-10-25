@@ -40,6 +40,10 @@ def int_reference(s, base, bits, signed):
             and s[i + 2].isalnum() and int(s[i + 2], 36) < 16):
         i += 2
         base = 16
+    elif (base in (0, 2) and s[i:i + 2] in ("0b", "0B") and i + 2 < n
+            and s[i + 2] in "01"):
+        i += 2
+        base = 2
     elif base == 0:
         base = 8 if s[i:i + 1] == "0" else 10
     start, value = i, 0

@@ -48,6 +48,10 @@ void _strtoint(const char *nptr, char **endptr, int base,
         (s[1] == 'x' || s[1] == 'X') && digit_value(s[2]) < 16) {
         s += 2;
         base = 16;
+    } else if ((base == 0 || base == 2) && s[0] == '0' &&
+               (s[1] == 'b' || s[1] == 'B') && digit_value(s[2]) < 2) {
+        s += 2;
+        base = 2;
     } else if (base == 0) {
         base = (s[0] == '0') ? 8 : 10;
     }

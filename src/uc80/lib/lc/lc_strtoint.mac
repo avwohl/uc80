@@ -216,21 +216,71 @@ __strtoint:
 @ELSE18_strtoint:
 	ld	A,(IX+8)
 	or	(IX+9)
-	jr nz,@ENDIF23_strtoint
+	jr z,@OR_S24_strtoint
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	A,L
+	xor	2
+	or	H
+	jr nz,@ELSE22_strtoint
+@OR_S24_strtoint:
 	ld	HL,(??AUTO_strtoint+0)
 	ld	A,(HL)
 	cp	48
-	jr nz,@TERN_E24_strtoint
-	ld	HL,8
-	jr @TERN_END25_strtoint
-@TERN_E24_strtoint:
-	ld	HL,10
-@TERN_END25_strtoint:
+	jr nz,@ELSE22_strtoint
+	inc	HL
+	ld	A,(HL)
+	cp	98
+	jr z,@OR_S25_strtoint
+	ld	HL,(??AUTO_strtoint+0)
+	inc	HL
+	ld	A,(HL)
+	cp	66
+	jr nz,@ELSE22_strtoint
+@OR_S25_strtoint:
+	ld	HL,(??AUTO_strtoint+0)
+	inc	HL
+	inc	HL
+	ld	A,(HL)
+	ld	L,A
+	push	HL
+	call	_digit_value
+	pop	DE
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	2
+	ld	A,D
+	sbc	A,128
+	jr nc,@ELSE22_strtoint
+	ld	HL,(??AUTO_strtoint+0)
+	inc	HL
+	inc	HL
+	ld	(??AUTO_strtoint+0),HL
+	ld	HL,2
 	ld	(IX+8),L
 	ld	(IX+9),H
+	jr @ENDIF23_strtoint
+@ELSE22_strtoint:
+	ld	A,(IX+8)
+	or	(IX+9)
+	jr nz,@ENDIF27_strtoint
+	ld	HL,(??AUTO_strtoint+0)
+	ld	A,(HL)
+	cp	48
+	jr nz,@TERN_E28_strtoint
+	ld	HL,8
+	jr @TERN_END29_strtoint
+@TERN_E28_strtoint:
+	ld	HL,10
+@TERN_END29_strtoint:
+	ld	(IX+8),L
+	ld	(IX+9),H
+@ENDIF27_strtoint:
 @ENDIF23_strtoint:
 @ENDIF19_strtoint:
-@FOR26_strtoint:
+@FOR30_strtoint:
 	ld	HL,(??AUTO_strtoint+0)
 	ld	A,(HL)
 	ld	L,A
@@ -242,12 +292,12 @@ __strtoint:
 	sub	(IX+8)
 	ld	A,H
 	sbc	A,(IX+9)
-	jp	PO,@CMP_NV31_strtoint
+	jp	PO,@CMP_NV35_strtoint
 	xor	128
-@CMP_NV31_strtoint:
-	jp	M,@ENDIF30_strtoint
-	jr @ENDFOR28_strtoint
-@ENDIF30_strtoint:
+@CMP_NV35_strtoint:
+	jp	M,@ENDIF34_strtoint
+	jr @ENDFOR32_strtoint
+@ENDIF34_strtoint:
 	ld	HL,1
 	ld	(??AUTO_strtoint+6),HL
 	ld	HL,(??AUTO_strtoint+0)
@@ -255,7 +305,7 @@ __strtoint:
 	ld	(??AUTO_strtoint+0),HL
 	ld	A,(??AUTO_strtoint+4)
 	or	A
-	jr nz,@ENDIF33_strtoint
+	jr nz,@ENDIF37_strtoint
 	ld	HL,(??AUTO_strtoint+10)
 	push	HL
 	ld	L,(IX+8)
@@ -275,43 +325,43 @@ __strtoint:
 	ex	DE,HL
 	ld	A,H
 	or	L
-	jr z,@ENDIF33_strtoint
+	jr z,@ENDIF37_strtoint
 	ld	HL,1
 	ld	(??AUTO_strtoint+4),HL
-@ENDIF33_strtoint:
-@FORUPD27_strtoint:
-	jr @FOR26_strtoint
-@ENDFOR28_strtoint:
+@ENDIF37_strtoint:
+@FORUPD31_strtoint:
+	jr @FOR30_strtoint
+@ENDFOR32_strtoint:
 	ld	A,(IX+6)
 	or	(IX+7)
-	jr z,@ENDIF35_strtoint
+	jr z,@ENDIF39_strtoint
 	ld	A,(??AUTO_strtoint+6)
 	or	A
-	jr z,@TERN_E36_strtoint
+	jr z,@TERN_E40_strtoint
 	ld	HL,(??AUTO_strtoint+0)
-	jr @TERN_END37_strtoint
-@TERN_E36_strtoint:
+	jr @TERN_END41_strtoint
+@TERN_E40_strtoint:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
-@TERN_END37_strtoint:
+@TERN_END41_strtoint:
 	ex	DE,HL
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
-@ENDIF35_strtoint:
+@ENDIF39_strtoint:
 	ld	A,(??AUTO_strtoint+6)
 	or	A
-	jr nz,@ENDIF39_strtoint
+	jr nz,@ENDIF43_strtoint
 	jp	@_strtoint_ret
-@ENDIF39_strtoint:
+@ENDIF43_strtoint:
 	ld	A,(??AUTO_strtoint+4)
 	or	A
-	jr nz,@ENDIF41_strtoint
+	jr nz,@ENDIF45_strtoint
 	ld	A,(IX+14)
 	or	(IX+15)
-	jr z,@ENDIF41_strtoint
+	jr z,@ENDIF45_strtoint
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	dec	HL
@@ -320,13 +370,13 @@ __strtoint:
 	add	HL,BC
 	ld	A,(HL)
 	cp	128
-	jr c,@ENDIF41_strtoint
+	jr c,@ENDIF45_strtoint
 	ld	HL,1
 	ld	(??AUTO_strtoint+4),HL
 	ld	HL,(??AUTO_strtoint+2)
 	ld	A,H
 	or	L
-	jr z,@ENDIF43_strtoint
+	jr z,@ENDIF47_strtoint
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	dec	HL
@@ -335,12 +385,12 @@ __strtoint:
 	add	HL,BC
 	ld	A,(HL)
 	cp	128
-	jr nz,@ENDIF43_strtoint
+	jr nz,@ENDIF47_strtoint
 	ld	HL,0
 	ld	(??AUTO_strtoint+4),HL
 	ld	HL,0
 	ld	(??AUTO_strtoint+8),HL
-@FOR44_strtoint:
+@FOR48_strtoint:
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	dec	HL
@@ -349,31 +399,31 @@ __strtoint:
 	sub	L
 	ld	A,D
 	sbc	A,H
-	jp	PO,@CMP_NV47_strtoint
+	jp	PO,@CMP_NV51_strtoint
 	xor	128
-@CMP_NV47_strtoint:
-	jp	P,@ENDFOR46_strtoint
+@CMP_NV51_strtoint:
+	jp	P,@ENDFOR50_strtoint
 	ld	HL,(??AUTO_strtoint+8)
 	ld	C,(IX+10)
 	ld	B,(IX+11)
 	add	HL,BC
 	ld	A,(HL)
 	or	A
-	jr z,@ENDIF49_strtoint
+	jr z,@ENDIF53_strtoint
 	ld	HL,1
 	ld	(??AUTO_strtoint+4),HL
-@ENDIF49_strtoint:
-@FORUPD45_strtoint:
+@ENDIF53_strtoint:
+@FORUPD49_strtoint:
 	ld	HL,(??AUTO_strtoint+8)
 	inc	HL
 	ld	(??AUTO_strtoint+8),HL
-	jr @FOR44_strtoint
-@ENDFOR46_strtoint:
-@ENDIF43_strtoint:
-@ENDIF41_strtoint:
+	jr @FOR48_strtoint
+@ENDFOR50_strtoint:
+@ENDIF47_strtoint:
+@ENDIF45_strtoint:
 	ld	A,(??AUTO_strtoint+4)
 	or	A
-	jr z,@ENDIF51_strtoint
+	jr z,@ENDIF55_strtoint
 	ld	HL,34
 	ld	(_errno),HL
 	ld	L,(IX+12)
@@ -381,16 +431,16 @@ __strtoint:
 	push	HL
 	ld	A,(IX+14)
 	or	(IX+15)
-	jr z,@TERN_E52_strtoint
+	jr z,@TERN_E56_strtoint
 	ld	HL,(??AUTO_strtoint+2)
 	ld	A,H
 	or	L
-	jr z,@TERN_E52_strtoint
+	jr z,@TERN_E56_strtoint
 	ld	HL,0
-	jr @TERN_END53_strtoint
-@TERN_E52_strtoint:
+	jr @TERN_END57_strtoint
+@TERN_E56_strtoint:
 	ld	HL,255
-@TERN_END53_strtoint:
+@TERN_END57_strtoint:
 	push	HL
 	ld	L,(IX+10)
 	ld	H,(IX+11)
@@ -401,16 +451,16 @@ __strtoint:
 	pop	DE
 	ld	A,(IX+14)
 	or	(IX+15)
-	jr z,@ENDIF55_strtoint
+	jr z,@ENDIF59_strtoint
 	ld	HL,(??AUTO_strtoint+2)
 	ld	A,H
 	or	L
-	jr z,@TERN_E56_strtoint
+	jr z,@TERN_E60_strtoint
 	ld	HL,128
-	jr @TERN_END57_strtoint
-@TERN_E56_strtoint:
+	jr @TERN_END61_strtoint
+@TERN_E60_strtoint:
 	ld	HL,127
-@TERN_END57_strtoint:
+@TERN_END61_strtoint:
 	push	HL
 	ld	L,(IX+12)
 	ld	H,(IX+13)
@@ -420,13 +470,13 @@ __strtoint:
 	add	HL,BC
 	pop	DE
 	ld	(HL),E
-@ENDIF55_strtoint:
+@ENDIF59_strtoint:
 	jr @_strtoint_ret
-@ENDIF51_strtoint:
+@ENDIF55_strtoint:
 	ld	HL,(??AUTO_strtoint+2)
 	ld	A,H
 	or	L
-	jr z,@ENDIF59_strtoint
+	jr z,@ENDIF63_strtoint
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	push	HL
@@ -436,7 +486,7 @@ __strtoint:
 	call	__sc_negate
 	pop	DE
 	pop	DE
-@ENDIF59_strtoint:
+@ENDIF63_strtoint:
 @_strtoint_ret:
 	pop	IX
 	ret

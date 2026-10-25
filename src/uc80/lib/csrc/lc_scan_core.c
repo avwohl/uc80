@@ -79,7 +79,7 @@ static int sc_skip(struct sc *in)
  * Returns 1, 0 for a matching failure, -1 for the end of the input. */
 static int sc_int(struct sc *in, int base, int width, unsigned char *r, int nb)
 {
-    int c, w, neg = 0, any = 0, d, xc;
+    int c, w, neg = 0, any = 0, d, xc, nb2;
 
     memset(r, 0, nb);
     w = width ? width : 32767;
@@ -90,17 +90,20 @@ static int sc_int(struct sc *in, int base, int width, unsigned char *r, int nb)
         neg = (c == '-');
         c = sc_next(in, &w);
     }
-    if ((base == 0 || base == 16) && c == '0') {
+    if ((base == 0 || base == 16 || base == 2) && c == '0') {
         any = 1;
         c = sc_next(in, &w);
-        if (c == 'x' || c == 'X') {
+        if (c >= 0 && ((base != 2 && (c == 'x' || c == 'X')) ||
+                       (base != 16 && (c == 'b' || c == 'B')))) {
             xc = c;
+            nb2 = (c == 'x' || c == 'X') ? 16 : 2;
             c = sc_next(in, &w);
-            if (c >= 0 && sc_digit(c) < 16) {
-                base = 16;
+            if (c >= 0 && sc_digit(c) < nb2) {
+                base = nb2;
                 any = 0;
             } else {
-                /* "0x" with no hex digit: the number is 0 and the x stays */
+                /* "0x" or "0b" with no digit: the number is 0 and the
+                 * letter stays */
                 _sc_ungetc(in, c);
                 _sc_ungetc(in, xc);
                 c = -2;
@@ -178,8 +181,8 @@ static const unsigned char sc_size[] = {
 };
 
 /* the integer conversions and the base of each (0: read the prefix) */
-static const char sc_int_convs[] = "duoxXpi";
-static const unsigned char sc_base[] = {10, 10, 8, 16, 16, 16, 0};
+static const char sc_int_convs[] = "duoxXpib";
+static const unsigned char sc_base[] = {10, 10, 8, 16, 16, 16, 0, 2};
 static const char sc_float_convs[] = "feEgGaAF";
 
 static char *sc_ap;                     /* the next argument */

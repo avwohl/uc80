@@ -11,7 +11,8 @@ characters from a string, a `FILE` or the console. The sources are in
 ## Conversions
 
 - `%d %i %u %o %x %X`: integers with an optional sign. `%i` reads the
-  prefixes `0x` and `0`.
+  prefixes `0x`, `0b` and `0`. `%b` reads a binary number with an optional
+  `0b` prefix.
 - The size modifiers `hh`, `h`, `l`, `ll`, `j`, `z`, `t`. An `int` has 2
   bytes, a `long` 4 bytes and a `long long` 8 bytes. The engine stores the
   number of bytes that the modifier gives. A value that does not fit wraps.
@@ -39,6 +40,7 @@ matching failure.
 ## Limits
 
 - `%i` and `%x` read the prefix `0x` only when a hexadecimal digit follows.
+  `%i` and `%b` read the prefix `0b` only when a binary digit follows.
   If not, the number is `0` and the `x` stays in the input. A `FILE` keeps
   only one pushed-back character. After `0xg` the `g` is lost for a `FILE`.
   A string keeps all characters.

@@ -26781,7 +26781,7 @@ __sc_getc:
 	ex	DE,HL
 	call	__callhl
 	pop	DE
-	ld	(??AUTO_scan_core+52),HL
+	ld	(??AUTO_scan_core+54),HL
 	bit	7,H
 	jr nz,@ENDIF2_scan_core
 	ld	L,(IX+4)
@@ -26794,7 +26794,7 @@ __sc_getc:
 	inc	(HL)
 @INC3_scan_core:
 @ENDIF2_scan_core:
-	ld	HL,(??AUTO_scan_core+52)
+	ld	HL,(??AUTO_scan_core+54)
 @_sc_getc_ret:
 	pop	IX
 	ret
@@ -27114,6 +27114,10 @@ _sc_int:
 	ld	A,L
 	xor	16
 	or	H
+	jr z,@OR_S32_scan_core
+	ld	A,L
+	xor	2
+	or	H
 	jp	NZ,@ELSE30_scan_core
 @OR_S32_scan_core:
 	ld	HL,(??AUTO_scan_core+40)
@@ -27132,6 +27136,15 @@ _sc_int:
 	pop	DE
 	pop	DE
 	ld	(??AUTO_scan_core+40),HL
+	bit	7,H
+	jp	NZ,@ELSE33_scan_core
+	ld	L,(IX+6)
+	ld	H,(IX+7)
+	ld	A,L
+	xor	2
+	or	H
+	jr z,@AND_S36_scan_core
+	ld	HL,(??AUTO_scan_core+40)
 	ld	A,L
 	xor	120
 	or	H
@@ -27139,10 +27152,42 @@ _sc_int:
 	ld	A,L
 	xor	88
 	or	H
-	jr nz,@ELSE33_scan_core
+	jr z,@OR_S35_scan_core
+@AND_S36_scan_core:
+	ld	L,(IX+6)
+	ld	H,(IX+7)
+	ld	A,L
+	xor	16
+	or	H
+	jp	Z,@ELSE33_scan_core
+	ld	HL,(??AUTO_scan_core+40)
+	ld	A,L
+	xor	98
+	or	H
+	jr z,@OR_S37_scan_core
+	ld	A,L
+	xor	66
+	or	H
+	jp	NZ,@ELSE33_scan_core
+@OR_S37_scan_core:
 @OR_S35_scan_core:
 	ld	HL,(??AUTO_scan_core+40)
 	ld	(??AUTO_scan_core+50),HL
+	ld	A,L
+	xor	120
+	or	H
+	jr z,@OR_S40_scan_core
+	ld	A,L
+	xor	88
+	or	H
+	jr nz,@TERN_E38_scan_core
+@OR_S40_scan_core:
+	ld	HL,16
+	jr @TERN_END39_scan_core
+@TERN_E38_scan_core:
+	ld	HL,2
+@TERN_END39_scan_core:
+	ld	(??AUTO_scan_core+52),HL
 	ld	HL,??AUTO_scan_core+42
 	push	HL
 	ld	L,(IX+4)
@@ -27153,25 +27198,26 @@ _sc_int:
 	pop	DE
 	ld	(??AUTO_scan_core+40),HL
 	bit	7,H
-	jr nz,@ELSE36_scan_core
+	jr nz,@ELSE41_scan_core
 	push	HL
 	call	_sc_digit
 	pop	DE
-	ld	A,H
-	xor	128
-	ld	D,A
+	ld	DE,(??AUTO_scan_core+52)
 	ld	A,L
-	sub	16
-	ld	A,D
-	sbc	A,128
-	jr nc,@ELSE36_scan_core
-	ld	HL,16
+	sub	E
+	ld	A,H
+	sbc	A,D
+	jp	PO,@CMP_NV43_scan_core
+	xor	128
+@CMP_NV43_scan_core:
+	jp	P,@ELSE41_scan_core
+	ld	HL,(??AUTO_scan_core+52)
 	ld	(IX+6),L
 	ld	(IX+7),H
 	ld	HL,0
 	ld	(??AUTO_scan_core+46),HL
 	jr @ENDIF31_scan_core
-@ELSE36_scan_core:
+@ELSE41_scan_core:
 	ld	HL,(??AUTO_scan_core+40)
 	push	HL
 	ld	L,(IX+4)
@@ -27190,49 +27236,49 @@ _sc_int:
 	pop	DE
 	ld	HL,-2
 	ld	(??AUTO_scan_core+40),HL
-@ENDIF37_scan_core:
+@ENDIF42_scan_core:
 	jr @ENDIF31_scan_core
 @ELSE33_scan_core:
 	ld	A,(IX+6)
 	or	(IX+7)
-	jr nz,@ENDIF39_scan_core
+	jr nz,@ENDIF45_scan_core
 	ld	HL,8
 	ld	(IX+6),L
 	ld	(IX+7),H
-@ENDIF39_scan_core:
+@ENDIF45_scan_core:
 @ENDIF34_scan_core:
 	jr @ENDIF31_scan_core
 @ELSE30_scan_core:
 	ld	A,(IX+6)
 	or	(IX+7)
-	jr nz,@ENDIF41_scan_core
+	jr nz,@ENDIF47_scan_core
 	ld	HL,10
 	ld	(IX+6),L
 	ld	(IX+7),H
-@ENDIF41_scan_core:
+@ENDIF47_scan_core:
 @ENDIF31_scan_core:
-@FOR42_scan_core:
+@FOR48_scan_core:
 	ld	HL,(??AUTO_scan_core+40)
 	bit	7,H
-	jr nz,@TERN_E45_scan_core
+	jr nz,@TERN_E51_scan_core
 	push	HL
 	call	_sc_digit
 	pop	DE
-	jr @TERN_END46_scan_core
-@TERN_E45_scan_core:
+	jr @TERN_END52_scan_core
+@TERN_E51_scan_core:
 	ld	HL,99
-@TERN_END46_scan_core:
+@TERN_END52_scan_core:
 	ld	(??AUTO_scan_core+48),HL
 	ld	A,L
 	sub	(IX+6)
 	ld	A,H
 	sbc	A,(IX+7)
-	jp	PO,@CMP_NV49_scan_core
+	jp	PO,@CMP_NV55_scan_core
 	xor	128
-@CMP_NV49_scan_core:
-	jp	M,@ENDIF48_scan_core
-	jr @ENDFOR44_scan_core
-@ENDIF48_scan_core:
+@CMP_NV55_scan_core:
+	jp	M,@ENDIF54_scan_core
+	jr @ENDFOR50_scan_core
+@ENDIF54_scan_core:
 	ld	HL,1
 	ld	(??AUTO_scan_core+46),HL
 	ld	HL,(??AUTO_scan_core+48)
@@ -27261,9 +27307,9 @@ _sc_int:
 	pop	DE
 	pop	DE
 	ld	(??AUTO_scan_core+40),HL
-@FORUPD43_scan_core:
-	jr @FOR42_scan_core
-@ENDFOR44_scan_core:
+@FORUPD49_scan_core:
+	jr @FOR48_scan_core
+@ENDFOR50_scan_core:
 	ld	HL,(??AUTO_scan_core+40)
 	push	HL
 	ld	L,(IX+4)
@@ -27274,14 +27320,14 @@ _sc_int:
 	pop	DE
 	ld	A,(??AUTO_scan_core+46)
 	or	A
-	jr nz,@ENDIF51_scan_core
+	jr nz,@ENDIF57_scan_core
 	ld	HL,0
 	jr @sc_int_ret
-@ENDIF51_scan_core:
+@ENDIF57_scan_core:
 	ld	HL,(??AUTO_scan_core+44)
 	ld	A,H
 	or	L
-	jr z,@ENDIF53_scan_core
+	jr z,@ENDIF59_scan_core
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	push	HL
@@ -27291,7 +27337,7 @@ _sc_int:
 	call	__sc_negate
 	pop	DE
 	pop	DE
-@ENDIF53_scan_core:
+@ENDIF59_scan_core:
 	ld	HL,1
 @sc_int_ret:
 	pop	IX
@@ -27313,15 +27359,15 @@ _sc_inset:
 	ld	H,(IX+7)
 	ld	A,(HL)
 	cp	94
-	jr nz,@ENDIF55_scan_core
+	jr nz,@ENDIF61_scan_core
 	ld	HL,1
 	ld	(??AUTO_scan_core+40),HL
 	inc	(IX+6)
-	jr	NZ,@INC56_scan_core
+	jr	NZ,@INC62_scan_core
 	inc	(IX+7)
-@INC56_scan_core:
-@ENDIF55_scan_core:
-@FOR57_scan_core:
+@INC62_scan_core:
+@ENDIF61_scan_core:
+@FOR63_scan_core:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	ld	A,(HL)
@@ -27330,36 +27376,36 @@ _sc_inset:
 	ld	(??AUTO_scan_core+44),HL
 	ld	A,(??AUTO_scan_core+44)
 	or	A
-	jr z,@OR_S62_scan_core
+	jr z,@OR_S68_scan_core
 	cp	93
-	jr nz,@ENDIF61_scan_core
+	jr nz,@ENDIF67_scan_core
 	ld	A,(??AUTO_scan_core+46)
 	or	A
-	jr nz,@ENDIF61_scan_core
-@OR_S62_scan_core:
-	jp	@ENDFOR59_scan_core
-@ENDIF61_scan_core:
+	jr nz,@ENDIF67_scan_core
+@OR_S68_scan_core:
+	jp	@ENDFOR65_scan_core
+@ENDIF67_scan_core:
 	ld	HL,0
 	ld	(??AUTO_scan_core+46),HL
 	inc	(IX+6)
-	jr	NZ,@INC63_scan_core
+	jr	NZ,@INC69_scan_core
 	inc	(IX+7)
-@INC63_scan_core:
+@INC69_scan_core:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	ld	A,(HL)
 	cp	45
-	jr nz,@ELSE64_scan_core
+	jr nz,@ELSE70_scan_core
 	inc	HL
 	ld	A,(HL)
 	cp	93
-	jr z,@ELSE64_scan_core
+	jr z,@ELSE70_scan_core
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	inc	HL
 	ld	A,(HL)
 	or	A
-	jr z,@ELSE64_scan_core
+	jr z,@ELSE70_scan_core
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	DE,(??AUTO_scan_core+44)
@@ -27367,10 +27413,10 @@ _sc_inset:
 	sub	E
 	ld	A,H
 	sbc	A,D
-	jp	PO,@CMP_NV68_scan_core
+	jp	PO,@CMP_NV74_scan_core
 	xor	128
-@CMP_NV68_scan_core:
-	jp	M,@ENDIF67_scan_core
+@CMP_NV74_scan_core:
+	jp	M,@ENDIF73_scan_core
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	inc	HL
@@ -27383,45 +27429,45 @@ _sc_inset:
 	sub	E
 	ld	A,H
 	sbc	A,D
-	jp	PO,@CMP_NV69_scan_core
+	jp	PO,@CMP_NV75_scan_core
 	xor	128
-@CMP_NV69_scan_core:
-	jp	M,@ENDIF67_scan_core
+@CMP_NV75_scan_core:
+	jp	M,@ENDIF73_scan_core
 	ld	HL,1
 	ld	(??AUTO_scan_core+42),HL
-@ENDIF67_scan_core:
+@ENDIF73_scan_core:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	inc	HL
 	inc	HL
 	ld	(IX+6),L
 	ld	(IX+7),H
-	jr @ENDIF65_scan_core
-@ELSE64_scan_core:
+	jr @ENDIF71_scan_core
+@ELSE70_scan_core:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	DE,(??AUTO_scan_core+44)
 	or	A
 	sbc	HL,DE
-	jr nz,@ENDIF71_scan_core
+	jr nz,@ENDIF77_scan_core
 	ld	HL,1
 	ld	(??AUTO_scan_core+42),HL
+@ENDIF77_scan_core:
 @ENDIF71_scan_core:
-@ENDIF65_scan_core:
-@FORUPD58_scan_core:
-	jp	@FOR57_scan_core
-@ENDFOR59_scan_core:
+@FORUPD64_scan_core:
+	jp	@FOR63_scan_core
+@ENDFOR65_scan_core:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	ld	A,(HL)
 	cp	93
-	jr nz,@TERN_E72_scan_core
+	jr nz,@TERN_E78_scan_core
 	inc	HL
-	jr @TERN_END73_scan_core
-@TERN_E72_scan_core:
+	jr @TERN_END79_scan_core
+@TERN_E78_scan_core:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
-@TERN_END73_scan_core:
+@TERN_END79_scan_core:
 	ex	DE,HL
 	ld	L,(IX+8)
 	ld	H,(IX+9)
@@ -27451,16 +27497,16 @@ _sc_store:
 	ld	(??AUTO_scan_core+40),HL
 	ld	HL,0
 	ld	(??AUTO_scan_core+42),HL
-@FOR74_scan_core:
+@FOR80_scan_core:
 	ld	HL,(??AUTO_scan_core+42)
 	ld	A,L
 	sub	(IX+6)
 	ld	A,H
 	sbc	A,(IX+7)
-	jp	PO,@CMP_NV77_scan_core
+	jp	PO,@CMP_NV83_scan_core
 	xor	128
-@CMP_NV77_scan_core:
-	jp	P,@ENDFOR76_scan_core
+@CMP_NV83_scan_core:
+	jp	P,@ENDFOR82_scan_core
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -27468,7 +27514,7 @@ _sc_store:
 	sub	4
 	ld	A,D
 	sbc	A,128
-	jr nc,@ELSE78_scan_core
+	jr nc,@ELSE84_scan_core
 	add	HL,HL
 	add	HL,HL
 	add	HL,HL
@@ -27486,31 +27532,31 @@ _sc_store:
 	ld	BC,(??AUTO_scan_core+40)
 	add	HL,BC
 	ld	(HL),E
-	jr @ENDIF79_scan_core
-@ELSE78_scan_core:
+	jr @ENDIF85_scan_core
+@ELSE84_scan_core:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	E,(IX+10)
 	ld	D,(IX+11)
 	bit	7,D
-	jr z,@TERN_E80_scan_core
+	jr z,@TERN_E86_scan_core
 	ld	HL,255
-	jr @TERN_END81_scan_core
-@TERN_E80_scan_core:
+	jr @TERN_END87_scan_core
+@TERN_E86_scan_core:
 	ld	HL,0
-@TERN_END81_scan_core:
+@TERN_END87_scan_core:
 	ex	DE,HL
 	ld	HL,(??AUTO_scan_core+42)
 	ld	BC,(??AUTO_scan_core+40)
 	add	HL,BC
 	ld	(HL),E
-@ENDIF79_scan_core:
-@FORUPD75_scan_core:
+@ENDIF85_scan_core:
+@FORUPD81_scan_core:
 	ld	HL,(??AUTO_scan_core+42)
 	inc	HL
 	ld	(??AUTO_scan_core+42),HL
-	jr @FOR74_scan_core
-@ENDFOR76_scan_core:
+	jr @FOR80_scan_core
+@ENDFOR82_scan_core:
 @sc_store_ret:
 	pop	IX
 	ret
@@ -27558,7 +27604,7 @@ __scan_run:
 	ld	L,(IX+8)
 	ld	H,(IX+9)
 	ld	(_sc_ap),HL
-@WHILE82_scan_core:
+@WHILE88_scan_core:
 	ld	HL,(??AUTO_scan_core+32)
 	push	HL
 	inc	HL
@@ -27570,11 +27616,11 @@ __scan_run:
 	ld	(??AUTO_scan_core+2),HL
 	ld	A,H
 	or	L
-	jp	Z,@ENDWHILE83_scan_core
+	jp	Z,@ENDWHILE89_scan_core
 	ld	A,L
 	xor	32
 	or	H
-	jr z,@OR_T86_scan_core
+	jr z,@OR_T92_scan_core
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -27582,7 +27628,7 @@ __scan_run:
 	sub	9
 	ld	A,D
 	sbc	A,128
-	jr c,@AND_S88_scan_core
+	jr c,@AND_S94_scan_core
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -27590,28 +27636,28 @@ __scan_run:
 	sub	14
 	ld	A,D
 	sbc	A,128
-	jr c,@OR_T86_scan_core
-@AND_S88_scan_core:
+	jr c,@OR_T92_scan_core
+@AND_S94_scan_core:
 	ld	HL,0
-	jr @OR_E87_scan_core
-@OR_T86_scan_core:
+	jr @OR_E93_scan_core
+@OR_T92_scan_core:
 	ld	HL,1
-@OR_E87_scan_core:
+@OR_E93_scan_core:
 	ld	A,H
 	or	L
-	jr z,@ENDIF85_scan_core
+	jr z,@ENDIF91_scan_core
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
 	call	_sc_skip
 	pop	DE
-	jr @WHILE82_scan_core
-@ENDIF85_scan_core:
+	jr @WHILE88_scan_core
+@ENDIF91_scan_core:
 	ld	HL,(??AUTO_scan_core+2)
 	ld	A,L
 	xor	37
 	or	H
-	jr z,@ENDIF90_scan_core
+	jr z,@ENDIF96_scan_core
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
@@ -27619,14 +27665,14 @@ __scan_run:
 	pop	DE
 	ld	(??AUTO_scan_core+4),HL
 	bit	7,H
-	jr z,@ENDIF92_scan_core
+	jr z,@ENDIF98_scan_core
 	jp	@L__scan_run_input_fail
-@ENDIF92_scan_core:
+@ENDIF98_scan_core:
 	ld	HL,(??AUTO_scan_core+4)
 	ld	DE,(??AUTO_scan_core+2)
 	or	A
 	sbc	HL,DE
-	jr z,@ENDIF94_scan_core
+	jr z,@ENDIF100_scan_core
 	ld	HL,(??AUTO_scan_core+4)
 	push	HL
 	ld	L,(IX+4)
@@ -27636,9 +27682,9 @@ __scan_run:
 	pop	DE
 	pop	DE
 	jp	@L__scan_run_done
-@ENDIF94_scan_core:
-	jp	@WHILE82_scan_core
-@ENDIF90_scan_core:
+@ENDIF100_scan_core:
+	jp	@WHILE88_scan_core
+@ENDIF96_scan_core:
 	ld	HL,0
 	ld	(??AUTO_scan_core+10),HL
 	ld	HL,0
@@ -27648,23 +27694,23 @@ __scan_run:
 	ld	HL,(??AUTO_scan_core+32)
 	ld	A,(HL)
 	cp	42
-	jr nz,@ENDIF96_scan_core
+	jr nz,@ENDIF102_scan_core
 	ld	HL,1
 	ld	(??AUTO_scan_core+10),HL
 	ld	HL,(??AUTO_scan_core+32)
 	inc	HL
 	ld	(??AUTO_scan_core+32),HL
-@ENDIF96_scan_core:
-@WHILE97_scan_core:
+@ENDIF102_scan_core:
+@WHILE103_scan_core:
 	ld	HL,(??AUTO_scan_core+32)
 	ld	A,(HL)
 	xor	128
 	cp	176
-	jr c,@ENDWHILE98_scan_core
+	jr c,@ENDWHILE104_scan_core
 	ld	A,(HL)
 	xor	128
 	cp	186
-	jr nc,@ENDWHILE98_scan_core
+	jr nc,@ENDWHILE104_scan_core
 	ld	L,(HL)
 	ld	A,L
 	rlca
@@ -27686,9 +27732,9 @@ __scan_run:
 	ld	HL,(??AUTO_scan_core+32)
 	inc	HL
 	ld	(??AUTO_scan_core+32),HL
-	jr @WHILE97_scan_core
-@ENDWHILE98_scan_core:
-@FOR99_scan_core:
+	jr @WHILE103_scan_core
+@ENDWHILE104_scan_core:
+@FOR105_scan_core:
 	ld	HL,(??AUTO_scan_core+32)
 	ld	L,(HL)
 	ld	A,L
@@ -27699,92 +27745,92 @@ __scan_run:
 	ld	A,L
 	xor	104
 	or	H
-	jr nz,@ELSE102_scan_core
+	jr nz,@ELSE108_scan_core
 	ld	HL,(??AUTO_scan_core+8)
 	ld	A,L
 	xor	2
 	or	H
-	jr nz,@TERN_E104_scan_core
+	jr nz,@TERN_E110_scan_core
 	ld	HL,1
-	jr @TERN_END105_scan_core
-@TERN_E104_scan_core:
+	jr @TERN_END111_scan_core
+@TERN_E110_scan_core:
 	ld	HL,2
-@TERN_END105_scan_core:
+@TERN_END111_scan_core:
 	ld	(??AUTO_scan_core+8),HL
-	jr @ENDIF103_scan_core
-@ELSE102_scan_core:
+	jr @ENDIF109_scan_core
+@ELSE108_scan_core:
 	ld	HL,(??AUTO_scan_core+2)
 	ld	A,L
 	xor	108
 	or	H
-	jr nz,@ELSE106_scan_core
+	jr nz,@ELSE112_scan_core
 	ld	HL,(??AUTO_scan_core+8)
 	ld	A,L
 	xor	3
 	or	H
-	jr nz,@TERN_E108_scan_core
+	jr nz,@TERN_E114_scan_core
 	ld	HL,4
-	jr @TERN_END109_scan_core
-@TERN_E108_scan_core:
+	jr @TERN_END115_scan_core
+@TERN_E114_scan_core:
 	ld	HL,3
-@TERN_END109_scan_core:
-	ld	(??AUTO_scan_core+8),HL
-	jr @ENDIF107_scan_core
-@ELSE106_scan_core:
-	ld	HL,(??AUTO_scan_core+2)
-	ld	A,L
-	xor	106
-	or	H
-	jr nz,@ELSE110_scan_core
-	ld	HL,5
-	ld	(??AUTO_scan_core+8),HL
-	jr @ENDIF111_scan_core
-@ELSE110_scan_core:
-	ld	HL,(??AUTO_scan_core+2)
-	ld	A,L
-	xor	122
-	or	H
-	jr nz,@ELSE112_scan_core
-	ld	HL,6
+@TERN_END115_scan_core:
 	ld	(??AUTO_scan_core+8),HL
 	jr @ENDIF113_scan_core
 @ELSE112_scan_core:
 	ld	HL,(??AUTO_scan_core+2)
 	ld	A,L
+	xor	106
+	or	H
+	jr nz,@ELSE116_scan_core
+	ld	HL,5
+	ld	(??AUTO_scan_core+8),HL
+	jr @ENDIF117_scan_core
+@ELSE116_scan_core:
+	ld	HL,(??AUTO_scan_core+2)
+	ld	A,L
+	xor	122
+	or	H
+	jr nz,@ELSE118_scan_core
+	ld	HL,6
+	ld	(??AUTO_scan_core+8),HL
+	jr @ENDIF119_scan_core
+@ELSE118_scan_core:
+	ld	HL,(??AUTO_scan_core+2)
+	ld	A,L
 	xor	116
 	or	H
-	jr nz,@ELSE114_scan_core
+	jr nz,@ELSE120_scan_core
 	ld	HL,7
 	ld	(??AUTO_scan_core+8),HL
-	jr @ENDIF115_scan_core
-@ELSE114_scan_core:
+	jr @ENDIF121_scan_core
+@ELSE120_scan_core:
 	ld	HL,(??AUTO_scan_core+2)
 	ld	A,L
 	xor	76
 	or	H
-	jr z,@OR_S118_scan_core
+	jr z,@OR_S124_scan_core
 	ld	A,L
 	xor	113
 	or	H
-	jr nz,@ELSE116_scan_core
-@OR_S118_scan_core:
+	jr nz,@ELSE122_scan_core
+@OR_S124_scan_core:
 	ld	HL,8
 	ld	(??AUTO_scan_core+8),HL
-	jr @ENDIF117_scan_core
-@ELSE116_scan_core:
-	jr @ENDFOR101_scan_core
+	jr @ENDIF123_scan_core
+@ELSE122_scan_core:
+	jr @ENDFOR107_scan_core
+@ENDIF123_scan_core:
+@ENDIF121_scan_core:
+@ENDIF119_scan_core:
 @ENDIF117_scan_core:
-@ENDIF115_scan_core:
 @ENDIF113_scan_core:
-@ENDIF111_scan_core:
-@ENDIF107_scan_core:
-@ENDIF103_scan_core:
+@ENDIF109_scan_core:
 	ld	HL,(??AUTO_scan_core+32)
 	inc	HL
 	ld	(??AUTO_scan_core+32),HL
-@FORUPD100_scan_core:
-	jp	@FOR99_scan_core
-@ENDFOR101_scan_core:
+@FORUPD106_scan_core:
+	jp	@FOR105_scan_core
+@ENDFOR107_scan_core:
 	ld	HL,(??AUTO_scan_core+32)
 	ld	A,(HL)
 	ld	L,A
@@ -27792,9 +27838,9 @@ __scan_run:
 	ld	(??AUTO_scan_core+18),HL
 	ld	A,(??AUTO_scan_core+18)
 	or	A
-	jr nz,@ENDIF120_scan_core
+	jr nz,@ENDIF126_scan_core
 	jp	@L__scan_run_done
-@ENDIF120_scan_core:
+@ENDIF126_scan_core:
 	ld	HL,(??AUTO_scan_core+32)
 	inc	HL
 	ld	(??AUTO_scan_core+32),HL
@@ -27806,16 +27852,16 @@ __scan_run:
 	ld	(??AUTO_scan_core+12),HL
 	ld	A,(??AUTO_scan_core+18)
 	cp	37
-	jr nz,@ENDIF122_scan_core
+	jr nz,@ENDIF128_scan_core
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
 	call	_sc_skip
 	pop	DE
 	bit	7,H
-	jr z,@ENDIF124_scan_core
+	jr z,@ENDIF130_scan_core
 	jp	@L__scan_run_input_fail
-@ENDIF124_scan_core:
+@ENDIF130_scan_core:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
@@ -27825,7 +27871,7 @@ __scan_run:
 	ld	A,L
 	xor	37
 	or	H
-	jr z,@ENDIF126_scan_core
+	jr z,@ENDIF132_scan_core
 	push	HL
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -27834,15 +27880,15 @@ __scan_run:
 	pop	DE
 	pop	DE
 	jp	@L__scan_run_done
-@ENDIF126_scan_core:
-	jp	@WHILE82_scan_core
-@ENDIF122_scan_core:
+@ENDIF132_scan_core:
+	jp	@WHILE88_scan_core
+@ENDIF128_scan_core:
 	ld	A,(??AUTO_scan_core+18)
 	cp	110
-	jr nz,@ENDIF128_scan_core
+	jr nz,@ENDIF134_scan_core
 	ld	A,(??AUTO_scan_core+10)
 	or	A
-	jr nz,@ENDIF130_scan_core
+	jr nz,@ENDIF136_scan_core
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	DE,8
@@ -27868,21 +27914,21 @@ __scan_run:
 	add	HL,SP
 	ld	SP,HL
 	ex	DE,HL
-@ENDIF130_scan_core:
-	jp	@WHILE82_scan_core
-@ENDIF128_scan_core:
+@ENDIF136_scan_core:
+	jp	@WHILE88_scan_core
+@ENDIF134_scan_core:
 	ld	A,(??AUTO_scan_core+18)
 	cp	99
-	jr z,@OR_S133_scan_core
+	jr z,@OR_S139_scan_core
 	cp	115
-	jr z,@OR_S133_scan_core
+	jr z,@OR_S139_scan_core
 	ld	A,(??AUTO_scan_core+18)
 	cp	91
-	jp	NZ,@ENDIF132_scan_core
-@OR_S133_scan_core:
+	jp	NZ,@ENDIF138_scan_core
+@OR_S139_scan_core:
 	ld	A,(??AUTO_scan_core+18)
 	cp	91
-	jr nz,@ELSE134_scan_core
+	jr nz,@ELSE140_scan_core
 	ld	HL,(??AUTO_scan_core+32)
 	ld	(??AUTO_scan_core+34),HL
 	ld	HL,??AUTO_scan_core+32
@@ -27895,46 +27941,46 @@ __scan_run:
 	pop	DE
 	pop	DE
 	pop	DE
-	jr @ENDIF135_scan_core
-@ELSE134_scan_core:
+	jr @ENDIF141_scan_core
+@ELSE140_scan_core:
 	ld	A,(??AUTO_scan_core+18)
 	cp	115
-	jr nz,@ENDIF137_scan_core
+	jr nz,@ENDIF143_scan_core
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
 	call	_sc_skip
 	pop	DE
 	bit	7,H
-	jr z,@ENDIF137_scan_core
+	jr z,@ENDIF143_scan_core
 	jp	@L__scan_run_input_fail
-@ENDIF137_scan_core:
-@ENDIF135_scan_core:
+@ENDIF143_scan_core:
+@ENDIF141_scan_core:
 	ld	A,(??AUTO_scan_core+10)
 	or	A
-	jr nz,@ENDIF139_scan_core
+	jr nz,@ENDIF145_scan_core
 	call	_sc_arg
 	ld	(??AUTO_scan_core+22),HL
-@ENDIF139_scan_core:
+@ENDIF145_scan_core:
 	ld	HL,(??AUTO_scan_core+6)
 	ld	A,H
 	or	L
-	jr z,@TERN_E140_scan_core
-	jr @TERN_END141_scan_core
-@TERN_E140_scan_core:
+	jr z,@TERN_E146_scan_core
+	jr @TERN_END147_scan_core
+@TERN_E146_scan_core:
 	ld	A,(??AUTO_scan_core+18)
 	cp	99
-	jr nz,@TERN_E142_scan_core
+	jr nz,@TERN_E148_scan_core
 	ld	HL,1
-	jr @TERN_END143_scan_core
-@TERN_E142_scan_core:
+	jr @TERN_END149_scan_core
+@TERN_E148_scan_core:
 	ld	HL,32767
-@TERN_END143_scan_core:
-@TERN_END141_scan_core:
+@TERN_END149_scan_core:
+@TERN_END147_scan_core:
 	ld	(??AUTO_scan_core+16),HL
 	ld	HL,0
 	ld	(??AUTO_scan_core+20),HL
-@FOR144_scan_core:
+@FOR150_scan_core:
 	ld	HL,(??AUTO_scan_core+16)
 	ld	A,H
 	xor	128
@@ -27943,9 +27989,9 @@ __scan_run:
 	sub	1
 	ld	A,D
 	sbc	A,128
-	jr nc,@ENDIF148_scan_core
-	jp	@ENDFOR146_scan_core
-@ENDIF148_scan_core:
+	jr nc,@ENDIF154_scan_core
+	jp	@ENDFOR152_scan_core
+@ENDIF154_scan_core:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
@@ -27953,17 +27999,17 @@ __scan_run:
 	pop	DE
 	ld	(??AUTO_scan_core+4),HL
 	bit	7,H
-	jr z,@ENDIF150_scan_core
-	jp	@ENDFOR146_scan_core
-@ENDIF150_scan_core:
+	jr z,@ENDIF156_scan_core
+	jp	@ENDFOR152_scan_core
+@ENDIF156_scan_core:
 	ld	A,(??AUTO_scan_core+18)
 	cp	115
-	jr nz,@TERN_E153_scan_core
+	jr nz,@TERN_E159_scan_core
 	ld	HL,(??AUTO_scan_core+4)
 	ld	A,L
 	xor	32
 	or	H
-	jr z,@OR_T155_scan_core
+	jr z,@OR_T161_scan_core
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -27971,7 +28017,7 @@ __scan_run:
 	sub	9
 	ld	A,D
 	sbc	A,128
-	jr c,@AND_S157_scan_core
+	jr c,@AND_S163_scan_core
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -27979,18 +28025,18 @@ __scan_run:
 	sub	14
 	ld	A,D
 	sbc	A,128
-	jr c,@OR_T155_scan_core
-@AND_S157_scan_core:
+	jr c,@OR_T161_scan_core
+@AND_S163_scan_core:
 	ld	HL,0
-	jr @TERN_END154_scan_core
-@OR_T155_scan_core:
+	jr @TERN_END160_scan_core
+@OR_T161_scan_core:
 	ld	HL,1
-@OR_E156_scan_core:
-	jr @TERN_END154_scan_core
-@TERN_E153_scan_core:
+@OR_E162_scan_core:
+	jr @TERN_END160_scan_core
+@TERN_E159_scan_core:
 	ld	A,(??AUTO_scan_core+18)
 	cp	91
-	jr nz,@AND_F158_scan_core
+	jr nz,@AND_F164_scan_core
 	ld	HL,??AUTO_scan_core+36
 	push	HL
 	ld	HL,(??AUTO_scan_core+34)
@@ -28003,16 +28049,16 @@ __scan_run:
 	pop	DE
 	ld	A,H
 	or	L
-	jr nz,@AND_F158_scan_core
+	jr nz,@AND_F164_scan_core
 	ld	HL,1
-	jr @AND_E159_scan_core
-@AND_F158_scan_core:
+	jr @AND_E165_scan_core
+@AND_F164_scan_core:
 	ld	HL,0
-@AND_E159_scan_core:
-@TERN_END154_scan_core:
+@AND_E165_scan_core:
+@TERN_END160_scan_core:
 	ld	A,H
 	or	L
-	jr z,@ENDIF152_scan_core
+	jr z,@ENDIF158_scan_core
 	ld	HL,(??AUTO_scan_core+4)
 	push	HL
 	ld	L,(IX+4)
@@ -28021,8 +28067,8 @@ __scan_run:
 	call	__sc_ungetc
 	pop	DE
 	pop	DE
-	jr @ENDFOR146_scan_core
-@ENDIF152_scan_core:
+	jr @ENDFOR152_scan_core
+@ENDIF158_scan_core:
 	ld	HL,(??AUTO_scan_core+16)
 	dec	HL
 	ld	(??AUTO_scan_core+16),HL
@@ -28031,7 +28077,7 @@ __scan_run:
 	ld	(??AUTO_scan_core+20),HL
 	ld	A,(??AUTO_scan_core+10)
 	or	A
-	jr nz,@ENDIF161_scan_core
+	jr nz,@ENDIF167_scan_core
 	ld	A,(??AUTO_scan_core+4)
 	push	AF
 	ld	HL,(??AUTO_scan_core+22)
@@ -28041,45 +28087,45 @@ __scan_run:
 	pop	HL
 	pop	AF
 	ld	(HL),A
-@ENDIF161_scan_core:
-@FORUPD145_scan_core:
-	jp	@FOR144_scan_core
-@ENDFOR146_scan_core:
+@ENDIF167_scan_core:
+@FORUPD151_scan_core:
+	jp	@FOR150_scan_core
+@ENDFOR152_scan_core:
 	ld	HL,(??AUTO_scan_core+20)
 	ld	A,H
 	or	L
-	jr nz,@ENDIF163_scan_core
+	jr nz,@ENDIF169_scan_core
 	ld	HL,(??AUTO_scan_core+4)
 	bit	7,H
-	jr z,@ENDIF165_scan_core
+	jr z,@ENDIF171_scan_core
 	jp	@L__scan_run_input_fail
-@ENDIF165_scan_core:
+@ENDIF171_scan_core:
 	jp	@L__scan_run_done
-@ENDIF163_scan_core:
+@ENDIF169_scan_core:
 	ld	A,(??AUTO_scan_core+10)
 	or	A
-	jr nz,@ENDIF167_scan_core
+	jr nz,@ENDIF173_scan_core
 	ld	A,(??AUTO_scan_core+18)
 	cp	99
-	jr z,@ENDIF169_scan_core
+	jr z,@ENDIF175_scan_core
 	ld	HL,(??AUTO_scan_core+22)
 	ld	(HL),0
-@ENDIF169_scan_core:
+@ENDIF175_scan_core:
 	ld	HL,(??AUTO_scan_core+0)
 	inc	HL
 	ld	(??AUTO_scan_core+0),HL
-@ENDIF167_scan_core:
-	jp	@WHILE82_scan_core
-@ENDIF132_scan_core:
+@ENDIF173_scan_core:
+	jp	@WHILE88_scan_core
+@ENDIF138_scan_core:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
 	call	_sc_skip
 	pop	DE
 	bit	7,H
-	jr z,@ENDIF171_scan_core
+	jr z,@ENDIF177_scan_core
 	jp	@L__scan_run_input_fail
-@ENDIF171_scan_core:
+@ENDIF177_scan_core:
 	ld	HL,(??AUTO_scan_core+18)
 	push	HL
 	ld	HL,_sc_int_convs
@@ -28090,13 +28136,13 @@ __scan_run:
 	ld	(??AUTO_scan_core+38),HL
 	ld	A,H
 	or	L
-	jr z,@ENDIF173_scan_core
+	jr z,@ENDIF179_scan_core
 	ld	A,(??AUTO_scan_core+18)
 	cp	112
-	jr nz,@ENDIF175_scan_core
+	jr nz,@ENDIF181_scan_core
 	ld	HL,2
 	ld	(??AUTO_scan_core+12),HL
-@ENDIF175_scan_core:
+@ENDIF181_scan_core:
 	ld	HL,(??AUTO_scan_core+12)
 	push	HL
 	ld	HL,??AUTO_scan_core+24
@@ -28124,18 +28170,18 @@ __scan_run:
 	ex	DE,HL
 	ld	(??AUTO_scan_core+14),HL
 	bit	7,H
-	jr z,@ENDIF177_scan_core
+	jr z,@ENDIF183_scan_core
 	jp	@L__scan_run_input_fail
-@ENDIF177_scan_core:
+@ENDIF183_scan_core:
 	ld	HL,(??AUTO_scan_core+14)
 	ld	A,H
 	or	L
-	jr nz,@ENDIF179_scan_core
+	jr nz,@ENDIF185_scan_core
 	jp	@L__scan_run_done
-@ENDIF179_scan_core:
+@ENDIF185_scan_core:
 	ld	A,(??AUTO_scan_core+10)
 	or	A
-	jr nz,@ENDIF181_scan_core
+	jr nz,@ENDIF187_scan_core
 	call	_sc_arg
 	ld	(??AUTO_scan_core+22),HL
 	ld	HL,(??AUTO_scan_core+12)
@@ -28151,9 +28197,9 @@ __scan_run:
 	ld	HL,(??AUTO_scan_core+0)
 	inc	HL
 	ld	(??AUTO_scan_core+0),HL
-@ENDIF181_scan_core:
-	jp	@WHILE82_scan_core
-@ENDIF173_scan_core:
+@ENDIF187_scan_core:
+	jp	@WHILE88_scan_core
+@ENDIF179_scan_core:
 	ld	HL,(??AUTO_scan_core+18)
 	push	HL
 	ld	HL,_sc_float_convs
@@ -28163,15 +28209,15 @@ __scan_run:
 	pop	DE
 	ld	A,H
 	or	L
-	jr z,@ENDIF183_scan_core
+	jr z,@ENDIF189_scan_core
 	ld	A,(??AUTO_scan_core+10)
 	or	A
-	jr z,@TERN_E184_scan_core
+	jr z,@TERN_E190_scan_core
 	ld	HL,0
-	jr @TERN_END185_scan_core
-@TERN_E184_scan_core:
+	jr @TERN_END191_scan_core
+@TERN_E190_scan_core:
 	call	_sc_arg
-@TERN_END185_scan_core:
+@TERN_END191_scan_core:
 	ld	(??AUTO_scan_core+22),HL
 	push	HL
 	ld	HL,(??AUTO_scan_core+6)
@@ -28185,27 +28231,27 @@ __scan_run:
 	pop	DE
 	ld	(??AUTO_scan_core+14),HL
 	bit	7,H
-	jr z,@ENDIF187_scan_core
+	jr z,@ENDIF193_scan_core
 	jr @L__scan_run_input_fail
-@ENDIF187_scan_core:
+@ENDIF193_scan_core:
 	ld	HL,(??AUTO_scan_core+14)
 	ld	A,H
 	or	L
-	jr nz,@ENDIF189_scan_core
+	jr nz,@ENDIF195_scan_core
 	jr @L__scan_run_done
-@ENDIF189_scan_core:
+@ENDIF195_scan_core:
 	ld	A,(??AUTO_scan_core+10)
 	or	A
-	jr nz,@ENDIF191_scan_core
+	jr nz,@ENDIF197_scan_core
 	ld	HL,(??AUTO_scan_core+0)
 	inc	HL
 	ld	(??AUTO_scan_core+0),HL
-@ENDIF191_scan_core:
-	jp	@WHILE82_scan_core
-@ENDIF183_scan_core:
+@ENDIF197_scan_core:
+	jp	@WHILE88_scan_core
+@ENDIF189_scan_core:
 	jr @L__scan_run_done
-	jp	@WHILE82_scan_core
-@ENDWHILE83_scan_core:
+	jp	@WHILE88_scan_core
+@ENDWHILE89_scan_core:
 @L__scan_run_done:
 	ld	HL,(??AUTO_scan_core+0)
 	jr @_scan_run_ret
@@ -28213,11 +28259,11 @@ __scan_run:
 	ld	HL,(??AUTO_scan_core+0)
 	ld	A,H
 	or	L
-	jr z,@TERN_E192_scan_core
-	jr @TERN_END193_scan_core
-@TERN_E192_scan_core:
+	jr z,@TERN_E198_scan_core
+	jr @TERN_END199_scan_core
+@TERN_E198_scan_core:
 	ld	HL,-1
-@TERN_END193_scan_core:
+@TERN_END199_scan_core:
 @_scan_run_ret:
 	pop	IX
 	ret
@@ -28242,7 +28288,7 @@ _sc_size:
 	db	2
 	db	8
 _sc_int_convs:
-	db	'duoxXpi',0
+	db	'duoxXpib',0
 _sc_base:
 	db	10
 	db	10
@@ -28251,6 +28297,7 @@ _sc_base:
 	db	16
 	db	16
 	db	0
+	db	2
 _sc_float_convs:
 	db	'feEgGaAF',0
 
@@ -28260,7 +28307,7 @@ _sc_ap:
 	ds	2
 ; Shared automatic storage
 ??AUTO_scan_core:
-	ds	54
+	ds	56
 
 
 	CSEG
@@ -34025,21 +34072,71 @@ __strtoint:
 @ELSE18_strtoint:
 	ld	A,(IX+8)
 	or	(IX+9)
-	jr nz,@ENDIF23_strtoint
+	jr z,@OR_S24_strtoint
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	A,L
+	xor	2
+	or	H
+	jr nz,@ELSE22_strtoint
+@OR_S24_strtoint:
 	ld	HL,(??AUTO_strtoint+0)
 	ld	A,(HL)
 	cp	48
-	jr nz,@TERN_E24_strtoint
-	ld	HL,8
-	jr @TERN_END25_strtoint
-@TERN_E24_strtoint:
-	ld	HL,10
-@TERN_END25_strtoint:
+	jr nz,@ELSE22_strtoint
+	inc	HL
+	ld	A,(HL)
+	cp	98
+	jr z,@OR_S25_strtoint
+	ld	HL,(??AUTO_strtoint+0)
+	inc	HL
+	ld	A,(HL)
+	cp	66
+	jr nz,@ELSE22_strtoint
+@OR_S25_strtoint:
+	ld	HL,(??AUTO_strtoint+0)
+	inc	HL
+	inc	HL
+	ld	A,(HL)
+	ld	L,A
+	push	HL
+	call	_digit_value
+	pop	DE
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	2
+	ld	A,D
+	sbc	A,128
+	jr nc,@ELSE22_strtoint
+	ld	HL,(??AUTO_strtoint+0)
+	inc	HL
+	inc	HL
+	ld	(??AUTO_strtoint+0),HL
+	ld	HL,2
 	ld	(IX+8),L
 	ld	(IX+9),H
+	jr @ENDIF23_strtoint
+@ELSE22_strtoint:
+	ld	A,(IX+8)
+	or	(IX+9)
+	jr nz,@ENDIF27_strtoint
+	ld	HL,(??AUTO_strtoint+0)
+	ld	A,(HL)
+	cp	48
+	jr nz,@TERN_E28_strtoint
+	ld	HL,8
+	jr @TERN_END29_strtoint
+@TERN_E28_strtoint:
+	ld	HL,10
+@TERN_END29_strtoint:
+	ld	(IX+8),L
+	ld	(IX+9),H
+@ENDIF27_strtoint:
 @ENDIF23_strtoint:
 @ENDIF19_strtoint:
-@FOR26_strtoint:
+@FOR30_strtoint:
 	ld	HL,(??AUTO_strtoint+0)
 	ld	A,(HL)
 	ld	L,A
@@ -34051,12 +34148,12 @@ __strtoint:
 	sub	(IX+8)
 	ld	A,H
 	sbc	A,(IX+9)
-	jp	PO,@CMP_NV31_strtoint
+	jp	PO,@CMP_NV35_strtoint
 	xor	128
-@CMP_NV31_strtoint:
-	jp	M,@ENDIF30_strtoint
-	jr @ENDFOR28_strtoint
-@ENDIF30_strtoint:
+@CMP_NV35_strtoint:
+	jp	M,@ENDIF34_strtoint
+	jr @ENDFOR32_strtoint
+@ENDIF34_strtoint:
 	ld	HL,1
 	ld	(??AUTO_strtoint+6),HL
 	ld	HL,(??AUTO_strtoint+0)
@@ -34064,7 +34161,7 @@ __strtoint:
 	ld	(??AUTO_strtoint+0),HL
 	ld	A,(??AUTO_strtoint+4)
 	or	A
-	jr nz,@ENDIF33_strtoint
+	jr nz,@ENDIF37_strtoint
 	ld	HL,(??AUTO_strtoint+10)
 	push	HL
 	ld	L,(IX+8)
@@ -34084,43 +34181,43 @@ __strtoint:
 	ex	DE,HL
 	ld	A,H
 	or	L
-	jr z,@ENDIF33_strtoint
+	jr z,@ENDIF37_strtoint
 	ld	HL,1
 	ld	(??AUTO_strtoint+4),HL
-@ENDIF33_strtoint:
-@FORUPD27_strtoint:
-	jr @FOR26_strtoint
-@ENDFOR28_strtoint:
+@ENDIF37_strtoint:
+@FORUPD31_strtoint:
+	jr @FOR30_strtoint
+@ENDFOR32_strtoint:
 	ld	A,(IX+6)
 	or	(IX+7)
-	jr z,@ENDIF35_strtoint
+	jr z,@ENDIF39_strtoint
 	ld	A,(??AUTO_strtoint+6)
 	or	A
-	jr z,@TERN_E36_strtoint
+	jr z,@TERN_E40_strtoint
 	ld	HL,(??AUTO_strtoint+0)
-	jr @TERN_END37_strtoint
-@TERN_E36_strtoint:
+	jr @TERN_END41_strtoint
+@TERN_E40_strtoint:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
-@TERN_END37_strtoint:
+@TERN_END41_strtoint:
 	ex	DE,HL
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
-@ENDIF35_strtoint:
+@ENDIF39_strtoint:
 	ld	A,(??AUTO_strtoint+6)
 	or	A
-	jr nz,@ENDIF39_strtoint
+	jr nz,@ENDIF43_strtoint
 	jp	@_strtoint_ret
-@ENDIF39_strtoint:
+@ENDIF43_strtoint:
 	ld	A,(??AUTO_strtoint+4)
 	or	A
-	jr nz,@ENDIF41_strtoint
+	jr nz,@ENDIF45_strtoint
 	ld	A,(IX+14)
 	or	(IX+15)
-	jr z,@ENDIF41_strtoint
+	jr z,@ENDIF45_strtoint
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	dec	HL
@@ -34129,13 +34226,13 @@ __strtoint:
 	add	HL,BC
 	ld	A,(HL)
 	cp	128
-	jr c,@ENDIF41_strtoint
+	jr c,@ENDIF45_strtoint
 	ld	HL,1
 	ld	(??AUTO_strtoint+4),HL
 	ld	HL,(??AUTO_strtoint+2)
 	ld	A,H
 	or	L
-	jr z,@ENDIF43_strtoint
+	jr z,@ENDIF47_strtoint
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	dec	HL
@@ -34144,12 +34241,12 @@ __strtoint:
 	add	HL,BC
 	ld	A,(HL)
 	cp	128
-	jr nz,@ENDIF43_strtoint
+	jr nz,@ENDIF47_strtoint
 	ld	HL,0
 	ld	(??AUTO_strtoint+4),HL
 	ld	HL,0
 	ld	(??AUTO_strtoint+8),HL
-@FOR44_strtoint:
+@FOR48_strtoint:
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	dec	HL
@@ -34158,31 +34255,31 @@ __strtoint:
 	sub	L
 	ld	A,D
 	sbc	A,H
-	jp	PO,@CMP_NV47_strtoint
+	jp	PO,@CMP_NV51_strtoint
 	xor	128
-@CMP_NV47_strtoint:
-	jp	P,@ENDFOR46_strtoint
+@CMP_NV51_strtoint:
+	jp	P,@ENDFOR50_strtoint
 	ld	HL,(??AUTO_strtoint+8)
 	ld	C,(IX+10)
 	ld	B,(IX+11)
 	add	HL,BC
 	ld	A,(HL)
 	or	A
-	jr z,@ENDIF49_strtoint
+	jr z,@ENDIF53_strtoint
 	ld	HL,1
 	ld	(??AUTO_strtoint+4),HL
-@ENDIF49_strtoint:
-@FORUPD45_strtoint:
+@ENDIF53_strtoint:
+@FORUPD49_strtoint:
 	ld	HL,(??AUTO_strtoint+8)
 	inc	HL
 	ld	(??AUTO_strtoint+8),HL
-	jr @FOR44_strtoint
-@ENDFOR46_strtoint:
-@ENDIF43_strtoint:
-@ENDIF41_strtoint:
+	jr @FOR48_strtoint
+@ENDFOR50_strtoint:
+@ENDIF47_strtoint:
+@ENDIF45_strtoint:
 	ld	A,(??AUTO_strtoint+4)
 	or	A
-	jr z,@ENDIF51_strtoint
+	jr z,@ENDIF55_strtoint
 	ld	HL,34
 	ld	(_errno),HL
 	ld	L,(IX+12)
@@ -34190,16 +34287,16 @@ __strtoint:
 	push	HL
 	ld	A,(IX+14)
 	or	(IX+15)
-	jr z,@TERN_E52_strtoint
+	jr z,@TERN_E56_strtoint
 	ld	HL,(??AUTO_strtoint+2)
 	ld	A,H
 	or	L
-	jr z,@TERN_E52_strtoint
+	jr z,@TERN_E56_strtoint
 	ld	HL,0
-	jr @TERN_END53_strtoint
-@TERN_E52_strtoint:
+	jr @TERN_END57_strtoint
+@TERN_E56_strtoint:
 	ld	HL,255
-@TERN_END53_strtoint:
+@TERN_END57_strtoint:
 	push	HL
 	ld	L,(IX+10)
 	ld	H,(IX+11)
@@ -34210,16 +34307,16 @@ __strtoint:
 	pop	DE
 	ld	A,(IX+14)
 	or	(IX+15)
-	jr z,@ENDIF55_strtoint
+	jr z,@ENDIF59_strtoint
 	ld	HL,(??AUTO_strtoint+2)
 	ld	A,H
 	or	L
-	jr z,@TERN_E56_strtoint
+	jr z,@TERN_E60_strtoint
 	ld	HL,128
-	jr @TERN_END57_strtoint
-@TERN_E56_strtoint:
+	jr @TERN_END61_strtoint
+@TERN_E60_strtoint:
 	ld	HL,127
-@TERN_END57_strtoint:
+@TERN_END61_strtoint:
 	push	HL
 	ld	L,(IX+12)
 	ld	H,(IX+13)
@@ -34229,13 +34326,13 @@ __strtoint:
 	add	HL,BC
 	pop	DE
 	ld	(HL),E
-@ENDIF55_strtoint:
+@ENDIF59_strtoint:
 	jr @_strtoint_ret
-@ENDIF51_strtoint:
+@ENDIF55_strtoint:
 	ld	HL,(??AUTO_strtoint+2)
 	ld	A,H
 	or	L
-	jr z,@ENDIF59_strtoint
+	jr z,@ENDIF63_strtoint
 	ld	L,(IX+12)
 	ld	H,(IX+13)
 	push	HL
@@ -34245,7 +34342,7 @@ __strtoint:
 	call	__sc_negate
 	pop	DE
 	pop	DE
-@ENDIF59_strtoint:
+@ENDIF63_strtoint:
 @_strtoint_ret:
 	pop	IX
 	ret

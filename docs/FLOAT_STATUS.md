@@ -9,7 +9,8 @@ IEEE 754 single-precision (32-bit) floating point is fully functional.
 - `__fadd` - Addition (DEHL + __tmp32), rounds to nearest even, handles inf and NaN
 - `__fsub` - Subtraction (DEHL - __tmp32)
 - `__fmul` - Multiplication (24x24 partial products)
-- `__fdiv` - Division (long division, 26-bit quotient, rounds to nearest even)
+- `__fdiv` - Division (long division, 26-bit quotient, rounds to nearest even), handles inf, NaN and the sign of a zero result
+- `__fcmp` - Comparison. It does not give the NaN result of Annex F: the code generator reads only the Z and C flags, so a NaN operand compares like its bit pattern (`n == n` is true, `n != n` is false). Use `isnan` to test for a NaN. A fix needs a change in the code generator.
 - `__fneg` - Negation (sign bit flip)
 - `__fcmp` - Comparison (Z flag = equal, C flag = less than)
 

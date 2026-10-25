@@ -8,6 +8,9 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- `__fdiv` gives the IEEE result for an infinity or NaN operand and keeps the sign of a zero numerator (`inf/2` was a huge finite number, `inf/inf` was 1.0, `0/-1` was `+0`). Float comparison with a NaN stays non-IEEE; recorded in `docs/FLOAT_STATUS.md`.
+- `strtol`, `strtoul`, `strtoll`, `strtoull` and scanf `%i` accept the C23 prefix `0b`; scanf has the `%b` conversion.
+- The tests use the `src` directory of their own checkout (`PYTHONPATH` set in `tests/conftest.py`).
 - `?:` after a side effect in the condition: `int a=v; return (a++ > 0) ? a : 99;` read `a` as `v` (uc80's own `?:` walk skipped the sequence point after the condition). uc80 now uses uc_core's walk and keeps only its typed constant fold (`_fold_ternary`). Needs the uc_core copy-propagation fix.
 
 - **scanf family rewritten in C** (`src/uc80/lib/csrc/`, generated into `lc/` by `gen_c_modules.py`). `sscanf`, `fscanf` and `scanf` now do `%f %e %g %a` (and `%lf`, `%Lf`), `%n`, widths (`%3c%d`), `%*` suppression, `%[...]` scan sets, `%%`, `%i` with `0x` and `0` prefixes, `%o %u %x` with signs, `%hhd %hd %ld %lld %zd %jd %td`, `%p`, and return EOF when the input ends before the first item. New `vscanf`, `vfscanf` and `vsscanf`. `sscanf` and `vsscanf` no longer link BDOS code.

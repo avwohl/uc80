@@ -25,6 +25,49 @@ __fdiv:
 	PUSH	BC
 	PUSH	IX
 
+	; dividend infinity or NaN?
+	LD	A,D
+	AND	7FH
+	CP	7FH
+	JR	NZ,@fdiv_n1
+	BIT	7,E
+	JR	Z,@fdiv_n1
+	LD	A,E
+	AND	7FH
+	OR	H
+	OR	L
+	JR	NZ,@fdiv_nan		; NaN / x
+	LD	A,(__tmp32+3)		; inf / x
+	AND	7FH
+	CP	7FH
+	JR	NZ,__fdiv_divzero	; inf / finite: infinity
+	LD	A,(__tmp32+2)
+	BIT	7,A
+	JR	Z,__fdiv_divzero
+@fdiv_nan:				; inf / inf, inf / NaN, x / NaN
+	LD	DE,07FC0H
+	LD	HL,0
+	JR	@fdiv_exit
+@fdiv_n1:
+	; divisor infinity or NaN?
+	LD	A,(__tmp32+3)
+	AND	7FH
+	CP	7FH
+	JR	NZ,@fdiv_n2
+	LD	A,(__tmp32+2)
+	BIT	7,A
+	JR	Z,@fdiv_n2
+	AND	7FH
+	LD	B,A
+	LD	A,(__tmp32+1)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32)
+	OR	B
+	JR	NZ,@fdiv_nan
+	JR	@fdiv_szero		; finite / infinity: a signed zero
+@fdiv_n2:
+
 	; Check for zero divisor -> infinity (or a NaN for 0/0)
 	LD	A,(__tmp32+3)
 	AND	7FH
@@ -66,7 +109,14 @@ __fdiv_check_dividend:
 	OR	H
 	OR	L
 	JR	NZ,__fdiv_do_div
-	LD	DE,0
+@fdiv_szero:				; zero or finite / infinity: the sign is the xor
+	LD	A,D
+	LD	B,A
+	LD	A,(__tmp32+3)
+	XOR	B
+	AND	80H
+	LD	D,A
+	LD	E,0
 	LD	HL,0
 	JR	@fdiv_exit
 
