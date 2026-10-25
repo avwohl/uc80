@@ -18,7 +18,4 @@ _stdout:	DW	_stdout_data
 	PUBLIC	_stderr
 _stderr:	DW	_stderr_data
 
-	PUBLIC	_errno
-_errno:	DW	0
-
 	END

@@ -1,0 +1,12 @@
+; lc_errno.mac - errno
+	.Z80
+
+	PUBLIC	_errno
+
+; Zero at the start, so a named COMMON block: a ROM image holds no bytes
+; for this variable (see docs/rom.md).
+	COMMON	/lc_errno/
+
+_errno:	DS	2
+
+	END

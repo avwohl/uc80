@@ -10,7 +10,14 @@ observable behaviour of a program uc80 compiles.
 
 - `?:` after a side effect in the condition: `int a=v; return (a++ > 0) ? a : 99;` read `a` as `v` (uc80's own `?:` walk skipped the sequence point after the condition). uc80 now uses uc_core's walk and keeps only its typed constant fold (`_fold_ternary`). Needs the uc_core copy-propagation fix.
 
+- **scanf family rewritten in C** (`src/uc80/lib/csrc/`, generated into `lc/` by `gen_c_modules.py`). `sscanf`, `fscanf` and `scanf` now do `%f %e %g %a` (and `%lf`, `%Lf`), `%n`, widths (`%3c%d`), `%*` suppression, `%[...]` scan sets, `%%`, `%i` with `0x` and `0` prefixes, `%o %u %x` with signs, `%hhd %hd %ld %lld %zd %jd %td`, `%p`, and return EOF when the input ends before the first item. New `vscanf`, `vfscanf` and `vsscanf`. `sscanf` and `vsscanf` no longer link BDOS code.
+- `strtod`, `strtof`, `strtold` and `atof` rewritten: the result is correctly rounded (the old code was up to 20 units in the last place off, and `1e-38` or `99999999999` were far wrong), and `inf`, `infinity`, `nan`, `nan(chars)` and hex floats (`0x1p3`) work. The end pointer is the input pointer when no number is read. `errno` is `ERANGE` on overflow and underflow.
+- `strtol` and `strtoul` rewritten: bases 0 and 2 to 36, `0x` prefix only before a hex digit, overflow gives `LONG_MAX`, `LONG_MIN` or `ULONG_MAX` with `errno == ERANGE`, a bad base gives `EINVAL`.
+- `errno` is its own module (`lc_errno`), so `strtol` stays in the ROM library.
+
 ### Added
+
+- `strtoll`, `strtoull`, `atoll`, `strtoimax` and `strtoumax`.
 
 - `tests/conftest.py` builds `libc_rom.lib` and `crt0_rom.rel` when a checkout lacks them. The ROM tests fail, not skip, if a library is missing.
 - **ROM target (Phase 1 of `docs/rom_target.md`): `uc80 --target=rom`** (alias
