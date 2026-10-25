@@ -17,6 +17,14 @@ observable behaviour of a program uc80 compiles.
   exactly; the count matches z88dk-ticks on the benchmark programs. See
   `docs/romrun.md`.
 
+- **romrun repair pass**: `ram_fill` and `sp` (start state of RAM and SP,
+  so a broken crt0 fails), `peek8`/`peek16`/`peek` and `--dump`,
+  `--dump-ram`, `track=True` (lowest SP and RAM written), `nmi_gate=True`
+  (Neo Geo NMI enable port 08h and disable port 18h) and a golden file of
+  the per-opcode timing sweep against z88dk-ticks
+  (`bench/romrun/golden/ticks_sweep.txt`). The random-stream test no longer
+  produces an indexed instruction without the displacement byte.
+
 ### Changed
 
 - **Faster `qsort`.** `qsort` was a selection sort (n² comparisons, 37

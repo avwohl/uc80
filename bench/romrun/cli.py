@@ -97,6 +97,19 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--measure", action="append", default=[],
                     metavar="A:B|FUNC",
                     help="T-states from symbol A to B, or inside function FUNC")
+    ap.add_argument("--ram-fill", metavar="BYTE|random", default=None,
+                    help="start value of RAM (default 0)")
+    ap.add_argument("--ram-seed", type=num, default=1)
+    ap.add_argument("--sp", metavar="N|poison", default="0xFFFF",
+                    help="start value of SP; poison is an address in ROM")
+    ap.add_argument("--track", action="store_true",
+                    help="report the lowest SP and the RAM written")
+    ap.add_argument("--nmi-gate", action="store_true",
+                    help="Neo Geo NMI gate: OUT 08h opens, OUT 18h closes")
+    ap.add_argument("--dump", action="append", default=[], metavar="SYM[:N]",
+                    help="print N bytes (default 1) at SYM after the run")
+    ap.add_argument("--dump-ram", metavar="FILE",
+                    help="write the RAM range to FILE after the run")
     ap.add_argument("--json", action="store_true", help="print the result as JSON")
     ap.add_argument("--quiet", action="store_true")
     return ap
@@ -124,7 +137,13 @@ def _main(argv=None) -> int:
             banks = list(NEOGEO_BANKS)
     m = Machine(rom_size=a.rom_size, ram=(int(lo, 16), int(hi, 16)),
                 banks=banks, rom_write=a.rom_write,
-                mode="cpm" if a.cpm else "rom", default_in=a.default_in)
+                mode="cpm" if a.cpm else "rom", default_in=a.default_in,
+                ram_fill=(None if a.ram_fill is None else
+                          "random" if a.ram_fill == "random"
+                          else num(a.ram_fill)),
+                ram_seed=a.ram_seed,
+                sp="poison" if a.sp == "poison" else num(a.sp),
+                track=a.track, nmi_gate=a.nmi_gate)
     m.log_events = a.log_events
     m.stop_on_halt = not a.no_stop_halt
     if a.port_log:
@@ -170,11 +189,20 @@ def _main(argv=None) -> int:
     if a.cpm and m.console:
         sys.stdout.write(m.output_text())
         sys.stdout.flush()
+    dumps = {}
+    for spec in a.dump:
+        sym, _, n = spec.partition(":")
+        dumps[spec] = m.peek(sym, num(n) if n else 1).hex()
+    if a.dump_ram:
+        with open(a.dump_ram, "wb") as f:
+            f.write(m.dump_ram())
     out = {"reason": res.reason, "t": res.t, "pc": res.pc,
            "seconds": round(dt, 2), "rom_writes": len(m.rom_writes),
            "spans": {k: {"count": v.count, "total": v.total, "min": v.min,
                          "max": v.max} for k, v in m.spans.items()}}
     out.update(res.info)
+    if dumps:
+        out["dump"] = dumps
     if a.json:
         print(json.dumps(out))
     elif not a.quiet:
@@ -182,6 +210,13 @@ def _main(argv=None) -> int:
         if m.rom_writes:
             print(f"rom writes: {len(m.rom_writes)}  first at "
                   f"{m.rom_writes[0][1]:04X} (pc {m.rom_writes[0][3]:04X})",
+                  file=sys.stderr)
+        for spec, hx in dumps.items():
+            print(f"{spec}: {hx}", file=sys.stderr)
+        if a.track:
+            ms = m.min_sp
+            print("lowest sp: " + ("none" if ms is None else f"{ms:04X}")
+                  + f"  ram written: {len(m.written())} bytes",
                   file=sys.stderr)
         for sp in m.spans.values():
             print(sp.summary(), file=sys.stderr)

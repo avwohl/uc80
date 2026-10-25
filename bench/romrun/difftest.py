@@ -59,6 +59,11 @@ def one(rng: random.Random) -> bytes:
                 continue
             b = base(rng, op)
             if b[0] == op:
+                if op in (0x34, 0x35, 0x36) or (
+                        (op >> 6) in (1, 2) and (op & 7) == 6) or (
+                        (op >> 6) == 1 and ((op >> 3) & 7) == 6):
+                    # (IX+d): the displacement byte follows the opcode
+                    b = b[:1] + bytes([rng.randrange(256)]) + b[1:]
                 return bytes([pre]) + b
     # DD CB d op: the documented forms only (the register in the opcode is
     # 6); ticks gets the flags of the undocumented register copies wrong

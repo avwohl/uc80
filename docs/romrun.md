@@ -96,9 +96,78 @@ Bank n of a window shows the image bytes from n times the window size.
 Bytes past the end of the image read as FFh. Before the first bank
 read, each window shows the part of the image at the same address.
 
+On the Neo Geo, port 08h is also the NMI enable port when the CPU
+writes the port (see Neo Geo NMI gate).
+
 Raw images and Intel HEX files load at address 0 (`load_rom`,
 `load_hex`, or `--hex`). The HEX loader uses record types 00, 01, 02 and
 04.
+
+## RAM start state and SP
+
+Real RAM holds random data at power-up. A ROM that skips the BSS clear,
+the copy of the initial data or the set-up of SP must fail in the
+runner. Two options make the failure show:
+
+- `ram_fill` (`--ram-fill`): the start value of the RAM range. The value
+  is a byte, or `random` (`--ram-seed N` selects the sequence). The
+  default is zero. The ROM area is not changed.
+- `sp` (`--sp`): the start value of SP. The default is FFFFh. The value
+  `poison` is 4000h, an address in ROM. A push before the ROM sets SP
+  then is a ROM write, which the `rom_write` policy logs or faults.
+
+## Inspection after a run
+
+- `m.peek8(x)`, `m.peek16(x)` (little endian) and `m.peek(x, n)` read
+  memory. `x` is an address, a hex string or a symbol from the `.sym`
+  file. `m.dump_ram()` returns the RAM range.
+- `--dump SYM[:N]` (repeatable) prints N bytes (default 1) as hex after
+  the run. `--dump-ram FILE` writes the RAM range to a file. The
+  `--json` result has a `dump` object.
+- A ROM kernel can report a result in three ways: a write to a magic
+  port (`--magic-port`, stops the run, value in `info["value"]`), a
+  write to any port (the port log has the value), or a store in RAM that
+  the test reads with `peek`.
+
+## Stack depth and RAM use
+
+`Machine(track=True)` (`--track`) records the lowest SP at a stack write
+and each RAM address that the ROM writes. The cost is small (about 5%).
+
+- `m.min_sp`: the lowest SP after a push, CALL, RST, EX (SP),HL or an
+  interrupt, or `None` if there was none.
+- `m.stack_depth(top=None)`: `top` (default the start SP) minus
+  `min_sp`. Interrupt pushes count.
+- `m.written()` and `m.written_ranges()`: the written addresses, and
+  the same as `(first, last)` ranges. A write to ROM does not count.
+- `RunResult.info` has `min_sp` and `ram_written` (a byte count). The
+  command line prints both and `--json` has both.
+
+A test can compare `written_ranges()` with the RAM budget, or check
+that `min_sp` stays above the end of the data.
+
+## Neo Geo NMI gate
+
+On the Neo Geo sound CPU, a write to port 08h enables the NMI and a
+write to port 18h disables the NMI. A read of port 08h selects a bank
+(see Memory layout), so port 08h has two uses: a read selects a bank
+and a write enables the NMI.
+
+`Machine(nmi_gate=True)` (`--nmi-gate`) models the gate. The options
+`nmi_enable_port` (08h) and `nmi_disable_port` (18h) set the ports. The
+runner matches the low byte of the port address.
+
+- The gate starts closed at reset.
+- While the gate stays closed, an NMI request waits. The runner holds
+  one request.
+- An OUT to the enable port opens the gate and delivers the held NMI at
+  the next instruction boundary.
+- An OUT to the disable port closes the gate.
+- A held NMI does not end a HALT, so a ROM that halts with a closed
+  gate stops with the reason `halt`.
+
+The default is off, which is a generic Z80: each NMI goes to 0066h at
+once. Use `nmi_gate=True` for a Neo Geo ROM that depends on the gate.
 
 ## Writes to ROM
 
@@ -264,11 +333,18 @@ T-states of the RET at 0005h, as ticks does.
 
 The core has these checks.
 
-1. Per-instruction timing sweep against z88dk-ticks: all 256 base
-   opcodes, and all CB, ED, DD, FD and DDCB/FDCB opcodes, each with two
-   flag states (3400 cases). Eight cases differ. All eight are errors of
-   ticks: ADC A,H (8Ch) takes 7 T-states in ticks and 4 on the Z80,
-   ED 8Bh, and DD 76h/FD 76h (ticks halts).
+1. Per-instruction timing sweep against z88dk-ticks: the base, CB,
+   ED, DD, FD and DDCB/FDCB opcodes, each after one of two flag preambles. The
+   file `bench/romrun/golden/ticks_sweep.txt` records the results: the
+   instruction, the preamble, the T-states of ticks and the T-states of
+   the core. The sweep leaves out RET, RST, JP (HL), HALT, RETN, RETI and
+   the block instructions that repeat. `python3 -m romrun.sweep --check`
+   (from `bench/`) runs the core on each case and compares the result
+   with the file. It needs no ticks. `--write FILE` makes the file again
+   and needs ticks. The cases where ticks and the core differ are all
+   errors of ticks (see the `ticks differs` lines of `--check`): ADC A,H
+   (8Ch) takes 7 T-states in ticks and 4 on the Z80, and ED 8Bh.
+   `tests/test_romrun.py` checks the core against the file.
 2. Random instruction streams (`python3 -m romrun.difftest`, from
    `bench/`). The registers before each instruction, the final memory
    and the final T-state count must agree with ticks. 40 of 40 streams
@@ -287,7 +363,7 @@ The core has these checks.
    46 billion T-states, which takes more than an hour on the core. The
    full run of `zexdoc` and `zexall` has not finished. The first run of
    all of the tests is an open item.
-5. `tests/test_romrun.py`: 117 tests for the T-state table, port log,
+5. `tests/test_romrun.py`: tests for the T-state table, port log,
    interrupt model, ROM write faults, banks, feeds, YM2610, HEX loader,
    spans and the command line.
 

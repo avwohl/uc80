@@ -39,6 +39,9 @@ NEOGEO_BANKS = [BankWindow(0x08, 0xF000, 0x0800),
                 BankWindow(0x0B, 0x8000, 0x4000)]
 
 
+POISON_SP = 0x4000     # in ROM: a push before the ROM sets SP is a ROM write
+
+
 @dataclass
 class RunResult:
     reason: str           # halt, idle, budget, address:XXXX, port:XX, rom-write, exit
@@ -107,8 +110,24 @@ class Machine:
                  ram: tuple[int, int] = (0xF800, 0xFFFF),
                  banks: Iterable[BankWindow] | None = NEOGEO_BANKS,
                  rom_write: str = "log", mode: str = "rom",
-                 default_in: int = 0xFF, im: int = 1):
-        self.cpu = Z80()
+                 default_in: int = 0xFF, im: int = 1,
+                 ram_fill: int | str | None = None, ram_seed: int = 1,
+                 sp: int | str = 0xFFFF, track: bool = False,
+                 nmi_gate: bool = False, nmi_enable_port: int = 0x08,
+                 nmi_disable_port: int = 0x18):
+        """ram_fill: None (zeros), a byte, or "random" (seeded by ram_seed):
+        the start value of RAM.  A ROM that skips the BSS clear or the data
+        copy then fails.  sp: the start value of SP, or "poison" (an address
+        in ROM, so a push before the ROM sets SP is a logged ROM write).
+        track: record the written RAM addresses and the lowest SP.
+        nmi_gate: model the Neo Geo NMI gate (see docs/romrun.md)."""
+        self.cpu = Z80(track=track)
+        self.track = track
+        self.nmi_gate = nmi_gate
+        self.nmi_enable_port = nmi_enable_port
+        self.nmi_disable_port = nmi_disable_port
+        self.nmi_open = False          # the gate is closed at reset
+        self._nmi_held = False         # an NMI waits for the gate
         self.mode = mode
         self.rom_size = rom_size
         self.ram = ram
@@ -152,10 +171,21 @@ class Machine:
             cpu.wok[:] = bytes(65536)
             lo, hi = self.ram
             cpu.wok[lo:hi + 1] = b"\x01" * (hi - lo + 1)
+        if ram_fill is not None:
+            lo, hi = self.ram
+            n = hi - lo + 1
+            if ram_fill == "random":
+                import random
+                cpu.mem[lo:hi + 1] = random.Random(ram_seed).randbytes(n)
+            else:
+                cpu.mem[lo:hi + 1] = bytes([int(ram_fill) & 255]) * n
         cpu.set_hooks(inh=self._in, outh=self._out, wbad=self._wbad,
                       fire=self._fire, wake=self._wake, bphit=self._bphit,
                       onacc=self._onacc)
-        cpu.set(SP=0xFFFF if mode == "rom" else 0, IM=0)
+        if sp == "poison":
+            sp = POISON_SP
+        self._sp0 = int(sp) if mode == "rom" else 0
+        cpu.set(SP=self._sp0, IM=0)
         self._started = False
 
     # --- loading ------------------------------------------------------------
@@ -267,6 +297,15 @@ class Machine:
 
     def _out(self, port: int, value: int, t: int) -> None:
         self._emit(t, "OUT", port, value)
+        if self.nmi_gate:
+            lo = port & 0xFF
+            if lo == self.nmi_enable_port:
+                self.nmi_open = True
+                if self._nmi_held:
+                    self._nmi_held = False
+                    self.cpu.poke(nmi=True)
+            elif lo == self.nmi_disable_port:
+                self.nmi_open = False
         for d in self.devices:
             if d.owns(port):
                 d.write(port, value, t)
@@ -335,7 +374,10 @@ class Machine:
             if self.log_events and self.log_file is not None:
                 self.log_file.write(f"{when} EVENT {kind}\n")
             if kind == "nmi":
-                self.cpu.poke(nmi=True)
+                if self.nmi_gate and not self.nmi_open:
+                    self._nmi_held = True
+                else:
+                    self.cpu.poke(nmi=True)
             elif kind == "irq":
                 self.cpu.poke(irq=True)
             else:
@@ -362,7 +404,7 @@ class Machine:
         """Can a future event end a HALT?"""
         if not self.stop_on_halt:
             return True
-        if self._nmi_sources > 0:
+        if self._nmi_sources > 0 and (self.nmi_open or not self.nmi_gate):
             return True
         if iff1 and (self._irq_sources > 0 or any(
                 getattr(d, "can_wake", lambda: False)() for d in self.devices)):
@@ -500,9 +542,60 @@ class Machine:
         res = RunResult(reason, s["T"], s["PC"])
         if self.magic_value is not None and reason.startswith("port:"):
             res.info["value"] = self.magic_value
-        if reason == "exit" or reason.startswith("address:"):
-            pass
+        if self.track:
+            res.info["min_sp"] = self.min_sp
+            res.info["ram_written"] = len(self.written())
         return res
+
+    # --- inspection ---------------------------------------------------------
+
+    def peek8(self, spec: int | str) -> int:
+        """The byte at an address or symbol (banked windows as mapped now)."""
+        return self.cpu.mem[self.addr(spec) & 0xFFFF]
+
+    def peek16(self, spec: int | str) -> int:
+        """The little-endian word at an address or symbol."""
+        a = self.addr(spec)
+        return self.cpu.mem[a & 0xFFFF] | (self.cpu.mem[(a + 1) & 0xFFFF] << 8)
+
+    def peek(self, spec: int | str, n: int = 1) -> bytes:
+        """n bytes from an address or symbol."""
+        a = self.addr(spec)
+        return bytes(self.cpu.mem[(a + i) & 0xFFFF] for i in range(n))
+
+    def dump_ram(self) -> bytes:
+        """The whole RAM range as bytes."""
+        lo, hi = self.ram
+        return bytes(self.cpu.mem[lo:hi + 1])
+
+    @property
+    def min_sp(self) -> int | None:
+        """The lowest SP seen at a stack write (a push, CALL, RST, EX (SP),HL
+        or an interrupt), or None.  Needs track=True."""
+        v = self.cpu.get()["MINSP"]
+        return v if v < 65536 else None
+
+    def stack_depth(self, top: int | None = None) -> int | None:
+        """Bytes of stack used: top (default the start SP) minus min_sp."""
+        v = self.min_sp
+        if v is None:
+            return None
+        return (self._sp0 if top is None else top) - v
+
+    def written(self) -> list[int]:
+        """Sorted addresses written during the run (needs track=True)."""
+        wr = self.cpu.wr
+        return [a for a in range(65536) if wr[a]]
+
+    def written_ranges(self) -> list[tuple[int, int]]:
+        """The written addresses as (first, last) ranges."""
+        out: list[list[int]] = []
+        for a in self.written():
+            if out and out[-1][1] == a - 1:
+                out[-1][1] = a
+            else:
+                out.append([a, a])
+        return [(x, y) for x, y in out]
 
     def regs(self) -> dict:
         return self.cpu.get()

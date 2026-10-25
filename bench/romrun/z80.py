@@ -29,6 +29,8 @@ Behaviour that matters to a ROM test:
 
 from __future__ import annotations
 
+import re
+
 # --- tables -----------------------------------------------------------------
 
 def _parity(v: int) -> int:
@@ -43,7 +45,8 @@ STATE_REGS = ["A", "F", "B", "C", "D", "E", "H", "L", "SP", "PC", "IX", "IY",
               "A_", "F_", "B_", "C_", "D_", "E_", "H_", "L_", "I", "R", "R7",
               "IFF1", "IFF2", "IM", "HALTED", "T"]
 OTHER_CELLS = ["EV", "EIDELAY", "NMI_P", "IRQ_P", "IRQ_L", "BUDGET", "STOP",
-               "IVEC", "INH", "OUTH", "WBAD", "FIRE", "WAKE", "BPHIT", "AD", "ONACC", "IPC"]
+               "IVEC", "INH", "OUTH", "WBAD", "FIRE", "WAKE", "BPHIT", "AD", "ONACC", "IPC",
+               "MINSP"]
 ALL_CELLS = STATE_REGS + OTHER_CELLS
 
 R8 = ["B", "C", "D", "E", "H", "L", None, "A"]
@@ -545,7 +548,7 @@ def _gen_ed(out: list[str]) -> None:
 
 def _build_source() -> str:
     out: list[str] = []
-    out.append("def _factory(mem, wok, bp, SZ, SZP):")
+    out.append("def _factory(mem, wok, bp, SZ, SZP, wr):")
     out.append("    " + ", ".join(ALL_CELLS) + " = " +
                ", ".join(["0"] * len(ALL_CELLS)))
     out.append("    pass")
@@ -645,7 +648,7 @@ def _tail(out: list[str]) -> None:
 
     def service():
         nonlocal T, EV, PC, SP, HALTED, IFF1, IFF2, EIDELAY, NMI_P, IRQ_P
-        nonlocal STOP, R
+        nonlocal STOP, R, MINSP
         while True:
             nxt = FIRE(T)
             if STOP is not None:
@@ -742,16 +745,16 @@ def _tail(out: list[str]) -> None:
     def getstate():
         return dict(""")
     for n in STATE_REGS + ["EIDELAY", "NMI_P", "IRQ_P", "IRQ_L", "IVEC",
-                           "BUDGET", "EV", "IPC"]:
+                           "BUDGET", "EV", "IPC", "MINSP"]:
         out.append(f'            {n}={n},')
     out.append("        )")
     out.append("")
     out.append("    def setstate(d):")
     out.append("        nonlocal " + ", ".join(
         STATE_REGS + ["EIDELAY", "NMI_P", "IRQ_P", "IRQ_L", "IVEC", "BUDGET",
-                      "EV"]))
+                      "EV", "MINSP"]))
     for n in STATE_REGS + ["EIDELAY", "NMI_P", "IRQ_P", "IRQ_L", "IVEC",
-                           "BUDGET", "EV"]:
+                           "BUDGET", "EV", "MINSP"]:
         out.append(f"        if '{n}' in d: {n} = d['{n}']")
     out.append("")
     out.append("    def sethooks(inh, outh, wbad, fire, wake, bphit, onacc):")
@@ -771,29 +774,49 @@ def _tail(out: list[str]) -> None:
     out.append("    return run, getstate, setstate, sethooks, poke")
 
 
-_CODE = None
+_CODE: dict = {}
 
 
-def _code():
-    global _CODE
-    if _CODE is None:
-        _CODE = compile(_build_source(), "<z80core>", "exec")
-    return _CODE
+def _track_source(src: str) -> str:
+    """The tracking variant of the core source: every write to a writable
+    address sets wr[address], and every write at an SP-relative address
+    lowers MINSP (the lowest SP seen at a stack write)."""
+    out = []
+    for line in src.split("\n"):
+        st = line.lstrip()
+        ind = line[:len(line) - len(st)]
+        if st.startswith("if wok[w_]: mem[w_]"):
+            line = line + "; wr[w_] = 1"
+        out.append(line)
+        if re.match(r"w_ ?= ?\(*SP\b", st):
+            out.append(ind + "if SP < MINSP: MINSP = SP")
+    return "\n".join(out)
+
+
+def _code(track: bool = False):
+    if track not in _CODE:
+        src = _build_source()
+        if track:
+            src = _track_source(src)
+        _CODE[track] = compile(src, "<z80core>", "exec")
+    return _CODE[track]
 
 
 class Z80:
     """One Z80 CPU with its own memory.  See the module docstring."""
 
-    def __init__(self):
+    def __init__(self, track: bool = False):
+        self.track = track
+        self.wr = bytearray(65536)     # track mode: 1 = address was written
         self.mem = bytearray(65536)
         self.wok = bytearray(b"\x01") * 65536
         self.bp = bytearray(65536)
         ns: dict = {}
-        exec(_code(), ns)
+        exec(_code(track), ns)
         (self._run, self._get, self._set, self._sethooks,
-         self._poke) = ns["_factory"](self.mem, self.wok, self.bp, SZ, SZP)
+         self._poke) = ns["_factory"](self.mem, self.wok, self.bp, SZ, SZP, self.wr)
         self._set(dict(A=255, F=255, SP=65535, IVEC=255,
-                       BUDGET=1 << 62, EV=0))
+                       BUDGET=1 << 62, EV=0, MINSP=65536))
         self._skip = False
         self.set_hooks()
 

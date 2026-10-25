@@ -754,3 +754,173 @@ def test_cli_reports_an_unknown_symbol(tmp_path, capsys):
     rom.write_bytes(b"\x76")
     assert main([str(rom), "--stop-at", "nosuchsymbol"]) == 1
     assert "unknown symbol" in capsys.readouterr().err
+
+
+# --- RAM start state, SP, inspection, tracking, NMI gate ---------------------
+
+def test_ram_fill_byte_shows_a_missing_bss_clear():
+    # LD A,(F800h); LD (F900h),A; HALT
+    rom = image(a0=b"\x3A\x00\xF8\x32\x00\xF9\x76")
+    m = machine(rom)
+    m.run(1000)
+    assert m.peek8(0xF900) == 0                      # default: zeros
+    m = machine(rom, ram_fill=0xA5)
+    m.run(1000)
+    assert m.peek8(0xF900) == 0xA5
+    assert m.peek8(0x0000) == 0x3A                   # ROM is not filled
+
+
+def test_ram_fill_random_is_repeatable_and_seeded():
+    a = Machine(ram_fill="random", ram_seed=7)
+    b = Machine(ram_fill="random", ram_seed=7)
+    c = Machine(ram_fill="random", ram_seed=8)
+    assert a.dump_ram() == b.dump_ram() != c.dump_ram()
+    assert len(a.dump_ram()) == 0x800
+
+
+def test_poison_sp_makes_an_early_push_a_rom_write():
+    rom = image(a0=b"\xF5\x76")                      # PUSH AF; HALT
+    m = machine(rom, sp="poison", rom_write="log")
+    m.run(1000)
+    assert [w[1] for w in m.rom_writes] == [0x3FFF, 0x3FFE]
+    m = machine(rom)                                 # default SP is FFFF
+    m.run(1000)
+    assert m.rom_writes == []
+    m = machine(rom, sp=0x1234)
+    assert m.regs()["SP"] == 0x1234
+
+
+def test_peek_by_symbol_address_and_width():
+    m = Machine()
+    m.syms["_COUNT"] = 0xF810
+    m.cpu.mem[0xF810:0xF814] = b"\x34\x12\xAB\xCD"
+    assert m.peek8("count") == 0x34
+    assert m.peek16("_count") == 0x1234
+    assert m.peek("COUNT", 4) == b"\x34\x12\xAB\xCD"
+    assert m.peek("F812", 2) == b"\xAB\xCD"
+    assert m.peek16(0xF811) == 0xAB12
+    with pytest.raises(KeyError):
+        m.peek8("nosuch")
+
+
+# LD SP,F900; CALL sub; HALT; sub: PUSH AF; LD A,5; LD (F800),A; POP AF; RET
+TRACK_ROM = image(a0=b"\x31\x00\xF9\xCD\x10\x00\x76",
+                  a10=b"\xF5\x3E\x05\x32\x00\xF8\xF1\xC9")
+
+
+def test_track_reports_lowest_sp_and_written_ram():
+    m = machine(TRACK_ROM, track=True, sp=0xF900)
+    res = m.run(10000)
+    assert res.reason == "halt"
+    assert m.min_sp == 0xF8FC                        # CALL, then PUSH AF
+    assert m.stack_depth(0xF900) == 4
+    assert m.written_ranges() == [(0xF800, 0xF800), (0xF8FC, 0xF8FF)]
+    assert res.info["min_sp"] == 0xF8FC and res.info["ram_written"] == 5
+
+
+def test_track_is_off_by_default():
+    m = machine(TRACK_ROM)
+    m.run(10000)
+    assert m.min_sp is None and m.written() == []
+
+
+def test_track_counts_the_interrupt_push_and_ex_sp():
+    # EI; NOPs ... an IRQ pushes PC at SP-1, SP-2
+    rom = image(a0=b"\x31\x00\xF9\xFB" + b"\x00" * 20 + b"\x76",
+                a38=b"\xED\x4D")                     # RETI
+    m = machine(rom, track=True)
+    m.add_irq_at(60)
+    m.run(2000)
+    assert m.accepted and m.min_sp == 0xF8FE
+
+
+def test_track_ignores_writes_to_rom():
+    rom = image(a0=b"\x3E\x01\x32\x00\x10\x76")      # LD (1000h),A
+    m = machine(rom, track=True)
+    m.run(1000)
+    assert m.rom_writes and m.written() == []
+
+
+# NOPs; OUT (08h),A; NOPs; OUT (18h),A; NOPs; HALT.  The NMI handler counts.
+GATE_ROM = image(a0=b"\x00" * 6 + b"\xD3\x08" + b"\x00" * 20 + b"\xD3\x18"
+                 + b"\x00" * 20 + b"\x76",
+                 a66=b"\x3A\x00\xF8\x3C\x32\x00\xF8\xED\x45")
+
+
+def test_nmi_gate_holds_the_nmi_until_port_08_is_written():
+    m = machine(GATE_ROM, nmi_gate=True)
+    m.add_nmi_at(10)                  # while the gate is closed
+    m.run(5000)
+    outs = [t for t, k, p, v in m.port_log if k == "OUT" and p & 255 == 8]
+    assert len(m.accepted) == 1 and m.accepted[0][0] == "nmi"
+    assert m.accepted[0][1] >= outs[0]               # accepted after the OUT
+    assert m.peek8(0xF800) == 1
+
+
+def test_nmi_gate_closes_again_on_port_18():
+    m = machine(GATE_ROM, nmi_gate=True)
+    m.add_nmi_at(10)
+    m.add_nmi_at(400)                 # after OUT (18h): held, never taken
+    res = m.run(5000)
+    assert res.reason == "halt"       # a held NMI does not wake the CPU
+    assert len(m.accepted) == 1 and m.peek8(0xF800) == 1
+    assert m.nmi_open is False
+
+
+def test_nmi_gate_off_by_default_delivers_at_once():
+    m = machine(GATE_ROM)
+    m.add_nmi_at(10)
+    m.add_nmi_at(400)
+    m.run(5000)
+    assert len(m.accepted) == 2 and m.peek8(0xF800) == 2
+    assert m.accepted[0][1] < 30
+
+
+def test_nmi_gate_periodic_nmi_runs_only_while_open():
+    m = machine(GATE_ROM, nmi_gate=True)
+    m.add_nmi_every(30, start=5)
+    m.run(5000)
+    times = [t for _, t in m.accepted]
+    assert times and all(t >= 24 + 11 for t in times)
+
+
+def test_cli_dump_track_ram_fill_and_sp(tmp_path, capsys):
+    from romrun.cli import main
+    rom = tmp_path / "t.bin"
+    rom.write_bytes(TRACK_ROM)
+    dump = tmp_path / "ram.bin"
+    assert main([str(rom), "--track", "--ram-fill", "0x5A", "--sp", "0xF900",
+                 "--dump", "F800:2", "--dump", "F8FC:4",
+                 "--dump-ram", str(dump), "--json"]) == 0
+    out = capsys.readouterr().out
+    import json
+    j = json.loads(out)
+    assert j["min_sp"] == 0xF8FC and j["ram_written"] == 5
+    assert j["dump"]["F800:2"] == "055a"
+    assert len(j["dump"]["F8FC:4"]) == 8
+    data = dump.read_bytes()
+    assert len(data) == 0x800 and data[0] == 5 and data[1] == 0x5A
+
+
+def test_cli_poison_sp_and_nmi_gate_options(tmp_path):
+    from romrun.cli import main
+    rom = tmp_path / "t.bin"
+    rom.write_bytes(image(a0=b"\xF5\x76"))
+    assert main([str(rom), "--sp", "poison", "--rom-write", "fault",
+                 "--quiet"]) == 2
+    rom.write_bytes(GATE_ROM)
+    assert main([str(rom), "--nmi-gate", "--nmi-at", "10", "--quiet"]) == 0
+
+
+def test_golden_sweep_core_matches_the_recorded_core_column():
+    from romrun import sweep
+    assert sweep.check() == []
+
+
+def test_golden_sweep_ticks_differs_only_where_ticks_is_wrong():
+    from romrun import sweep
+    cases = sweep.load()
+    assert len(cases) > 3000
+    bad = {c[0].hex() for c in cases if c[2] != c[3]}
+    # ADC A,H takes 7 T-states in ticks (4 on the Z80); ED 8Bh is undefined
+    assert bad == {"8c", "ed8b"}
