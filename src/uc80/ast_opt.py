@@ -39,22 +39,6 @@ class Uc80ASTOptimizer(ASTOptimizer):
 
     # ---- identities that would lose the type of an operand
 
-    def _invalidate_caches_for_stmt(self, item) -> None:
-        """Also see the side effects inside a declaration initialiser.
-
-        uc_core looks only at the declared name, so ``int b = a++;`` or
-        ``int b = f();`` left the copy ``a <- v`` and the cached
-        expressions alive, and a later read of ``a`` became a read of
-        ``v``.  The initialisers are processed in order, before the
-        name that each one declares is recorded.
-        """
-        if isinstance(item, ast.Declaration):
-            for d in item.declarators or []:
-                init = getattr(d, "init", None)
-                if isinstance(d, ast.InitDeclaratorWithInit) and init is not None:
-                    self._invalidate_caches_for_expr(init)
-        super()._invalidate_caches_for_stmt(item)
-
     def _simplify_identity(self, expr):
         """``x + 0L`` is a long and ``x * 1u`` an unsigned int.  uc_core
         drops only a literal with a U or LL suffix, as on a target whose
@@ -88,26 +72,21 @@ class Uc80ASTOptimizer(ASTOptimizer):
         # Only the x / 2^n and x % 2^n reductions ask this.
         return False
 
-    def _optimize_expr(self, expr):
-        """``K ? a : b`` is not folded to a or b unless both are integer
+    def _fold_ternary(self, expr):
+        """K ? a : b is not folded to a or b unless both are integer
         literals of one type: the conditional has the common type of the
-        two (``1 ? ui : ul`` is unsigned long), which uc_core, knowing no
+        two (1 ? ui : ul is unsigned long), which uc_core, knowing no
         variable types, cannot tell.  A constant condition costs one
         test in the generated code and the peephole removes that."""
-        if isinstance(expr, ast.TernaryOp):
-            expr.condition = self._optimize_expr(expr.condition)
-            expr.true_expr = self._optimize_expr(expr.true_expr)
-            expr.false_expr = self._optimize_expr(expr.false_expr)
-            t, f = expr.true_expr, expr.false_expr
-            if (isinstance(expr.condition, ast.IntLiteral)
-                    and isinstance(t, ast.IntLiteral)
-                    and isinstance(f, ast.IntLiteral)
-                    and self._literal_type(t)[:2] == self._literal_type(f)[:2]):
-                self._stat("ternary_fold")
-                self._changed = True
-                return t if int_value(expr.condition) != 0 else f
-            return expr
-        return super()._optimize_expr(expr)
+        t, f = expr.true_expr, expr.false_expr
+        if (isinstance(expr.condition, ast.IntLiteral)
+                and isinstance(t, ast.IntLiteral)
+                and isinstance(f, ast.IntLiteral)
+                and self._literal_type(t)[:2] == self._literal_type(f)[:2]):
+            self._stat("ternary_fold")
+            self._changed = True
+            return t if int_value(expr.condition) != 0 else f
+        return expr
 
     # ---- typed constant folding
 
