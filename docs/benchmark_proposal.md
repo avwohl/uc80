@@ -616,31 +616,30 @@ The wiki reports that HI-TECH 7.80pl2 miscompiles fasta (DISQ) and hangs in Dhry
 - [BDS C](https://www.bdsoft.com/resources/bdsc.html), [Aztec C notes (Kevin Boone)](https://kevinboone.me/cpm-c.html), [MESCC](https://github.com/MiguelVis/mescc)
 - [Hack](https://en.wikipedia.org/wiki/Hack_(video_game)), [Ladder](https://en.wikipedia.org/wiki/Ladder_(video_game))
 
-## Draft reply to issue #1
+## Reply to issue #1
 
-Updated 2026-10-25. Not posted.
+Posted on 2026-10-25 as https://github.com/avwohl/uc80/issues/1#issuecomment-6394218792. The text follows.
 
-Thanks for the question, and for the pointer to ngdevkit. We now have numbers.
+Thanks for the question. We built a proper benchmark to answer it, which took a while.
 
-Short answer: stay with SDCC for the Neo Geo sound driver. uc80 cannot build ROM code yet, and on driver-shaped code SDCC is smaller and faster than uc80 today.
+**Short answer: for a Neo Geo sound driver, stay with SDCC for now.** SDCC is the better choice today for driver code and for ROM code.
 
-What we measured. The benchmark harness now builds 112 programs with 9 compilers, including standalone SDCC 4.4.0 and 4.6.0, and counts Z80 T-states with `z88dk-ticks`. The results are in docs/benchmarks.md and docs/benchmarks_speed.md.
+**What we measured**
 
-Four of the programs are small sound-driver kernels that we wrote for this issue: a 16-entry NMI command queue (`snd-cmdq`), YM2610 register writes with a shadow compare and a busy-wait (`snd-ymreg`), a sequencer tick for 4 FM and 3 SSG channels (`snd-seq`), and note to F-number (`snd-fnum`). The kernels run as CP/M programs, not as ROM code. Against SDCC 4.4.0 (the version that ngdevkit uses), uc80 needs 16 to 53 percent more T-states on three kernels and is 2 percent faster on `snd-fnum`. Against SDCC 4.6.0 the result is the same or worse for uc80.
+- A harness of 112 programs and 9 compilers, including standalone SDCC 4.4.0 (the version ngdevkit builds) and SDCC 4.6.0. It counts Z80 T-states with `z88dk-ticks`.
+- Four of the programs are sound-driver kernels that we wrote for this issue: an NMI command queue, YM2610 register writes with a shadow compare and a busy-wait, a sequencer tick for 4 FM and 3 SSG channels, and note to F-number. Against SDCC 4.4.0, uc80 needs 16 to 53 percent more T-states on three of them and is about 2 percent faster on the fourth. The kernel code is about 25 to 45 percent bigger with uc80.
+- Over all 105 programs that run, uc80 is faster than SDCC on average (about 0.63 of the T-states of SDCC 4.6.0). Most of that lead comes from the uc80 library (`printf`, `qsort`, 32-bit math), which a sound driver does not use. On small integer code with many small calls, SDCC still wins.
 
-The whole uc80 images are 33 to 46 percent bigger, but most of that difference is library code that a ROM driver does not link: the uc80 `printf` pulls in its float printer even for `%d`. We will fix that. The kernel code itself, without the library, is about 25 to 45 percent bigger with uc80 (an estimate from per-module sizes).
+**Why SDCC wins on driver code:** SDCC passes arguments in registers and keeps locals in registers. uc80 passes every argument on the stack as a 16-bit word and keeps locals in memory.
 
-The main cause of the speed difference is the calling convention. uc80 pushes every argument on the stack as a 16-bit word and reads it back through IX. SDCC passes the first arguments in registers. uc80 also keeps locals in memory, where SDCC keeps them in registers. Our analysis is in docs/codegen_gap.md. A register calling convention for internal functions is the largest item, at about 12 to 20 engineer-days.
+**ROM:** uc80 targets CP/M today and cannot build a ROM image yet. It cannot put data and BSS in RAM at F800h, it has no ROM startup code, no interrupt or NMI functions, no `__sfr`/`__at` port access and no banking. It also silently drops a bare SDCC `__interrupt` today; that will become an error. And we found a bug where uc80 dropped repeated stores to a `volatile` variable, which matters for hardware registers; a fix is in progress.
 
-On the whole set of 105 programs that run, uc80 is faster than SDCC on the mean (0.63 of the SDCC 4.6.0 T-states, 0.77 without the sort programs). Most of that gain comes from the uc80 library (`qsort`, `printf`, 32-bit math), which a sound driver does not use. On small integer loops and on code with many small functions, SDCC is faster. uc80 programs are about 1.5 times bigger than SDCC programs.
+**What we are doing about it.** Our goal is for uc80 to be better than SDCC for everything, drivers and ROM included. Work in progress:
 
-ROM support. uc80 targets CP/M today. The gaps for a sound driver are:
-- ul80 has no option to put data and BSS at F800h, and no startup code copies initialized data from ROM to RAM.
-- String literals and `const` tables go in the data segment, so in a ROM build they would need RAM.
-- uc80 has no interrupt-function attribute, no `__sfr`/`__at` port access and no banking.
-- uc80 silently drops a bare SDCC `__interrupt` and a bare `__fastcall`. Other SDCC forms such as `__critical __interrupt` and `__asm`/`__endasm` stop with an error.
-- uc80 writes M80 `.REL` objects and passes arguments on the stack, so `sdldz80` cannot link uc80 output with nullsound.
+- Library packaging fixes. Our measurements show they remove most of the size gap against SDCC across the benchmark set.
+- A ROM target: linker options for a ROM/RAM layout, ROM startup code, interrupt and NMI functions, port I/O, and a test runner that logs port I/O and injects interrupts.
+- A register calling convention and register locals. Our measurements show these two are the main cause of the speed gap on driver code.
 
-We wrote a plan for a ROM target: docs/rom_target.md. The smallest useful version puts data and BSS in RAM at F800h, adds ROM startup code, interrupt and NMI functions, port I/O intrinsics and `__at` variables. We estimate about 30 engineer-days for that version. We expect SDCC to stay smaller and faster on driver code after that work. If you would use a uc80 ROM target, please tell us if your driver links nullsound, and which SDCC features it uses (`__sfr`, `__at`, `__interrupt`, `__critical`, `__banked`).
+We will post numbers here as the pieces land.
 
-It would still help a lot if you could share one hot function from your driver, or the driver's per-tick cycle and RAM budget. Then we can measure real code instead of our own kernels.
+It would help a lot if you could share one hot function from your driver, or your per-tick cycle and RAM budget, and tell us which SDCC features the driver uses (`__sfr`, `__at`, `__interrupt`, `__critical`, `__banked`) and whether it links nullsound or uses its own crt0. Then we can use your real code as a test case.
