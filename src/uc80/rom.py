@@ -100,18 +100,27 @@ def undefined_in_rom(lib_dir: Path, code: str) -> list:
 _BLOCK = re.compile(r"^;@(INT|NMI)_BEGIN\n.*?^;@\1_END\n", re.S | re.M)
 
 
-def startup_text(path: Path, int_handler: bool, nmi_handler: bool,
-                 stack_top: str | None) -> list:
-    """Lines of crt0_rom.mac for embedding.  A user handler (PUBLIC
-    __int_handler or __nmi_handler) replaces the default stub at its vector;
-    stack_top (an assembler expression) replaces __RAM_END."""
+def startup_text(path: Path, int_handler, nmi_handler,
+                 stack_top: str | None, start: str | None = None) -> list:
+    """Lines of crt0_rom.mac for embedding.  A user handler replaces the
+    default stub at its vector.  int_handler and nmi_handler are None (keep
+    the default stub), True (the assembly label __int_handler or
+    __nmi_handler), or the label to jump to.  stack_top (an assembler
+    expression) replaces __RAM_END.  start is the label that __start calls
+    in place of _main."""
     text = path.read_text()
     use = {"INT": int_handler, "NMI": nmi_handler}
+    target = {"INT": int_handler if isinstance(int_handler, str)
+              else "__int_handler",
+              "NMI": nmi_handler if isinstance(nmi_handler, str)
+              else "__nmi_handler"}
 
     def block(m):
         body = m.group(0).splitlines()[1:-1]
         user = [ln for ln in body if ln.startswith(";@USER")]
-        keep = ([ln[len(";@USER"):] for ln in user] if use[m.group(1)]
+        keep = ([ln[len(";@USER"):].replace(
+                     f"__{m.group(1).lower()}_handler", target[m.group(1)])
+                 for ln in user] if use[m.group(1)]
                 else [ln for ln in body if not ln.startswith(";@USER")])
         return "\n".join(keep) + "\n"
 
@@ -125,6 +134,8 @@ def startup_text(path: Path, int_handler: bool, nmi_handler: bool,
             continue
         if s.startswith("EXTRN") and "_MAIN" in s and "__" not in s:
             continue
+        if start and s.startswith("CALL") and s.split()[-1] == "_MAIN":
+            line = f"\tCALL\t{start}"
         out.append(line)
     return out
 

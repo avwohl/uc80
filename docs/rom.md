@@ -47,7 +47,7 @@ With the ROM target the compiler:
 1. Load SP from `__RAM_END` (or from `--stack-top`).
 2. Copy `__DATA_LEN` bytes from `__DATA_ROM` to `__DATA_RAM`. No copy happens when `__DATA_LEN` is 0.
 3. Clear the BSS from `__BSS_START` to `__BSS_END`. No clear happens when the BSS is empty.
-4. Call `main`.
+4. Call `main`. If the program has no `main`, call the first function that `--entry` names (see Roots, entry points and vectors).
 5. Loop on `HALT`. The interrupt state is the state that `main` left.
 
 The link must use `--rom-data` and `--data-origin` (`-d`), because `__DATA_ROM`, `__DATA_RAM` and `__DATA_LEN` come from them. The link must also give `--ram-size` or `--ram-end`, unless you use `--stack-top`.
@@ -62,7 +62,47 @@ uc80 --target=rom main.c isr.mac -o main.mac
 
 If `isr.mac` has `PUBLIC __int_handler`, the vector at 0038h becomes `JP __int_handler`. If `isr.mac` has `PUBLIC __nmi_handler`, the vector at 0066h becomes `JP __nmi_handler`. The handler must save the registers it uses and must end with `RETI` (INT) or `RETN` (NMI).
 
-A handler can share a variable with the C program. Define the variable in the assembly file with `PUBLIC _name`. Declare the variable `extern` in the C program. A global variable that the C program defines has no `PUBLIC` label in whole-program mode.
+A handler can share a variable with the C program. Define the variable in the assembly file with `PUBLIC _name`, and declare the variable `extern` in the C program. Or define the variable in C and name the variable in `#pragma uc80 public` (see Roots, entry points and vectors). The assembly file then uses `EXTRN _name`.
+
+## Roots, entry points and vectors
+
+In whole-program mode the compiler removes each function that no code calls, and each object that no live code uses. Four pragmas and one option tell the compiler what hardware or assembly code uses. The pragmas go in any C source file. Several names can follow one pragma, separated by commas or spaces.
+
+```
+#pragma uc80 keep NAME ...      keep the function or object, and what the function calls
+#pragma uc80 public NAME ...    keep NAME and give NAME a PUBLIC label, also if NAME is static
+#pragma uc80 vector 38h NAME    the INT vector jumps to the C function NAME
+#pragma uc80 vector 66h NAME    the NMI vector jumps to the C function NAME
+```
+
+- `--entry NAME` (repeatable) is the same as `#pragma uc80 keep NAME`. The option also has a second use: a ROM program may have no `main`. The start-up code then calls the first `--entry` function in place of `main`. A ROM program with no `main` and no `--entry` is an error.
+- A kept function has the same storage rules as a function whose address the code takes. No other function shares the local storage of the kept function, because hardware can enter the function at any time.
+- A function in a `vector` pragma is kept. The vector becomes `JP _NAME`. The compiler gives an error when a `vector` pragma and an assembly `__int_handler` (or `__nmi_handler`) both set the same vector.
+- The compiler gives an error in three cases: an unknown pragma verb, a vector address that is not 38h or 66h, and a name that the program does not define.
+
+A C function has no interrupt prologue and no `RETI`. It ends with `RET`. Use a `vector` target only for code that handles this itself. Phase 2 of the plan adds real interrupt functions (see [rom_target.md](rom_target.md)).
+
+Objects in the BSS (uninitialised globals) now keep a `PUBLIC` label in the ROM target. The `.sym` file of `ul80` lists them, and `bench/romrun` can read them by name (`m.peek8("_ticks")`). The CP/M target does not change.
+
+## Const data in the ROM
+
+With `--target=rom` the compiler puts these objects in CSEG, so they stay in the ROM and the start-up code does not copy them to RAM:
+
+- an object whose type is const all the way down: `const int tab[3]`, `static const unsigned char k[]`, `const struct S s`, `const char *const names[]`
+- string literals
+- compound literals that are const-qualified, such as `(const int[]){1, 2}`, when no code writes the literal at run time
+
+These objects stay in DSEG, and so in RAM:
+
+- a pointer to const data: `const char *p = "x"` (the pointer can change)
+- an array of such pointers: `const char *tbl[]` (the array is not const). Write `const char *const tbl[]` to put the array in the ROM.
+- a volatile const object
+- a struct that is not const but has a const member
+- a compound literal that is not const, or that the code initialises at run time
+
+A write to a const object through a cast has undefined behavior. In a ROM the write goes nowhere. Run the ROM in `bench/romrun` with `rom_write="fault"` (or `--rom-write fault`) to stop at the first such write (`rom-write` is the stop reason).
+
+The CP/M target does not change. Many CP/M programs write to string literals or to const objects through casts. The CP/M image gets no gain, because CSEG and DSEG are both in the `.com` file.
 
 ## Calls that the ROM target refuses
 
@@ -97,12 +137,11 @@ This change also makes the CP/M images that use these modules smaller, because t
 
 ## Limits today
 
-- The const tables, string literals and initialised variables are all in DSEG. They use ROM and RAM both, because the start-up code copies the data to RAM. The next part of Phase 1 puts const data in CSEG (see [rom_target.md](rom_target.md)).
 - No interrupt handler in C. The compiler refuses `__interrupt` and the other spellings (see Refused spellings). No port intrinsics. Use an assembly file for `IN` and `OUT`, as `bench/rom/z80io.mac` does.
-- A program without `main` and the `--entry` option are not done.
 - The heap and `sprintf` are not available.
 - The helpers of the runtime keep their temporaries at fixed RAM addresses. A routine that an interrupt handler and the main program both call can fail. Do not call long division, 64-bit arithmetic or float in a handler.
 - Float code uses the alternate registers (`EXX`).
+- Each C object that the program defines is one object of one module. A second C file does not get its own BSS block (the plan lists this as optional).
 
 ## Refused spellings
 
@@ -119,19 +158,19 @@ python3 bench/rom/sndrom.py --layout neogeo  # RAM F800-FFFF (2 KB)
 
 `bench/rom/snd.h` replaces the CP/M header. The functions `out` and `in` are real `OUT` and `IN` instructions (`bench/rom/z80io.mac`). The text output goes to the debug port 0FEh. A host model catches the ports. The model keeps the same ring of the last 256 writes and the same busy count as the CP/M header. The decoded output is equal to the CP/M golden output (`bench/golden/snd-*.txt`) for all four kernels.
 
-The run starts with random RAM and a poisoned SP. Figures from the last run (uc80 ROM build, `libc_rom.lib`):
+The run starts with random RAM and a poisoned SP. Figures from the last run (Neo Geo layout, uc80 ROM build, `libc_rom.lib`). Before the const data moved to CSEG, the RAM figure included the const tables.
 
 ```
-kernel      ROM bytes  ROM no debug  RAM data  RAM bss  stack  T-states (timed region)
-snd-cmdq        1811          1517        39       42     30      10 727 741
-snd-ymreg       1337           885       240      528     28      18 620 847
-snd-seq         2853          2420       309      634     26      13 567 802
-snd-fnum        1329          1329        71       14     22      14 456 390
+kernel      ROM bytes  RAM before  RAM now  RAM data  RAM bss  stack  T-states (timed region)
+snd-cmdq        1777          81       48         6       42     30      10 236 778
+snd-ymreg       1312         768      530         2      528     28      17 676 627
+snd-seq         2797         943      636         2      634     26      12 749 126
+snd-fnum        1121          83       14         2       12     18       9 478 190
 ```
 
-- ROM bytes: the end of the image (vectors, code and the initial data). "No debug" is the same kernel with `rom_printf` removed. The first 104 bytes are the vector area.
-- RAM data and bss: from the `ul80` summary. The stack is the peak depth that romrun measured. The stack does not include an interrupt.
-- All four kernels fit the real Neo Geo layout (RAM F800h to FFFFh, 2 KB). The largest one, snd-seq, uses 943 bytes of RAM data and BSS plus 26 bytes of stack. The const tables are in this RAM figure until the const-in-CSEG part lands.
+- ROM bytes: the end of the image (vectors, code and the initial data). The ROM size and the T-states did not change when the const data moved to CSEG. The same bytes are in the image, and the code reads the bytes at the same cost.
+- RAM before and now: data plus BSS, from the `ul80` summary. The stack is the peak depth that romrun measured. The stack does not include an interrupt.
+- All four kernels fit the real Neo Geo layout (RAM F800h to FFFFh, 2 KB). The largest one, snd-seq, uses 636 bytes of RAM data and BSS plus 26 bytes of stack.
 - The T-states cover the code between `TIMER_START` and `TIMER_STOP` and include the real `OUT` and `IN` calls. The CP/M figures of [rom_target.md](rom_target.md) use a C model of the ports, so the two sets do not compare.
 
 The test `tests/test_rom_target.py` builds and runs `snd-cmdq` end to end. The test skips when `um80`, a `ul80` with the ROM options, or `libc_rom.lib` is missing.

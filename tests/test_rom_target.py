@@ -6,6 +6,7 @@ in the bench/romrun Z80 runner.  They skip when a tool or a library is
 missing.
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -327,3 +328,235 @@ class TestSndKernel:
         assert info["ram"] + 0x100 <= 0x800
         r = sndrom.execute(info, "snd-cmdq")
         assert r["text"] == sndrom.golden("snd-cmdq")
+
+
+CONST_PROGRAM = """
+const int ctab[3] = {1, 2, 3};
+const char *ptbl[] = {"a", "b"};
+const char *const ctbl[] = {"c", "d"};
+const char *pstr = "hello";
+int wtab[2] = {5, 6};
+static const unsigned char ktab[] = {1, 2, 3};
+const struct { int a, b; } cstruct = {3, 4};
+volatile const int vconst = 3;
+volatile int sink;
+int main(void)
+{
+    static const int stat_const[2] = {7, 8};
+    static int stat_var[2] = {9, 10};
+    sink = ctab[1] + ktab[2] + wtab[1] + cstruct.b + vconst + stat_const[1]
+         + stat_var[1] + ((const int[]){11, 12})[1] + ctbl[1][0] + ptbl[1][0] + pstr[0];
+    return 0;
+}
+"""
+
+
+def segment_of(text, label):
+    """CSEG or DSEG: the last segment directive before the label."""
+    i = text.index("\n" + label)
+    seg = re.findall(r"^\s*(CSEG|DSEG|COMMON)\b", text[:i], re.I | re.M)
+    return seg[-1].upper() if seg else None
+
+
+class TestConstInRom:
+    def test_const_objects_are_in_the_rom_and_the_rest_in_ram(self, tmp_path):
+        r = compile_rom(tmp_path, CONST_PROGRAM)
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        sy = symbols(tmp_path)
+        for name in ("_CTAB", "_CTBL", "_CSTRUCT"):
+            assert sy[name] < sy["__DATA_ROM"], name        # ROM
+        # a pointer to const data is itself a writable object, and so is
+        # an array of such pointers; a volatile const object stays in RAM
+        for name in ("_PTBL", "_PSTR", "_WTAB", "_VCONST"):
+            assert sy[name] >= 0xF800, name
+        assert sy["__DATA_LEN"] == sy["__DATA_END"] - sy["__DATA_RAM"]
+        text = (tmp_path / "t.mac").read_text()
+        for label in ("_ctab:", "_ctbl:", "_cstruct:", "_ktab:", "@STR1:"):
+            assert segment_of(text, label) == "CSEG", label
+        for label in ("_ptbl:", "_wtab:", "_pstr:", "_vconst:"):
+            assert segment_of(text, label) == "DSEG", label
+        assert segment_of(text, "__main_S0:") == "CSEG"      # stat_const
+        assert segment_of(text, "__main_S1:") == "DSEG"      # stat_var
+        m = machine(tmp_path)
+        assert m.run(max_tstates=500_000).reason == "halt"
+        assert m.rom_writes == []
+
+    def test_ram_data_is_smaller_than_the_data_in_the_rom_image(self, tmp_path):
+        r = compile_rom(tmp_path, CONST_PROGRAM)
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        sy = symbols(tmp_path)
+        # only ptbl (4), pstr (2), wtab (4), vconst (2), stat_var (4) and
+        # the string pointers are copied; the const tables are not
+        assert sy["__DATA_LEN"] <= 20
+
+    def test_string_literal_is_in_the_rom(self, tmp_path):
+        r = compile_rom(tmp_path, """
+volatile char c;
+int main(void) { const char *s = "abc"; c = s[1]; return 0; }
+""")
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        sy = symbols(tmp_path)
+        assert sy["__DATA_LEN"] == 0
+        assert b"abc\x00" in (tmp_path / "t.bin").read_bytes()
+
+    def test_write_through_a_cast_hits_the_rom_write_fault(self, tmp_path):
+        r = compile_rom(tmp_path, """
+const int ctab[3] = {1, 2, 3};
+int main(void)
+{
+    int *volatile p = (int *) ctab;     /* undefined behavior */
+    p[1] = 99;
+    return 0;
+}
+""")
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        m = Machine(ram=(0xF800, 0xFFFF), banks=None, ram_fill="random",
+                    sp="poison", track=True, rom_write="fault")
+        m.load_rom(str(tmp_path / "t.bin"))
+        m.load_symbols(str(tmp_path / "t.sym"))
+        res = m.run(max_tstates=500_000)
+        assert res.reason == "rom-write"
+        assert m.rom_writes and m.rom_writes[0][1] == symbols(tmp_path)["_CTAB"] + 2
+
+    def test_cpm_output_keeps_const_data_in_dseg(self, tmp_path):
+        src = tmp_path / "t.c"
+        src.write_text(CONST_PROGRAM)
+        r = subprocess.run(uc80_cmd(str(src), "-o", str(tmp_path / "t.mac")),
+                           capture_output=True, text=True, cwd=str(REPO))
+        assert r.returncode == 0, r.stderr
+        text = (tmp_path / "t.mac").read_text()
+        assert "__UC80_ROMDATA__" not in text
+        assert "_ctab:" in text.split("DSEG")[1]
+
+
+class TestRootsAndVectors:
+    def test_entry_without_main(self, tmp_path):
+        r = compile_rom(tmp_path, """
+volatile int out;
+static int twice(int x) { return x * 2; }
+void run(void) { out = twice(21); for (;;) { } }
+int dead(void) { return 1; }
+""", "--entry", "run")
+        assert r.returncode == 0, r.stderr
+        text = (tmp_path / "t.mac").read_text()
+        assert "CALL\t_run" in text and "_dead:" not in text
+        link_rom(tmp_path)
+        m = machine(tmp_path)
+        res = m.run(max_tstates=100_000)
+        assert res.reason in ("budget", "idle")
+        assert m.peek16("_out") == 42
+
+    def test_no_main_and_no_entry_is_an_error(self, tmp_path):
+        r = compile_rom(tmp_path, "void run(void) { }\n")
+        assert r.returncode == 1
+        assert "no main()" in r.stderr and "--entry" in r.stderr
+
+    def test_unknown_entry_is_an_error(self, tmp_path):
+        r = compile_rom(tmp_path, "int main(void) { return 0; }\n",
+                        "--entry", "nothere")
+        assert r.returncode == 1
+        assert "nothere" in r.stderr
+
+    def test_keep_pragma_keeps_an_unused_function(self, tmp_path):
+        r = compile_rom(tmp_path, """
+#pragma uc80 keep spare
+static int spare(void) { return 7; }
+int unused(void) { return 8; }
+int main(void) { return 0; }
+""")
+        assert r.returncode == 0, r.stderr
+        text = (tmp_path / "t.mac").read_text()
+        assert "_spare:" in text and "_unused:" not in text
+
+    def test_vector_pragma_jumps_to_the_c_function(self, tmp_path):
+        r = compile_rom(tmp_path, """
+#pragma uc80 vector 38h on_int
+#pragma uc80 vector 66h on_nmi
+void on_int(void) { }
+void on_nmi(void) { }
+int main(void) { return 0; }
+""")
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        img = (tmp_path / "t.bin").read_bytes()
+        sy = symbols(tmp_path)
+        assert img[0x38:0x3B] == bytes([0xC3, sy["_ON_INT"] & 255, sy["_ON_INT"] >> 8])
+        assert img[0x66:0x69] == bytes([0xC3, sy["_ON_NMI"] & 255, sy["_ON_NMI"] >> 8])
+
+    @pytest.mark.parametrize("pragma", [
+        "#pragma uc80 vector 40h f",
+        "#pragma uc80 vector 38h",
+        "#pragma uc80 keep",
+        "#pragma uc80 frobnicate x",
+    ])
+    def test_bad_pragma_is_an_error(self, tmp_path, pragma):
+        r = compile_rom(tmp_path, pragma + "\nvoid f(void) { }\nint main(void) { return 0; }\n")
+        assert r.returncode == 1
+        assert "#pragma uc80" in r.stderr
+
+    def test_vector_and_assembly_handler_conflict(self, tmp_path):
+        (tmp_path / "isr.mac").write_text(
+            "\t.Z80\n\tCSEG\n\tPUBLIC\t__int_handler\n__int_handler:\n\tRETI\n\tEND\n")
+        r = compile_rom(tmp_path, """
+#pragma uc80 vector 38h f
+void f(void) { }
+int main(void) { return 0; }
+""", files=[str(tmp_path / "isr.mac")])
+        assert r.returncode == 1
+        assert "same vector" in r.stderr
+
+    def test_public_pragma_exports_a_static_and_an_unused_bss_object(self, tmp_path):
+        r = compile_rom(tmp_path, """
+#pragma uc80 public counter, table, spare
+volatile unsigned char counter;
+static unsigned char table[4] = {1, 2, 3, 4};
+static int spare(void) { return 1; }
+int main(void) { return 0; }
+""")
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        sy = symbols(tmp_path)
+        assert sy["_COUNTER"] >= sy["__BSS_START"]
+        assert "_TABLE" in sy and "_SPARE" in sy
+
+    def test_bss_object_is_named_in_the_symbol_file(self, tmp_path):
+        r = compile_rom(tmp_path, """
+volatile unsigned char ticks;
+int main(void) { ticks = 1; return 0; }
+""")
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        assert "_TICKS" in symbols(tmp_path)
+
+    def test_assembly_isr_uses_a_c_global_and_a_rom_table(self, tmp_path):
+        (tmp_path / "isr.mac").write_text(
+            "\t.Z80\n\tCSEG\n\tPUBLIC\t__int_handler\n\tEXTRN\t_counter\n"
+            "__int_handler:\n\tPUSH\tAF\n\tLD\tA,(_counter)\n\tINC\tA\n"
+            "\tLD\t(_counter),A\n\tPOP\tAF\n\tEI\n\tRETI\n\tEND\n")
+        r = compile_rom(tmp_path, """
+#pragma uc80 public counter
+const int tab[4] = {1, 2, 3, 4};
+volatile unsigned char counter;
+volatile int sink;
+int main(void)
+{
+    asm("\\tei");
+    while (counter < 3)
+        ;
+    asm("\\tdi");
+    sink = tab[2];
+    return 0;
+}
+""", files=[str(tmp_path / "isr.mac")])
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        m = machine(tmp_path)
+        m.add_irq_every(3000, start=3000)
+        assert m.run(max_tstates=500_000).reason == "halt"
+        assert m.peek8("_counter") == 3
+        assert m.peek16("_sink") == 3
+        assert symbols(tmp_path)["_TAB"] < 0x8000

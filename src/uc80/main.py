@@ -7,6 +7,7 @@ Compiles C source to Z80 assembly compatible with um80 assembler.
 import argparse
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from uc_core.frontend import parse as _frontend_parse
@@ -330,6 +331,61 @@ def _defines_label(code: str, mac_files: list, label: str) -> bool:
     return bool(pat.search(code) or any(pat.search(m) for m in mac_files))
 
 
+@dataclass
+class _Roots:
+    keep: set        # function and object names to keep
+    public: set      # names that get a PUBLIC label even if static
+    vectors: dict    # {0x38: name, 0x66: name}
+
+
+_VECTORS = {0x38: "INT (38h)", 0x66: "NMI (66h)"}
+
+
+def _parse_address(text: str):
+    """38h, 0x38, 038H or decimal -> int, or None."""
+    t = text.strip().lower()
+    try:
+        if t.startswith("0x"):
+            return int(t[2:], 16)
+        if t.endswith("h"):
+            return int(t[:-1], 16)
+        return int(t, 10)
+    except ValueError:
+        return None
+
+
+def _roots_from_options(entries: list, pragmas: list) -> _Roots:
+    """The names --entry and #pragma uc80 keep/public/vector pin down.
+    Raises CodegenError for a pragma it does not understand: a vector
+    that is silently dropped is a ROM that does not start."""
+    roots = _Roots(keep=set(entries), public=set(), vectors={})
+    ident = re.compile(r"^[A-Za-z_]\w*$")
+    for verb, words, fname, line in pragmas:
+        where = f"{fname}:{line}: #pragma uc80 {verb}"
+        if verb in ("keep", "public"):
+            if not words or not all(ident.match(w) for w in words):
+                raise CodegenError(f"{where}: expected one or more names")
+            roots.keep.update(words)
+            if verb == "public":
+                roots.public.update(words)
+        elif verb == "vector":
+            addr = _parse_address(words[0]) if words else None
+            if len(words) != 2 or addr not in _VECTORS or not ident.match(words[1]):
+                raise CodegenError(
+                    f"{where}: expected '#pragma uc80 vector 38h NAME' or "
+                    f"'#pragma uc80 vector 66h NAME'")
+            if addr in roots.vectors and roots.vectors[addr] != words[1]:
+                raise CodegenError(
+                    f"{where}: the {_VECTORS[addr]} vector is already set "
+                    f"to {roots.vectors[addr]}")
+            roots.vectors[addr] = words[1]
+            roots.keep.add(words[1])
+        else:
+            raise CodegenError(
+                f"{where}: unknown verb; uc80 knows keep, public and vector")
+    return roots
+
+
 def _rom_problems(gen, code: str) -> list:
     """Error messages for what a ROM cannot do: main(argc, argv), and calls
     to library functions that are not in libc_rom.lib."""
@@ -499,6 +555,13 @@ def main() -> int:
              "--ram-size)"
     )
     parser.add_argument(
+        "--entry", metavar="NAME", action="append", default=[],
+        help="Keep function NAME and everything it calls, even if no code "
+             "calls NAME (repeatable; the same as #pragma uc80 keep NAME). "
+             "With --target=rom and no main(), the first --entry is the "
+             "function the start-up code calls"
+    )
+    parser.add_argument(
         "--no-crlf",
         action="store_true",
         help="Do not translate '\\n' to CR LF on console output. The default "
@@ -589,6 +652,7 @@ def main() -> int:
         mac_files = []  # Assembly files to append
         printf_features: set[str] | None = None  # From #pragma printf
         scanf_features: set[str] | None = None   # From #pragma scanf
+        target_pragmas = []                      # From #pragma uc80 ...
 
         for input_path in input_paths:
             # Handle .mac assembly files - pass through
@@ -642,6 +706,8 @@ def main() -> int:
                         pp.macros[define] = Macro(define, body="1")
 
                 source = pp.preprocess(source, str(input_path))
+
+                target_pragmas.extend(pp.target_pragmas)
 
                 # Collect #pragma printf/scanf features
                 if pp.printf_features:
@@ -722,14 +788,30 @@ def main() -> int:
         if scanf_features is not None:
             scanf_features = _close_format_features(scanf_features)
 
+        roots = _roots_from_options(args.entry, target_pragmas)
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                            enable_inlining, enable_const_propagation, whole_program,
                            embed_runtime=embed_runtime,
                            printf_features=printf_features,
                            scanf_features=scanf_features,
                            type_config=type_config,
-                           crlf_console=not args.no_crlf or rom)
+                           crlf_console=not args.no_crlf or rom,
+                           rom_data=rom,
+                           keep_names=roots.keep,
+                           public_names=roots.public)
         code = gen.generate(merged_ast)
+
+        def label_of(name):
+            sym = gen.ctx.globals.get(name)
+            return sym.label() if sym else f"_{name}"
+
+        keep_labels = {label_of(n) for n in roots.keep}
+        for n in sorted(roots.keep):
+            if (n not in gen.ctx.globals
+                    and not _defines_label(code, mac_files, label_of(n))):
+                raise CodegenError(
+                    f"'{n}' is named by --entry or #pragma uc80 but the "
+                    f"program does not define it")
 
         if rom:
             problems = _rom_problems(gen, code)
@@ -777,11 +859,36 @@ def main() -> int:
                 # Parse and filter startup code
                 startup_lines = []
                 if rom and not args.startup_lib:
+                    int_handler = (label_of(roots.vectors[0x38])
+                                   if 0x38 in roots.vectors else
+                                   "__int_handler" if _defines_label(
+                                       code, mac_files, "__int_handler")
+                                   else None)
+                    nmi_handler = (label_of(roots.vectors[0x66])
+                                   if 0x66 in roots.vectors else
+                                   "__nmi_handler" if _defines_label(
+                                       code, mac_files, "__nmi_handler")
+                                   else None)
+                    if (0x38 in roots.vectors and _defines_label(
+                            code, mac_files, "__int_handler")) or (
+                            0x66 in roots.vectors and _defines_label(
+                                code, mac_files, "__nmi_handler")):
+                        raise CodegenError(
+                            "#pragma uc80 vector and an assembly "
+                            "__int_handler or __nmi_handler both set the "
+                            "same vector")
+                    start = None
+                    if not (gen.ctx.globals.get("main") is not None
+                            or _defines_label(code, mac_files, "_main")):
+                        if not args.entry:
+                            raise CodegenError(
+                                "--target=rom: the program has no main() "
+                                "and no --entry; name the function that "
+                                "the start-up code calls with --entry NAME")
+                        start = label_of(args.entry[0])
                     startup_lines = rom_module.startup_text(
-                        startup_path,
-                        _defines_label(code, mac_files, "__int_handler"),
-                        _defines_label(code, mac_files, "__nmi_handler"),
-                        args.stack_top)
+                        startup_path, int_handler, nmi_handler,
+                        args.stack_top, start)
                     startup_content = ""
                 for line in startup_content.splitlines():
                     stripped = line.strip().upper()
@@ -827,7 +934,7 @@ def main() -> int:
         # assembly reaches its own labels (computed jumps, address-taken
         # labels), so it must not assume an unreferenced label is dead.  Any
         # future source of hand-written assembly should add its labels here.
-        asm_entry_labels = set()
+        asm_entry_labels = set(keep_labels)
         for line in code.splitlines():
             match = re.match(r'\s*PUBLIC\s+(.+)', line, re.IGNORECASE)
             if match:
@@ -883,7 +990,8 @@ def main() -> int:
                                       gen.call_graph_analyzer.address_taken}
                         try:
                             live_code = asm_eliminate_dead_code(
-                                code, entry_points=entry)
+                                code, entry_points=entry,
+                                keep_labels=keep_labels, export_common=rom)
                         except Exception:
                             live_code = code
                     funcs, lib_provided = leave_to_library(
@@ -1158,12 +1266,16 @@ def main() -> int:
                 if gen.call_graph_analyzer:
                     for func_name in gen.call_graph_analyzer.address_taken:
                         asm_entry_points.add(f"_{func_name}")
-                code = asm_eliminate_dead_code(code, entry_points=asm_entry_points)
+                code = asm_eliminate_dead_code(code, entry_points=asm_entry_points,
+                                               keep_labels=keep_labels,
+                                               export_common=rom)
             else:
                 # extra_entry_points, not entry_points: passing entry_points
                 # would switch asm_dce into whole-program mode and drop
                 # unreferenced PUBLIC data.
-                code = asm_eliminate_dead_code(code, extra_entry_points=asm_entry_labels)
+                code = asm_eliminate_dead_code(code, extra_entry_points=asm_entry_labels,
+                                               keep_labels=keep_labels,
+                                               export_common=rom)
             lines_after = len(code.splitlines())
 
             if args.verbose and lines_before != lines_after:

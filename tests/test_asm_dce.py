@@ -335,3 +335,57 @@ __tmp32:
         assert "_dead" not in result
         assert "__tmp32:" in result
         assert "public\t__tmp32" in result.lower().replace("  ", "\t")
+
+
+ROM_ASM = """
+\t.Z80
+\tPUBLIC\t_main,_count,_table
+\tCSEG
+_main:
+\tLD\tHL,_k_used
+\tLD\tA,(_count)
+\tRET
+
+; __UC80_ROMDATA__
+\tcseg
+_k_used:
+\tdb\t1,2,3
+_k_dead:
+\tdb\t4,5,6
+\tdseg
+_w_used:
+\tdw\t1
+\tcommon\t//
+_count:
+\tds\t1
+\tend
+"""
+
+
+def _publics(text):
+    import re
+    return {n for m in re.finditer(r"^\s*PUBLIC\s+(.+)$", text, re.M | re.I)
+            for n in m.group(1).split(",")}
+
+
+class TestRomDataRegion:
+    def test_rom_data_stays_in_cseg_and_dead_rom_data_goes(self):
+        out = eliminate_dead_code(ROM_ASM, entry_points={"_main"})
+        assert "\tCSEG\n_k_used:" in out and "_k_dead:" not in out
+        assert "_w_used:" not in out                    # unreferenced DSEG
+
+    def test_keep_labels_keep_rom_data_and_dseg(self):
+        out = eliminate_dead_code(ROM_ASM, entry_points={"_main"},
+                                  keep_labels={"_k_dead", "_w_used"})
+        assert "_k_dead:" in out and "_w_used:" in out
+        assert out.index("_k_dead:") < out.index("\tDSEG") < out.index("_w_used:")
+
+    def test_bss_public_is_dropped_by_default_and_exported_on_request(self):
+        plain = eliminate_dead_code(ROM_ASM, entry_points={"_main"})
+        assert "_count" not in _publics(plain)
+        exported = eliminate_dead_code(ROM_ASM, entry_points={"_main"},
+                                       export_common=True)
+        assert "_count" in _publics(exported)
+        kept = eliminate_dead_code(ROM_ASM, entry_points={"_main"},
+                                   keep_labels={"_count"})
+        assert "_count" in _publics(kept)

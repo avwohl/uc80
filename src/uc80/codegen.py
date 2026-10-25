@@ -16,7 +16,8 @@ from typing import Callable, Iterator, Optional
 # dependencies) so that codegen, main and asm_dce share one definition of
 # them; they are re-exported here because codegen is what writes them.
 from .asm_dce import (ASM_BEGIN_MARKER, ASM_BEGIN_FILE_MARKER,
-                      ASM_END_MARKER, is_asm_begin, is_asm_end)
+                      ASM_END_MARKER, ROM_DATA_MARKER, is_asm_begin,
+                      is_asm_end)
 from uc_core import ast
 from uc_core.volatility import VolatileInfo, declared_names
 from uc_core.volatility import children as _children
@@ -495,6 +496,7 @@ class _SynthVarDecl:
     var_type: object
     init: object = None
     storage_class: "Optional[str]" = None
+    rom: bool = False      # const all the way down (see _is_rom_type)
 
 
 def _rewrite_str_token(string_lit, rewriter) -> None:
@@ -916,9 +918,10 @@ def _to_legacy(t, ctx=None):
                                    bit_width=bw)
                    for (nm, mt, bw) in t.members]
         return lt.StructType(name=t.name, is_union=t.is_union,
-                             members=members, is_packed=False)
+                             members=members, is_packed=False,
+                             is_const=t.is_const, is_volatile=t.is_volatile)
     if k == "enum":
-        return lt.EnumType(name=t.name)
+        return lt.EnumType(name=t.name, is_const=t.is_const)
     if k == "typedef":
         # Resolve via the active codegen's typedef registry (set when a
         # ``CodeGenerator`` is constructed). The registry maps typedef
@@ -937,6 +940,31 @@ _ACTIVE_TYPEDEFS = None
 # Set by ``CodeGenerator.__init__``: maps the operand of a ``typeof`` to
 # its ResolvedType (None when the operand's type is not known).
 _TYPEOF_HOOK = None
+
+
+def _is_rom_type(t) -> bool:
+    """True for the type of an object that may live in ROM: const all the
+    way down.  An array is const when its elements are; a pointer object
+    is const only if the pointer itself is (`const char *const`), not when
+    it only points to const data.  A volatile object stays in RAM."""
+    while True:
+        if _is_resolved_type(t) and t.kind == "array":
+            t = t.element
+        elif isinstance(t, lt.ArrayType):
+            t = t.base_type
+        else:
+            break
+    if _is_resolved_type(t) and t.kind == "typedef" and t.is_const:
+        # `const T x`: the legacy conversion of a typedef-name drops the
+        # qualifier that was written on the name itself.
+        return not t.is_volatile
+    t = _to_legacy(t)
+    while isinstance(t, lt.ArrayType):
+        t = _to_legacy(t.base_type)
+    if isinstance(t, (lt.BasicType, lt.PointerType, lt.StructType,
+                      lt.EnumType)):
+        return bool(t.is_const) and not getattr(t, "is_volatile", False)
+    return False
 
 
 def _from_legacy(t) -> Optional[ResolvedType]:
@@ -1366,6 +1394,9 @@ class CallGraphAnalyzer:
     struct_sizes: dict[str, int] = field(default_factory=dict)  # struct name -> size in bytes
     typedefs: dict[str, "ResolvedType"] = field(default_factory=dict)  # typedef name -> resolved type
     type_config: TypeConfig = field(default_factory=lambda: Z80_CPM)
+    # Functions the user names as roots (--entry, #pragma uc80 keep): live
+    # whatever the call graph says, and treated as entered from anywhere.
+    extra_roots: set[str] = field(default_factory=set)
 
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
@@ -1397,6 +1428,10 @@ class CallGraphAnalyzer:
                 roots: set[str] = set()
                 self._analyze_asm(item, roots, roots)
                 self.address_taken |= (roots & self.has_body)
+
+        # Pass 5: the roots the user named.  An interrupt vector or a start
+        # function is entered by hardware, so no caller shares its storage.
+        self.address_taken |= (self.extra_roots & self.has_body)
 
     def _analyze_global_init(self, decl) -> None:
         """Analyze global variable initializers for address-taken functions."""
@@ -3409,8 +3444,22 @@ class CodeGenerator:
                  printf_features: set[str] | None = None,
                  scanf_features: set[str] | None = None,
                  type_config: TypeConfig | None = None,
-                 crlf_console: bool = True):
+                 crlf_console: bool = True,
+                 rom_data: bool = False,
+                 keep_names: "set[str] | None" = None,
+                 public_names: "set[str] | None" = None):
         self.module_name = module_name
+        # --target=rom: const objects, string literals and constant
+        # compound literals go to CSEG (the ROM), not DSEG (copied to RAM).
+        self.rom_data = rom_data
+        # Roots the user names (--entry, #pragma uc80 keep): functions the
+        # dead-function pass keeps, and objects the asm DCE keeps.
+        self.keep_names = set(keep_names or ())
+        # #pragma uc80 public: file-scope names that get a PUBLIC label even
+        # if static, so assembly can name them.
+        self.public_names = set(public_names or ())
+        # Compound-literal labels the code writes at run time.
+        self._cl_written: set[str] = set()
         self.ctx = CodeGenContext()
         # The top-level node of an expression whose value is not used
         # (an expression statement, a for-loop init or update, the left
@@ -3869,6 +3918,36 @@ class CodeGenerator:
         finally:
             self.ctx.locals, self.ctx.globals = saved
 
+    @contextmanager
+    def _emitting_to(self, buf: list):
+        """Send emitted lines to `buf` instead of the module text."""
+        saved = self.ctx.lines
+        self.ctx.lines = buf
+        try:
+            yield
+        finally:
+            self.ctx.lines = saved
+
+    def _emit_string_literals(self) -> None:
+        self.ctx.emit()
+        self.ctx.emit("; String literals")
+        for label, value in self.ctx.strings.items():
+            self.ctx.emit_label(label)
+            if label in self.ctx.wide_strings:
+                # Wide string: emit each character as a 16-bit word (little-endian)
+                for ch in value:
+                    self.ctx.emit_instr("dw", str(ord(ch)))
+                self.ctx.emit_instr("dw", "0")  # 16-bit null terminator
+            else:
+                # Narrow string: emit as bytes with null terminator
+                escaped = self._escape_string(value)
+                self.ctx.emit_instr("db", f"'{escaped}',0")
+
+    def _new_analyzer(self) -> "CallGraphAnalyzer":
+        return CallGraphAnalyzer(whole_program=self.whole_program,
+                                 type_config=self.type_config,
+                                 extra_roots=set(self.keep_names))
+
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
         self._annotate_typeof(unit)
@@ -3876,7 +3955,7 @@ class CodeGenerator:
         needs_call_graph = (self.enable_shared_storage or self.enable_dead_elimination or
                            self.enable_inlining or self.enable_const_propagation)
         if needs_call_graph:
-            self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
+            self.call_graph_analyzer = self._new_analyzer()
             self.call_graph_analyzer.build_call_graph(unit)
 
         # Inline expansion (before dead elimination so inlined functions can be removed)
@@ -3884,7 +3963,7 @@ class CodeGenerator:
             unit, self.inlined_calls = self.call_graph_analyzer.inline_functions(unit)
             # Rebuild call graph after inlining
             if self.inlined_calls > 0:
-                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
+                self.call_graph_analyzer = self._new_analyzer()
                 self.call_graph_analyzer.build_call_graph(unit)
 
         # Interprocedural constant propagation (after inlining, before dead elimination)
@@ -3892,7 +3971,7 @@ class CodeGenerator:
             unit, self.constants_propagated = self.call_graph_analyzer.propagate_constants(unit)
             # Rebuild call graph after constant propagation if any changes
             if self.constants_propagated > 0:
-                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
+                self.call_graph_analyzer = self._new_analyzer()
                 self.call_graph_analyzer.build_call_graph(unit)
 
         # Remember what the program defines: dead-function removal drops
@@ -3913,7 +3992,7 @@ class CodeGenerator:
 
             # Rebuild call graph after elimination for accurate shared storage
             if self.enable_shared_storage and self.dead_functions_removed > 0:
-                self.call_graph_analyzer = CallGraphAnalyzer(whole_program=self.whole_program, type_config=self.type_config)
+                self.call_graph_analyzer = self._new_analyzer()
                 self.call_graph_analyzer.build_call_graph(unit)
 
         self._vol = VolatileInfo(unit)
@@ -4127,11 +4206,13 @@ class CodeGenerator:
             for nm, full, init, is_fn in iter_var_decls(d):
                 if nm is None or is_fn:
                     continue
+                full_unconverted = full
                 full = _to_legacy(full)
                 if isinstance(full, lt.FunctionType):
                     continue
                 synth = _SynthVarDecl(name=nm, var_type=full, init=init,
-                                      storage_class=storage)
+                                      storage_class=storage,
+                                      rom=_is_rom_type(full_unconverted))
                 if storage == "extern" and not init:
                     if nm not in global_vars:
                         extern_only.add(nm)
@@ -4159,7 +4240,7 @@ class CodeGenerator:
             self.ctx.emit()
             self.ctx.emit("; Global variables")
             for name, decl in global_vars.items():
-                if decl.storage_class != "static":
+                if decl.storage_class != "static" or name in self.public_names:
                     sym = self.ctx.globals.get(decl.name)
                     label = sym.label() if sym else f"_{decl.name}"
                     self.ctx.emit_instr("public", label)
@@ -4184,23 +4265,31 @@ class CodeGenerator:
 
         # === DSEG: initialized data only (goes into binary) ===
         in_dseg = False
+        # --target=rom: const objects, string literals and constant compound
+        # literals go to CSEG, so the start-up code does not copy them to
+        # RAM.  They are collected here and spliced in ahead of the DSEG.
+        rom_lines: list[str] = []
+        rom_at = len(self.ctx.lines)
+        if self.rom_data:
+            ram_globals = [(n, d) for n, d in init_globals if not d.rom]
+            rom_globals = [(n, d) for n, d in init_globals if d.rom]
+            ram_statics = [e for e in init_statics
+                           if not _is_rom_type(e[1][0])]
+            rom_statics = [e for e in init_statics if _is_rom_type(e[1][0])]
+        else:
+            ram_globals, rom_globals = init_globals, []
+            ram_statics, rom_statics = init_statics, []
 
-        if init_globals:
-            self.ctx.emit("\tdseg")
-            in_dseg = True
-            for name, decl in init_globals:
+        def emit_globals(items):
+            for name, decl in items:
                 sym = self.ctx.globals.get(name)
                 var_type = sym.sym_type if sym else decl.var_type
                 label = sym.label() if sym else f"_{decl.name}"
                 self.ctx.emit_label(label)
                 self._emit_initializer(decl.init, var_type)
 
-        if init_statics:
-            if not in_dseg:
-                self.ctx.emit("\tdseg")
-                in_dseg = True
-            self.ctx.emit("; Static local variables")
-            for label, entry, has_resolved in init_statics:
+        def emit_statics(items):
+            for label, entry, has_resolved in items:
                 var_type, init = entry[0], entry[1]
                 resolved_addr = entry[2] if len(entry) > 2 else None
                 self.ctx.emit_label(label)
@@ -4208,6 +4297,45 @@ class CodeGenerator:
                     self._emit_address_const(*resolved_addr)
                 else:
                     self._emit_initializer(init, var_type)
+
+        def emit_compound_literals(items):
+            for label, init, target_type, size in items:
+                self.ctx.emit_label(label)
+                if isinstance(init, ast.InitializerList):
+                    self._emit_initializer(init, target_type)
+                else:
+                    self.ctx.emit_instr("ds", str(size))
+
+        def split_compound_literals(items):
+            if not self.rom_data:
+                return items, []
+            ram, rom = [], []
+            for cl in items:
+                label, init, target_type, _size = cl
+                (rom if (isinstance(init, ast.InitializerList)
+                         and label not in self._cl_written
+                         and _is_rom_type(target_type)) else ram).append(cl)
+            return ram, rom
+
+        if rom_globals:
+            with self._emitting_to(rom_lines):
+                emit_globals(rom_globals)
+        if rom_statics:
+            with self._emitting_to(rom_lines):
+                self.ctx.emit("; Static local constants")
+                emit_statics(rom_statics)
+
+        if ram_globals:
+            self.ctx.emit("\tdseg")
+            in_dseg = True
+            emit_globals(ram_globals)
+
+        if ram_statics:
+            if not in_dseg:
+                self.ctx.emit("\tdseg")
+                in_dseg = True
+            self.ctx.emit("; Static local variables")
+            emit_statics(ram_statics)
 
         # Compound literals materialized during code generation —
         # MUST be emitted before strings because a struct compound
@@ -4217,39 +4345,32 @@ class CodeGenerator:
         # were emitted first, ``@STR1`` would be referenced but never
         # defined and um80 would error out.
         if hasattr(self.ctx, 'compound_literals') and self.ctx.compound_literals:
-            if not in_dseg:
-                self.ctx.emit("\tdseg")
-                in_dseg = True
-            self.ctx.emit()
-            self.ctx.emit("; Compound literals")
-            for label, init, target_type, size in self.ctx.compound_literals:
-                self.ctx.emit_label(label)
-                if isinstance(init, ast.InitializerList):
-                    self._emit_initializer(init, target_type)
-                else:
-                    self.ctx.emit_instr("ds", str(size))
+            ram_cls, rom_cls = split_compound_literals(self.ctx.compound_literals)
+            if rom_cls:
+                with self._emitting_to(rom_lines):
+                    self.ctx.emit("; Constant compound literals")
+                    emit_compound_literals(rom_cls)
+            if ram_cls:
+                if not in_dseg:
+                    self.ctx.emit("\tdseg")
+                    in_dseg = True
+                self.ctx.emit()
+                self.ctx.emit("; Compound literals")
+                emit_compound_literals(ram_cls)
             self.ctx.compound_literals = []
 
         # Data segment with string literals (emitted after globals so that
         # strings created during global initializer emission are included,
         # and after compound literals for the same reason — see above).
         if self.ctx.strings:
-            if not in_dseg:
-                self.ctx.emit("\tdseg")
-                in_dseg = True
-            self.ctx.emit()
-            self.ctx.emit("; String literals")
-            for label, value in self.ctx.strings.items():
-                self.ctx.emit_label(label)
-                if label in self.ctx.wide_strings:
-                    # Wide string: emit each character as a 16-bit word (little-endian)
-                    for ch in value:
-                        self.ctx.emit_instr("dw", str(ord(ch)))
-                    self.ctx.emit_instr("dw", "0")  # 16-bit null terminator
-                else:
-                    # Narrow string: emit as bytes with null terminator
-                    escaped = self._escape_string(value)
-                    self.ctx.emit_instr("db", f"'{escaped}',0")
+            if self.rom_data:
+                with self._emitting_to(rom_lines):
+                    self._emit_string_literals()
+            else:
+                if not in_dseg:
+                    self.ctx.emit("\tdseg")
+                    in_dseg = True
+                self._emit_string_literals()
 
         # Compound literals — old emit point, kept here so we don't
         # leak any literals that somehow weren't in the queue at the
@@ -4260,12 +4381,13 @@ class CodeGenerator:
                 in_dseg = True
             self.ctx.emit()
             self.ctx.emit("; Compound literals")
-            for label, init, target_type, size in self.ctx.compound_literals:
-                self.ctx.emit_label(label)
-                if isinstance(init, ast.InitializerList):
-                    self._emit_initializer(init, target_type)
-                else:
-                    self.ctx.emit_instr("ds", str(size))
+            emit_compound_literals(self.ctx.compound_literals)
+
+        if rom_lines:
+            self.ctx.lines[rom_at:rom_at] = [
+                "", ROM_DATA_MARKER,
+                "; Constant data (CSEG: stays in the ROM)", "\tcseg",
+                *rom_lines]
 
         # === Uninitialized data (BSS) ===
         #
@@ -5702,7 +5824,7 @@ class CodeGenerator:
 
         sym = self.ctx.globals.get(name)
         func_label = sym.label() if sym else f"_{name}"
-        if storage != "static":
+        if storage != "static" or name in self.public_names:
             self.ctx.emit_instr("public", func_label)
         self.ctx.emit()
         if use_shared_storage:
@@ -6593,6 +6715,7 @@ class CodeGenerator:
         the head of the designator chain and recursing into the matching
         sub-aggregate.
         """
+        self._cl_written.add(label)
         members = self._get_struct_members(struct_type)
         if not members:
             return
@@ -6733,6 +6856,7 @@ class CodeGenerator:
         compile-time constants — e.g. ``(int[]){0, f(), 2}``. Without
         this, the materialised slot would just be ``ds N`` for the
         non-const positions and ``f()`` would never be called."""
+        self._cl_written.add(label)
         base_type = _to_legacy(array_type.base_type)
         elem_size = self._type_size(base_type)
         for i, v in enumerate(values or []):

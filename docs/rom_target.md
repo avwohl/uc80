@@ -14,11 +14,12 @@ Done:
 - Phase 1, `libc_rom.lib`: 93 modules with no BDOS use. The split of `lc_string` and `lc_stdlib` was already done by the libc split.
 - Phase 1, ROM proof: the four snd-* kernels run as ROM images with the CP/M golden output (`bench/rom/sndrom.py`, `tests/test_rom_target.py`). Figures are in [rom.md](rom.md).
 
+- Phase 1, const data in CSEG (ROM target only): const objects, string literals and const compound literals stay in the ROM. RAM of the four snd-* kernels dropped by 33 to 230 bytes (see [rom.md](rom.md)). The CP/M output is byte-identical.
+- Phase 1, dead-code roots: `--entry NAME`, `#pragma uc80 keep NAME`, a ROM program with no `main` (the crt0 calls the first `--entry`), `#pragma uc80 vector 38h NAME` and `66h NAME`, and `#pragma uc80 public NAME` (a PUBLIC label for a static name, and a kept BSS object). BSS objects of the ROM target keep their PUBLIC label.
+
 Not done (needs `codegen.py` or other work):
 
-- Const objects, string literals and constant compound literals in CSEG.
-- `--entry NAME`, `#pragma uc80 keep`, and a program with no `main`.
-- `#pragma uc80 vector 38h f`, and the watchdog hook of the crt0.
+- The watchdog hook of the crt0.
 - The optional per-module BSS block for separate compilation.
 - All of Phase 2 and the later phases.
 
@@ -26,7 +27,9 @@ Notes for the codegen work that follows:
 
 - `src/uc80/rom.py` strips the empty printf dispatch tables from the assembly text. The codegen change must replace this post-processing.
 - The user INT and NMI handler substitution works in whole-program mode only.
-- A global that C code defines has no PUBLIC label in whole-program mode. An assembly ISR must use an extern declaration and `PUBLIC _name` in the .mac file. Phase 2 ISRs that share C globals must remove this limit.
+- A C object that only assembly uses is removed in whole-program mode, unless the C source names the object in `#pragma uc80 public`.
+- A C function at a vector (`#pragma uc80 vector`) has no register save and no `RETI`. Phase 2 adds them.
+- The compiler puts a compound literal in ROM only when the literal is const and no code writes the literal. A local pointer that points to a compound array literal (`const int *p = (const int[]){1, 2};` in a function) stops with an internal error. This defect is older than this change.
 
 
 ## 1. Answer to the issue
