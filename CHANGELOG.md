@@ -70,6 +70,26 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- **Every access to a volatile object now happens as written (C23
+  6.7.3).** `volatile unsigned char ymaddr; ymaddr = 0x28; ymaddr = 0x28;
+  ymaddr = 1;` compiled to one store, and `g = 1; x = g;` to one store and
+  no load. Four passes caused it, and each is fixed:
+  - the AST optimizer (uc_core) deleted adjacent stores to a volatile
+    global, static, extern, local or typedef object, and a store whose
+    right side read a volatile object. It folded `v == v`, `v | v`,
+    `v % 1` and `v * 2`, and it unrolled a loop over a volatile variable;
+  - the inliner dropped a volatile argument that the body did not use, and
+    repeated one that the body used twice;
+  - the peephole pass merged `ld (_g),A / ld A,(_g)`, dropped the second of
+    two equal reads, and removed the store of `g = g`. The code generator
+    now brackets the code that can access a volatile object, and `main.py`
+    fences the bracketed code with labels that the peephole matcher does
+    not match across (`src/uc80/volatile_fence.py`);
+  - `++` and `+=` on a 32-bit volatile object read and wrote the high word
+    only after a carry. They now access all four bytes.
+  Code that uses no volatile object compiles to the same assembly as
+  before. Details are in [docs/volatile.md](docs/volatile.md).
+
 - **Integer promotion and `char` handling.** Each operand now gets its own
   promotion (`unsigned char`, `short`, `_Bool`, enum and narrow bit-fields
   become `int`). Thus with `unsigned char c = 10`, `(c - 20) < 0` is 1.

@@ -22,6 +22,7 @@ from .runtime import (RuntimeLibrary, load_lib_modules, load_runtime_library,
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
 from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
                       is_asm_begin, is_asm_end)
+from . import volatile_fence
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
@@ -1077,13 +1078,19 @@ def main() -> int:
             peephole = PeepholeOptimizer()
             # Not peephole.optimize(code): inline asm is an optimization
             # barrier and its bytes are never rewritten.
-            code = _optimize_outside_asm(peephole, code)
+            # Volatile accesses are fenced with labels the matcher cannot
+            # see across (volatile_fence.py); the labels go again after.
+            code = _optimize_outside_asm(
+                peephole, volatile_fence.fence_regions(code))
 
             if args.verbose:
                 for pattern, count in peephole.stats.items():
                     if count > 0:
                         print(f"    {pattern}: {count} applied")
                 print(f"  Optimized to {len(code.splitlines())} lines of assembly")
+
+        # The volatile markers and fence labels are for the passes above only.
+        code = volatile_fence.strip(code)
 
         # Drop EXTRNs nothing uses: ul80 links the library module for each
         # one.  Done last, so appended .mac files count as uses and names
