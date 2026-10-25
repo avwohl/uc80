@@ -36,10 +36,10 @@ other `printf` call then does not link the printf core (a hello program drops
 from about 3.9 KB to 256 B). The compiler rewrites only when no other `printf`-family call is left in the
 program. The compiler does not rewrite a call when the
 result is used, when the literal holds `%` (other than the exact `%s\n`
-form), `\0` or a non-ASCII character, when the literal has no final newline,
-when the program defines its own `printf` or `puts`, or with
-`--no-whole-program`. `printf("text")` without a newline stays a `printf`
-call because libc has no small routine that writes a string without a newline.
+form), `\0` or a non-ASCII character, when the program defines its own
+`printf`, `puts` or `cputs`, or with `--no-whole-program`. A non-empty literal
+without a newline, such as `printf("Hello");`, becomes `cputs("Hello");`.
+The libc function `cputs` writes a string without a newline.
 
 The compiler auto-detects which printf format specifiers your program uses
 and links only the needed handlers. That inference needs the whole program, so

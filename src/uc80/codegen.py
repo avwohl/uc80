@@ -3769,7 +3769,8 @@ class CodeGenerator:
 
         # Emit EXTRN for puts if printf→puts rewrite needs it
         if getattr(self, '_needs_puts_extern', False):
-            self.ctx.emit_instr("extrn", "_puts")
+            for name in sorted(getattr(self, '_rewrite_externs', {'puts'})):
+                self.ctx.emit_instr("extrn", "_" + name)
 
         # Generate code for each declaration
         for decl in unit.items:
@@ -4891,8 +4892,10 @@ class CodeGenerator:
             joined), without an encoding prefix,
           - the decoded format is "<text>\\n" where <text> holds no '%' and
             no NUL (printf stops at a NUL, puts adds a newline), or exactly
-            "%s\\n" with a second argument,
-          - the unit defines neither printf nor puts itself.
+            "%s\\n" with a second argument; a non-empty "<text>" without a
+            newline becomes cputs("<text>") (libc cputs writes a string
+            without a newline),
+          - the unit defines none of printf, puts or cputs itself.
         The emitted puts string is the decoded text re-encoded with octal
         escapes, so the bytes are exactly what printf would have printed.
         The rewrite is made only if it removes every printf-family call of
@@ -4902,11 +4905,11 @@ class CodeGenerator:
         from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
 
         # Names recorded before dead-function removal.
-        if getattr(self, '_defined_function_names', set()) & {'printf', 'puts'}:
+        if getattr(self, '_defined_function_names', set()) & {'printf', 'puts', 'cputs'}:
             return False
         for decl in unit.items:
             if (isinstance(decl, ast.FunctionDef)
-                    and function_name(decl) in ('printf', 'puts')):
+                    and function_name(decl) in ('printf', 'puts', 'cputs')):
                 return False
 
         def literal_pieces(arg):
@@ -4930,6 +4933,8 @@ class CodeGenerator:
             out.append('"')
             return ''.join(out)
 
+        used_targets: set[str] = set()
+
         def rewrite_call(expr):
             if not (isinstance(expr, ast.Call)
                     and isinstance(expr.func, ast.Identifier)
@@ -4942,20 +4947,27 @@ class CodeGenerator:
             if any(not p.value.text.startswith('"') for p in pieces):
                 return expr
             fmt = "".join(_decode_string_literal(p.value.text) for p in pieces)
-            if (not fmt.endswith('\n') or any(ord(c) > 126 for c in fmt)):
+            if any(ord(c) > 126 for c in fmt):
                 return expr
-            body = fmt[:-1]
             first = pieces[0]
+            target = 'puts'
+            if fmt.endswith('\n'):
+                body = fmt[:-1]
+            else:
+                # No newline: cputs writes the bytes without one.
+                body = fmt
+                target = 'cputs'
             if len(expr.args) == 1:
-                if '%' in body or '\0' in body:
+                if '%' in body or '\0' in body or not body:
                     return expr
                 tok = dataclasses.replace(first.value, text=encode(body))
                 new_args = [[dataclasses.replace(first, value=tok)]]
-            elif len(expr.args) == 2 and body == '%s':
+            elif len(expr.args) == 2 and body == '%s' and target == 'puts':
                 new_args = [expr.args[1]]
             else:
                 return expr
-            new_name = dataclasses.replace(expr.func.name, text='puts')
+            used_targets.add(target)
+            new_name = dataclasses.replace(expr.func.name, text=target)
             return dataclasses.replace(
                 expr, func=dataclasses.replace(expr.func, name=new_name),
                 args=new_args)
@@ -5000,6 +5012,7 @@ class CodeGenerator:
             return False
         for node, new in stmts:
             node.expr = new
+        self._rewrite_externs = set(used_targets)
         return True
 
     def _rewrite_scanf_formats_for_int32(self, unit: ast.TranslationUnit) -> None:

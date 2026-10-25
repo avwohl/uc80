@@ -28,7 +28,7 @@ def gen(source: str, **kwargs) -> str:
 
 def calls(code: str) -> list:
     # A call loads the function address ("ld HL,_puts") then calls it.
-    return re.findall(r"ld\s+HL,(_puts|_printf)\b", code)
+    return re.findall(r"ld\s+HL,(_puts|_cputs|_printf)\b", code)
 
 
 class TestRewriteDecision:
@@ -63,10 +63,10 @@ class TestRewriteDecision:
                    ' return 0; }', whole_program=True)
         assert calls(code) == ["_printf", "_printf"]
 
-    def test_no_newline_is_not_rewritten(self):
+    def test_no_newline_becomes_cputs(self):
         code = gen('int main(void){ printf("hi"); return 0; }',
                    whole_program=True)
-        assert calls(code) == ["_printf"]
+        assert calls(code) == ["_cputs"]
 
     def test_embedded_nul_is_not_rewritten(self):
         code = gen('int main(void){ printf("a\\0b\\n"); return 0; }',
@@ -138,3 +138,65 @@ class TestRewriteRuns:
             tmp_path, 'int main(void){ int r; %s return 0; }'
             % body.replace("printf", "r = printf"))
         assert out1 == out2 == "xy\\z\nw\n"
+
+
+@needs_tools
+class TestCputsAndLibrarySplit:
+    def test_no_newline_text_runs_and_is_small(self, tmp_path):
+        out, size = build_and_run(
+            tmp_path, r'int main(void){ printf("a\x41" "b"); printf("c\n");'
+                      r' return 0; }')
+        assert out == "aAbc\n"
+        out, size = build_and_run(
+            tmp_path, 'int main(void){ printf("Hello"); return 0; }')
+        assert out == "Hello"
+        assert size < 600
+
+    def test_empty_format_is_not_rewritten(self):
+        code = gen('int main(void){ printf(""); return 0; }',
+                   whole_program=True)
+        assert calls(code) == ["_printf"]
+
+    def test_integer_printf_does_not_link_float_printer(self, tmp_path):
+        out, size = build_and_run(
+            tmp_path, 'int main(void){ int i = 42; printf("%d x\\n", i);'
+                      ' return 0; }')
+        assert out == "42 x\n"
+        assert size < 2000     # was 4352 with the float printer linked
+
+    def test_float_printf_still_works(self, tmp_path):
+        out, _ = build_and_run(
+            tmp_path, 'int main(void){ double d = 3.25;'
+                      ' printf("%f %g %e\\n", d, d, d); return 0; }')
+        assert out == "3.250000 3.25 3.250000e+00\n"
+
+    def test_console_fputs_does_not_link_disk_file_code(self, tmp_path):
+        out, size = build_and_run(
+            tmp_path, 'int main(void){ fputs("to stdout\\n", stdout);'
+                      ' fputc(120, stderr); putc(10, stdout); return 0; }')
+        assert out == "to stdout\nx\n"
+        assert size < 1000
+
+    def test_disk_file_write_and_read_back(self, tmp_path):
+        out, _ = build_and_run(
+            tmp_path, r'''int main(void){
+ FILE *f = fopen("T.TMP", "w"); fputs("line one\n", f); fputc('Z', f);
+ putc('\n', f); fwrite("abc\n", 1, 4, f); fprintf(f, "v=%d\n", 7); fclose(f);
+ f = fopen("T.TMP", "r"); int c;
+ while ((c = fgetc(f)) != EOF) putchar(c);
+ fclose(f); remove("T.TMP"); return 0; }''')
+        assert out == "line one\nZ\nabc\nv=7\n"
+
+    def test_strdup_without_malloc_program_is_small(self, tmp_path):
+        out, size = build_and_run(
+            tmp_path, '#include <string.h>\nint main(void){ char b[8];'
+                      ' strcpy(b, "ab"); puts(b); return strlen(b) - 2; }')
+        assert out == "ab\n"
+        assert size < 1300   # strdup (and malloc) no longer linked
+
+    def test_strdup_still_works(self, tmp_path):
+        out, _ = build_and_run(
+            tmp_path, '#include <string.h>\n#include <stdlib.h>\n'
+                      'int main(void){ char *p = strdup("dup"); puts(p);'
+                      ' free(p); return 0; }')
+        assert out == "dup\n"
