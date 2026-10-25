@@ -4,12 +4,8 @@
 	.Z80
 
 	EXTRN	__tmp32
-	EXTRN	__fexp1
-	EXTRN	__fman1
-	EXTRN	__fman2
-	EXTRN	__fop1
-	EXTRN	__fop2
 	EXTRN	__fpack
+	EXTRN	__funpack
 
 	CSEG
 ; ============================================================
@@ -24,359 +20,320 @@
 ; ============================================================
 ; Float Addition: DEHL = DEHL + (__tmp32)
 ;
-; The result is rounded to nearest, ties to even.  The mantissas have five
-; extra low bits; the bits that the alignment shifts out are OR-ed into the
-; lowest of them.  A subnormal operand counts as zero, and a result below
-; the smallest normal number is zero.  An infinity or a NaN in an operand
-; gives the IEEE result.
+; The result is rounded to nearest, ties to even.  Each mantissa has five
+; extra low bits, and the bits that the alignment shifts out are OR-ed into
+; the lowest of them.  A subnormal operand counts as zero, and a result
+; below the smallest normal number is zero.  An infinity or a NaN in an
+; operand gives the IEEE result.
+;
+; The data labels start with two underscores, because the compiler embeds
+; only the data with such names (runtime.py).
+;
+; Each operand is unpacked into a block of 6 bytes:
+;   +0 sign (0 or 80H), +1 exponent, +2 to +5 mantissa (32 bits, little endian)
 ; ============================================================
 	PUBLIC	__fadd
 __fadd:
 	PUSH	BC
 	PUSH	IX
-
-	LD	(__fop1),HL
-	LD	(__fop1+2),DE
+	LD	(__fa_o1),HL
+	LD	(__fa_o1+2),DE
+	LD	IX,__fa1
+	CALL	_fa_unp
 	LD	HL,(__tmp32)
-	LD	(__fop2),HL
-	LD	HL,(__tmp32+2)
-	LD	(__fop2+2),HL
+	LD	DE,(__tmp32+2)
+	LD	IX,__fa2
+	CALL	_fa_unp
 
-	; B = exponent of operand 1, C = exponent of operand 2
-	LD	A,D
-	ADD	A,A
-	LD	B,A
-	LD	A,E
-	RLCA
-	LD	A,B
-	ADC	A,0
-	LD	B,A
-	LD	A,(__fop2+3)
-	ADD	A,A
-	LD	C,A
-	LD	A,(__fop2+2)
-	RLCA
-	LD	A,C
-	ADC	A,0
-	LD	C,A
-
-	LD	A,B
-	CP	255
-	JP	Z,__fadd_special
-	LD	A,C
-	CP	255
-	JP	Z,__fadd_special
+	LD	A,(__fa1+1)
+	LD	B,A		; B = exponent of operand 1
+	LD	A,(__fa2+1)
+	LD	C,A		; C = exponent of operand 2
 	LD	A,B
 	OR	A
-	JR	Z,__fadd_azero
+	JR	Z,_fa_z1
 	LD	A,C
 	OR	A
-	JP	Z,__fadd_retx
+	JR	Z,_fa_ret1
+	LD	A,B
+	CP	255
+	JR	Z,_fa_sp
+	LD	A,C
+	CP	255
+	JR	Z,_fa_sp
 
-	; Order the operands: operand 1 gets the larger magnitude.
+	; align: the operand with the smaller exponent shifts right
 	LD	A,B
-	CP	C
-	JR	C,__fadd_swap
-	JR	NZ,__fadd_ordered
-	LD	A,(__fop1+2)
-	AND	7FH
-	LD	D,A
-	LD	A,(__fop2+2)
-	AND	7FH
-	CP	D
-	JR	C,__fadd_ordered
-	JR	NZ,__fadd_swap
-	LD	A,(__fop1+1)
-	LD	D,A
-	LD	A,(__fop2+1)
-	CP	D
-	JR	C,__fadd_ordered
-	JR	NZ,__fadd_swap
-	LD	A,(__fop1)
-	LD	D,A
-	LD	A,(__fop2)
-	CP	D
-	JR	C,__fadd_ordered
-	JR	Z,__fadd_ordered
-__fadd_swap:
-	LD	HL,(__fop1)
-	LD	DE,(__fop2)
-	LD	(__fop1),DE
-	LD	(__fop2),HL
-	LD	HL,(__fop1+2)
-	LD	DE,(__fop2+2)
-	LD	(__fop1+2),DE
-	LD	(__fop2+2),HL
-	LD	A,B
-	LD	B,C
-	LD	C,A
-__fadd_ordered:
-	; B = exponent of the larger number, C = exponent of the smaller
-	LD	A,B
-	LD	E,0
-	LD	D,0
+	SUB	C
+	LD	L,B		; L = exponent of the result
+	JR	Z,_fa_aligned
+	JR	NC,_fa_sh2
+	NEG
+	LD	L,C
+	LD	IX,__fa1
+	JR	_fa_shift
+_fa_sh2:
+	LD	IX,__fa2
+_fa_shift:
 	LD	H,0
-	LD	L,A
-	LD	(__fexp1),HL
-	SUB	C		; A = shift count for the smaller number
-	CP	30
-	JP	NC,__fadd_retx	; the smaller number is below the last bit
-	PUSH	AF
-
-	; larger mantissa <<5 into __fman1
-	LD	A,(__fop1+2)
-	OR	80H
-	LD	E,A
-	LD	HL,(__fop1)
-	LD	D,0
-	LD	B,5
-__fadd_shl1:
-	SLA	L
-	RL	H
-	RL	E
-	RL	D
-	DJNZ	__fadd_shl1
-	LD	(__fman1),HL
-	LD	(__fman1+2),DE
-
-	; smaller mantissa <<5, then >> count with a sticky bit
-	LD	A,(__fop2+2)
-	OR	80H
-	LD	E,A
-	LD	HL,(__fop2)
-	LD	D,0
-	LD	B,5
-__fadd_shl2:
-	SLA	L
-	RL	H
-	RL	E
-	RL	D
-	DJNZ	__fadd_shl2
-	POP	AF
+	LD	(__fa_e),HL
+	CP	32
+	JR	C,_fa_cnt
+	LD	A,31
+_fa_cnt:
 	LD	B,A
+	LD	L,(IX+2)
+	LD	H,(IX+3)
+	LD	E,(IX+4)
+	LD	D,(IX+5)
 	LD	C,0		; C = sticky
-	OR	A
-	JR	Z,__fadd_aligned
-__fadd_shr:
+_fa_s1:
 	SRL	D
 	RR	E
 	RR	H
 	RR	L
-	JR	NC,__fadd_shr_nc
+	JR	NC,_fa_s2
 	LD	C,1
-__fadd_shr_nc:
-	DJNZ	__fadd_shr
+_fa_s2:
+	DJNZ	_fa_s1
 	LD	A,C
 	OR	A
-	JR	Z,__fadd_aligned
+	JR	Z,_fa_s3
 	SET	0,L
-__fadd_aligned:
-	LD	(__fman2),HL
-	LD	(__fman2+2),DE
-
-	; add or subtract
-	LD	A,(__fop1+3)
+_fa_s3:
+	LD	(IX+2),L
+	LD	(IX+3),H
+	LD	(IX+4),E
+	LD	(IX+5),D
+	JR	_fa_as2
+_fa_aligned:
+	LD	H,0
+	LD	(__fa_e),HL
+_fa_as2:
+	; add or subtract the mantissas
+	LD	A,(__fa1)
 	LD	B,A
-	LD	A,(__fop2+3)
+	LD	A,(__fa2)
 	XOR	B
-	AND	80H
-	JR	NZ,__fadd_sub
-	LD	HL,(__fman1)
-	LD	BC,(__fman2)
+	JR	NZ,_fa_sub
+	LD	HL,(__fa1+2)
+	LD	BC,(__fa2+2)
 	ADD	HL,BC
-	LD	(__fman1),HL
-	LD	HL,(__fman1+2)
-	LD	BC,(__fman2+2)
+	PUSH	HL
+	LD	HL,(__fa1+4)
+	LD	BC,(__fa2+4)
 	ADC	HL,BC
-	LD	(__fman1+2),HL
-	JR	__fadd_sum
-__fadd_sub:
-	LD	HL,(__fman1)
-	LD	BC,(__fman2)
+	EX	DE,HL
+	POP	HL
+	LD	A,(__fa1)
+	JR	_fa_norm
+_fa_sub:
+	LD	HL,(__fa1+2)
+	LD	BC,(__fa2+2)
 	OR	A
 	SBC	HL,BC
-	LD	(__fman1),HL
-	LD	HL,(__fman1+2)
-	LD	BC,(__fman2+2)
+	PUSH	HL
+	LD	HL,(__fa1+4)
+	LD	BC,(__fa2+4)
 	SBC	HL,BC
-	LD	(__fman1+2),HL
-__fadd_sum:
-	LD	HL,(__fman1)
-	LD	DE,(__fman1+2)
+	EX	DE,HL
+	POP	HL
+	LD	A,(__fa1)
+	JR	NC,_fa_norm
+	; operand 2 is larger: the result is m2 - m1 with the sign of operand 2
+	LD	HL,(__fa2+2)
+	LD	BC,(__fa1+2)
+	OR	A
+	SBC	HL,BC
+	PUSH	HL
+	LD	HL,(__fa2+4)
+	LD	BC,(__fa1+4)
+	SBC	HL,BC
+	EX	DE,HL
+	POP	HL
+	LD	A,(__fa2)
+_fa_norm:
+	LD	(__fa_s),A
 	LD	A,D
 	OR	E
 	OR	H
 	OR	L
-	JR	NZ,__fadd_nz
+	JR	NZ,_fa_nz
 	LD	DE,0		; exact zero: +0
 	LD	HL,0
-	JP	__fadd_done
-__fadd_nz:
+	JR	_fa_done
+_fa_nz:
 	; normalise: the leading bit goes to bit 28 (bit 4 of D)
+	LD	BC,(__fa_e)
 	BIT	5,D
-	JR	Z,__fadd_nocarry
+	JR	Z,_fa_nocarry
 	SRL	D
 	RR	E
 	RR	H
 	RR	L
-	JR	NC,__fadd_c1
+	JR	NC,_fa_c1
 	SET	0,L
-__fadd_c1:
-	PUSH	HL
-	LD	HL,(__fexp1)
-	INC	HL
-	LD	(__fexp1),HL
-	POP	HL
-	JR	__fadd_round
-__fadd_nocarry:
+_fa_c1:
+	INC	BC
+	JR	_fa_round
+_fa_nocarry:
 	BIT	4,D
-	JR	NZ,__fadd_round
-	PUSH	BC
-	LD	BC,(__fexp1)
-__fadd_left:
-	SLA	L
-	RL	H
-	RL	E
-	RL	D
+	JR	NZ,_fa_round
+_fa_left:
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
 	DEC	BC
 	BIT	4,D
-	JR	Z,__fadd_left
-	LD	(__fexp1),BC
-	POP	BC
-__fadd_round:
+	JR	Z,_fa_left
+_fa_round:
 	LD	A,L
 	AND	1FH
-	LD	C,A		; C = the five low bits
+	LD	(__fa_e),A	; the five low bits
+	LD	A,B
 	LD	B,5
-__fadd_shr5:
+_fa_shr5:
 	SRL	D
 	RR	E
 	RR	H
 	RR	L
-	DJNZ	__fadd_shr5
-	LD	A,C
+	DJNZ	_fa_shr5
+	LD	B,A		; B = high byte of the exponent again
+	LD	A,(__fa_e)
 	CP	17
-	JR	NC,__fadd_up
+	JR	NC,_fa_up
 	CP	16
-	JR	NZ,__fadd_rounded
+	JR	NZ,_fa_rounded
 	BIT	0,L
-	JR	Z,__fadd_rounded
-__fadd_up:
+	JR	Z,_fa_rounded
+_fa_up:
 	INC	HL
 	LD	A,H
 	OR	L
-	JR	NZ,__fadd_rounded
+	JR	NZ,_fa_rounded
 	INC	DE
-__fadd_rounded:
+_fa_rounded:
 	LD	A,D
 	OR	A
-	JR	Z,__fadd_range
+	JR	Z,_fa_range
 	LD	DE,0080H	; the mantissa carried to 2^24
 	LD	HL,0
-	PUSH	HL
-	LD	HL,(__fexp1)
-	INC	HL
-	LD	(__fexp1),HL
-	POP	HL
-__fadd_range:
-	PUSH	HL
-	LD	HL,(__fexp1)
-	BIT	7,H
-	JR	NZ,__fadd_under
-	LD	A,H
+	INC	BC
+_fa_range:
+	LD	A,(__fa_s)
+	LD	D,A		; D = sign (the high byte of the mantissa is zero)
+	BIT	7,B
+	JR	NZ,_fa_under
+	LD	A,B
 	OR	A
-	JR	NZ,__fadd_over
-	LD	A,L
+	JR	NZ,_fa_over
+	LD	A,C
 	OR	A
-	JR	Z,__fadd_under
+	JR	Z,_fa_under
 	CP	255
-	JR	NC,__fadd_over
-	LD	B,H
-	LD	C,L
-	POP	HL
+	JR	NC,_fa_over
+	LD	A,D
 	LD	D,0
-	LD	A,(__fop1+3)
-	AND	80H
 	CALL	__fpack
-__fadd_done:
+_fa_done:
 	POP	IX
 	POP	BC
 	RET
 
-__fadd_under:
-	POP	HL
-	LD	A,(__fop1+3)
-	AND	80H
-	LD	D,A
+_fa_under:
 	LD	E,0
 	LD	HL,0
-	JR	__fadd_done
-__fadd_over:
-	POP	HL
-	LD	A,(__fop1+3)
-	AND	80H
+	JR	_fa_done
+_fa_over:
+	LD	A,D
 	OR	7FH
 	LD	D,A
 	LD	E,80H
 	LD	HL,0
-	JR	__fadd_done
+	JR	_fa_done
 
 ; operand 1 is zero (exponent 0): the result is operand 2, or a zero
-__fadd_azero:
+_fa_z1:
 	LD	A,C
 	OR	A
-	JR	NZ,__fadd_rety
-	LD	A,(__fop1+3)
-	LD	B,A
-	LD	A,(__fop2+3)
-	AND	B
-	AND	80H
+	JR	NZ,_fa_ret2
+	LD	A,(__fa1)
+	LD	HL,__fa2
+	AND	(HL)
 	LD	D,A
 	LD	E,0
 	LD	HL,0
-	JR	__fadd_done
-__fadd_rety:
-	LD	HL,(__fop2)
-	LD	DE,(__fop2+2)
-	JR	__fadd_done
-__fadd_retx:
-	LD	HL,(__fop1)
-	LD	DE,(__fop1+2)
-	JR	__fadd_done
+	JR	_fa_done
+_fa_ret2:
+	LD	HL,(__tmp32)
+	LD	DE,(__tmp32+2)
+	JR	_fa_done
+_fa_ret1:
+	LD	HL,(__fa_o1)
+	LD	DE,(__fa_o1+2)
+	JR	_fa_done
 
 ; an exponent of 255: infinity or NaN
-__fadd_special:
+_fa_sp:
 	LD	A,B
 	CP	255
-	JR	NZ,__fadd_sp2
-	; operand 1 is inf or NaN
-	LD	A,(__fop1+2)
+	JR	NZ,_fa_sp2
+	LD	A,(__fa_o1+2)
 	AND	7FH
-	LD	HL,(__fop1)
+	LD	HL,(__fa_o1)
 	OR	H
 	OR	L
-	JR	NZ,__fadd_retx	; NaN
-__fadd_sp2:
+	JR	NZ,_fa_ret1	; operand 1 is a NaN
+_fa_sp2:
 	LD	A,C
 	CP	255
-	JR	NZ,__fadd_retx	; operand 1 is the infinity
-	LD	A,(__fop2+2)
+	JR	NZ,_fa_ret1	; operand 1 is the infinity
+	LD	A,(__tmp32+2)
 	AND	7FH
-	LD	HL,(__fop2)
+	LD	HL,(__tmp32)
 	OR	H
 	OR	L
-	JR	NZ,__fadd_rety	; operand 2 is NaN
+	JR	NZ,_fa_ret2	; operand 2 is a NaN
 	LD	A,B
 	CP	255
-	JR	NZ,__fadd_rety	; only operand 2 is infinite
-	LD	A,(__fop1+3)
-	LD	B,A
-	LD	A,(__fop2+3)
-	XOR	B
-	AND	80H
-	JR	Z,__fadd_retx	; the same infinity twice
+	JR	NZ,_fa_ret2	; only operand 2 is infinite
+	LD	A,(__fa1)
+	LD	HL,__fa2
+	XOR	(HL)
+	JR	Z,_fa_ret1	; the same infinity twice
 	LD	DE,07FC0H	; inf - inf: a quiet NaN
 	LD	HL,0
-	JR	__fadd_done
+	JR	_fa_done
+
+; unpack the float in DEHL into the block at IX; the mantissa gets 5 more bits
+_fa_unp:
+	CALL	__funpack
+	LD	(IX+0),A
+	LD	(IX+1),C
+	LD	B,5
+_fa_u5:
+	ADD	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	DJNZ	_fa_u5
+	LD	(IX+2),L
+	LD	(IX+3),H
+	LD	(IX+4),E
+	LD	(IX+5),D
+	RET
+
+	COMMON	/rt_fadd/
+__fa1:
+	DS	6
+__fa2:
+	DS	6
+__fa_o1:
+	DS	4
+__fa_e:
+	DS	2
+__fa_s:
+	DS	1
 
 	END

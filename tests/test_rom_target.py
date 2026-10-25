@@ -309,6 +309,66 @@ class TestLibcRom:
             assert bad not in text.split(), bad
 
 
+class TestLibcInRom:
+    """sscanf, the strto* functions and the math library are in
+    libc_rom.lib, and they work with the ROM start-up code (data copied
+    from ROM, BSS cleared)."""
+
+    SOURCE = """
+#include <stdio.h>
+#include <stdlib.h>
+#include <math.h>
+volatile struct {
+    unsigned long magic;
+    int i[4];
+    long l[2];
+    float f[8];
+} out = {0xC0FFEE11UL};
+int main(void)
+{
+    int a = 0, n = 0, r;
+    float f = 0;
+    char *e;
+    r = sscanf("  42 %", "%d %%", &a);
+    out.i[0] = r;
+    out.i[1] = a;
+    r = sscanf("7 2.5", "%d %f%n", &a, &f, &n);
+    out.i[2] = r * 100 + a;
+    out.i[3] = n;
+    out.f[0] = f;
+    out.l[0] = strtol("-0x1f", &e, 0);
+    out.l[1] = e != 0 && *e == 0;
+    out.f[1] = strtod("1e3", 0);
+    out.f[2] = sqrt(2.0f);
+    out.f[3] = sin(1.0f);
+    out.f[4] = pow(2.0f, 0.5f);
+    out.f[5] = floor(-2.5f);
+    out.f[6] = (float) strtol("123456", 0, 10);
+    return 0;
+}
+"""
+
+    def test_scanf_strtol_and_math_run_in_a_rom(self, tmp_path):
+        import struct
+        r = compile_rom(tmp_path, self.SOURCE)
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path, ram_size="800")
+        m = machine(tmp_path)
+        assert m.run(max_tstates=60_000_000).reason == "halt"
+        ram = m.peek(0xF800, 0x800)
+        at = ram.index(struct.pack("<L", 0xC0FFEE11))
+        ints = struct.unpack_from("<4h", ram, at + 4)
+        longs = struct.unpack_from("<2l", ram, at + 12)
+        floats = struct.unpack_from("<8f", ram, at + 20)
+        assert ints == (1, 42, 207, 5)
+        assert longs == (-31, 1)
+        assert floats[0] == 2.5 and floats[1] == 1000.0
+        assert abs(floats[2] - 2 ** 0.5) < 2e-7
+        assert abs(floats[3] - 0.8414709848) < 2e-7
+        assert abs(floats[4] - 2 ** 0.5) < 2e-7
+        assert floats[5] == -3.0 and floats[6] == 123456.0
+
+
 @pytest.mark.skipif(not shutil.which("uc80"), reason="needs the uc80 console script")
 class TestSndKernel:
     def test_cmdq_rom_matches_the_cpm_golden_output(self, tmp_path):
