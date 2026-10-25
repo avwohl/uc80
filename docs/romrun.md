@@ -128,6 +128,7 @@ The command line prints the exit status 2 after a `fault` stop.
 - `rom-write`: see above.
 - `exit`: CP/M mode only (BDOS function 0, or a jump to 0000h).
 
+A ROM that loops for ever never stops without `max_tstates` (`--max-t`).
 A second call of `run` continues from the stop. `stop_on_halt = False`
 makes HALT wait for the next event, and `max_tstates` must be set.
 

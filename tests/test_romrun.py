@@ -746,3 +746,11 @@ def test_assemble_link_and_run_the_demo_rom(tmp_path):
     assert outs == [(0x210C, 0x21)]
     assert nmi.count == 1 and nmi.total == 70
     assert isr.count == m.cpu.mem[0xF800] and isr.min == 105
+
+
+def test_cli_reports_an_unknown_symbol(tmp_path, capsys):
+    from romrun.cli import main
+    rom = tmp_path / "t.bin"
+    rom.write_bytes(b"\x76")
+    assert main([str(rom), "--stop-at", "nosuchsymbol"]) == 1
+    assert "unknown symbol" in capsys.readouterr().err

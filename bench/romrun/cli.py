@@ -103,6 +103,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    try:
+        return _main(argv)
+    except (KeyError, FileNotFoundError, ValueError) as e:
+        print(f"romrun: error: {e.args[0] if e.args else e}", file=sys.stderr)
+        return 1
+
+
+def _main(argv=None) -> int:
     a = build_parser().parse_args(argv)
     lo, _, hi = a.ram.partition("-")
     banks = None
