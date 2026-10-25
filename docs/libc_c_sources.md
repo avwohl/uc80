@@ -59,7 +59,7 @@ the file.
 ## Code size
 
 The compiled code is larger than the assembly that it replaces. A program
-that calls `sin` is about 2.5 KB larger than before. Three measures keep the
+that calls `sin` is about 3 KB larger than before. Three measures keep the
 growth small:
 
 - The tests of a float use bytes (`M_SPEC`, `M_TINY` and the other macros of
@@ -68,6 +68,6 @@ growth small:
 - `pow`, `hypot`, `cbrt`, `exp2` and `fma` need exact sums and products of
   floats. Two small functions, `_m_2sum` and `_m_2prod`, provide them.
 
-The floating-point part of `scanf` (about 5 KB with `strtod`) links only when
+The floating-point part of `scanf` (about 6 KB with `strtod`) links only when
 the program needs it. The compiler decides this from the format strings
 (`src/uc80/scan_hook.py`). See [docs/scanf.md](scanf.md).

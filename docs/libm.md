@@ -63,6 +63,6 @@ IEEE result for an infinity or a NaN operand.
 ## Size
 
 The functions are larger than the assembly functions that they replace. A
-program that calls `sin` is about 2.5 KB larger. A program that calls `pow` is
-about 4.5 KB larger. `sqrt` is smaller than before. Each function is a module,
+program that calls `sin` is about 3 KB larger. A program that calls `pow` is
+about 5 KB larger. `sqrt` is smaller than before. Each function is a module,
 so a program links only the functions that it calls.

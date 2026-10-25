@@ -57,7 +57,7 @@ matching failure.
 - The compiler links the float conversions only in three cases. A scanf call
   has a float conversion in a format literal. A scanf call has a format that
   is not a literal. The program uses a scanf function without a call. The
-  float part is about 5 KB, with `strtod`. To link it by force, use
+  float part is about 6 KB, with `strtod`. To link it by force, use
   `#pragma scanf float` or `--scanf float`.
 
 ## Number strings
