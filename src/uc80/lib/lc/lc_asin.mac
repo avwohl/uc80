@@ -68,7 +68,7 @@ _asinf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_asin/
 
 _asin_x:	DS	4
 

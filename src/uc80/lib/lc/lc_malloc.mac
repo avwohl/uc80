@@ -149,8 +149,8 @@ _mde_oom:
 	RET
 
 
-	DSEG
+	COMMON	/lc_malloc/
 
-_heap_ptr:	DW	0
+_heap_ptr:	DS	2
 
 	END

@@ -96,7 +96,7 @@ _fwrite_ret:
 	RET
 
 
-	DSEG
+	COMMON	/lc_fwrite/
 
 _fwrite_ptr:	DS	2	; fwrite source pointer temp
 _fwrite_cnt:	DS	2	; fwrite byte counter temp

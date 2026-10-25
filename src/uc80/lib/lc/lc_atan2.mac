@@ -56,7 +56,7 @@ _atan2f:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_atan2/
 
 _atan2_x:	DS	4
 _atan2_y:	DS	4

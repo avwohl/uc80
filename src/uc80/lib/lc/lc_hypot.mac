@@ -64,7 +64,7 @@ _hypotf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_hypot/
 
 _hypot_x2:	DS	4
 

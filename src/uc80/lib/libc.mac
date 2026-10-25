@@ -191,7 +191,7 @@ _acoshf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_acosh/
 
 _acosh_x:	DS	4
 _acosh_t:	DS	4
@@ -262,7 +262,7 @@ _asinf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_asin/
 
 _asin_x:	DS	4
 
@@ -337,7 +337,7 @@ _asinhf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_asinh/
 
 _asinh_x:	DS	4
 
@@ -679,7 +679,7 @@ _atan_no_inv:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_atan/
 
 _atan_val:	DS	4
 _atan_v2:	DS	4
@@ -744,7 +744,7 @@ _atan2f:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_atan2/
 
 _atan2_x:	DS	4
 _atan2_y:	DS	4
@@ -828,7 +828,7 @@ _atanhf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_atanh/
 
 _atanh_x:	DS	4
 _atanh_num:	DS	4
@@ -1622,7 +1622,7 @@ _atol_ret:
 	RET
 
 
-	DSEG
+	COMMON	/lc_atol/
 
 
 ; atol working storage
@@ -3059,7 +3059,7 @@ _cbrt_done:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_cbrt/
 
 _cbrt_sign:	DS	1
 _cbrt_x:	DS	4
@@ -3950,7 +3950,7 @@ __cdiv:
 	LDIR
 	RET
 
-	DSEG
+	COMMON	/lc_complex/
 
 ; Complex number work areas
 _cplx_z:	DS	8	; Input complex
@@ -4282,7 +4282,7 @@ _cos_no_neg:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_cos/
 
 _cos_x:		DS	4
 _cos_x2:	DS	4
@@ -4361,7 +4361,7 @@ _coshf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_cosh/
 
 _cosh_x:	DS	4
 _cosh_ep:	DS	4
@@ -4484,7 +4484,7 @@ _div:
 	RET
 
 
-	DSEG
+	COMMON	/lc_div/
 
 
 ; div/ldiv result storage
@@ -4551,11 +4551,11 @@ _exit_done:
 	PUBLIC	_atexit_tab
 
 
-	DSEG
+	COMMON	/lc_exit_data/
 
 
 ; atexit handler table (max 4 handlers)
-_atexit_cnt:	DB	0	; Number of registered handlers
+_atexit_cnt:	DS	1	; Number of registered handlers
 _atexit_tab:	DS	8	; 4 function pointers (2 bytes each)
 
 
@@ -4747,7 +4747,7 @@ _exp_loop:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_exp/
 
 _exp_x:		DS	4
 _exp_r:		DS	4
@@ -4850,7 +4850,7 @@ _expm1f:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_expm1/
 
 _expm1_t:	DS	4
 
@@ -5732,7 +5732,7 @@ _roundl:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_floor/
 
 _floor_x:	DS	4
 _floor_t:	DS	4
@@ -5976,7 +5976,7 @@ _remainder:
 _remainderf:
 	JP	_fmod
 
-	DSEG
+	COMMON	/lc_fmod/
 
 _fmod_x:	DS	4
 _fmod_y:	DS	4
@@ -6281,7 +6281,7 @@ _parse_done:
 	RET
 
 
-	DSEG
+	COMMON	/lc_fopen/
 
 
 ; File slot storage
@@ -6607,7 +6607,7 @@ _fprintf_sink:
 	POP	BC
 	RET
 
-	DSEG
+	COMMON	/lc_fprintf/
 
 _fprintf_stream: DS	2
 
@@ -6978,7 +6978,7 @@ _fread_ret:
 	RET
 
 
-	DSEG
+	COMMON	/lc_fread/
 
 _fread_ptr:	DS	2	; fread dest pointer temp
 _fread_cnt:	DS	2	; fread byte counter temp
@@ -7686,7 +7686,7 @@ _fwrite_ret:
 	RET
 
 
-	DSEG
+	COMMON	/lc_fwrite/
 
 _fwrite_ptr:	DS	2	; fwrite source pointer temp
 _fwrite_cnt:	DS	2	; fwrite byte counter temp
@@ -7862,7 +7862,7 @@ _hypotf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_hypot/
 
 _hypot_x2:	DS	4
 
@@ -8255,7 +8255,7 @@ _ldiv:
 	RET
 
 
-	DSEG
+	COMMON	/lc_ldiv/
 
 _ldiv_result:	DS	8	; ldiv_t: quot (4), rem (4)
 
@@ -8589,7 +8589,7 @@ _log_done:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_log/
 
 _log_x:		DS	4
 _log_m:		DS	4
@@ -9040,9 +9040,9 @@ _mde_oom:
 	RET
 
 
-	DSEG
+	COMMON	/lc_malloc/
 
-_heap_ptr:	DW	0
+_heap_ptr:	DS	2
 
 
 ; ============================================================
@@ -9055,9 +9055,9 @@ _heap_ptr:	DW	0
 	PUBLIC	_free_head
 
 
-	DSEG
+	COMMON	/lc_malloc_data/
 
-_free_head:	DW	0
+_free_head:	DS	2
 
 
 ; ============================================================
@@ -9649,7 +9649,7 @@ _modff:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_modf/
 
 _modf_x:	DS	4
 _modf_i:	DS	4
@@ -10069,7 +10069,7 @@ _pow_log:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_pow/
 
 _pow_x:		DS	4
 _pow_y:		DS	4
@@ -11850,11 +11850,11 @@ _p10neg:
 	DW	2425H,03AAH	; 1e-36
 	DW	1CEAH,0208H	; 1e-37
 
-	DSEG
+	COMMON	/lc_printf_e/
 
 _prt_e_val:	DS	4
 _prt_e_half:	DS	4
-_prt_e_dexp:	DB	0
+_prt_e_dexp:	DS	1
 
 
 ; ============================================================
@@ -12709,7 +12709,7 @@ _plo_set:
 	POP	HL
 	JP	_printf_loop
 
-	DSEG
+	COMMON	/lc_printf_lo/
 _plo_val:	DS	4
 
 
@@ -12992,8 +12992,8 @@ _phs_ret:
 	POP	HL
 	JP	_printf_loop
 
-	DSEG
-_phs_pad:	DB	0
+	COMMON	/lc_printf_s/
+_phs_pad:	DS	1
 
 
 ; ============================================================
@@ -13200,7 +13200,7 @@ _div32_10_nosub:
 	POP	BC
 	RET
 
-	DSEG
+	COMMON	/lc_prt_dec32/
 	PUBLIC	_prt32_val
 _prt32_val:	DS	4
 
@@ -13326,7 +13326,7 @@ _div64_10_nosub:
 	RET
 
 	PUBLIC	_prt64_val
-	DSEG
+	COMMON	/lc_prt_dec64/
 _prt64_val:	DS	8
 
 
@@ -14541,7 +14541,7 @@ qs_swg1:
 	JP	PE,qs_swg1		; P/V set while BC != 0
 	RET
 
-	DSEG
+	COMMON	/lc_qsort/
 ; qsort working storage.  qsort saves these QS_NV bytes on its stack on
 ; entry and restores them on exit (see "Reentrancy" above).
 QS_VARS:
@@ -14820,7 +14820,7 @@ _reduce_done:
 	LD	DE,(_trig_x+2)
 	RET
 
-	DSEG
+	COMMON	/lc_reduce_trig/
 _trig_x:	DS	4
 _trig_negate:	DS	1
 
@@ -15856,7 +15856,7 @@ _fscanf:
 	LD	(_scanf_count),A
 	JP	_scanf_loop
 
-	DSEG
+	COMMON	/lc_scanf/
 
 ; scanf work areas
 _scanf_count:	DS	1	; Number of matched items
@@ -16104,7 +16104,7 @@ _raise_err:
 ; Using Taylor series, Newton-Raphson, and polynomial approximations
 
 
-	DSEG
+	COMMON	/lc_signal/
 _signal_table:	DS	14
 
 
@@ -16311,7 +16311,7 @@ _sin_loop:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_sin/
 
 _sin_sign:	DS	1
 _sin_x:		DS	4
@@ -16392,7 +16392,7 @@ _sinhf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_sinh/
 
 _sinh_x:	DS	4
 _sinh_ep:	DS	4
@@ -16493,7 +16493,7 @@ _snp_drop:
 	POP	AF
 	RET
 
-	DSEG
+	COMMON	/lc_snprintf/
 
 _snprintf_out:	DS	2
 _snprintf_max:	DS	2
@@ -16573,7 +16573,7 @@ _sprintf_sink:
 	POP	HL
 	RET
 
-	DSEG
+	COMMON	/lc_sprintf/
 
 _sprintf_out:	DS	2	; next byte of the caller's buffer
 
@@ -16716,7 +16716,7 @@ _sqrt_done:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_sqrt/
 
 _sqrt_x:	DS	4
 _sqrt_guess:	DS	4
@@ -17699,7 +17699,7 @@ _strtok_null:
 	RET
 
 
-	DSEG
+	COMMON	/lc_strtok/
 
 
 ; strtok state
@@ -17984,7 +17984,7 @@ _strtol_mult_done:
 	RET
 
 
-	DSEG
+	COMMON	/lc_strtol/
 
 
 ; strtol working storage
@@ -18003,7 +18003,7 @@ _strtol_tmp:	DS	4
 	PUBLIC	_strtol_neg
 
 
-	DSEG
+	COMMON	/lc_strtol_data/
 
 _strtol_base:	DS	1
 _strtol_neg:	DS	1
@@ -18147,7 +18147,7 @@ _tanl:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_tan/
 
 _tan_x:		DS	4
 _tan_sin:	DS	4
@@ -18210,7 +18210,7 @@ _tanhf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_tanh/
 
 _tanh_x:	DS	4
 _tanh_s:	DS	4
@@ -19081,9 +19081,9 @@ _call_once_call:
 
 
 
-	DSEG
-_thread_mode:	DB	0
-_thread_current:	DB	0
+	COMMON	/lc_thread/
+_thread_mode:	DS	1
+_thread_current:	DS	1
 _tss_slots:	DS	16
 _tss_dtors:	DS	16
 

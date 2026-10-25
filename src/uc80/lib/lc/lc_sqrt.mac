@@ -139,7 +139,7 @@ _sqrt_done:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_sqrt/
 
 _sqrt_x:	DS	4
 _sqrt_guess:	DS	4

@@ -121,7 +121,7 @@ _div64_10_nosub:
 	RET
 
 	PUBLIC	_prt64_val
-	DSEG
+	COMMON	/lc_prt_dec64/
 _prt64_val:	DS	8
 
 	END

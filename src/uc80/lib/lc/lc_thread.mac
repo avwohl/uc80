@@ -866,9 +866,9 @@ _call_once_call:
 
 
 
-	DSEG
-_thread_mode:	DB	0
-_thread_current:	DB	0
+	COMMON	/lc_thread/
+_thread_mode:	DS	1
+_thread_current:	DS	1
 _tss_slots:	DS	16
 _tss_dtors:	DS	16
 

@@ -845,7 +845,7 @@ _fscanf:
 	LD	(_scanf_count),A
 	JP	_scanf_loop
 
-	DSEG
+	COMMON	/lc_scanf/
 
 ; scanf work areas
 _scanf_count:	DS	1	; Number of matched items

@@ -48,7 +48,7 @@ _div:
 	RET
 
 
-	DSEG
+	COMMON	/lc_div/
 
 
 ; div/ldiv result storage

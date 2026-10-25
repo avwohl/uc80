@@ -86,7 +86,7 @@ _remainder:
 _remainderf:
 	JP	_fmod
 
-	DSEG
+	COMMON	/lc_fmod/
 
 _fmod_x:	DS	4
 _fmod_y:	DS	4

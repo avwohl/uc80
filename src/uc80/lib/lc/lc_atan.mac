@@ -222,7 +222,7 @@ _atan_no_inv:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_atan/
 
 _atan_val:	DS	4
 _atan_v2:	DS	4

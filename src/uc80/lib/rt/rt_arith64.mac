@@ -13,7 +13,7 @@
 ; ============================================================
 
 ; 64-bit accumulator and temporary storage
-	DSEG
+	COMMON	/rt_arith64/
 	PUBLIC	__acc64
 	PUBLIC	__tmp64
 __acc64:	DS	8	; 64-bit accumulator
@@ -572,7 +572,7 @@ __not64:
 ; __mul64: 64-bit multiplication __acc64 = __acc64 * __tmp64
 ; Uses shift-and-add algorithm (slow but correct)
 ; ============================================================
-	DSEG
+	COMMON	/rt_arith64/
 __mul64_mcd:	DS	8	; Multiplicand
 __mul64_mpr:	DS	8	; Multiplier
 	CSEG
@@ -785,7 +785,7 @@ __load64t:
 ; Remainder stored in __rem64
 ; Uses shift-and-subtract algorithm (same as __div32 but 64-bit)
 ; ============================================================
-	DSEG
+	COMMON	/rt_arith64/
 	PUBLIC	__rem64
 __div64_dvd:	DS	8	; dividend
 __rem64:	DS	8	; remainder

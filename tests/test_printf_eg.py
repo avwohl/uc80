@@ -127,12 +127,13 @@ class TestModulesExist:
                     assert sym not in code, "%s references %s" % (path.name, sym)
 
     def test_modules_are_macro80_shaped(self):
-        """One module per conversion, .Z80 header, CSEG/DSEG, END."""
+        """One module per conversion, .Z80 header, CSEG, a data segment
+        (DSEG, or the named COMMON of the zero-start variables), END."""
         for path in (E_MAC, G_MAC):
             src = mac_source(path)
             assert "\t.Z80\n" in src
             assert "\tCSEG\n" in src
-            assert "\tDSEG\n" in src
+            assert "\tDSEG\n" in src or "\tCOMMON\t/" in src
             assert src.rstrip().endswith("END")
 
 

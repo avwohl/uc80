@@ -184,7 +184,7 @@ _roundl:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_floor/
 
 _floor_x:	DS	4
 _floor_t:	DS	4

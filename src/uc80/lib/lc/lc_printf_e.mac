@@ -749,10 +749,10 @@ _p10neg:
 	DW	2425H,03AAH	; 1e-36
 	DW	1CEAH,0208H	; 1e-37
 
-	DSEG
+	COMMON	/lc_printf_e/
 
 _prt_e_val:	DS	4
 _prt_e_half:	DS	4
-_prt_e_dexp:	DB	0
+_prt_e_dexp:	DS	1
 
 	END

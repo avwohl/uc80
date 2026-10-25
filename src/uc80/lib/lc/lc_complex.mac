@@ -835,7 +835,7 @@ __cdiv:
 	LDIR
 	RET
 
-	DSEG
+	COMMON	/lc_complex/
 
 ; Complex number work areas
 _cplx_z:	DS	8	; Input complex

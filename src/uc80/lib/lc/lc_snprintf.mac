@@ -93,7 +93,7 @@ _snp_drop:
 	POP	AF
 	RET
 
-	DSEG
+	COMMON	/lc_snprintf/
 
 _snprintf_out:	DS	2
 _snprintf_max:	DS	2

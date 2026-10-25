@@ -138,9 +138,9 @@ __div16_zero:
 	LD	E,L
 	RET
 
-	DSEG
+	COMMON	/rt_arith16/
 __divrem:
-	DW	0
+	DS	2
 
 	CSEG
 

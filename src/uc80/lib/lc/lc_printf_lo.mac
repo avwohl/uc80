@@ -124,7 +124,7 @@ _plo_set:
 	POP	HL
 	JP	_printf_loop
 
-	DSEG
+	COMMON	/lc_printf_lo/
 _plo_val:	DS	4
 
 	END

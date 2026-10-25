@@ -206,7 +206,7 @@ _sin_loop:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_sin/
 
 _sin_sign:	DS	1
 _sin_x:		DS	4

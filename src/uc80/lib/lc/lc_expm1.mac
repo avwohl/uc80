@@ -48,7 +48,7 @@ _expm1f:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_expm1/
 
 _expm1_t:	DS	4
 

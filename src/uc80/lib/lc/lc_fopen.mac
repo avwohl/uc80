@@ -303,7 +303,7 @@ _parse_done:
 	RET
 
 
-	DSEG
+	COMMON	/lc_fopen/
 
 
 ; File slot storage

@@ -71,7 +71,7 @@ _asinhf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_asinh/
 
 _asinh_x:	DS	4
 

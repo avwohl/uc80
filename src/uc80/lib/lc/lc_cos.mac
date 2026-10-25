@@ -244,7 +244,7 @@ _cos_no_neg:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_cos/
 
 _cos_x:		DS	4
 _cos_x2:	DS	4

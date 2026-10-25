@@ -10,7 +10,7 @@ PRTSTR	EQU	9
 	PUBLIC	_strtol_neg
 
 
-	DSEG
+	COMMON	/lc_strtol_data/
 
 _strtol_base:	DS	1
 _strtol_neg:	DS	1

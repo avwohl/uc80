@@ -71,7 +71,7 @@ _coshf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_cosh/
 
 _cosh_x:	DS	4
 _cosh_ep:	DS	4

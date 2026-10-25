@@ -190,7 +190,7 @@ _pow_log:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_pow/
 
 _pow_x:		DS	4
 _pow_y:		DS	4

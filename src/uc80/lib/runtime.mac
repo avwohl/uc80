@@ -151,9 +151,9 @@ __div16_zero:
 	LD	E,L
 	RET
 
-	DSEG
+	COMMON	/rt_arith16/
 __divrem:
-	DW	0
+	DS	2
 
 	CSEG
 
@@ -1371,11 +1371,11 @@ __ffs32_zero:
 	LD	HL,0
 	RET
 
-	DSEG
+	COMMON	/rt_arith32/
 __div32_dvd:
-	DW	0,0
+	DS	4
 __rem32:
-	DW	0,0
+	DS	4
 
 ; ============================================================
 ; rt_arith64.mac
@@ -1394,7 +1394,7 @@ __rem32:
 ; ============================================================
 
 ; 64-bit accumulator and temporary storage
-	DSEG
+	COMMON	/rt_arith64/
 	PUBLIC	__acc64
 	PUBLIC	__tmp64
 __acc64:	DS	8	; 64-bit accumulator
@@ -1953,7 +1953,7 @@ __not64:
 ; __mul64: 64-bit multiplication __acc64 = __acc64 * __tmp64
 ; Uses shift-and-add algorithm (slow but correct)
 ; ============================================================
-	DSEG
+	COMMON	/rt_arith64/
 __mul64_mcd:	DS	8	; Multiplicand
 __mul64_mpr:	DS	8	; Multiplier
 	CSEG
@@ -2166,7 +2166,7 @@ __load64t:
 ; Remainder stored in __rem64
 ; Uses shift-and-subtract algorithm (same as __div32 but 64-bit)
 ; ============================================================
-	DSEG
+	COMMON	/rt_arith64/
 	PUBLIC	__rem64
 __div64_dvd:	DS	8	; dividend
 __rem64:	DS	8	; remainder
@@ -2991,18 +2991,18 @@ __cdiv:
 	LD	(__cplx_result+6),DE
 	RET
 
-	DSEG
+	COMMON	/rt_complex/
 	PUBLIC	__cplx_l,__cplx_r,__cplx_result,__cplx_tmp
 __cplx_l:
-	DW	0,0,0,0
+	DS	8
 __cplx_r:
-	DW	0,0,0,0
+	DS	8
 __cplx_result:
-	DW	0,0,0,0
+	DS	8
 __cplx_tmp:
-	DW	0,0,0,0
+	DS	8
 __cplx_work:
-	DW	0,0,0,0
+	DS	8
 
 ; ============================================================
 ; rt_div8.mac
@@ -4581,37 +4581,37 @@ __fneg:
 	LD	D,A
 	RET
 
-	DSEG
+	COMMON	/rt_float/
 	PUBLIC	__fop1,__fop2,__fsgn1,__fsgn2,__fexp1,__fexp2,__fman1,__fman2
 __fop1:
-	DW	0,0
+	DS	4
 __fop2:
-	DW	0,0
+	DS	4
 __fsgn1:
-	DB	0
+	DS	1
 __fsgn2:
-	DB	0
+	DS	1
 __fexp1:
-	DW	0
+	DS	2
 __fexp2:
-	DW	0
+	DS	2
 __fman1:
-	DW	0,0
+	DS	4
 __fman2:
-	DW	0,0
+	DS	4
 __fdiv_rem:
-	DW	0,0
+	DS	4
 
 
 ; Temporary storage for partial products in float multiplication
 __fmul_hh:
-	DW	0,0
+	DS	4
 __fmul_hl:
-	DW	0,0
+	DS	4
 __fmul_lh:
-	DW	0,0
+	DS	4
 __fmul_ll:
-	DW	0,0
+	DS	4
 
 ; ============================================================
 ; rt_mul.mac
@@ -4932,7 +4932,7 @@ _longjmp_valok:
 ; twice.  Alone in its own module it is pulled only when it is unresolved.
 
 
-	DSEG
+	COMMON	/rt_sret/
 	PUBLIC	__sret_buf
 __sret_buf:	DS	256		; Struct return buffer
 
@@ -4945,10 +4945,10 @@ __sret_buf:	DS	256		; Struct return buffer
 ; linking one of them should not bring in rt_arith32.
 
 
-	DSEG
+	COMMON	/rt_tmp32/
 	PUBLIC	__tmp32
 __tmp32:
-	DW	0,0
+	DS	4
 
 
 	END

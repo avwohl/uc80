@@ -104,7 +104,7 @@ _fread_ret:
 	RET
 
 
-	DSEG
+	COMMON	/lc_fread/
 
 _fread_ptr:	DS	2	; fread dest pointer temp
 _fread_cnt:	DS	2	; fread byte counter temp

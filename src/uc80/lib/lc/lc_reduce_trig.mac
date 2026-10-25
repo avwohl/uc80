@@ -114,7 +114,7 @@ _reduce_done:
 	LD	DE,(_trig_x+2)
 	RET
 
-	DSEG
+	COMMON	/lc_reduce_trig/
 _trig_x:	DS	4
 _trig_negate:	DS	1
 

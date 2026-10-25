@@ -269,16 +269,16 @@ __cdiv:
 	LD	(__cplx_result+6),DE
 	RET
 
-	DSEG
+	COMMON	/rt_complex/
 	PUBLIC	__cplx_l,__cplx_r,__cplx_result,__cplx_tmp
 __cplx_l:
-	DW	0,0,0,0
+	DS	8
 __cplx_r:
-	DW	0,0,0,0
+	DS	8
 __cplx_result:
-	DW	0,0,0,0
+	DS	8
 __cplx_tmp:
-	DW	0,0,0,0
+	DS	8
 __cplx_work:
-	DW	0,0,0,0
+	DS	8
 	END

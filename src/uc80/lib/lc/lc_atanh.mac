@@ -78,7 +78,7 @@ _atanhf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_atanh/
 
 _atanh_x:	DS	4
 _atanh_num:	DS	4

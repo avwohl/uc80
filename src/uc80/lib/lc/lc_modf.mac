@@ -65,7 +65,7 @@ _modff:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_modf/
 
 _modf_x:	DS	4
 _modf_i:	DS	4

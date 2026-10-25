@@ -189,7 +189,7 @@ _exp_loop:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_exp/
 
 _exp_x:		DS	4
 _exp_r:		DS	4

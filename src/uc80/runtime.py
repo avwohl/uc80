@@ -67,7 +67,9 @@ class RuntimeLibrary:
             upper = stripped.upper()
 
             # Track segment changes
-            if upper == 'DSEG':
+            # A named COMMON block (COMMON /name/) holds a module's zero
+            # initialised variables; it is data like DSEG.
+            if upper == 'DSEG' or upper.startswith('COMMON'):
                 in_dseg = True
                 if current_func and current_lines:
                     self._save_function(current_func, current_lines,

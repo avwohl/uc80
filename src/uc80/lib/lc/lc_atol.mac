@@ -159,7 +159,7 @@ _atol_ret:
 	RET
 
 
-	DSEG
+	COMMON	/lc_atol/
 
 
 ; atol working storage

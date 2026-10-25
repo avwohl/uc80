@@ -76,7 +76,7 @@ _acoshf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_acosh/
 
 _acosh_x:	DS	4
 _acosh_t:	DS	4

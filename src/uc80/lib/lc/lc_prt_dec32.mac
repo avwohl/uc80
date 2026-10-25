@@ -130,7 +130,7 @@ _div32_10_nosub:
 	POP	BC
 	RET
 
-	DSEG
+	COMMON	/lc_prt_dec32/
 	PUBLIC	_prt32_val
 _prt32_val:	DS	4
 

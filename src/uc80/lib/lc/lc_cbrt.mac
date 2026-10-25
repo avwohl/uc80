@@ -126,7 +126,7 @@ _cbrt_done:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_cbrt/
 
 _cbrt_sign:	DS	1
 _cbrt_x:	DS	4

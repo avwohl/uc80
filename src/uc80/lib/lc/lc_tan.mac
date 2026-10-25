@@ -64,7 +64,7 @@ _tanl:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_tan/
 
 _tan_x:		DS	4
 _tan_sin:	DS	4

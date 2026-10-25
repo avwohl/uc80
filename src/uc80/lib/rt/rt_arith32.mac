@@ -875,9 +875,9 @@ __ffs32_zero:
 	LD	HL,0
 	RET
 
-	DSEG
+	COMMON	/rt_arith32/
 __div32_dvd:
-	DW	0,0
+	DS	4
 __rem32:
-	DW	0,0
+	DS	4
 	END

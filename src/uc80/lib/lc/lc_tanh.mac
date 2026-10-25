@@ -60,7 +60,7 @@ _tanhf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_tanh/
 
 _tanh_x:	DS	4
 _tanh_s:	DS	4

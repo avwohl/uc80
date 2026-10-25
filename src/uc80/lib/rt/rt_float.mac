@@ -1445,35 +1445,35 @@ __fneg:
 	LD	D,A
 	RET
 
-	DSEG
+	COMMON	/rt_float/
 	PUBLIC	__fop1,__fop2,__fsgn1,__fsgn2,__fexp1,__fexp2,__fman1,__fman2
 __fop1:
-	DW	0,0
+	DS	4
 __fop2:
-	DW	0,0
+	DS	4
 __fsgn1:
-	DB	0
+	DS	1
 __fsgn2:
-	DB	0
+	DS	1
 __fexp1:
-	DW	0
+	DS	2
 __fexp2:
-	DW	0
+	DS	2
 __fman1:
-	DW	0,0
+	DS	4
 __fman2:
-	DW	0,0
+	DS	4
 __fdiv_rem:
-	DW	0,0
+	DS	4
 
 
 ; Temporary storage for partial products in float multiplication
 __fmul_hh:
-	DW	0,0
+	DS	4
 __fmul_hl:
-	DW	0,0
+	DS	4
 __fmul_lh:
-	DW	0,0
+	DS	4
 __fmul_ll:
-	DW	0,0
+	DS	4
 	END

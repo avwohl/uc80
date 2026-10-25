@@ -114,7 +114,7 @@ _phs_ret:
 	POP	HL
 	JP	_printf_loop
 
-	DSEG
-_phs_pad:	DB	0
+	COMMON	/lc_printf_s/
+_phs_pad:	DS	1
 
 	END

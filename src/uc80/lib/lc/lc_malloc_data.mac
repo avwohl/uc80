@@ -9,8 +9,8 @@ PRTSTR	EQU	9
 	PUBLIC	_free_head
 
 
-	DSEG
+	COMMON	/lc_malloc_data/
 
-_free_head:	DW	0
+_free_head:	DS	2
 
 	END

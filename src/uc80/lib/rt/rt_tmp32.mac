@@ -4,9 +4,9 @@
 
 	.Z80
 
-	DSEG
+	COMMON	/rt_tmp32/
 	PUBLIC	__tmp32
 __tmp32:
-	DW	0,0
+	DS	4
 
 	END

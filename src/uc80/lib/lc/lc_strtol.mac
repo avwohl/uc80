@@ -278,7 +278,7 @@ _strtol_mult_done:
 	RET
 
 
-	DSEG
+	COMMON	/lc_strtol/
 
 
 ; strtol working storage

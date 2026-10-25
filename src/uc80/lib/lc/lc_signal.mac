@@ -195,7 +195,7 @@ _raise_err:
 ; Using Taylor series, Newton-Raphson, and polynomial approximations
 
 
-	DSEG
+	COMMON	/lc_signal/
 _signal_table:	DS	14
 
 	END

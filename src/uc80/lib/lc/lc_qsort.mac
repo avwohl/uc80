@@ -581,7 +581,7 @@ qs_swg1:
 	JP	PE,qs_swg1		; P/V set while BC != 0
 	RET
 
-	DSEG
+	COMMON	/lc_qsort/
 ; qsort working storage.  qsort saves these QS_NV bytes on its stack on
 ; entry and restores them on exit (see "Reentrancy" above).
 QS_VARS:

@@ -230,7 +230,7 @@ _log_done:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_log/
 
 _log_x:		DS	4
 _log_m:		DS	4

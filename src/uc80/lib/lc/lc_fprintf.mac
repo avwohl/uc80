@@ -106,7 +106,7 @@ _fprintf_sink:
 	POP	BC
 	RET
 
-	DSEG
+	COMMON	/lc_fprintf/
 
 _fprintf_stream: DS	2
 

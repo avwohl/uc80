@@ -66,7 +66,7 @@ _ldiv:
 	RET
 
 
-	DSEG
+	COMMON	/lc_ldiv/
 
 _ldiv_result:	DS	8	; ldiv_t: quot (4), rem (4)
 

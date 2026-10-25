@@ -10,11 +10,11 @@ PRTSTR	EQU	9
 	PUBLIC	_atexit_tab
 
 
-	DSEG
+	COMMON	/lc_exit_data/
 
 
 ; atexit handler table (max 4 handlers)
-_atexit_cnt:	DB	0	; Number of registered handlers
+_atexit_cnt:	DS	1	; Number of registered handlers
 _atexit_tab:	DS	8	; 4 function pointers (2 bytes each)
 
 	END

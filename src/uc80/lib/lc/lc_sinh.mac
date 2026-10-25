@@ -72,7 +72,7 @@ _sinhf:
 	POP	IX
 	RET
 
-	DSEG
+	COMMON	/lc_sinh/
 
 _sinh_x:	DS	4
 _sinh_ep:	DS	4

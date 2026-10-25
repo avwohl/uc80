@@ -110,7 +110,7 @@ _strtok_null:
 	RET
 
 
-	DSEG
+	COMMON	/lc_strtok/
 
 
 ; strtok state
