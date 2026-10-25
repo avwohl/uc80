@@ -27,6 +27,8 @@ observable behaviour of a program uc80 compiles.
 
 ### Changed
 
+- **Unsigned 8-bit divide and modulo by a constant 1 to 255 (speed family D).** When the left operand is known to be 0..255 (an unsigned char, a masked value, another such quotient), `x / K` and `x % K` no longer use the signed 16-bit chain `__sdiv16 / __div16 / __dv8w / __dv8n`. A power of two is a shift or a mask. For 192 of the other 247 divisors the quotient is an exact reciprocal multiply `(x * M) >> S` (inline shift-and-add), and the remainder is `x - q * K`. The rest call `__dv8n` once. `q = x / K; r = x % K;` in two adjacent statements (or declarations) is one division. A signed operand stays on the signed path. The helpers that lose their last caller are not linked. `snd-fnum` runs 18.83M to 13.98M T-states and shrinks by 196 bytes; `snd-cmdq` runs 14.32M to 14.05M and shrinks by 196 bytes. See `docs/u8_divmod.md`.
+
 - **`bsearch`, `vprintf` and `vsprintf` are their own modules, and `rand` links no runtime multiply.** A `qsort`-only program is 192 bytes smaller, an `fprintf` program about 220 bytes smaller, and a `rand` program about 550 bytes smaller.
 - **Smaller programs: libc is split into one module per function.** The
   float printer was part of `lc_printf_core`, so every program that called

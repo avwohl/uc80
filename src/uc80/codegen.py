@@ -3184,6 +3184,44 @@ class CodegenError(Exception):
             super().__init__(message)
 
 
+class _DivModFuse:
+    """State of one fused ``v1 = x / K; v2 = x % K;`` pair (or the
+    reverse).  The first division keeps the other result in B; the second
+    reads it when nothing between the two statements touched B."""
+
+    _TOUCH_B = re.compile(r"\b(B|BC)\b", re.IGNORECASE)
+    _FLOW = frozenset((
+        "call", "jp", "jr", "djnz", "ret", "reti", "retn", "rst", "exx",
+        "ldir", "lddr", "ldi", "ldd", "cpir", "cpdr", "cpi", "cpd",
+        "inir", "indr", "ini", "ind", "otir", "otdr", "outi", "outd",
+        "halt", "ei", "di"))
+
+    def __init__(self, first, second):
+        self.first = first
+        self.second = second
+        self.mark = None        # lines index after the first's stash
+        self.end = None         # lines index at the end of the first item
+        self.ready = False
+
+    def arm(self, lines) -> None:
+        """The first item is generated: B still holds the other result
+        when the lines after the stash use neither B nor BC and do not
+        branch, call or define a label."""
+        if self.mark is None:
+            return
+        for line in lines[self.mark:]:
+            if not line.startswith("\t"):
+                return
+            text = line.split(";")[0].strip()
+            if not text:
+                continue
+            mnem, _, ops = text.partition("\t")
+            if mnem.lower() in self._FLOW or self._TOUCH_B.search(ops):
+                return
+        self.end = len(lines)
+        self.ready = True
+
+
 class _SavedAddrValue:
     """Codegen-only operand: the value at the address on top of the stack.
 
@@ -3230,6 +3268,7 @@ class CodeGenerator:
         # side of a comma).  Set by gen_expr_discard; only an identity
         # match counts, so nested sub-expressions never see it.
         self._discard_expr = None
+        self._dm = None          # _DivModFuse of the current block pair
         # Wire module-level ``_to_legacy`` to consult this codegen's
         # typedef registry. (Single-threaded codegen, so a module-level
         # pointer is fine; reset in finally/exit if we ever grow re-entry.)
@@ -5553,14 +5592,101 @@ class CodeGenerator:
         # the slots stay distinct, which is what an address taken inside
         # the block needs.
         saved_locals = dict(self.ctx.locals)
-        for item in stmt.items:
-            if isinstance(item, ast.Declaration):
-                self.gen_local_decl(item)
-            else:
-                self.gen_statement(item)
+        items = stmt.items
+        i = 0
+        while i < len(items):
+            pair = (self._dm_pair(items[i], items[i + 1])
+                    if i + 1 < len(items) else None)
+            if pair is None:
+                self._gen_block_item(items[i])
+                i += 1
+                continue
+            # ``q = x / K; r = x % K;``: one division for both.
+            saved_dm = self._dm
+            self._dm = _DivModFuse(*pair)
+            try:
+                self._gen_block_item(items[i])
+                self._dm.arm(self.ctx.lines)
+                self._gen_block_item(items[i + 1])
+            finally:
+                self._dm = saved_dm
+            i += 2
         # Restore block_externs on scope exit
         self.ctx.block_externs = saved_block_externs
         self.ctx.locals = saved_locals
+
+    def _gen_block_item(self, item) -> None:
+        if isinstance(item, ast.Declaration):
+            self.gen_local_decl(item)
+        else:
+            self.gen_statement(item)
+
+    def _dm_stmt(self, item):
+        """For a block item ``v = x / K`` or ``v = x % K`` (a statement)
+        or ``T v = x / K`` (a declaration), where v is a plain integer
+        variable of 1 or 2 bytes: (the division expression, v's name,
+        x's name, K).  Else None."""
+        expr = None
+        if isinstance(item, ast.ExpressionStmt):
+            e = item.expr
+            if (isinstance(e, ast.BinaryOp) and e.op == "="
+                    and isinstance(e.left, ast.Identifier)):
+                sym = self._simple_sym(e.left)
+                if sym is None or not self._dm_dest_ok(sym.sym_type):
+                    return None
+                name, expr = e.left.name.text, e.right
+        elif isinstance(item, ast.Declaration):
+            if decl_storage_class(item.decl_specs) is not None:
+                return None
+            decls = list(iter_var_decls(item))
+            if len(decls) != 1 or decls[0][3] or decls[0][2] is None:
+                return None
+            name, full, init, _ = decls[0]
+            if (name is None or isinstance(init, (list, ast.InitializerList,
+                                                  ast.Compound))
+                    or not self._dm_dest_ok(full)):
+                return None
+            expr = init
+        if expr is None:
+            return None
+        expr = self._peel_int_casts(expr)
+        k = self._u8_divmod_info(expr)
+        if k is None or k & (k - 1) == 0:
+            return None
+        x = self._peel_int_casts(expr.left)
+        if not isinstance(x, ast.Identifier):
+            return None
+        xsym = self._simple_sym(x)
+        if xsym is None or getattr(_to_legacy(xsym.sym_type),
+                                   "is_volatile", False):
+            return None
+        return expr, name, x.name.text, k
+
+    def _dm_dest_ok(self, t) -> bool:
+        t = _to_legacy(t)
+        return (isinstance(t, lt.BasicType) and not self._is_float_type(t)
+                and not self._is_bool_type(t)
+                and not getattr(t, "is_volatile", False)
+                and self._type_size(t) in (1, 2))
+
+    def _dm_pair(self, a, b):
+        """(first, second) division expressions when the block items a
+        and b are ``v1 = x / K`` and ``v2 = x % K`` (or the reverse), in
+        either statement or declaration form, with v1, v2 and x three
+        different plain variables."""
+        if getattr(self.ctx, "no_dm_fuse", False):
+            return None
+        da = self._dm_stmt(a)
+        if da is None:
+            return None
+        db = self._dm_stmt(b)
+        if db is None:
+            return None
+        (ea, va, xa, ka), (eb, vb, xb, kb) = da, db
+        if (xa != xb or ka != kb or len({va, vb, xa}) != 3
+                or ea.op == eb.op):
+            return None
+        return ea, eb
 
     def gen_local_decl(self, decl) -> None:
         """Generate code for a local declaration; the code of a volatile
@@ -14388,6 +14514,159 @@ class CodeGenerator:
             e("ld", "H,A")
             self.ctx.emit_label(done)
 
+    def _u8_divmod_info(self, expr, depth: int = 0) -> int | None:
+        """The divisor K when ``expr`` is ``x / K`` or ``x % K`` with a
+        constant K in 1..255 and x known to be 0..255 (_byte_kind: a
+        value-range test, not a type test, so a signed x stays on the
+        signed path).  Then the result is 0..255 and exact in 8 bits.
+        Else None."""
+        if not isinstance(expr, ast.BinaryOp):
+            return None
+        op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if op not in ("/", "%"):
+            return None
+        k = self._const_int_operand(expr.right)
+        if k is None or not 1 <= k <= 255:
+            return None
+        if not (self._int_scalar_expr(expr.left)
+                and self._int_scalar_expr(expr.right)):
+            return None
+        if "u" not in self._byte_kind(expr.left, depth + 1):
+            return None
+        return k
+
+    # A 0..255 dividend over a constant K: the quotient is (x * M) >> S
+    # for M = ceil(2**S / K), when that is exact for every x in 0..255 and
+    # x * M fits in 16 bits.  The multiply is the inline shift-and-add
+    # chain of _gen_mul_const.  It is used when it is faster than the
+    # call of __dv8n (about 330 T-states for x >= K) and the code stays
+    # small; the limits are below.  Measured in docs/codegen_gap.md.
+    _RECIP_MAX_T = 190          # T-states of the quotient alone
+    _RECIP_MAX_T_REM = 300      # quotient and remainder
+
+    def _u8_recip_plan(self, k: int):
+        """(M, S, T-states of the quotient, T-states of quotient and
+        remainder) of the cheapest exact reciprocal multiply for the
+        divisor ``k`` (not a power of two), or None."""
+        cache = self.__dict__.setdefault("_recip_cache", {})
+        if k in cache:
+            return cache[k]
+        best = None
+        for sh in range(8, 17):
+            m = -(-(1 << sh) // k)
+            if 255 * m >= 1 << 16:
+                break
+            if any((x * m) >> sh != x // k for x in range(256)):
+                continue
+            t = sh - 8
+            shift_t = 4 + (0 if t == 0 else 8 if t == 1 else 4 * t + 7)
+            cost = 4 + 7 + self._chain_t(m) + shift_t
+            if best is None or cost < best[2]:
+                best = (m, sh, cost)
+        if best is not None:
+            rem_t = best[2] + 4 + 4 + 4 + 7 + self._chain_t(k) + 8
+            best = best + (rem_t,)
+            if best[2] > self._RECIP_MAX_T or best[3] > self._RECIP_MAX_T_REM:
+                best = None
+        cache[k] = best
+        return best
+
+    def _chain_t(self, n: int) -> int:
+        """T-states of the multiply of HL by the constant n."""
+        tz = (n & -n).bit_length() - 1
+        if n == 1:
+            return 0
+        if n == 1 << tz:
+            return 11 * tz
+        return min(self._mul16_chain_cost(d)[0]
+                   for d in self._mul_digit_forms(n, 16))
+
+    def _emit_u8_recip(self, plan, k: int, mode: str) -> None:
+        """The dividend x is in A.  Reciprocal multiply of ``plan``;
+        ``mode`` is what is left: "q": A = x / k.  "r": A = x % k.
+        "both_q": A = x / k and B = x % k.  "both_r": A = x % k and
+        B = x / k.  Clobbers HL, DE, BC and the flags."""
+        e = self.ctx.emit_instr
+        m, sh = plan[0], plan[1]
+        if mode != "q":
+            e("ld", "C,A")                   # x, for the remainder
+        e("ld", "L,A")
+        e("ld", "H,0")
+        self._gen_mul_const(m)               # HL = x * M
+        e("ld", "A,H")
+        t = sh - 8
+        if t == 1:
+            e("srl", "A")
+        elif t >= 2:
+            for _ in range(t):
+                e("rrca")
+            e("and", str(0xFF >> t))         # A = x / k
+        if mode == "q":
+            return
+        if mode != "r":
+            e("ld", "B,A")                   # the multiply keeps BC
+        e("ld", "L,A")
+        e("ld", "H,0")
+        self._gen_mul_const(k)               # L = (x / k) * k
+        e("ld", "A,C")
+        e("sub", "L")                        # A = x % k
+        if mode == "both_q":
+            e("ld", "C,A")
+            e("ld", "A,B")
+            e("ld", "B,C")
+
+    def _emit_u8_divmod_a(self, expr) -> None:
+        """A = ``x / K`` or ``x % K`` (see _u8_divmod_info).  A power of
+        two is a shift or a mask.  Another K is a reciprocal multiply
+        (_u8_recip_plan) or one call of __dv8n (the byte step of the
+        16-bit divide: A = running remainder 0, E = dividend, C =
+        divisor; out E = quotient, A = remainder).  Clobbers HL, DE, BC
+        and the flags."""
+        e = self.ctx.emit_instr
+        op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        k = self._const_int_operand(expr.right)
+        if k & (k - 1) == 0:
+            n = k.bit_length() - 1
+            self._gen_expr_a(expr.left)
+            if op == "%":
+                if n == 0:
+                    e("xor", "A")
+                elif k < 256:
+                    e("and", str(k - 1))
+            elif n == 1:
+                e("srl", "A")
+            elif n >= 2:
+                for _ in range(n):
+                    e("rrca")
+                e("and", str(0xFF >> n))
+            return
+        dm = self._dm
+        if (dm is not None and expr is dm.second and dm.ready
+                and len(self.ctx.lines) == dm.end):
+            e("ld", "A,B")           # the first division left it here
+            return
+        first = dm is not None and expr is dm.first
+        self._gen_expr_a(expr.left)
+        plan = self._u8_recip_plan(k)
+        if plan is not None:
+            if first:
+                self._emit_u8_recip(plan, k,
+                                    "both_q" if op == "/" else "both_r")
+                dm.mark = len(self.ctx.lines)
+            else:
+                self._emit_u8_recip(plan, k, "q" if op == "/" else "r")
+            return
+        e("ld", "E,A")
+        e("ld", f"C,{k}")
+        e("xor", "A")
+        self._call_runtime("__dv8n")
+        if first:
+            # Keep the other result in B for the second statement.
+            e("ld", "B,E" if op == "%" else "B,A")
+            dm.mark = len(self.ctx.lines)
+        if op == "/":
+            e("ld", "A,E")
+
     def _gen_const_op_16(self, expr: ast.BinaryOp, op: str) -> bool:
         """``x * K``, ``K * x``, ``x / K``, ``x % K``, ``x << K`` and
         ``x >> K`` at 16 bits with a constant K, done inline.
@@ -14430,6 +14709,14 @@ class CodeGenerator:
             return True
 
         # '/' and '%'
+        u8k = self._u8_divmod_info(expr)
+        if u8k is not None and u8k & (u8k - 1):
+            # A 0..255 dividend and a constant divisor 3..255 (not a
+            # power of two): one 8-bit division, no 16-bit helper.
+            self._emit_u8_divmod_a(expr)
+            e("ld", "L,A")
+            e("ld", "H,0")
+            return True
         is_unsigned = (self._is_promoted_unsigned(expr.left)
                        or self._is_promoted_unsigned(expr.right))
         kv = k & 0xFFFF
@@ -14439,7 +14726,9 @@ class CodeGenerator:
             return False
         n = kv.bit_length() - 1
         # An unsigned char operand is never negative.
-        nonneg = is_unsigned or char_signed is False
+        h_zero = (char_signed is False
+                  or "u" in self._byte_kind(expr.left))
+        nonneg = is_unsigned or h_zero
         self.gen_expr(expr.left)
         if op == "/":
             if nonneg:
@@ -14449,8 +14738,7 @@ class CodeGenerator:
         elif n == 0:
             e("ld", "HL,0")
         elif nonneg:
-            self._emit_and16_const((1 << n) - 1,
-                                   h_zero=char_signed is False)
+            self._emit_and16_const((1 << n) - 1, h_zero=h_zero)
         else:
             self._emit_smod16_pow2(n)
         return True
@@ -14700,6 +14988,10 @@ class CodeGenerator:
         s = self._char_ext_operand(expr)
         if s is not None:
             return frozenset("s" if s else "u")
+        if isinstance(expr, _SavedAddrValue):
+            # The char at the saved address of a compound assignment.
+            cs = self._char_type_signed(expr.ctype)
+            return frozenset() if cs is None else frozenset("s" if cs else "u")
         fast = self._bf_fast_pos(expr)
         if fast is not None:
             bf = fast[0]
@@ -14732,6 +15024,9 @@ class CodeGenerator:
                 k = self._const_int_operand(expr.right)
                 if k is not None and 0 <= k <= 15:
                     r = self._byte_kind(expr.left, depth + 1)
+            elif op in ("/", "%"):
+                if self._u8_divmod_info(expr, depth) is not None:
+                    r = {"u"}
             if "s" in r and self._is_promoted_unsigned(expr):
                 # An unsigned value is never negative.
                 r = r - {"s"}
@@ -14774,6 +15069,8 @@ class CodeGenerator:
         computes in A rather than through gen_expr."""
         if isinstance(expr, ast.BinaryOp):
             op = expr.op.text if hasattr(expr.op, "text") else expr.op
+            if op in ("/", "%"):
+                return self._u8_divmod_info(expr) is not None
             if op not in ("+", "-", "&", "|", "^", "<<", ">>"):
                 return False
             if not (self._int_scalar_expr(expr.left)
@@ -14885,6 +15182,13 @@ class CodeGenerator:
         if fast is not None:
             self._gen_bf_value_a(expr, fast[0], fast[1])
             return
+        if (isinstance(expr, _SavedAddrValue)
+                and self._char_type_signed(expr.ctype) is not None):
+            # The char at the saved address (kept on the stack).
+            e("pop", "HL")
+            e("push", "HL")
+            e("ld", "A,(HL)")
+            return
         if not self._a_structural(expr):
             self.gen_expr(expr)
             e("ld", "A,L")
@@ -14902,6 +15206,9 @@ class CodeGenerator:
                 e("inc", "A")            # 0 when it was not 0, else 1
             return
         op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if op in ("/", "%"):
+            self._emit_u8_divmod_a(expr)
+            return
         left, right = expr.left, expr.right
         if op in ("<<", ">>"):
             k = self._const_int_operand(right)
