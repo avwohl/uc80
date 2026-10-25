@@ -2296,137 +2296,70 @@ __fdiv_inf:
 ; ------------------------------------------------------------
 ; __fdiv_man: divide the 24-bit mantissa in __fman1 by the one in __fman2.
 ; Out: __fman1 = the rounded 24-bit quotient (bit 23 set), __fexp1 adjusted.
+;
+; Restoring division, 26 steps.  The remainder is in DE:HL, the divisor in
+; BC (low 16 bits) and (IX+2) (high 8 bits), and the quotient in the second
+; register set (DE':HL') with the step counter in B'.
 ; ------------------------------------------------------------
 __fdiv_man:
-	LD	A,(__fman1)
-	LD	(__fdiv_rem),A
-	LD	A,(__fman1+1)
-	LD	(__fdiv_rem+1),A
-	LD	A,(__fman1+2)
-	LD	(__fdiv_rem+2),A
-	XOR	A
-	LD	(__fdiv_rem+3),A	; Clear high byte (for 32-bit shifts)
-
-	LD	(__fman1),A
-	LD	(__fman1+1),A
-	LD	(__fman1+2),A
-	LD	(__fman1+3),A
-
-	LD	B,26			; 26 quotient bits
-
-@fdiv_lp:
-	PUSH	BC
-
-	; Compare rem (32-bit) with divisor (24-bit)
-	LD	A,(__fdiv_rem+3)
-	OR	A
-	JR	NZ,@fdiv_sub		; dividend has bit 24+, definitely >= divisor
-
-	LD	A,(__fdiv_rem+2)
-	LD	C,A
-	LD	A,(__fman2+2)
-	CP	C
-	JR	C,@fdiv_sub		; divisor < dividend, subtract
-	JR	NZ,@fdiv_nosub		; divisor > dividend, no subtract
-
-	LD	A,(__fdiv_rem+1)
-	LD	C,A
-	LD	A,(__fman2+1)
-	CP	C
-	JR	C,@fdiv_sub
-	JR	NZ,@fdiv_nosub
-
-	LD	A,(__fdiv_rem)
-	LD	C,A
-	LD	A,(__fman2)
-	CP	C
-	JR	C,@fdiv_sub
-	JR	NZ,@fdiv_nosub
-
-@fdiv_sub:
-	LD	A,(__fdiv_rem)
-	LD	C,A
-	LD	A,(__fman2)
-	LD	E,A
-	LD	A,C
-	SUB	E
-	LD	(__fdiv_rem),A
-
-	LD	A,(__fdiv_rem+1)
-	LD	C,A
-	LD	A,(__fman2+1)
-	LD	E,A
-	LD	A,C
-	SBC	A,E
-	LD	(__fdiv_rem+1),A
-
-	LD	A,(__fdiv_rem+2)
-	LD	C,A
-	LD	A,(__fman2+2)
-	LD	E,A
-	LD	A,C
-	SBC	A,E
-	LD	(__fdiv_rem+2),A
-
-	LD	A,(__fdiv_rem+3)
-	SBC	A,0
-	LD	(__fdiv_rem+3),A
-
-	; quotient = quotient * 2 + 1
-	LD	A,(__fman1)
-	ADD	A,A
-	LD	(__fman1),A
-	LD	A,(__fman1+1)
-	RLA
-	LD	(__fman1+1),A
-	LD	A,(__fman1+2)
-	RLA
-	LD	(__fman1+2),A
-	LD	A,(__fman1+3)
-	RLA
-	LD	(__fman1+3),A
-	LD	HL,__fman1
-	INC	(HL)
-	JR	@fdiv_next
-
-@fdiv_nosub:
-	LD	A,(__fman1)
-	ADD	A,A
-	LD	(__fman1),A
-	LD	A,(__fman1+1)
-	RLA
-	LD	(__fman1+1),A
-	LD	A,(__fman1+2)
-	RLA
-	LD	(__fman1+2),A
-	LD	A,(__fman1+3)
-	RLA
-	LD	(__fman1+3),A
-
-@fdiv_next:
-	LD	A,(__fdiv_rem)
-	ADD	A,A
-	LD	(__fdiv_rem),A
-	LD	A,(__fdiv_rem+1)
-	RLA
-	LD	(__fdiv_rem+1),A
-	LD	A,(__fdiv_rem+2)
-	RLA
-	LD	(__fdiv_rem+2),A
-	LD	A,(__fdiv_rem+3)
-	RLA
-	LD	(__fdiv_rem+3),A
-
-	POP	BC
-	DEC	B
-	JP	NZ,@fdiv_lp
-
-	; The quotient is in [2^24, 2^26).  Put the leading bit at bit 25.
+	LD	IX,__fman2
+	LD	BC,(__fman2)
 	LD	HL,(__fman1)
 	LD	DE,(__fman1+2)
+	EXX
+	LD	HL,0
+	LD	DE,0
+	LD	B,26
+	EXX
+@fdiv_lp:
+	PUSH	DE
+	PUSH	HL
+	OR	A
+	SBC	HL,BC
+	LD	A,E
+	SBC	A,(IX+2)
+	LD	E,A
+	LD	A,D
+	SBC	A,0
+	LD	D,A		; DE:HL = remainder - divisor, carry if it is negative
+	JR	C,@fdiv_no
+	POP	AF
+	POP	AF
+	SCF
+	JR	@fdiv_q
+@fdiv_no:
+	POP	HL
+	POP	DE
+	OR	A
+@fdiv_q:
+	EXX			; quotient = quotient * 2 + the carry
+	ADC	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	EXX
+	ADD	HL,HL		; remainder = remainder * 2
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	EXX
+	DEC	B
+	EXX
+	JP	NZ,@fdiv_lp
+
+	; sticky: a non-zero remainder
+	LD	A,D
+	OR	E
+	OR	H
+	OR	L
+	ADD	A,255
+	SBC	A,A
+	AND	1
+	LD	B,A
+	EXX			; DEHL = the quotient, in [2^24, 2^26)
 	BIT	1,D
 	JR	NZ,@fdiv_lead
-	ADD	HL,HL
+	ADD	HL,HL		; put the leading bit at bit 25
 	EX	DE,HL
 	ADC	HL,HL
 	EX	DE,HL
@@ -2436,17 +2369,10 @@ __fdiv_man:
 	LD	(__fexp1),HL
 	POP	HL
 @fdiv_lead:
-	; sticky: a non-zero remainder sets bit 0
-	LD	A,(__fdiv_rem)
-	LD	B,A
-	LD	A,(__fdiv_rem+1)
-	OR	B
-	LD	B,A
-	LD	A,(__fdiv_rem+2)
-	OR	B
-	LD	B,A
-	LD	A,(__fdiv_rem+3)
-	OR	B
+	EXX
+	LD	A,B
+	EXX
+	OR	A
 	JR	Z,@fdiv_exact
 	SET	0,L
 @fdiv_exact:
