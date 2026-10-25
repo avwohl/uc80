@@ -144,6 +144,6 @@ These limits are deliberate. The linked documents give the details.
 - **Reentrancy.** The scanf engine, `strtod` and the math functions use
   static storage for their local variables. They are not reentrant and are
   not thread safe.
-- **Size.** A program that calls a transcendental function links 1 KB to
-  4 KB more code than with the old assembly library. `sqrt` is smaller than
+- **Size.** A program that calls a transcendental function links 0.5 KB to
+  5 KB more code than with the old assembly library. `sqrt` is smaller than
   before ([math library](libm.md)).
