@@ -31,7 +31,7 @@ Result against SDCC 4.6.0 (96 programs for size and 78 for T-states that are OK 
 
 What is left:
 
-- Freestanding and ROM target (6.3, phase 3): nothing done. The answer to issue #1 about the Neo Geo sound driver stays "not today".
+- Freestanding and ROM target (6.3, phase 3): nothing built. [rom_target.md](rom_target.md) has the plan: about 32 engineer-days for a minimum version. The answer to issue #1 about the Neo Geo sound driver stays "not today".
 - One program fails on uc80: `empire-trefonas` (the image of 69,888 bytes is more than 64 KB). Two size-only programs, `battlestar-size` and `rogue36-size`, stop with BUILD-TIMEOUT at the whole-program link (bug C8, the dead-code pass).
 - Games tier gaps: mojozork runs only as a size-only row (no scripted Zork I run), and Rogue 3.6 is size-only. Larn, TSCP and the Scott Adams games are not in, because of their licenses. We did not run `battlestar-size`, `rogue36-size` and `mojozork-size` again for sdcc, sdcc-4.4 and zsdcc, because each build takes more than an hour. These rows come from the earlier run with the same tools and sources.
 - Open compiler bugs from 6.5. A recheck on 2026-10-24 with the single-file repros: C1 and C6 compile now. C3, C10 and C15 still give no diagnostic, and C13 still gives "internal error: unexpected token". C2, C4, C5, C7, C9 and C14 are not rechecked.
@@ -484,7 +484,7 @@ Status: not done, and not needed. The harness uses the alternative in the last r
 
 ### 6.3 Freestanding target (needed before uc80 is a real answer to issue #1)
 
-Status: not started. Every gap in the table is still open.
+Status: not started. Every gap in the table is still open. [rom_target.md](rom_target.md) has a costed plan (2026-10-25) and re-checks each gap.
 
 | Gap | Today |
 |---|---|
@@ -618,14 +618,25 @@ The wiki reports that HI-TECH 7.80pl2 miscompiles fasta (DISQ) and hangs in Dhry
 
 ## Draft reply to issue #1
 
-Thanks for the question, and for the pointer to ngdevkit.
-Short answer today: no, uc80 is not ready for a Neo Geo sound driver.
-uc80 has no interrupt-function attribute, no `__sfr`/`__at` port access and no banking.
-By default uc80 puts globals, BSS and locals right after the code, so in a ROM build those variables land in ROM. ul80 has no option yet to put data at F800h, and no startup code copies data from ROM to RAM.
-uc80 silently drops a bare SDCC `__interrupt`. Other SDCC forms such as `__critical __interrupt` and `__asm`/`__endasm` stop with an error, so SDCC driver code needs edits.
-uc80 writes M80 `.REL` objects and passes arguments on the stack, so `sdldz80` cannot link uc80 output with nullsound.
-On size, our first like-for-like test (the z88dk sieve) shows SDCC 4.6.0 smaller than uc80, and we expect SDCC to be faster too.
-We plan to add Z80 T-state counts, standalone SDCC 4.4.0 (the ngdevkit pin) and 4.6.0 columns, and a freestanding sound-driver set: NMI command ring, YM2610 register writes, sequencer tick, note to F-number.
-If you need C next to nullsound now, llvm-z80 has an sdas output mode that may suit you better. We have not tested the llvm-z80 path ourselves.
-It would help a lot if you could share one hot function from your driver, or the driver's per-tick cycle and RAM budget, so we benchmark real code.
-We will post the numbers in this issue when the numbers exist.
+Updated 2026-10-25. Not posted.
+
+Thanks for the question, and for the pointer to ngdevkit. We now have numbers.
+
+Short answer: stay with SDCC for the Neo Geo sound driver. uc80 cannot build ROM code yet, and on driver-shaped code SDCC is smaller and faster than uc80 today.
+
+What we measured. The benchmark harness now builds 112 programs with 9 compilers, including standalone SDCC 4.4.0 and 4.6.0, and counts Z80 T-states with `z88dk-ticks`. The results are in docs/benchmarks.md and docs/benchmarks_speed.md.
+
+Four of the programs are small sound-driver kernels that we wrote for this issue: a 16-entry NMI command queue (`snd-cmdq`), YM2610 register writes with a shadow compare and a busy-wait (`snd-ymreg`), a sequencer tick for 4 FM and 3 SSG channels (`snd-seq`), and note to F-number (`snd-fnum`). The kernels run as CP/M programs, not as ROM code. Against SDCC 4.4.0 (the version that ngdevkit uses), uc80 is 33 to 46 percent bigger. uc80 needs 16 to 53 percent more T-states on three kernels and is 2 percent faster on `snd-fnum`. Against SDCC 4.6.0 the result is the same or worse for uc80.
+
+On the whole set of 105 programs that run, uc80 is faster than SDCC on the mean (0.63 of the SDCC 4.6.0 T-states, 0.77 without the sort programs). Most of that gain comes from the uc80 library (`qsort`, `printf`, 32-bit math), which a sound driver does not use. On small integer loops and on code with many small functions, SDCC is faster. uc80 programs are about 1.5 times bigger than SDCC programs.
+
+ROM support. uc80 targets CP/M today. The gaps for a sound driver are:
+- ul80 has no option to put data and BSS at F800h, and no startup code copies initialized data from ROM to RAM.
+- String literals and `const` tables go in the data segment, so in a ROM build they would need RAM.
+- uc80 has no interrupt-function attribute, no `__sfr`/`__at` port access and no banking.
+- uc80 silently drops a bare SDCC `__interrupt` and a bare `__fastcall`. Other SDCC forms such as `__critical __interrupt` and `__asm`/`__endasm` stop with an error.
+- uc80 writes M80 `.REL` objects and passes arguments on the stack, so `sdldz80` cannot link uc80 output with nullsound.
+
+We wrote a plan for a ROM target: docs/rom_target.md. The smallest useful version puts data and BSS in RAM at F800h, adds ROM startup code, interrupt and NMI functions, port I/O intrinsics and `__at` variables. We estimate about 30 engineer-days for that version. We expect SDCC to stay smaller and faster on driver code after that work. If you would use a uc80 ROM target, please tell us if your driver links nullsound, and which SDCC features it uses (`__sfr`, `__at`, `__interrupt`, `__critical`, `__banked`).
+
+It would still help a lot if you could share one hot function from your driver, or the driver's per-tick cycle and RAM budget. Then we can measure real code instead of our own kernels.
