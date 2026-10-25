@@ -70,6 +70,32 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- **A float or double times a power of two was not multiplied.** `float nv =
+  1.5f; float r = nv * 4;` gave 1.5 and `double d = 2.5; d = d * 8;` gave
+  2.5. The AST optimizer turned `x * 2^n` into `x << n`, a shift of the
+  integer value of the float. Also `x / 8u` (shift), `(x * 3) * 5` and
+  `(x + 1) + 2` (an integer constant, wrapped), `x - x`, `x == x`, `x * 0`
+  and `x + 0` were integer rewrites of a float. uc_core now skips them for any
+  operand that may be floating (see the uc_core changelog), and
+  `Uc80ASTOptimizer` leaves the power-of-two multiply to the code generator,
+  which knows the type. Its integer code is the same or better: a multiply
+  by 128 uses the 7-bit shift sequence, a multiply by a power of two that is
+  stored in a char is computed in A, and `x * 2` no longer reads `x` twice
+  (`(a % 2) * 2` computed `a % 2` twice). Over the benchmark programs 16 of
+  them get shorter and none gets longer. New tests run float, double and long
+  double, negative values, 2 to 2^14, multiply, divide and compound
+  assignment (`tests/test_float_strength.py`).
+- **`typeof(char_object)` was two bytes, and `typeof(volatile unsigned
+  char)` did not parse.** Code generation took every `typeof` for `int`.
+  uc80 now resolves the type of the operand (an object, a member, an
+  expression, at file scope or in a function, before the call-graph analyzer
+  sizes the declarations). The qualified type-name form `typeof(type-name)`
+  parses (uc_core change).
+- **A block-scope `extern` object had no `EXTRN`.** `void f(void) { extern
+  int g; g = 1; }` with `g` defined in another unit emitted no `extrn _g`,
+  so the link failed with an undefined symbol (or bound to a wrong one). The
+  name is now an `EXTRN` when this unit does not define the object.
+
 - **Every access to a volatile object now happens as written (C23
   6.7.3).** `volatile unsigned char ymaddr; ymaddr = 0x28; ymaddr = 0x28;
   ymaddr = 1;` compiled to one store, and `g = 1; x = g;` to one store and

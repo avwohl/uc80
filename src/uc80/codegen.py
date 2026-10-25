@@ -5,6 +5,7 @@ Uses IX as frame pointer, following the calling convention in implementation_pla
 """
 
 from contextlib import contextmanager
+import copy
 import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -18,6 +19,7 @@ from .asm_dce import (ASM_BEGIN_MARKER, ASM_BEGIN_FILE_MARKER,
                       ASM_END_MARKER, is_asm_begin, is_asm_end)
 from uc_core import ast
 from uc_core.volatility import VolatileInfo, declared_names
+from uc_core.volatility import children as _children
 from .volatile_fence import VOL_BEGIN, VOL_END
 # Codegen-internal synthetic resolved types — the parser doesn't
 # produce these (the auto-AST is declarator-shaped), but codegen
@@ -211,7 +213,20 @@ def resolve_base_type(decl_specs) -> ResolvedType:
             explicit = _resolve_enum_spec(spec)
         elif isinstance(spec, ast.BitIntSpec):
             explicit = ResolvedType(kind="basic", name="int")
-        # Unknown specs (typeof / alignas / etc.) skipped — codegen
+        elif isinstance(spec, (ast.TypeofExpr, ast.TypeofUnqualExpr)):
+            # typeof(expr): the type of the operand, as the running
+            # CodeGenerator knows it (its scopes); int when unknown.
+            hook = _TYPEOF_HOOK
+            found = getattr(spec, "_resolved", None)
+            if found is not None:
+                found = copy.copy(found)
+            elif hook is not None:
+                found = hook(spec.operand)
+            if found is not None:
+                explicit = found
+                if isinstance(spec, ast.TypeofUnqualExpr):
+                    explicit.is_const = explicit.is_volatile = False
+        # Unknown specs (alignas / etc.) skipped — codegen
         # treats them as int width by default.
     if explicit is None:
         name = _reduce_type_keywords(type_keywords)
@@ -878,6 +893,56 @@ def _to_legacy(t, ctx=None):
 # Set by ``CodeGenerator.__init__`` to its ctx.typedefs dict; consulted
 # by the module-level ``_to_legacy`` to resolve uc_core typedef nodes.
 _ACTIVE_TYPEDEFS = None
+
+# Set by ``CodeGenerator.__init__``: maps the operand of a ``typeof`` to
+# its ResolvedType (None when the operand's type is not known).
+_TYPEOF_HOOK = None
+
+
+def _from_legacy(t) -> Optional[ResolvedType]:
+    """The inverse of ``_to_legacy``: a ResolvedType for a legacy type
+    (what ``CodeGenerator._get_expr_type`` returns).  None when ``t`` is
+    a kind with no ResolvedType form."""
+    if t is None:
+        return None
+    if _is_resolved_type(t):
+        return copy.copy(t)
+    if isinstance(t, lt.BasicType):
+        return ResolvedType(kind="basic", name=t.name, is_signed=t.is_signed,
+                            is_const=t.is_const, is_volatile=t.is_volatile)
+    if isinstance(t, lt.PointerType):
+        base = _from_legacy(t.base_type)
+        if base is None:
+            return None
+        return ResolvedType(kind="pointer", pointee=base,
+                            is_const=t.is_const, is_volatile=t.is_volatile)
+    if isinstance(t, lt.ArrayType):
+        base = _from_legacy(t.base_type)
+        if base is None:
+            return None
+        return ResolvedType(kind="array", element=base, size_expr=t.size)
+    if isinstance(t, lt.FunctionType):
+        ret = _from_legacy(t.return_type)
+        params = [_from_legacy(p) for p in t.param_types]
+        if ret is None or any(p is None for p in params):
+            return None
+        return ResolvedType(kind="function", return_type=ret,
+                            param_types=tuple(params),
+                            is_variadic=t.is_variadic)
+    if isinstance(t, lt.StructType):
+        members = []
+        for m in t.members or []:
+            mt = _from_legacy(m.member_type)
+            if mt is None:
+                return None
+            members.append((m.name, mt, m.bit_width))
+        return ResolvedType(kind="struct", name=t.name, is_union=t.is_union,
+                            members=tuple(members), is_const=t.is_const,
+                            is_volatile=t.is_volatile)
+    if isinstance(t, lt.EnumType):
+        return ResolvedType(kind="enum", name=t.name, is_const=t.is_const,
+                            is_volatile=t.is_volatile)
+    return None
 
 
 def function_is_variadic(func) -> bool:
@@ -3233,8 +3298,9 @@ class CodeGenerator:
         # Wire module-level ``_to_legacy`` to consult this codegen's
         # typedef registry. (Single-threaded codegen, so a module-level
         # pointer is fine; reset in finally/exit if we ever grow re-entry.)
-        global _ACTIVE_TYPEDEFS
+        global _ACTIVE_TYPEDEFS, _TYPEOF_HOOK
         _ACTIVE_TYPEDEFS = self.ctx.typedefs
+        _TYPEOF_HOOK = self._typeof_operand_type
         self.enable_shared_storage = enable_shared_storage
         self.enable_dead_elimination = enable_dead_elimination
         self.enable_inlining = enable_inlining
@@ -3561,8 +3627,121 @@ class CodeGenerator:
                 walk(v)
         walk(root)
 
+    def _annotate_typeof(self, unit) -> None:
+        """Resolve every ``typeof(expr)`` of the unit before anything
+        sizes a declaration (the call-graph analyzer does, ahead of the
+        symbol tables).  The unit is walked in source order with its own
+        scopes, and each TypeofExpr gets ``_resolved``, the ResolvedType
+        of its operand, which ``resolve_base_type`` then uses."""
+        found = [False]
+
+        def scan(n):
+            stack = [n]
+            while stack and not found[0]:
+                x = stack.pop()
+                if isinstance(x, (ast.TypeofExpr, ast.TypeofUnqualExpr)):
+                    found[0] = True
+                    return
+                stack.extend(_children(x))
+        scan(unit)
+        if not found[0]:
+            return
+        saved = (self.ctx.locals, self.ctx.globals)
+        self.ctx.locals, self.ctx.globals = {}, {}
+        undo: list[list] = []          # per scope: (dict, name, old Symbol)
+
+        def declare(table, name, rtype):
+            if not name:
+                return
+            if undo:
+                undo[-1].append((table, name, table.get(name)))
+            table[name] = Symbol(name=name, sym_type=_to_legacy(rtype),
+                                 is_global=table is self.ctx.globals)
+
+        def declare_decl(decl, table):
+            try:
+                is_td = decl_storage_class(decl.decl_specs) == "typedef"
+                for nm, full, _init, _fn in iter_var_decls(decl):
+                    if nm is None:
+                        continue
+                    if is_td:
+                        self.ctx.typedefs[nm] = full
+                    else:
+                        declare(table, nm, full)
+            except Exception:
+                pass
+
+        def push():
+            undo.append([])
+
+        def pop():
+            for table, name, old in reversed(undo.pop()):
+                if old is None:
+                    table.pop(name, None)
+                else:
+                    table[name] = old
+
+        def walk(n):
+            if isinstance(n, list):
+                for x in n:
+                    walk(x)
+                return
+            if not dataclasses.is_dataclass(n):
+                return
+            if isinstance(n, (ast.TypeofExpr, ast.TypeofUnqualExpr)):
+                walk(n.operand)
+                if getattr(n, "_resolved", None) is None:
+                    try:
+                        n._resolved = _from_legacy(
+                            self._get_expr_type(n.operand))
+                    except Exception:
+                        n._resolved = None
+                return
+            if isinstance(n, ast.FunctionDef):
+                walk(n.decl_specs)
+                nm = function_name(n)
+                try:
+                    _, ft = resolve_type_from_decl(n.decl_specs, n.declarator)
+                    declare(self.ctx.globals, nm, ft)
+                except Exception:
+                    pass
+                push()
+                walk(n.declarator)
+                for p in function_params(n):
+                    if isinstance(p, ast.ParamDecl):
+                        try:
+                            pn, pt = resolve_type_from_decl(p.decl_specs,
+                                                            p.declarator)
+                            declare(self.ctx.locals, pn, pt)
+                        except Exception:
+                            pass
+                walk(n.body)
+                pop()
+                return
+            if isinstance(n, ast.Declaration):
+                walk(n.decl_specs)
+                walk(n.declarators)
+                declare_decl(n, self.ctx.locals if undo
+                             else self.ctx.globals)
+                return
+            if isinstance(n, (ast.CompoundStmt, ast.ForStmt)):
+                push()
+                for c in _children(n):
+                    walk(c)
+                pop()
+                return
+            for c in _children(n):
+                walk(c)
+
+        try:
+            for item in unit.items or []:
+                walk(item)
+        finally:
+            self.ctx.locals, self.ctx.globals = saved
+
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
+        self._annotate_typeof(unit)
         # Build call graph for optimizations
         needs_call_graph = (self.enable_shared_storage or self.enable_dead_elimination or
                            self.enable_inlining or self.enable_const_propagation)
@@ -3823,6 +4002,10 @@ class CodeGenerator:
                         global_vars[nm] = synth
 
         # Emit EXTRN for symbols that are extern-only (declared but not defined)
+        # A block-scope ``extern int g;`` of an object this unit does not
+        # define is external as well.
+        extern_only |= {n for n in getattr(self.ctx, '_local_externs', ())
+                        if n not in global_vars}
         for name in sorted(extern_only):
             sym = self.ctx.globals.get(name)
             self.ctx.emit_instr("extrn", sym.label() if sym else f"_{name}")
@@ -8304,6 +8487,14 @@ class CodeGenerator:
                 self.ctx.emit_instr("ld", "HL,0")
         else:
             self.ctx.emit_instr("ld", "HL,0")
+
+    def _typeof_operand_type(self, operand):
+        """The type of the operand of ``typeof``, as a ResolvedType;
+        None when the type is not known (then the object is an int)."""
+        try:
+            return _from_legacy(self._get_expr_type(operand))
+        except Exception:
+            return None
 
     def _resolve_typename(self, t):
         """Resolve an auto-AST TypeName / type-spec list to a legacy type.
@@ -14007,8 +14198,7 @@ class CodeGenerator:
             self._emit_mul8_to_h(n >> 8)
             return
         if n == 1 << tz:
-            for _ in range(tz):
-                e("add", "HL,HL")
+            self._emit_shl16_const(tz)
             return
         digits = min(self._mul_digit_forms(n, 16),
                      key=self._mul16_chain_cost)
@@ -14680,11 +14870,13 @@ class CodeGenerator:
         computes in A rather than through gen_expr."""
         if isinstance(expr, ast.BinaryOp):
             op = expr.op.text if hasattr(expr.op, "text") else expr.op
-            if op not in ("+", "-", "&", "|", "^", "<<", ">>"):
+            if op not in ("+", "-", "&", "|", "^", "<<", ">>", "*"):
                 return False
             if not (self._int_scalar_expr(expr.left)
                     and self._int_scalar_expr(expr.right)):
                 return False
+            if op == "*":
+                return self._mul_pow2_shift(expr) is not None
             if op in ("<<", ">>"):
                 k = self._const_int_operand(expr.right)
                 if k is None or not 0 <= k <= 15:
@@ -14702,6 +14894,20 @@ class CodeGenerator:
             return (op in ("~", "-", "+")
                     and self._int_scalar_expr(expr.operand))
         return False
+
+    def _mul_pow2_shift(self, expr):
+        """For ``x * 2^n`` or ``2^n * x`` with an integer x and
+        1 <= n <= 15: (x, n).  Else None.  The multiply is not turned
+        into a shift in the AST (x may be a float there); here the
+        types are known."""
+        for const, other in ((expr.right, expr.left),
+                             (expr.left, expr.right)):
+            k = self._const_int_operand(const)
+            if k is not None and k > 1 and k & (k - 1) == 0 \
+                    and k.bit_length() - 1 <= 15 \
+                    and self._int_scalar_expr(other):
+                return other, k.bit_length() - 1
+        return None
 
     def _a_char_load(self, expr) -> bool:
         """A char element, member or ``*p`` (not a variable)."""
@@ -14809,8 +15015,13 @@ class CodeGenerator:
             return
         op = expr.op.text if hasattr(expr.op, "text") else expr.op
         left, right = expr.left, expr.right
+        shift = None
+        if op == "*":
+            # x * 2^n: the low byte is that of x << n.
+            left, shift = self._mul_pow2_shift(expr)
+            op = "<<"
         if op in ("<<", ">>"):
-            k = self._const_int_operand(right)
+            k = shift if shift is not None else self._const_int_operand(right)
             kind = self._byte_kind(left)
             if k >= 8 and op == "<<" or (op == ">>" and k >= 8
                                          and "u" in kind):

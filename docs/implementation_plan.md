@@ -104,7 +104,7 @@ long double	32 bits	same as float for Z80
 - [x] nullptr
 - [x] static_assert
 - [x] _Generic
-- [ ] typeof (6.7.3.6)
+- [x] typeof (6.7.3.6)
 - [ ] [[]] attributes (6.7.13)
 - [ ] constexpr (6.7.2)
 - Skip: Decimal floating point, _BitInt(N), Annex K
