@@ -24,7 +24,7 @@ Program, before D and E, after D, after D and E, SDCC speed (bytes / T-states):
 - sieve, tak, stanford-perm: no change (253 B / 3.91M, 1055 B / 47.26M, 528 B / 448.5M). Their cost is in the calling convention and in locals in memory (families F, G, H).
 - stanford-towers: 2482 B / 502.89M, then 2481 B / 501.74M.
 
-Mean over the programs that are OK on both compilers (`bench/report.py` method, uc80 divided by SDCC 4.6.0): the size ratio falls from 0.992 to 0.988 (96 programs). The T-state ratio against SDCC speed mode falls from 0.629 to 0.623 (78 programs) and from 0.775 to 0.767 without `sort-*`. No program changed status. The largest changes are the snd kernels and `davidly-ttt`. 62 rows changed.
+Mean over the programs that are OK on both compilers (`bench/report.py` method, uc80 divided by SDCC 4.6.0), measured on the merge of `speed-de` and `bugfix-float`: the size ratio falls from 0.992 to 0.982 (96 programs). The T-state ratio against SDCC speed mode falls from 0.629 to 0.623 (78 programs) and from 0.775 to 0.766 without `sort-*`. No program that was OK changed status. The largest changes are the snd kernels and `davidly-ttt`. The `bugfix-float` changes (float-aware rewrites and the power-of-two multiply in the code generator) make 16 programs smaller and none bigger, and they change no T-state count of D and E. The row `empire-trefonas` went from HANG to WRONG (it failed before and still fails). The row `battlestar-size` went from BUILD-TIMEOUT to TOO-BIG.
 
 What the re-check of the claims in sections 1.2(b), 2.D and 2.E found:
 
@@ -44,7 +44,7 @@ Families A, B and C are in the code (branches `printf-puts` and `libc-split`, me
 - A: `_prt_float` is in `lib/lc/lc_prt_float.mac`. Only `%f`, `%e` and `%g` link the module.
 - B: `printf("text\n")` and `printf("%s\n", s)` become `puts`, and `printf("text")` becomes `cputs`. The rewrite needs an unused result and no other `printf`-family call. [compiler_options.md](compiler_options.md) has the rules.
 - C: libc has one module for each public function (176 modules in `libc.mac`). `bsearch`, `vprintf` and `vsprintf` are separate, and `rand` links no runtime multiply.
-- Result against SDCC 4.6.0 (96 programs that are OK on both): the mean size ratio fell from 1.53 to 0.99. uc80 is smaller on 52 programs and bigger on 44. The staged estimate in section 1.1 was 1.014, so the measured result is a little better than the estimate.
+- Result against SDCC 4.6.0 (96 programs that are OK on both): the mean size ratio fell from 1.53 to 0.99. uc80 is smaller on 52 programs and bigger on 44 (53 and 43 after D, E and the float fixes). The staged estimate in section 1.1 was 1.014, so the measured result is a little better than the estimate.
 - Snd kernels (image bytes): snd-cmdq 5866 to 3027, snd-ymreg 5267 to 2422, snd-seq 6658 to 3891, snd-fnum 5549 to 2782. All four are now smaller than SDCC (3926, 3685, 4873 and 3653).
 - T-states against SDCC 4.6.0 (speed mode) did not change: the mean is 0.63 (0.77 without `sort-*`). The families D to H are open. The speed gap on small integer loops is still there.
 - The programs `micro*` grew by 6 bytes (8601 to 8607) because the code generator now keeps the access to a volatile object (the `volatile-fix` branch).
