@@ -141,6 +141,11 @@ These limits are deliberate. The linked documents give the details.
 - **`scanf`.** A `FILE` keeps one pushed-back character. The float
   conversion collects 126 characters. The console gives CR for the Enter
   key and Ctrl-Z for the end of the input ([scanf](scanf.md)).
+- **`printf` of floats.** The `%f`, `%e` and `%g` printers use float
+  arithmetic. A float has 24 bits, so the last printed digit can differ by
+  one from the exact decimal value when the conversion has more than 6 digits.
+  The printers were not changed, except that they now work with the rounding
+  runtime (`tests/test_printf_float_digits.py`).
 - **Reentrancy.** The scanf engine, `strtod` and the math functions use
   static storage for their local variables. They are not reentrant and are
   not thread safe.
