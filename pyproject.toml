@@ -66,6 +66,7 @@ where = ["src"]
 uc80 = [
     "lib/**/*.mac",
     "lib/**/*.h",
+    "lib/csrc/*.c",
     "lib/*.lib",
     "lib/crt0.rel",
     "lib/crt0_rom.rel",

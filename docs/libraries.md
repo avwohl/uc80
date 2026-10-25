@@ -82,6 +82,8 @@ Rules for the split:
   `rt_divrem`, `rt_rem32` and `rt_rem64`. The code modules
   have the labels as EXTRN. A work area that only one function uses is in
   the module of that function (for example `__fdiv_rem` in `rt_fdiv`).
+- A data label of a runtime module starts with two underscores (`__fa1`).
+  The compiler embeds only the data labels with such names (`runtime.py`).
 - Each module that has data has its own `COMMON /name/` block. Two modules
   must not use the same block name, because the linker puts the blocks of one
   name at one address.
@@ -107,7 +109,7 @@ writes `runtime.mac` as all `rt/` modules in one file. `build_libs.py` puts a
 `CSEG` line before the banner of each module, so that the banner does not
 come after the data of the module before.
 
-Measured result (`bench/run.py -c uc80 -m size`, 109 programs, without
+Measured result of the split (`bench/run.py -c uc80 -m size`, 109 programs, without
 `battlestar-size`, `rogue36-size` and `empire-trefonas`): the status of each
 program is the same, no program grows, and 58 programs get smaller. The total
 image goes from 817,781 to 814,805 bytes. The geometric mean against SDCC
