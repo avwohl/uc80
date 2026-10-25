@@ -6037,7 +6037,6 @@ class CodeGenerator(Z80IntrinsicsMixin):
             plan.loc = [None] * len(plan.types)
             plan.sizes = [self._type_size(t) for t in plan.types]
             plan.spill = [False] * len(plan.types)
-            first_in_hl = False
             for i in (0, 1):
                 if i >= len(plan.types) or not self._regcc_param_ok(plan.types[i]):
                     continue

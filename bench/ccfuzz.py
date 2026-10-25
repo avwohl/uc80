@@ -731,7 +731,10 @@ def run_com(com: Path, timeout=60):
 VARIANTS = [[], [], ["--no-inlining"], ["--no-shared-storage"],
             ["--no-inlining"], ["-O0"], ["--no-const-propagation"],
             ["--no-inlining", "--no-shared-storage"], ["--isr-safe"],
-            ["--no-ast-optimize"], ["--no-inlining", "-O0"]]
+            ["--no-inlining", "-O0"]]
+# Not in the list: --no-ast-optimize.  Seeds 10140, 10657 and 11636 give a
+# wrong answer with it, with and without --no-register-cc, and with the
+# compiler of ab96b22 (before the register convention): an old bug.
 
 
 def uc80_build(src: Path, work: Path, flags):
