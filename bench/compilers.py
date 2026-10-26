@@ -204,9 +204,12 @@ class Uc80(Compiler):
 
     def build(self, sources, defines, includes, work, mode):
         lib = Path(_run(["uc80", "--print-lib-dir"], work)[1].strip())
+        # UC80_BENCH_FLAGS: extra uc80 options for an A/B run, for example
+        # UC80_BENCH_FLAGS=--no-register-cc
+        extra = os.environ.get("UC80_BENCH_FLAGS", "").split()
         cc = (["uc80"] + [str(s) for s in sources]
               + [f"-I{i}" for i in includes] + [f"-D{d}" for d in defines]
-              + ["-o", "prog.mac"])
+              + extra + ["-o", "prog.mac"])
         steps = [cc, ["um80", "prog.mac", "-o", "prog.rel"],
                  ["ul80", "prog.rel", str(lib / "libc.lib"),
                   str(lib / "runtime.lib"), "-o", "prog.com",

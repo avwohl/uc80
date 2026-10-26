@@ -34,8 +34,9 @@ class TestFunctionGeneration:
 
     def test_function_reading_a_parameter_keeps_the_frame(self):
         """A parameter is read through IX, so the prologue stays."""
-        code = gen("int g(void); int id(int a) { return a; } "
-                   "int main(void) { return id(g()) + id(g()); }")
+        code = generate(parse("int g(void); int id(int a) { return a; } "
+                              "int main(void) { return id(g()) + id(g()); }"),
+                        register_cc=False)
         body = code[code.index("_id:"):code.index("_main:")]
         for text in ("push\tIX", "ld\tIX,0", "add\tIX,SP",
                      "pop\tIX", "(IX+4)"):

@@ -9,6 +9,7 @@ import copy
 import dataclasses
 from dataclasses import dataclass, field
 from enum import Enum, auto
+import os
 import re
 import struct
 from typing import Callable, Iterator, Optional
@@ -23,6 +24,7 @@ from uc_core.volatility import VolatileInfo, declared_names
 from uc_core.volatility import children as _children
 from .volatile_fence import VOL_BEGIN, VOL_END
 from . import absaddr
+from . import regcc
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE)
@@ -1723,6 +1725,23 @@ class CallGraphAnalyzer:
             return self.type_config.int_size  # unresolved; estimate
         return 2
 
+    _CALLBACK_LIBS = frozenset({"qsort", "bsearch", "atexit", "signal",
+                                "onexit", "on_exit"})
+
+    def _passes_callback(self, callee: str, args) -> bool:
+        """True when a call to the external routine ``callee`` can make
+        that routine call a function of this program: it is a library
+        routine that takes a callback, or one argument names a function."""
+        if callee.lstrip("_") in self._CALLBACK_LIBS:
+            return True
+        for arg in args:
+            if (isinstance(arg, ast.UnaryOp) and arg.op == "&"):
+                arg = arg.operand
+            if (isinstance(arg, ast.Identifier)
+                    and arg.name.text in self.has_body):
+                return True
+        return False
+
     def _analyze_function_body(self, func) -> None:
         """Analyze a FunctionDef body for calls and address-taken functions."""
         if not func.body:
@@ -1826,7 +1845,17 @@ class CallGraphAnalyzer:
                 # Indirect call through expression — analyze it for
                 # nested calls and any &fn whose address is leaked.
                 self._analyze_expr(expr.func, calls, address_taken, indirect_sigs)
+                indirect_sigs.add(("indirect",))
             args = getattr(expr, "args", None) or []
+            if (isinstance(expr.func, ast.Identifier)
+                    and expr.func.name.text not in self.func_signatures):
+                # a pointer variable, a parameter or an undeclared name
+                indirect_sigs.add(("indirect",))
+            elif (isinstance(expr.func, ast.Identifier)
+                    and expr.func.name.text not in self.has_body
+                    and self._passes_callback(expr.func.name.text, args)):
+                # a library routine that may call back into the program
+                indirect_sigs.add(("callback",))
             for arg in args:
                 self._analyze_expr(arg, calls, address_taken, indirect_sigs)
 
@@ -1958,14 +1987,23 @@ class CallGraphAnalyzer:
             for func in public_funcs:
                 self.can_be_active_together[func].update(public_funcs)
 
-    def _get_reachable(self, func: str, visited: set[str]) -> set[str]:
-        """Get all functions reachable from func via calls."""
-        if func in visited:
-            return set()  # Cycle detected (recursive)
-        visited = visited | {func}
-        result = set(self.call_graph.get(func, set()))
-        for callee in list(result):
-            result.update(self._get_reachable(callee, visited))
+    def _get_reachable(self, func: str, visited: set[str] | None = None) -> set[str]:
+        """Get all functions reachable from func via calls (one edge or
+        more, so func is in the result when it can call itself).  A call
+        through a pointer, or into a library routine that takes a callback,
+        reaches every function whose address is taken."""
+        taken = self.address_taken & self.has_body
+        result: set[str] = set()
+        todo = [func]
+        while todo:
+            cur = todo.pop()
+            nxt = set(self.call_graph.get(cur, ()))
+            if self.indirect_call_sigs.get(cur):
+                nxt |= taken
+            for callee in nxt:
+                if callee not in result:
+                    result.add(callee)
+                    todo.append(callee)
         return result
 
     def is_recursive(self, func: str) -> bool:
@@ -3478,8 +3516,18 @@ class CodeGenerator(Z80IntrinsicsMixin):
                  public_names: "set[str] | None" = None,
                  isr_funcs: "dict[str, str] | None" = None,
                  isr_safe: bool = False,
-                 absolute: "dict[str, int] | None" = None):
+                 absolute: "dict[str, int] | None" = None,
+                 register_cc: bool = True,
+                 foreign_asm_names: "set[str] | None" = None):
         self.module_name = module_name
+        # Register calling convention (docs/calling_convention.md): on by
+        # default; off for separate compilation, whatever this says.
+        # foreign_asm_names: lower-case names that the hand-written
+        # assembly of the link mentions; a function with one of them keeps
+        # the stack convention.
+        self.register_cc = register_cc
+        self.foreign_asm_names = set(foreign_asm_names or ())
+        self._regcc: dict[str, regcc.RegPlan] = {}
         # Objects at a fixed address (SDCC __at, [[uc80::at]]): name ->
         # address.  They get an EQU, not storage.
         self.absolute = dict(absolute or {})
@@ -3506,6 +3554,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
         # side of a comma).  Set by gen_expr_discard; only an identity
         # match counts, so nested sub-expressions never see it.
         self._discard_expr = None
+        self._want_a = False
         self._dm = None          # _DivModFuse of the current block pair
         self._holders = None     # local ints that hold only bytes
         self._holder_cache = {}
@@ -4232,6 +4281,12 @@ class CodeGenerator(Z80IntrinsicsMixin):
         if self.absolute:
             self._emit_absolute_symbols(unit)
 
+        # Convention selection.  It has to run before the first call is
+        # generated (a forward call needs the callee's plan) and before the
+        # shared storage is sized (a register parameter is stored on entry,
+        # and that store needs a slot).
+        self._plan_register_cc(unit)
+
         # Shared storage allocation.  It runs here, rather than straight
         # after the call graph is built, because the region a function
         # needs includes a slot per aggregate-returning call it makes, and
@@ -4250,7 +4305,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 self._register_body_types(decl.body)
                 sret_total, _slots = self._plan_sret_slots(decl)
                 self.call_graph_analyzer.func_storage[nm] = (
-                    self._calc_locals_size(decl.body) + sret_total)
+                    self._calc_locals_size(decl.body) + sret_total
+                    + self._regcc_spill_size(nm, True))
                 self._type_scope_restore(type_scope)
             self.call_graph_analyzer.compute_active_together()
             self.call_graph_analyzer.allocate_shared_storage()
@@ -5927,6 +5983,345 @@ class CodeGenerator(Z80IntrinsicsMixin):
         self._sret_plans[name] = (total, slots)
         return total, slots
 
+    # ------------------------------------------------------------------
+    # Register calling convention (docs/calling_convention.md)
+    # ------------------------------------------------------------------
+
+    def _regcc_param_ok(self, t) -> bool:
+        """A parameter type that a register can carry: an integer, an enum
+        or a pointer of one or two bytes."""
+        t = _to_legacy(t)
+        if not isinstance(t, (lt.BasicType, lt.EnumType, lt.PointerType)):
+            return False
+        if isinstance(t, lt.BasicType) and t.name == "void":
+            return False
+        if (self._is_float_type(t) or self._is_long_long_type(t)
+                or self._is_complex_type(t)):
+            return False
+        return self._type_size(t) in (1, 2)
+
+    def _regcc_params(self, item) -> list:
+        """The parameters of function definition ``item``; ``f(void)`` has
+        none."""
+        fparams = function_params(item)
+        if (len(fparams) == 1 and isinstance(fparams[0], (
+                ast.ParamDecl, ast.ParamDeclAbstract,
+                ast.ParamDeclTypeOnly))):
+            try:
+                _, p0 = resolve_type_from_decl(
+                    fparams[0].decl_specs,
+                    getattr(fparams[0], "declarator", None))
+                p0 = _to_legacy(p0)
+                if (isinstance(p0, lt.BasicType) and p0.name == "void"
+                        and (not isinstance(fparams[0], ast.ParamDecl)
+                             or declarator_ident(fparams[0].declarator)
+                             is None)):
+                    return []
+            except Exception:
+                pass
+        return list(fparams)
+
+    @staticmethod
+    def _regcc_ident_name(node) -> str:
+        n = node.name
+        return n.text if hasattr(n, "text") else str(n)
+
+    def _regcc_a_sites(self, unit, names) -> dict:
+        """For each function in ``names``: (calls whose value is used as a
+        byte, calls whose value is used as an int).  A guess from the
+        syntax only: a call that is a whole statement, a condition, a
+        comparison, a cast to a char type, or the value stored to a char
+        object or returned from a char function counts as a byte use.  A
+        char result in A saves the widening in the callee and costs it in
+        every call that needs an int."""
+        counts = {n: [0, 0] for n in names}
+        gchars: dict[str, bool] = {}
+
+        def is_char(decl_specs, declarator) -> bool:
+            try:
+                _, t = resolve_type_from_decl(decl_specs, declarator)
+                return self._char_type_signed(_to_legacy(t)) is not None
+            except Exception:
+                return False
+
+        def collect(node, into, seen):
+            if not dataclasses.is_dataclass(node) or isinstance(node, type):
+                return
+            if id(node) in seen:
+                return
+            seen.add(id(node))
+            if isinstance(node, ast.Declaration):
+                for d in node.declarators or []:
+                    dd = getattr(d, "declarator", d)
+                    nm = declarator_ident(dd)
+                    if nm:
+                        into[nm] = is_char(node.decl_specs, dd)
+            elif isinstance(node, ast.ParamDecl):
+                nm = declarator_ident(node.declarator)
+                if nm:
+                    into[nm] = is_char(node.decl_specs, node.declarator)
+            for c in _children(node, skip_params=False):
+                collect(c, into, seen)
+
+        for item in unit.items:
+            if isinstance(item, ast.Declaration):
+                collect(item, gchars, set())
+        cmp_ops = {"==", "!=", "<", ">", "<=", ">="}
+
+        def visit(node, a_ctx, locs, fchar):
+            if node is None or isinstance(node, (str, int, float, bytes)):
+                return
+            if isinstance(node, (list, tuple)):
+                for x in node:
+                    visit(x, False, locs, fchar)
+                return
+            if not dataclasses.is_dataclass(node) or isinstance(node, type):
+                return
+
+            def lval_char(e):
+                if isinstance(e, ast.Identifier):
+                    nm = self._regcc_ident_name(e)
+                    return locs.get(nm, gchars.get(nm, False))
+                return False
+            if isinstance(node, (ast.Call, ast.CallNoArgs)):
+                fn = node.func
+                if isinstance(fn, ast.Identifier) and self._regcc_ident_name(fn) in counts:
+                    counts[self._regcc_ident_name(fn)][0 if a_ctx else 1] += 1
+                for a in getattr(node, "args", None) or []:
+                    visit(a, False, locs, fchar)
+                if not isinstance(fn, ast.Identifier):
+                    visit(fn, False, locs, fchar)
+                return
+            if isinstance(node, ast.ExpressionStmt):
+                visit(node.expr, True, locs, fchar)
+            elif isinstance(node, (ast.IfStmt, ast.WhileStmt, ast.DoWhileStmt)):
+                visit(node.condition, True, locs, fchar)
+                for sub in (getattr(node, "then_branch", None),
+                            getattr(node, "else_branch", None),
+                            getattr(node, "body", None)):
+                    visit(sub, False, locs, fchar)
+            elif isinstance(node, ast.ForStmt):
+                visit(node.init, True, locs, fchar)
+                visit(node.condition, True, locs, fchar)
+                visit(node.update, True, locs, fchar)
+                visit(node.body, False, locs, fchar)
+            elif isinstance(node, ast.ReturnStmtValue):
+                visit(node.value, fchar, locs, fchar)
+            elif isinstance(node, ast.Cast):
+                try:
+                    c = self._char_type_signed(_to_legacy(node.target_type)) \
+                        is not None
+                except Exception:
+                    c = False
+                visit(node.expr, c, locs, fchar)
+            elif isinstance(node, ast.UnaryOp):
+                op = node.op.text if hasattr(node.op, "text") else node.op
+                visit(node.operand, op == "!", locs, fchar)
+            elif isinstance(node, ast.BinaryOp):
+                op = node.op.text if hasattr(node.op, "text") else node.op
+                if op in ("&&", "||") or op in cmp_ops:
+                    visit(node.left, True, locs, fchar)
+                    visit(node.right, True, locs, fchar)
+                elif op == ",":
+                    visit(node.left, True, locs, fchar)
+                    visit(node.right, a_ctx, locs, fchar)
+                elif op == "=":
+                    visit(node.left, False, locs, fchar)
+                    visit(node.right, lval_char(node.left), locs, fchar)
+                else:
+                    visit(node.left, False, locs, fchar)
+                    visit(node.right, False, locs, fchar)
+            elif isinstance(node, ast.TernaryOp):
+                visit(node.condition, True, locs, fchar)
+                visit(node.true_expr, a_ctx, locs, fchar)
+                visit(node.false_expr, a_ctx, locs, fchar)
+            elif isinstance(node, ast.InitDeclaratorWithInit):
+                ch = locs.get(declarator_ident(node.declarator), False)
+                visit(node.init, ch, locs, fchar)
+            else:
+                for c in _children(node):
+                    visit(c, False, locs, fchar)
+
+        for item in unit.items:
+            if not isinstance(item, ast.FunctionDef) or item.body is None:
+                continue
+            locs: dict[str, bool] = {}
+            collect(item, locs, set())
+            try:
+                _, ft = resolve_type_from_decl(item.decl_specs, item.declarator)
+                fchar = self._char_type_signed(_to_legacy(ft.return_type)) \
+                    is not None
+            except Exception:
+                fchar = False
+            visit(item.body, False, locs, fchar)
+        return {n: tuple(v) for n, v in counts.items()}
+
+    def _plan_register_cc(self, unit) -> None:
+        """Decide, for every function, whether its first two scalar
+        parameters travel in registers.  Runs before any call is generated.
+
+        A function qualifies when the whole program is in view and nothing
+        outside the C code of this program can call it: it has a body, it is
+        named only as the callee of a direct call, no assembly (inline, file
+        scope, an appended .mac file or the library) mentions it, no
+        pragma or option makes it an entry point, it is not an interrupt
+        function, not variadic, not main, and returns no aggregate.  Every
+        call has as many arguments as the definition has parameters."""
+        self._regcc = {}
+        if (not self.register_cc or not self.whole_program
+                or self.type_config.int_size != 2):
+            return
+        scan = regcc.scan_program(unit, function_name)
+        libnames = regcc.lib_asm_names()
+        asm_names = scan.asm_tokens | self.foreign_asm_names
+        isr_reach: set[str] = set()
+        if self.isr_funcs and self.call_graph_analyzer is not None:
+            isr_reach = self.call_graph_analyzer.isr_reachable()
+        elif self.isr_funcs:
+            return          # cannot tell what an interrupt reaches
+        for item in unit.items:
+            if not isinstance(item, ast.FunctionDef) or item.body is None:
+                continue
+            name = function_name(item)
+            if name is None or name == "main":
+                continue
+            if (name in self.keep_names or name in self.public_names
+                    or name in self.isr_funcs or name in self.absolute
+                    or name in isr_reach or name in scan.value_refs
+                    or name in scan.asm_funcs):
+                continue
+            low = name.lower()
+            if (low in asm_names or f"_{low}" in asm_names
+                    or low in libnames or f"_{low}" in libnames):
+                continue
+            if scan.call_args.get(name, set()) - {len(self._regcc_params(item))}:
+                continue
+            try:
+                _, fn_type = resolve_type_from_decl(item.decl_specs,
+                                                    item.declarator)
+                if fn_type.kind != "function" or fn_type.is_variadic:
+                    continue
+                if self._struct_return_size(fn_type.return_type):
+                    continue
+            except Exception:
+                continue
+            plan = regcc.RegPlan()
+            ok = True
+            ret_sg = self._char_type_signed(_to_legacy(fn_type.return_type))
+            if ret_sg is not None:
+                plan.ret_a = True
+                plan.ret_signed = ret_sg
+            fparams = self._regcc_params(item)
+            for p in fparams:
+                if not isinstance(p, (ast.ParamDecl, ast.ParamDeclAbstract,
+                                      ast.ParamDeclTypeOnly)):
+                    continue
+                try:
+                    _, p_type = resolve_type_from_decl(
+                        p.decl_specs, getattr(p, "declarator", None))
+                except Exception:
+                    ok = False
+                    break
+                p_type = _to_legacy(p_type)
+                if isinstance(p_type, lt.ArrayType):
+                    p_type = lt.PointerType(base_type=p_type.base_type)
+                plan.types.append(p_type)
+                plan.names.append(declarator_ident(p.declarator)
+                                  if isinstance(p, ast.ParamDecl) else None)
+            if not ok or (not plan.types and not plan.ret_a):
+                continue
+            if len(plan.types) != len(fparams):
+                continue
+            used = scan.body_names.get(name, set())
+            plan.loc = [None] * len(plan.types)
+            plan.sizes = [self._type_size(t) for t in plan.types]
+            plan.spill = [False] * len(plan.types)
+            for i in (0, 1):
+                if i >= len(plan.types) or not self._regcc_param_ok(plan.types[i]):
+                    continue
+                size = plan.sizes[i]
+                if i == 0:
+                    plan.loc[i] = "A" if size == 1 else "HL"
+                else:
+                    plan.loc[i] = "E" if size == 1 else "DE"
+                plan.spill[i] = plan.names[i] is not None and plan.names[i] in used
+            if not plan.reg_params() and not plan.ret_a:
+                continue
+            self._regcc[name] = plan
+        # A char result in A pays only when the calls that use it as a byte
+        # are at least as many as the calls that need an int.
+        ra = [n for n, p in self._regcc.items() if p.ret_a]
+        if ra:
+            try:
+                sites = self._regcc_a_sites(unit, ra)
+            except Exception:
+                sites = {n: (0, 1) for n in ra}
+            for n in ra:
+                byte_uses, int_uses = sites.get(n, (0, 0))
+                if int_uses > byte_uses:
+                    self._regcc[n].ret_a = False
+                    if not self._regcc[n].reg_params():
+                        del self._regcc[n]
+
+    def _regcc_spill_size(self, name, shared: bool) -> int:
+        """Bytes of automatic storage for the register parameters of
+        function ``name`` that the callee stores on entry.  In ??AUTO a
+        parameter takes its own size; in the stack frame it takes a word,
+        because the prologue pushes it (push AF, push HL or push DE)."""
+        plan = self._regcc.get(name)
+        if plan is None:
+            return 0
+        regs = [i for i in plan.reg_params() if plan.spill[i]]
+        if shared:
+            # a byte in E is stored with D, as a word (ld (nn),DE)
+            return sum(2 if plan.loc[i] == "E" else plan.sizes[i] for i in regs)
+        return 2 * len(regs)
+
+    def _regcc_ret_a(self, expr) -> bool:
+        """True when ``expr`` is a call whose callee returns a char in A."""
+        if not isinstance(expr, (ast.Call, ast.CallNoArgs)):
+            return False
+        plan = self._regcc_callee_plan(expr)
+        return plan is not None and plan.ret_a
+
+    def _regcc_callee_plan(self, expr):
+        """The plan of the function that call ``expr`` names, or None when
+        the call uses the stack convention (an indirect call, a local that
+        shadows the name, a function of the library)."""
+        fn = expr.func
+        if not isinstance(fn, ast.Identifier) or not self._regcc:
+            return None
+        nm = fn.name.text
+        plan = self._regcc.get(nm)
+        if plan is None:
+            return None
+        sym = self.ctx.lookup(nm)
+        if (sym is None or not sym.is_global
+                or nm not in self.ctx.function_names
+                or not is_function_type(sym.sym_type)):
+            return None
+        return plan
+
+    def _emit_regcc_spill(self, sym, reg) -> None:
+        """Store register parameter ``reg`` into its slot ``sym``."""
+        e = self.ctx.emit_instr
+        if sym.uses_shared_storage:
+            at = f"??AUTO+{sym.shared_offset}"
+            if reg == "A":
+                e("ld", f"({at}),A")
+            else:
+                # E is stored with D: A may hold parameter 0
+                e("ld", f"({at}),{'DE' if reg == 'E' else reg}")
+            return
+        lo = ix_off(sym.offset)
+        if reg in ("A", "E"):
+            e("ld", f"({lo}),{reg}")
+        else:
+            hi = ix_off(sym.offset + 1)
+            lo_r, hi_r = ("L", "H") if reg == "HL" else ("E", "D")
+            e("ld", f"({lo}),{lo_r}")
+            e("ld", f"({hi}),{hi_r}")
+
     def gen_function(self, func) -> None:
         """Generate code for a function definition (auto-AST FunctionDef)."""
         name = function_name(func)
@@ -5995,7 +6390,9 @@ class CodeGenerator(Z80IntrinsicsMixin):
         # function shares automatic storage.  Either way they live as long
         # as the activation, so the result stays readable for as long as
         # the expression that produced it is being evaluated.
-        locals_size = self._calc_locals_size(func.body)
+        plan = self._regcc.get(name)
+        locals_size = (self._calc_locals_size(func.body)
+                       + self._regcc_spill_size(name, use_shared_storage))
         sret_total, sret_slots = self._plan_sret_slots(func)
         self._sret_slot_addrs = {}
         if use_shared_storage:
@@ -6010,10 +6407,20 @@ class CodeGenerator(Z80IntrinsicsMixin):
                                                   size)
 
         frame_size = 0
+        pushed = 0
         if not use_shared_storage:
             frame_size = locals_size + sret_total
-            if frame_size > 0:
-                self.ctx.emit_instr("ld", f"HL,-{frame_size}")
+            # The register parameters that the body names go to the top of
+            # the frame by push, before the reservation below destroys HL.
+            if plan is not None:
+                for i in plan.reg_params():
+                    if plan.spill[i]:
+                        self.ctx.emit_instr(
+                            "push", {"A": "AF", "HL": "HL", "E": "DE",
+                                     "DE": "DE"}[plan.loc[i]])
+                        pushed += 2
+            if frame_size - pushed > 0:
+                self.ctx.emit_instr("ld", f"HL,-{frame_size - pushed}")
                 self.ctx.emit_instr("add", "HL,SP")
                 self.ctx.emit_instr("ld", "SP,HL")
 
@@ -6021,6 +6428,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
         # A hidden destination pointer for an aggregate return occupies
         # IX+4, so the declared parameters start two bytes further in.
         param_offset = 6 if self._current_sret_size else 4
+        spills = []
+        p_index = -1
         for p in function_params(func):
             # A parameter with no name -- ``int f(int, int x)``, or an
             # abstract declarator like ``char *`` -- still occupies its
@@ -6047,6 +6456,32 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if isinstance(p_type, lt.ArrayType):
                 p_type = lt.PointerType(base_type=p_type.base_type)
             size = self._type_size(p_type)
+            p_index += 1
+            if (plan is not None and p_index < len(plan.loc)
+                    and plan.loc[p_index] is not None):
+                # Passed in a register: no stack word.  A parameter the
+                # body names is stored in a slot of its own on entry.
+                if plan.spill[p_index]:
+                    if use_shared_storage:
+                        sym_p = Symbol(
+                            name=p_name, sym_type=p_type, is_param=True,
+                            uses_shared_storage=True,
+                            shared_offset=(self._shared_base_offset
+                                           + self._shared_local_offset))
+                        self._shared_local_offset += (
+                            2 if plan.loc[p_index] == "E" else size)
+                    else:
+                        # The prologue pushed the word: A is its high
+                        # byte (push AF), the others lie as pushed.
+                        self.ctx.local_offset -= 2
+                        off = self.ctx.local_offset
+                        if plan.loc[p_index] == "A":
+                            off += 1
+                        sym_p = Symbol(name=p_name, sym_type=p_type,
+                                       is_param=True, offset=off)
+                    self.ctx.locals[p_name] = sym_p
+                    spills.append((sym_p, plan.loc[p_index]))
+                continue
             if p_name is not None:
                 self.ctx.locals[p_name] = Symbol(
                     name=p_name,
@@ -6055,6 +6490,25 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     is_param=True,
                 )
             param_offset += (size + 1) & ~1
+        fwd_start = len(self.ctx.lines)
+        fwd_slots, fwd_init = {}, {}
+        for sym_p, reg in spills:
+            if getattr(sym_p.sym_type, "is_volatile", False):
+                continue
+            kind = "a" if sym_p.uses_shared_storage else "x"
+            base = sym_p.shared_offset if kind == "a" else sym_p.offset
+            nbytes = 2 if (reg in ("HL", "DE")
+                           or (reg == "E" and kind == "a")) else 1
+            regs = {"A": ("a",), "E": ("e", "d"), "HL": ("l", "h"),
+                    "DE": ("e", "d")}[reg]
+            for j in range(nbytes):
+                fwd_slots[(kind, base + j)] = sym_p.name
+                # the reservation of the frame destroyed HL
+                if not (kind == "x" and reg == "HL" and frame_size - pushed > 0):
+                    fwd_init[(kind, base + j)] = regs[j]
+        if use_shared_storage:
+            for sym_p, reg in spills:
+                self._emit_regcc_spill(sym_p, reg)
 
         # Must come after the prologue and before anything main() can print.
         if name == "main" and not self.crlf_console:
@@ -6067,6 +6521,17 @@ class CodeGenerator(Z80IntrinsicsMixin):
             self.gen_compound_stmt(func.body)
         finally:
             self._holders = None
+        if fwd_slots:
+            void_ret = (isinstance(return_type, lt.BasicType)
+                        and return_type.name == "void") or (
+                _is_resolved_type(return_type) and return_type.kind == "basic"
+                and return_type.name == "void")
+            regcc.forward_slots(self.ctx.lines, fwd_start, fwd_slots, fwd_init,
+                                end_dead=void_ret)
+            if use_shared_storage:
+                regcc.push_pop_slots(
+                    self.ctx.lines, fwd_start,
+                    [k[1] for k in fwd_slots if k[0] == "a"])
 
         # The prologue reserved locals_size before a line of the body was
         # generated; the body then handed out the slots.  If it wanted more
@@ -6082,6 +6547,10 @@ class CodeGenerator(Z80IntrinsicsMixin):
             raise CodegenError(
                 f"internal error: {name} reserved {locals_size} bytes of "
                 f"automatic storage but its body used {handed_out}")
+
+        if (isr_kind is None and name != "main" and self.register_cc
+                and frame_size == 0 and not self._stmt_expr_seen):
+            self._tail_call_returns(name, frame_start)
 
         epilogue_label = f"@{name}_ret"
         if isr_kind is not None:
@@ -6114,6 +6583,39 @@ class CodeGenerator(Z80IntrinsicsMixin):
         self._current_sret_size = None
         self._sret_slot_addrs = {}
         self._type_scope_restore(type_scope)
+
+    _TAIL_CALL = re.compile(r"^\tcall\t(_[A-Za-z0-9][A-Za-z0-9_]*)\s*(;.*)?$")
+    _NO_TAIL_NAME = re.compile(r"setjmp", re.IGNORECASE)
+
+    def _tail_call_returns(self, name: str, frame_start: int) -> None:
+        """``call X`` then ``jp @name_ret`` (a ``return g(...);``) in a
+        function without stack locals: leave the frame and ``jp X``.  The
+        callee returns to the caller of this function.  Nothing stands
+        between the call and the return (no argument cleanup, no widening),
+        and no local of the frame can be in use, because the function has
+        none on the stack."""
+        lines = self.ctx.lines
+        ret = f"\tjp\t@{name}_ret"
+        frame_used = not self._frame_is_unused(frame_start, 0)
+        out = []
+        i = frame_start + 3
+        n = len(lines)
+        changed = False
+        new = lines[:i]
+        while i < n:
+            m = self._TAIL_CALL.match(lines[i]) if i + 1 < n else None
+            if (m and lines[i + 1].split(";", 1)[0].rstrip() == ret
+                    and not self._NO_TAIL_NAME.search(m.group(1))):
+                if frame_used:
+                    new.append("\tpop\tIX")
+                new.append(f"\tjp\t{m.group(1)}")
+                i += 2
+                changed = True
+                continue
+            new.append(lines[i])
+            i += 1
+        if changed:
+            lines[:] = new
 
     def _emit_isr_prologue(self, name: str, kind: str) -> None:
         """Entry of an interrupt function: EI first for "int" (SDCC
@@ -8364,6 +8866,11 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     "inline assembly and cannot appear in an asm template",
                     node)
 
+    def _ret_in_a(self) -> bool:
+        """The function being generated returns its char result in A."""
+        plan = self._regcc.get(self.ctx.current_function)
+        return plan is not None and plan.ret_a
+
     def gen_return(self, stmt) -> None:
         """Generate code for `return;` (ReturnStmt) or `return expr;`
         (ReturnStmtValue) — auto-AST splits the two."""
@@ -8419,12 +8926,18 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 self._emit_load_sret_dest()
             elif self._is_long_long_type(ret_type):
                 self._gen_64bit_operand(value, to_tmp=False)
+            elif (self._ret_in_a()
+                  and self._int_scalar_expr(value)
+                  and not self._is_long_expr(value)):
+                # A char result goes back in A (register convention).
+                self._gen_expr_a(value)
             elif (self._char_type_signed(_to_legacy(ret_type)) is not None
                   and self._a_profitable(value)):
                 # A char result: only the low byte of the value matters.
                 self._gen_expr_a(value)
-                self._emit_a_to_hl(
-                    self._char_type_signed(_to_legacy(ret_type)))
+                if not self._ret_in_a():
+                    self._emit_a_to_hl(
+                        self._char_type_signed(_to_legacy(ret_type)))
             else:
                 return_is_long = self._is_long_type(ret_type)
                 return_is_float = self._is_float_type(ret_type)
@@ -8441,7 +8954,9 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     self._extend_hl_to_dehl(is_signed)
                 else:
                     ret_size = self._type_size(ret_type) if ret_type else 2
-                    if ret_size == 1:
+                    if ret_size == 1 and self._ret_in_a():
+                        self.ctx.emit_instr("ld", "A,L")
+                    elif ret_size == 1:
                         is_signed = self._is_signed_type(ret_type)
                         skip = False
                         if isinstance(value, ast.IntLiteral):
@@ -11822,8 +12337,157 @@ class CodeGenerator(Z80IntrinsicsMixin):
         self.ctx.emit_instr("ld", "L,A")
         return True
 
+    # -- register arguments ------------------------------------------------
+
+    _REGCC_REGS = {"A": {"a"}, "HL": {"h", "l"}, "E": {"e"}, "DE": {"d", "e"}}
+
+    def _gen_small_arg_hl(self, arg, ptype) -> None:
+        """Evaluate ``arg`` converted to the one- or two-byte parameter
+        type ``ptype``; the value (a byte in L) is in HL."""
+        if self._is_float_expr(arg):
+            if isinstance(arg, ast.FloatLiteral):
+                self.ctx.emit_instr("ld", f"HL,{int(float_value(arg)) & 0xFFFF}")
+            else:
+                self.gen_expr(arg, force_long=True)
+                self._call_runtime("__ftoi")
+        elif self._is_long_long_expr(arg):
+            ll_val = self._try_get_ll_literal_value(arg)
+            if ll_val is not None:
+                self.ctx.emit_instr("ld", f"HL,{ll_val & 0xFFFF}")
+            else:
+                self._gen_64bit_operand(arg, to_tmp=False)
+                self.ctx.emit_instr("ld", "HL,(__acc64)")
+                self.ctx.runtime_used.add("__acc64")
+        elif self._is_long_expr(arg):
+            self.gen_expr(arg, force_long=True)
+        else:
+            self.gen_expr(arg)
+        if self._is_bool_type(ptype):
+            self._emit_bool_normalize()
+
+    def _regcc_direct(self, arg, ptype, reg):
+        """Instructions that load ``arg`` into ``reg`` without using HL or
+        a register of the other argument: a constant, or a variable of the
+        parameter's own size.  Returns (lines, clobbered registers) or
+        None.  The lines are (mnemonic, operands) pairs."""
+        size = self._type_size(ptype)
+        e_reg = reg
+        if self._int_scalar_expr(arg) and not self._is_long_expr(arg):
+            k = self._const_int_operand(arg)
+            if k is not None:
+                if self._is_bool_type(ptype):
+                    k = 1 if k else 0
+                if size == 1:
+                    return [("ld", f"{e_reg},{k & 0xFF}")], set(self._REGCC_REGS[reg])
+                return [("ld", f"{e_reg},{k & 0xFFFF}")], set(self._REGCC_REGS[reg])
+        if not isinstance(arg, ast.Identifier) or self._is_bool_type(ptype):
+            return None
+        sym = self.ctx.lookup(arg.name.text)
+        if sym is None:
+            return None
+        t = _to_legacy(sym.sym_type)
+        if (not isinstance(t, (lt.BasicType, lt.EnumType, lt.PointerType))
+                or self._is_float_type(t) or self._is_long_long_type(t)
+                or self._is_bool_type(t) or self._type_size(t) != size
+                or arg.name.text in self.ctx.function_names):
+            return None
+        regs = set(self._REGCC_REGS[reg])
+        if sym.is_global or sym.is_static:
+            at = sym.label()
+        elif sym.uses_shared_storage:
+            at = f"??AUTO+{sym.shared_offset}"
+        else:
+            at = None
+        if at is not None:
+            if size == 2:
+                return [("ld", f"{reg},({at})")], regs
+            if reg == "A":
+                return [("ld", f"A,({at})")], regs
+            return [("ld", f"A,({at})"), ("ld", f"{reg},A")], regs | {"a"}
+        if not self._ix_in_range(sym.offset, size):
+            return None
+        lo = ix_off(sym.offset)
+        if size == 1:
+            return [("ld", f"{reg},({lo})")], regs
+        hi = ix_off(sym.offset + 1)
+        lo_r, hi_r = ("L", "H") if reg == "HL" else ("E", "D")
+        return [("ld", f"{lo_r},({lo})"), ("ld", f"{hi_r},({hi})")], regs
+
+    def _emit_direct(self, d) -> None:
+        for mn, ops in d[0]:
+            self.ctx.emit_instr(mn, ops)
+
+    def _gen_reg_arg(self, arg, ptype, reg) -> None:
+        """Evaluate ``arg`` into ``reg`` (A, HL, E or DE), converted to
+        ``ptype``.  May use any register."""
+        d = self._regcc_direct(arg, ptype, reg)
+        if d is not None:
+            self._emit_direct(d)
+            return
+        byte = reg in ("A", "E")
+        if byte and not self._is_bool_type(ptype):
+            x = self._peel_int_casts(arg)
+            if (self._int_scalar_expr(arg) and not self._is_long_expr(arg)
+                    and self._type_size(_to_legacy(self._get_expr_type(arg))) <= 2
+                    and self._a_profitable(x)):
+                self._gen_expr_a(x)
+                if reg == "E":
+                    self.ctx.emit_instr("ld", "E,A")
+                return
+        self._gen_small_arg_hl(arg, ptype)
+        if reg == "A":
+            self.ctx.emit_instr("ld", "A,L")
+        elif reg == "E":
+            self.ctx.emit_instr("ld", "E,L")
+        elif reg == "DE":
+            self.ctx.emit_instr("ex", "DE,HL")
+
+    def _gen_reg_args(self, plan, args) -> None:
+        """Load the register arguments of a call.  Parameter 0 goes to A or
+        HL, parameter 1 to E or DE.  The code of one argument must not
+        destroy the other's register: a constant or a plain variable loads
+        straight into its register after the other argument; otherwise the
+        second register is saved on the stack around the first argument's
+        code unless that code is straight-line and leaves the register
+        alone."""
+        regs = plan.reg_params()
+        if not regs:
+            return
+        if len(regs) == 1:
+            i = regs[0]
+            self._gen_reg_arg(args[i], plan.types[i], plan.loc[i])
+            return
+        a0, a1 = args[0], args[1]
+        t0, t1 = plan.types[0], plan.types[1]
+        r0, r1 = plan.loc[0], plan.loc[1]
+        d1 = self._regcc_direct(a1, t1, r1)
+        if d1 is not None and not (d1[1] & self._REGCC_REGS[r0]):
+            self._gen_reg_arg(a0, t0, r0)
+            self._emit_direct(d1)
+            return
+        d0 = self._regcc_direct(a0, t0, r0)
+        if d0 is not None and not (d0[1] & self._REGCC_REGS[r1]):
+            self._gen_reg_arg(a1, t1, r1)
+            self._emit_direct(d0)
+            return
+        self._gen_reg_arg(a1, t1, r1)
+        mark = len(self.ctx.lines)
+        self._gen_reg_arg(a0, t0, r0)
+        eff = regcc.run_effects(self.ctx.lines[mark:])
+        if eff is not None and not (eff[0] & self._REGCC_REGS[r1]):
+            return
+        self.ctx.lines.insert(mark, "\tpush\tDE")
+        self.ctx.emit_instr("pop", "DE")
+
     def gen_call(self, expr: ast.Call) -> None:
-        """Generate code for function call."""
+        """Generate code for function call.  The result is in HL (DEHL);
+        a char result of a register-convention function is left in A when
+        the caller asked for that (``_want_a``)."""
+        want_a = self._want_a or expr is self._discard_expr
+        self._want_a = False
+        self._gen_call(expr, want_a)
+
+    def _gen_call(self, expr: ast.Call, want_a: bool) -> None:
         # Handle GCC builtins
         if isinstance(expr.func, ast.Identifier):
             if expr.func.name.text in Z80_BUILTINS:
@@ -12182,11 +12846,25 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if isinstance(ft, lt.FunctionType):
                 param_types = ft.param_types or []
 
+        # The register convention (docs/calling_convention.md): the callee
+        # takes its first two scalar parameters in registers.  Those
+        # arguments are not pushed; they are loaded after the pushes.
+        reg_plan = self._regcc_callee_plan(expr)
+        if reg_plan is not None:
+            if len(expr.args) != len(reg_plan.types):
+                raise CodegenError(
+                    f"internal error: call of '{expr.func.name.text}' has "
+                    f"{len(expr.args)} argument(s), the definition has "
+                    f"{len(reg_plan.types)} parameter(s)")
+            param_types = reg_plan.types
+
         # Push arguments right-to-left, tracking total stack size
         stack_size = 0
         num_args = len(expr.args)
         for i, arg in enumerate(reversed(expr.args)):
             arg_idx = num_args - 1 - i  # Index in forward order
+            if reg_plan is not None and reg_plan.loc[arg_idx] is not None:
+                continue
             param_type = param_types[arg_idx] if arg_idx < len(param_types) else None
 
             # Check if we need to convert float to int
@@ -12400,6 +13078,9 @@ class CodeGenerator(Z80IntrinsicsMixin):
                             self.ctx.emit_instr("push", "HL")
                             stack_size += 2
 
+        if reg_plan is not None:
+            self._gen_reg_args(reg_plan, expr.args)
+
         # An aggregate wider than HL comes back through a destination the
         # caller supplies.  Push it last so it lands at IX+4, ahead of the
         # declared parameters.
@@ -12518,6 +13199,10 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 self.ctx.emit_instr("add", "HL,SP")
                 self.ctx.emit_instr("ld", "SP,HL")
                 self.ctx.emit_instr("ex", "DE,HL")  # Restore return value
+
+        if reg_plan is not None and reg_plan.ret_a and not want_a:
+            # the callee returns its char in A: widen it to an int in HL
+            self._emit_a_to_hl(reg_plan.ret_signed)
 
         # For 64-bit return, load low 32 bits from __acc64 into DEHL
         if return_is_64bit:
@@ -15657,6 +16342,9 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # The char at the saved address of a compound assignment.
             cs = self._char_type_signed(expr.ctype)
             return frozenset() if cs is None else frozenset("s" if cs else "u")
+        if self._regcc_ret_a(expr):
+            return frozenset(
+                "s" if self._regcc_callee_plan(expr).ret_signed else "u")
         fast = self._bf_fast_pos(expr)
         if fast is not None:
             bf = fast[0]
@@ -15946,6 +16634,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             return False
         x = self._peel_int_casts(expr)
         return (self._const_int_operand(x) is not None
+                or self._regcc_ret_a(x)
                 or self._z80_in_call(x)
                 or self._a_simple_sym(x) is not None
                 or self._a_char_load(x)
@@ -16031,6 +16720,10 @@ class CodeGenerator(Z80IntrinsicsMixin):
             return
         if self._z80_in_call(expr):
             self._gen_z80_in(expr, to_hl=False)
+            return
+        if self._regcc_ret_a(expr):
+            self._want_a = True
+            self.gen_call(expr)
             return
         if not self._a_structural(expr):
             self.gen_expr(expr)
@@ -21147,9 +21840,10 @@ def generate(unit: ast.TranslationUnit, module_name: str = "main",
              enable_const_propagation: bool = True,
              whole_program: bool = True,
              embed_runtime: bool = False,
-             crlf_console: bool = True) -> str:
+             crlf_console: bool = True,
+             register_cc: bool = True) -> str:
     """Generate Z80 assembly for a translation unit."""
     gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                        enable_inlining, enable_const_propagation, whole_program, embed_runtime,
-                       crlf_console=crlf_console)
+                       crlf_console=crlf_console, register_cc=register_cc)
     return drop_unreferenced_externs(gen.generate(unit))

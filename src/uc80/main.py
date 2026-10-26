@@ -25,6 +25,7 @@ from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
 from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
                       is_asm_begin, is_asm_end)
 from . import volatile_fence
+from . import regcc
 from . import sdcc_compat
 from . import sdas
 from . import isr_check
@@ -548,6 +549,11 @@ def main() -> int:
         help="Assume other C files may be linked (disables some optimizations on PUBLIC functions)"
     )
     parser.add_argument(
+        "--no-register-cc",
+        action="store_true",
+        help="Pass every argument on the stack (docs/calling_convention.md)"
+    )
+    parser.add_argument(
         "--no-embed-runtime",
         action="store_true",
         help="Don't embed runtime library (use EXTRN references instead)"
@@ -914,7 +920,14 @@ def main() -> int:
                            public_names=roots.public,
                            isr_funcs=roots.isrs,
                            isr_safe=args.isr_safe,
-                           absolute=sdcc_found.absolute)
+                           absolute=sdcc_found.absolute,
+                           # Hand-written assembly and extra libraries may
+                           # call a C function with the stack convention.
+                           register_cc=not (args.no_register_cc
+                                            or args.embed_lib
+                                            or args.runtime_lib
+                                            or args.startup_lib),
+                           foreign_asm_names=regcc.asm_text_names(mac_files))
         code = gen.generate(merged_ast)
         scanf_need = scan_hook.scanf_needs(merged_ast, scanf_features)
         if scanf_need:
@@ -959,6 +972,9 @@ def main() -> int:
                 print(f"  Propagated {gen.constants_propagated} constant(s)")
             if gen.dead_functions_removed > 0:
                 print(f"  Eliminated {gen.dead_functions_removed} dead function(s)")
+            if gen._regcc:
+                print(f"  Register calling convention: {len(gen._regcc)} "
+                      f"function(s): {', '.join(sorted(gen._regcc))}")
             if gen.call_graph_analyzer and gen.call_graph_analyzer.total_shared_storage > 0:
                 cga = gen.call_graph_analyzer
                 shared_count = len(cga.storage_offsets)

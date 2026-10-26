@@ -12,23 +12,23 @@ The size ratio compares with the size mode of the other compiler. The T-state ra
 
 | Other compiler | Programs (size) | Size ratio | Programs (T-states) | T-state ratio | T-state ratio without sort-* |
 |---|---|---|---|---|---|
-| sdcc 4.6.0 | 96 | 0.98 | 78 | 0.62 | 0.77 |
-| sdcc 4.4.0 | 92 | 0.96 | 75 | 0.61 | 0.76 |
-| z88dk zsdcc | 91 | 0.99 | 74 | 0.77 | 0.91 |
-| z88dk sccz80 | 83 | 0.93 | 57 | 0.54 | 0.65 |
-| hitech 3.09 | 69 | 0.48 | 58 | 0.47 | 0.64 |
-| dcc 3.6.0 | 55 | 0.84 | 43 | 0.49 | 0.61 |
-| llvm-z80 | 98 | 0.97 | 79 | 0.76 | 0.96 |
-| z88dk 80cc (nightly) | 65 | 0.88 | 51 | 0.83 | 1.18 |
+| sdcc 4.6.0 | 96 | 0.95 | 78 | 0.60 | 0.74 |
+| sdcc 4.4.0 | 92 | 0.93 | 75 | 0.59 | 0.73 |
+| z88dk zsdcc | 91 | 0.96 | 74 | 0.74 | 0.88 |
+| z88dk sccz80 | 83 | 0.90 | 57 | 0.52 | 0.62 |
+| hitech 3.09 | 69 | 0.47 | 58 | 0.45 | 0.60 |
+| dcc 3.6.0 | 55 | 0.81 | 43 | 0.47 | 0.57 |
+| llvm-z80 | 98 | 0.93 | 79 | 0.74 | 0.93 |
+| z88dk 80cc (nightly) | 65 | 0.85 | 51 | 0.80 | 1.13 |
 
 The T-state ratio uses only programs where both counts are TIMER-region counts. The games have no TIMER labels, so the games are in the size ratio but not in the T-state ratio. The games have their own numbers below.
 
 What the data supports:
 
-- **Size.** On the mean, uc80 makes programs that are about as big as those of SDCC, zsdcc, sccz80 and llvm-z80 (ratios 0.93 to 0.99). The programs of uc80 are smaller than those of dcc (0.84), z88dk 80cc (0.88) and HI-TECH C (0.48). Against SDCC 4.6.0, uc80 is smaller on 53 of 96 programs and bigger on 43. The mean size ratio against SDCC 4.6.0 was 1.53 before the library work. Three changes made the ratio 0.99 (now 0.98): the `printf` to `puts` rewrite, the split of the float printer and the split of libc into one module for each public function. See the "Unreleased" part of the [CHANGELOG](../CHANGELOG.md) and [codegen_gap.md](codegen_gap.md). The claim "smallest known binaries for Z80/CP/M" is not true and this page does not make the claim.
-- **Speed.** uc80 is faster than SDCC 4.6.0 (speed mode) on 56 of 78 programs. The mean ratio is 0.62. Much of the gain comes from the library: `qsort()` of SDCC is up to 5000 times slower than the one of uc80 on sorted input. The 32-bit programs `pi`, `pi_ldiv` and `davidly-tpi` are also 4 to 5 times faster on uc80 than on SDCC. Without the eight `sort-*` programs the mean ratio is 0.77. The speed families D and E of [codegen_gap.md](codegen_gap.md) made the `snd-*` kernels and `davidly-ttt` faster, and they moved the mean from 0.629 to 0.623. uc80 is slower than SDCC on small integer loops and on code with many small functions (for example `sieve`, `queens`, `tak`, `stanford-perm`, `stanford-towers`, `davidly-ttt`).
-- **llvm-z80 and z88dk 80cc are the closest rivals on speed.** Without the `sort-*` programs the mean ratio against llvm-z80 is 0.96 (uc80 wins on 38 programs and loses on 33). z88dk 80cc is the only compiler that is faster than uc80 on the mean without `sort-*`: the ratio is 1.18 (uc80 wins on 20 of 43 programs). With the `sort-*` programs the ratio is 0.83.
-- **Games (tier 3).** 25 game programs run with scripted input. uc80 runs 24 of them, sdcc 18, sdcc-4.4 17, zsdcc 17, sccz80 16, llvm-z80 19, 80cc 14, dcc 12 and HI-TECH C 11. The numbers below are the geometric mean of uc80 divided by the other compiler over the games that run on both. The T-state counts are whole-run counts (the games have no TIMER labels), compared with the speed mode of the other compiler.
+- **Size.** On the mean, uc80 makes programs that are about as big as those of SDCC, zsdcc, sccz80 and llvm-z80 (ratios 0.90 to 0.96). The programs of uc80 are smaller than those of dcc (0.81), z88dk 80cc (0.85) and HI-TECH C (0.47). Against SDCC 4.6.0, uc80 is smaller on 63 of 96 programs and bigger on 33. The mean size ratio against SDCC 4.6.0 was 1.53 before the library work. Three changes made the ratio 0.99. The register calling convention (family F, steps 1 and 2) made the ratio 0.95: the `printf` to `puts` rewrite, the split of the float printer and the split of libc into one module for each public function. See the "Unreleased" part of the [CHANGELOG](../CHANGELOG.md) and [codegen_gap.md](codegen_gap.md). The claim "smallest known binaries for Z80/CP/M" is not true and this page does not make the claim.
+- **Speed.** uc80 is faster than SDCC 4.6.0 (speed mode) on 58 of 78 programs. The mean ratio is 0.60. Much of the gain comes from the library: `qsort()` of SDCC is up to 5000 times slower than the one of uc80 on sorted input. The 32-bit programs `pi`, `pi_ldiv` and `davidly-tpi` are also 4 to 5 times faster on uc80 than on SDCC. Without the eight `sort-*` programs the mean ratio is 0.74. The speed families D and E of [codegen_gap.md](codegen_gap.md) made the `snd-*` kernels and `davidly-ttt` faster, and they moved the mean from 0.629 to 0.623. The register calling convention (family F) moved the mean to 0.602 (step 1: parameters in registers) and to 0.6015 (step 2: byte results in A, tail calls, push and pop for parameters across a call). uc80 is slower than SDCC on small integer loops and on code with many small functions (for example `sieve`, `queens`, `tak`, `stanford-perm`, `stanford-towers`, `davidly-ttt`).
+- **llvm-z80 and z88dk 80cc are the closest rivals on speed.** Without the `sort-*` programs the mean ratio against llvm-z80 is 0.93 (uc80 wins on 42 programs and loses on 29). z88dk 80cc is the only compiler that is faster than uc80 on the mean without `sort-*`: the ratio is 1.13 (uc80 wins on 22 of 43 programs). With the `sort-*` programs the ratio is 0.80.
+- **Games (tier 3).** 25 game programs run with scripted input. uc80 runs 24 of them, sdcc 18, sdcc-4.4 17, zsdcc 17, sccz80 16, llvm-z80 19, 80cc 14, dcc 12 and HI-TECH C 11. The numbers below are the geometric mean of uc80 divided by the other compiler over the games that run on both. The T-state counts are whole-run counts (the games have no TIMER labels), compared with the speed mode of the other compiler. The table is from before the register calling convention (steps 1 and 2). It is not recomputed: the games method is not in the repository. The register calling convention made uc80 programs a little smaller and faster, so the ratios are a little too high.
 
 | Other compiler | Games on both | Size ratio | T-state ratio |
 |---|---|---|---|
@@ -46,7 +46,7 @@ What the data supports:
 - **Programs that fail on uc80** (1 of 105 that run): `empire-trefonas` prints wrong output. The image is 63,360 bytes, close to the 64 KB limit. All other compilers fail to build this program. Earlier versions of this page named four more failures (`embench-tarfind`, `whetstone`, `whetstone+static` and `coremark-unofficial`). Code generator fixes in the "Unreleased" part of the [CHANGELOG](../CHANGELOG.md) fix these four programs.
 - All numbers are for one version of each compiler on one machine. They are T-states of the Z80 program, not host time, so they do not change from run to run.
 
-How the size changed since the first run (commit 24fdef8, 61 programs that are OK on uc80 and SDCC 4.6.0 in both runs):
+How the size changed since the first run (commit 24fdef8, 61 programs that are OK on uc80 and SDCC 4.6.0 in both runs). The "Now" column is from before the register calling convention (steps 1 and 2) and is not recomputed. The size-mode means on the 109 programs are in the summary table at the top of this page.
 
 | Measure | First run | Now |
 |---|---|---|

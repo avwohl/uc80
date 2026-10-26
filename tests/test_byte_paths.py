@@ -351,7 +351,7 @@ def test_byte_argument_has_no_extension(tmp_path):
         unsigned char a;
         void out(unsigned char port, unsigned char v) { a = port + v; }
         int main(void) { a = getchar(); out(7, a + 1); return a; }""",
-                      ["--no-inlining"])
+                      ["--no-inlining", "--no-register-cc"])
     main = body(mac, "main")
     seq = main[main.index("call\t_getchar"):main.index("call\t_out")]
     assert "ld\tL,7" in seq

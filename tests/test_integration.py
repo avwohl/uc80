@@ -187,7 +187,9 @@ class TestOptimizationFlags:
         code = output.read_text().lower()
         # inc should NOT be inlined
         assert "public\t_inc" in code
-        assert "call\t_inc" in code
+        # the register convention leaves nothing to pop, so the call that
+        # ends main becomes a jump
+        assert "call\t_inc" in code or "jp\t_inc" in code
 
     def test_no_dead_elimination(self, tmp_path):
         """--no-dead-elimination keeps unused functions."""

@@ -43,7 +43,10 @@ from compilers import (BENCH, TOOLS, TPA_LIMIT, TPA_STACK,  # noqa: E402
 
 CACHE = BENCH / "_cache"
 WORK = BENCH / "_work"
-RESULTS = BENCH / "results" / "results.csv"
+# UC80_BENCH_RESULTS: write the rows to another file (an A/B run must not
+# touch the committed results.csv)
+RESULTS = Path(os.environ.get("UC80_BENCH_RESULTS",
+                              BENCH / "results" / "results.csv"))
 FIELDS = ["program", "tier", "compiler", "mode", "status", "image", "bss",
           "com", "check_com", "cycles", "total_cycles", "timing", "version",
           "command", "code", "data", "objects"]
