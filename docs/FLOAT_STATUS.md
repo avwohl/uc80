@@ -29,7 +29,7 @@ IEEE 754 single-precision (32-bit) floating point is fully functional.
 - Respects precision modifier (default 6 decimal places)
 - Enabled via `#pragma printf float` or `#pragma printf all`
 
-### Math Library (lib/lc/lc_*.mac, from lib/csrc/*.c)
+### Math Library (lib/lc/lc_*.mac, from lib/vmsrc/*.vc and lib/csrc/*.c)
 Full single-precision math library; each function is within 2 ulp of the
 exact result ([docs/libm.md](libm.md)):
 - Trigonometric: sin, cos, tan, asin, acos, atan, atan2

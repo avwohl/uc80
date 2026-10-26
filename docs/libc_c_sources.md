@@ -10,16 +10,30 @@ library build needs only `um80` and `ulib80`.
 
 These modules are in C:
 
-- the scanf family (`lc_scan_*`, `lc_scanf`, `lc_sscanf`, `lc_fscanf` and the
-  `v` versions)
-- `strtol`, `strtoul`, `strtoll`, `strtoull`, `atoll`, `strtoimax`,
-  `strtoumax`, `strtod`, `strtof`, `strtold` and `atof`
-- the math library ([docs/libm.md](libm.md)), except `sqrt`, `fabs`,
-  `copysign` and the classification functions, which are assembly
+- the scanf front ends (`lc_scanf`, `lc_sscanf`, `lc_fscanf`, the `v`
+  versions and the readers `lc_scan_str`, `lc_scan_file`, `lc_scan_stdin`,
+  `lc_scan_float`)
+- `strtoll`, `strtoull`, `atoll`, `strtoimax`, `strtoumax`, `strtod`,
+  `strtof`, `strtold` and `atof`
+- the math functions that work on the bits of a float (`floor`, `fmod`,
+  `frexp`, `nextafter`, `cbrt` and others, see [docs/libm.md](libm.md))
 
-Two assembly modules help the C code. `lc_sqrt` is the square root.
-`lc_sc_num` multiplies and negates a number of 1 to 8 bytes in memory, so the
-integer readers need no 32-bit or 64-bit multiply routine.
+The scanf engine and the integer reader are assembly. The functions of the
+math library that do float arithmetic are programs for the float
+interpreter, made from `src/uc80/lib/vmsrc/` by `gen_vm_modules.py`
+([float interpreter](libm_vm.md)). These assembly modules help the rest:
+
+- `lc_scan_core` is the scanf engine. It does the integer conversions, the
+  literal characters, `%%` and `%n`. `lc_scan_text` does `%c`, `%s` and
+  `%[`. `lc_scan_float` does the float conversions. The compiler links the
+  last two only when a format needs them ([scanf and strtol](scanf.md)).
+- `lc_strtoint` reads an integer of 4 or 8 bytes for `strtol` and the
+  other integer conversions. `lc_sc_num` multiplies and negates a number of
+  1 to 8 bytes in memory, so the integer readers need no 32-bit or 64-bit
+  multiply routine.
+- `lc_sqrt` is the square root. `lc_scalbn` and `lc_vm_ldexp` are `scalbn`
+  and `ldexp`. `lc_m_pack`, `lc_m_unpack` and `lc_m_phred` pack a float,
+  unpack a float and reduce an argument of `sin`.
 
 ## Change a C module
 
@@ -55,19 +69,18 @@ the file.
 - The compiled functions keep their local variables in static storage, as all
   uc80 functions do. They are not reentrant.
 - The files `m.h` and `scan.h` are the headers that the C modules share.
+- `cbrt` is the only user of `lc_m_2prod`.
 
 ## Code size
 
-The compiled code is larger than the assembly that it replaces. A program
-that calls `sin` is about 3 KB larger than before. Three measures keep the
-growth small:
+The compiled code of a float function is large: the compiler writes 25 to
+40 bytes for each float operation. This is the reason why the math functions
+that do float arithmetic are programs for the float interpreter
+([docs/libm_vm.md](libm_vm.md)). The tests of a float in the C modules use
+bytes (`M_SPEC`, `M_TINY` and the other macros of `m.h`), because a 32-bit
+mask costs more code on the Z80.
 
-- The tests of a float use bytes (`M_SPEC`, `M_TINY` and the other macros of
-  `m.h`). A 32-bit mask costs more code on the Z80.
-- A polynomial is a table and a call of `_m_poly`.
-- `pow`, `hypot`, `cbrt`, `exp2` and `fma` need exact sums and products of
-  floats. Two small functions, `_m_2sum` and `_m_2prod`, provide them.
-
-The floating-point part of `scanf` (about 6 KB with `strtod`) links only when
-the program needs it. The compiler decides this from the format strings
-(`src/uc80/scan_hook.py`). See [docs/scanf.md](scanf.md).
+The floating-point part of `scanf` (about 5.7 KB with `strtod`) and the text
+conversions (0.3 KB) link only when the program needs them. The compiler
+decides this from the format strings (`src/uc80/scan_hook.py`). See
+[docs/scanf.md](scanf.md).

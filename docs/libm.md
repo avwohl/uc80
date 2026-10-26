@@ -4,9 +4,12 @@ Back to the [README](../README.md).
 
 `double`, `float` and `long double` are the same 32-bit IEEE single type in
 uc80. Each `math.h` function has one body. The names that end in `f` or `l`
-(`sinf`, `sinl`) are other entry points of the same code. The sources are in
-`src/uc80/lib/csrc/`. [Library modules written in C](libc_c_sources.md)
-describes them. `sqrt` is an assembly file with an integer algorithm.
+(`sinf`, `sinl`) are other entry points of the same code. The functions that
+do float arithmetic are programs for a small stack machine. The sources are
+in `src/uc80/lib/vmsrc/`. [The float interpreter](libm_vm.md) describes the
+machine. The functions that work on the bits of a float are in C
+(`src/uc80/lib/csrc/`, see [Library modules written in C](libc_c_sources.md))
+or in assembly. `sqrt` is an assembly file with an integer algorithm.
 
 ## Accuracy
 
@@ -67,6 +70,12 @@ IEEE result for an infinity or a NaN operand.
 ## Size
 
 The functions are larger than the assembly functions that they replace. A
-program that calls `sin` is about 3 KB larger. A program that calls `pow` is
-about 5 KB larger. `sqrt` is smaller than before. Each function is a module,
-so a program links only the functions that it calls.
+program that calls `sin` is about 0.6 KB larger. A program that calls `pow`
+is about 0.9 KB larger. The float interpreter (700 bytes) is the same for
+all functions, so a program that calls several functions pays for it once.
+`sqrt` is smaller than before. Each function is a module, so a program links
+only the functions that it calls.
+
+The reduction of an argument above 6000 for `sin`, `cos` and `tan` needs 400
+bytes (`lc_m_phred`). A program that calls one of these functions links it,
+because the compiler cannot know the size of the argument.

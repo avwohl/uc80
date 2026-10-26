@@ -3,10 +3,11 @@
 Back to the [README](../README.md).
 
 The C library has `scanf`, `fscanf`, `sscanf`, `vscanf`, `vfscanf` and
-`vsscanf`. All six use one engine (`lc_scan_core`). The engine takes its
-characters from a string, a `FILE` or the console. The sources are in
-`src/uc80/lib/csrc/`. See [Library modules written in C](libc_c_sources.md).
-`sscanf` and `vsscanf` have no BDOS call, so they are in the ROM library.
+`vsscanf`. All six use one engine (`lc_scan_core`, in assembly). The engine
+takes its characters from a string, a `FILE` or the console. The front ends
+are in `src/uc80/lib/csrc/`. See
+[Library modules written in C](libc_c_sources.md). `sscanf` and `vsscanf`
+have no BDOS call, so they are in the ROM library.
 
 ## Conversions
 
@@ -56,11 +57,16 @@ matching failure.
   integers.
 - With `--int=32`, the compiler changes `%d`, `%i`, `%u` and `%x` in a format
   string literal to the `long` forms. `%n` keeps the size of a 16-bit `int`.
-- The compiler links the float conversions only in three cases. A scanf call
-  has a float conversion in a format literal. A scanf call has a format that
-  is not a literal. The program uses a scanf function without a call. The
-  float part is about 6 KB, with `strtod`. To link it by force, use
-  `#pragma scanf float` or `--scanf float`.
+- The engine does the integer conversions, the literal characters, `%%` and
+  `%n`. A program that uses only these conversions links about 1.3 KB for
+  `sscanf("%d")`. The compiler links the float conversions and the text
+  conversions (`%c`, `%s`, `%[`) only when the program needs them. The
+  program needs a part in three cases. A scanf call has a conversion of that
+  part in a format literal. A scanf call has a format that is not a literal.
+  The program uses a scanf function without a call. The float part is about
+  5.7 KB, with `strtod`. The text part is about 0.3 KB. To link the float
+  part by force, use `#pragma scanf float` or `--scanf float`. To link the
+  text part by force, use `--scanf text`.
 
 ## Number strings
 

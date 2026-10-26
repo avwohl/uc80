@@ -1,21 +1,12 @@
 ; lc_scalbn.mac - scalbn and ldexp: x * 2^n
 ;
 ; double scalbn(double x, int n)
-; An infinity, a NaN and a zero are the result.  Else the routine takes the
-; sign, the mantissa (24 bits, a subnormal x is shifted left until bit 23
-; is set) and the exponent e + n.  An exponent from 1 to 254 is stored; a
-; larger one gives infinity; a smaller one shifts the mantissa right, with
-; rounding to nearest even, which gives a subnormal number or zero.  The C
-; entry limits n to -600 to 600 first.
-;
-; __vm_ldexp is the routine of the float interpreter (see lc_vm.mac):
-; DEHL = x, (__tmp32) = n as a float.  It keeps BC and IX.
+; The entry limits n to -600 to 600 and calls __sbn_core (lc_vm_ldexp).
 	.Z80
 
 	CSEG
 
-	EXTRN	__ftoi
-	EXTRN	__tmp32
+	EXTRN	__sbn_core
 
 	PUBLIC	_scalbn
 	PUBLIC	_scalbnf
@@ -23,7 +14,6 @@
 	PUBLIC	_ldexp
 	PUBLIC	_ldexpf
 	PUBLIC	_ldexpl
-	PUBLIC	__vm_ldexp
 
 _scalbn:
 _scalbnf:
@@ -52,138 +42,8 @@ _sbn_ok:
 	LD	H,(IX+5)
 	LD	E,(IX+6)
 	LD	D,(IX+7)
-	CALL	_sbn_core
+	CALL	__sbn_core
 	POP	IX
 	RET
-
-__vm_ldexp:
-	PUSH	BC
-	PUSH	HL
-	PUSH	DE
-	LD	HL,(__tmp32)
-	LD	DE,(__tmp32+2)
-	CALL	__ftoi
-	LD	B,H
-	LD	C,L
-	POP	DE
-	POP	HL
-	CALL	_sbn_core
-	POP	BC
-	RET
-
-; DEHL = x, BC = n.  Result in DEHL.  Changes AF and BC.
-_sbn_core:
-	LD	A,E
-	RLA
-	LD	A,D
-	RLA			; A = the exponent field
-	CP	255
-	RET	Z		; an infinity or a NaN
-	OR	A
-	JR	Z,_sbn_sub
-	PUSH	HL
-	LD	L,A
-	LD	H,0
-	ADD	HL,BC		; HL = the new exponent
-	LD	B,H
-	LD	C,L
-	POP	HL
-	SET	7,E		; the implicit bit
-_sbn_pk:
-	LD	A,D
-	AND	80H
-	LD	D,A		; D = the sign
-	LD	A,B
-	OR	A
-	JP	M,_sbn_neg	; the exponent is below zero
-	JR	NZ,_sbn_inf	; 256 or more
-	LD	A,C
-	CP	255
-	JR	NC,_sbn_inf
-	OR	A
-	JR	Z,_sbn_sh0
-	; 1 to 254: the exponent field
-	LD	B,A
-	SRL	A
-	OR	D
-	LD	D,A
-	RES	7,E
-	BIT	0,B
-	RET	Z
-	SET	7,E
-	RET
-_sbn_inf:
-	LD	A,D
-	OR	7FH
-	LD	D,A
-	LD	E,80H
-	LD	HL,0
-	RET
-_sbn_neg:
-	LD	A,B
-	INC	A
-	JR	NZ,_sbn_zero	; -256 or below
-	LD	A,C
-	CP	233
-	JR	C,_sbn_zero	; below -23
-	NEG
-	INC	A		; the shift count, 1 - exponent
-	JR	_sbn_cnt
-_sbn_sh0:
-	LD	A,1
-_sbn_cnt:
-	LD	B,A
-	LD	C,0		; C is not zero when a lost bit was set
-_sbn_sl:
-	SRL	E
-	RR	H
-	RR	L
-	DEC	B
-	JR	Z,_sbn_rnd	; the carry is the round bit
-	JR	NC,_sbn_sl
-	INC	C
-	JR	_sbn_sl
-_sbn_rnd:
-	RET	NC
-	LD	A,C
-	OR	A
-	JR	NZ,_sbn_up
-	BIT	0,L
-	RET	Z		; a tie goes to the even mantissa
-_sbn_up:
-	INC	HL
-	LD	A,H
-	OR	L
-	RET	NZ
-	INC	E
-	RET
-_sbn_zero:
-	LD	E,0
-	LD	HL,0
-	RET
-
-; a subnormal number or a zero
-_sbn_sub:
-	LD	A,E
-	AND	7FH
-	OR	H
-	OR	L
-	RET	Z		; a zero
-	PUSH	BC
-	LD	BC,1
-_sbn_nl:
-	BIT	7,E
-	JR	NZ,_sbn_nd
-	ADD	HL,HL
-	RL	E
-	DEC	BC
-	JR	_sbn_nl
-_sbn_nd:
-	EX	(SP),HL		; HL = n
-	ADD	HL,BC
-	LD	B,H
-	LD	C,L
-	POP	HL
-	JR	_sbn_pk
 
 	END

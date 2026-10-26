@@ -11,9 +11,10 @@ stack machine. One operation is one byte or two bytes. The interpreter
 `lc_vm` is 700 bytes and all programs share it.
 
 The results are bit for bit the same as the results of the C versions that
-the programs replaced. A test program compared both versions on 300 to 1500
-arguments for each function, with special values, subnormal numbers and the
-edges of each range.
+the programs replaced, with one exception: the table of `pow` has 16 values
+instead of 32. A test ran both versions with 300 to 1500 arguments for each
+function. The arguments include special values, subnormal numbers
+and the edges of each range.
 
 These functions are programs: `sin cos tan asin acos atan atan2 sinh cosh
 tanh asinh acosh atanh exp exp2 expm1 log log2 log10 log1p pow hypot fma`.
@@ -69,9 +70,13 @@ from the next bytes.
 - `RET k`, `RET2 k`, `RET3 k`: return the top 1, 2 or 3 elements and remove
   the k elements below them.
 
-The assembly routines are `__vm_sqrt` (in `lc_sqrt`), `__vm_ldexp` (in
-`lc_scalbn`), `__vm_frexp1` and `__vm_phred` (the Payne-Hanek reduction in
-`lc_m_phred`). A program links a routine only when it calls the routine.
+These assembly routines exist. A program links a routine only when it calls
+the routine.
+
+- `__vm_sqrt` is in `lc_sqrt`.
+- `__vm_ldexp` is in `lc_vm_ldexp`.
+- `__vm_frexp1` is in `lc_vm_frexp`.
+- `__vm_phred`, the Payne-Hanek reduction, is in `lc_m_phred`.
 
 ## The language of a program
 
@@ -108,7 +113,7 @@ Do not edit a generated `.mac` file. `tests/test_libm_vm.py` fails when a
 Programs that use one function are about as large as before. Programs that
 use several functions are smaller, because they share the interpreter:
 
-- `pow`: 1.1 KB and the interpreter, 3.7 KB before.
+- `pow`: 0.9 KB and the interpreter, 3.7 KB before.
 - `atan2`: 275 bytes, 1.4 KB before.
 - `exp`: 97 bytes and `m_expk` 107 bytes, 361 and 419 bytes before.
 

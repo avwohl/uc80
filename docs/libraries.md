@@ -26,8 +26,10 @@ uc80 --build-libs          # assembles libc.lib, libc_rom.lib, runtime.lib and c
 ```
 
 Re-run that after editing anything in `src/uc80/lib/lc/` or `src/uc80/lib/rt/`.
-Some modules in `lc/` are made from C files in `src/uc80/lib/csrc/`; see
-[Library modules written in C](libc_c_sources.md).
+Some modules in `lc/` are made from C files in `src/uc80/lib/csrc/` and the
+math functions are made from `src/uc80/lib/vmsrc/`; see
+[Library modules written in C](libc_c_sources.md) and
+[The float interpreter](libm_vm.md).
 
 Set `UC80_LIB_DIR` to use libraries built somewhere else, which is what makes
 uc80 usable when it is installed into a read-only `site-packages`. The
@@ -87,12 +89,12 @@ Rules for the split:
 - Each module that has data has its own `COMMON /name/` block. Two modules
   must not use the same block name, because the linker puts the blocks of one
   name at one address.
-- The scanf family is in C. `lc_scan_core` is the engine. `lc_scan_str`,
+- The scanf family: `lc_scan_core` (assembly) is the engine. `lc_scan_str`,
   `lc_scan_file` and `lc_scan_stdin` read from a string, a `FILE` and the
   console. `lc_scanf`, `lc_sscanf`, `lc_fscanf` and the `v` versions are
   short functions that call them. `lc_scan_float` reads the float
-  conversions; a program links it only when it needs it
-  ([scanf and strtol](scanf.md)).
+  conversions and `lc_scan_text` reads `%c`, `%s` and `%[`; a program links
+  each of them only when it needs it ([scanf and strtol](scanf.md)).
 - `lc_fpclassify`, `lc_isfinite`, `lc_isinf`, `lc_isnan`, `lc_isnormal` and
   `lc_signbit` are six modules. Each of the four `is*` functions has its own
   copy of the 3-instruction return of zero.
@@ -151,6 +153,6 @@ These limits are deliberate. The linked documents give the details.
 - **Reentrancy.** The scanf engine, `strtod` and the math functions use
   static storage for their local variables. They are not reentrant and are
   not thread safe.
-- **Size.** A program that calls a transcendental function links 0.5 KB to
-  5 KB more code than with the old assembly library. `sqrt` is smaller than
+- **Size.** A program that calls a transcendental function links 0.3 KB to
+  0.9 KB more code than with the old assembly library. `sqrt` is smaller than
   before ([math library](libm.md)).
