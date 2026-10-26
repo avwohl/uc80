@@ -69,7 +69,7 @@ class TestChokePointInvariant:
             hits = _BDOS_CONOUT.findall(path.read_text())
             if hits:
                 offenders[path.name] = len(hits)
-        assert offenders == {"lc_conout.mac": 1}, (
+        assert offenders == {"lc_conout.mac": 2}, (
             "console output must go through __conout; found direct BDOS 2 "
             "calls in %r" % offenders)
 
@@ -194,7 +194,7 @@ class TestLibcMacInSync:
     def test_libc_mac_has_no_stale_bdos_2_writers(self):
         # concat_modules() emits every lc/ module verbatim, so the same
         # invariant has to hold in the monolithic file.
-        assert len(_BDOS_CONOUT.findall((LIB_DIR / "libc.mac").read_text())) == 1
+        assert len(_BDOS_CONOUT.findall((LIB_DIR / "libc.mac").read_text())) == 2
 
     def test_libc_mac_lists_lc_conout(self):
         assert "; lc_conout.mac" in (LIB_DIR / "libc.mac").read_text()

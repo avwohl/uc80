@@ -177,9 +177,8 @@ These limits are deliberate. The linked documents give the details.
   for each; `UC80_MAX_FILES` sets another number when the libraries are
   built). `ftell` and `fseek` give exact byte positions up to 8 MB
   ([exit and files](exit_and_files.md)).
-- **Console output.** A TAB (09H) is written as spaces up to the next tab stop
-  of 8 columns. The other control characters go to the BDOS as they are
-  ([console output](console_output.md)).
+- **Console output.** Every control character, TAB included, goes to the BDOS
+  as it is; the BDOS expands a TAB ([console output](console_output.md)).
 - **Reentrancy.** The scanf engine, `strtod` and the math functions use
   static storage for their local variables. They are not reentrant and are
   not thread safe.

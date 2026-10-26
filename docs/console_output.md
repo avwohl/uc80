@@ -10,23 +10,16 @@ Back to the [README](../README.md). The limits are also in
 
 - LF (0AH) becomes CR LF, unless the character before was CR, or the program
   sets `__crlf_mode` to 0 (`--no-crlf`).
-- TAB (09H) becomes spaces up to the next multiple of 8 columns. The routine
-  counts the columns: a visible character adds 1, backspace (08H) takes 1
-  away, and CR sets the count to 0.
-- Every other character goes to the BDOS as it is, with no change.
+- Every other character goes to the BDOS as it is, with no change. TAB (09H)
+  is one of these characters.
 
-## Why TAB becomes spaces
+## TAB
 
-A real CP/M BDOS does the same for function 2: it writes spaces up to the next
-tab stop. The emulator `cpmemu` does not. It acts as an ADM-3A terminal and
-drops the byte 09H, so each TAB was missing from the output. The library
-sends spaces only. The output is the same on a real CP/M system and under
-`cpmemu`. A program that needs the byte 09H on the console cannot write it
-with the C library.
-
-The column count follows only the characters that go through `__conout`. A
-cursor movement that the terminal makes by itself (an escape sequence) does not
-change the count.
+The CP/M 2.2 BDOS expands a TAB for function 2: it writes spaces up to the
+next multiple of 8 columns. The library does not expand it, so it costs no
+bytes. `cpmemu` 4.10 and older drop the byte 09H. The next version expands
+it as the BDOS does. `z88dk-ticks` passes the byte through, so
+`bench/run.py` compares text with the TABs expanded.
 
 ## The other control characters
 
@@ -39,5 +32,4 @@ acts on ESC (1BH, an escape sequence), Ctrl-Z (1AH, clear screen), Ctrl-K
 file functions (`fputc` and `fwrite` on a `FILE` that `fopen` returned) write
 all bytes as they are, TAB included.
 
-Test: `tests/test_stdio_library.py` (`test_tab_makes_spaces_to_the_next_tab_stop`,
-`test_every_console_route_sends_the_same_bytes`), `tests/test_crlf.py`.
+Test: `tests/test_stdio_library.py` (`test_every_console_route_sends_the_same_bytes`), `tests/test_crlf.py`.
