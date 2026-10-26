@@ -117,6 +117,80 @@ struct S gs[4];
 """
 
 
+# ------------------------------------------------- 64-bit mode (--ll)
+#
+# The main generator keeps its arithmetic in 32 bits.  This small generator
+# makes long long parameters, results and arguments next to register
+# parameters, with 64-bit expressions that have calls on both sides.  Calls
+# to runtime routines that push (__save_tmp64, __push64_acc) sit between the
+# store and the load of a parameter slot, which found a push/pop bug.
+
+LL_HDR = r"""#include <stdio.h>
+#ifdef HOST
+typedef short I16; typedef int L32;
+#else
+typedef int I16; typedef long L32;
+#endif
+typedef long long LL; typedef unsigned long long ULL;
+ULL G=0x123456789ULL; L32 GL=77777; I16 GI=-5;
+"""
+LL_T = {"ll": "LL", "l": "L32", "i": "I16", "c": "char"}
+
+
+def make_program_ll(seed):
+    r = random.Random(seed)
+    funcs = []
+    out = [LL_HDR]
+
+    def leaf(params):
+        c = r.random()
+        if c < 0.5 and params:
+            return r.choice([n for n, _ in params])
+        if c < 0.7:
+            return r.choice(["G", "GL", "GI"])
+        return str(r.randrange(-1000, 100000)) + ("LL" if r.random() < .3 else "")
+
+    def expr(params, d):
+        if d <= 0 or r.random() < 0.2:
+            return f"(ULL)({leaf(params)})"
+        c = r.random()
+        if c < 0.25 and funcs:
+            f = r.choice(funcs)
+            args = ",".join(f"({LL_T[pt]})({expr(params, d - 1)})"
+                            for pt in f[1])
+            return f"(ULL)({f[0]}({args}))"
+        op = r.choice(["+", "-", "*", "^", "&", "|"])
+        if c < 0.35:
+            return (f"((ULL)({expr(params, d - 1)}{op}{expr(params, d - 1)})"
+                    f" >> {r.randrange(0, 5)})")
+        return f"({expr(params, d - 1)} {op} {expr(params, d - 1)})"
+
+    for i in range(r.randrange(4, 9)):
+        pts = [r.choice(["ll", "l", "i", "c", "i", "i", "ll"])
+               for _ in range(r.randrange(0, 4))]
+        rt = r.choice(["ll", "l", "i", "c"])
+        name = f"f{i}"
+        params = [(f"p{j}", pt) for j, pt in enumerate(pts)]
+        sig = ", ".join(f"{LL_T[pt]} {pn}" for pn, pt in params) or "void"
+        body = f"static {LL_T[rt]} {name}({sig}){{\n"
+        for j in range(r.randrange(0, 2)):
+            body += f"  LL v{j} = (LL)({expr(params, 2)});\n"
+        e = expr(params, r.randrange(1, 4))
+        if r.random() < 0.3:
+            e = f"({e}) + (ULL)(GI)"
+        body += f"  return ({LL_T[rt]})({e});\n}}\n"
+        out.append(body)
+        funcs.append((name, pts, rt))
+    m = "int main(void){\n"
+    for _ in range(r.randrange(6, 14)):
+        f = r.choice(funcs)
+        args = ",".join(f"({LL_T[pt]})({r.randrange(-300, 70000)}LL)"
+                        for pt in f[1])
+        m += f'  printf("%ld\\n",(long)(L32)({f[0]}({args})));\n'
+    out.append(m + "  return 0;\n}\n")
+    return "".join(out)
+
+
 # ------------------------------------------------------------ generator
 
 class Gen:
@@ -782,6 +856,9 @@ def run_com(com: Path, timeout=60):
     return p.stdout.replace("\r", "")
 
 
+LL_VARIANTS = [[], ["--no-inlining"], ["--no-inlining"], ["-O0"],
+               ["--no-inlining", "--no-shared-storage"],
+               ["--no-inlining", "--isr-safe"]]
 VARIANTS = [[], [], ["--no-inlining"], ["--no-shared-storage"],
             ["--no-inlining"], ["-O0"], ["--no-const-propagation"],
             ["--no-inlining", "--no-shared-storage"], ["--isr-safe"],
@@ -808,7 +885,7 @@ def one(seed, opts):
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
-    text = make_program(seed)
+    text = make_program_ll(seed) if opts.ll else make_program(seed)
     src = work / "prog.c"
     src.write_text(text)
     rc, out = sh(["cc", "-O1", "-w", "-fsigned-char", "-DHOST", "prog.c",
@@ -821,7 +898,8 @@ def one(seed, opts):
         if rc != 0:
             status, note = "HOST-FAIL", f"host exit {rc}"
         else:
-            flags = list(VARIANTS[seed % len(VARIANTS)]) + opts.flags.split()
+            flags = list((LL_VARIANTS if opts.ll else VARIANTS)[
+                seed % (len(LL_VARIANTS) if opts.ll else len(VARIANTS))]) + opts.flags.split()
             com, log = uc80_build(src, work, flags)
             if com is None:
                 status, note = "BUILD-FAIL", log[-600:]
@@ -865,6 +943,8 @@ def main():
     ap.add_argument("--keep", help="directory for failing programs")
     ap.add_argument("--keep-work", action="store_true")
     ap.add_argument("--flags", default="", help="extra uc80 flags")
+    ap.add_argument("--ll", action="store_true",
+                    help="64-bit mode: long long parameters and results")
     ap.add_argument("--print", type=int, metavar="SEED")
     ap.add_argument("--trace", action="store_true",
                     help="with --print: print the checksum after each statement")
@@ -873,7 +953,8 @@ def main():
     if opts.keep:
         opts.keep = str(Path(opts.keep).resolve())
     if opts.print is not None:
-        sys.stdout.write(make_program(opts.print, opts.trace))
+        sys.stdout.write(make_program_ll(opts.print) if opts.ll
+                         else make_program(opts.print, opts.trace))
         return 0
     Path(opts.work).mkdir(parents=True, exist_ok=True)
     seeds = range(opts.seed, opts.seed + opts.count)

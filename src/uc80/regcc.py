@@ -522,6 +522,12 @@ _WORD_LOAD = re.compile(
     r"^\t(?:ld|LD)\t(HL|DE|BC),\(\?\?AUTO\+(\d+)\)\s*(?:;.*)?$", re.IGNORECASE)
 
 
+# Runtime routines with a net stack effect.  A call to one of these between
+# the store and the load of a slot moves SP, so the pop would read the wrong
+# word.
+_STACK_RUNTIME = {"__save_tmp64", "__restore_tmp64", "__push64_acc"}
+
+
 def push_pop_slots(lines: list, start: int, offsets) -> int:
     """Turn the store and the single load of a parameter slot into push and
     pop where that is safe.  ``offsets`` holds the ??AUTO offsets of the
@@ -593,6 +599,9 @@ def push_pop_slots(lines: list, start: int, offsets) -> int:
                     break
                 continue
             if mn == "call" and "," not in opnd:
+                if opnd.strip().lower() in _STACK_RUNTIME:
+                    ok = False                   # leaves or takes bytes
+                    break
                 continue
             if re.search(r"\bsp\b", opnd, re.IGNORECASE):
                 ok = False

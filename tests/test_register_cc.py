@@ -459,6 +459,23 @@ int main(void) {
     return 0;
 }
 """,
+    # The runtime routines __save_tmp64 and __push64_acc leave 8 bytes on
+    # the stack, so a parameter slot must not become push/pop across them.
+    "ll_stack_effect": r"""
+#include <stdio.h>
+typedef long long LL;
+LL g = 3;
+static LL k(int a, int b, LL c) { return c * a - b; }
+static LL f2(LL x, int y) { return x * y + g; }
+static LL h(int a) { return f2(g + 1, a); }
+static LL m(int a, int b) { return (LL)a * b + k(a, b, 7LL) * (g + a); }
+int main(void) {
+    printf("%ld\n", (long)k(3, 4, 5LL));
+    printf("%ld %ld\n", (long)h(5), (long)h(-2));
+    printf("%ld %ld\n", (long)m(2, 3), (long)m(-4, 9));
+    return 0;
+}
+""",
     "assign_param": r"""
 #include <stdio.h>
 int count(int n, char c) { int k = 0; while (n--) { c++; k += c; } return k; }
@@ -470,7 +487,8 @@ int main(void) { printf("%d %d %d\n", count(3, 'a'), clobber(1, 2), addr(5, 6));
 
 # What a host compiler prints for each program (int is 16 bits here, but no
 # program depends on it).
-KNOWN = {'char_result': '44 44 45 8 -2 5\n4 -44\nt1\nt2\nt4\n-43\n',
+KNOWN = {'ll_stack_effect': '11\n23 -5\n61 1\n',
+    'char_result': '44 44 45 8 -2 5\n4 -44\nt1\nt2\nt4\n-43\n',
     'tail_and_keep': '6 42 43 10\n215 47 101\n',
     'ptr_cycle': '1204\n',
     'ptr_cycle_apply': '183\n',
@@ -623,6 +641,21 @@ def test_isr_reaches_helper_through_a_hook_pointer(tmp_path):
 
 
 # ------------------------------------------------ results in A, tail calls
+
+
+class TestPushPopStackEffect:
+    def test_no_pop_across_a_routine_that_pushes(self):
+        from uc80 import regcc
+        lines = ["\tld\t(??AUTO+0),HL", "\tcall\t__save_tmp64",
+                 "\tld\tHL,(??AUTO+0)"]
+        assert regcc.push_pop_slots(lines, 0, {0}) == 0
+        assert lines[0].startswith("\tld\t(??AUTO")
+
+    def test_pop_across_an_ordinary_call_is_kept(self):
+        from uc80 import regcc
+        lines = ["\tld\t(??AUTO+0),HL", "\tcall\t_g",
+                 "\tld\tHL,(??AUTO+0)"]
+        assert regcc.push_pop_slots(lines, 0, {0}) == 1
 
 
 class TestStep2:

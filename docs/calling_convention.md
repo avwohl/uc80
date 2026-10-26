@@ -104,7 +104,7 @@ The widening moves from the callee to the caller. A call that needs HL costs the
 The callee stores a parameter that the body names in a slot (section "The callee"). In the shared storage (`??AUTO`) the store and the loads are `ld (??AUTO+n),HL` and `ld HL,(??AUTO+n)`: 16 T-states and 3 bytes each (20 T-states and 4 bytes for DE). The pass `regcc.push_pop_slots` (after `forward_slots`) uses the stack instead when all of these are true:
 
 - The slot has one store and one load left. The store and the load are word instructions for HL or DE (the load may use HL, DE or BC).
-- Only straight-line code lies between them: no label, no jump, no return. Calls and balanced `push` and `pop` pairs are allowed. Any use of SP stops the pass.
+- Only straight-line code lies between them: no label, no jump, no return. Calls and balanced `push` and `pop` pairs are allowed. Any use of SP stops the pass. A call to `__save_tmp64`, `__restore_tmp64` or `__push64_acc` also stops the pass: each of these routines changes SP by 8 bytes, so a `pop` after the call would read the wrong word.
 - The stack is level at the load: the load is not in the middle of a `push` of arguments.
 
 The store becomes `push rr` and the load becomes `pop rr`: 11 and 10 T-states, 1 byte each. When two slots qualify, the stores are put in the order that makes the pops match (the word that is loaded last is pushed first). If the conditions are not true, the compiler spills once at entry, as in step 1. A stack frame keeps the prologue `push`, because the frame layout is fixed.
@@ -146,7 +146,7 @@ The test `asm_between` in `tests/test_register_cc.py` puts inline asm between ca
 ## Tests
 
 - `tests/test_register_cc.py` checks three things. It checks the shape of the code. It checks the functions that keep the stack convention. It checks that both conventions give the same output for recursion, byte parameters, function pointers, variadic callees, struct returns, assembly callers and the storage options.
-- `bench/ccfuzz.py`: random programs with many small functions, compared with the host compiler. See the header of the file for the kinds of calls. It also makes tail calls and returns of an expression of another type.
+- `bench/ccfuzz.py`: random programs with many small functions, compared with the host compiler. See the header of the file for the kinds of calls. It also makes tail calls and returns of an expression of another type. The option `--ll` makes a different kind of program, with long long parameters, results and arguments next to register parameters. This mode found the stack effect of the 64-bit runtime routines (see "A parameter across a call"). Some `--ll` programs are wrong with `--no-register-cc` too (old 64-bit bug, for example seed 126). The fuzzer reports them as WRONG. Only REG-WRONG is a fault of the register convention.
 - `bench/difftest.py --focus calls`: random programs against SDCC.
 
 ## Later steps
