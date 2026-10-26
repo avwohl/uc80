@@ -1,0 +1,153 @@
+; lc_ftowrite.mac - change a file stream from reading to writing
+;
+; A FILE is in one of two states, and flag bit 3 (FLAG_WRITE) tells which:
+;
+;   reading (bit 3 clear): r0 r1 of the FCB is the number of the NEXT record
+;       to read.  When bufcnt is not 0 the buffer holds the record before
+;       r0 r1, and bufpos is the position in it.
+;   writing (bit 3 set): r0 r1 is the number of the record that is IN the
+;       buffer, and bufpos is the position in it.  bufcnt is the number of
+;       valid bytes (the high water mark).  Flag bit 7 is set when fputc
+;       changed the buffer since the last write.
+;
+; A stream that only reads or only writes never changes state.  A stream
+; opened with "+" does it here (reading to writing, called by fputc) and in
+; lc_ftoread.mac (writing to reading, called by fgetc).  This is what C needs
+; fflush, fseek or rewind for between a write and a read; the library does it
+; by itself, so the program works without them too.  A stream opened with "a"
+; starts in the reading state at the start of the file.  The first fputc puts
+; it at the end of the file, here, and so does the first fputc after each
+; fseek, rewind or read.  So each write goes to the end of the file.
+;
+; With the compiler hook of file_hook.py, a program that opens no file in
+; an update mode or an append mode links lc_f_lite.mac instead of this
+; module and lc_ftoread.mac.
+;
+; Flags: 01 open, 02 end of file, 04 error, 08 writing, 10 can read,
+; 20 can write, 40 append, 80 buffer changed.
+	.Z80
+
+BDOS	EQU	5
+BDOS_SETDMA	EQU	26	; Set DMA address
+BDOS_READR	EQU	33	; Read random
+BDOS_SIZE	EQU	35	; Compute file size
+
+; offsets from the start of the FILE (the register IX holds it)
+F_FLAGS		EQU	1
+F_UNGET		EQU	2
+F_BUFPOS	EQU	3
+F_BUFCNT	EQU	4
+F_FCB		EQU	6
+F_R0		EQU	39
+F_R1		EQU	40
+F_R2		EQU	41
+F_BUFFER	EQU	42
+
+
+	EXTRN	_file_loadrec
+
+	CSEG
+
+; ============================================================
+; Internal: _file_towrite.  HL = FILE*.  Returns Z when the stream is in
+; the writing state, NZ (and the error flag) when it cannot write.
+; ============================================================
+	PUBLIC	_file_towrite
+_file_towrite:
+	PUSH	IX
+	PUSH	HL
+	POP	IX
+	BIT	5,(IX+F_FLAGS)	; can write?
+	JR	Z,_ftw_err
+	RES	1,(IX+F_FLAGS)	; no end of file
+	LD	A,0FFH
+	CP	(IX+F_UNGET)
+	JR	Z,_ftw_nou
+	LD	(IX+F_UNGET),A	; a pushed back character: back up one byte
+	LD	A,(IX+F_BUFPOS)
+	OR	A
+	JR	Z,_ftw_nou
+	DEC	(IX+F_BUFPOS)
+_ftw_nou:
+	BIT	6,(IX+F_FLAGS)	; append?
+	JR	NZ,_ftw_end
+	LD	A,(IX+F_BUFCNT)
+	OR	A
+	JR	Z,_ftw_load	; empty buffer: the record r0 r1 is next
+	LD	L,(IX+F_R0)	; the buffer holds the record before r0 r1
+	LD	H,(IX+F_R1)
+	DEC	HL
+	LD	(IX+F_R0),L
+	LD	(IX+F_R1),H
+	JR	_ftw_done
+_ftw_load:
+	PUSH	IX
+	POP	HL
+	CALL	_file_loadrec	; keep the bytes that the record has
+	JR	_ftw_done
+_ftw_end:
+	CALL	_file_toend
+_ftw_done:
+	SET	3,(IX+F_FLAGS)
+	XOR	A
+	POP	IX
+	RET
+_ftw_err:
+	SET	2,(IX+F_FLAGS)
+	OR	1		; NZ
+	POP	IX
+	RET
+
+; ============================================================
+; Internal: _file_toend.  IX = FILE*.  Put the stream at the end of the
+; data of the file, in the writing state: the last record is in the buffer
+; and bufpos is the place of its first Ctrl-Z.
+; ============================================================
+_file_toend:
+	PUSH	IX
+	POP	HL
+	LD	DE,F_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SIZE
+	CALL	BDOS		; r0 r1 = the number of records
+	LD	(IX+F_R2),0
+	LD	L,(IX+F_R0)
+	LD	H,(IX+F_R1)
+	LD	A,H
+	OR	L
+	JR	Z,_fte_empty
+	DEC	HL		; the last record
+	LD	(IX+F_R0),L
+	LD	(IX+F_R1),H
+	PUSH	IX
+	POP	HL
+	CALL	_file_loadrec
+	JR	NZ,_fte_empty2
+	PUSH	IX
+	POP	HL
+	LD	DE,F_BUFFER
+	ADD	HL,DE
+	LD	B,0
+_fte_scan:
+	LD	A,B
+	CP	128
+	JR	NC,_fte_set
+	LD	A,(HL)
+	CP	1AH
+	JR	Z,_fte_set
+	INC	HL
+	INC	B
+	JR	_fte_scan
+_fte_set:
+	LD	(IX+F_BUFPOS),B
+	RET
+_fte_empty:
+	LD	(IX+F_R0),0
+	LD	(IX+F_R1),0
+_fte_empty2:
+	LD	(IX+F_BUFPOS),0
+	LD	(IX+F_BUFCNT),0
+	RET
+
+	END

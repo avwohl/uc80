@@ -67,6 +67,18 @@ Rules for a module in `src/uc80/lib/lc/`:
 - `lc_qsort.mac` holds `qsort`. `lc_bsearch.mac` holds `bsearch`.
 - `lc_fprintf.mac` holds `fprintf` and `vfprintf`, which share the stream sink.
   `lc_vprintf.mac` and `lc_vsprintf.mac` hold `vprintf` and `vsprintf`.
+  `lc_snprintf.mac` and `lc_vsnprintf.mac` are the two entry points of the
+  bounded buffer. They share `lc_snprintf_run.mac` ([printf](printf.md)).
+- The `FILE` functions share the state of a stream, which has two states,
+  reading and writing. `lc_ftowrite.mac` and `lc_ftoread.mac` change the state
+  (`r+`, `w+`, `a+`, `a`). `lc_floadrec.mac` reads a record into the buffer, and
+  `lc_fflush_int.mac` writes the record in the buffer. `lc_fslots.mac` has the
+  table of `FILE` structures and the number of them. `lc_f_lite.mac` replaces the
+  two modules that change the state, in a program that needs no update or append
+  mode (`file_hook.py`). It has the name that sorts before `lc_fgetc`. All of
+  this is in [exit and files](exit_and_files.md).
+- `lc_exit_now.mac` holds `_Exit`. `lc_quick_exit.mac` holds `quick_exit` and
+  `at_quick_exit`.
 - `lc_rand.mac` multiplies with a shift and add loop, so `rand` does not link
   the 16-bit runtime module `rt_arith16` (about 600 bytes).
 
@@ -157,11 +169,17 @@ These limits are deliberate. The linked documents give the details.
   the 16-bit `int` only. `%s` with a null pointer reads address 0. `%p`
   prints `0x` and the hex address (`0x0` for a null pointer).
 - **Program exit.** `main` returning and `exit()` run the `atexit` functions
-  (32 at most), last registered first, and close the open files. CP/M 2.2
-  has no exit status, so the status is not used ([exit and files](exit_and_files.md)).
-- **Files.** A file has records of 128 bytes. `fopen` mode `a` does not append
-  (it makes a new file), and modes with `+` are not supported. `ftell` and
-  `fseek` give exact byte positions up to 8 MB ([exit and files](exit_and_files.md)).
+  (32 at most), last registered first, and close the open files. `_Exit` and
+  `quick_exit` close no file. CP/M 2.2 has no exit status, so the status is
+  not used ([exit and files](exit_and_files.md)).
+- **Files.** A file has records of 128 bytes. `fopen` has the modes `r`, `w`,
+  `a`, `r+`, `w+` and `a+`. A program can have 8 files open (170 bytes of RAM
+  for each; `UC80_MAX_FILES` sets another number when the libraries are
+  built). `ftell` and `fseek` give exact byte positions up to 8 MB
+  ([exit and files](exit_and_files.md)).
+- **Console output.** A TAB (09H) is written as spaces up to the next tab stop
+  of 8 columns. The other control characters go to the BDOS as they are
+  ([console output](console_output.md)).
 - **Reentrancy.** The scanf engine, `strtod` and the math functions use
   static storage for their local variables. They are not reentrant and are
   not thread safe.

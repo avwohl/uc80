@@ -11,6 +11,7 @@ import re
 import sys
 import subprocess
 import glob
+import tempfile
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RT_DIR = os.path.join(SCRIPT_DIR, "rt")
@@ -21,6 +22,30 @@ def run(cmd, **kwargs):
     result = subprocess.run(cmd, capture_output=True, text=True, **kwargs)
     output = result.stdout + result.stderr
     return result.returncode == 0, output
+
+def max_files():
+    """The number of files that can be open at once, from UC80_MAX_FILES, or
+    None for the number in lc/lc_fslots.mac.  Each file costs 170 bytes of
+    RAM (docs/exit_and_files.md)."""
+    text = os.environ.get("UC80_MAX_FILES", "").strip()
+    if not text:
+        return None
+    if not text.isdigit() or not 1 <= int(text) <= 64:
+        sys.exit("UC80_MAX_FILES must be a number from 1 to 64")
+    return int(text)
+
+
+def module_text(path):
+    """The text of a library module.  lc_fslots.mac gets the number of
+    UC80_MAX_FILES, when it is set."""
+    with open(path) as f:
+        text = f.read()
+    count = max_files()
+    if count is not None and os.path.basename(path) == "lc_fslots.mac":
+        text = re.sub(r"^(MAX_FILES\s+EQU\s+)\d+", lambda m: m.group(1) + str(count),
+                      text, count=1, flags=re.M)
+    return text
+
 
 def assemble_dir(src_dir, verbose=True):
     """Assemble all .mac files in a directory to .rel files."""
@@ -40,7 +65,14 @@ def assemble_dir(src_dir, verbose=True):
     for mac_file in mac_files:
         rel_file = mac_file.replace(".mac", ".rel")
         name = os.path.basename(mac_file)
-        ok, output = run(["um80", mac_file, "-o", rel_file])
+        if name == "lc_fslots.mac" and max_files() is not None:
+            with tempfile.TemporaryDirectory() as tmp:
+                patched = os.path.join(tmp, name)
+                with open(patched, "w") as f:
+                    f.write(module_text(mac_file))
+                ok, output = run(["um80", patched, "-o", rel_file])
+        else:
+            ok, output = run(["um80", mac_file, "-o", rel_file])
         if not ok:
             print(f"  FAIL: {name}")
             for line in output.strip().split("\n"):
@@ -129,8 +161,7 @@ def concat_modules(src_dir, output_path, header_comment):
     seen_equs = set()
     for path in mac_files:
         name = os.path.basename(path)
-        with open(path) as f:
-            lines = f.read().splitlines()
+        lines = module_text(path).splitlines()
 
         # CSEG first: the banner must not land in the data segment of the
         # module before (runtime.py would read it as part of that data).

@@ -1,0 +1,25 @@
+; lc_fslots.mac - the table of FILE structures that fopen hands out
+;
+; MAX_FILES files can be open at the same time.  Each one costs
+; FILE_SIZE (170) bytes of RAM in the BSS segment: 6 bytes of state, the
+; 36-byte FCB and the 128-byte buffer.  The image on disk does not hold the
+; table.  A build can set another number: UC80_MAX_FILES=n uc80 --build-libs
+; (see docs/exit_and_files.md).  Only this file has the number; fopen reads
+; the byte _file_nmax.
+	.Z80
+
+FILE_SIZE	EQU	170
+MAX_FILES	EQU	8
+
+	PUBLIC	_file_slots
+	PUBLIC	_file_nmax
+
+	DSEG
+
+_file_nmax:	DB	MAX_FILES
+
+	COMMON	/lc_fslots/
+
+_file_slots:	DS	MAX_FILES*FILE_SIZE
+
+	END

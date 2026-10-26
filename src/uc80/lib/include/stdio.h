@@ -32,11 +32,12 @@ typedef int __intptr_t;
 /* File type - opaque structure for CP/M
  * Actual structure defined in libc.mac:
  *   0: fd (1) - slot number (0-2 = stdin/out/err, 3+ = files)
- *   1: flags (1) - bit0=open, bit1=EOF, bit2=error, bit3=write, bit4=read
+ *   1: flags (1) - bit0=open, bit1=EOF, bit2=error, bit3=in the writing state,
+ *      bit4=can read, bit5=can write, bit6=append, bit7=buffer changed
  *   2: unget (1) - ungetc char (0xFF = none)
  *   3: bufpos (1) - current buffer position
  *   4: bufcnt (1) - valid bytes in buffer
- *   5: (reserved)
+ *   5: set to 1 by fseek (a later write keeps the bytes of the next records)
  *   6-41: FCB (36 bytes) - CP/M File Control Block
  *   42-169: buffer (128 bytes) - I/O buffer
  * Total: 170 bytes per FILE
@@ -68,6 +69,8 @@ int fprintf(FILE *stream, const char *format, ...);
 /* String I/O */
 int sprintf(char *str, const char *format, ...);
 int snprintf(char *str, size_t size, const char *format, ...);
+/* C99: the last argument is a va_list (stdarg.h); same return value as snprintf */
+int vsnprintf(char *str, size_t size, const char *format, ...);
 
 /* File operations (stubs for CP/M - limited functionality) */
 FILE *fopen(const char *pathname, const char *mode);

@@ -1,26 +1,18 @@
 ; lc_snprintf.mac - snprintf(): the shared printf engine, bounded buffer.
 ;
-; Was a third copy of the formatter, and the most threadbare of them: it
-; knew no float conversion at all, so %f, %e, %g and %F each emitted an
-; empty field and left the vararg offset alone, which desynced every
-; later conversion in the same call.  See lc_sprintf.mac for why there is
-; only one formatter now.
+; The sink, the NUL and the count are in lc_snprintf_run.mac, which
+; vsnprintf shares.
 	.Z80
 
-	EXTRN	_printf_engine
-	EXTRN	_printf_sink
-	EXTRN	_printf_count
+	EXTRN	_snprintf_run
+	EXTRN	_snprintf_out
+	EXTRN	_snprintf_max
 
 	CSEG
 
 	PUBLIC	_snprintf
 
 ; int snprintf(char *str, size_t size, const char *fmt, ...)
-;
-; C 7.21.6.5: write at most size-1 characters plus a terminating NUL, and
-; return the number that WOULD have been written had size been big
-; enough.  _printf_count counts everything the engine produced, whether
-; the sink stored it or dropped it, so it is that return value already.
 _snprintf:
 	PUSH	IX
 	LD	IX,0
@@ -36,66 +28,14 @@ _snprintf:
 	LD	D,(IX+7)
 	LD	(_snprintf_max),DE
 
-	LD	HL,(_printf_sink)
-	PUSH	HL
-	LD	HL,_snprintf_sink
-	LD	(_printf_sink),HL
-
 	LD	L,(IX+8)
 	LD	H,(IX+9)		; HL = format string
 	LD	C,10			; first vararg at IX+10
-	CALL	_printf_engine
+	CALL	_snprintf_run
 
-	POP	HL
-	LD	(_printf_sink),HL
-
-	; Terminate, unless the caller left no room at all.
-	LD	HL,(_snprintf_max)
-	LD	A,H
-	OR	L
-	JR	Z,_snp_noterm
-	LD	HL,(_snprintf_out)
-	LD	(HL),0
-_snp_noterm:
-
-	LD	HL,(_printf_count)
 	POP	DE
 	POP	BC
 	POP	IX
 	RET
-
-; Sink: character in E, dropped once the buffer is full.  _printf_putc
-; counts it either way, which is what makes the return value right.
-_snprintf_sink:
-	PUSH	AF
-	PUSH	BC
-	PUSH	DE
-	PUSH	HL
-	LD	HL,(_snprintf_max)
-	LD	A,H
-	OR	L
-	JR	Z,_snp_drop		; size 0: not even the NUL fits
-	LD	B,H
-	LD	C,L
-	DEC	BC			; keep one byte back for the NUL
-	LD	HL,(_printf_count)	; bytes produced so far
-	OR	A
-	SBC	HL,BC
-	JR	NC,_snp_drop		; already at the limit
-	LD	HL,(_snprintf_out)
-	LD	(HL),E
-	INC	HL
-	LD	(_snprintf_out),HL
-_snp_drop:
-	POP	HL
-	POP	DE
-	POP	BC
-	POP	AF
-	RET
-
-	COMMON	/lc_snprintf/
-
-_snprintf_out:	DS	2
-_snprintf_max:	DS	2
 
 	END

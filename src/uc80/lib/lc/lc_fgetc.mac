@@ -13,6 +13,8 @@ FILE_RECNO	EQU	39	; r0 r1 of the FCB: the number of the next record
 FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
 FLAG_EOF	EQU	02H
 
+	EXTRN	_file_toread
+
 	CSEG
 
 ; ============================================================
@@ -48,6 +50,17 @@ _fgetc:
 	JP	_fgetc_ret
 
 _fgetc_file:
+	; A stream in the writing state (w+, a+, r+ after a write) goes to the
+	; reading state first; a stream that cannot read fails here.
+	INC	HL
+	BIT	3,(HL)
+	DEC	HL
+	JR	Z,_fgetc_rdy
+	PUSH	HL
+	CALL	_file_toread
+	POP	HL
+	JR	NZ,_fgetc_eof
+_fgetc_rdy:
 	; Check for ungetc char first
 	PUSH	HL
 	INC	HL

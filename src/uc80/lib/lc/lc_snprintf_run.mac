@@ -1,0 +1,80 @@
+; lc_snprintf_run.mac - the part that snprintf and vsnprintf share
+;
+; C 7.23.6.5: write at most size-1 characters plus a terminating NUL, and
+; return the number of characters that WOULD have been written had size
+; been big enough.  With size 0 nothing is written, not even the NUL.
+; _printf_count counts everything the engine produces, whether the sink
+; stores the character or drops it, so the count is the return value.
+	.Z80
+
+	EXTRN	_printf_engine
+	EXTRN	_printf_sink
+	EXTRN	_printf_count
+
+	CSEG
+
+	PUBLIC	_snprintf_out
+	PUBLIC	_snprintf_max
+	PUBLIC	_snprintf_run
+
+; Run the engine.  The caller has set _snprintf_out and _snprintf_max.
+; HL = format string, IX = the base of the arguments, C = the offset of
+; the first argument (the same values as for _printf_engine).
+; Returns HL = the count.  Destroys AF, BC, DE and HL.
+_snprintf_run:
+	LD	DE,(_printf_sink)
+	PUSH	DE			; the caller's sink, restored below
+	LD	DE,_snprintf_sink
+	LD	(_printf_sink),DE
+
+	CALL	_printf_engine
+
+	POP	HL
+	LD	(_printf_sink),HL
+
+	; Terminate, unless the caller left no room at all.
+	LD	HL,(_snprintf_max)
+	LD	A,H
+	OR	L
+	JR	Z,_snp_noterm
+	LD	HL,(_snprintf_out)
+	LD	(HL),0
+_snp_noterm:
+	LD	HL,(_printf_count)
+	RET
+
+; Sink: character in E, dropped once the buffer is full.  _printf_putc
+; counts it either way, which is what makes the return value right.
+_snprintf_sink:
+	PUSH	AF
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	LD	HL,(_snprintf_max)
+	LD	A,H
+	OR	L
+	JR	Z,_snp_drop		; size 0: not even the NUL fits
+	LD	B,H
+	LD	C,L
+	DEC	BC			; keep one byte back for the NUL
+	LD	HL,(_printf_count)	; bytes produced so far
+	OR	A
+	SBC	HL,BC
+	JR	NC,_snp_drop		; already at the limit
+	LD	HL,(_snprintf_out)
+	LD	(HL),E
+	INC	HL
+	LD	(_snprintf_out),HL
+_snp_drop:
+	POP	HL
+	POP	DE
+	POP	BC
+	POP	AF
+	RET
+
+	COMMON	/lc_snprintf/
+
+_snprintf_out:	DS	2
+_snprintf_max:	DS	2
+
+	END

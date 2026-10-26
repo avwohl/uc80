@@ -2,7 +2,7 @@
 ;
 ; EVERY libc routine that writes a character to the CP/M console calls
 ; __conout.  Nothing else in lc/*.mac may call BDOS function 2 directly;
-; the only two `LD C,CONOUT' in the whole library live in this file.
+; the only `LD C,CONOUT' in the whole library lives in this file.
 ; (See the grep in tests/test_crlf.py, which enforces that.)
 ;
 ; A real CP/M console (ADM-3A, Kaypro, Televideo, ...) treats LF as
@@ -55,30 +55,79 @@ __conout:
 	LD	HL,__conout_last
 	LD	C,(HL)		; C = previous character written
 	LD	(HL),A		; remember this one
-	CP	0AH		; LF?
-	JR	NZ,__conout_put
-	LD	A,(___crlf_mode)
-	OR	A
-	JR	Z,__conout_put	; translation disabled - pass LF through
-	LD	A,C
-	CP	0DH		; already preceded by CR?
-	JR	Z,__conout_put
-	LD	E,0DH		; no - emit CR first
-	LD	C,CONOUT
-	CALL	BDOS
-	LD	E,0AH
-__conout_put:
-	LD	C,CONOUT
-	CALL	BDOS
+	LD	HL,__conout_col
+	CP	20H
+	JR	C,__conout_ctl
+	INC	(HL)		; a visible character moves the column
+__conout_out:
+	CALL	__conout_bdos
 	POP	HL
 	POP	DE
 	POP	BC
 	RET
+
+__conout_ctl:
+	CP	0DH
+	JR	Z,__conout_zero
+	CP	0AH
+	JR	Z,__conout_lf
+	CP	09H
+	JR	Z,__conout_tab
+	CP	08H
+	JR	NZ,__conout_out	; other control characters do not move it
+	LD	A,(HL)		; backspace
+	OR	A
+	JR	Z,__conout_out
+	DEC	(HL)
+	JR	__conout_out
+__conout_zero:
+	LD	(HL),0
+	JR	__conout_out
+__conout_lf:
+	LD	A,(___crlf_mode)
+	OR	A
+	JR	Z,__conout_out	; translation disabled - pass LF through
+	LD	A,C
+	CP	0DH		; already preceded by CR?
+	JR	Z,__conout_out
+	LD	(HL),0
+	LD	E,0DH		; no - emit CR first
+	CALL	__conout_bdos
+	LD	E,0AH
+	JR	__conout_out
+
+; TAB: write spaces up to the next multiple of 8 columns.  A real CP/M BDOS
+; does this for function 2 itself, but the emulator cpmemu drops the byte
+; 09H, so the library does it and sends only spaces.
+__conout_tab:
+	LD	A,(HL)
+	CPL
+	AND	7
+	INC	A		; 8 - (column mod 8)
+	LD	B,A
+__conout_tab1:
+	PUSH	BC
+	LD	E,' '
+	CALL	__conout_bdos
+	LD	HL,__conout_col
+	INC	(HL)
+	POP	BC
+	DJNZ	__conout_tab1
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; The only BDOS 2 call.  E = character.
+__conout_bdos:
+	LD	C,CONOUT
+	JP	BDOS
 
 	DSEG
 
 	PUBLIC	___crlf_mode
 ___crlf_mode:	DB	1	; non-zero: translate LF -> CR LF
 __conout_last:	DB	0	; last character handed to BDOS
+__conout_col:	DB	0	; column of the cursor, for TAB
 
 	END

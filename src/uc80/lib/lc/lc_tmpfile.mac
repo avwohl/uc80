@@ -26,10 +26,11 @@ _tmpfile:
 	LD	HL,_tmpfile_name
 	CALL	_gen_tmpnam
 
-	; Open with "w+" mode (create new)
-	LD	HL,_tmpfile_name
-	PUSH	HL
+	; Open with "w+" mode (create new).  The arguments go right to left:
+	; the mode first, then the name.
 	LD	HL,_tmpfile_mode
+	PUSH	HL
+	LD	HL,_tmpfile_name
 	PUSH	HL
 	CALL	_fopen
 	POP	BC
@@ -46,7 +47,7 @@ _tmpfile:
 
 
 _tmpfile_mode:
-	DB	'w',0
+	DB	'w','+',0
 
 _tmpfile_name:
 	DS	13

@@ -128,7 +128,8 @@ class TestRewriteRuns:
                r' printf("\x68i\012"); printf("%s\n", "str");'
                r' printf("q\?\n"); return 0; }')
         out, _ = build_and_run(tmp_path, src)
-        assert out == 'ab AA\\ "q" ?? c\nhi\nstr\nq?\n'  # libc console drops \\t
+        # the console makes spaces of the TAB: "a" and 7 spaces, then "b"
+        assert out == 'a       b AA\\ "q" ?? c\nhi\nstr\nq?\n'
 
     def test_rewritten_output_equals_unrewritten(self, tmp_path):
         """The same program with a result-used printf (never rewritten)."""
@@ -137,7 +138,7 @@ class TestRewriteRuns:
         out2, _ = build_and_run(
             tmp_path, 'int main(void){ int r; %s return 0; }'
             % body.replace("printf", "r = printf"))
-        assert out1 == out2 == "xy\\z\nw\n"
+        assert out1 == out2 == "x       y\\z\nw\n"   # TAB: 7 spaces
 
 
 @needs_tools

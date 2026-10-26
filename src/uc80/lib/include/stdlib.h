@@ -23,11 +23,10 @@ typedef unsigned short size_t;
 void exit(int status);
 void abort(void);
 int atexit(void (*func)(void));
-/* C11 */
+/* C99, C11: _Exit and quick_exit run no atexit function and flush no file */
+_Noreturn void _Exit(int status);
 _Noreturn void quick_exit(int status);
 int at_quick_exit(void (*func)(void));
-#define quick_exit(s) exit(s)
-#define at_quick_exit(f) atexit(f)
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
 

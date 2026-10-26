@@ -1,0 +1,86 @@
+; lc_ftoread.mac - change a file stream from writing to reading
+;
+; The two states of a file stream are described in lc_ftowrite.mac.
+	.Z80
+
+BDOS	EQU	5
+BDOS_SETDMA	EQU	26	; Set DMA address
+BDOS_READR	EQU	33	; Read random
+BDOS_SIZE	EQU	35	; Compute file size
+
+; offsets from the start of the FILE (the register IX holds it)
+F_FLAGS		EQU	1
+F_UNGET		EQU	2
+F_BUFPOS	EQU	3
+F_BUFCNT	EQU	4
+F_FCB		EQU	6
+F_R0		EQU	39
+F_R1		EQU	40
+F_R2		EQU	41
+F_BUFFER	EQU	42
+
+	EXTRN	_fflush_internal
+
+; ============================================================
+; Internal: _file_toread.  HL = FILE*.  Returns Z when the stream is in
+; the reading state, NZ (and the error flag) when it cannot read, or when
+; the last record cannot be written.
+; ============================================================
+	PUBLIC	_file_toread
+_file_toread:
+	PUSH	IX
+	PUSH	HL
+	POP	IX
+	BIT	4,(IX+F_FLAGS)	; can read?
+	JR	Z,_ftr_err
+	PUSH	IX
+	POP	HL
+	CALL	_fflush_internal	; writes the record when it changed
+	LD	A,H
+	OR	L
+	JR	NZ,_ftr_ret
+	LD	A,(IX+F_BUFPOS)	; A = valid bytes: the larger of bufpos, bufcnt
+	CP	(IX+F_BUFCNT)
+	JR	NC,_ftr_v
+	LD	A,(IX+F_BUFCNT)
+_ftr_v:
+	OR	A
+	JR	Z,_ftr_done	; empty buffer: r0 r1 is the next record
+	LD	B,A
+	LD	A,128
+	SUB	B
+	JR	Z,_ftr_full
+	LD	C,A		; C = bytes after the valid ones
+	LD	A,B
+	PUSH	IX
+	POP	HL
+	LD	DE,F_BUFFER
+	ADD	HL,DE
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[valid]
+	LD	B,C
+	LD	A,1AH
+_ftr_pad:
+	LD	(HL),A		; Ctrl-Z after the valid bytes: end of file
+	INC	HL
+	DJNZ	_ftr_pad
+_ftr_full:
+	INC	(IX+F_R0)	; the buffer holds the record before r0 r1
+	JR	NZ,_ftr_cnt
+	INC	(IX+F_R1)
+_ftr_cnt:
+	LD	(IX+F_BUFCNT),128
+_ftr_done:
+	RES	3,(IX+F_FLAGS)
+	XOR	A
+	POP	IX
+	RET
+_ftr_err:
+	SET	2,(IX+F_FLAGS)
+_ftr_ret:
+	OR	1		; NZ
+	POP	IX
+	RET
+
+	END

@@ -15,7 +15,9 @@ from pathlib import Path
 # libc_rom.lib.
 ROM_EXCLUDED = frozenset({
     "lc_data",          # stdin, stdout and stderr
-    "lc_exit", "lc_exit_data", "lc_atexit",
+    "lc_exit", "lc_exit_data", "lc_atexit", "lc_exit_now", "lc_quick_exit",
+    "lc_fslots",        # the table of FILE structures
+    "lc_f_lite",      # file code
     "lc_system", "lc_getenv",
     "lc_time", "lc_clock",
     "lc_malloc_data", "lc_free",   # the heap: malloc itself reaches the BDOS

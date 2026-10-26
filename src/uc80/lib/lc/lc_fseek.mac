@@ -113,6 +113,20 @@ _fsk_have:
 	ADC	A,A
 	LD	B,A		; BC = the record number = position / 128
 
+	; A stream that appends goes to the end of the file at its next
+	; write, so after the seek it is in the reading state.  (The
+	; position above was computed in the state it had.)
+	LD	HL,(_fsk_fp)
+	INC	HL
+	BIT	6,(HL)
+	JR	Z,_fsk_na
+	RES	3,(HL)
+_fsk_na:
+	LD	HL,(_fsk_fp)
+	LD	DE,5
+	ADD	HL,DE
+	LD	(HL),1		; moved: fputc keeps the bytes of the next records
+
 	; An empty buffer, no pushed back character, no end of file
 	LD	HL,(_fsk_fp)
 	PUSH	HL
@@ -139,9 +153,17 @@ _fsk_have:
 	INC	HL
 	LD	(HL),0		; r2
 
+	LD	HL,(_fsk_fp)
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	JR	NZ,_fsk_ld	; a stream that writes keeps the bytes of the record
 	LD	A,(_fsk_off)
 	OR	A
-	CALL	NZ,_fsk_load	; inside a record: read it
+	JR	Z,_fsk_noload
+_fsk_ld:
+	CALL	_fsk_load	; inside a record: read it
+_fsk_noload:
 	LD	HL,0
 	JR	_fseek_ret
 

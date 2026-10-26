@@ -32,12 +32,29 @@ PRINTF_FORMAT_ARG = {
     "printf": 0, "vprintf": 0,
     "fprintf": 1, "vfprintf": 1,
     "sprintf": 1, "vsprintf": 1,
-    "snprintf": 2,
+    "snprintf": 2, "vsnprintf": 2,
     "__builtin_printf": 0, "__builtin_vprintf": 0,
     "__builtin_fprintf": 1, "__builtin_vfprintf": 1,
     "__builtin_sprintf": 1, "__builtin_vsprintf": 1,
-    "__builtin_snprintf": 2,
+    "__builtin_snprintf": 2, "__builtin_vsnprintf": 2,
 }
+
+# printf functions that the format scan of codegen.py does not know.  A
+# program that uses one of them gets every conversion, as for a format
+# that is not a literal.
+UNSCANNED = frozenset({"vsnprintf", "__builtin_vsnprintf"})
+
+
+def uses_unscanned(unit):
+    """True if the program calls (or takes the address of) a function in
+    UNSCANNED."""
+    stack = list(unit.items)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Identifier) and node.name.text in UNSCANNED:
+            return True
+        stack.extend(children(node))
+    return False
 
 # % flags width .precision length conversion
 _SPEC = re.compile(

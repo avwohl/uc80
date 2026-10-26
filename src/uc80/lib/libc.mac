@@ -4178,7 +4178,7 @@ _cplx_res:	DS	8	; Result storage
 ;
 ; EVERY libc routine that writes a character to the CP/M console calls
 ; __conout.  Nothing else in lc/*.mac may call BDOS function 2 directly;
-; the only two `LD C,CONOUT' in the whole library live in this file.
+; the only `LD C,CONOUT' in the whole library lives in this file.
 ; (See the grep in tests/test_crlf.py, which enforces that.)
 ;
 ; A real CP/M console (ADM-3A, Kaypro, Televideo, ...) treats LF as
@@ -4227,31 +4227,80 @@ __conout:
 	LD	HL,__conout_last
 	LD	C,(HL)		; C = previous character written
 	LD	(HL),A		; remember this one
-	CP	0AH		; LF?
-	JR	NZ,__conout_put
-	LD	A,(___crlf_mode)
-	OR	A
-	JR	Z,__conout_put	; translation disabled - pass LF through
-	LD	A,C
-	CP	0DH		; already preceded by CR?
-	JR	Z,__conout_put
-	LD	E,0DH		; no - emit CR first
-	LD	C,CONOUT
-	CALL	BDOS
-	LD	E,0AH
-__conout_put:
-	LD	C,CONOUT
-	CALL	BDOS
+	LD	HL,__conout_col
+	CP	20H
+	JR	C,__conout_ctl
+	INC	(HL)		; a visible character moves the column
+__conout_out:
+	CALL	__conout_bdos
 	POP	HL
 	POP	DE
 	POP	BC
 	RET
+
+__conout_ctl:
+	CP	0DH
+	JR	Z,__conout_zero
+	CP	0AH
+	JR	Z,__conout_lf
+	CP	09H
+	JR	Z,__conout_tab
+	CP	08H
+	JR	NZ,__conout_out	; other control characters do not move it
+	LD	A,(HL)		; backspace
+	OR	A
+	JR	Z,__conout_out
+	DEC	(HL)
+	JR	__conout_out
+__conout_zero:
+	LD	(HL),0
+	JR	__conout_out
+__conout_lf:
+	LD	A,(___crlf_mode)
+	OR	A
+	JR	Z,__conout_out	; translation disabled - pass LF through
+	LD	A,C
+	CP	0DH		; already preceded by CR?
+	JR	Z,__conout_out
+	LD	(HL),0
+	LD	E,0DH		; no - emit CR first
+	CALL	__conout_bdos
+	LD	E,0AH
+	JR	__conout_out
+
+; TAB: write spaces up to the next multiple of 8 columns.  A real CP/M BDOS
+; does this for function 2 itself, but the emulator cpmemu drops the byte
+; 09H, so the library does it and sends only spaces.
+__conout_tab:
+	LD	A,(HL)
+	CPL
+	AND	7
+	INC	A		; 8 - (column mod 8)
+	LD	B,A
+__conout_tab1:
+	PUSH	BC
+	LD	E,' '
+	CALL	__conout_bdos
+	LD	HL,__conout_col
+	INC	(HL)
+	POP	BC
+	DJNZ	__conout_tab1
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; The only BDOS 2 call.  E = character.
+__conout_bdos:
+	LD	C,CONOUT
+	JP	BDOS
 
 	DSEG
 
 	PUBLIC	___crlf_mode
 ___crlf_mode:	DB	1	; non-zero: translate LF -> CR LF
 __conout_last:	DB	0	; last character handed to BDOS
+__conout_col:	DB	0	; column of the cursor, for TAB
 
 
 	CSEG
@@ -4591,6 +4640,24 @@ __exit_fhook:	DS	2
 	COMMON	/lc_exit_hook/
 
 __exit_hook:	DS	2
+
+
+	CSEG
+; ============================================================
+; lc_exit_now.mac
+; ============================================================
+; lc_exit_now.mac - _Exit
+
+	CSEG
+
+; ============================================================
+; void _Exit(int status)
+; Returns to CP/M at once (warm boot).  It runs no atexit function, closes
+; no file and writes no buffer.  CP/M 2.2 has no exit status.
+; ============================================================
+	PUBLIC	__Exit
+__Exit:
+	JP	0
 
 
 	CSEG
@@ -5118,15 +5185,125 @@ _fflush_done_pub:
 
 	CSEG
 ; ============================================================
+; lc_fflush_int.mac
+; ============================================================
+; lc_fflush_int.mac - _fflush_internal: write the record in the buffer
+
+BDOS_WRITE	EQU	34	; Write random (the record number is in the FCB, r0 r1)
+BDOS_SETDMA	EQU	26	; Set DMA address
+FILE_BUFPOS	EQU	3	; Current position in buffer
+FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
+
+	CSEG
+
+; ============================================================
+; Internal: Flush write buffer
+; HL = FILE*
+; Returns HL=0 success, HL=-1 error
+;
+; Writes the record in the buffer (record number r0 r1 of the FCB), padded
+; with Ctrl-Z after the valid bytes.  It does not move on to the next
+; record, so more output after an fflush goes into the same record and no
+; Ctrl-Z stays in the middle of the file.  It writes only when a fputc
+; changed the buffer since the last write (flag bit 7), so a record that
+; fseek loaded and nobody changed is not written back.
+; ============================================================
+	PUBLIC	_fflush_internal
+_fflush_internal:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+
+	INC	HL
+	BIT	7,(HL)		; changed since the last write?
+	DEC	HL
+	JR	Z,_fflush_ok
+
+	; A = valid bytes = the larger of bufpos and bufcnt
+	LD	BC,FILE_BUFPOS
+	ADD	HL,BC
+	LD	A,(HL)
+	INC	HL
+	CP	(HL)
+	JR	NC,_fflush_v
+	LD	A,(HL)
+_fflush_v:
+	OR	A
+	JR	Z,_fflush_ok	; Nothing to flush
+
+	; Pad rest of buffer with Ctrl-Z (CP/M EOF)
+	LD	B,A		; B = valid bytes
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[valid]
+	LD	A,128
+	SUB	B
+	LD	B,A		; B = bytes to pad
+	JR	Z,_fflush_write
+	LD	A,1AH		; Ctrl-Z
+_fflush_pad:
+	LD	(HL),A
+	INC	HL
+	DJNZ	_fflush_pad
+
+_fflush_write:
+	; Set DMA
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+
+	; Write record
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_WRITE
+	CALL	BDOS
+
+	OR	A
+	JR	NZ,_fflush_err
+
+_fflush_ok:
+	POP	HL
+	INC	HL
+	RES	7,(HL)		; the buffer matches the file
+	LD	HL,0
+	POP	DE
+	POP	BC
+	RET
+
+_fflush_err:
+	POP	HL
+	PUSH	HL
+	INC	HL		; flags
+	LD	A,(HL)
+	OR	FLAG_ERROR
+	LD	(HL),A
+	POP	HL
+	LD	HL,-1
+	POP	DE
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
 ; lc_fgetc.mac
 ; ============================================================
 ; lc_fgetc.mac - split from lc_file.mac
 
 BDOS_READ	EQU	33	; Read random (the record number is in the FCB, r0 r1)
-BDOS_SETDMA	EQU	26	; Set DMA address
-FILE_BUFPOS	EQU	3	; Current position in buffer
 FILE_RECNO	EQU	39	; r0 r1 of the FCB: the number of the next record
-FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
+
 
 	CSEG
 
@@ -5163,6 +5340,17 @@ _fgetc:
 	JP	_fgetc_ret
 
 _fgetc_file:
+	; A stream in the writing state (w+, a+, r+ after a write) goes to the
+	; reading state first; a stream that cannot read fails here.
+	INC	HL
+	BIT	3,(HL)
+	DEC	HL
+	JR	Z,_fgetc_rdy
+	PUSH	HL
+	CALL	_file_toread
+	POP	HL
+	JR	NZ,_fgetc_eof
+_fgetc_rdy:
 	; Check for ungetc char first
 	PUSH	HL
 	INC	HL
@@ -5485,6 +5673,63 @@ _fgets_null:
 	POP	DE
 	POP	BC
 	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_floadrec.mac
+; ============================================================
+; lc_floadrec.mac - read a record into the buffer of a file stream
+;
+; The two states of a file stream are described in lc_ftowrite.mac.
+
+BDOS_READR	EQU	33	; Read random
+BDOS_SIZE	EQU	35	; Compute file size
+
+; offsets from the start of the FILE (the register IX holds it)
+F_FLAGS		EQU	1
+F_UNGET		EQU	2
+F_BUFPOS	EQU	3
+F_BUFCNT	EQU	4
+F_FCB		EQU	6
+F_R0		EQU	39
+F_R1		EQU	40
+F_R2		EQU	41
+F_BUFFER	EQU	42
+
+
+	CSEG
+
+; ============================================================
+; Internal: _file_loadrec.  HL = FILE*.  Read the record r0 r1 into the
+; buffer.  bufcnt becomes 128 when the record exists, and 0 when it does
+; not (then the file ends before it).  Returns Z when the record was read.
+; ============================================================
+	PUBLIC	_file_loadrec
+_file_loadrec:
+	PUSH	HL
+	LD	DE,F_BUFFER
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+	POP	HL
+	PUSH	HL
+	LD	DE,F_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_READR
+	CALL	BDOS
+	POP	HL
+	OR	A
+	LD	DE,F_BUFCNT
+	ADD	HL,DE
+	JR	NZ,_flr_none
+	LD	(HL),128
+	RET
+_flr_none:
+	LD	(HL),0
 	RET
 
 
@@ -6263,8 +6508,9 @@ BDOS_OPEN	EQU	15	; Open file
 BDOS_DELETE	EQU	19	; Delete file
 BDOS_MAKE	EQU	22	; Make (create) file
 FILE_SIZE	EQU	170	; Total FILE structure size
-FLAG_READ	EQU	10H
-MAX_FILES	EQU	4
+FLAG_READ	EQU	10H	; can read
+FLAG_CANW	EQU	20H	; can write
+FLAG_APPEND	EQU	40H	; every write goes to the end
 
 	PUBLIC	_parse_fcb
 
@@ -6273,7 +6519,7 @@ MAX_FILES	EQU	4
 
 ; ============================================================
 ; FILE *fopen(const char *pathname, const char *mode)
-; Open a file for reading or writing
+; Open a file.  Modes: r, w, a, and r+, w+, a+ ("b" and "t" are ignored)
 ; ============================================================
 	PUBLIC	_fopen
 _fopen:
@@ -6285,7 +6531,8 @@ _fopen:
 
 	; Find free file slot
 	LD	HL,_file_slots
-	LD	B,MAX_FILES
+	LD	A,(_file_nmax)
+	LD	B,A
 _fopen_find:
 	PUSH	HL
 	INC	HL		; Point to flags
@@ -6304,33 +6551,37 @@ _fopen_found:
 	; HL = FILE structure, save it
 	PUSH	HL
 
-	; Parse mode string
+	; Parse mode string: r, w or a, then any of "+", "b", "t".
+	; B = flags of the stream: r can read, w can write and starts in the
+	; writing state, a can write and appends.  "+" adds the other way.
 	LD	L,(IX+6)
 	LD	H,(IX+7)	; HL = mode
 	LD	A,(HL)
-	LD	B,0		; B = mode flags
+	LD	B,FLAG_READ
 	CP	'r'
-	JR	Z,_fopen_read
+	JR	Z,_fopen_mode
+	LD	B,FLAG_CANW+FLAG_WRITE
 	CP	'w'
-	JR	Z,_fopen_write
+	JR	Z,_fopen_mode
+	LD	B,FLAG_CANW+FLAG_APPEND
 	CP	'a'
-	JR	Z,_fopen_append
+	JR	Z,_fopen_mode
 	; Invalid mode
 	POP	HL
 	LD	HL,0
 	JP	_fopen_ret
 
-_fopen_read:
-	LD	B,FLAG_READ
-	JR	_fopen_setup
-
-_fopen_write:
-	LD	B,FLAG_WRITE
-	JR	_fopen_setup
-
-_fopen_append:
-	LD	B,FLAG_WRITE	; Append = write mode
-	; (simplified: append not fully supported)
+_fopen_mode:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JR	Z,_fopen_setup
+	CP	'+'
+	JR	NZ,_fopen_mode
+	LD	A,B
+	OR	FLAG_READ+FLAG_CANW
+	LD	B,A
+	JR	_fopen_mode
 
 _fopen_setup:
 	; B = mode flags, stack has FILE*
@@ -6396,13 +6647,28 @@ _fopen_clr:
 
 	LD	A,B
 	AND	FLAG_WRITE
-	JR	Z,_fopen_doopen
+	JR	Z,_fopen_notw
 
 	; Write mode - delete existing, create new
 	PUSH	DE
 	LD	C,BDOS_DELETE
 	CALL	BDOS
 	POP	DE
+	LD	C,BDOS_MAKE
+	CALL	BDOS
+	JR	_fopen_check
+
+_fopen_notw:
+	; Append mode - open the file, or create it when there is none
+	LD	A,B
+	AND	FLAG_APPEND
+	JR	Z,_fopen_doopen
+	PUSH	DE
+	LD	C,BDOS_OPEN
+	CALL	BDOS
+	POP	DE
+	CP	0FFH
+	JR	NZ,_fopen_check
 	LD	C,BDOS_MAKE
 	CALL	BDOS
 	JR	_fopen_check
@@ -6438,6 +6704,8 @@ _fopen_ok:
 	OR	FLAG_OPEN
 	LD	(HL),A
 	POP	HL		; Return FILE*
+	; A stream that appends starts in the reading state at the start of the
+	; file.  The first fputc puts it at the end (lc_ftowrite.mac).
 	JR	_fopen_ret
 
 _fopen_ret:
@@ -6451,7 +6719,8 @@ _fopen_ret:
 ; ============================================================
 _fclose_all:
 	LD	HL,_file_slots
-	LD	B,MAX_FILES
+	LD	A,(_file_nmax)
+	LD	B,A
 _fclose_all1:
 	PUSH	BC
 	PUSH	HL
@@ -6576,12 +6845,6 @@ _parse_done:
 	POP	BC
 	RET
 
-
-	COMMON	/lc_fopen/
-
-
-; File slot storage
-_file_slots:	DS	680	; 4 FILE structures * 170 bytes each
 
 
 	CSEG
@@ -6778,10 +7041,8 @@ _fprintf_stream: DS	2
 ; ============================================================
 ; lc_fputc.mac - split from lc_file.mac
 
-BDOS_WRITE	EQU	34	; Write random (the record number is in the FCB, r0 r1)
 
 
-	PUBLIC	_fflush_internal
 
 	CSEG
 
@@ -6820,11 +7081,21 @@ _fputc:
 	JP	_fputc_ret
 
 _fputc_file:
-	; Check if buffer full
+	; A stream in the reading state (r+, or a+ after a read) goes to the
+	; writing state first; a stream that cannot write fails here.
+	INC	HL
+	BIT	3,(HL)
+	DEC	HL
+	JR	NZ,_fputc_ready
 	PUSH	HL
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
-	LD	A,(HL)
+	CALL	_file_towrite
+	POP	HL
+	JR	NZ,_fputc_err
+_fputc_ready:
+	PUSH	HL		; the FILE* stays on the stack
+	LD	DE,FILE_BUFPOS
+	ADD	HL,DE
+	LD	A,(HL)		; A = bufpos
 	CP	128
 	JR	C,_fputc_store
 
@@ -6832,21 +7103,16 @@ _fputc_file:
 	POP	HL
 	PUSH	HL
 	CALL	_fflush_internal
-	; Check for error
 	LD	A,H
 	OR	L
 	JR	NZ,_fputc_flerr
 	POP	HL
 	PUSH	HL
 	CALL	_file_nextrec
-	POP	HL
-	PUSH	HL
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
+	XOR	A		; bufpos = 0
 
 _fputc_store:
-	; Store byte in buffer
-	LD	A,(HL)		; A = bufpos
+	; A = bufpos.  Store the byte in the buffer.
 	POP	HL
 	PUSH	HL
 	LD	DE,FILE_BUFFER
@@ -6857,12 +7123,15 @@ _fputc_store:
 	LD	A,(IX+4)
 	LD	(HL),A		; Store the byte
 
-	; Increment bufpos.  bufcnt is the number of bytes of the record that
-	; are valid (the high water mark), so a flush pads only after them.
+	; The buffer now differs from the file (flag bit 7).  Increment
+	; bufpos.  bufcnt is the number of bytes of the record that are
+	; valid (the high water mark), so a flush pads only after them.
 	POP	HL
 	PUSH	HL
-	LD	DE,FILE_BUFPOS
-	ADD	HL,DE
+	INC	HL
+	SET	7,(HL)
+	INC	HL
+	INC	HL		; bufpos
 	INC	(HL)		; bufpos++
 	LD	A,(HL)
 	INC	HL
@@ -6899,101 +7168,31 @@ _file_nextrec:
 	INC	HL
 	LD	(HL),A		; bufcnt = 0
 	POP	HL
+	PUSH	HL
 	LD	DE,FILE_RECNO
 	ADD	HL,DE
 	INC	(HL)
-	RET	NZ
+	JR	NZ,_nextrec_ld
 	INC	HL
 	INC	(HL)
-	RET
-
-; ============================================================
-; Internal: Flush write buffer
-; HL = FILE*
-; Returns HL=0 success, HL=-1 error
-;
-; Writes the record in the buffer (record number r0 r1 of the FCB), padded
-; with Ctrl-Z after the valid bytes.  It does not move on to the next
-; record, so more output after an fflush goes into the same record and no
-; Ctrl-Z stays in the middle of the file.
-; ============================================================
-_fflush_internal:
-	PUSH	BC
-	PUSH	DE
+_nextrec_ld:
+	; A stream that can also read, or that fseek moved (byte 5 is not 0),
+	; keeps the bytes that the next record already has, so a write into
+	; it changes only the bytes written.
+	POP	HL
 	PUSH	HL
-
-	; A = valid bytes = the larger of bufpos and bufcnt
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
-	LD	A,(HL)
 	INC	HL
-	CP	(HL)
-	JR	NC,_fflush_v
+	BIT	4,(HL)
+	POP	HL
+	JP	NZ,_file_loadrec
+	PUSH	HL
+	LD	DE,5
+	ADD	HL,DE
 	LD	A,(HL)
-_fflush_v:
+	POP	HL
 	OR	A
-	JR	Z,_fflush_ok	; Nothing to flush
-
-	; Pad rest of buffer with Ctrl-Z (CP/M EOF)
-	LD	B,A		; B = valid bytes
-	POP	HL
-	PUSH	HL
-	LD	DE,FILE_BUFFER
-	ADD	HL,DE
-	LD	E,B
-	LD	D,0
-	ADD	HL,DE		; HL = buffer[valid]
-	LD	A,128
-	SUB	B
-	LD	B,A		; B = bytes to pad
-	JR	Z,_fflush_write
-	LD	A,1AH		; Ctrl-Z
-_fflush_pad:
-	LD	(HL),A
-	INC	HL
-	DJNZ	_fflush_pad
-
-_fflush_write:
-	; Set DMA
-	POP	HL
-	PUSH	HL
-	LD	DE,FILE_BUFFER
-	ADD	HL,DE
-	EX	DE,HL
-	LD	C,BDOS_SETDMA
-	CALL	BDOS
-
-	; Write record
-	POP	HL
-	PUSH	HL
-	LD	DE,FILE_FCB
-	ADD	HL,DE
-	EX	DE,HL
-	LD	C,BDOS_WRITE
-	CALL	BDOS
-
-	OR	A
-	JR	NZ,_fflush_err
-
-_fflush_ok:
-	POP	HL
-	LD	HL,0
-	POP	DE
-	POP	BC
-	RET
-
-_fflush_err:
-	POP	HL
-	PUSH	HL
-	INC	HL		; flags
-	LD	A,(HL)
-	OR	FLAG_ERROR
-	LD	(HL),A
-	POP	HL
-	LD	HL,-1
-	POP	DE
-	POP	BC
-	RET
+	RET	Z
+	JP	_file_loadrec
 
 
 	CSEG
@@ -7577,8 +7776,6 @@ _fscanf:
 ; that record when the position is not at the start of a record.  See
 ; lc_ftell.mac and docs/libraries.md ("Files").
 
-BDOS_READR	EQU	33	; Read random
-BDOS_SIZE	EQU	35	; Compute file size
 FILE_FLAGS	EQU	1
 FILE_UNGET	EQU	2	; pushed back character, or 0FFH
 
@@ -7672,6 +7869,20 @@ _fsk_have:
 	ADC	A,A
 	LD	B,A		; BC = the record number = position / 128
 
+	; A stream that appends goes to the end of the file at its next
+	; write, so after the seek it is in the reading state.  (The
+	; position above was computed in the state it had.)
+	LD	HL,(_fsk_fp)
+	INC	HL
+	BIT	6,(HL)
+	JR	Z,_fsk_na
+	RES	3,(HL)
+_fsk_na:
+	LD	HL,(_fsk_fp)
+	LD	DE,5
+	ADD	HL,DE
+	LD	(HL),1		; moved: fputc keeps the bytes of the next records
+
 	; An empty buffer, no pushed back character, no end of file
 	LD	HL,(_fsk_fp)
 	PUSH	HL
@@ -7698,9 +7909,17 @@ _fsk_have:
 	INC	HL
 	LD	(HL),0		; r2
 
+	LD	HL,(_fsk_fp)
+	INC	HL
+	LD	A,(HL)
+	AND	FLAG_WRITE
+	JR	NZ,_fsk_ld	; a stream that writes keeps the bytes of the record
 	LD	A,(_fsk_off)
 	OR	A
-	CALL	NZ,_fsk_load	; inside a record: read it
+	JR	Z,_fsk_noload
+_fsk_ld:
+	CALL	_fsk_load	; inside a record: read it
+_fsk_noload:
 	LD	HL,0
 	JR	_fseek_ret
 
@@ -7930,6 +8149,33 @@ _fsetpos:
 
 	CSEG
 ; ============================================================
+; lc_fslots.mac
+; ============================================================
+; lc_fslots.mac - the table of FILE structures that fopen hands out
+;
+; MAX_FILES files can be open at the same time.  Each one costs
+; FILE_SIZE (170) bytes of RAM in the BSS segment: 6 bytes of state, the
+; 36-byte FCB and the 128-byte buffer.  The image on disk does not hold the
+; table.  A build can set another number: UC80_MAX_FILES=n uc80 --build-libs
+; (see docs/exit_and_files.md).  Only this file has the number; fopen reads
+; the byte _file_nmax.
+
+MAX_FILES	EQU	8
+
+	PUBLIC	_file_slots
+	PUBLIC	_file_nmax
+
+	DSEG
+
+_file_nmax:	DB	MAX_FILES
+
+	COMMON	/lc_fslots/
+
+_file_slots:	DS	MAX_FILES*FILE_SIZE
+
+
+	CSEG
+; ============================================================
 ; lc_ftell.mac
 ; ============================================================
 ; lc_ftell.mac - ftell, and the position code that fseek shares
@@ -8053,6 +8299,223 @@ _fpc_sh:
 	INC	E
 	RET	NZ
 	INC	D
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_ftoread.mac
+; ============================================================
+; lc_ftoread.mac - change a file stream from writing to reading
+;
+; The two states of a file stream are described in lc_ftowrite.mac.
+
+
+; offsets from the start of the FILE (the register IX holds it)
+
+
+; ============================================================
+; Internal: _file_toread.  HL = FILE*.  Returns Z when the stream is in
+; the reading state, NZ (and the error flag) when it cannot read, or when
+; the last record cannot be written.
+; ============================================================
+	PUBLIC	_file_toread
+_file_toread:
+	PUSH	IX
+	PUSH	HL
+	POP	IX
+	BIT	4,(IX+F_FLAGS)	; can read?
+	JR	Z,_ftr_err
+	PUSH	IX
+	POP	HL
+	CALL	_fflush_internal	; writes the record when it changed
+	LD	A,H
+	OR	L
+	JR	NZ,_ftr_ret
+	LD	A,(IX+F_BUFPOS)	; A = valid bytes: the larger of bufpos, bufcnt
+	CP	(IX+F_BUFCNT)
+	JR	NC,_ftr_v
+	LD	A,(IX+F_BUFCNT)
+_ftr_v:
+	OR	A
+	JR	Z,_ftr_done	; empty buffer: r0 r1 is the next record
+	LD	B,A
+	LD	A,128
+	SUB	B
+	JR	Z,_ftr_full
+	LD	C,A		; C = bytes after the valid ones
+	LD	A,B
+	PUSH	IX
+	POP	HL
+	LD	DE,F_BUFFER
+	ADD	HL,DE
+	LD	E,B
+	LD	D,0
+	ADD	HL,DE		; HL = buffer[valid]
+	LD	B,C
+	LD	A,1AH
+_ftr_pad:
+	LD	(HL),A		; Ctrl-Z after the valid bytes: end of file
+	INC	HL
+	DJNZ	_ftr_pad
+_ftr_full:
+	INC	(IX+F_R0)	; the buffer holds the record before r0 r1
+	JR	NZ,_ftr_cnt
+	INC	(IX+F_R1)
+_ftr_cnt:
+	LD	(IX+F_BUFCNT),128
+_ftr_done:
+	RES	3,(IX+F_FLAGS)
+	XOR	A
+	POP	IX
+	RET
+_ftr_err:
+	SET	2,(IX+F_FLAGS)
+_ftr_ret:
+	OR	1		; NZ
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_ftowrite.mac
+; ============================================================
+; lc_ftowrite.mac - change a file stream from reading to writing
+;
+; A FILE is in one of two states, and flag bit 3 (FLAG_WRITE) tells which:
+;
+;   reading (bit 3 clear): r0 r1 of the FCB is the number of the NEXT record
+;       to read.  When bufcnt is not 0 the buffer holds the record before
+;       r0 r1, and bufpos is the position in it.
+;   writing (bit 3 set): r0 r1 is the number of the record that is IN the
+;       buffer, and bufpos is the position in it.  bufcnt is the number of
+;       valid bytes (the high water mark).  Flag bit 7 is set when fputc
+;       changed the buffer since the last write.
+;
+; A stream that only reads or only writes never changes state.  A stream
+; opened with "+" does it here (reading to writing, called by fputc) and in
+; lc_ftoread.mac (writing to reading, called by fgetc).  This is what C needs
+; fflush, fseek or rewind for between a write and a read; the library does it
+; by itself, so the program works without them too.  A stream opened with "a"
+; starts in the reading state at the start of the file.  The first fputc puts
+; it at the end of the file, here, and so does the first fputc after each
+; fseek, rewind or read.  So each write goes to the end of the file.
+;
+; With the compiler hook of file_hook.py, a program that opens no file in
+; an update mode or an append mode links lc_f_lite.mac instead of this
+; module and lc_ftoread.mac.
+;
+; Flags: 01 open, 02 end of file, 04 error, 08 writing, 10 can read,
+; 20 can write, 40 append, 80 buffer changed.
+
+
+; offsets from the start of the FILE (the register IX holds it)
+
+
+
+	CSEG
+
+; ============================================================
+; Internal: _file_towrite.  HL = FILE*.  Returns Z when the stream is in
+; the writing state, NZ (and the error flag) when it cannot write.
+; ============================================================
+	PUBLIC	_file_towrite
+_file_towrite:
+	PUSH	IX
+	PUSH	HL
+	POP	IX
+	BIT	5,(IX+F_FLAGS)	; can write?
+	JR	Z,_ftw_err
+	RES	1,(IX+F_FLAGS)	; no end of file
+	LD	A,0FFH
+	CP	(IX+F_UNGET)
+	JR	Z,_ftw_nou
+	LD	(IX+F_UNGET),A	; a pushed back character: back up one byte
+	LD	A,(IX+F_BUFPOS)
+	OR	A
+	JR	Z,_ftw_nou
+	DEC	(IX+F_BUFPOS)
+_ftw_nou:
+	BIT	6,(IX+F_FLAGS)	; append?
+	JR	NZ,_ftw_end
+	LD	A,(IX+F_BUFCNT)
+	OR	A
+	JR	Z,_ftw_load	; empty buffer: the record r0 r1 is next
+	LD	L,(IX+F_R0)	; the buffer holds the record before r0 r1
+	LD	H,(IX+F_R1)
+	DEC	HL
+	LD	(IX+F_R0),L
+	LD	(IX+F_R1),H
+	JR	_ftw_done
+_ftw_load:
+	PUSH	IX
+	POP	HL
+	CALL	_file_loadrec	; keep the bytes that the record has
+	JR	_ftw_done
+_ftw_end:
+	CALL	_file_toend
+_ftw_done:
+	SET	3,(IX+F_FLAGS)
+	XOR	A
+	POP	IX
+	RET
+_ftw_err:
+	SET	2,(IX+F_FLAGS)
+	OR	1		; NZ
+	POP	IX
+	RET
+
+; ============================================================
+; Internal: _file_toend.  IX = FILE*.  Put the stream at the end of the
+; data of the file, in the writing state: the last record is in the buffer
+; and bufpos is the place of its first Ctrl-Z.
+; ============================================================
+_file_toend:
+	PUSH	IX
+	POP	HL
+	LD	DE,F_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SIZE
+	CALL	BDOS		; r0 r1 = the number of records
+	LD	(IX+F_R2),0
+	LD	L,(IX+F_R0)
+	LD	H,(IX+F_R1)
+	LD	A,H
+	OR	L
+	JR	Z,_fte_empty
+	DEC	HL		; the last record
+	LD	(IX+F_R0),L
+	LD	(IX+F_R1),H
+	PUSH	IX
+	POP	HL
+	CALL	_file_loadrec
+	JR	NZ,_fte_empty2
+	PUSH	IX
+	POP	HL
+	LD	DE,F_BUFFER
+	ADD	HL,DE
+	LD	B,0
+_fte_scan:
+	LD	A,B
+	CP	128
+	JR	NC,_fte_set
+	LD	A,(HL)
+	CP	1AH
+	JR	Z,_fte_set
+	INC	HL
+	INC	B
+	JR	_fte_scan
+_fte_set:
+	LD	(IX+F_BUFPOS),B
+	RET
+_fte_empty:
+	LD	(IX+F_R0),0
+	LD	(IX+F_R1),0
+_fte_empty2:
+	LD	(IX+F_BUFPOS),0
+	LD	(IX+F_BUFCNT),0
 	RET
 
 
@@ -17367,6 +17830,78 @@ QS_NV	EQU	QS_END-QS_VARS
 
 	CSEG
 ; ============================================================
+; lc_quick_exit.mac
+; ============================================================
+; lc_quick_exit.mac - quick_exit and at_quick_exit (C11)
+;
+; quick_exit calls the functions that at_quick_exit registered, last
+; registered first, and then does what _Exit does.  It does not run the
+; atexit functions and does not close the files.
+
+MAX_QEXIT	EQU	32	; the minimum that C 7.24.4.3 requires
+
+	CSEG
+
+; int at_quick_exit(void (*func)(void))
+; Returns 0, or 1 when 32 functions are registered.
+	PUBLIC	_at_quick_exit
+_at_quick_exit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(_qexit_cnt)
+	CP	MAX_QEXIT
+	JR	NC,_atq_fail
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	LD	DE,_qexit_tab
+	ADD	HL,DE
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	HL,_qexit_cnt
+	INC	(HL)
+	LD	HL,0
+	POP	IX
+	RET
+_atq_fail:
+	LD	HL,1
+	POP	IX
+	RET
+
+; void quick_exit(int status)
+; A function that calls at_quick_exit adds a function that runs next.
+	PUBLIC	_quick_exit
+_quick_exit:
+	LD	A,(_qexit_cnt)
+	OR	A
+	JP	Z,0		; no more functions: warm boot
+	DEC	A
+	LD	(_qexit_cnt),A
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	LD	DE,_qexit_tab
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = function
+	LD	HL,_quick_exit	; the function returns to the start of the loop
+	PUSH	HL
+	PUSH	DE
+	RET			; "call" the function
+
+	COMMON	/lc_quick_exit/
+
+_qexit_cnt:	DS	1
+_qexit_tab:	DS	64
+
+
+	CSEG
+; ============================================================
 ; lc_rand.mac
 ; ============================================================
 ; lc_rand.mac - split from lc_stdlib.mac
@@ -21667,11 +22202,8 @@ __v_sinh:
 ; ============================================================
 ; lc_snprintf.mac - snprintf(): the shared printf engine, bounded buffer.
 ;
-; Was a third copy of the formatter, and the most threadbare of them: it
-; knew no float conversion at all, so %f, %e, %g and %F each emitted an
-; empty field and left the vararg offset alone, which desynced every
-; later conversion in the same call.  See lc_sprintf.mac for why there is
-; only one formatter now.
+; The sink, the NUL and the count are in lc_snprintf_run.mac, which
+; vsnprintf shares.
 
 
 	CSEG
@@ -21679,11 +22211,6 @@ __v_sinh:
 	PUBLIC	_snprintf
 
 ; int snprintf(char *str, size_t size, const char *fmt, ...)
-;
-; C 7.21.6.5: write at most size-1 characters plus a terminating NUL, and
-; return the number that WOULD have been written had size been big
-; enough.  _printf_count counts everything the engine produced, whether
-; the sink stored it or dropped it, so it is that return value already.
 _snprintf:
 	PUSH	IX
 	LD	IX,0
@@ -21699,14 +22226,46 @@ _snprintf:
 	LD	D,(IX+7)
 	LD	(_snprintf_max),DE
 
-	LD	HL,(_printf_sink)
-	PUSH	HL
-	LD	HL,_snprintf_sink
-	LD	(_printf_sink),HL
-
 	LD	L,(IX+8)
 	LD	H,(IX+9)		; HL = format string
 	LD	C,10			; first vararg at IX+10
+	CALL	_snprintf_run
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_snprintf_run.mac
+; ============================================================
+; lc_snprintf_run.mac - the part that snprintf and vsnprintf share
+;
+; C 7.23.6.5: write at most size-1 characters plus a terminating NUL, and
+; return the number of characters that WOULD have been written had size
+; been big enough.  With size 0 nothing is written, not even the NUL.
+; _printf_count counts everything the engine produces, whether the sink
+; stores the character or drops it, so the count is the return value.
+
+
+	CSEG
+
+	PUBLIC	_snprintf_out
+	PUBLIC	_snprintf_max
+	PUBLIC	_snprintf_run
+
+; Run the engine.  The caller has set _snprintf_out and _snprintf_max.
+; HL = format string, IX = the base of the arguments, C = the offset of
+; the first argument (the same values as for _printf_engine).
+; Returns HL = the count.  Destroys AF, BC, DE and HL.
+_snprintf_run:
+	LD	DE,(_printf_sink)
+	PUSH	DE			; the caller's sink, restored below
+	LD	DE,_snprintf_sink
+	LD	(_printf_sink),DE
+
 	CALL	_printf_engine
 
 	POP	HL
@@ -21720,11 +22279,7 @@ _snprintf:
 	LD	HL,(_snprintf_out)
 	LD	(HL),0
 _snp_noterm:
-
 	LD	HL,(_printf_count)
-	POP	DE
-	POP	BC
-	POP	IX
 	RET
 
 ; Sink: character in E, dropped once the buffer is full.  _printf_putc
@@ -26535,10 +27090,11 @@ _tmpfile:
 	LD	HL,_tmpfile_name
 	CALL	_gen_tmpnam
 
-	; Open with "w+" mode (create new)
-	LD	HL,_tmpfile_name
-	PUSH	HL
+	; Open with "w+" mode (create new).  The arguments go right to left:
+	; the mode first, then the name.
 	LD	HL,_tmpfile_mode
+	PUSH	HL
+	LD	HL,_tmpfile_name
 	PUSH	HL
 	CALL	_fopen
 	POP	BC
@@ -26555,7 +27111,7 @@ _tmpfile:
 
 
 _tmpfile_mode:
-	DB	'w',0
+	DB	'w','+',0
 
 _tmpfile_name:
 	DS	13
@@ -26665,8 +27221,10 @@ _gen_tmpnam:
 	POP	BC
 	RET
 
-; Internal: Divide DE by BC, quotient in A, remainder in DE
+; Internal: Divide DE by BC, quotient in A, remainder in DE.  Keeps HL (the
+; place in the name): the loop below uses HL as a work register.
 _div16:
+	PUSH	HL
 	XOR	A
 _div16_loop:
 	LD	H,D
@@ -26678,6 +27236,7 @@ _div16_loop:
 	INC	A
 	JR	_div16_loop
 _div16_done:
+	POP	HL
 	RET
 
 
@@ -27918,6 +28477,48 @@ _vscanf:
 
 
 ; Implicit external functions
+
+
+	CSEG
+; ============================================================
+; lc_vsnprintf.mac
+; ============================================================
+; lc_vsnprintf.mac - vsnprintf(): snprintf with a va_list
+
+
+	CSEG
+
+	PUBLIC	_vsnprintf
+
+; int vsnprintf(char *str, size_t size, const char *fmt, va_list ap)
+_vsnprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; str at IX+4, size at IX+6, fmt at IX+8, ap at IX+10
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(_snprintf_out),DE
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	(_snprintf_max),DE
+
+	LD	L,(IX+8)
+	LD	H,(IX+9)		; HL = format string
+	LD	E,(IX+10)
+	LD	D,(IX+11)		; DE = va_list
+	PUSH	DE
+	POP	IX			; the engine reads the arguments from IX+C
+	LD	C,0
+	CALL	_snprintf_run
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
 
 
 	CSEG

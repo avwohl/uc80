@@ -1,0 +1,69 @@
+; lc_quick_exit.mac - quick_exit and at_quick_exit (C11)
+;
+; quick_exit calls the functions that at_quick_exit registered, last
+; registered first, and then does what _Exit does.  It does not run the
+; atexit functions and does not close the files.
+	.Z80
+
+MAX_QEXIT	EQU	32	; the minimum that C 7.24.4.3 requires
+
+	CSEG
+
+; int at_quick_exit(void (*func)(void))
+; Returns 0, or 1 when 32 functions are registered.
+	PUBLIC	_at_quick_exit
+_at_quick_exit:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	A,(_qexit_cnt)
+	CP	MAX_QEXIT
+	JR	NC,_atq_fail
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	LD	DE,_qexit_tab
+	ADD	HL,DE
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	HL,_qexit_cnt
+	INC	(HL)
+	LD	HL,0
+	POP	IX
+	RET
+_atq_fail:
+	LD	HL,1
+	POP	IX
+	RET
+
+; void quick_exit(int status)
+; A function that calls at_quick_exit adds a function that runs next.
+	PUBLIC	_quick_exit
+_quick_exit:
+	LD	A,(_qexit_cnt)
+	OR	A
+	JP	Z,0		; no more functions: warm boot
+	DEC	A
+	LD	(_qexit_cnt),A
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	LD	DE,_qexit_tab
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = function
+	LD	HL,_quick_exit	; the function returns to the start of the loop
+	PUSH	HL
+	PUSH	DE
+	RET			; "call" the function
+
+	COMMON	/lc_quick_exit/
+
+_qexit_cnt:	DS	1
+_qexit_tab:	DS	64
+
+	END

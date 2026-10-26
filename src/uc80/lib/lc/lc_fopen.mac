@@ -13,9 +13,10 @@ FILE_FCB	EQU	6	; FCB starts here (36 bytes)
 FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
 FILE_SIZE	EQU	170	; Total FILE structure size
 FLAG_OPEN	EQU	01H
-FLAG_WRITE	EQU	08H
-FLAG_READ	EQU	10H
-MAX_FILES	EQU	4
+FLAG_WRITE	EQU	08H	; in the writing state
+FLAG_READ	EQU	10H	; can read
+FLAG_CANW	EQU	20H	; can write
+FLAG_APPEND	EQU	40H	; every write goes to the end
 
 	PUBLIC	_parse_fcb
 
@@ -23,12 +24,14 @@ MAX_FILES	EQU	4
 	EXTRN	__exit_run
 	EXTRN	__exit_hook
 	EXTRN	__exit_fhook
+	EXTRN	_file_slots
+	EXTRN	_file_nmax
 
 	CSEG
 
 ; ============================================================
 ; FILE *fopen(const char *pathname, const char *mode)
-; Open a file for reading or writing
+; Open a file.  Modes: r, w, a, and r+, w+, a+ ("b" and "t" are ignored)
 ; ============================================================
 	PUBLIC	_fopen
 _fopen:
@@ -40,7 +43,8 @@ _fopen:
 
 	; Find free file slot
 	LD	HL,_file_slots
-	LD	B,MAX_FILES
+	LD	A,(_file_nmax)
+	LD	B,A
 _fopen_find:
 	PUSH	HL
 	INC	HL		; Point to flags
@@ -59,33 +63,37 @@ _fopen_found:
 	; HL = FILE structure, save it
 	PUSH	HL
 
-	; Parse mode string
+	; Parse mode string: r, w or a, then any of "+", "b", "t".
+	; B = flags of the stream: r can read, w can write and starts in the
+	; writing state, a can write and appends.  "+" adds the other way.
 	LD	L,(IX+6)
 	LD	H,(IX+7)	; HL = mode
 	LD	A,(HL)
-	LD	B,0		; B = mode flags
+	LD	B,FLAG_READ
 	CP	'r'
-	JR	Z,_fopen_read
+	JR	Z,_fopen_mode
+	LD	B,FLAG_CANW+FLAG_WRITE
 	CP	'w'
-	JR	Z,_fopen_write
+	JR	Z,_fopen_mode
+	LD	B,FLAG_CANW+FLAG_APPEND
 	CP	'a'
-	JR	Z,_fopen_append
+	JR	Z,_fopen_mode
 	; Invalid mode
 	POP	HL
 	LD	HL,0
 	JP	_fopen_ret
 
-_fopen_read:
-	LD	B,FLAG_READ
-	JR	_fopen_setup
-
-_fopen_write:
-	LD	B,FLAG_WRITE
-	JR	_fopen_setup
-
-_fopen_append:
-	LD	B,FLAG_WRITE	; Append = write mode
-	; (simplified: append not fully supported)
+_fopen_mode:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JR	Z,_fopen_setup
+	CP	'+'
+	JR	NZ,_fopen_mode
+	LD	A,B
+	OR	FLAG_READ+FLAG_CANW
+	LD	B,A
+	JR	_fopen_mode
 
 _fopen_setup:
 	; B = mode flags, stack has FILE*
@@ -151,13 +159,28 @@ _fopen_clr:
 
 	LD	A,B
 	AND	FLAG_WRITE
-	JR	Z,_fopen_doopen
+	JR	Z,_fopen_notw
 
 	; Write mode - delete existing, create new
 	PUSH	DE
 	LD	C,BDOS_DELETE
 	CALL	BDOS
 	POP	DE
+	LD	C,BDOS_MAKE
+	CALL	BDOS
+	JR	_fopen_check
+
+_fopen_notw:
+	; Append mode - open the file, or create it when there is none
+	LD	A,B
+	AND	FLAG_APPEND
+	JR	Z,_fopen_doopen
+	PUSH	DE
+	LD	C,BDOS_OPEN
+	CALL	BDOS
+	POP	DE
+	CP	0FFH
+	JR	NZ,_fopen_check
 	LD	C,BDOS_MAKE
 	CALL	BDOS
 	JR	_fopen_check
@@ -193,6 +216,8 @@ _fopen_ok:
 	OR	FLAG_OPEN
 	LD	(HL),A
 	POP	HL		; Return FILE*
+	; A stream that appends starts in the reading state at the start of the
+	; file.  The first fputc puts it at the end (lc_ftowrite.mac).
 	JR	_fopen_ret
 
 _fopen_ret:
@@ -206,7 +231,8 @@ _fopen_ret:
 ; ============================================================
 _fclose_all:
 	LD	HL,_file_slots
-	LD	B,MAX_FILES
+	LD	A,(_file_nmax)
+	LD	B,A
 _fclose_all1:
 	PUSH	BC
 	PUSH	HL
@@ -331,11 +357,5 @@ _parse_done:
 	POP	BC
 	RET
 
-
-	COMMON	/lc_fopen/
-
-
-; File slot storage
-_file_slots:	DS	680	; 4 FILE structures * 170 bytes each
 
 	END

@@ -1,0 +1,56 @@
+; lc_floadrec.mac - read a record into the buffer of a file stream
+;
+; The two states of a file stream are described in lc_ftowrite.mac.
+	.Z80
+
+BDOS	EQU	5
+BDOS_SETDMA	EQU	26	; Set DMA address
+BDOS_READR	EQU	33	; Read random
+BDOS_SIZE	EQU	35	; Compute file size
+
+; offsets from the start of the FILE (the register IX holds it)
+F_FLAGS		EQU	1
+F_UNGET		EQU	2
+F_BUFPOS	EQU	3
+F_BUFCNT	EQU	4
+F_FCB		EQU	6
+F_R0		EQU	39
+F_R1		EQU	40
+F_R2		EQU	41
+F_BUFFER	EQU	42
+
+
+	CSEG
+
+; ============================================================
+; Internal: _file_loadrec.  HL = FILE*.  Read the record r0 r1 into the
+; buffer.  bufcnt becomes 128 when the record exists, and 0 when it does
+; not (then the file ends before it).  Returns Z when the record was read.
+; ============================================================
+	PUBLIC	_file_loadrec
+_file_loadrec:
+	PUSH	HL
+	LD	DE,F_BUFFER
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+	POP	HL
+	PUSH	HL
+	LD	DE,F_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_READR
+	CALL	BDOS
+	POP	HL
+	OR	A
+	LD	DE,F_BUFCNT
+	ADD	HL,DE
+	JR	NZ,_flr_none
+	LD	(HL),128
+	RET
+_flr_none:
+	LD	(HL),0
+	RET
+
+	END

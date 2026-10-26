@@ -1,0 +1,42 @@
+; lc_vsnprintf.mac - vsnprintf(): snprintf with a va_list
+	.Z80
+
+	EXTRN	_snprintf_run
+	EXTRN	_snprintf_out
+	EXTRN	_snprintf_max
+
+	CSEG
+
+	PUBLIC	_vsnprintf
+
+; int vsnprintf(char *str, size_t size, const char *fmt, va_list ap)
+_vsnprintf:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+
+	; str at IX+4, size at IX+6, fmt at IX+8, ap at IX+10
+	LD	E,(IX+4)
+	LD	D,(IX+5)
+	LD	(_snprintf_out),DE
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	(_snprintf_max),DE
+
+	LD	L,(IX+8)
+	LD	H,(IX+9)		; HL = format string
+	LD	E,(IX+10)
+	LD	D,(IX+11)		; DE = va_list
+	PUSH	DE
+	POP	IX			; the engine reads the arguments from IX+C
+	LD	C,0
+	CALL	_snprintf_run
+
+	POP	DE
+	POP	BC
+	POP	IX
+	RET
+
+	END

@@ -136,7 +136,7 @@ The CP/M target does not change. Many CP/M programs write to string literals or 
 The compiler stops with `uc80: error: --target=rom: ...` when the program:
 
 - declares `main` with parameters, such as `main(int argc, char **argv)`. Write `main(void)`.
-- calls a library function that `libc_rom.lib` does not have: console and file I/O (`printf`, `puts`, `putchar`, `getchar`, `fopen`, and the others), `exit`, `abort`, `atexit`, `system`, `getenv`, `time`, `clock`, and the heap (`malloc`, `calloc`, `realloc`, `free`).
+- calls a library function that `libc_rom.lib` does not have: console and file I/O (`printf`, `puts`, `putchar`, `getchar`, `fopen`, and the others), `exit`, `_Exit`, `quick_exit`, `abort`, `atexit`, `at_quick_exit`, `system`, `getenv`, `time`, `clock`, and the heap (`malloc`, `calloc`, `realloc`, `free`).
 
 A call of `printf("text\n")` becomes a call of `puts` in the generated code, so the error names `puts`. Send output to a port with your own function. The kernels in `bench/rom/` show one way.
 

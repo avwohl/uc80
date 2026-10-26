@@ -168,7 +168,10 @@ def get_stdin(prog: dict) -> str:
 
 
 def normalize(text: str) -> str:
-    lines = [l.rstrip() for l in text.replace("\r", "").split("\n")]
+    # A TAB and the spaces up to the next tab stop are the same text: a CP/M
+    # BDOS (and the uc80 library) writes the spaces, a host cc the TAB.
+    lines = [l.expandtabs(8).rstrip()
+             for l in text.replace("\r", "").split("\n")]
     while lines and not lines[-1]:
         lines.pop()
     return "\n".join(lines) + "\n"

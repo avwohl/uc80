@@ -1,0 +1,15 @@
+; lc_exit_now.mac - _Exit
+	.Z80
+
+	CSEG
+
+; ============================================================
+; void _Exit(int status)
+; Returns to CP/M at once (warm boot).  It runs no atexit function, closes
+; no file and writes no buffer.  CP/M 2.2 has no exit status.
+; ============================================================
+	PUBLIC	__Exit
+__Exit:
+	JP	0
+
+	END

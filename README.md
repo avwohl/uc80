@@ -72,7 +72,7 @@ z88dk output. uc80 passes all 220 c-testsuite tests. Numbers are in
 - [Neo Geo sound driver example](https://github.com/avwohl/uc80/blob/main/docs/neogeo_driver.md) - NMI command, timer IRQ, YM busy wait and bank select in one C file
 - [ROM test runner](https://github.com/avwohl/uc80/blob/main/docs/romrun.md) - run a Z80 ROM, log port I/O and T-states, inject IRQ and NMI
 - [Float status](https://github.com/avwohl/uc80/blob/main/docs/FLOAT_STATUS.md) - IEEE 754 single-precision support
-- [printf](https://github.com/avwohl/uc80/blob/main/docs/printf.md), [program exit and files](https://github.com/avwohl/uc80/blob/main/docs/exit_and_files.md) - conversions and limits, `atexit`, `ftell` and `fseek`
+- [printf](https://github.com/avwohl/uc80/blob/main/docs/printf.md), [program exit and files](https://github.com/avwohl/uc80/blob/main/docs/exit_and_files.md), [console output](https://github.com/avwohl/uc80/blob/main/docs/console_output.md) - conversions and limits, `atexit`, `fopen` modes, `ftell` and `fseek`, TAB
 - [Math library](https://github.com/avwohl/uc80/blob/main/docs/libm.md), [scanf and strtol](https://github.com/avwohl/uc80/blob/main/docs/scanf.md), [library modules in C](https://github.com/avwohl/uc80/blob/main/docs/libc_c_sources.md), [float interpreter](https://github.com/avwohl/uc80/blob/main/docs/libm_vm.md) - accuracy, limits, how the modules are made
 - [CHANGELOG](https://github.com/avwohl/uc80/blob/main/CHANGELOG.md) - release history
 

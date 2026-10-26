@@ -33,6 +33,7 @@ from .z80_intrinsics import BARRIER_BEGIN, BARRIER_END
 from . import rom as rom_module
 from . import printf_hook
 from . import scan_hook
+from . import file_hook
 
 from . import peep_local
 
@@ -901,6 +902,11 @@ def main() -> int:
             printf_features = set(args.printf)
         if args.scanf:
             scanf_features = set(args.scanf)
+        # vsnprintf is not in the format scan of the code generator, so a
+        # program that calls it needs every conversion, as vsprintf does
+        # (its format is not a literal).
+        if printf_features is None and printf_hook.uses_unscanned(merged_ast):
+            printf_features = {"all"}
         # ...and either way, close the set over its implied features.
         if printf_features is not None:
             printf_features = _close_format_features(printf_features)
@@ -938,6 +944,15 @@ def main() -> int:
             code = scan_hook.add_scanf_references(code, module_name,
                                                   _tail_insert_index,
                                                   scanf_need)
+        # Short file code for a program that opens no file in an update or
+        # append mode.  Only when this unit is the whole program: another
+        # unit or hand-written assembly could open one.
+        if (whole_program and not rom and not mac_files
+                and not (args.embed_lib or args.runtime_lib
+                         or args.startup_lib)
+                and file_hook.needs_lite(merged_ast)):
+            code = file_hook.add_lite_reference(code, module_name,
+                                                _tail_insert_index)
 
         def label_of(name):
             sym = gen.ctx.globals.get(name)

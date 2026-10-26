@@ -1,0 +1,37 @@
+; lc_f_lite.mac - CONCAT-SKIP: lc_ftowrite and lc_ftoread define these too
+;
+; The file functions of a program that opens no file in an update mode or in
+; the append mode (r+, w+, a+, a): a stream never changes between reading and
+; writing, so fputc and fgetc need no code for the change.  Both entry points
+; fail.  The compiler adds a reference to __fio_lite when it sees that the
+; whole program is like that (file_hook.py in uc80); the linker then does not
+; take lc_ftowrite and lc_ftoread.  Without the reference, the library has the
+; full code.
+;
+; The name must sort before lc_fgetc and lc_fputc, which refer to the entry
+; points: the linker reads the library in the order of the names and takes a
+; module that defines a symbol that is undefined at that moment.  Before
+; fgetc and fputc are in the program, only the reference of the compiler makes
+; this module necessary.  After that, the symbols are defined and the full
+; modules (lc_ftoread, lc_ftowrite) are not taken.
+	.Z80
+
+FLAG_ERROR	EQU	04H
+
+	CSEG
+
+	PUBLIC	__fio_lite
+	PUBLIC	_file_towrite
+	PUBLIC	_file_toread
+__fio_lite:
+_file_towrite:
+_file_toread:
+	INC	HL
+	LD	A,(HL)
+	OR	FLAG_ERROR
+	LD	(HL),A
+	DEC	HL
+	OR	1		; NZ: the stream cannot change
+	RET
+
+	END

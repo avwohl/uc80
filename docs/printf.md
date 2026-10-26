@@ -3,12 +3,36 @@
 Back to the [README](../README.md). The limits are also in
 [Known limits of the C library](libraries.md).
 
-`printf`, `fprintf`, `sprintf`, `snprintf`, `vprintf`, `vfprintf` and `vsprintf`
-use one engine (`lc_printf_core.mac`). The engine reads the format string and
+`printf`, `fprintf`, `sprintf`, `snprintf`, `vprintf`, `vfprintf`, `vsprintf` and
+`vsnprintf` use one engine (`lc_printf_core.mac`). The engine reads the format string and
 finds each conversion in a dispatch table. The compiler writes the table next
 to `main()`. The table has only the conversions that the format strings of the
 program use, so a program links only the handlers that it needs
 ([compiler options](compiler_options.md)).
+
+## snprintf and vsnprintf
+
+`snprintf(buf, n, fmt, ...)` and `vsnprintf(buf, n, fmt, ap)` have the C99
+rules:
+
+- They write at most `n - 1` characters and then a NUL. When `n` is greater
+  than 0, the buffer always ends with a NUL.
+- When `n` is 0, they write nothing, and `buf` can be a null pointer.
+- They return the number of characters that the full output has, without the
+  NUL, also when the output was cut. A return value of `n` or more means that
+  the output was cut.
+
+The two functions share `lc_snprintf_run.mac`, which has the sink, the NUL and
+the count. `vsnprintf` takes the argument `ap` as a `va_list`, but `<stdio.h>`
+declares the last parameter as `...`, as it does for `vsprintf`.
+
+The code generator does not scan the format string of a `vsnprintf` call. So a
+program that calls `vsnprintf` gets every conversion in the dispatch table, as
+for a format that is not a literal. A `--printf` option or a `#pragma printf`
+in the program overrides this (`main.py`, `printf_hook.uses_unscanned`).
+
+The count has 16 bits. An output of 65,536 characters or more gives a wrong
+return value. Test: `tests/test_stdio_library.py`.
 
 ## Conversions
 

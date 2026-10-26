@@ -103,8 +103,10 @@ _gen_tmpnam:
 	POP	BC
 	RET
 
-; Internal: Divide DE by BC, quotient in A, remainder in DE
+; Internal: Divide DE by BC, quotient in A, remainder in DE.  Keeps HL (the
+; place in the name): the loop below uses HL as a work register.
 _div16:
+	PUSH	HL
 	XOR	A
 _div16_loop:
 	LD	H,D
@@ -116,6 +118,7 @@ _div16_loop:
 	INC	A
 	JR	_div16_loop
 _div16_done:
+	POP	HL
 	RET
 
 

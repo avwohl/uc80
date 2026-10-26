@@ -26,8 +26,9 @@ skip_without_tools = pytest.mark.skipif(
     reason="um80/ul80/cpmemu or built libraries not available")
 
 
-def build_and_run(tmp_path, source, stdin=b"", args=()):
-    """Compile, link and run SOURCE; return its output without CRs."""
+def build_and_run(tmp_path, source, stdin=b"", args=(), raw=False):
+    """Compile, link and run SOURCE; return its output without CRs (with them
+    when RAW is true)."""
     c_file = tmp_path / "prog.c"
     c_file.write_text(source)
     mac, rel, com = (tmp_path / ("prog" + e) for e in (".mac", ".rel", ".com"))
@@ -44,7 +45,9 @@ def build_and_run(tmp_path, source, stdin=b"", args=()):
                          input=stdin, timeout=120,
                          env=dict(os.environ, PYTHONHASHSEED="0"),
                          cwd=str(tmp_path))
-    out = run.stdout.decode("latin-1").replace("\r", "")
+    out = run.stdout.decode("latin-1")
+    if not raw:
+        out = out.replace("\r", "")
     return "\n".join(ln for ln in out.split("\n")
                      if not ln.startswith(("CPU mode", "Loaded ",
                                            "Program exit", "Note:")))
