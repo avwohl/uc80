@@ -70,6 +70,10 @@ the file.
   uc80 functions do. They are not reentrant.
 - The files `m.h` and `scan.h` are the headers that the C modules share.
 - `cbrt` is the only user of `lc_m_2prod`.
+- `lc_strtod` is correctly rounded for every decimal string. It has a fast
+  path in 64-bit arithmetic and a big-integer comparison with the tie for a
+  string that is near a tie ([docs/scanf.md](scanf.md)). The test is
+  `tests/test_strtod_exact.py`.
 
 ## Code size
 
@@ -80,7 +84,7 @@ that do float arithmetic are programs for the float interpreter
 bytes (`M_SPEC`, `M_TINY` and the other macros of `m.h`), because a 32-bit
 mask costs more code on the Z80.
 
-The floating-point part of `scanf` (about 5.7 KB with `strtod`) and the text
+The floating-point part of `scanf` (about 6.4 KB with `strtod`) and the text
 conversions (0.3 KB) link only when the program needs them. The compiler
 decides this from the format strings (`src/uc80/scan_hook.py`). See
 [docs/scanf.md](scanf.md).

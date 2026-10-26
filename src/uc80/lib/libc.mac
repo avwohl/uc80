@@ -22608,26 +22608,191 @@ _sd_mulhi:
 	ret
 
 
-; Function sd_norm (uses shared storage)
-_sd_norm:
+; Function sd_bmul (uses shared storage)
+_sd_bmul:
 	push	IX
 	ld	IX,0
 	add	IX,SP
-@WHILE19_strtod:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
-	ld	DE,6
-	add	HL,DE
+	inc	HL
+	inc	HL
+	ld	(??AUTO_strtod+87),HL
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	inc	HL
+	inc	HL
+	push	HL
+	ld	L,(IX+4)
+	ld	H,(IX+5)
 	ld	E,(HL)
 	inc	HL
 	ld	D,(HL)
 	ex	DE,HL
+	add	HL,HL
+	pop	DE
+	add	HL,DE
+	ld	(??AUTO_strtod+89),HL
+@FOR19_strtod:
+	ld	HL,(??AUTO_strtod+87)
+	ld	DE,(??AUTO_strtod+89)
+	ld	A,L
+	sub	E
+	ld	A,H
+	sbc	A,D
+	jr nc,@ENDFOR21_strtod
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	ld	DE,0
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	L,(IX+6)
+	ld	H,(IX+7)
+	ld	DE,0
+	call	__mul32
+	ld	C,(IX+8)
+	ld	B,(IX+9)
+	add	HL,BC
+	jr	NC,@AD22_strtod
+	inc	DE
+@AD22_strtod:
+	ld	(??AUTO_strtod+83),HL
+	ld	(??AUTO_strtod+85),DE
+	ld	HL,(??AUTO_strtod+83)
+	ld	DE,(??AUTO_strtod+85)
+	ex	DE,HL
+	ld	HL,(??AUTO_strtod+87)
+	ld	(HL),E
+	inc	HL
+	ld	(HL),D
+	ld	HL,(??AUTO_strtod+83)
+	ld	DE,(??AUTO_strtod+85)
+	ex	DE,HL
+	ld	DE,0
+	ld	(IX+8),L
+	ld	(IX+9),H
+@FORUPD20_strtod:
+	ld	HL,(??AUTO_strtod+87)
+	inc	HL
+	inc	HL
+	ld	(??AUTO_strtod+87),HL
+	jr @FOR19_strtod
+@ENDFOR21_strtod:
+	ld	A,(IX+8)
+	or	(IX+9)
+	jr z,@ENDIF24_strtod
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	inc	DE
+	ld	(HL),D
+	dec	HL
+	ld	(HL),E
+	ex	DE,HL
+	dec	HL
+	add	HL,HL
+	push	HL
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	inc	HL
+	inc	HL
+	pop	DE
+	add	HL,DE
+	ld	E,(IX+8)
+	ld	D,(IX+9)
+	ld	(HL),E
+	inc	HL
+	ld	(HL),D
+@ENDIF24_strtod:
+@sd_bmul_ret:
+	pop	IX
+	ret
+
+
+; Function sd_mulp (uses shared storage)
+_sd_mulp:
+	push	IX
+	ld	IX,0
+	add	IX,SP
+	ld	L,(IX+10)
+	ld	H,(IX+11)
+	ld	A,L
+	xor	10
+	or	H
+	jr nz,@TERN_E25_strtod
+	ld	HL,10000
+	jr @TERN_END26_strtod
+@TERN_E25_strtod:
+	ld	HL,32768
+@TERN_END26_strtod:
+	ld	(??AUTO_strtod+99),HL
+	ld	L,(IX+10)
+	ld	H,(IX+11)
+	ld	A,L
+	xor	10
+	or	H
+	jr nz,@TERN_E27_strtod
+	ld	HL,4
+	jr @TERN_END28_strtod
+@TERN_E27_strtod:
+	ld	HL,15
+@TERN_END28_strtod:
+	ld	(??AUTO_strtod+101),HL
+	ld	L,(IX+8)
+	ld	H,(IX+9)
 	bit	7,H
-	jp	NZ,@ENDWHILE20_strtod
-	ld	HL,3
-	ld	(??AUTO_strtod+59),HL
-@FOR21_strtod:
-	ld	HL,(??AUTO_strtod+59)
+	jr z,@ENDIF30_strtod
+	ex	DE,HL
+	ld	HL,0
+	or	A
+	sbc	HL,DE
+	ld	(IX+8),L
+	ld	(IX+9),H
+	ld	L,(IX+6)
+	ld	H,(IX+7)
+	ld	(IX+4),L
+	ld	(IX+5),H
+@ENDIF30_strtod:
+@FOR31_strtod:
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	DE,(??AUTO_strtod+101)
+	ld	A,L
+	sub	E
+	ld	A,H
+	sbc	A,D
+	jp	PO,@CMP_NV34_strtod
+	xor	128
+@CMP_NV34_strtod:
+	jp	M,@ENDFOR33_strtod
+	ld	HL,0
+	push	HL
+	ld	HL,(??AUTO_strtod+99)
+	push	HL
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	push	HL
+	call	_sd_bmul
+	pop	DE
+	pop	DE
+	pop	DE
+@FORUPD32_strtod:
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	DE,(??AUTO_strtod+101)
+	or	A
+	sbc	HL,DE
+	ld	(IX+8),L
+	ld	(IX+9),H
+	jr @FOR31_strtod
+@ENDFOR33_strtod:
+@FOR35_strtod:
+	ld	L,(IX+8)
+	ld	H,(IX+9)
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -22635,83 +22800,339 @@ _sd_norm:
 	sub	1
 	ld	A,D
 	sbc	A,128
-	jr c,@ENDFOR23_strtod
+	jr c,@ENDFOR37_strtod
+	ld	HL,0
+	push	HL
+	ld	L,(IX+10)
+	ld	H,(IX+11)
+	push	HL
 	ld	L,(IX+4)
 	ld	H,(IX+5)
-	ld	DE,(??AUTO_strtod+59)
-	add	HL,DE
+	push	HL
+	call	_sd_bmul
+	pop	DE
+	pop	DE
+	pop	DE
+@FORUPD36_strtod:
+	ld	A,(IX+8)
+	sub	1
+	ld	(IX+8),A
+	jr	NC,@INC38_strtod
+	dec	(IX+9)
+@INC38_strtod:
+	jr @FOR35_strtod
+@ENDFOR37_strtod:
+@sd_mulp_ret:
+	pop	IX
+	ret
+
+
+; Function sd_top (uses shared storage)
+_sd_top:
+	push	IX
+	ld	IX,0
+	add	IX,SP
+	ld	HL,(_sd_a)
+	ld	(??AUTO_strtod+63),HL
+	dec	HL
+	add	HL,HL
+	push	HL
+	ld	HL,_sd_a+2
+	pop	DE
 	add	HL,DE
 	ld	E,(HL)
 	inc	HL
 	ld	D,(HL)
 	ex	DE,HL
-	add	HL,HL
-	push	HL
-	ld	HL,(??AUTO_strtod+59)
-	dec	HL
-	add	HL,HL
-	push	HL
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	pop	DE
-	add	HL,DE
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ex	DE,HL
-	ld	A,H
-	rlca
-	and	1
-	ld	L,A
-	ld	H,0
-	pop	DE
-	ld	A,H
-	or	D
-	ld	H,A
-	ld	A,L
-	or	E
-	ld	L,A
-	push	HL
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	DE,(??AUTO_strtod+59)
-	add	HL,DE
-	add	HL,DE
-	pop	DE
-	ld	(HL),E
-	inc	HL
-	ld	(HL),D
-@FORUPD22_strtod:
-	ld	HL,(??AUTO_strtod+59)
-	dec	HL
 	ld	(??AUTO_strtod+59),HL
-	jr @FOR21_strtod
-@ENDFOR23_strtod:
-	ld	L,(IX+4)
-	ld	H,(IX+5)
+@FOR39_strtod:
+	ld	A,(??AUTO_strtod+60)
+	and	128
+	jr nz,@ENDFOR41_strtod
+	ld	HL,(_sd_lz)
+	inc	HL
+	ld	(_sd_lz),HL
+@FORUPD40_strtod:
+	ld	HL,(??AUTO_strtod+59)
+	add	HL,HL
+	ld	(??AUTO_strtod+59),HL
+	jr @FOR39_strtod
+@ENDFOR41_strtod:
+	ld	HL,(_sd_lz)
+	ld	A,H
+	or	L
+	jr z,@ENDIF43_strtod
+	ld	HL,0
+	push	HL
+	ld	HL,1
+	ex	DE,HL
+	ld	HL,(_sd_lz)
+	call	__shl16
+	push	HL
+	ld	HL,_sd_a
+	push	HL
+	call	_sd_bmul
+	pop	DE
+	pop	DE
+	pop	DE
+@ENDIF43_strtod:
+	ld	HL,3
+	ld	(??AUTO_strtod+61),HL
+@FOR44_strtod:
+	ld	HL,(??AUTO_strtod+61)
+	bit	7,H
+	jr nz,@ENDFOR46_strtod
+	ld	HL,(??AUTO_strtod+63)
+	dec	HL
+	ld	(??AUTO_strtod+63),HL
+	bit	7,H
+	jr nz,@TERN_E47_strtod
+	ld	HL,_sd_a+2
+	ld	DE,(??AUTO_strtod+63)
+	add	HL,DE
+	add	HL,DE
 	ld	E,(HL)
 	inc	HL
 	ld	D,(HL)
 	ex	DE,HL
-	add	HL,HL
-	ex	DE,HL
-	ld	(HL),D
-	dec	HL
+	jr @TERN_END48_strtod
+@TERN_E47_strtod:
+	ld	HL,0
+@TERN_END48_strtod:
+	push	HL
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	DE,(??AUTO_strtod+61)
+	add	HL,DE
+	add	HL,DE
+	pop	DE
 	ld	(HL),E
+	inc	HL
+	ld	(HL),D
+@FORUPD45_strtod:
+	ld	HL,(??AUTO_strtod+61)
+	dec	HL
+	ld	(??AUTO_strtod+61),HL
+	jr @FOR44_strtod
+@ENDFOR46_strtod:
+@WHILE49_strtod:
+	ld	HL,(??AUTO_strtod+63)
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	1
+	ld	A,D
+	sbc	A,128
+	jr c,@ENDWHILE50_strtod
+	dec	HL
+	ld	(??AUTO_strtod+63),HL
+	add	HL,HL
+	push	HL
+	ld	HL,_sd_a+2
+	pop	DE
+	add	HL,DE
+	ld	A,(HL)
+	inc	HL
+	or	(HL)
+	jr z,@ENDIF52_strtod
+	ld	HL,1
+	ld	(IX+6),L
+	ld	(IX+7),H
+@ENDIF52_strtod:
+	jr @WHILE49_strtod
+@ENDWHILE50_strtod:
+	ld	HL,(_sd_a)
+	add	HL,HL
+	add	HL,HL
+	add	HL,HL
+	add	HL,HL
+	ld	DE,(_sd_lz)
+	or	A
+	sbc	HL,DE
+	ex	DE,HL
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	BC,8
 	add	HL,BC
+	ld	(HL),E
+	inc	HL
+	ld	(HL),D
+	ld	A,(IX+6)
+	or	(IX+7)
+	jr z,@ENDIF54_strtod
+	ld	L,(IX+4)
+	ld	H,(IX+5)
 	ld	E,(HL)
 	inc	HL
 	ld	D,(HL)
-	dec	DE
+	ex	DE,HL
+	ld	A,L
+	or	1
+	ld	L,A
+	ex	DE,HL
 	ld	(HL),D
 	dec	HL
 	ld	(HL),E
-	jp	@WHILE19_strtod
-@ENDWHILE20_strtod:
-@sd_norm_ret:
+@ENDIF54_strtod:
+@sd_top_ret:
+	pop	IX
+	ret
+
+
+; Function sd_cmp_mid (uses shared storage)
+_sd_cmp_mid:
+	push	IX
+	ld	IX,0
+	add	IX,SP
+	ld	L,(IX+4)
+	ld	H,(IX+5)
+	ld	E,(IX+6)
+	ld	D,(IX+7)
+	add	HL,HL
+	rl	E
+	rl	D
+	ld	BC,1
+	add	HL,BC
+	jr	NC,@AD55_strtod
+	inc	DE
+@AD55_strtod:
+	ld	(??AUTO_strtod+91),HL
+	ld	(??AUTO_strtod+93),DE
+	ld	HL,(??AUTO_strtod+91)
+	ld	DE,(??AUTO_strtod+93)
+	ld	(_sd_b+2),HL
+	ld	HL,(??AUTO_strtod+91)
+	ld	DE,(??AUTO_strtod+93)
+	ex	DE,HL
+	ld	DE,0
+	ld	(_sd_b+4),HL
+	ld	A,H
+	or	L
+	jr z,@TERN_E56_strtod
+	ld	HL,2
+	jr @TERN_END57_strtod
+@TERN_E56_strtod:
+	ld	HL,1
+@TERN_END57_strtod:
+	ld	(_sd_b),HL
+	ld	HL,10
+	push	HL
+	ld	HL,(_sd_q)
+	push	HL
+	ld	HL,_sd_b
+	push	HL
+	ld	HL,_sd_a
+	push	HL
+	call	_sd_mulp
+	ex	DE,HL
+	ld	HL,8
+	add	HL,SP
+	ld	SP,HL
+	ex	DE,HL
+	ld	HL,2
+	push	HL
+	ld	L,(IX+8)
+	ld	H,(IX+9)
+	ld	DE,(_sd_lz)
+	add	HL,DE
+	push	HL
+	ld	HL,_sd_a
+	push	HL
+	ld	HL,_sd_b
+	push	HL
+	call	_sd_mulp
+	ex	DE,HL
+	ld	HL,8
+	add	HL,SP
+	ld	SP,HL
+	ex	DE,HL
+	ld	HL,(_sd_a)
+	push	HL
+	ld	HL,(_sd_b)
+	pop	DE
+	ex	DE,HL
+	or	A
+	sbc	HL,DE
+	ld	(??AUTO_strtod+97),HL
+	ld	HL,(_sd_a)
+	ld	(??AUTO_strtod+95),HL
+@FOR58_strtod:
+	ld	HL,(??AUTO_strtod+97)
+	ld	A,H
+	or	L
+	jr nz,@ENDFOR60_strtod
+	ld	HL,(??AUTO_strtod+95)
+	push	HL
+	dec	HL
+	ld	(??AUTO_strtod+95),HL
+	pop	HL
+	ld	A,H
+	or	L
+	jr z,@ENDFOR60_strtod
+	ld	HL,_sd_a+2
+	ld	DE,(??AUTO_strtod+95)
+	add	HL,DE
+	add	HL,DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	push	HL
+	ld	HL,_sd_b+2
+	ld	DE,(??AUTO_strtod+95)
+	add	HL,DE
+	add	HL,DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	pop	DE
+	or	A
+	sbc	HL,DE
+	jr z,@ENDIF62_strtod
+	ld	HL,_sd_a+2
+	ld	DE,(??AUTO_strtod+95)
+	add	HL,DE
+	add	HL,DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	push	HL
+	ld	HL,_sd_b+2
+	ld	DE,(??AUTO_strtod+95)
+	add	HL,DE
+	add	HL,DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	pop	DE
+	ld	A,L
+	sub	E
+	ld	A,H
+	sbc	A,D
+	jr nc,@TERN_E63_strtod
+	ld	HL,1
+	jr @TERN_END64_strtod
+@TERN_E63_strtod:
+	ld	HL,-1
+@TERN_END64_strtod:
+	ld	(??AUTO_strtod+97),HL
+@ENDIF62_strtod:
+@FORUPD59_strtod:
+	jr @FOR58_strtod
+@ENDFOR60_strtod:
+	ld	HL,(??AUTO_strtod+97)
+	ld	A,H
+	or	L
+	jr z,@TERN_E65_strtod
+	jr @TERN_END66_strtod
+@TERN_E65_strtod:
+	ld	HL,(_sd_tail)
+@TERN_END66_strtod:
+@sd_cmp_mid_ret:
 	pop	IX
 	ret
 
@@ -22723,7 +23144,7 @@ _sd_pow10:
 	add	IX,SP
 	ld	HL,0
 	ld	(??AUTO_strtod+95),HL
-@FOR24_strtod:
+@FOR67_strtod:
 	ld	HL,(??AUTO_strtod+95)
 	ld	A,H
 	xor	128
@@ -22732,7 +23153,7 @@ _sd_pow10:
 	sub	4
 	ld	A,D
 	sbc	A,128
-	jr nc,@ENDFOR26_strtod
+	jr nc,@ENDFOR69_strtod
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	DE,(??AUTO_strtod+95)
@@ -22741,12 +23162,12 @@ _sd_pow10:
 	ld	(HL),0
 	inc	HL
 	ld	(HL),0
-@FORUPD25_strtod:
+@FORUPD68_strtod:
 	ld	HL,(??AUTO_strtod+95)
 	inc	HL
 	ld	(??AUTO_strtod+95),HL
-	jr @FOR24_strtod
-@ENDFOR26_strtod:
+	jr @FOR67_strtod
+@ENDFOR69_strtod:
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ld	DE,6
@@ -22764,7 +23185,7 @@ _sd_pow10:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	bit	7,H
-	jr z,@ELSE27_strtod
+	jr z,@ELSE70_strtod
 	ex	DE,HL
 	ld	HL,0
 	or	A
@@ -22781,8 +23202,8 @@ _sd_pow10:
 	ld	(??AUTO_strtod+85),HL
 	ld	HL,65533
 	ld	(??AUTO_strtod+93),HL
-	jr @ENDIF28_strtod
-@ELSE27_strtod:
+	jr @ENDIF71_strtod
+@ELSE70_strtod:
 	ld	HL,40960
 	ld	(??AUTO_strtod+91),HL
 	ld	HL,0
@@ -22793,13 +23214,13 @@ _sd_pow10:
 	ld	(??AUTO_strtod+85),HL
 	ld	HL,4
 	ld	(??AUTO_strtod+93),HL
-@ENDIF28_strtod:
-@WHILE29_strtod:
+@ENDIF71_strtod:
+@WHILE72_strtod:
 	ld	A,(IX+6)
 	or	(IX+7)
-	jr z,@ENDWHILE30_strtod
+	jr z,@ENDWHILE73_strtod
 	bit	0,(IX+6)
-	jr z,@ENDIF32_strtod
+	jr z,@ENDIF75_strtod
 	ld	HL,??AUTO_strtod+85
 	push	HL
 	ld	L,(IX+4)
@@ -22808,7 +23229,7 @@ _sd_pow10:
 	call	_sd_mulhi
 	pop	DE
 	pop	DE
-@ENDIF32_strtod:
+@ENDIF75_strtod:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	sra	H
@@ -22817,7 +23238,7 @@ _sd_pow10:
 	ld	(IX+7),H
 	ld	A,(IX+6)
 	or	(IX+7)
-	jr z,@ENDIF34_strtod
+	jr z,@ENDIF77_strtod
 	ld	HL,??AUTO_strtod+85
 	push	HL
 	ld	HL,??AUTO_strtod+85
@@ -22825,9 +23246,9 @@ _sd_pow10:
 	call	_sd_mulhi
 	pop	DE
 	pop	DE
-@ENDIF34_strtod:
-	jr @WHILE29_strtod
-@ENDWHILE30_strtod:
+@ENDIF77_strtod:
+	jr @WHILE72_strtod
+@ENDWHILE73_strtod:
 @sd_pow10_ret:
 	pop	IX
 	ret
@@ -22840,22 +23261,22 @@ _sd_hexval:
 	add	IX,SP
 	ld	A,(IX+4)
 	cp	48
-	jr c,@ENDIF36_strtod
+	jr c,@ENDIF79_strtod
 	ld	A,(IX+4)
 	cp	58
-	jr nc,@ENDIF36_strtod
+	jr nc,@ENDIF79_strtod
 	ld	L,(IX+4)
 	ld	H,0
 	ld	DE,65488
 	add	HL,DE
 	jr @sd_hexval_ret
-@ENDIF36_strtod:
+@ENDIF79_strtod:
 	ld	A,(IX+4)
 	cp	97
-	jr c,@ENDIF38_strtod
+	jr c,@ENDIF81_strtod
 	ld	A,(IX+4)
 	cp	103
-	jr nc,@ENDIF38_strtod
+	jr nc,@ENDIF81_strtod
 	ld	L,(IX+4)
 	ld	H,0
 	ld	DE,65439
@@ -22863,13 +23284,13 @@ _sd_hexval:
 	ld	DE,10
 	add	HL,DE
 	jr @sd_hexval_ret
-@ENDIF38_strtod:
+@ENDIF81_strtod:
 	ld	A,(IX+4)
 	cp	65
-	jr c,@ENDIF40_strtod
+	jr c,@ENDIF83_strtod
 	ld	A,(IX+4)
 	cp	71
-	jr nc,@ENDIF40_strtod
+	jr nc,@ENDIF83_strtod
 	ld	L,(IX+4)
 	ld	H,0
 	ld	DE,65471
@@ -22877,7 +23298,7 @@ _sd_hexval:
 	ld	DE,10
 	add	HL,DE
 	jr @sd_hexval_ret
-@ENDIF40_strtod:
+@ENDIF83_strtod:
 	ld	HL,-1
 @sd_hexval_ret:
 	pop	IX
@@ -22891,12 +23312,12 @@ _sd_match:
 	add	IX,SP
 	ld	HL,0
 	ld	(??AUTO_strtod+59),HL
-@WHILE41_strtod:
+@WHILE84_strtod:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	ld	A,(HL)
 	or	A
-	jr z,@ENDWHILE42_strtod
+	jr z,@ENDWHILE85_strtod
 	ld	HL,(??AUTO_strtod+59)
 	ld	C,(IX+4)
 	ld	B,(IX+5)
@@ -22904,103 +23325,34 @@ _sd_match:
 	ld	A,(HL)
 	ld	(??AUTO_strtod+61),A
 	cp	65
-	jr c,@ENDIF44_strtod
+	jr c,@ENDIF87_strtod
 	ld	A,(??AUTO_strtod+61)
 	cp	91
-	jr nc,@ENDIF44_strtod
+	jr nc,@ENDIF87_strtod
 	ld	A,(??AUTO_strtod+61)
 	add	A,32
 	ld	(??AUTO_strtod+61),A
-@ENDIF44_strtod:
+@ENDIF87_strtod:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	ld	A,(HL)
 	ld	HL,??AUTO_strtod+61
 	cp	(HL)
-	jr z,@ENDIF46_strtod
+	jr z,@ENDIF89_strtod
 	ld	HL,0
 	jr @sd_match_ret
-@ENDIF46_strtod:
+@ENDIF89_strtod:
 	inc	(IX+6)
-	jr	NZ,@INC47_strtod
+	jr	NZ,@INC90_strtod
 	inc	(IX+7)
-@INC47_strtod:
+@INC90_strtod:
 	ld	HL,(??AUTO_strtod+59)
 	inc	HL
 	ld	(??AUTO_strtod+59),HL
-	jr @WHILE41_strtod
-@ENDWHILE42_strtod:
+	jr @WHILE84_strtod
+@ENDWHILE85_strtod:
 	ld	HL,(??AUTO_strtod+59)
 @sd_match_ret:
-	pop	IX
-	ret
-
-
-; Function sd_muladd (uses shared storage)
-_sd_muladd:
-	push	IX
-	ld	IX,0
-	add	IX,SP
-	ld	L,(IX+8)
-	ld	H,(IX+9)
-	ld	(??AUTO_strtod+63),HL
-	ld	HL,0
-	ld	(??AUTO_strtod+65),HL
-@FOR48_strtod:
-	ld	HL,(??AUTO_strtod+65)
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	4
-	ld	A,D
-	sbc	A,128
-	jr nc,@ENDFOR50_strtod
-	add	HL,HL
-	ld	C,(IX+4)
-	ld	B,(IX+5)
-	add	HL,BC
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ex	DE,HL
-	ld	DE,0
-	ld	(__tmp32),HL
-	ld	(__tmp32+2),DE
-	ld	L,(IX+6)
-	ld	H,(IX+7)
-	ld	DE,0
-	call	__mul32
-	ld	BC,(??AUTO_strtod+63)
-	add	HL,BC
-	jr	NC,@AD51_strtod
-	inc	DE
-@AD51_strtod:
-	ld	(??AUTO_strtod+59),HL
-	ld	(??AUTO_strtod+61),DE
-	ld	HL,(??AUTO_strtod+59)
-	ld	DE,(??AUTO_strtod+61)
-	ex	DE,HL
-	ld	HL,(??AUTO_strtod+65)
-	add	HL,HL
-	ld	C,(IX+4)
-	ld	B,(IX+5)
-	add	HL,BC
-	ld	(HL),E
-	inc	HL
-	ld	(HL),D
-	ld	HL,(??AUTO_strtod+59)
-	ld	DE,(??AUTO_strtod+61)
-	ex	DE,HL
-	ld	DE,0
-	ld	(??AUTO_strtod+63),HL
-@FORUPD49_strtod:
-	ld	HL,(??AUTO_strtod+65)
-	inc	HL
-	ld	(??AUTO_strtod+65),HL
-	jr @FOR48_strtod
-@ENDFOR50_strtod:
-@sd_muladd_ret:
 	pop	IX
 	ret
 
@@ -23012,6 +23364,7 @@ _sd_round:
 	add	IX,SP
 	ld	L,(IX+4)
 	ld	H,(IX+5)
+	ld	(??AUTO_strtod+73),HL
 	ld	DE,8
 	add	HL,DE
 	ld	E,(HL)
@@ -23028,11 +23381,11 @@ _sd_round:
 	sub	255
 	ld	A,D
 	sbc	A,128
-	jr c,@ENDIF53_strtod
+	jr c,@ENDIF92_strtod
 	ld	HL,0
 	ld	DE,32640
 	jp	@sd_round_ret
-@ENDIF53_strtod:
+@ENDIF92_strtod:
 	ld	HL,0
 	ld	(??AUTO_strtod+61),HL
 	ld	HL,(??AUTO_strtod+59)
@@ -23043,7 +23396,7 @@ _sd_round:
 	sub	1
 	ld	A,D
 	sbc	A,128
-	jr nc,@ENDIF55_strtod
+	jr nc,@ENDIF94_strtod
 	ld	HL,1
 	ld	DE,(??AUTO_strtod+59)
 	or	A
@@ -23051,21 +23404,21 @@ _sd_round:
 	ld	(??AUTO_strtod+61),HL
 	ld	HL,1
 	ld	(??AUTO_strtod+59),HL
-@ENDIF55_strtod:
-	ld	HL,(??AUTO_strtod+61)
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	25
-	ld	A,D
-	sbc	A,128
-	jr c,@ENDIF57_strtod
+@ENDIF94_strtod:
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	ld	(HL),1
 	inc	HL
 	ld	(HL),0
+	ld	HL,(??AUTO_strtod+61)
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	27
+	ld	A,D
+	sbc	A,128
+	jr c,@ENDIF96_strtod
 	ld	HL,0
 	ld	A,H
 	rlca
@@ -23073,20 +23426,146 @@ _sd_round:
 	ld	E,A
 	ld	D,A
 	jp	@sd_round_ret
-@ENDIF57_strtod:
-	ld	L,(IX+4)
-	ld	H,(IX+5)
+@ENDIF96_strtod:
+	ld	HL,0
+	ld	(??AUTO_strtod+65),HL
+@FOR97_strtod:
+	ld	HL,(??AUTO_strtod+61)
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	1
+	ld	A,D
+	sbc	A,128
+	jp	C,@ENDFOR99_strtod
+	ld	HL,(??AUTO_strtod+73)
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	ld	A,L
+	and	1
+	ld	L,A
+	ld	H,0
+	ld	DE,(??AUTO_strtod+65)
+	ld	A,H
+	or	D
+	ld	H,A
+	ld	A,L
+	or	E
+	ld	L,A
+	ld	(??AUTO_strtod+65),HL
+	ld	HL,0
+	ld	(??AUTO_strtod+69),HL
+@FOR100_strtod:
+	ld	HL,(??AUTO_strtod+69)
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	3
+	ld	A,D
+	sbc	A,128
+	jr nc,@ENDFOR102_strtod
+	add	HL,HL
+	ld	BC,(??AUTO_strtod+73)
+	add	HL,BC
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	srl	H
+	rr	L
+	push	HL
+	ld	HL,(??AUTO_strtod+69)
+	inc	HL
+	add	HL,HL
+	ld	BC,(??AUTO_strtod+73)
+	add	HL,BC
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	ld	A,L
+	add	A,A
+	add	A,A
+	add	A,A
+	add	A,A
+	add	A,A
+	add	A,A
+	add	A,A
+	ld	H,A
+	ld	L,0
+	pop	DE
+	ld	A,H
+	or	D
+	ld	H,A
+	ld	A,L
+	or	E
+	ld	L,A
+	ex	DE,HL
+	ld	HL,(??AUTO_strtod+69)
+	add	HL,HL
+	ld	BC,(??AUTO_strtod+73)
+	add	HL,BC
+	ld	(HL),E
+	inc	HL
+	ld	(HL),D
+@FORUPD101_strtod:
+	ld	HL,(??AUTO_strtod+69)
+	inc	HL
+	ld	(??AUTO_strtod+69),HL
+	jr @FOR100_strtod
+@ENDFOR102_strtod:
+	ld	HL,(??AUTO_strtod+73)
+	ld	BC,6
+	add	HL,BC
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	srl	H
+	rr	L
+	ex	DE,HL
+	ld	(HL),D
+	dec	HL
+	ld	(HL),E
+@FORUPD98_strtod:
+	ld	HL,(??AUTO_strtod+61)
+	dec	HL
+	ld	(??AUTO_strtod+61),HL
+	jp	@FOR97_strtod
+@ENDFOR99_strtod:
+	ld	HL,(??AUTO_strtod+73)
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	ld	BC,(??AUTO_strtod+65)
+	ld	A,L
+	or	C
+	ld	L,A
+	ld	A,H
+	or	B
+	ld	H,A
+	ex	DE,HL
+	ld	(HL),D
+	dec	HL
+	ld	(HL),E
+	ld	HL,(??AUTO_strtod+73)
 	ld	DE,4
 	add	HL,DE
 	ld	E,(HL)
 	inc	HL
 	ld	D,(HL)
 	ex	DE,HL
+	ld	L,H
+	ld	H,0
 	ld	DE,0
 	push	DE
 	push	HL
-	ld	L,(IX+4)
-	ld	H,(IX+5)
+	ld	HL,(??AUTO_strtod+73)
 	ld	DE,6
 	add	HL,DE
 	ld	E,(HL)
@@ -23094,8 +23573,10 @@ _sd_round:
 	ld	D,(HL)
 	ex	DE,HL
 	ld	DE,0
-	ex	DE,HL
-	ld	HL,0
+	ld	D,E
+	ld	E,H
+	ld	H,L
+	ld	L,0
 	pop	BC
 	ld	A,C
 	or	L
@@ -23110,170 +23591,211 @@ _sd_round:
 	ld	A,B
 	or	D
 	ld	D,A
-	ld	(??AUTO_strtod+65),HL
-	ld	(??AUTO_strtod+67),DE
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ex	DE,HL
-	ld	DE,0
-	push	DE
-	push	HL
-	ld	L,(IX+4)
-	ld	H,(IX+5)
-	inc	HL
-	inc	HL
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ex	DE,HL
-	ld	DE,0
-	ex	DE,HL
-	ld	HL,0
-	pop	BC
-	ld	A,C
-	or	L
-	ld	L,A
-	ld	A,B
-	or	H
-	ld	H,A
-	pop	BC
-	ld	A,C
-	or	E
-	ld	E,A
-	ld	A,B
-	or	D
-	ld	D,A
-	ld	(??AUTO_strtod+69),HL
-	ld	(??AUTO_strtod+71),DE
-	ld	HL,(??AUTO_strtod+61)
-	ld	DE,8
+	ld	(??AUTO_strtod+75),HL
+	ld	(??AUTO_strtod+77),DE
+	ld	HL,(??AUTO_strtod+73)
+	ld	DE,4
 	add	HL,DE
-	ld	(??AUTO_strtod+63),HL
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	32
-	ld	A,D
-	sbc	A,128
-	jr nc,@TERN_E58_strtod
-	ld	HL,(??AUTO_strtod+65)
-	ld	DE,(??AUTO_strtod+67)
-	ld	A,(??AUTO_strtod+63)
-	call	__shr32
-	jr @TERN_END59_strtod
-@TERN_E58_strtod:
-	ld	HL,0
-	ld	DE,0
-@TERN_END59_strtod:
-	ld	(??AUTO_strtod+73),HL
-	ld	(??AUTO_strtod+75),DE
-	ld	HL,(??AUTO_strtod+63)
-	dec	HL
-	push	HL
-	ld	HL,(??AUTO_strtod+65)
-	ld	DE,(??AUTO_strtod+67)
-	pop	BC
-	ld	A,C
-	call	__shr32
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	xor	A
+	add	HL,HL
+	rla
+	ld	L,H
+	ld	H,A
 	ld	A,L
 	and	1
 	ld	L,A
 	ld	H,0
-	ld	DE,0
-	ld	(??AUTO_strtod+85),HL
-	ld	HL,(??AUTO_strtod+63)
-	dec	HL
-	push	HL
-	ld	HL,1
-	ld	DE,0
-	pop	BC
-	ld	A,C
-	call	__shl32
-	ld	BC,65535
-	add	HL,BC
-	jr	C,@AD60_strtod
-	dec	DE
-@AD60_strtod:
-	ld	(??AUTO_strtod+81),HL
-	ld	(??AUTO_strtod+83),DE
-	ld	HL,(??AUTO_strtod+65)
-	ld	DE,(??AUTO_strtod+67)
-	ld	A,(??AUTO_strtod+81)
-	and	L
+	ld	(??AUTO_strtod+67),HL
+	ld	HL,(??AUTO_strtod+73)
+	ld	DE,4
+	add	HL,DE
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	ld	A,L
+	and	127
 	ld	L,A
-	ld	A,(??AUTO_strtod+82)
-	and	H
-	ld	H,A
-	ld	A,(??AUTO_strtod+83)
-	and	E
-	ld	E,A
-	ld	A,(??AUTO_strtod+84)
-	and	D
-	ld	D,A
-	ld	A,H
-	or	L
-	or	E
-	or	D
-	jr nz,@OR_T61_strtod
-	ld	HL,(??AUTO_strtod+69)
-	ld	DE,(??AUTO_strtod+71)
-	ld	A,H
-	or	L
-	or	E
-	or	D
-	jr nz,@OR_T61_strtod
+	ld	H,0
+	ld	(??AUTO_strtod+71),HL
+	ld	A,(??AUTO_strtod+71)
+	or	A
+	jr nz,@OR_T103_strtod
+	ld	HL,(??AUTO_strtod+73)
+	inc	HL
+	inc	HL
+	ld	A,(HL)
+	inc	HL
+	or	(HL)
+	jr nz,@OR_T103_strtod
+	ld	HL,(??AUTO_strtod+73)
+	ld	A,(HL)
+	inc	HL
+	or	(HL)
+	jr nz,@OR_T103_strtod
 	ld	HL,0
-	jr @OR_E62_strtod
-@OR_T61_strtod:
+	jr @OR_E104_strtod
+@OR_T103_strtod:
 	ld	HL,1
-@OR_E62_strtod:
-	ld	(??AUTO_strtod+87),HL
-	ld	HL,(??AUTO_strtod+85)
+@OR_E104_strtod:
+	ld	(??AUTO_strtod+65),HL
+	ld	A,(??AUTO_strtod+67)
+	or	A
+	jr nz,@OR_T105_strtod
 	ld	A,H
 	or	L
-	jr nz,@OR_T63_strtod
-	ld	HL,(??AUTO_strtod+87)
-	ld	A,H
-	or	L
-	jr nz,@OR_T63_strtod
+	jr nz,@OR_T105_strtod
 	ld	HL,0
-	jr @OR_E64_strtod
-@OR_T63_strtod:
+	jr @OR_E106_strtod
+@OR_T105_strtod:
 	ld	HL,1
-@OR_E64_strtod:
+@OR_E106_strtod:
 	ex	DE,HL
 	ld	L,(IX+6)
 	ld	H,(IX+7)
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
-	ld	HL,(??AUTO_strtod+85)
+	ld	A,(??AUTO_strtod+67)
+	or	A
+	jr z,@AND_F107_strtod
+	ld	HL,(??AUTO_strtod+65)
 	ld	A,H
 	or	L
-	jr z,@ENDIF66_strtod
-	ld	HL,(??AUTO_strtod+87)
-	ld	A,H
-	or	L
-	jr nz,@OR_S67_strtod
-	ld	A,(??AUTO_strtod+73)
+	jr nz,@OR_S109_strtod
+	ld	A,(??AUTO_strtod+75)
 	and	1
-	jr z,@ENDIF66_strtod
-@OR_S67_strtod:
+	jr z,@AND_F107_strtod
+@OR_S109_strtod:
+	ld	HL,1
+	jr @AND_E108_strtod
+@AND_F107_strtod:
+	ld	HL,0
+@AND_E108_strtod:
+	ld	(??AUTO_strtod+63),HL
+	ld	HL,(_sd_dec)
+	ld	A,H
+	or	L
+	jp	Z,@ENDIF111_strtod
+	ld	A,(??AUTO_strtod+67)
+	or	A
+	jr z,@TERN_E112_strtod
+	ld	A,(??AUTO_strtod+71)
+	or	A
+	jr nz,@AND_F114_strtod
 	ld	HL,(??AUTO_strtod+73)
 	inc	HL
-	ld	(??AUTO_strtod+73),HL
+	inc	HL
+	ld	A,(HL)
+	inc	HL
+	or	(HL)
+	jr nz,@AND_F114_strtod
+	ld	HL,(??AUTO_strtod+73)
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	ld	A,H
+	cp	64
+	jr nc,@AND_F114_strtod
+	ld	HL,1
+	jr @TERN_END113_strtod
+@AND_F114_strtod:
+	ld	HL,0
+@AND_E115_strtod:
+	jr @TERN_END113_strtod
+@TERN_E112_strtod:
+	ld	A,(??AUTO_strtod+71)
+	cp	127
+	jr nz,@AND_F116_strtod
+	ld	HL,(??AUTO_strtod+73)
+	inc	HL
+	inc	HL
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	ld	A,H
+	and	L
+	inc	A
+	jr nz,@AND_F116_strtod
+	ld	HL,(??AUTO_strtod+73)
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ex	DE,HL
+	ld	A,H
+	cp	192
+	jr c,@AND_F116_strtod
+	ld	HL,1
+	jr @AND_E117_strtod
+@AND_F116_strtod:
+	ld	HL,0
+@AND_E117_strtod:
+@TERN_END113_strtod:
 	ld	A,H
 	or	L
-	jr	NZ,@INC68_strtod
-	ld	HL,(??AUTO_strtod+73+2)
+	jr z,@ENDIF111_strtod
+	ld	HL,(??AUTO_strtod+59)
+	ld	DE,65385
+	add	HL,DE
+	push	HL
+	ld	HL,(??AUTO_strtod+75)
+	ld	DE,(??AUTO_strtod+77)
+	push	DE
+	push	HL
+	call	_sd_cmp_mid
+	pop	DE
+	pop	DE
+	pop	DE
+	ld	(??AUTO_strtod+65),HL
+	ld	L,(IX+6)
+	ld	H,(IX+7)
+	ld	(HL),1
 	inc	HL
-	ld	(??AUTO_strtod+73+2),HL
-@INC68_strtod:
-@ENDIF66_strtod:
+	ld	(HL),0
+	ld	HL,(??AUTO_strtod+65)
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	1
+	ld	A,D
+	sbc	A,128
+	jr nc,@OR_T118_strtod
+	ld	A,H
+	or	L
+	jr nz,@AND_S120_strtod
+	ld	A,(??AUTO_strtod+75)
+	and	1
+	jr nz,@OR_T118_strtod
+@AND_S120_strtod:
+	ld	HL,0
+	jr @OR_E119_strtod
+@OR_T118_strtod:
+	ld	HL,1
+@OR_E119_strtod:
+	ld	(??AUTO_strtod+63),HL
+@ENDIF111_strtod:
+	ld	HL,(??AUTO_strtod+63)
+	ld	A,H
+	or	L
+	jr z,@ENDIF122_strtod
+	ld	HL,(??AUTO_strtod+75)
+	inc	HL
+	ld	(??AUTO_strtod+75),HL
+	ld	A,H
+	or	L
+	jr	NZ,@INC123_strtod
+	ld	HL,(??AUTO_strtod+75+2)
+	inc	HL
+	ld	(??AUTO_strtod+75+2),HL
+@INC123_strtod:
+@ENDIF122_strtod:
 	ld	HL,(??AUTO_strtod+59)
 	dec	HL
 	ld	A,H
@@ -23290,27 +23812,27 @@ _sd_round:
 	add	HL,HL
 	ex	DE,HL
 	ld	HL,0
-	ld	BC,(??AUTO_strtod+73)
+	ld	BC,(??AUTO_strtod+75)
 	add	HL,BC
 	ex	DE,HL
-	ld	BC,(??AUTO_strtod+75)
+	ld	BC,(??AUTO_strtod+77)
 	adc	HL,BC
 	ex	DE,HL
-	ld	(??AUTO_strtod+77),HL
-	ld	(??AUTO_strtod+79),DE
-	ld	HL,(??AUTO_strtod+77)
-	ld	DE,(??AUTO_strtod+79)
+	ld	(??AUTO_strtod+79),HL
+	ld	(??AUTO_strtod+81),DE
+	ld	HL,(??AUTO_strtod+79)
+	ld	DE,(??AUTO_strtod+81)
 	ld	A,E
 	sub	128
 	ld	A,D
 	sbc	A,127
-	jr c,@ENDIF70_strtod
+	jr c,@ENDIF125_strtod
 	ld	HL,0
 	ld	DE,32640
 	jr @sd_round_ret
-@ENDIF70_strtod:
-	ld	HL,(??AUTO_strtod+77)
-	ld	DE,(??AUTO_strtod+79)
+@ENDIF125_strtod:
+	ld	HL,(??AUTO_strtod+79)
+	ld	DE,(??AUTO_strtod+81)
 @sd_round_ret:
 	pop	IX
 	ret
@@ -23345,31 +23867,31 @@ _strtod:
 	ld	(??AUTO_strtod+25),HL
 	ld	HL,0
 	ld	(??AUTO_strtod+27),HL
-@WHILE71_strtod:
+@WHILE126_strtod:
 	ld	HL,(??AUTO_strtod+0)
 	ld	A,(HL)
 	cp	32
-	jr z,@OR_S73_strtod
+	jr z,@OR_S128_strtod
 	xor	128
 	cp	137
-	jr c,@ENDWHILE72_strtod
+	jr c,@ENDWHILE127_strtod
 	ld	A,(HL)
 	xor	128
 	cp	142
-	jr nc,@ENDWHILE72_strtod
-@OR_S73_strtod:
+	jr nc,@ENDWHILE127_strtod
+@OR_S128_strtod:
 	ld	HL,(??AUTO_strtod+0)
 	inc	HL
 	ld	(??AUTO_strtod+0),HL
-	jr @WHILE71_strtod
-@ENDWHILE72_strtod:
+	jr @WHILE126_strtod
+@ENDWHILE127_strtod:
 	ld	HL,(??AUTO_strtod+0)
 	ld	A,(HL)
 	cp	45
-	jr z,@OR_S76_strtod
+	jr z,@OR_S131_strtod
 	cp	43
-	jr nz,@ENDIF75_strtod
-@OR_S76_strtod:
+	jr nz,@ENDIF130_strtod
+@OR_S131_strtod:
 	ld	HL,(??AUTO_strtod+0)
 	ld	A,(HL)
 	sub	45
@@ -23382,7 +23904,7 @@ _strtod:
 	ld	HL,(??AUTO_strtod+0)
 	inc	HL
 	ld	(??AUTO_strtod+0),HL
-@ENDIF75_strtod:
+@ENDIF130_strtod:
 	ld	HL,0
 	ld	(??AUTO_strtod+55),HL
 	ld	(??AUTO_strtod+57),HL
@@ -23396,7 +23918,7 @@ _strtod:
 	ld	(??AUTO_strtod+29),HL
 	ld	A,H
 	or	L
-	jr z,@ENDIF78_strtod
+	jr z,@ENDIF133_strtod
 	ld	HL,(??AUTO_strtod+0)
 	ld	DE,(??AUTO_strtod+29)
 	add	HL,DE
@@ -23418,7 +23940,7 @@ _strtod:
 	ld	HL,32640
 	ld	(??AUTO_strtod+57),HL
 	jp	@L_strtod_done
-@ENDIF78_strtod:
+@ENDIF133_strtod:
 	ld	HL,@STR3_strtod
 	push	HL
 	ld	HL,(??AUTO_strtod+0)
@@ -23429,110 +23951,91 @@ _strtod:
 	ld	(??AUTO_strtod+29),HL
 	ld	A,H
 	or	L
-	jr z,@ENDIF80_strtod
+	jr z,@ENDIF135_strtod
 	ld	HL,(??AUTO_strtod+0)
 	ld	DE,(??AUTO_strtod+29)
 	add	HL,DE
 	ld	(??AUTO_strtod+0),HL
 	ld	A,(HL)
 	cp	40
-	jr nz,@ENDIF82_strtod
+	jr nz,@ENDIF137_strtod
 	inc	HL
 	ld	(??AUTO_strtod+2),HL
-@WHILE83_strtod:
+@WHILE138_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	xor	128
 	cp	176
-	jr c,@AND_S86_strtod
+	jr c,@AND_S141_strtod
 	ld	A,(HL)
 	xor	128
 	cp	186
-	jr c,@OR_S85_strtod
-@AND_S86_strtod:
+	jr c,@OR_S140_strtod
+@AND_S141_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	xor	128
 	cp	225
-	jr c,@AND_S87_strtod
+	jr c,@AND_S142_strtod
 	ld	A,(HL)
 	xor	128
 	cp	251
-	jr c,@OR_S85_strtod
-@AND_S87_strtod:
+	jr c,@OR_S140_strtod
+@AND_S142_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	xor	128
 	cp	193
-	jr c,@AND_S88_strtod
+	jr c,@AND_S143_strtod
 	ld	A,(HL)
 	xor	128
 	cp	219
-	jr c,@OR_S85_strtod
-@AND_S88_strtod:
+	jr c,@OR_S140_strtod
+@AND_S143_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	cp	95
-	jr nz,@ENDWHILE84_strtod
-@OR_S85_strtod:
+	jr nz,@ENDWHILE139_strtod
+@OR_S140_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	inc	HL
 	ld	(??AUTO_strtod+2),HL
-	jr @WHILE83_strtod
-@ENDWHILE84_strtod:
+	jr @WHILE138_strtod
+@ENDWHILE139_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	cp	41
-	jr nz,@ENDIF90_strtod
+	jr nz,@ENDIF145_strtod
 	inc	HL
 	ld	(??AUTO_strtod+0),HL
-@ENDIF90_strtod:
-@ENDIF82_strtod:
+@ENDIF145_strtod:
+@ENDIF137_strtod:
 	ld	HL,0
 	ld	(??AUTO_strtod+55),HL
 	ld	HL,32704
 	ld	(??AUTO_strtod+57),HL
 	jp	@L_strtod_done
-@ENDIF80_strtod:
+@ENDIF135_strtod:
 	ld	HL,0
-	ld	(??AUTO_strtod+29),HL
-@FOR91_strtod:
-	ld	HL,(??AUTO_strtod+29)
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	4
-	ld	A,D
-	sbc	A,128
-	jr nc,@ENDFOR93_strtod
-	ld	HL,??AUTO_strtod+31
-	ld	DE,(??AUTO_strtod+29)
-	add	HL,DE
-	add	HL,DE
-	ld	(HL),0
-	inc	HL
-	ld	(HL),0
-@FORUPD92_strtod:
-	ld	HL,(??AUTO_strtod+29)
-	inc	HL
-	ld	(??AUTO_strtod+29),HL
-	jr @FOR91_strtod
-@ENDFOR93_strtod:
+	ld	(_sd_a),HL
+	ld	HL,0
+	ld	(_sd_dec),HL
+	ld	HL,0
+	ld	(_sd_lz),HL
 	ld	HL,(??AUTO_strtod+0)
 	ld	A,(HL)
 	cp	48
-	jr nz,@ENDIF95_strtod
+	jr nz,@ENDIF147_strtod
 	inc	HL
 	ld	A,(HL)
 	cp	120
-	jr z,@OR_S96_strtod
+	jr z,@OR_S148_strtod
 	ld	HL,(??AUTO_strtod+0)
 	inc	HL
 	ld	A,(HL)
 	cp	88
-	jr nz,@ENDIF95_strtod
-@OR_S96_strtod:
+	jr nz,@ENDIF147_strtod
+@OR_S148_strtod:
 	ld	HL,(??AUTO_strtod+0)
 	inc	HL
 	inc	HL
@@ -23542,13 +24045,13 @@ _strtod:
 	call	_sd_hexval
 	pop	DE
 	bit	7,H
-	jr z,@OR_S97_strtod
+	jr z,@OR_S149_strtod
 	ld	HL,(??AUTO_strtod+0)
 	inc	HL
 	inc	HL
 	ld	A,(HL)
 	cp	46
-	jr nz,@ENDIF95_strtod
+	jr nz,@ENDIF147_strtod
 	ld	HL,(??AUTO_strtod+0)
 	inc	HL
 	inc	HL
@@ -23559,119 +24062,111 @@ _strtod:
 	call	_sd_hexval
 	pop	DE
 	bit	7,H
-	jr nz,@ENDIF95_strtod
-@OR_S97_strtod:
+	jr nz,@ENDIF147_strtod
+@OR_S149_strtod:
 	ld	HL,1
 	ld	(??AUTO_strtod+25),HL
 	ld	HL,(??AUTO_strtod+0)
 	inc	HL
 	inc	HL
 	ld	(??AUTO_strtod+0),HL
-@ENDIF95_strtod:
+@ENDIF147_strtod:
 	ld	HL,(??AUTO_strtod+0)
 	ld	(??AUTO_strtod+2),HL
-@FOR98_strtod:
+@FOR150_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	ld	(??AUTO_strtod+4),A
 	cp	46
-	jr nz,@ENDIF102_strtod
+	jr nz,@ENDIF154_strtod
 	ld	A,(??AUTO_strtod+15)
 	or	A
-	jr nz,@ENDIF102_strtod
+	jr nz,@ENDIF154_strtod
 	ld	HL,1
 	ld	(??AUTO_strtod+15),HL
-	jp	@FORUPD99_strtod
-@ENDIF102_strtod:
+	jp	@FORUPD151_strtod
+@ENDIF154_strtod:
 	ld	A,(??AUTO_strtod+25)
 	or	A
-	jr z,@TERN_E103_strtod
+	jr z,@TERN_E155_strtod
 	ld	A,(??AUTO_strtod+4)
 	ld	L,A
 	push	HL
 	call	_sd_hexval
 	pop	DE
-	jr @TERN_END104_strtod
-@TERN_E103_strtod:
+	jr @TERN_END156_strtod
+@TERN_E155_strtod:
 	ld	A,(??AUTO_strtod+4)
 	cp	48
-	jr c,@AND_F107_strtod
+	jr c,@AND_F159_strtod
 	ld	A,(??AUTO_strtod+4)
 	cp	58
-	jr nc,@AND_F107_strtod
+	jr nc,@AND_F159_strtod
 	ld	HL,1
-	jr @AND_E108_strtod
-@AND_F107_strtod:
+	jr @AND_E160_strtod
+@AND_F159_strtod:
 	ld	HL,0
-@AND_E108_strtod:
+@AND_E160_strtod:
 	ld	A,H
 	or	L
-	jr z,@TERN_E105_strtod
+	jr z,@TERN_E157_strtod
 	ld	A,(??AUTO_strtod+4)
 	ld	L,A
 	ld	H,0
 	ld	DE,65488
 	add	HL,DE
-	jr @TERN_END106_strtod
-@TERN_E105_strtod:
+	jr @TERN_END158_strtod
+@TERN_E157_strtod:
 	ld	HL,-1
-@TERN_END106_strtod:
-@TERN_END104_strtod:
+@TERN_END158_strtod:
+@TERN_END156_strtod:
 	ld	(??AUTO_strtod+29),HL
 	bit	7,H
-	jr z,@ENDIF110_strtod
-	jp	@ENDFOR100_strtod
-@ENDIF110_strtod:
+	jr z,@ENDIF162_strtod
+	jp	@ENDFOR152_strtod
+@ENDIF162_strtod:
 	ld	HL,1
 	ld	(??AUTO_strtod+7),HL
 	ld	HL,(??AUTO_strtod+29)
 	ld	A,H
 	or	L
-	jr nz,@ENDIF112_strtod
+	jr nz,@ENDIF164_strtod
 	ld	HL,(??AUTO_strtod+9)
 	ld	A,H
 	or	L
-	jr nz,@ENDIF112_strtod
+	jr nz,@ENDIF164_strtod
 	ld	A,(??AUTO_strtod+15)
 	or	A
-	jr z,@ENDIF114_strtod
+	jr z,@ENDIF166_strtod
 	ld	HL,(??AUTO_strtod+13)
 	inc	HL
 	ld	(??AUTO_strtod+13),HL
-@ENDIF114_strtod:
-	jr @FORUPD99_strtod
-@ENDIF112_strtod:
-	ld	A,(??AUTO_strtod+25)
-	or	A
-	jr z,@TERN_E117_strtod
-	ld	HL,16
-	jr @TERN_END118_strtod
-@TERN_E117_strtod:
-	ld	HL,19
-@TERN_END118_strtod:
-	ld	DE,(??AUTO_strtod+9)
-	ld	A,E
-	sub	L
-	ld	A,D
-	sbc	A,H
-	jp	PO,@CMP_NV119_strtod
+@ENDIF166_strtod:
+	jr @FORUPD151_strtod
+@ENDIF164_strtod:
+	ld	HL,(??AUTO_strtod+9)
+	ld	A,H
 	xor	128
-@CMP_NV119_strtod:
-	jp	P,@ELSE115_strtod
+	ld	D,A
+	ld	A,L
+	sub	116
+	ld	A,D
+	sbc	A,128
+	jr nc,@ELSE167_strtod
 	ld	HL,(??AUTO_strtod+29)
 	push	HL
 	ld	A,(??AUTO_strtod+25)
 	or	A
-	jr z,@TERN_E120_strtod
+	jr z,@TERN_E169_strtod
 	ld	HL,16
-	jr @TERN_END121_strtod
-@TERN_E120_strtod:
+	jr @TERN_END170_strtod
+@TERN_E169_strtod:
 	ld	HL,10
-@TERN_END121_strtod:
+@TERN_END170_strtod:
 	push	HL
-	ld	HL,??AUTO_strtod+31
+	ld	HL,_sd_a
 	push	HL
-	call	_sd_muladd
+	call	_sd_bmul
 	pop	DE
 	pop	DE
 	pop	DE
@@ -23680,40 +24175,40 @@ _strtod:
 	ld	(??AUTO_strtod+9),HL
 	ld	A,(??AUTO_strtod+15)
 	or	A
-	jr z,@ENDIF123_strtod
+	jr z,@ENDIF172_strtod
 	ld	HL,(??AUTO_strtod+13)
 	inc	HL
 	ld	(??AUTO_strtod+13),HL
-@ENDIF123_strtod:
-	jr @ENDIF116_strtod
-@ELSE115_strtod:
+@ENDIF172_strtod:
+	jr @ENDIF168_strtod
+@ELSE167_strtod:
 	ld	HL,(??AUTO_strtod+29)
 	ld	A,H
 	or	L
-	jr z,@ENDIF125_strtod
+	jr z,@ENDIF174_strtod
 	ld	HL,1
 	ld	(??AUTO_strtod+17),HL
-@ENDIF125_strtod:
+@ENDIF174_strtod:
 	ld	A,(??AUTO_strtod+15)
 	or	A
-	jr nz,@ENDIF127_strtod
+	jr nz,@ENDIF176_strtod
 	ld	HL,(??AUTO_strtod+11)
 	inc	HL
 	ld	(??AUTO_strtod+11),HL
-@ENDIF127_strtod:
-@ENDIF116_strtod:
-@FORUPD99_strtod:
+@ENDIF176_strtod:
+@ENDIF168_strtod:
+@FORUPD151_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	inc	HL
 	ld	(??AUTO_strtod+2),HL
-	jp	@FOR98_strtod
-@ENDFOR100_strtod:
+	jp	@FOR150_strtod
+@ENDFOR152_strtod:
 	ld	A,(??AUTO_strtod+7)
 	or	A
-	jr nz,@ENDIF129_strtod
+	jr nz,@ENDIF178_strtod
 	ld	A,(IX+6)
 	or	(IX+7)
-	jr z,@ENDIF131_strtod
+	jr z,@ENDIF180_strtod
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	ex	DE,HL
@@ -23722,44 +24217,44 @@ _strtod:
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
-@ENDIF131_strtod:
+@ENDIF180_strtod:
 	ld	HL,0
 	ld	DE,0
 	jp	@strtod_ret
-@ENDIF129_strtod:
+@ENDIF178_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	(??AUTO_strtod+0),HL
 	ld	A,(HL)
 	ld	(??AUTO_strtod+4),A
 	ld	A,(??AUTO_strtod+25)
 	or	A
-	jr z,@TERN_E134_strtod
+	jr z,@TERN_E183_strtod
 	ld	A,(??AUTO_strtod+4)
 	cp	112
-	jr z,@OR_T136_strtod
+	jr z,@OR_T185_strtod
 	cp	80
-	jr z,@OR_T136_strtod
+	jr z,@OR_T185_strtod
 	ld	HL,0
-	jr @TERN_END135_strtod
-@OR_T136_strtod:
+	jr @TERN_END184_strtod
+@OR_T185_strtod:
 	ld	HL,1
-@OR_E137_strtod:
-	jr @TERN_END135_strtod
-@TERN_E134_strtod:
+@OR_E186_strtod:
+	jr @TERN_END184_strtod
+@TERN_E183_strtod:
 	ld	A,(??AUTO_strtod+4)
 	cp	101
-	jr z,@OR_T138_strtod
+	jr z,@OR_T187_strtod
 	cp	69
-	jr z,@OR_T138_strtod
+	jr z,@OR_T187_strtod
 	ld	HL,0
-	jr @OR_E139_strtod
-@OR_T138_strtod:
+	jr @OR_E188_strtod
+@OR_T187_strtod:
 	ld	HL,1
-@OR_E139_strtod:
-@TERN_END135_strtod:
+@OR_E188_strtod:
+@TERN_END184_strtod:
 	ld	A,H
 	or	L
-	jp	Z,@ENDIF133_strtod
+	jp	Z,@ENDIF182_strtod
 	ld	HL,(??AUTO_strtod+0)
 	inc	HL
 	ld	(??AUTO_strtod+2),HL
@@ -23768,10 +24263,10 @@ _strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	cp	45
-	jr z,@OR_S142_strtod
+	jr z,@OR_S191_strtod
 	cp	43
-	jr nz,@ENDIF141_strtod
-@OR_S142_strtod:
+	jr nz,@ENDIF190_strtod
+@OR_S191_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	sub	45
@@ -23784,40 +24279,40 @@ _strtod:
 	ld	HL,(??AUTO_strtod+2)
 	inc	HL
 	ld	(??AUTO_strtod+2),HL
-@ENDIF141_strtod:
+@ENDIF190_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	cp	48
-	jr c,@AND_F145_strtod
+	jr c,@AND_F194_strtod
 	ld	A,(HL)
 	cp	58
-	jr nc,@AND_F145_strtod
+	jr nc,@AND_F194_strtod
 	ld	HL,1
-	jr @AND_E146_strtod
-@AND_F145_strtod:
+	jr @AND_E195_strtod
+@AND_F194_strtod:
 	ld	HL,0
-@AND_E146_strtod:
+@AND_E195_strtod:
 	ld	A,H
 	or	L
-	jr z,@ENDIF144_strtod
+	jr z,@ENDIF193_strtod
 	ld	HL,0
 	ld	(??AUTO_strtod+23),HL
-@WHILE147_strtod:
+@WHILE196_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	ld	A,(HL)
 	cp	48
-	jr c,@AND_F149_strtod
+	jr c,@AND_F198_strtod
 	ld	A,(HL)
 	cp	58
-	jr nc,@AND_F149_strtod
+	jr nc,@AND_F198_strtod
 	ld	HL,1
-	jr @AND_E150_strtod
-@AND_F149_strtod:
+	jr @AND_E199_strtod
+@AND_F198_strtod:
 	ld	HL,0
-@AND_E150_strtod:
+@AND_E199_strtod:
 	ld	A,H
 	or	L
-	jr z,@ENDWHILE148_strtod
+	jr z,@ENDWHILE197_strtod
 	ld	HL,(??AUTO_strtod+23)
 	ld	A,H
 	xor	128
@@ -23826,7 +24321,7 @@ _strtod:
 	sub	184
 	ld	A,D
 	sbc	A,139
-	jr nc,@ENDIF152_strtod
+	jr nc,@ENDIF201_strtod
 	ld	HL,(??AUTO_strtod+2)
 	ld	L,(HL)
 	ld	A,L
@@ -23846,64 +24341,49 @@ _strtod:
 	pop	DE
 	add	HL,DE
 	ld	(??AUTO_strtod+23),HL
-@ENDIF152_strtod:
+@ENDIF201_strtod:
 	ld	HL,(??AUTO_strtod+2)
 	inc	HL
 	ld	(??AUTO_strtod+2),HL
-	jr @WHILE147_strtod
-@ENDWHILE148_strtod:
+	jr @WHILE196_strtod
+@ENDWHILE197_strtod:
 	ld	HL,(??AUTO_strtod+21)
 	ld	A,H
 	or	L
-	jr z,@TERN_E153_strtod
+	jr z,@TERN_E202_strtod
 	ld	HL,(??AUTO_strtod+23)
 	ex	DE,HL
 	ld	HL,0
 	or	A
 	sbc	HL,DE
-	jr @TERN_END154_strtod
-@TERN_E153_strtod:
+	jr @TERN_END203_strtod
+@TERN_E202_strtod:
 	ld	HL,(??AUTO_strtod+23)
-@TERN_END154_strtod:
+@TERN_END203_strtod:
 	ld	(??AUTO_strtod+19),HL
 	ld	HL,(??AUTO_strtod+2)
 	ld	(??AUTO_strtod+0),HL
-@ENDIF144_strtod:
-@ENDIF133_strtod:
+@ENDIF193_strtod:
+@ENDIF182_strtod:
 	ld	HL,(??AUTO_strtod+9)
 	ld	A,H
 	or	L
-	jr nz,@ENDIF156_strtod
+	jr nz,@ENDIF205_strtod
 	ld	HL,0
 	ld	(??AUTO_strtod+55),HL
 	ld	(??AUTO_strtod+57),HL
 	jp	@L_strtod_done
-@ENDIF156_strtod:
-	ld	A,(??AUTO_strtod+17)
-	or	A
-	jr z,@ENDIF158_strtod
-	ld	HL,??AUTO_strtod+31
-	ld	E,(HL)
-	inc	HL
-	ld	D,(HL)
-	ex	DE,HL
-	ld	A,L
-	or	1
-	ld	L,A
-	ex	DE,HL
-	ld	(HL),D
-	dec	HL
-	ld	(HL),E
-@ENDIF158_strtod:
-	ld	HL,64
-	ld	(??AUTO_strtod+39),HL
+@ENDIF205_strtod:
+	ld	HL,(??AUTO_strtod+17)
+	push	HL
 	ld	HL,??AUTO_strtod+31
 	push	HL
-	call	_sd_norm
+	call	_sd_top
+	pop	DE
 	pop	DE
 	ld	A,(??AUTO_strtod+25)
 	or	A
-	jr z,@ELSE159_strtod
+	jr z,@ELSE206_strtod
 	ld	HL,(??AUTO_strtod+39)
 	push	HL
 	ld	HL,(??AUTO_strtod+11)
@@ -23917,8 +24397,8 @@ _strtod:
 	pop	DE
 	add	HL,DE
 	ld	(??AUTO_strtod+39),HL
-	jr @ENDIF160_strtod
-@ELSE159_strtod:
+	jp	@ENDIF207_strtod
+@ELSE206_strtod:
 	ld	HL,(??AUTO_strtod+11)
 	ld	DE,(??AUTO_strtod+19)
 	add	HL,DE
@@ -23926,6 +24406,8 @@ _strtod:
 	or	A
 	sbc	HL,DE
 	ld	(??AUTO_strtod+29),HL
+	ld	DE,(??AUTO_strtod+9)
+	add	HL,DE
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -23933,7 +24415,7 @@ _strtod:
 	sub	41
 	ld	A,D
 	sbc	A,128
-	jr c,@ENDIF162_strtod
+	jr c,@ENDIF209_strtod
 	ld	HL,0
 	ld	(??AUTO_strtod+55),HL
 	ld	HL,32640
@@ -23941,27 +24423,29 @@ _strtod:
 	ld	HL,34
 	ld	(_errno),HL
 	jp	@L_strtod_done
-@ENDIF162_strtod:
+@ENDIF209_strtod:
 	ld	HL,(??AUTO_strtod+29)
+	ld	DE,(??AUTO_strtod+9)
+	add	HL,DE
 	ld	A,H
 	xor	128
 	ld	D,A
 	ld	A,L
-	sub	186
+	sub	211
 	ld	A,D
 	sbc	A,127
-	jr nc,@ENDIF164_strtod
+	jr nc,@ENDIF211_strtod
 	ld	HL,0
 	ld	(??AUTO_strtod+55),HL
 	ld	(??AUTO_strtod+57),HL
 	ld	HL,34
 	ld	(_errno),HL
-	jr @L_strtod_done
-@ENDIF164_strtod:
+	jp	@L_strtod_done
+@ENDIF211_strtod:
 	ld	HL,(??AUTO_strtod+29)
 	ld	A,H
 	or	L
-	jr z,@ENDIF166_strtod
+	jr z,@ENDIF213_strtod
 	push	HL
 	ld	HL,??AUTO_strtod+41
 	push	HL
@@ -23975,8 +24459,14 @@ _strtod:
 	call	_sd_mulhi
 	pop	DE
 	pop	DE
-@ENDIF166_strtod:
-@ENDIF160_strtod:
+@ENDIF213_strtod:
+	ld	HL,1
+	ld	(_sd_dec),HL
+	ld	HL,(??AUTO_strtod+29)
+	ld	(_sd_q),HL
+	ld	HL,(??AUTO_strtod+17)
+	ld	(_sd_tail),HL
+@ENDIF207_strtod:
 	ld	HL,??AUTO_strtod+27
 	push	HL
 	ld	HL,??AUTO_strtod+31
@@ -23998,22 +24488,22 @@ _strtod:
 	ld	A,D
 	xor	127
 	or	B
-	jr z,@OR_S169_strtod
+	jr z,@OR_S216_strtod
 	ld	HL,(??AUTO_strtod+51)
 	ld	DE,(??AUTO_strtod+53)
 	ld	A,E
 	sub	128
 	ld	A,D
 	sbc	A,0
-	jr nc,@ENDIF168_strtod
+	jr nc,@ENDIF215_strtod
 	ld	HL,(??AUTO_strtod+27)
 	ld	A,H
 	or	L
-	jr z,@ENDIF168_strtod
-@OR_S169_strtod:
+	jr z,@ENDIF215_strtod
+@OR_S216_strtod:
 	ld	HL,34
 	ld	(_errno),HL
-@ENDIF168_strtod:
+@ENDIF215_strtod:
 	ld	HL,(??AUTO_strtod+51)
 	ld	DE,(??AUTO_strtod+53)
 	ld	(??AUTO_strtod+55),HL
@@ -24022,7 +24512,7 @@ _strtod:
 	ld	HL,(??AUTO_strtod+5)
 	ld	A,H
 	or	L
-	jr z,@ENDIF171_strtod
+	jr z,@ENDIF218_strtod
 	ld	HL,(??AUTO_strtod+55)
 	ld	DE,(??AUTO_strtod+57)
 	ld	A,D
@@ -24030,10 +24520,10 @@ _strtod:
 	ld	D,A
 	ld	(??AUTO_strtod+55),HL
 	ld	(??AUTO_strtod+57),DE
-@ENDIF171_strtod:
+@ENDIF218_strtod:
 	ld	A,(IX+6)
 	or	(IX+7)
-	jr z,@ENDIF173_strtod
+	jr z,@ENDIF220_strtod
 	ld	HL,(??AUTO_strtod+0)
 	ex	DE,HL
 	ld	L,(IX+6)
@@ -24041,7 +24531,7 @@ _strtod:
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
-@ENDIF173_strtod:
+@ENDIF220_strtod:
 	ld	HL,(??AUTO_strtod+55)
 	ld	DE,(??AUTO_strtod+57)
 @strtod_ret:
@@ -24051,9 +24541,10 @@ _strtod:
 
 ; Runtime library functions
 	EXTRN	__mul32
-	EXTRN	__shl32
-	EXTRN	__shr32
+	EXTRN	__shl16
 	EXTRN	__tmp32
+
+; Global variables
 	DSEG
 
 ; String literals
@@ -24066,9 +24557,21 @@ _strtod:
 
 ; Static storage that starts as zero
 	COMMON	/lc_strtod/
+_sd_a:
+	ds	78
+_sd_b:
+	ds	78
+_sd_dec:
+	ds	2
+_sd_q:
+	ds	2
+_sd_tail:
+	ds	2
+_sd_lz:
+	ds	2
 ; Shared automatic storage
 ??AUTO_strtod:
-	ds	97
+	ds	103
 
 
 	CSEG

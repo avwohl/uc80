@@ -157,7 +157,7 @@ Printf links only needed format handlers via `#pragma printf int|long|llong|floa
 
 ### `<stdlib.h>` - Implemented
 - [x] `atoi()`, `atol()`, `atof()`
-- [x] `strtol()`, `strtoul()`, `strtoll()`, `strtoull()`, `strtod()`, `strtof()`, `strtold()`, `atoll()` - bases 0 and 2 to 36, `errno`, correct rounding of floats with up to 19 significant digits. A longer string that is closer than 2^-57 (relative) to the middle of two floats can round the wrong way
+- [x] `strtol()`, `strtoul()`, `strtoll()`, `strtoull()`, `strtod()`, `strtof()`, `strtold()`, `atoll()` - bases 0 and 2 to 36, `errno`, correct rounding of every decimal float string (a 64-bit fast path and an exact big-integer comparison near a tie)
 - [x] `malloc()`, `calloc()`, `realloc()`, `free()` - first-fit free list, sorted by address, merged on `free()`. The heap grows from `__END__` up to 255 bytes below the stack pointer
 - [x] `abs()`, `labs()`, `div()`, `ldiv()`
 - [x] `rand()`, `srand()` - 16-bit LCG

@@ -64,7 +64,7 @@ matching failure.
   program needs a part in three cases. A scanf call has a conversion of that
   part in a format literal. A scanf call has a format that is not a literal.
   The program uses a scanf function without a call. The float part is about
-  5.7 KB, with `strtod`. The text part is about 0.3 KB. To link the float
+  6.4 KB, with `strtod`. The text part is about 0.3 KB. To link the float
   part by force, use `#pragma scanf float` or `--scanf float`. To link the
   text part by force, use `--scanf text`.
 
@@ -80,7 +80,20 @@ functions.
 
 `strtod`, `strtof`, `strtold` and `atof` use the same code. They read decimal
 numbers, `inf`, `infinity`, `nan` and hexadecimal floats. The result is the
-nearest float, and a tie goes to the even mantissa. A decimal string that is
-very close to a tie can round to the neighbor. A value that is too large
-gives an infinity. A value that is too small gives zero or a subnormal
-number. Both set `errno` to `ERANGE`.
+nearest float for every string, and a tie goes to the even mantissa. A value
+that is too large gives an infinity. A value that is too small gives zero or a
+subnormal number. Both set `errno` to `ERANGE`.
+
+The converter reads up to 116 digits into a big integer. It multiplies the top
+64 bits of the integer by a power of ten with 64-bit mantissa arithmetic. The
+error of the product is below 2^-54. About 1 string in 2^23 is within 2^-48
+of a tie. For such a string, the converter compares the digits with the tie in
+big integers, and the answer is exact.
+
+The longest tie of a float has 113 digits, so the cut after 116 digits cannot
+hide a tie. A hexadecimal string is exact in 64 bits. A number with more than
+32000 digits does not work, because the digit counters have the type `int`.
+
+The exact comparison adds about 700 bytes of code and 170 bytes of RAM. Each
+program that links `strtod`, `atof` or the float part of `scanf` pays this
+cost. The comparison runs only for a string that is near a tie.
