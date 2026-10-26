@@ -42,6 +42,8 @@ class RegPlan:
     sizes: list = field(default_factory=list)
     names: list = field(default_factory=list)   # parameter names, None if none
     spill: list = field(default_factory=list)   # True: store on entry
+    ret_a: bool = False       # a char result comes back in A, not in HL
+    ret_signed: bool = False  # the signedness of that char result
 
     def reg_params(self) -> list[int]:
         return [i for i, r in enumerate(self.loc) if r is not None]
@@ -500,4 +502,114 @@ def forward_slots(lines: list, start: int, slots: dict, init: dict,
         if ln is not None:
             flat.extend(ln.split("\n"))
     lines[start:] = flat
+    return changed
+
+
+# ---------------------------------------------------------------------------
+# A register parameter across a call: push and pop instead of a slot
+# ---------------------------------------------------------------------------
+#
+# After forward_slots, a parameter slot in ??AUTO can still have a store
+# (ld (??AUTO+n),HL) and one load (ld HL,(??AUTO+n)) that come after a call.
+# When only straight-line code lies between the two (no label, no jump, no
+# return) and the stack is level at the load, the store can be a push and
+# the load a pop.  That saves 6 bytes and about 20 T-states for a pair
+# register in DE, and 4 bytes and 12 T-states for HL.
+
+_WORD_STORE = re.compile(
+    r"^\t(?:ld|LD)\t\(\?\?AUTO\+(\d+)\),(HL|DE)\s*(?:;.*)?$", re.IGNORECASE)
+_WORD_LOAD = re.compile(
+    r"^\t(?:ld|LD)\t(HL|DE|BC),\(\?\?AUTO\+(\d+)\)\s*(?:;.*)?$", re.IGNORECASE)
+
+
+def push_pop_slots(lines: list, start: int, offsets) -> int:
+    """Turn the store and the single load of a parameter slot into push and
+    pop where that is safe.  ``offsets`` holds the ??AUTO offsets of the
+    word slots of the register parameters.  Rewrites ``lines[start:]``
+    in place and returns the number of slots changed."""
+    if _effect is None or not offsets:
+        return 0
+    region = lines[start:]
+    if any("__UC80_ASM" in ln for ln in region):
+        return 0
+    # Stores that stand side by side: the pop must take the word that was
+    # pushed last first, so push the one that is loaded last first.
+    load_at = {}
+    for i, ln in enumerate(region):
+        m = _WORD_LOAD.match(ln or "")
+        if m and int(m.group(2)) in offsets:
+            load_at.setdefault(int(m.group(2)), i)
+    i = 0
+    while i < len(region):
+        j = i
+        while (j < len(region) and _WORD_STORE.match(region[j] or "")
+               and int(_WORD_STORE.match(region[j]).group(1)) in load_at):
+            j += 1
+        if j - i > 1:
+            region[i:j] = sorted(
+                region[i:j], reverse=True,
+                key=lambda t: load_at[int(_WORD_STORE.match(t).group(1))])
+        i = max(j, i + 1)
+    changed = 0
+    for n in sorted(offsets):
+        refs = []
+        ok = True
+        for i, ln in enumerate(region):
+            if ln is None:
+                continue
+            hit = False
+            for m in _AUTO_ANY.finditer(ln.split(";", 1)[0]):
+                if int(m.group(1) or 0) in (n, n + 1):
+                    hit = True
+            if hit:
+                refs.append(i)
+        if len(refs) != 2:
+            continue
+        s, l = refs
+        ms, ml = _WORD_STORE.match(region[s]), _WORD_LOAD.match(region[l])
+        if not (ms and ml and int(ms.group(1)) == n and int(ml.group(2)) == n):
+            continue
+        depth = 0
+        for k in range(s + 1, l):
+            ln = region[k]
+            if ln is None:
+                continue
+            if not ln or ln[0] not in " \t":
+                ok = False                       # a label or a directive
+                break
+            text = ln.split(";", 1)[0].strip()
+            if not text:
+                continue
+            parts = text.split(None, 1)
+            mn = parts[0].lower()
+            opnd = parts[1] if len(parts) > 1 else ""
+            if mn == "push":
+                depth += 2
+                continue
+            if mn == "pop":
+                depth -= 2
+                if depth < 0:
+                    ok = False
+                    break
+                continue
+            if mn == "call" and "," not in opnd:
+                continue
+            if re.search(r"\bsp\b", opnd, re.IGNORECASE):
+                ok = False
+                break
+            try:
+                eff = _effect(mn, opnd)
+            except Exception:
+                ok = False
+                break
+            if eff.flow != "next" or eff.stack != 0:
+                ok = False
+                break
+        if not ok or depth != 0:
+            continue
+        region[s] = f"\tpush\t{ms.group(2).upper()}"
+        region[l] = f"\tpop\t{ml.group(1).upper()}"
+        changed += 1
+    if changed:
+        lines[start:] = region
     return changed

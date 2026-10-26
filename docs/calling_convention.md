@@ -1,12 +1,12 @@
 # Calling convention
 
-uc80 has two calling conventions: the stack convention and the register convention. The compiler chooses one convention for each function. It decides before it generates the first call. The plan for the full register convention is section F of [codegen_gap.md](codegen_gap.md). This page describes what the compiler does today (step 1 of that plan).
+uc80 has two calling conventions: the stack convention and the register convention. The compiler chooses one convention for each function. It decides before it generates the first call. The plan for the full register convention is section F of [codegen_gap.md](codegen_gap.md). This page describes what the compiler does today (steps 1 and 2 of that plan).
 
 ## The two conventions
 
 The stack convention is the original one. The caller pushes every argument as a 16-bit word, from the last argument to the first. The caller pops the arguments after the call. The callee builds a frame with IX and reads each parameter as `(IX+d)`. A function returns a value in HL (DEHL for a long or a float).
 
-The register convention applies to one function at a time. The callee takes its first two scalar parameters in registers. The caller pushes the other parameters, as before. The caller does not pop the register parameters, because they were never pushed. The return value is the same as in the stack convention.
+The register convention applies to one function at a time. The callee takes its first two scalar parameters in registers. The caller pushes the other parameters, as before. The caller does not pop the register parameters, because they were never pushed. A result that is not a char is returned as in the stack convention. A char result is returned in A (section "Results in A").
 
 ## Which registers
 
@@ -40,6 +40,7 @@ The compiler uses the register convention for a function when all of these rules
 - An interrupt function does not reach the function. This keeps the ISR safe rules (section "Storage of the parameters").
 - The call graph includes calls through pointers. A call through a pointer, a call of a name that is not a declared function, and a call of a library routine that takes a callback (`qsort`, `bsearch`, `atexit`, `signal`) or an argument that names a function, can reach every function with an address that the program takes. So `f` calls `fp`, `fp` points to `h`, and `h` calls `f`: this is a cycle, and `f` is recursive. An interrupt function that calls a pointer reaches the same functions.
 - The function is not variadic. A function that returns a struct wider than HL (`sret`) keeps the stack convention.
+- A function with no register parameter also qualifies when it returns a char (`char f(void)`), because the result goes in A.
 - Every call has as many arguments as the definition has parameters.
 - `--int=32` is not set. The options `--embed-lib`, `--runtime-lib` and `--startup-lib` turn the register convention off, because the extra assembly is not scanned.
 
@@ -86,6 +87,39 @@ _out:
 
 A loop of 1000 calls of `out(3, k)` costs 199 T-states for each call in the stack convention and 50 T-states in the register convention. Both numbers include the call site and the store to `a`. The cost of the loop is not in the numbers.
 
+## Results in A
+
+A function of the register convention that returns `char`, `signed char` or `unsigned char` (a typedef of these too, but not `_Bool`) returns the byte in A. The callee does not set H and does not set L. The callee does not extend the byte.
+
+- In the callee, `return e;` evaluates `e` with the byte paths of the compiler (`_gen_expr_a`), so `return a + b;` for two bytes is `add A,E`.
+- In the caller, the code asks for A when the value is used as a byte: a store to a char, a `return` of a char, a byte argument, a test (`if (f(x))` is `call` and `or A`), and a call whose value is not used. In these cases the caller does not widen the byte.
+- In every other case the caller widens the byte to an int in HL after the call: `ld L,A` then `ld H,0` (unsigned) or the sign extension (signed).
+
+The compiler picks A only when it pays. The prepass counts the calls of the function in two groups, from the syntax of the call. A call is a byte use when it is a whole statement, a condition, an operand of `&&`, `||`, `!` or a comparison, the operand of a cast to a char type, the value stored to a char object (assignment or initializer), or the operand of a `return` in a char function. Every other call is an int use. A function that has more int uses than byte uses returns its char in HL, as in step 1: each int use would pay for the widening that the callee saves once.
+
+The widening moves from the callee to the caller. A call that needs HL costs the same as before. A call that needs A saves the widening: 8 T-states and 2 bytes for each byte result that stays a byte.
+
+## A parameter across a call
+
+The callee stores a parameter that the body names in a slot (section "The callee"). In the shared storage (`??AUTO`) the store and the loads are `ld (??AUTO+n),HL` and `ld HL,(??AUTO+n)`: 16 T-states and 3 bytes each (20 T-states and 4 bytes for DE). The pass `regcc.push_pop_slots` (after `forward_slots`) uses the stack instead when all of these are true:
+
+- The slot has one store and one load left. The store and the load are word instructions for HL or DE (the load may use HL, DE or BC).
+- Only straight-line code lies between them: no label, no jump, no return. Calls and balanced `push` and `pop` pairs are allowed. Any use of SP stops the pass.
+- The stack is level at the load: the load is not in the middle of a `push` of arguments.
+
+The store becomes `push rr` and the load becomes `pop rr`: 11 and 10 T-states, 1 byte each. When two slots qualify, the stores are put in the order that makes the pops match (the word that is loaded last is pushed first). If the conditions are not true, the compiler spills once at entry, as in step 1. A stack frame keeps the prologue `push`, because the frame layout is fixed.
+
+## Tail calls
+
+`return g(...);` in a function with no stack local and no stack argument for `g` ends with `call _g` then `jp @f_ret`. The compiler replaces the two instructions with `pop IX` and `jp _g` (only `jp _g` when the function has no frame). The function `g` returns to the caller of this function. A call to a function in the register convention has no cleanup. The call and the `ret` are therefore next to each other in many more places than in step 1.
+
+The compiler does not do this when:
+
+- the function has a stack local (a local in `??AUTO` is fine), a stack-frame spill of a parameter, or a statement expression. The callee could receive a pointer to the frame, and the frame is gone after the jump.
+- the call has stack arguments, a hidden pointer for a struct result, or any code after it (a cast, or the widening of a char result).
+- the callee is a runtime routine (a name that starts with two underscores) or `setjmp`.
+- the function is `main` or an interrupt function.
+
 ## Storage of the parameters
 
 The slot of a parameter has the same storage rules as every other local variable.
@@ -112,13 +146,12 @@ The test `asm_between` in `tests/test_register_cc.py` puts inline asm between ca
 ## Tests
 
 - `tests/test_register_cc.py` checks three things. It checks the shape of the code. It checks the functions that keep the stack convention. It checks that both conventions give the same output for recursion, byte parameters, function pointers, variadic callees, struct returns, assembly callers and the storage options.
-- `bench/ccfuzz.py`: random programs with many small functions, compared with the host compiler. See the header of the file for the kinds of calls.
+- `bench/ccfuzz.py`: random programs with many small functions, compared with the host compiler. See the header of the file for the kinds of calls. It also makes tail calls and returns of an expression of another type.
 - `bench/difftest.py --focus calls`: random programs against SDCC.
 
 ## Later steps
 
-Step 1 is the subject of this page. The next steps of the plan in [codegen_gap.md](codegen_gap.md) are:
+Steps 1 and 2 are the subject of this page. Two items of the plan in [codegen_gap.md](codegen_gap.md) are still open:
 
-- a non-leaf callee that keeps its parameters live across a call without a store
-- a byte result in A
-- the tail call (`jp`) for calls that have stack arguments
+- a `jp` for a call that has stack arguments (the callee would have to pop its own arguments).
+- a third register parameter (a byte in L, as SDCC does).

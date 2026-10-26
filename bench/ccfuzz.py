@@ -397,6 +397,14 @@ class Gen:
     def ret_stmt(self, f, env):
         if f.ret == "void":
             return []
+        if self.chance(0.3):
+            # a tail call: the result of a call of the same result type
+            same = [g for g in env["pure"] if g.ret == f.ret]
+            if same:
+                return [f"return {self.call_text(self.pick(same), env, 3)};"]
+        if f.ret in SCALARS and self.chance(0.25):
+            # an expression of another scalar type, converted by the return
+            return [f"return {self.expr(self.pick(SCALAR_NAMES), env, 3)};"]
         return [f"return {self.expr(f.ret, env, 3)};"]
 
     def make_function(self, idx, pure_funcs, impure_funcs, force=None):

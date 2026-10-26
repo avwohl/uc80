@@ -9,9 +9,9 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
-## Status on 2026-10-25: family F, step 1 (register parameters) is done
+## Status on 2026-10-26: family F, steps 1 and 2 are done
 
-Step 1 of family F is in the code (branch `regcc`). [calling_convention.md](calling_convention.md) describes the rules. A function that only direct calls reach takes its first two scalar parameters in registers (A or HL, then E or DE). The caller pushes the other parameters and does not pop the register parameters. The callee stores each parameter that the body names into a slot (`??AUTO`, or a push in the prologue of a stack frame). The pass `regcc.forward_slots` then removes the loads that a register still serves and the stores that nothing reads. A small leaf function needs no IX frame. Steps 2 to 4 (non-leaf callees without a store, byte results in A, `jp` for tail calls with stack arguments) are open.
+Step 1 of family F is in the code (branch `regcc`). [calling_convention.md](calling_convention.md) describes the rules. A function that only direct calls reach takes its first two scalar parameters in registers (A or HL, then E or DE). The caller pushes the other parameters and does not pop the register parameters. The callee stores each parameter that the body names into a slot (`??AUTO`, or a push in the prologue of a stack frame). The pass `regcc.forward_slots` then removes the loads that a register still serves and the stores that nothing reads. A small leaf function needs no IX frame. Step 2 is described after the step 1 numbers below. Two parts of the plan are still open: a `jp` for a call that has stack arguments (the callee would have to pop its own arguments), and a third register parameter.
 
 The numbers come from `bench/run.py` (uc80, size mode), with and without `--no-register-cc`, from the same tree. Image bytes / T-states, before and after (SDCC 4.6.0 speed mode in the last column):
 
@@ -247,6 +247,23 @@ The analyst described the fault as a list-wrapped literal. A reviewer found more
   - extend `_byte_kind` to int locals that come from chars (ttt: -552 B).
 - Test: pytest, `run_ctests.py`, `difftest.py`, the bench harness.
 - Risk: flag-state assumptions in later rules. Add each rule alone and run the full tests after each one.
+
+### Step 2 of family F (measured on 2026-10-26)
+
+Step 2 is in the code (branch `regcc`, see [calling_convention.md](calling_convention.md)). It has three parts. All numbers are `bench/run.py` (uc80, size mode) on the 104 programs that are OK, from the same tree, step 2 against step 1.
+
+- Byte results in A. A function that returns a char returns the byte in A when its calls use the byte as a byte at least as often as they need an int (a guess from the syntax). The callee does not widen. A call that is a statement, a condition, a comparison, a store to a char or a `return` in a char function does not widen either. Gain: 110 bytes in the 104 programs (`davidly-ttt` -33 B and -0.8% T-states, `coremark-unofficial` -15 B). A first version without the guess made `snd-seq` 5 bytes bigger and 14K T-states slower, because two calls needed an int and paid for the widening that one callee saved.
+- A parameter across a call by push and pop. When a register parameter has one store and one load left in straight-line code, the store is `push` and the load is `pop` (section "A parameter across a call"). Gain: 250 bytes. `stanford-perm` 361.6M to 356.0M T-states (-1.5%), `binary-trees` -1.05%, `snd-cmdq` 10.72M to 10.60M (-1.05%), `stanford-towers` -0.8%, `davidly-ttt` -0.8%.
+- Tail calls. `return g(...)` in a function with no stack local becomes `pop IX` and `jp _g`. Gain: 50 bytes (`tak` -5 B, `coremark-unofficial` -9 B). The time effect is small, because few hot paths end with a call.
+
+Totals for step 2 against step 1: the image of the 104 programs falls by 408 bytes (611,907 to 611,499). 41 programs get smaller, none gets bigger. 21 programs get faster and one gets slower (`embench-tarfind`, +1,269 T-states, 0.04%). Geometric means against SDCC 4.6.0, with the method of `bench/report.py`:
+
+- Size, minus the empty program: 0.9757 (no register convention), 0.9484 (step 1), 0.9476 (step 2)
+- Size, whole image: 0.9374, 0.9117, 0.9110
+- T-states against the speed mode, 78 programs: 0.6228, 0.6020, 0.6015
+- T-states without the `sort-*` programs, 70 programs: 0.7662, 0.7377, 0.7370
+
+Step 2 gains much less than step 1 (-0.0008 on the size mean and -0.0005 on the T-state mean, against -0.0273 and -0.0208). The kernels that motivated family F have few char results and few calls at the end of a function. The remaining distance to SDCC on `snd-cmdq` (10.60M against 9.03M) is not in the calling convention any more. It is in locals in memory (family G) and in the code of the loops (families D, H).
 
 ### F. Register calling convention (12 to 20 days, medium to high risk)
 

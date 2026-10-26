@@ -64,7 +64,8 @@ def build_run(tmp_path, source, *flags, files=()):
 def func(mac, name):
     """The text of function ``name``, from its label to its return label."""
     start = mac.index(f"\n_{name}:")
-    end = mac.index(f"@{name}_ret:", start)
+    ends = [mac.find(m, start + 1) for m in (f"@{name}_ret:", "\n_")]
+    end = min(e for e in ends if e >= 0)
     return mac[start:end]
 
 
@@ -412,6 +413,52 @@ static int h(int x) { return f(x - 1, x); }
 static int f(int a, int b) { int t; if (a <= 0) return b + 100; t = apply(h, a); return t + a * b; }
 int main(void) { printf("%d\n", f(6, 2)); return 0; }
 """,
+    "char_result": r"""
+#include <stdio.h>
+typedef unsigned char u8;
+static char sneg(int x) { return (char)(x * 3); }
+static u8 uadd(u8 a, u8 b) { return a + b; }
+static signed char sdiv(int a) { return (signed char)(a / 2); }
+static char five(void) { return 5; }
+static u8 chain(int a) { return uadd((u8)a, (u8)a); }
+static char bounce(char c) { return sneg(c); }
+static int seen;
+static void note(int a, char c) { seen += a + c; }
+int main(void) {
+    char c = sneg(100);
+    u8 u = uadd(200, 100);
+    int i = sneg(100) + 1;
+    int j = uadd(250, 10) * 2;
+    int k = sdiv(-5);
+    printf("%d %d %d %d %d %d\n", c, u, i, j, k, five());
+    printf("%d %d\n", chain(130), bounce(-100));
+    if (sneg(90)) printf("t1\n");
+    if (!uadd(128, 128)) printf("t2\n");
+    if (sneg(10) < sneg(50)) printf("t3\n");
+    if (uadd(100, 100) > 150) printf("t4\n");
+    sneg(3);
+    note(sneg(70), uadd(1, 2));
+    printf("%d\n", seen);
+    return 0;
+}
+""",
+    "tail_and_keep": r"""
+#include <stdio.h>
+static int g_sum(int *p, int n) { int s = 0; while (n--) s += *p++; return s; }
+static int tail_arr(int a, int b) { int arr[3]; arr[0] = a; arr[1] = b; arr[2] = a + b; return g_sum(arr, 3); }
+static int tail_local(int a) { int v = a * 2; return g_sum(&v, 1); }
+static int leaf(int a, int b) { return a * 10 + b; }
+static int tail_ok(int a, int b) { return leaf(b, a); }
+static int tail_deep(int a, int b) { if (a) return tail_ok(a, b); return tail_local(b); }
+static int keep_two(int a, int b) { int t = leaf(1, 2); return t + a * 100 + b; }
+static int keep_one(int a, int b) { int t = leaf(a, 2); return t + b; }
+static int keep_swap(int a, int b) { int t = leaf(3, 4); int u = leaf(a, b); return t + u; }
+int main(void) {
+    printf("%d %d %d %d\n", tail_arr(1, 2), tail_local(21), tail_ok(3, 4), tail_deep(0, 5));
+    printf("%d %d %d\n", keep_two(2, 3), keep_one(4, 5), keep_swap(6, 7));
+    return 0;
+}
+""",
     "assign_param": r"""
 #include <stdio.h>
 int count(int n, char c) { int k = 0; while (n--) { c++; k += c; } return k; }
@@ -423,7 +470,9 @@ int main(void) { printf("%d %d %d\n", count(3, 'a'), clobber(1, 2), addr(5, 6));
 
 # What a host compiler prints for each program (int is 16 bits here, but no
 # program depends on it).
-KNOWN = {'ptr_cycle': '1204\n',
+KNOWN = {'char_result': '44 44 45 8 -2 5\n4 -44\nt1\nt2\nt4\n-43\n',
+    'tail_and_keep': '6 42 43 10\n215 47 101\n',
+    'ptr_cycle': '1204\n',
     'ptr_cycle_apply': '183\n',
     'asm_between': '7 11\n14\n',
     'assign_param': '297 604 11\n',
@@ -571,3 +620,49 @@ def test_isr_reaches_helper_through_a_hook_pointer(tmp_path):
     want = result(0)
     for period in (1511, 3001, 5003):
         assert result(period) == want
+
+
+# ------------------------------------------------ results in A, tail calls
+
+
+class TestStep2:
+    def test_char_result_comes_back_in_a_and_the_caller_tests_a(self, tmp_path):
+        mac, _ = compile_mac(tmp_path, """
+            static char lo(int x) { return x & 127; }
+            int main(void) { if (lo(5)) return 1; return 0; }""",
+                             "--no-inlining")
+        assert ops(mac, "lo") == ["ld A,L", "and 127"]
+        main = ops(mac, "main")
+        i = main.index("call _lo")
+        assert main[i + 1] == "or A"
+
+    def test_char_result_is_widened_only_when_used_as_int(self, tmp_path):
+        mac, _ = compile_mac(tmp_path, """
+            unsigned char g;
+            static unsigned char inc(unsigned char x) { return x + 1; }
+            int use(void) { return inc(4) + 1; }
+            void store(void) { g = inc(9); }
+            int main(void) { store(); return use(); }""", "--no-inlining")
+        store = ops(mac, "store")
+        i = store.index("call _inc")
+        assert store[i + 1] == "ld (_g),A"
+        use = ops(mac, "use")
+        assert "ld H,0" in use
+
+    def test_return_of_a_call_is_a_jump(self, tmp_path):
+        mac, _ = compile_mac(tmp_path, """
+            static int leaf(int a, int b) { return a - b; }
+            static int w(int a, int b) { return leaf(b, a); }
+            int main(void) { return w(5, 3); }""", "--no-inlining")
+        body = ops(mac, "w")
+        assert not any(o.startswith("call") for o in body)
+        assert body[-1] in ("jp _leaf", "jr _leaf")
+
+    def test_parameter_across_a_call_is_pushed(self, tmp_path):
+        mac, _ = compile_mac(tmp_path, """
+            extern int putchar(int);
+            static int w(int a, int b) { putchar('x'); return a + b; }
+            int main(void) { return w(5, 3); }""", "--no-inlining")
+        body = ops(mac, "w")
+        assert body[0] == "push DE" and "pop DE" in body
+        assert not any("??AUTO" in o for o in body)
