@@ -1724,6 +1724,23 @@ class CallGraphAnalyzer:
             return self.type_config.int_size  # unresolved; estimate
         return 2
 
+    _CALLBACK_LIBS = frozenset({"qsort", "bsearch", "atexit", "signal",
+                                "onexit", "on_exit"})
+
+    def _passes_callback(self, callee: str, args) -> bool:
+        """True when a call to the external routine ``callee`` can make
+        that routine call a function of this program: it is a library
+        routine that takes a callback, or one argument names a function."""
+        if callee.lstrip("_") in self._CALLBACK_LIBS:
+            return True
+        for arg in args:
+            if (isinstance(arg, ast.UnaryOp) and arg.op == "&"):
+                arg = arg.operand
+            if (isinstance(arg, ast.Identifier)
+                    and arg.name.text in self.has_body):
+                return True
+        return False
+
     def _analyze_function_body(self, func) -> None:
         """Analyze a FunctionDef body for calls and address-taken functions."""
         if not func.body:
@@ -1827,7 +1844,17 @@ class CallGraphAnalyzer:
                 # Indirect call through expression — analyze it for
                 # nested calls and any &fn whose address is leaked.
                 self._analyze_expr(expr.func, calls, address_taken, indirect_sigs)
+                indirect_sigs.add(("indirect",))
             args = getattr(expr, "args", None) or []
+            if (isinstance(expr.func, ast.Identifier)
+                    and expr.func.name.text not in self.func_signatures):
+                # a pointer variable, a parameter or an undeclared name
+                indirect_sigs.add(("indirect",))
+            elif (isinstance(expr.func, ast.Identifier)
+                    and expr.func.name.text not in self.has_body
+                    and self._passes_callback(expr.func.name.text, args)):
+                # a library routine that may call back into the program
+                indirect_sigs.add(("callback",))
             for arg in args:
                 self._analyze_expr(arg, calls, address_taken, indirect_sigs)
 
@@ -1959,14 +1986,23 @@ class CallGraphAnalyzer:
             for func in public_funcs:
                 self.can_be_active_together[func].update(public_funcs)
 
-    def _get_reachable(self, func: str, visited: set[str]) -> set[str]:
-        """Get all functions reachable from func via calls."""
-        if func in visited:
-            return set()  # Cycle detected (recursive)
-        visited = visited | {func}
-        result = set(self.call_graph.get(func, set()))
-        for callee in list(result):
-            result.update(self._get_reachable(callee, visited))
+    def _get_reachable(self, func: str, visited: set[str] | None = None) -> set[str]:
+        """Get all functions reachable from func via calls (one edge or
+        more, so func is in the result when it can call itself).  A call
+        through a pointer, or into a library routine that takes a callback,
+        reaches every function whose address is taken."""
+        taken = self.address_taken & self.has_body
+        result: set[str] = set()
+        todo = [func]
+        while todo:
+            cur = todo.pop()
+            nxt = set(self.call_graph.get(cur, ()))
+            if self.indirect_call_sigs.get(cur):
+                nxt |= taken
+            for callee in nxt:
+                if callee not in result:
+                    result.add(callee)
+                    todo.append(callee)
         return result
 
     def is_recursive(self, func: str) -> bool:

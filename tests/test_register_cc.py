@@ -396,6 +396,22 @@ void run(int n) {
 }
 int main(void) { run(2); return 0; }
 """,
+    "ptr_cycle": r"""
+#include <stdio.h>
+static int (*fp)(int, int);
+static int f(int a, int b) { int t; if (a <= 0) return b; t = fp(a - 1, b + 1); return t * 2 + a + b; }
+static int h(int a, int b) { int t = f(a, b + 3); return t + a; }
+int main(void) { fp = h; printf("%d\n", f(5, 1)); return 0; }
+""",
+    "ptr_cycle_apply": r"""
+#include <stdio.h>
+typedef int (*cb)(int);
+static int apply(cb c, int x) { return c(x); }
+static int f(int a, int b);
+static int h(int x) { return f(x - 1, x); }
+static int f(int a, int b) { int t; if (a <= 0) return b + 100; t = apply(h, a); return t + a * b; }
+int main(void) { printf("%d\n", f(6, 2)); return 0; }
+""",
     "assign_param": r"""
 #include <stdio.h>
 int count(int n, char c) { int k = 0; while (n--) { c++; k += c; } return k; }
@@ -407,7 +423,9 @@ int main(void) { printf("%d %d %d\n", count(3, 'a'), clobber(1, 2), addr(5, 6));
 
 # What a host compiler prints for each program (int is 16 bits here, but no
 # program depends on it).
-KNOWN = {'asm_between': '7 11\n14\n',
+KNOWN = {'ptr_cycle': '1204\n',
+    'ptr_cycle_apply': '183\n',
+    'asm_between': '7 11\n14\n',
     'assign_param': '297 604 11\n',
     'bytes': '44 56 -25400 67 0\n-1 32640\n',
     'mixed': '70005 123 4321 4321 101 321\n',
@@ -503,3 +521,53 @@ def test_isr_and_main_share_a_helper(tmp_path):
     m.add_irq_every(2500, start=2500)
     assert m.run(max_tstates=400_000).reason == "halt"
     assert m.peek8("_ticks") == 5
+
+
+@needs_run
+def test_recursion_through_a_pointer_keeps_parameters_per_activation(tmp_path):
+    """f is named only in direct calls, but f -> fp -> h -> f is a cycle.
+    The call graph must see the indirect edge, or the parameters of f sit
+    in one static slot and the inner activation overwrites them."""
+    assert build_run(tmp_path, PROGRAMS["ptr_cycle"], "--no-inlining") == KNOWN["ptr_cycle"]
+
+
+@needs_run
+def test_isr_reaches_helper_through_a_hook_pointer(tmp_path):
+    """An interrupt function calls hook(); hook points to h, and h calls f
+    by name.  f is reachable from the interrupt function, so f keeps the
+    stack convention and its parameters are safe from the interrupt."""
+    if not _ul80_has_rom_options():
+        pytest.skip("needs a ul80 with ROM options")
+    r = compile_rom(tmp_path, """
+        #include <stdint.h>
+        volatile uint16_t cnt;
+        static void (*hook)(void);
+        static int f2(int a, int b) { a = a + b; b = b + 3; a = a * 2; b = b * 5; a = a - b; b = b + a; return a + b; }
+        static void h(void) { cnt = cnt + (f2(cnt, 3) & 1); }
+        #pragma uc80 interrupt isr
+        void isr(void) { hook(); }
+        volatile int sink;
+        int main(void) {
+            int i;
+            hook = h;
+            __asm__("\tei");
+            for (i = 0; i < 300; i++) sink = f2(i, i + 1) + f2(f2(i, 1), f2(2, i));
+            __asm__("\tdi");
+            return 0;
+        }""", "--no-inlining")
+    assert r.returncode == 0, r.stderr
+    link_rom(tmp_path)
+    from .test_rom_target import machine, symbols
+    sink = symbols(tmp_path)["_SINK"]
+
+    def result(period):
+        m = machine(tmp_path)
+        if period:
+            m.add_irq_every(period, start=period)
+        res = m.run(max_tstates=20_000_000)
+        assert res.reason == "halt", (period, res.reason)
+        return m.peek8(sink), m.peek8(sink + 1)
+
+    want = result(0)
+    for period in (1511, 3001, 5003):
+        assert result(period) == want

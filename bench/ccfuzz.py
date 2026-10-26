@@ -585,6 +585,49 @@ class Gen:
             self.emit_func(me, pn, body)
         return [fa, fb]
 
+    def make_pcycle(self, idx, pure_funcs):
+        """A cycle that runs through a function pointer: pa calls pb through
+        a pointer variable, pb calls pa by name.  pa is only ever named in
+        direct calls, so it may take the register convention; the cycle is
+        invisible to a call graph that ignores calls through pointers."""
+        r = self.r
+        ret = self.pick(["I16", "L32", "uchar", "U16"])
+        mk = []
+        for nm in ("pa", "pb"):
+            params, _ = self.signature()
+            params = [t for t in params if not is_ptr(t)]
+            pos = r.randrange(len(params) + 1)
+            params.insert(pos, "uchar")
+            params = params[:4]
+            if pos >= len(params):
+                pos = len(params) - 1
+                params[pos] = "uchar"
+            mk.append((f"{nm}{idx}", params, pos))
+        fa = Func(mk[0][0], mk[0][1], ret, self.chance(0.5), True, "pcy")
+        fb = Func(mk[1][0], mk[1][1], ret, self.chance(0.5), True, "pcy")
+        fa.depth_param, fb.depth_param = mk[0][2], mk[1][2]
+        pv = f"pv{idx}"
+        self.out.append(fb.proto() + ";")
+        self.out.append(f"static {ctype(ret)} (*{pv})("
+                        f"{', '.join(ctype(t) for t in fb.params)}) = {fb.name};")
+        for me, other, via in ((fa, fb, True), (fb, fa, False)):
+            pn = [f"p{i}" for i in range(len(me.params))]
+            env = {"vars": [(n, t) for n, t in zip(pn, me.params)],
+                   "pure": list(pure_funcs), "impure": []}
+            dn = pn[me.depth_param]
+            args = []
+            for i, t in enumerate(other.params):
+                if i == other.depth_param:
+                    args.append(f"(unsigned char)({dn} - 1)")
+                else:
+                    args.append(self.expr(t, env, 2))
+            callee = pv if via else other.name
+            body = [f"if ({dn} == 0) return {self.expr(ret, env, 2)};",
+                    f"return ({ctype(ret)})((unsigned long)({self.expr(ret, env, 2)}) + "
+                    f"(unsigned long){callee}({', '.join(args)}));"]
+            self.emit_func(me, pn, body)
+        return [fa]
+
     def make_table(self, idx, pure_funcs):
         """Functions with one signature, and a table of pointers to them."""
         r = self.r
@@ -645,7 +688,9 @@ L32 lsum(int n, ...)
                 pure_funcs.append(self.make_recursive(idx, pure_funcs))
             elif k < 0.18:
                 pure_funcs.extend(self.make_mutual(idx, pure_funcs))
-            elif k < 0.26:
+            elif k < 0.23:
+                pure_funcs.extend(self.make_pcycle(idx, pure_funcs))
+            elif k < 0.28:
                 self.make_table(idx, pure_funcs)
                 # members are callable by name too (they keep the stack
                 # convention: the address is taken)

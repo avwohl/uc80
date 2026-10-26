@@ -8,6 +8,8 @@ observable behaviour of a program uc80 compiles.
 
 ### Changed
 
+- The call graph of the shared-storage analysis now has an edge from every function that calls through a pointer (or into a library routine that takes a callback) to every function with a taken address. Recursion through a pointer is now found, and a function that an interrupt function reaches through a pointer keeps its locals and parameters on the stack. This also fixes locals in shared `??AUTO` of a function that recursed through a pointer, wrong before the register convention.
+- `bench/ccfuzz.py` makes cycles that run through a pointer variable; `tests/test_register_cc.py` pins two such programs and an interrupt that calls a hook pointer.
 - `peep_local` rule 3 (`call` then `ret` becomes `jp`) now applies to calls of register-convention functions that take no stack argument, because the caller has nothing to pop. In the stack convention the rule almost never applied.
 - `generate()` has a `register_cc` argument (default True). The unit tests that pin the shape of stack-convention parameters pass `register_cc=False`.
 

@@ -38,6 +38,7 @@ The compiler uses the register convention for a function when all of these rules
 - No library routine mentions the name. The compiler reads the `PUBLIC` and `EXTRN` lines of the library sources. A program function with the name of a library function (`abs`, `putchar`) keeps the stack convention, because library code can call the function.
 - The function is not an entry point: not `main`, not named by `--entry` or `#pragma uc80 keep`, `public` or `vector`, not an interrupt function.
 - An interrupt function does not reach the function. This keeps the ISR safe rules (section "Storage of the parameters").
+- The call graph includes calls through pointers. A call through a pointer, a call of a name that is not a declared function, and a call of a library routine that takes a callback (`qsort`, `bsearch`, `atexit`, `signal`) or an argument that names a function, can reach every function with an address that the program takes. So `f` calls `fp`, `fp` points to `h`, and `h` calls `f`: this is a cycle, and `f` is recursive. An interrupt function that calls a pointer reaches the same functions.
 - The function is not variadic. A function that returns a struct wider than HL (`sret`) keeps the stack convention.
 - Every call has as many arguments as the definition has parameters.
 - `--int=32` is not set. The options `--embed-lib`, `--runtime-lib` and `--startup-lib` turn the register convention off, because the extra assembly is not scanned.
