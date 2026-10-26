@@ -15,7 +15,7 @@ What is done:
 
 - The harness `bench/` has 112 programs and 9 compilers (uc80, SDCC 4.6.0 and 4.4.0, z88dk zsdcc, sccz80 and 80cc, HI-TECH C 3.09, dcc 3.6.0, llvm-z80). It measures T-states with `z88dk-ticks`. 105 programs run, and 7 big games are built only ("size-only"). [bench_harness.md](bench_harness.md) describes the harness. [benchmarks_speed.md](benchmarks_speed.md) has the tables and a summary of uc80 against each compiler.
 - Tier 1 (classic benchmarks) and tier 2 (Embench, Stanford, decompressors, sound-driver kernels, CoreMark) are in.
-- z88dk 80cc is in (nightly tree, `-compiler=80cc -O3`, adapter `bench/cc_z88dk80cc.py`). It is the only compiler that is faster than uc80 on the mean without the `sort-*` programs (ratio 1.13).
+- z88dk 80cc is in (nightly tree, `-compiler=80cc -O3`, adapter `bench/cc_z88dk80cc.py`). It is the only compiler that is faster than uc80 on the mean without the `sort-*` programs (ratio 1.11).
 - The games tier (tier 3, 32 programs) is in. 25 programs run with scripted input: our own `game-guess` and `curses-demo`, 6 curses games (robots, worm, snake, mille, canfield, invaders), 4 V7 games, 9 NetBSD stdio games, Super Star Trek (integer version), micro-Max chess, Hamurabi and Empire. 7 programs are size-only: Rogue 3.6, trek, adventure, battlestar, monop, mojozork and `curses-demo-size`. The shared glue is `bench/support/posix_shim.[ch]` and `bench/support/tinycurses.[ch]`. The details are in [bench_games_stdio.md](bench_games_stdio.md), [bench_games_curses.md](bench_games_curses.md) and [bench_big_games.md](bench_big_games.md).
 - The unused-`EXTRN` blocker (6.1) is fixed. The heap bug, `qsort`, `printf` precision, `div()` and `ldiv()` are fixed (6.4, 6.5).
 - The four programs that failed on uc80 earlier now pass: `embench-tarfind` (`sizeof` of a pointer type in a call argument), `whetstone` and `whetstone+static` (a label before an `asm` statement) and `coremark-unofficial` (pointer plus `long` index). The games found 6 more uc80 bugs. We fixed all of them: `atof`, `scanf`, `pow`, a string escape, a dead-code pass that kept two copies of `__tmp32`, a pointer difference that had the pointer type, and a call to a function whose name differs from another global only in case. See the CHANGELOG, "Unreleased".
@@ -24,10 +24,10 @@ What is done:
 
 Result against SDCC 4.6.0 (96 programs for size and 78 for T-states that are OK on both, geometric mean of uc80 divided by SDCC):
 
-- Size: 0.95. The first run gave 2.01 on 61 programs, and the run before the library split gave 1.53. uc80 is smaller on 63 programs and bigger on 33. The library split (families A to C of [codegen_gap.md](codegen_gap.md)) made most of this gain, and the register calling convention (family F) made the rest (0.98 to 0.95).
-- T-states against the speed mode of SDCC: 0.60. uc80 is faster. The first run gave 0.87 on 61 programs. Without the `sort-*` programs the mean is 0.74 (0.737). uc80 is faster on 58 programs and slower on 20.
+- Size: 0.96. The first run gave 2.01 on 61 programs, and the run before the library split gave 1.53. uc80 is smaller on 63 programs and bigger on 33. The library split (families A to C of [codegen_gap.md](codegen_gap.md)) made most of this gain, and the register calling convention (family F) made the rest (0.99 to 0.96 on the integrated tree, measured again on the tree without it).
+- T-states against the speed mode of SDCC: 0.59 (0.585). uc80 is faster. The first run gave 0.87 on 61 programs. Without the `sort-*` programs the mean is 0.71 (0.715). uc80 is faster on 58 programs and slower on 20.
 - Games (18 games that run on both compilers, whole-run T-states): size 0.79, T-states 1.00. The stdio games are faster on uc80 and the curses games are 30 to 48 percent slower.
-- The "uc80 wins on size" claim is still false as a general claim (ratio 0.95, a small lead), but uc80 is smaller than SDCC 4.6.0 on 63 of 96 programs. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
+- The "uc80 wins on size" claim is still false as a general claim (ratio 0.96, a small lead), but uc80 is smaller than SDCC 4.6.0 on 63 of 96 programs. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
 
 What is left:
 

@@ -9,6 +9,34 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-26: family F is integrated with the C library
+
+The branch `regcc` is merged into the tree that has the libc rewrite in C, the float interpreter and the ROM work (branch `integrate5`). The library modules in `src/uc80/lib/lc/` come from `gen_c_modules.py` and `gen_vm_modules.py`, which compile with `--no-whole-program`. The register convention needs the whole program in view, so every library function keeps the stack convention. Running both generators again with the merged compiler gave files that are the same, byte for byte, as the files in the repository, and `--build-libs` gave the same `libc.mac`, `libc.lib` and `runtime.lib`. `tests/test_libm_vm.py` and `tests/test_sdas.py` pass.
+
+Numbers from `bench/run.py` (uc80, size mode, 109 programs; the three games `battlestar-size`, `rogue36-size` and `empire-trefonas` are not run again). "Main" is the tree before the merge (commit c2fcd87) run again with the same harness, because the committed `results.csv` of main was older than the library work. Image bytes / T-states:
+
+- snd-cmdq: 2797 B / 13.72M to 2635 B / 10.60M (SDCC speed mode: 4034 B / 9.03M)
+- snd-ymreg: 2442 B / 21.21M to 2363 B / 17.87M (3821 B / 15.26M)
+- snd-seq: 3866 B / 14.52M to 3669 B / 12.34M (5002 B / 12.99M)
+- snd-fnum: 2597 B / 13.69M to 2539 B / 11.06M (3769 B / 17.65M)
+- tak: 1053 B / 47.26M to 956 B / 44.16M
+- stanford-perm: 528 B / 448.5M to 495 B / 356.0M
+- stanford-towers: 2480 B / 501.7M to 2312 B / 404.1M
+- queens: 947 B / 34.07M to 896 B / 33.94M
+- davidly-ttt: 3807 B / 13.12M to 3747 B / 12.87M
+- sieve: 253 B / 3.91M, no change
+
+Of the 103 programs that are OK in both runs, 82 get smaller and none gets bigger. The total image falls from 638,662 to 619,188 bytes (geometric mean of the size ratio 0.972). 56 programs get faster and 2 get slower (`embench-md5sum` +373 T-states and `embench-tarfind` +844 T-states); the geometric mean of the T-state ratio is 0.966. No program changed status.
+
+Means against SDCC 4.6.0 (method of `bench/report.py`), main then integrated:
+
+- size minus the empty program: 0.9867 to 0.9585 (96 programs; uc80 smaller on 53, then on 63)
+- whole image: 0.9479 to 0.9213
+- T-states against the speed mode: 0.6060 to 0.5852 (78 programs); without `sort-*`: 0.7431 to 0.7148 (70 programs)
+- T-states against the size mode: 0.5853 to 0.5652; without `sort-*`: 0.7150 to 0.6877
+
+Family F status: done for the whole tree. `snd-seq` and `snd-fnum` are faster than SDCC speed mode. `snd-cmdq` and `snd-ymreg` are still 17 percent slower. The small loops (`sieve`, `queens`, `tak`, `stanford-perm`, `stanford-towers`, `davidly-ttt`) are still slower than SDCC; their cost is locals in memory (family G).
+
 ## Status on 2026-10-26: family F, steps 1 and 2 are done
 
 Step 1 of family F is in the code (branch `regcc`). [calling_convention.md](calling_convention.md) describes the rules. A function that only direct calls reach takes its first two scalar parameters in registers (A or HL, then E or DE). The caller pushes the other parameters and does not pop the register parameters. The callee stores each parameter that the body names into a slot (`??AUTO`, or a push in the prologue of a stack frame). The pass `regcc.forward_slots` then removes the loads that a register still serves and the stores that nothing reads. A small leaf function needs no IX frame. Step 2 is described after the step 1 numbers below. Two parts of the plan are still open: a `jp` for a call that has stack arguments (the callee would have to pop its own arguments), and a third register parameter.
