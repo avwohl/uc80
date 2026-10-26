@@ -24,9 +24,11 @@ IEEE 754 single-precision (32-bit) floating point is fully functional.
 - `__fpack` - Combine sign, exponent, mantissa into IEEE 754
 - `__fnorm` - Normalize mantissa and adjust exponent
 
-### Printf %f Support (lib/lc/lc_printf_f.mac)
-- Prints integer and fractional parts
-- Respects precision modifier (default 6 decimal places)
+### Printf float conversions (lib/lc/lc_prt_float.mac)
+- `%f %F %e %E %g %G` with flags, width and precision
+- The digits are exact and rounded to nearest, a tie to even: the output is the
+  output of the host `printf` for the same float value ([printf](printf.md))
+- No float arithmetic, so no soft float runtime is linked for `printf`
 - Enabled via `#pragma printf float` or `#pragma printf all`
 
 ### Math Library (lib/lc/lc_*.mac, from lib/vmsrc/*.vc and lib/csrc/*.c)

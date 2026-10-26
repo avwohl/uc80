@@ -23,10 +23,17 @@
 	EXTRN	__printf_handle_lu
 	EXTRN	__printf_handle_lo
 	EXTRN	__printf_handle_lx
+	EXTRN	__printf_handle_lxu
 
 	EXTRN	__printf_handle_lld
 	EXTRN	__printf_handle_llu
 	EXTRN	__printf_handle_llx
+	EXTRN	__printf_handle_llxu
+	EXTRN	__printf_handle_llo
+	EXTRN	__printf_handle_n
+	EXTRN	__printf_handle_a
+	EXTRN	__printf_handle_au
+	EXTRN	__printf_handle_skip
 
 	CSEG
 
@@ -64,6 +71,14 @@ __printf_format_table:
 	DW	__printf_handle_g
 	DB	'G'
 	DW	__printf_handle_gu
+	DB	'n'
+	DW	__printf_handle_n
+	DB	'a'
+	DW	__printf_handle_a
+	DB	'A'
+	DW	__printf_handle_au
+	DB	't'
+	DW	__printf_handle_skip	; %td: ptrdiff_t is an int
 	DB	0		; sentinel
 
 	PUBLIC	__printf_long_table
@@ -78,6 +93,8 @@ __printf_long_table:
 	DW	__printf_handle_lo
 	DB	'x'
 	DW	__printf_handle_lx
+	DB	'X'
+	DW	__printf_handle_lxu
 	DB	'f'
 	DW	__printf_handle_f	; %lf same as %f
 	DB	'e'
@@ -102,6 +119,10 @@ __printf_ll_table:
 	DW	__printf_handle_llu
 	DB	'x'
 	DW	__printf_handle_llx
+	DB	'X'
+	DW	__printf_handle_llxu
+	DB	'o'
+	DW	__printf_handle_llo
 	DB	0		; sentinel
 
 ; The 'll' dispatch entry point - search __printf_ll_table

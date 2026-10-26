@@ -5,20 +5,13 @@ src/uc80/lib/lc/, and no format table had an 'e' or 'g' entry.  Worse, a
 table miss also leaves the vararg offset alone, so every later conversion
 in the same printf call silently read the wrong argument.
 
-lc_printf_e.mac and lc_printf_g.mac supply the handlers.  Registering them
-in the format tables is a separate change in codegen.py; until that lands
-the modules are unreferenced, so the end-to-end tests here add the four
-table entries to the generated assembly themselves.  register_eg_handlers()
-is idempotent, so these tests keep working unchanged once codegen emits the
-entries on its own.
-
-Accuracy contract (see the header of lc_printf_e.mac for the derivation):
-rt_float.mac truncates every operation to 24 bits, and binary32 carries only
-about 7.2 decimal digits, so the last digit of a 7-significant-digit "%e"
-can differ by one from a correctly rounded conversion.  The tests below
-therefore assert on values whose result is exact -- above all the powers of
-ten, which the old prototype scaler got wrong by a whole decade (1e20 came
-out as 9.999998e+19).
+lc_prt_float.mac now holds all the float conversions (%f %F %e %E %g %G).
+It makes the exact digits with integer arithmetic, so the results here are
+exactly what the host prints (tests/test_printf_float_exact.py compares with
+Python over random floats).  The end-to-end tests here add the four table
+entries to the generated assembly themselves.  register_eg_handlers() is
+idempotent, so these tests keep working when codegen emits the entries on its
+own.
 """
 
 import os
@@ -32,11 +25,7 @@ from pathlib import Path
 import pytest
 
 LIB_DIR = Path(__file__).resolve().parent.parent / "src" / "uc80" / "lib"
-LC_DIR = LIB_DIR / "lc"
 CPMEMU = Path(__file__).resolve().parent.parent.parent / "cpmemu" / "src" / "cpmemu"
-
-E_MAC = LC_DIR / "lc_printf_e.mac"
-G_MAC = LC_DIR / "lc_printf_g.mac"
 
 # (specifier, handler) pairs the format table needs for %e/%E/%g/%G.
 EG_HANDLERS = (
@@ -77,143 +66,6 @@ def register_eg_handlers(code):
             for sp, h in missing:
                 out += ["\tdb\t'%s'" % sp, "\tdw\t%s" % h]
     return "\n".join(out) + "\n"
-
-
-def mac_source(path):
-    return path.read_text()
-
-
-# ---------------------------------------------------------------------------
-# Source-level checks.  These need no toolchain at all.
-# ---------------------------------------------------------------------------
-
-class TestModulesExist:
-    """The two conversion modules must be present and self-describing."""
-
-    def test_both_modules_exist(self):
-        assert E_MAC.exists(), "lc_printf_e.mac is missing"
-        assert G_MAC.exists(), "lc_printf_g.mac is missing"
-
-    def test_e_module_exports_its_handlers(self):
-        src = mac_source(E_MAC)
-        for sym in ("__printf_handle_e", "__printf_handle_eu"):
-            assert "\tPUBLIC\t%s" % sym in src
-
-    def test_g_module_exports_its_handlers(self):
-        src = mac_source(G_MAC)
-        for sym in ("__printf_handle_g", "__printf_handle_gu"):
-            assert "\tPUBLIC\t%s" % sym in src
-
-    def test_g_depends_on_e(self):
-        """%g reuses %e's scaler; that dependency must be declared."""
-        src = mac_source(G_MAC)
-        for sym in ("_prt_e_scale", "_prt_e_round", "_prt_e_d0", "_prt_e_dn",
-                    "_prt_e_expout", "_prt_e_spec", "_prt_e_val",
-                    "_prt_e_dexp"):
-            assert "\tEXTRN\t%s" % sym in src, sym
-            assert "\tPUBLIC\t%s" % sym in mac_source(E_MAC), sym
-
-    def test_modules_do_not_touch_prt_float(self):
-        """%f must be unable to regress: nothing here calls into its printer.
-
-        Checked on code, not on comments -- both modules discuss _prt_dec in
-        their headers to explain why they deliberately avoid it.
-        """
-        for path in (E_MAC, G_MAC):
-            for line in mac_source(path).splitlines():
-                code = line.split(";", 1)[0]
-                for sym in ("_prt_float\t", "_prt_float\n", "_prt_dec",
-                            "_prt_div16"):
-                    assert sym not in code, "%s references %s" % (path.name, sym)
-
-    def test_modules_are_macro80_shaped(self):
-        """One module per conversion, .Z80 header, CSEG, a data segment
-        (DSEG, or the named COMMON of the zero-start variables), END."""
-        for path in (E_MAC, G_MAC):
-            src = mac_source(path)
-            assert "\t.Z80\n" in src
-            assert "\tCSEG\n" in src
-            assert "\tDSEG\n" in src or "\tCOMMON\t/" in src
-            assert src.rstrip().endswith("END")
-
-
-def parse_power_table(src, label):
-    """Return the binary32 values of a DW lo,hi table starting at `label`."""
-    lines = src.splitlines()
-    start = next(i for i, l in enumerate(lines) if l.startswith(label + ":"))
-    out = []
-    for line in lines[start + 1:]:
-        m = re.match(r"\s*DW\s+([0-9A-F]+)H,([0-9A-F]+)H", line)
-        if not m:
-            if line.strip() and not line.strip().startswith(";"):
-                break
-            continue
-        lo, hi = int(m.group(1), 16), int(m.group(2), 16)
-        out.append(struct.unpack("<f", struct.pack("<I", (hi << 16) | lo))[0])
-    return out
-
-
-class TestPowerOfTenTables:
-    """The scaler divides by these constants, so they must be exact."""
-
-    def test_positive_table_is_10_pow_0_to_38(self):
-        vals = parse_power_table(mac_source(E_MAC), "_p10pos")
-        assert len(vals) == 39
-        for k, got in enumerate(vals):
-            want = struct.unpack("<f", struct.pack("<f", 10.0 ** k))[0]
-            assert got == want, "10^%d wrong in _p10pos" % k
-
-    def test_negative_table_is_10_pow_minus_1_to_minus_37(self):
-        vals = parse_power_table(mac_source(E_MAC), "_p10neg")
-        assert len(vals) == 37, "table must stop at 10^-37"
-        for i, got in enumerate(vals):
-            k = i + 1
-            want = struct.unpack("<f", struct.pack("<f", 10.0 ** -k))[0]
-            assert got == want, "10^-%d wrong in _p10neg" % k
-
-    def test_no_table_entry_is_denormal(self):
-        """rt_float flushes denormals to zero, so 10^-38 must not be a divisor.
-
-        Dividing by a denormal returns infinity from __fdiv, which is how the
-        smallest normals used to print as 1e-36.
-        """
-        src = mac_source(E_MAC)
-        for label in ("_p10pos", "_p10neg"):
-            for i, v in enumerate(parse_power_table(src, label)):
-                exp = (struct.unpack("<I", struct.pack("<f", v))[0] >> 23) & 0xFF
-                assert exp not in (0, 255), \
-                    "%s entry %d is denormal/inf: %r" % (label, i, v)
-
-    def test_smallest_decade_is_scaled_by_multiplying(self):
-        """The 10^-38 decade has no divisor, so it must multiply instead."""
-        src = mac_source(E_MAC)
-        assert "CP\t0C2H" in src, "the -38 special case is gone"
-        assert "__fmul" in src
-
-
-# ---------------------------------------------------------------------------
-# Assembly-level checks.
-# ---------------------------------------------------------------------------
-
-def _um80_available():
-    return shutil.which("um80") is not None
-
-
-@pytest.mark.skipif(not _um80_available(), reason="um80 not available")
-class TestModulesAssemble:
-
-    def assemble(self, tmp_path, path):
-        rel = tmp_path / (path.stem + ".rel")
-        result = subprocess.run(["um80", str(path), "-o", str(rel)],
-                                capture_output=True, text=True)
-        assert result.returncode == 0, result.stdout + result.stderr
-        return result.stdout
-
-    def test_e_module_assembles(self, tmp_path):
-        assert "Code segment" in self.assemble(tmp_path, E_MAC)
-
-    def test_g_module_assembles(self, tmp_path):
-        assert "Code segment" in self.assemble(tmp_path, G_MAC)
 
 
 class TestBuiltLibrary:

@@ -6,17 +6,26 @@
 #ifndef _STDDEF_H
 #define _STDDEF_H
 
-/* size_t / ptrdiff_t track the pointer width */
+/* size_t / ptrdiff_t track the pointer width.  Other headers (stdio.h,
+ * string.h) define size_t alone under _SIZE_T_DEFINED, so ptrdiff_t has its
+ * own guard: <stdio.h> then <stddef.h> must still give ptrdiff_t. */
 #ifndef _SIZE_T_DEFINED
 #define _SIZE_T_DEFINED
 #if __SIZEOF_POINTER__ == __SIZEOF_INT__
 typedef unsigned int size_t;
-typedef int ptrdiff_t;
 #elif __SIZEOF_POINTER__ == __SIZEOF_LONG__
 typedef unsigned long size_t;
-typedef long ptrdiff_t;
 #elif __SIZEOF_POINTER__ == __SIZEOF_SHORT__
 typedef unsigned short size_t;
+#endif
+#endif
+#ifndef _PTRDIFF_T_DEFINED
+#define _PTRDIFF_T_DEFINED
+#if __SIZEOF_POINTER__ == __SIZEOF_INT__
+typedef int ptrdiff_t;
+#elif __SIZEOF_POINTER__ == __SIZEOF_LONG__
+typedef long ptrdiff_t;
+#elif __SIZEOF_POINTER__ == __SIZEOF_SHORT__
 typedef short ptrdiff_t;
 #endif
 #endif

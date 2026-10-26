@@ -31,6 +31,7 @@ from . import sdas
 from . import isr_check
 from .z80_intrinsics import BARRIER_BEGIN, BARRIER_END
 from . import rom as rom_module
+from . import printf_hook
 from . import scan_hook
 
 from . import peep_local
@@ -929,6 +930,9 @@ def main() -> int:
                                             or args.startup_lib),
                            foreign_asm_names=regcc.asm_text_names(mac_files))
         code = gen.generate(merged_ast)
+        printf_need = printf_hook.printf_needs(merged_ast, printf_features)
+        code = printf_hook.patch_tables(code, printf_need)
+        gen.warnings = printf_hook.filter_warnings(gen.warnings, printf_need)
         scanf_need = scan_hook.scanf_needs(merged_ast, scanf_features)
         if scanf_need:
             code = scan_hook.add_scanf_references(code, module_name,

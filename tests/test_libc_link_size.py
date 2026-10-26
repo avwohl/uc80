@@ -4,7 +4,8 @@ libc.lib used to hold the float printer inside lc_printf_core, and several
 public functions per module (lc_string, lc_stdlib, lc_malloc, lc_file ...).
 Every printf() program linked the soft-float code, and every strdup() or
 strlen() program linked malloc.  Each public function is now its own module
-and the float printer is lc_prt_float, which only lc_printf_f needs.
+and the float printer is lc_prt_float, which the %f %e %g handlers share.
+It does no float arithmetic, so it does not link the soft float runtime.
 
 The size bound is the measured image size of printf("%d") (1498 bytes) plus
 about 7 percent.  The image size is __BSS_START - 0x100 from the link
@@ -64,7 +65,7 @@ def image_size(symbols):
     return symbols["__BSS_START"] - 0x100
 
 
-FLOAT_SYMBOLS = ("_PRT_FLOAT", "__FMUL", "__FADD", "__FTOI", "__ITOF")
+FLOAT_SYMBOLS = ("__PRINTF_HANDLE_F", "__FMUL", "__FADD", "__FTOI", "__ITOF")
 
 
 def test_printf_d_links_no_float_code(tmp_path):
@@ -100,7 +101,10 @@ def test_percent_f_still_links_float_printer(tmp_path):
     _, syms = link(tmp_path, '#include <stdio.h>\n'
                    'volatile float v = 1.5f;\n'
                    'int main(void){ printf("%f\\n", v); return 0; }\n')
-    assert "_PRT_FLOAT" in syms
+    assert "__PRINTF_HANDLE_F" in syms
+    # the exact digits come from integer arithmetic
+    for name in ("__FMUL", "__FADD", "__FDIV", "__FTOI", "__ITOF"):
+        assert name not in syms, name + " linked into a printf(%f) program"
 
 
 @pytest.mark.skipif(not CPMEMU.exists(), reason="cpmemu not available")

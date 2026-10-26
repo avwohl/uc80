@@ -1,0 +1,18 @@
+; lc_printf_llxu.mac - printf %llX handler (long long hex, upper case)
+;
+; The compiler writes no table entry for 'llX'.  The printf hook of uc80
+; (printf_hook.py) adds one to the long long table when a format has %llX.
+	.Z80
+
+	EXTRN	_printf_upper
+	EXTRN	__printf_handle_llx
+
+	CSEG
+
+	PUBLIC	__printf_handle_llxu
+__printf_handle_llxu:
+	LD	A,1
+	LD	(_printf_upper),A
+	JP	__printf_handle_llx
+
+	END

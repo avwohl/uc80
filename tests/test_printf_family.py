@@ -201,4 +201,5 @@ class TestFileStreamsAreNotTranslated:
   FILE *f = fopen("o.txt", "w");
   fprintf(f, "a\\nb\\n");
   fclose(f);""")
-        assert (tmp_path / "o.txt").read_bytes() == b"a\nb\n"
+        # the emulator may leave the ^Z padding of the last 128-byte record
+        assert (tmp_path / "o.txt").read_bytes().rstrip(b"\x1a") == b"a\nb\n"

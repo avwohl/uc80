@@ -4,6 +4,7 @@
 	EXTRN	_printf_loop
 	EXTRN	_printf_upper
 	EXTRN	_printf_prt_hex
+	EXTRN	_printf_pfxlen
 
 	CSEG
 
@@ -18,7 +19,10 @@ __printf_handle_xu:
 	JR	__printf_handle_x
 
 __printf_handle_p:
-	; Pointer - same as %x
+	; Pointer: 0x and the hex digits, also for a null pointer (0x0).
+	; C leaves the format of %p to the implementation.
+	LD	A,2
+	LD	(_printf_pfxlen),A
 
 __printf_handle_x:
 	PUSH	HL

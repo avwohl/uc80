@@ -1,459 +1,792 @@
-; lc_prt_float.mac - the %f float printer (_prt_float)
-; Only lc_printf_f links this module, with the soft-float runtime it needs.
-; _printf_putc, _printf_upper, __ftmp and _prt_float_prec stay in
-; lc_printf_core because the %e and %g handlers share them.
+; lc_prt_float.mac - the float conversions of printf: %f %F %e %E %g %G
+;
+; One engine for all six conversions.  It does no float arithmetic.  A
+; binary32 value is M * 2^E (M has 24 bits), so its decimal form is exact and
+; this module makes the exact digits with integer arithmetic:
+;
+;   - E >= 0: start with M as decimal digits and double the digit string E
+;     times (at most 104 times, at most 39 digits);
+;   - E < 0:  halve the digit string -E times (at most 149 times; each halving
+;     adds at most one digit after the decimal point).
+;
+; The digits are in _pf_dg, one digit in each byte.  The byte with index 39 is
+; the units digit, so the byte with index i has the weight 10^(39-i).  Index
+; 40 is the first digit after the decimal point.  Then the digits are rounded
+; to the precision (to nearest, a tie to the even digit, like glibc) and
+; printed.  The result is the same as the result of glibc for the same float
+; value, for every precision.
+;
+; The handlers are the table entries that the compiler writes beside main()
+; (and that lc_printf_all lists).  This module needs no float arithmetic, so
+; it does not link the soft float runtime.
+;
+; Handler ABI (see lc_printf_core.mac): entered by a tail JP with HL = format
+; pointer past the specifier, C = vararg offset from IX, IX = printf's frame.
+; The engine does not change IX and IY.
 
 	.Z80
 
+	EXTRN	_printf_loop
 	EXTRN	_printf_putc
+	EXTRN	_printf_padn
 	EXTRN	_printf_upper
+	EXTRN	_printf_hasprec
+	EXTRN	_printf_prec
 	EXTRN	_printf_alt
-	EXTRN	__ftmp
-	EXTRN	_prt_float_prec
-	EXTRN	__fmul
-	EXTRN	__fsub
-	EXTRN	__ftoi
-	EXTRN	__itof
-	EXTRN	__fadd
-	EXTRN	__tmp32
-	EXTRN	_prt_dec32
-
-	PUBLIC	_prt_float
+	EXTRN	_printf_left
+	EXTRN	_printf_plus
+	EXTRN	_printf_space
+	EXTRN	_printf_zero
+	EXTRN	_printf_width
 
 	CSEG
 
-; ============================================================
-; Internal: print float from __ftmp (IEEE 754 single precision)
-; This is included in core since it's complex and shares state
-; ============================================================
+	PUBLIC	__printf_handle_f
+	PUBLIC	__printf_handle_fu
+	PUBLIC	__printf_handle_e
+	PUBLIC	__printf_handle_eu
+	PUBLIC	__printf_handle_g
+	PUBLIC	__printf_handle_gu
 
-_prt_float:
+DIGITS	EQU	190		; digits that _pf_dg holds (index 0 to 189)
+POINT	EQU	40		; index of the first digit after the point
+
+__printf_handle_f:
+	LD	A,'f'
+	JR	_printf_fl
+__printf_handle_fu:
+	LD	A,'F'
+	JR	_printf_fl
+__printf_handle_e:
+	LD	A,'e'
+	JR	_printf_fl
+__printf_handle_eu:
+	LD	A,'E'
+	JR	_printf_fl
+__printf_handle_g:
+	LD	A,'g'
+	JR	_printf_fl
+__printf_handle_gu:
+	LD	A,'G'
+
+; A = conversion character, HL = format pointer, C = vararg offset
+_printf_fl:
+	PUSH	HL
 	PUSH	BC
-	PUSH	DE
+	LD	B,A
+	AND	20H
+	XOR	20H		; 0 for a lower case conversion
+	LD	(_printf_upper),A
+	LD	A,B
+	OR	20H
+	LD	(_pf_mode),A	; f, e or g
+	LD	H,0
+	LD	L,C
 	PUSH	IX
-
-	; Load float from __ftmp into HLDE
-	LD	DE,(__ftmp)
-	LD	HL,(__ftmp+2)
-
-	; Sign first, then zero.  The zero test masks the sign bit off, so
-	; testing it first sent -0.0 to _prt_float_zero with the '-' never
-	; emitted: printf("%f", -0.0) printed "0.000000".  C 7.21.6.1 says
-	; the sign of a negative value is always printed, and negative zero
-	; is a negative value.
-	BIT	7,H
-	JR	Z,_prt_float_signdone
-
-	PUSH	HL
-	PUSH	DE
-	LD	E,'-'
-	CALL	_printf_putc
 	POP	DE
+	ADD	HL,DE
+	LD	DE,_pf_val
+	LD	BC,4
+	LDIR
+	CALL	_pf_main
+	POP	BC
+	LD	A,C
+	ADD	A,4
+	LD	C,A
 	POP	HL
-	RES	7,H
+	JP	_printf_loop
 
-_prt_float_signdone:
-	; An all-ones exponent is an infinity or a NaN.  Test it here, on
-	; the value as it arrived: the rounding pass below runs the bits
-	; through __fadd, which does not preserve the mantissa that tells
-	; the two apart, so a NaN reaching that point printed as "inf".
-	LD	A,H
-	ADD	A,A
-	LD	B,A
-	LD	A,L
-	RLCA
-	LD	A,B
-	ADC	A,0
-	CP	255
-	JP	Z,_prt_float_inf
-
-	; Check for zero (the sign bit is already cleared)
-	LD	A,H
-	OR	L
-	OR	D
-	OR	E
-	JP	Z,_prt_float_zero
-
-_prt_float_pos:
-	EX	DE,HL
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-
-	; Pre-round
-	PUSH	DE
-	PUSH	HL
-	LD	DE,3F00H
-	LD	HL,0
-	LD	A,(_prt_float_prec)
+; ============================================================
+; _pf_main: print the float in _pf_val.
+; ============================================================
+_pf_main:
+	; ---- the sign character: '-', '+', ' ' or none ----
+	LD	A,(_pf_val+3)
+	LD	B,'-'
 	OR	A
-	JR	Z,_prt_round_add
-	LD	B,A
-_prt_round_lp:
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	DE,3DCCH
-	LD	HL,0CCCDH
-	CALL	__fmul
-	DJNZ	_prt_round_lp
-_prt_round_add:
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	CALL	_prt_addz
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-	POP	HL
-	POP	DE
+	JP	M,_pm_sign
+	LD	B,'+'
+	LD	A,(_printf_plus)
+	OR	A
+	JR	NZ,_pm_sign
+	LD	B,' '
+	LD	A,(_printf_space)
+	OR	A
+	JR	NZ,_pm_sign
+	LD	B,0
+_pm_sign:
+	LD	A,B
+	LD	(_pf_sign),A
 
-	; Reload rounded value
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	EX	DE,HL
-
-	; Extract exponent
-	LD	A,H
+	; ---- B = the biased exponent ----
+	LD	A,(_pf_val+3)
 	ADD	A,A
 	LD	B,A
-	LD	A,L
+	LD	A,(_pf_val+2)
 	RLCA
 	LD	A,B
 	ADC	A,0
 	LD	B,A
-
 	CP	255
-	JP	Z,_prt_float_inf
+	JR	NZ,_pm_fin
 
-	OR	A
-	JP	Z,_prt_float_zero
+	; infinity or NaN: the field is padded with spaces
+	LD	A,(_pf_val+2)
+	AND	7FH
+	LD	C,A
+	LD	A,(_pf_val+1)
+	OR	C
+	LD	C,A
+	LD	A,(_pf_val)
+	OR	C
+	LD	HL,_pf_sinf
+	JR	Z,_pm_spec
+	LD	HL,_pf_snan
+_pm_spec:
+	LD	(_pf_sptr),HL
+	LD	A,2
+	LD	(_pf_kind),A
+	XOR	A
+	LD	(_printf_zero),A
+	JP	_pf_emit
 
-	; Above 2^31 the integer no longer fits the int32 that __ftoi
-	; returns -- it saturates at 2147483647 and the fraction loop then
-	; emits bytes that are not even digits.  Such a value is an exact
-	; integer (a float has 24 mantissa bits), so print it exactly.
-	; Compare the BIASED exponent: 127+31 = 158.  Subtracting the bias
-	; first and comparing against 31 would be a signed test written
-	; with an unsigned CP, and every |value| < 1 (negative unbiased
-	; exponent, so 0xFF..0x80 as a byte) would take the big path.
+	; ---- a finite value: the mantissa M in _pf_m ----
+_pm_fin:
+	LD	A,(_pf_val)
+	LD	(_pf_m),A
+	LD	A,(_pf_val+1)
+	LD	(_pf_m+1),A
+	LD	A,(_pf_val+2)
+	AND	7FH
+	LD	C,A		; the high mantissa bits
 	LD	A,B
-	CP	158			; unbiased exponent >= 31, i.e. >= 2^31
-	JP	NC,_prt_float_big
-
-	; ---- Integer part ----
-	; __ftoi truncates the pre-rounded value to a 32-bit integer and
-	; _prt_dec32 prints all 32 bits of it, which is what the %ld
-	; handler already does.
-	;
-	; This replaces a hand-rolled mantissa walk that assembled the
-	; integer part in H:L:E and then printed it with the 16-bit
-	; _prt_dec, dropping E: every |value| >= 65536 came out wrong,
-	; and often not even as digits, because the leftover low byte
-	; was emitted as a character.  1000000.0 printed as "3906.00///".
-	; The >= 2^24 path shifted a 16-bit HL left and yielded 0.
-	; sprintf in this same libc has always done it the way below.
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	CALL	__ftoi
-	LD	(__fint),HL
-	LD	(__fint+2),DE
-	CALL	_prt_dec32
-
-	CALL	_prt_float_point
-
-	; frac = value - (float)int
-	LD	HL,(__fint)
-	LD	DE,(__fint+2)
-	CALL	__itof
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	CALL	__fsub
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-
-	LD	A,(_prt_float_prec)
-	LD	B,A
 	OR	A
-	JP	Z,_prt_float_done
-	JP	_prt_float_frac
+	JR	Z,_pm_sub
+	LD	A,C
+	OR	80H		; the hidden bit
+	LD	C,A
+_pm_sub:
+	LD	A,C
+	LD	(_pf_m+2),A
+	; clear the digits
+	LD	HL,_pf_dg
+	LD	DE,_pf_dg+1
+	LD	BC,DIGITS+1
+	LD	(HL),0
+	LDIR
+	LD	A,39
+	LD	(_pf_dstart),A
+	LD	A,POINT
+	LD	(_pf_dlen),A
+	LD	A,(_pf_m)
+	LD	HL,_pf_m+1
+	OR	(HL)
+	INC	HL
+	OR	(HL)
+	JR	Z,_pm_digits	; the value is zero: all digits stay zero
 
-_prt_float_frac:
+	; Horner: the digit string = M, one bit at a time, high bit first
+	LD	B,24
+_pm_h:
 	PUSH	BC
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	DE,4120H
-	LD	HL,0
-	CALL	__fmul
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-	CALL	__ftoi
-	LD	A,L
-	PUSH	AF
-	ADD	A,'0'
-	LD	E,A
-	CALL	_printf_putc
-	POP	AF
+	LD	HL,_pf_m
+	SLA	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	LD	A,0
+	RLA
+	CALL	_pf_dbl
+	POP	BC
+	DJNZ	_pm_h
+
+	; the binary exponent: E = e - 150, and e = 0 means E = -149
+	LD	A,(_pf_val+3)
+	ADD	A,A
+	LD	B,A
+	LD	A,(_pf_val+2)
+	RLCA
+	LD	A,B
+	ADC	A,0		; A = e
+	LD	B,A
+	OR	A
+	JR	Z,_pm_sn
+	CP	150
+	JR	C,_pm_neg
+	SUB	150
+	JR	Z,_pm_digits
+	LD	B,A
+_pm_dd:
+	PUSH	BC
+	XOR	A
+	CALL	_pf_dbl
+	POP	BC
+	DJNZ	_pm_dd
+	JR	_pm_digits
+_pm_sn:
+	LD	A,149		; a subnormal value: M * 2^-149
+	JR	_pm_hv
+_pm_neg:
+	LD	B,A
+	LD	A,150
+	SUB	B
+_pm_hv:
+	LD	B,A
+_pm_hh:
+	PUSH	BC
+	CALL	_pf_halve
+	POP	BC
+	DJNZ	_pm_hh
+
+_pm_digits:
+	LD	A,(_pf_mode)
+	CP	'f'
+	JR	Z,_pm_f
+	CP	'e'
+	JR	Z,_pm_e
+
+	; ---- %g: P significant digits ----
+	CALL	_pf_prec6
+	OR	A
+	JR	NZ,_pg_p
+	LD	A,1
+_pg_p:
+	LD	(_pf_gp),A
+	CALL	_pf_scan0
 	LD	L,A
 	LD	H,0
-	LD	DE,0
-	CALL	__itof
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(__fwork)
-	LD	DE,(__fwork+2)
-	CALL	__fsub
-	LD	(__fwork),HL
-	LD	(__fwork+2),DE
-	POP	BC
-	DJNZ	_prt_float_frac
-	JP	_prt_float_done
-
-; ============================================================
-; %f for |value| >= 2^31.
-;
-; value = mantissa * 2^(e-23) with a 24-bit mantissa, so it is a whole
-; number and its decimal form is exact.  Feed the mantissa's bits into
-; a decimal accumulator most significant first, then double (e-23) more
-; times.  Doubling a decimal digit string is exact at every step, so the
-; digits printed are the value's own -- unlike scaling by powers of ten
-; in float, which runs out of precision after about seven digits.
-;
-; Entry: HL = high half of |value| (L holds the top mantissa bits),
-;        DE = low half, A = biased exponent.
-; ============================================================
-_prt_float_big:
-	PUSH	AF
-	LD	A,E
-	LD	(_pbig_m),A
-	LD	A,D
-	LD	(_pbig_m+1),A
-	LD	A,L
-	AND	7FH
-	OR	80H			; restore the implicit leading 1
-	LD	(_pbig_m+2),A
-
-	XOR	A
-	LD	HL,_prt_big
-	LD	B,40
-_pbig_clr:
-	LD	(HL),A
-	INC	HL
-	DJNZ	_pbig_clr
-	LD	A,1
-	LD	(_prt_biglen),A
-
-	LD	B,24
-_pbig_bits:
-	PUSH	BC
-	LD	A,(_pbig_m)
-	ADD	A,A
-	LD	(_pbig_m),A
-	LD	A,(_pbig_m+1)
-	ADC	A,A
-	LD	(_pbig_m+1),A
-	LD	A,(_pbig_m+2)
-	ADC	A,A
-	LD	(_pbig_m+2),A
-	LD	A,0
-	ADC	A,0			; A = the bit shifted out of the top
-	CALL	_pbig_dbl
-	POP	BC
-	DJNZ	_pbig_bits
-
-	POP	AF
-	SUB	150			; (e - 127) - 23, straight off the biased form
-	JR	Z,_pbig_print
-	LD	B,A
-_pbig_more:
-	PUSH	BC
-	XOR	A
-	CALL	_pbig_dbl
-	POP	BC
-	DJNZ	_pbig_more
-
-_pbig_print:
-	LD	A,(_prt_biglen)
-	LD	B,A
-	LD	HL,_prt_big
+	LD	A,(_pf_gp)
+	LD	E,A
 	LD	D,0
-	LD	E,A
-	ADD	HL,DE
-	DEC	HL			; most significant digit
-_pbig_po:
-	PUSH	BC
-	PUSH	HL
-	LD	A,(HL)
-	ADD	A,'0'
-	LD	E,A
-	CALL	_printf_putc
-	POP	HL
-	DEC	HL
-	POP	BC
-	DJNZ	_pbig_po
-	JP	_prt_float_dot_zeros
-
-; Double the decimal accumulator, adding the carry-in in A.
-_pbig_dbl:
-	LD	C,A
-	LD	HL,_prt_big
-	LD	A,(_prt_biglen)
+	ADD	HL,DE		; round after the digit with the index f0 + P - 1
+	CALL	_pf_round
+	CALL	_pf_scan0	; A = f0
+	LD	(_pf_f0),A
 	LD	B,A
-_pbig_dl:
+	LD	A,39
+	SUB	B
+	LD	(_pf_x),A	; X = the decimal exponent
+	LD	C,A
+	BIT	7,A
+	JR	Z,_pg_nn
+	ADD	A,4
+	JP	M,_pg_exp	; X < -4
+	JR	_pg_fix
+_pg_nn:
+	LD	A,(_pf_gp)
+	CP	C
+	JR	Z,_pg_exp	; X >= P
+	JR	C,_pg_exp
+_pg_fix:
+	; style f, P-1-X digits after the point (at most 255)
+	LD	A,(_pf_gp)
+	DEC	A
+	LD	L,A
+	LD	H,0
+	LD	A,(_pf_x)
+	LD	E,A
+	LD	D,0
+	BIT	7,A
+	JR	Z,_pg_f0
+	DEC	D
+_pg_f0:
+	OR	A
+	SBC	HL,DE
+	LD	A,H
+	OR	A
+	LD	A,L
+	JR	Z,_pg_f1
+	LD	A,255
+_pg_f1:
+	LD	B,A
+_pg_fx:
+	LD	A,(_printf_alt)
+	OR	A
+	JR	NZ,_pg_fk
+	LD	DE,POINT
+	CALL	_pf_strip
+_pg_fk:
+	LD	A,B
+	LD	(_pf_nf),A
+	LD	A,(_pf_f0)
+	CP	POINT
+	JR	C,_pg_fs
+	LD	A,39
+_pg_fs:
+	LD	(_pf_ifirst),A
+	LD	A,39
+	LD	(_pf_ilast),A
+	XOR	A
+	LD	(_pf_kind),A
+	CALL	_pf_setdot
+	JP	_pf_emit
+_pg_exp:
+	LD	A,(_pf_gp)
+	DEC	A
+	LD	B,A
+	LD	A,(_printf_alt)
+	OR	A
+	JR	NZ,_pge_k
+	LD	A,(_pf_f0)
+	INC	A
+	LD	E,A
+	LD	D,0		; DE = f0 + 1
+	CALL	_pf_strip
+_pge_k:
+	LD	A,B
+	LD	(_pf_nf),A
+	JR	_pe_set
+
+_pm_f:
+	CALL	_pf_prec6
+	LD	(_pf_nf),A
+	LD	L,A
+	LD	H,0
+	LD	DE,POINT
+	ADD	HL,DE
+	CALL	_pf_round
+	CALL	_pf_scan0
+	CP	POINT
+	JR	C,_pf_s
+	LD	A,39
+_pf_s:
+	LD	(_pf_ifirst),A
+	LD	A,39
+	LD	(_pf_ilast),A
+	XOR	A
+	LD	(_pf_kind),A
+	CALL	_pf_setdot
+	JP	_pf_emit
+
+_pm_e:
+	CALL	_pf_prec6
+	LD	(_pf_nf),A
+	CALL	_pf_scan0
+	LD	L,A
+	LD	H,0
+	INC	HL
+	LD	A,(_pf_nf)
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE		; round after the digit with the index f0 + p
+	CALL	_pf_round
+	CALL	_pf_scan0
+	LD	(_pf_f0),A
+	LD	B,A
+	LD	A,39
+	SUB	B
+	LD	(_pf_x),A
+_pe_set:
+	LD	A,(_pf_f0)
+	LD	(_pf_ifirst),A
+	LD	(_pf_ilast),A
+	LD	A,1
+	LD	(_pf_kind),A
+	CALL	_pf_setdot
+	JP	_pf_emit
+
+; ---- helper: A = the precision, 6 when there is none ----
+_pf_prec6:
+	LD	A,(_printf_hasprec)
+	OR	A
+	LD	A,6
+	RET	Z
+	LD	A,(_printf_prec)
+	RET
+
+; ---- helper: _pf_dot = 1 when _pf_nf is not 0 or the # flag is set ----
+_pf_setdot:
+	LD	A,(_pf_nf)
+	LD	HL,_printf_alt
+	OR	(HL)
+	JR	Z,_psd
+	LD	A,1
+_psd:
+	LD	(_pf_dot),A
+	RET
+
+; ---- helper: A = the index of the first digit that is not 0, or 39 ----
+_pf_scan0:
+	LD	HL,_pf_dg
+	LD	A,(_pf_dlen)
+	LD	B,A
+	LD	C,0
+_ps0:
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_ps0f
+	INC	HL
+	INC	C
+	DJNZ	_ps0
+	LD	A,39
+	RET
+_ps0f:
+	LD	A,C
+	RET
+
+; ---- helper: A = the digit with the index HL (0 outside the buffer) ----
+; Keeps BC, DE and HL.
+_pf_getdig:
+	PUSH	HL
+	PUSH	DE
+	LD	A,H
+	OR	A
+	JR	NZ,_pgd0
+	LD	A,L
+	CP	DIGITS
+	JR	NC,_pgd0
+	LD	DE,_pf_dg
+	ADD	HL,DE
+	LD	A,(HL)
+	POP	DE
+	POP	HL
+	RET
+_pgd0:
+	XOR	A
+	POP	DE
+	POP	HL
+	RET
+
+; ---- helper: remove the zeros at the end of a fraction ----
+; DE = the index of the first digit of the fraction, B = its length.
+; Returns the shorter length in B.
+_pf_strip:
+	LD	A,B
+	OR	A
+	RET	Z
+	LD	L,B
+	LD	H,0
+	ADD	HL,DE
+	DEC	HL
+	CALL	_pf_getdig
+	OR	A
+	RET	NZ
+	DJNZ	_pf_strip
+	RET
+
+; ---- helper: double the digit string, A = the carry in (0 or 1) ----
+; The digits with the indexes _pf_dstart to 39 are in use.
+_pf_dbl:
+	LD	C,A
+	LD	A,40
+	LD	HL,_pf_dstart
+	SUB	(HL)
+	LD	B,A
+	LD	HL,_pf_dg+39
+_pd_lp:
 	LD	A,(HL)
 	ADD	A,A
 	ADD	A,C
 	LD	C,0
 	CP	10
-	JR	C,_pbig_nc
+	JR	C,_pd_nc
 	SUB	10
 	LD	C,1
-_pbig_nc:
+_pd_nc:
 	LD	(HL),A
-	INC	HL
-	DJNZ	_pbig_dl
+	DEC	HL
+	DJNZ	_pd_lp
 	LD	A,C
 	OR	A
 	RET	Z
-	LD	(HL),1
-	LD	A,(_prt_biglen)
-	INC	A
-	LD	(_prt_biglen),A
+	LD	(HL),1		; one more digit on the left
+	LD	A,(_pf_dstart)
+	DEC	A
+	LD	(_pf_dstart),A
 	RET
 
-; Emit the decimal point, unless there are no digits to follow it.
-; C 7.21.6.1: for %f the point appears only when the precision is
-; non-zero, or when the # flag asks for it.  printf("%.0f", 2.0) was
-; printing "2." , which no conforming implementation produces and which
-; %e and %g in this same libc already got right.
-_prt_float_point:
-	LD	A,(_prt_float_prec)
+; ---- helper: halve the digit string ----
+; The digits with the indexes _pf_dstart to _pf_dlen - 1 are in use.  A
+; halving can add one digit (a 5) at the end.
+_pf_halve:
+	LD	A,(_pf_dlen)
+	LD	HL,_pf_dstart
+	SUB	(HL)
+	LD	B,A
+	LD	E,(HL)
+	LD	D,0
+	LD	HL,_pf_dg
+	ADD	HL,DE
+	LD	C,0		; the carry
+_ph_lp:
+	LD	A,(HL)
+	INC	C
+	DEC	C
+	JR	Z,_ph_n
+	ADD	A,10
+_ph_n:
+	SRL	A
+	LD	(HL),A
+	LD	C,0
+	RL	C
+	INC	HL
+	DJNZ	_ph_lp
+	INC	C
+	DEC	C
+	JR	Z,_ph_nd
+	LD	(HL),5
+	LD	A,(_pf_dlen)
+	INC	A
+	LD	(_pf_dlen),A
+_ph_nd:
+	LD	A,(_pf_dstart)
+	LD	E,A
+	LD	D,0
+	LD	HL,_pf_dg
+	ADD	HL,DE
+	LD	A,(HL)
 	OR	A
-	JR	NZ,_prt_float_point_yes
-	LD	A,(_printf_alt)
+	RET	NZ
+	LD	A,E
+	INC	A
+	LD	(_pf_dstart),A	; the first digit became 0
+	RET
+
+; ---- helper: round the digit string, HL = the index of the first digit ----
+; that is dropped.  To nearest; an exact tie goes to the even digit.
+_pf_round:
+	LD	A,H
+	OR	A
+	RET	NZ
+	LD	A,L
+	CP	DIGITS
+	RET	NC
+	LD	E,L
+	LD	D,0
+	LD	HL,_pf_dg
+	ADD	HL,DE
+	LD	A,(HL)
+	CP	5
+	RET	C
+	JR	NZ,_prd_up
+	LD	A,DIGITS-1
+	SUB	E
+	JR	Z,_prd_tie
+	LD	B,A
+	PUSH	HL
+_prd_sc:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_prd_ups
+	DJNZ	_prd_sc
+	POP	HL
+_prd_tie:
+	DEC	HL
+	BIT	0,(HL)
+	RET	Z		; an exact tie and the digit before is even
+	JR	_prd_inc
+_prd_ups:
+	POP	HL
+_prd_up:
+	DEC	HL
+_prd_inc:
+	LD	A,(HL)
+	INC	A
+	CP	10
+	JR	Z,_prd_9
+	LD	(HL),A
+	RET
+_prd_9:
+	LD	(HL),0
+	DEC	HL
+	JR	_prd_inc
+
+; ============================================================
+; _pf_emit: print the sign, the body and the padding.
+; The body is: the digits _pf_ifirst to _pf_ilast, a point when _pf_dot,
+; _pf_nf digits after that, and for _pf_kind 1 the exponent.  _pf_kind 2
+; is the text of an infinity or a NaN.
+; ============================================================
+_pf_emit:
+	; HL = the length of the sign and the body
+	LD	A,(_pf_kind)
+	CP	2
+	LD	HL,3
+	JR	Z,_pe_len
+	LD	A,(_pf_ilast)
+	LD	HL,_pf_ifirst
+	SUB	(HL)
+	INC	A
+	LD	L,A
+	LD	H,0
+	LD	A,(_pf_dot)
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	LD	A,(_pf_nf)
+	LD	E,A
+	ADD	HL,DE
+	LD	A,(_pf_kind)
+	OR	A
+	JR	Z,_pe_len
+	LD	DE,4		; e, the sign and two digits
+	ADD	HL,DE
+_pe_len:
+	LD	A,(_pf_sign)
+	OR	A
+	JR	Z,_pe_ns
+	INC	HL
+_pe_ns:
+	; the padding = width - length, or 0
+	LD	A,(_printf_width)
+	LD	E,A
+	LD	D,0
+	EX	DE,HL
+	OR	A
+	SBC	HL,DE
+	LD	A,0
+	JR	C,_pe_p
+	LD	A,L
+_pe_p:
+	LD	(_pf_pad),A
+	LD	A,(_printf_left)
+	OR	A
+	JR	NZ,_pe_left
+	LD	A,(_printf_zero)
+	OR	A
+	JR	NZ,_pe_zero
+	LD	E,' '
+	CALL	_pf_padout
+	CALL	_pf_signout
+	JR	_pf_body
+_pe_zero:
+	CALL	_pf_signout
+	LD	E,'0'
+	CALL	_pf_padout
+	JR	_pf_body
+_pe_left:
+	CALL	_pf_signout
+	CALL	_pf_body
+	LD	E,' '
+_pf_padout:
+	LD	A,(_pf_pad)
+	LD	B,A
+	JP	_printf_padn
+_pf_signout:
+	LD	A,(_pf_sign)
 	OR	A
 	RET	Z
-_prt_float_point_yes:
-	LD	E,'.'
+	LD	E,A
 	JP	_printf_putc
 
-_prt_float_zero:
-	LD	E,'0'
-	CALL	_printf_putc
-_prt_float_dot_zeros:
-	CALL	_prt_float_point
-	LD	A,(_prt_float_prec)
+_pf_body:
+	LD	A,(_pf_kind)
+	CP	2
+	JR	Z,_pb_spec
+	LD	A,(_pf_ifirst)
+	LD	L,A
+	LD	H,0
+	LD	A,(_pf_ilast)
+	SUB	L
+	INC	A
 	LD	B,A
+_pb_int:
+	CALL	_pf_digout
+	INC	HL
+	DJNZ	_pb_int
+	LD	A,(_pf_dot)
 	OR	A
-	JR	Z,_prt_float_done
-_prt_float_z2:
-	PUSH	BC
-	LD	E,'0'
+	JR	Z,_pb_nd
+	LD	E,'.'
 	CALL	_printf_putc
-	POP	BC
-	DJNZ	_prt_float_z2
-	JR	_prt_float_done
-
-; HL holds the high word and DE the low word, sign already emitted.  A
-; zero mantissa is an infinity, anything else a NaN; C17 7.21.6.1 p8 wants
-; the uppercase spellings for %F.
-_prt_float_inf:
-	LD	A,L
-	AND	7FH
-	OR	D
-	OR	E
-	LD	HL,_prt_float_sinf
-	JR	Z,_prt_float_spec
-	LD	HL,_prt_float_snan
-_prt_float_spec:
-	LD	B,3
-_prt_float_spec1:
-	LD	A,(HL)
-	PUSH	HL
-	PUSH	BC
+_pb_nd:
+	LD	A,(_pf_nf)
+	OR	A
+	JR	Z,_pb_ex
 	LD	B,A
+_pb_fr:
+	CALL	_pf_digout
+	INC	HL
+	DJNZ	_pb_fr
+_pb_ex:
+	LD	A,(_pf_kind)
+	OR	A
+	RET	Z
+	LD	E,'e'
 	LD	A,(_printf_upper)
 	OR	A
-	LD	A,B
-	JR	NZ,_prt_float_specu
-	OR	20H			; lowercase unless %F
-_prt_float_specu:
+	JR	Z,_pb_e
+	LD	E,'E'
+_pb_e:
+	CALL	_printf_putc
+	LD	A,(_pf_x)
+	LD	E,'+'
+	BIT	7,A
+	JR	Z,_pb_xp
+	NEG
+	LD	E,'-'
+_pb_xp:
+	LD	C,A
+	CALL	_printf_putc
+	LD	A,C
+	LD	E,'0'
+_pb_tens:
+	SUB	10
+	JR	C,_pb_td
+	INC	E
+	JR	_pb_tens
+_pb_td:
+	ADD	A,10
+	LD	C,A
+	CALL	_printf_putc
+	LD	A,C
+	ADD	A,'0'
+	LD	E,A
+	JP	_printf_putc
+
+_pb_spec:
+	LD	HL,(_pf_sptr)
+	LD	B,3
+_pb_sl:
+	LD	A,(HL)
+	LD	E,A
+	LD	A,(_printf_upper)
+	OR	A
+	LD	A,E
+	JR	Z,_pb_su
+	AND	0DFH
+_pb_su:
 	LD	E,A
 	CALL	_printf_putc
-	POP	BC
-	POP	HL
 	INC	HL
-	DJNZ	_prt_float_spec1
+	DJNZ	_pb_sl
+	RET
 
-_prt_float_done:
-	POP	IX
-	POP	DE
+; print the digit with the index HL; keeps HL and BC
+_pf_digout:
+	PUSH	BC
+	PUSH	HL
+	CALL	_pf_getdig
+	ADD	A,'0'
+	LD	E,A
+	CALL	_printf_putc
+	POP	HL
 	POP	BC
 	RET
 
-; ============================================================
-; _prt_addz - DEHL = DEHL + (__tmp32), both positive, rounded toward zero.
-; __fadd rounds to nearest.  The pre-round step above adds half a unit of
-; the last printed digit, and the digit loop then cuts the result off, so
-; the sum has to be the largest float that is not above the exact sum.
-; The error of the nearest sum is found with the exact subtractions
-; s - x and d - (s - x); if it is negative, the sum is one float too high.
-; ============================================================
-_prt_addz:
-	LD	(_pz_x),HL
-	LD	(_pz_x+2),DE
-	LD	HL,(__tmp32)
-	LD	(_pz_d),HL
-	LD	HL,(__tmp32+2)
-	LD	(_pz_d+2),HL
-	LD	HL,(_pz_x)
-	CALL	__fadd			; DEHL = s (DE still holds the high word)
-	LD	(_pz_s),HL
-	LD	(_pz_s+2),DE
-	LD	HL,(_pz_x)
-	LD	(__tmp32),HL
-	LD	HL,(_pz_x+2)
-	LD	(__tmp32+2),HL
-	LD	HL,(_pz_s)
-	LD	DE,(_pz_s+2)
-	CALL	__fsub			; s - x
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	LD	HL,(_pz_d)
-	LD	DE,(_pz_d+2)
-	CALL	__fsub			; d - (s - x), the error of s
-	LD	A,D
-	LD	HL,(_pz_s)
-	LD	DE,(_pz_s+2)
-	OR	A
-	RET	P			; the error is not negative
-	LD	A,D			; the sum is one float too high
-	OR	E
-	OR	H
-	OR	L
-	RET	Z
-	DEC	HL
-	LD	A,H
-	AND	L
-	INC	A
-	RET	NZ
-	DEC	DE
-	RET
+_pf_sinf:	DB	'inf'
+_pf_snan:	DB	'nan'
 
+	COMMON	/lc_prt_float/	; BSS: every variable is set before it is read
 
-	DSEG
-
-_prt_float_sinf:	DB	'INF'
-_prt_float_snan:	DB	'NAN'
-__fwork:	DS	4
-_pz_x:		DS	4
-_pz_d:		DS	4
-_pz_s:		DS	4
-__fint:		DS	4	; %f integer part, as a 32-bit integer
-_pbig_m:	DS	3	; %f >= 2^31: the 24-bit mantissa, shifted out MSB first
-_prt_big:	DS	40	; %f >= 2^31: decimal digits, least significant first
-_prt_biglen:	DB	1
+_pf_val:	DS	4	; the float to print
+_pf_m:		DS	3	; its mantissa
+_pf_sptr:	DS	2
+_pf_sign:	DS	1
+_pf_mode:	DS	1
+_pf_kind:	DS	1	; 0 digits, 1 digits and exponent, 2 inf or nan
+_pf_ifirst:	DS	1
+_pf_ilast:	DS	1
+_pf_nf:		DS	1	; digits after the point
+_pf_dot:	DS	1
+_pf_x:		DS	1	; the decimal exponent, as a signed byte
+_pf_f0:		DS	1	; index of the first digit that is not 0
+_pf_gp:		DS	1	; %g: the number of significant digits
+_pf_pad:	DS	1
+_pf_dstart:	DS	1
+_pf_dlen:	DS	1
+_pf_dg:		DS	DIGITS+2
 
 	END

@@ -1,0 +1,528 @@
+; lc_printf_a.mac - printf %a and %A (hexadecimal floating point)
+;
+; [-]0xh.hhhhp+d: one hex digit before the point (0 for zero, else 1), the 23
+; bits of the fraction of the float as hex digits (24 bits, six digits: the
+; bit 0 of the sixth digit is 0), and the exponent of 2 in decimal.  Without
+; a precision the zeros at the end are left out and the point appears only
+; when digits follow it.  With a precision the digits are rounded to nearest,
+; a tie to the even digit; a carry into the first digit gives 2 (0x2p+0),
+; as glibc does.  A subnormal float is normalized.
+;
+; The compiler writes no table entry for 'a' and 'A'.  The printf hook of uc80
+; (printf_hook.py) adds them when a format has %a or %A.
+;
+; Handler ABI (see lc_printf_core.mac): entered by a tail JP with HL = format
+; pointer past the specifier, C = vararg offset from IX, IX = printf's frame.
+; The code does not change IX and IY.
+	.Z80
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_putc
+	EXTRN	_printf_padn
+	EXTRN	_printf_upper
+	EXTRN	_printf_hasprec
+	EXTRN	_printf_prec
+	EXTRN	_printf_alt
+	EXTRN	_printf_left
+	EXTRN	_printf_plus
+	EXTRN	_printf_space
+	EXTRN	_printf_zero
+	EXTRN	_printf_width
+
+	CSEG
+
+	PUBLIC	__printf_handle_a
+	PUBLIC	__printf_handle_au
+
+__printf_handle_au:
+	LD	A,20H		; any non-zero value: the upper case flag
+	LD	(_printf_upper),A
+__printf_handle_a:
+	PUSH	HL
+	PUSH	BC
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	DE,_pa_val
+	LD	BC,4
+	LDIR
+	CALL	_pa_main
+	POP	BC
+	LD	A,C
+	ADD	A,4
+	LD	C,A
+	POP	HL
+	JP	_printf_loop
+
+_pa_main:
+	; ---- the sign character ----
+	LD	A,(_pa_val+3)
+	LD	B,'-'
+	OR	A
+	JP	M,_pa_sg
+	LD	B,'+'
+	LD	A,(_printf_plus)
+	OR	A
+	JR	NZ,_pa_sg
+	LD	B,' '
+	LD	A,(_printf_space)
+	OR	A
+	JR	NZ,_pa_sg
+	LD	B,0
+_pa_sg:
+	LD	A,B
+	LD	(_pa_sign),A
+
+	; ---- B = the biased exponent; _pa_m = the 23 bits of the fraction ----
+	LD	A,(_pa_val+3)
+	ADD	A,A
+	LD	B,A
+	LD	A,(_pa_val+2)
+	RLCA
+	LD	A,B
+	ADC	A,0
+	LD	B,A
+	LD	A,(_pa_val+2)
+	AND	7FH
+	LD	(_pa_m+2),A
+	LD	C,A
+	LD	A,(_pa_val+1)
+	LD	(_pa_m+1),A
+	OR	C
+	LD	C,A
+	LD	A,(_pa_val)
+	LD	(_pa_m),A
+	OR	C
+	LD	C,A		; C = 0 when the fraction is 0
+	LD	A,B
+	CP	255
+	JR	NZ,_pa_fin
+
+	; infinity or NaN: the text is padded with spaces
+	LD	HL,_pa_inf
+	LD	A,C
+	OR	A
+	JR	Z,_pa_isi
+	LD	HL,_pa_nan
+_pa_isi:
+	LD	(_pa_sptr),HL
+	XOR	A
+	LD	(_printf_zero),A
+	LD	HL,3
+	LD	(_pa_len),HL
+	LD	A,1
+	LD	(_pa_kind),A
+	JR	_pa_emit
+
+_pa_fin:
+	XOR	A
+	LD	(_pa_kind),A
+	LD	A,B		; the exponent e
+	LD	B,0		; B = the first digit
+	OR	A
+	JR	Z,_pa_zs
+	INC	B
+	LD	L,A
+	LD	H,0
+	LD	DE,-127
+	ADD	HL,DE
+	LD	(_pa_x),HL
+	JR	_pa_nib
+_pa_zs:
+	LD	HL,0
+	LD	(_pa_x),HL
+	LD	A,C
+	OR	A
+	JR	Z,_pa_nib	; zero: 0x0p+0
+	; subnormal: value = fraction * 2^-149.  Shift left until bit 23 is
+	; set: that bit is the 1 before the point; the exponent is -126 less
+	; one for each shift.
+	INC	B
+	LD	HL,-126
+	LD	(_pa_x),HL
+_pa_nm:
+	LD	A,(_pa_m+2)
+	BIT	7,A
+	JR	NZ,_pa_nd
+	LD	HL,_pa_m
+	SLA	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	LD	HL,(_pa_x)
+	DEC	HL
+	LD	(_pa_x),HL
+	JR	_pa_nm
+_pa_nd:
+	AND	7FH
+	LD	(_pa_m+2),A
+_pa_nib:
+	; the digits: _pa_n[0] = B; then 24 bits = the fraction * 2, high first
+	LD	A,B
+	LD	(_pa_n),A
+	LD	HL,_pa_m
+	SLA	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	LD	A,(_pa_m+2)
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	LD	(_pa_n+1),A
+	LD	A,(_pa_m+2)
+	AND	0FH
+	LD	(_pa_n+2),A
+	LD	A,(_pa_m+1)
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	LD	(_pa_n+3),A
+	LD	A,(_pa_m+1)
+	AND	0FH
+	LD	(_pa_n+4),A
+	LD	A,(_pa_m)
+	RRCA
+	RRCA
+	RRCA
+	RRCA
+	AND	0FH
+	LD	(_pa_n+5),A
+	LD	A,(_pa_m)
+	AND	0FH
+	LD	(_pa_n+6),A
+
+	; ---- the number of digits after the point ----
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	NZ,_pa_prec
+	LD	B,6		; no precision: leave out the zeros at the end
+	LD	HL,_pa_n+6
+_pa_tz:
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_pa_nf
+	DEC	HL
+	DJNZ	_pa_tz
+_pa_nf:
+	LD	A,B
+	LD	(_pa_nfd),A
+	JR	_pa_expo
+_pa_prec:
+	LD	A,(_printf_prec)
+	LD	(_pa_nfd),A
+	CP	6
+	JR	NC,_pa_expo	; 6 digits or more: nothing to round
+	LD	E,A
+	LD	D,0
+	LD	HL,_pa_n
+	ADD	HL,DE
+	PUSH	HL		; HL -> the last digit that stays
+	INC	HL
+	LD	A,(HL)		; the first digit that goes
+	CP	8
+	JR	C,_pa_rdn	; below half
+	JR	NZ,_pa_rup	; above half
+	LD	A,5
+	SUB	E		; the digits after the first one that goes
+	JR	Z,_pa_tie
+	LD	B,A
+_pa_rs:
+	INC	HL
+	LD	A,(HL)
+	OR	A
+	JR	NZ,_pa_rup	; more than half
+	DJNZ	_pa_rs
+_pa_tie:
+	POP	HL		; an exact tie: up when the last digit is odd
+	BIT	0,(HL)
+	JR	Z,_pa_expo
+	JR	_pa_inc
+_pa_rdn:
+	POP	HL
+	JR	_pa_expo
+_pa_rup:
+	POP	HL
+_pa_inc:
+	LD	A,(HL)
+	INC	A
+	CP	16
+	JR	Z,_pa_wrap
+	LD	(HL),A
+	JR	_pa_expo
+_pa_wrap:
+	LD	(HL),0
+	DEC	HL
+	JR	_pa_inc
+
+_pa_expo:
+	; ---- the exponent: its sign and the digits (1 to 3) ----
+	LD	HL,(_pa_x)
+	LD	A,'+'
+	BIT	7,H
+	JR	Z,_pa_xp
+	LD	A,'-'
+	LD	D,A
+	XOR	A
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+	LD	A,D
+_pa_xp:
+	LD	(_pa_xs),A
+	LD	A,L		; |exponent| is 149 at most
+	LD	B,'0'
+_pa_h:
+	CP	100
+	JR	C,_pa_hd
+	SUB	100
+	INC	B
+	JR	_pa_h
+_pa_hd:
+	LD	C,'0'
+_pa_t:
+	CP	10
+	JR	C,_pa_td
+	SUB	10
+	INC	C
+	JR	_pa_t
+_pa_td:
+	ADD	A,'0'
+	LD	(_pa_xd+2),A
+	LD	A,C
+	LD	(_pa_xd+1),A
+	LD	A,B
+	LD	(_pa_xd),A
+	LD	HL,_pa_xd
+	LD	B,3
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_pa_xl
+	INC	HL
+	DEC	B
+	LD	A,(HL)
+	CP	'0'
+	JR	NZ,_pa_xl
+	INC	HL
+	DEC	B
+_pa_xl:
+	LD	(_pa_xptr),HL
+	LD	A,B
+	LD	(_pa_xn),A
+
+	; ---- the point, and the length of the text without the sign ----
+	LD	A,(_pa_nfd)
+	LD	HL,_printf_alt
+	OR	(HL)
+	JR	Z,_pa_nd0
+	LD	A,1
+_pa_nd0:
+	LD	(_pa_dot),A
+	LD	E,A
+	LD	D,0
+	LD	A,(_pa_nfd)
+	LD	L,A
+	LD	H,0
+	ADD	HL,DE
+	LD	A,(_pa_xn)
+	LD	E,A
+	ADD	HL,DE
+	LD	DE,5		; 0x, the first digit, p and the sign of the exponent
+	ADD	HL,DE
+	LD	(_pa_len),HL
+
+	; ---- print the sign, the text and the padding ----
+_pa_emit:
+	LD	HL,(_pa_len)
+	LD	A,(_pa_sign)
+	OR	A
+	JR	Z,_pa_e1
+	INC	HL
+_pa_e1:
+	LD	A,(_printf_width)
+	LD	E,A
+	LD	D,0
+	EX	DE,HL
+	OR	A
+	SBC	HL,DE
+	LD	A,0
+	JR	C,_pa_e2
+	LD	A,L
+_pa_e2:
+	LD	(_pa_pad),A
+	LD	A,(_printf_left)
+	OR	A
+	JR	NZ,_pa_left
+	LD	A,(_printf_zero)
+	OR	A
+	JR	NZ,_pa_zero
+	LD	E,' '
+	CALL	_pa_padout
+	CALL	_pa_signout
+	JR	_pa_text
+_pa_zero:
+	CALL	_pa_signout
+	CALL	_pa_prefix
+	LD	E,'0'
+	CALL	_pa_padout
+	JR	_pa_rest
+_pa_left:
+	CALL	_pa_signout
+	CALL	_pa_text
+	LD	E,' '
+_pa_padout:
+	LD	A,(_pa_pad)
+	LD	B,A
+	JP	_printf_padn
+
+_pa_signout:
+	LD	A,(_pa_sign)
+	OR	A
+	RET	Z
+	LD	E,A
+	JP	_printf_putc
+
+; "0x" or "0X"
+_pa_prefix:
+	LD	E,'0'
+	CALL	_printf_putc
+	LD	E,'x'
+	LD	A,(_printf_upper)
+	OR	A
+	JR	Z,_pa_pf
+	LD	E,'X'
+_pa_pf:
+	JP	_printf_putc
+
+; the text after the sign: for infinity and NaN the three letters, else the
+; prefix and the rest
+_pa_text:
+	LD	A,(_pa_kind)
+	OR	A
+	JR	Z,_pa_tx
+	LD	HL,(_pa_sptr)
+	LD	B,3
+_pa_tl:
+	LD	A,(HL)
+	LD	E,A
+	LD	A,(_printf_upper)
+	OR	A
+	LD	A,E
+	JR	Z,_pa_tu
+	AND	0DFH
+_pa_tu:
+	LD	E,A
+	PUSH	HL
+	PUSH	BC
+	CALL	_printf_putc
+	POP	BC
+	POP	HL
+	INC	HL
+	DJNZ	_pa_tl
+	RET
+_pa_tx:
+	CALL	_pa_prefix
+; the first digit, the point, the digits, p, the sign and the exponent
+_pa_rest:
+	LD	A,(_pa_n)
+	CALL	_pa_hex
+	LD	A,(_pa_dot)
+	OR	A
+	JR	Z,_pa_r1
+	LD	E,'.'
+	CALL	_printf_putc
+_pa_r1:
+	LD	A,(_pa_nfd)
+	OR	A
+	JR	Z,_pa_r3
+	LD	B,A
+	LD	HL,_pa_n+1
+	LD	C,6		; digits that are in the table
+_pa_r2:
+	XOR	A
+	INC	C
+	DEC	C
+	JR	Z,_pa_r2a
+	LD	A,(HL)
+	INC	HL
+	DEC	C
+_pa_r2a:
+	PUSH	BC
+	PUSH	HL
+	CALL	_pa_hex
+	POP	HL
+	POP	BC
+	DJNZ	_pa_r2
+_pa_r3:
+	LD	E,'p'
+	LD	A,(_printf_upper)
+	OR	A
+	JR	Z,_pa_r4
+	LD	E,'P'
+_pa_r4:
+	CALL	_printf_putc
+	LD	A,(_pa_xs)
+	LD	E,A
+	CALL	_printf_putc
+	LD	HL,(_pa_xptr)
+	LD	A,(_pa_xn)
+	LD	B,A
+_pa_r5:
+	LD	E,(HL)
+	INC	HL
+	PUSH	HL
+	PUSH	BC
+	CALL	_printf_putc
+	POP	BC
+	POP	HL
+	DJNZ	_pa_r5
+	RET
+
+; print the hex digit A
+_pa_hex:
+	ADD	A,'0'
+	CP	'9'+1
+	JR	C,_pa_hx
+	ADD	A,'a'-'9'-1
+	LD	E,A
+	LD	A,(_printf_upper)
+	OR	A
+	LD	A,E
+	JR	Z,_pa_hx
+	SUB	20H
+_pa_hx:
+	LD	E,A
+	JP	_printf_putc
+
+_pa_inf:	DB	'inf'
+_pa_nan:	DB	'nan'
+
+	COMMON	/lc_printf_a/	; BSS: every variable is set before it is read
+
+_pa_val:	DS	4
+_pa_m:		DS	3
+_pa_n:		DS	7
+_pa_sign:	DS	1
+_pa_sptr:	DS	2
+_pa_x:		DS	2
+_pa_xs:		DS	1
+_pa_xd:		DS	3
+_pa_xptr:	DS	2
+_pa_xn:		DS	1
+_pa_nfd:	DS	1
+_pa_dot:	DS	1
+_pa_len:	DS	2
+_pa_pad:	DS	1
+_pa_kind:	DS	1
+
+	END

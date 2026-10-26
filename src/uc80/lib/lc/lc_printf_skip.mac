@@ -1,0 +1,18 @@
+; lc_printf_skip.mac - printf: a length modifier that changes nothing
+;
+; The table entry of a modifier that has no effect on the argument: 't'
+; (ptrdiff_t is an int) and 'l' before a float conversion (C 7.23.6.1p7).
+; The handler goes on with the character after the modifier.  The printf hook
+; of uc80 (printf_hook.py) adds these entries to the dispatch table.
+	.Z80
+
+	EXTRN	_printf_skip
+
+	CSEG
+
+	PUBLIC	__printf_handle_skip
+__printf_handle_skip:
+	DEC	HL		; back on the modifier; _printf_skip steps past it
+	JP	_printf_skip
+
+	END

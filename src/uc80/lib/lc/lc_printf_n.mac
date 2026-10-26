@@ -1,0 +1,34 @@
+; lc_printf_n.mac - printf %n handler
+;
+; Stores the number of characters written so far in the int that the next
+; argument points to.  The compiler writes no table entry for 'n'.  The
+; printf hook of uc80 (printf_hook.py) adds one when a format string has %n.
+	.Z80
+
+	EXTRN	_printf_loop
+	EXTRN	_printf_count
+
+	CSEG
+
+	PUBLIC	__printf_handle_n
+__printf_handle_n:
+	PUSH	HL
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = the pointer
+	INC	C
+	INC	C
+	LD	HL,(_printf_count)
+	EX	DE,HL
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	POP	HL
+	JP	_printf_loop
+
+	END

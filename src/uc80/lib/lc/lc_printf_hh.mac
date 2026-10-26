@@ -1,0 +1,72 @@
+; lc_printf_hh.mac - printf: the hh length modifier
+;
+; %hhd and %hhu convert the argument to signed char or unsigned char
+; (C 7.23.6.1p7).  The printf hook of uc80 (printf_hook.py) puts a short glue
+; routine in front of the handler of d, i, u, o, x and X:
+;
+;     CALL __printf_hhs    (d, i)    or    CALL __printf_hhu    (u, o, x, X)
+;     JP   the handler
+;
+; The routine narrows the int argument on the stack when the specification
+; has "hh", and does nothing for "h" or for no modifier.  It handles the
+; 16-bit int only.
+	.Z80
+
+	EXTRN	_printf_fmtstart
+
+	CSEG
+
+	PUBLIC	__printf_hhs
+	PUBLIC	__printf_hhu
+
+; Entry (as the handler): C = argument offset, IX = frame.  Keeps HL, C.
+__printf_hhs:
+	LD	A,1
+	JR	_pfhh
+__printf_hhu:
+	XOR	A
+_pfhh:
+	PUSH	HL
+	PUSH	DE
+	PUSH	AF		; A = 1 for a signed conversion
+	LD	DE,(_printf_fmtstart)
+_pfhh_sk:
+	LD	A,(DE)		; skip the flags, the width and the precision
+	CP	'9'+1
+	JR	NC,_pfhh_len
+	CP	' '
+	JR	C,_pfhh_len
+	INC	DE
+	JR	_pfhh_sk
+_pfhh_len:
+	CP	'h'
+	JR	NZ,_pfhh_no
+	INC	DE
+	LD	A,(DE)
+	CP	'h'
+	JR	NZ,_pfhh_no
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE		; HL -> the low byte of the argument
+	POP	AF
+	OR	A
+	LD	A,(HL)
+	INC	HL
+	JR	Z,_pfhh_u
+	ADD	A,A		; the sign of the low byte
+	SBC	A,A		; 0 or 0FFH
+	LD	(HL),A
+	JR	_pfhh_ret
+_pfhh_u:
+	LD	(HL),0
+_pfhh_ret:
+	POP	DE
+	POP	HL
+	RET
+_pfhh_no:
+	POP	AF
+	JR	_pfhh_ret
+
+	END

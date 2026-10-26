@@ -54,10 +54,10 @@ CONOUT	EQU	2
 	PUBLIC	_printf_ll_w1
 	PUBLIC	_printf_ll_w2
 	PUBLIC	_printf_ll_w3
-	PUBLIC	_prt_float_prec
 	PUBLIC	_printf_putc
 	PUBLIC	_printf_count
-	PUBLIC	__ftmp
+	PUBLIC	_printf_skip
+	PUBLIC	_printf_fmtstart
 
 ; ============================================================
 ; _printf_putc: output the char in E to CONOUT and bump
@@ -773,7 +773,5 @@ _printf_ll_w0:	DS	2
 _printf_ll_w1:	DS	2
 _printf_ll_w2:	DS	2
 _printf_ll_w3:	DS	2
-_prt_float_prec:	DB	6
-__ftmp:		DS	4
 
 	END
