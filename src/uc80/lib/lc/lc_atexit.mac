@@ -1,20 +1,19 @@
-; lc_atexit.mac - split from lc_stdlib.mac
+; lc_atexit.mac - atexit
 	.Z80
-
-BDOS	EQU	5
-CONOUT	EQU	2
-CONIN	EQU	1
-PRTSTR	EQU	9
 
 	EXTRN	_atexit_cnt
 	EXTRN	_atexit_tab
+	EXTRN	__exit_run
+	EXTRN	__exit_hook
+
+MAX_ATEXIT	EQU	32	; the minimum that C 7.24.4.3 requires
 
 	CSEG
 
 ; ============================================================
 ; int atexit(void (*func)(void))
-; Register function to be called at exit
-; Returns 0 on success, non-zero on failure
+; Register function to be called at exit.
+; Returns 0 on success, non-zero when 32 functions are registered.
 ; ============================================================
 	PUBLIC	_atexit
 _atexit:
@@ -24,7 +23,7 @@ _atexit:
 
 	; Check if we have room
 	LD	A,(_atexit_cnt)
-	CP	4		; Max 4 handlers
+	CP	MAX_ATEXIT
 	JR	NC,_atexit_fail
 
 	; Get handler address: _atexit_tab + cnt*2
@@ -45,6 +44,11 @@ _atexit:
 	LD	A,(_atexit_cnt)
 	INC	A
 	LD	(_atexit_cnt),A
+
+	; Returning from main must run the handlers: crt0 jumps through
+	; __exit_hook.
+	LD	HL,__exit_run
+	LD	(__exit_hook),HL
 
 	; Return success
 	LD	HL,0

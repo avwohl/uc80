@@ -14,6 +14,7 @@
 	PUBLIC	__start
 
 	EXTRN	_main
+	EXTRN	__exit_hook
 	EXTRN	__bss_start
 	EXTRN	__bss_end
 
@@ -50,9 +51,16 @@ __nobss:
 	; __tmp64 (64-bit) depending on the main() return type width.
 	CALL	_main
 
-	; Return to CP/M via warm boot.  CP/M has no standard register
-	; convention for passing a program exit status, so the return
-	; value from main() is discarded here regardless of its width.
-	JP	0
+	; Returning from main is exit(): the program runs the atexit handlers
+	; and closes its open files.  The word __exit_hook (in lc_exit_hook, in
+	; BSS) holds the address of that code.  It is 0 until atexit() or fopen()
+	; puts the address in it, and JP (HL) to address 0 is the warm boot, so a
+	; program that links no exit code only returns to CP/M.
+	;
+	; CP/M has no standard register convention for passing a program exit
+	; status, so the return value from main() is discarded here regardless
+	; of its width.
+	LD	HL,(__exit_hook)
+	JP	(HL)
 
 	END	__start

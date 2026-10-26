@@ -1,0 +1,14 @@
+; lc_exit_hook.mac - the word that crt0 jumps through when main returns
+;
+; 0 until atexit() or fopen() puts the address of __exit_run (lc_exit.mac) in
+; the word.  crt0 does LD HL,(__exit_hook) and JP (HL); a jump to address 0 is
+; the warm boot.  The word is in BSS, so the program image does not hold it.
+	.Z80
+
+	PUBLIC	__exit_hook
+
+	COMMON	/lc_exit_hook/
+
+__exit_hook:	DS	2
+
+	END

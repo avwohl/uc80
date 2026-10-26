@@ -1,50 +1,53 @@
-; lc_exit.mac - split from lc_stdlib.mac
+; lc_exit.mac - exit, and the code that runs when main returns
 	.Z80
-
-BDOS	EQU	5
-CONOUT	EQU	2
-CONIN	EQU	1
-PRTSTR	EQU	9
 
 	EXTRN	_atexit_cnt
 	EXTRN	_atexit_tab
+	EXTRN	__exit_fhook
 
 	CSEG
 
 ; ============================================================
 ; void exit(int status)
-; Calls atexit handlers then terminates
+; Calls the atexit handlers, last registered first, closes the open
+; files and returns to CP/M.  CP/M 2.2 has no exit status, so the
+; argument is not used.
+;
+; __exit_run is the same code.  crt0 jumps to it when main returns, through
+; the word __exit_hook that atexit() and fopen() set (see crt0.mac).
 ; ============================================================
 	PUBLIC	_exit
+	PUBLIC	__exit_run
 _exit:
-	; Call atexit handlers in reverse order
+__exit_run:
+	; A handler can register another handler, so read the count again
+	; for each handler.
 	LD	A,(_atexit_cnt)
 	OR	A
-	JR	Z,_exit_done
-
-_exit_loop:
+	JR	Z,_exit_files
 	DEC	A
 	LD	(_atexit_cnt),A
-	; Get handler address: _atexit_tab + A*2
 	LD	L,A
 	LD	H,0
-	ADD	HL,HL		; HL = A*2
+	ADD	HL,HL
 	LD	DE,_atexit_tab
-	ADD	HL,DE		; HL = address of handler pointer
+	ADD	HL,DE
 	LD	E,(HL)
 	INC	HL
 	LD	D,(HL)		; DE = handler address
-	; Call handler
-	PUSH	AF
-	LD	HL,_exit_loop_ret
-	PUSH	HL		; Push return address
-	PUSH	DE		; Push handler address
-	RET			; "Call" the handler
-_exit_loop_ret:
-	POP	AF
-	OR	A
-	JR	NZ,_exit_loop
+	LD	HL,__exit_run	; the handler returns to the start of the loop
+	PUSH	HL
+	PUSH	DE
+	RET			; "call" the handler
 
+_exit_files:
+	LD	HL,(__exit_fhook)
+	LD	A,H
+	OR	L
+	JR	Z,_exit_done
+	LD	DE,_exit_done
+	PUSH	DE
+	JP	(HL)		; close the open files, then return to _exit_done
 _exit_done:
 	; Return to CP/M (warm boot)
 	JP	0

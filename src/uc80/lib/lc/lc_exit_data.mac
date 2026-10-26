@@ -8,13 +8,16 @@ PRTSTR	EQU	9
 
 	PUBLIC	_atexit_cnt
 	PUBLIC	_atexit_tab
+	PUBLIC	__exit_fhook
 
 
 	COMMON	/lc_exit_data/
 
 
-; atexit handler table (max 4 handlers)
+; atexit handler table (32 handlers, the minimum that C 7.24.4.3 requires)
 _atexit_cnt:	DS	1	; Number of registered handlers
-_atexit_tab:	DS	8	; 4 function pointers (2 bytes each)
+_atexit_tab:	DS	64	; 32 function pointers (2 bytes each)
+; Address of the routine that closes the open files, or 0.  fopen sets it.
+__exit_fhook:	DS	2
 
 	END
