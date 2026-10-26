@@ -32,6 +32,7 @@ from . import isr_check
 from .z80_intrinsics import BARRIER_BEGIN, BARRIER_END
 from . import rom as rom_module
 from . import scan_hook
+from .multi_unit import uniquify_statics, uniquify_types
 
 from . import peep_local
 
@@ -865,6 +866,10 @@ def main() -> int:
         if len(asts) == 1:
             merged_ast = asts[0]
         else:
+            # A static of one file must stay apart from a same-named
+            # static (or global) of another file.
+            uniquify_types(asts)
+            uniquify_statics(asts)
             merged_ast = ast_module.TranslationUnit(items=[])
             for unit in asts:
                 merged_ast.items.extend(unit.items)

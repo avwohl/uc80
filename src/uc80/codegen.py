@@ -11998,6 +11998,10 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # Check if we're dereferencing a function pointer
             # Dereferencing a function pointer is a no-op (functions decay to pointers)
             operand_type = self._get_expr_type(expr.operand)
+            if isinstance(operand_type, lt.FunctionType):
+                # **f: the operand ``*f`` is a function designator, which
+                # decays to the pointer already in HL.
+                return
             if isinstance(operand_type, lt.PointerType):
                 if isinstance(operand_type.base_type, lt.FunctionType):
                     # *func_ptr is just func_ptr - no actual load needed
@@ -15122,6 +15126,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 return ptr_type.base_type
             elif isinstance(ptr_type, lt.ArrayType):
                 return ptr_type.base_type
+            elif isinstance(ptr_type, lt.FunctionType):
+                return ptr_type     # *g is the function designator again
         elif isinstance(expr, ast.UnaryOp) and expr.op == "&":
             # Address-of: return pointer to operand type
             operand_type = self._get_expr_type(expr.operand)

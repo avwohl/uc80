@@ -886,10 +886,7 @@ LL_VARIANTS = [[], ["--no-inlining"], ["--no-inlining"], ["-O0"],
 VARIANTS = [[], [], ["--no-inlining"], ["--no-shared-storage"],
             ["--no-inlining"], ["-O0"], ["--no-const-propagation"],
             ["--no-inlining", "--no-shared-storage"], ["--isr-safe"],
-            ["--no-inlining", "-O0"]]
-# Not in the list: --no-ast-optimize.  Seeds 10140, 10657 and 11636 give a
-# wrong answer with it, with and without --no-register-cc, and with the
-# compiler of ab96b22 (before the register convention): an old bug.
+            ["--no-inlining", "-O0"], ["--no-ast-optimize"]]
 
 
 def uc80_build(src: Path, work: Path, flags):
@@ -922,8 +919,11 @@ def one(seed, opts):
         if rc != 0:
             status, note = "HOST-FAIL", f"host exit {rc}"
         else:
-            flags = list((LL_VARIANTS if opts.ll else VARIANTS)[
-                seed % (len(LL_VARIANTS) if opts.ll else len(VARIANTS))]) + opts.flags.split()
+            table = LL_VARIANTS if opts.ll else VARIANTS
+            if opts.exact:
+                flags = opts.flags.split()
+            else:
+                flags = list(table[seed % len(table)]) + opts.flags.split()
             com, log = uc80_build(src, work, flags)
             if com is None:
                 status, note = "BUILD-FAIL", log[-600:]
@@ -967,6 +967,8 @@ def main():
     ap.add_argument("--keep", help="directory for failing programs")
     ap.add_argument("--keep-work", action="store_true")
     ap.add_argument("--flags", default="", help="extra uc80 flags")
+    ap.add_argument("--exact", action="store_true",
+                    help="use only the --flags, not the variant of the seed")
     ap.add_argument("--ll", action="store_true",
                     help="64-bit mode: long long parameters and results")
     ap.add_argument("--print", type=int, metavar="SEED")
