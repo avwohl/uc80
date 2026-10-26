@@ -36,6 +36,7 @@ from . import scan_hook
 from . import file_hook
 
 from . import peep_local
+from . import reglocals
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
@@ -556,6 +557,11 @@ def main() -> int:
         help="Pass every argument on the stack (docs/calling_convention.md)"
     )
     parser.add_argument(
+        "--no-register-locals",
+        action="store_true",
+        help="Keep every local in memory (docs/register_locals.md)"
+    )
+    parser.add_argument(
         "--no-embed-runtime",
         action="store_true",
         help="Don't embed runtime library (use EXTRN references instead)"
@@ -934,7 +940,8 @@ def main() -> int:
                                             or args.embed_lib
                                             or args.runtime_lib
                                             or args.startup_lib),
-                           foreign_asm_names=regcc.asm_text_names(mac_files))
+                           foreign_asm_names=regcc.asm_text_names(mac_files),
+                           register_locals=not args.no_register_locals)
         code = gen.generate(merged_ast)
         printf_need = printf_hook.printf_needs(merged_ast, printf_features)
         code = printf_hook.patch_tables(code, printf_need)
@@ -1497,6 +1504,10 @@ def main() -> int:
                     if count > 0:
                         print(f"    {pattern}: {count} applied")
                 print(f"  Optimized to {len(code.splitlines())} lines of assembly")
+
+        # The register-locals wraps that protect nothing (the peephole
+        # pass has run: the callees are final).
+        code = reglocals.prune(code)
 
         # The volatile markers and fence labels are for the passes above only.
         code = volatile_fence.strip(code)
