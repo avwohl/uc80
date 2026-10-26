@@ -46,27 +46,10 @@ unsigned long _m_unpack(float x, int *e);
 float _m_round(float x, int mode);
 /* an integer-valued float as a long long (saturates) */
 long long _m_toll(float r);
-/* exp(x) = y * 2^n for |x| < 104, y in [0.7, 1.42]; *np gets n */
-float _m_expk(float x, int *np);
-/* c[0] + c[1]*x + ... + c[n-1]*x^(n-1) by Horner's rule */
-float _m_poly(float x, const float *c, int n);
-/* Error-free transformations: p + *e = a * b and s + *e = a + b exactly */
+/* Error-free transformation: p + *e = a * b exactly.  Only cbrt uses it;
+ * the other math functions are programs of the float interpreter
+ * (docs/libm_vm.md). */
 float _m_2prod(float a, float b, float *e);
-float _m_2sum(float a, float b, float *e);
-/* x > 0 and finite: x = m * 2^n with m in [sqrt(1/2), sqrt(2)]; sets
- * *np = n and *fp = f = m - 1 (exact); the return value y is such that
- * log(m) = f + y with |y| about f*f/2 */
-float _m_logk(float x, int *np, float *fp);
-/* asin(t) for 0 <= |t| <= 1/2 */
-float _m_kasin(float t);
-/* x = n * pi/2 + r for ax >= 0, |r| <= pi/4 (a little more at the edge);
- * returns n modulo 4 and sets *r */
-int _m_reduce(float ax, float *r);
-/* the Payne-Hanek part of _m_reduce, for ax >= 6000 (assembly) */
-int _m_phred(float ax, float *r);
-/* sin and cos of |r| <= pi/4 + a little */
-float _m_ksin(float r);
-float _m_kcos(float r);
 
 /* Veltkamp split of the float A into HI + LO, each with 12 bits: the
  * product of two such parts is exact.  The compiler does not reassociate
@@ -76,15 +59,6 @@ float _m_kcos(float r);
         float c_ = 4097.0f * (a); \
         (hi) = c_ - (c_ - (a)); \
         (lo) = (a) - (hi); \
-    } while (0)
-
-/* s + e = a + b exactly (Knuth) */
-#define M_2SUM(a, b, s, e) \
-    do { \
-        float bb_; \
-        (s) = (a) + (b); \
-        bb_ = (s) - (a); \
-        (e) = ((a) - ((s) - bb_)) + ((b) - bb_); \
     } while (0)
 
 #endif

@@ -1,8 +1,10 @@
-; lc_m_phred.mac - _m_phred, the Payne-Hanek argument reduction for _m_reduce
+; lc_m_phred.mac - __vm_phred, the Payne-Hanek argument reduction for
+; sin, cos and tan (see lc_m_reduce.vc)
 ;
-; int _m_phred(float ax, float *rp)
-; For a finite ax of 6000 or more.  ax = n * pi/2 + r with |r| <= pi/4.
-; Returns n modulo 4 and sets *rp to r.
+; A routine of the float interpreter (see lc_vm.mac): DEHL = ax, a finite
+; number of 6000 or more.  ax = n * pi/2 + r with |r| <= pi/4.  The routine
+; returns DEHL = r and (__tmp32) = n modulo 4, as a float.  It keeps BC and
+; IX.
 ;
 ; ax = M * 2^(e-150) with a 24-bit M.  A window of 104 bits of 2/pi,
 ; which starts at the place of the exponent, is multiplied by M modulo
@@ -21,64 +23,21 @@
 	EXTRN	__fadd
 	EXTRN	__tmp32
 
-	PUBLIC	__m_phred
 	PUBLIC	__vm_phred
-
-; The routine of the float interpreter (see lc_vm.mac): DEHL = ax.  It
-; returns DEHL = r and (__tmp32) = the quadrant, as a float.  It keeps BC
-; and IX.
 __vm_phred:
 	PUSH	BC
-	LD	(_mph_t),HL
-	LD	(_mph_t+2),DE
-	PUSH	AF		; room for r
-	PUSH	AF
-	LD	HL,0
-	ADD	HL,SP
-	PUSH	HL		; the pointer to r
-	LD	HL,(_mph_t+2)
-	PUSH	HL
-	LD	HL,(_mph_t)
-	PUSH	HL
-	CALL	__m_phred
-	LD	A,L
-	POP	BC
-	POP	BC
-	POP	BC
-	POP	HL		; r
-	POP	DE
-	PUSH	HL
-	PUSH	DE
-	LD	L,A
-	LD	H,0
-	LD	DE,0
-	CALL	__itof
-	LD	(__tmp32),HL
-	LD	(__tmp32+2),DE
-	POP	DE
-	POP	HL
-	POP	BC
-	RET
-
-__m_phred:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+8)
-	LD	H,(IX+9)
-	LD	(_mph_rp),HL
 	; the mantissa with the implied bit
-	LD	A,(IX+4)
+	LD	A,L
 	LD	(_mph_m),A
-	LD	A,(IX+5)
+	LD	A,H
 	LD	(_mph_m+1),A
-	LD	A,(IX+6)
+	LD	A,E
 	OR	80H
 	LD	(_mph_m+2),A
 	; e = the biased exponent; s = e - 152 is the number of the first bit
-	LD	A,(IX+6)
+	LD	A,E
 	RLA
-	LD	A,(IX+7)
+	LD	A,D
 	RLA
 	LD	L,A
 	LD	H,0
@@ -271,20 +230,17 @@ _mph_found:
 _mph_out:
 	PUSH	DE
 	PUSH	HL
-	LD	HL,(_mph_rp)
-	POP	DE
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
-	INC	HL
-	POP	DE
-	LD	(HL),E
-	INC	HL
-	LD	(HL),D
 	LD	A,(_mph_n)
 	LD	L,A
 	LD	H,0
-	POP	IX
+	LD	D,H
+	LD	E,H
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	HL
+	POP	DE
+	POP	BC
 	RET
 
 ; the first 272 bits of 2/pi, with two zero bytes before them
@@ -308,10 +264,6 @@ _mph_n:
 _mph_c:
 	DS	1
 _mph_df:
-	DS	4
-_mph_rp:
-	DS	2
-_mph_t:
 	DS	4
 
 	END
