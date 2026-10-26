@@ -622,7 +622,8 @@ class Gen:
                 else:
                     args.append(self.expr(t, env, 2))
             callee = pv if via else other.name
-            body = [f"if ({dn} == 0) return {self.expr(ret, env, 2)};",
+            # the low 3 bits of the depth reach 0 within 8 levels
+            body = [f"if (((unsigned long){dn} & 7ul) == 0) return {self.expr(ret, env, 2)};",
                     f"return ({ctype(ret)})((unsigned long)({self.expr(ret, env, 2)}) + "
                     f"(unsigned long){callee}({', '.join(args)}));"]
             self.emit_func(me, pn, body)
