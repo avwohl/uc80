@@ -14946,30 +14946,22 @@ class CodeGenerator(Z80IntrinsicsMixin):
         if isinstance(expr, _SavedAddrValue):
             return expr.ctype
         if isinstance(expr, ast.IntLiteral):
+            # C23 6.4.4.1: the first type of the list for the suffix and
+            # base in which the value fits.  _is_long_long_expr and
+            # _is_long_expr give the width; the signedness is here.
             is_long, is_long_long, is_unsigned, is_hex = int_flags(expr)
             val = int_value(expr)
-            if is_long_long:
+            tc = self.type_config
+            if self._is_long_long_expr(expr):
+                uns = is_unsigned or val > (1 << 63) - 1
                 return ResolvedType(kind="basic", name="long long",
-                                    is_signed=not is_unsigned)
-            if is_long:
+                                    is_signed=not uns)
+            if self._is_long_expr(expr):
+                uns = is_unsigned or (is_hex and val > tc.long_max)
                 return ResolvedType(kind="basic", name="long",
-                                    is_signed=not is_unsigned)
-            if is_hex and not is_unsigned:
-                if 32768 <= val <= 65535:
-                    return ResolvedType(kind="basic", name="int", is_signed=False)
-                if val > 65535 and val <= 2147483647:
-                    return ResolvedType(kind="basic", name="long", is_signed=True)
-                if val > 2147483647 and val <= 4294967295:
-                    return ResolvedType(kind="basic", name="long", is_signed=False)
-                if val > 4294967295:
-                    return ResolvedType(kind="basic", name="long long", is_signed=False)
-            elif not is_hex and not is_unsigned:
-                if val > 32767 and val <= 2147483647:
-                    return ResolvedType(kind="basic", name="long", is_signed=True)
-                if val > 2147483647:
-                    return ResolvedType(kind="basic", name="long long", is_signed=True)
-            return ResolvedType(kind="basic", name="int",
-                                is_signed=not is_unsigned)
+                                    is_signed=not uns)
+            uns = is_unsigned or (is_hex and val > tc.int_max)
+            return ResolvedType(kind="basic", name="int", is_signed=not uns)
         elif isinstance(expr, ast.CharLiteral):
             return lt.BasicType(name="char")
         elif isinstance(expr, ast.StringLiteral):

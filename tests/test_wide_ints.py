@@ -2,7 +2,8 @@
 
 Each program in tests/wide_int/ is plain C that the host compiler also
 builds (-DHOST selects 16-bit and 32-bit stand-ins for uc80's int and
-long); NAME.out is what the host prints.  Every program is built with
+long); NAME.out is what the host prints (fold16 needs a 16-bit int: its
+output is written by hand).  Every program is built with
 uc80 under each flag set below and must print the same text.
 
   bool_return_param   a _Bool result or parameter is 0 or 1, for a value
@@ -20,6 +21,13 @@ uc80 under each flag set below and must print the same text.
   unary_ll            ~ and - of a long long leave the low 32 bits in DEHL
   long_from_ll        a long initialised from a long long keeps 32 bits
   ll_const_arg        long long constants above 32767 as arguments
+  ll_literals         integer literal types (0xffffffffU is an unsigned long)
+                      and constants as long long arguments and values
+  ll_mixed            conversions, comparisons, shifts, arithmetic and calls
+                      that mix long long with narrower types
+  bool_misc           _Bool from every width, in calls, returns and casts
+  fold16              (x op c1) op c2 with constants of different widths is
+                      not folded to x op c3
   ccfuzz_ll126        seed 126 of bench/ccfuzz.py --ll
 """
 
