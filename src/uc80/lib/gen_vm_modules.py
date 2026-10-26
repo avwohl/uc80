@@ -67,6 +67,11 @@ HANDLER = {"RET": "ret", "ADD": "add", "SUB": "sub", "MUL": "mul",
 OP = {n: i for i, n in enumerate(LOW)}
 OP.update({n: 0x80 + i for i, n in enumerate(HIGH)})
 PICK, PUT, LDC = 0x20, 0x40, 0x60
+# The constants that most programs use are in the interpreter: LDC 24 to
+# LDC 31 push them.  A program has no copy of them.
+GLOBALS = [0x00000000, 0x3F800000, 0x437F0000, 0x7F800000, 0x7FC00000,
+           0x3F000000, 0x42E40000, 0x40000000]
+GLOBAL_BASE = 24
 INVERSE = {"JLT": "JGE", "JLE": "JGT", "JGT": "JLE", "JGE": "JLT",
            "JEQ": "JNE", "JNE": "JEQ"}
 RELOP = {"<": "JLT", "<=": "JLE", ">": "JGT", ">=": "JGE", "==": "JEQ",
@@ -647,7 +652,8 @@ def assemble(gen):
 
     The pool holds the scalar constants (the most used first, so that more
     of them get the one-byte LDC) and then the tables."""
-    scal = sorted(gen.consts, key=lambda b: (-gen.consts[b], b))
+    scal = sorted((b for b in gen.consts if b not in GLOBALS),
+                  key=lambda b: (-gen.consts[b], b))
     pool = list(scal)
     placed = {}
     for item in gen.code:
@@ -663,8 +669,11 @@ def assemble(gen):
         if isinstance(it, int):
             items.append(it)
         elif it[0] == "ldc":
+            if it[1] in GLOBALS:
+                items.append(LDC + GLOBAL_BASE + GLOBALS.index(it[1]))
+                continue
             n = index[it[1]]
-            if n < 32:
+            if n < GLOBAL_BASE:
                 items.append(LDC + n)
             else:
                 items.extend([OP["LDCX"], n])
@@ -788,7 +797,14 @@ def generate(name):
             table.append("\tDW\t" + ", ".join("_vm_" + HANDLER[n] for n in LOW[i:i + 4]))
         for i in range(0, len(HIGH), 4):
             table.append("\tDW\t" + ", ".join("_vm_" + HANDLER[n] for n in HIGH[i:i + 4]))
+        gk = []
+        for bits in GLOBALS:
+            v = struct.unpack("<f", struct.pack("<I", bits))[0]
+            gk.append("\tDW\t0%04XH,0%04XH\t; %r" % (bits & 0xFFFF, bits >> 16, v))
         text = (tmpl.replace(";;SUBS\n", "")
+                .replace(";;GLOBALS", "\n".join(gk))
+                .replace(";;GBASE", str(GLOBAL_BASE))
+                .replace(";;GOFF", str(4 * GLOBAL_BASE))
                 .replace(";;TABLE", "\n".join(table))
                 .replace(";;NLOW", str(len(LOW)))
                 .replace(";;STACK", str(STACK_BYTES)))

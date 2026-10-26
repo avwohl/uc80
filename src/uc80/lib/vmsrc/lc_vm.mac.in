@@ -36,7 +36,7 @@
 ;   CALLN p,n     a1 ... an -> f(a1, ..., an) for a C function p
 ;   PICK n        push a copy of the element n below the top
 ;   PUT n         pop, store into the element n below the new top
-;   LDC n         push constant n
+;   LDC n         push constant n; n from 24 to 31: a constant of the interpreter
 ;   Jcc d         pop b, a; jump by d (a signed byte) when a cc b
 ;   JMP d, JMPL d
 	.Z80
@@ -142,13 +142,22 @@ _vm_ldcn:
 	ADD	HL,HL
 	ADD	HL,HL
 	LD	DE,(_vm_pool)
+	CP	;;GBASE
+	JR	C,_vm_ld1
+	LD	DE,_vm_gk-;;GOFF	; LDC 24 and up: a constant of the interpreter
+_vm_ld1:
 	ADD	HL,DE
 	JR	_vm_push
 
 _vm_ldcx:
 	LD	A,(BC)
 	INC	BC
-	JR	_vm_ldcn
+	LD	L,A
+	LD	H,0
+	ADD	HL,HL
+	ADD	HL,HL
+	LD	DE,(_vm_pool)
+	JR	_vm_ld1
 
 _vm_hi:
 	AND	1FH
@@ -515,6 +524,10 @@ _vm_store2:
 
 _vm_tbl:
 ;;TABLE
+
+; the constants that most programs use: 0, 1, 255, inf, NaN, 1/2, 114, 2
+_vm_gk:
+;;GLOBALS
 
 	COMMON	/lc_vm/
 _vm_pool:

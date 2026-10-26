@@ -1,290 +1,211 @@
 ; lc_sqrt.mac - sqrt, sqrtf, sqrtl
 ;
-; Correctly rounded square root with integer arithmetic.  The mantissa is
-; shifted so that the exponent is even, the digit-by-digit method gives a
-; 26-bit root, and the last bits and the remainder round to nearest even.
+; Correctly rounded square root with integer arithmetic.  The mantissa M
+; (24 bits) becomes the 56-bit number N = M * 2^32 or M * 2^31, whichever
+; makes the exponent of the root a whole number.  The digit-by-digit method
+; takes 28 bits of the root of N, two bits of N in each of 28 steps:
+;   R = R * 4 + the next two bits of N
+;   if R >= 4 * Q + 1 then R = R - (4 * Q + 1), Q = 2 * Q + 1, else Q = 2 * Q
+; The loop keeps X = 4 * Q in memory.  The mantissa of the result is Q
+; rounded at 4 bits: (Q + 8) >> 4.  A tie cannot happen, so the 4 low bits
+; of Q are enough.
+;
+; __vm_sqrt is the routine of the float interpreter (see lc_vm.mac): DEHL = x,
+; the result is in DEHL.  It keeps BC and IX.
 	.Z80
 
 	CSEG
 
-; The routine of the float interpreter (see lc_vm.mac): DEHL = x, and the
-; result is in DEHL.  It keeps BC and IX.
-__vm_sqrt:
-	PUSH	BC
-	PUSH	DE
-	PUSH	HL
-	CALL	_sqrt
-	POP	BC
-	POP	BC
-	POP	BC
-	RET
-
-; ============================================================
-; double sqrt(double x)
-; ============================================================
 	PUBLIC	__vm_sqrt
 	PUBLIC	_sqrt
 	PUBLIC	_sqrtf
 	PUBLIC	_sqrtl
+
+__vm_sqrt:
+	PUSH	BC
+	CALL	_sq_core
+	POP	BC
+	RET
+
+; double sqrt(double x)
 _sqrt:
 _sqrtf:
 _sqrtl:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	E,(IX+6)
-	LD	D,(IX+7)
-
-	; B = the biased exponent
-	LD	A,D
-	AND	7FH
-	ADD	A,A
-	LD	B,A
-	LD	A,E
-	RLCA
-	LD	A,B
-	ADC	A,0
-	LD	B,A
-	JR	Z,_sqrt_z	; zero or subnormal
-	CP	255
-	JR	Z,_sqrt_sp	; inf or NaN
-	BIT	7,D
-	JR	NZ,_sqrt_nan	; negative
-	LD	A,E
-	OR	80H		; the implied bit
-	LD	E,A
-	LD	D,0		; DEHL = the mantissa, 24 bits
-	LD	C,0		; C = 0: normal number
-_sqrt_go:
-	; B = exponent, C = 64 for a subnormal number
-	LD	A,B
-	SRL	A
-	ADD	A,63
-	SUB	C
-	LD	(_sqrt_e),A	; the exponent of a root with 25 bits
-	BIT	0,B
-	JR	Z,_sqrt_ev
-	ADD	HL,HL		; the unbiased exponent is even: mantissa * 2
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-_sqrt_ev:
-	LD	B,6
-_sqrt_sh6:
-	ADD	HL,HL
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-	DJNZ	_sqrt_sh6
-	LD	(_sqrt_s),HL
-	LD	(_sqrt_s+2),DE
-	LD	HL,0
-	LD	(_sqrt_r),HL
-	LD	(_sqrt_r+2),HL
-	LD	(_sqrt_q),HL
-	LD	(_sqrt_q+2),HL
-	EXX
-	LD	B,26		; B' = loop counter
-	EXX
-_sqrt_lp:
-	; C = the next two bits of S, S = S << 2
-	LD	A,(_sqrt_s+3)
-	RLCA
-	RLCA
-	AND	3
-	LD	C,A
-	LD	HL,(_sqrt_s)
-	LD	DE,(_sqrt_s+2)
-	ADD	HL,HL
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-	ADD	HL,HL
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-	LD	(_sqrt_s),HL
-	LD	(_sqrt_s+2),DE
-	; R = R << 2 | C
-	LD	HL,(_sqrt_r)
-	LD	DE,(_sqrt_r+2)
-	ADD	HL,HL
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-	ADD	HL,HL
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-	LD	A,L
-	OR	C
+	LD	HL,2
+	ADD	HL,SP
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	HL
+	LD	A,(HL)
+	INC	HL
+	LD	H,(HL)
 	LD	L,A
-	LD	(_sqrt_r),HL
-	LD	(_sqrt_r+2),DE
-	; DE:HL = T = Q << 2 | 1
-	LD	HL,(_sqrt_q)
-	LD	DE,(_sqrt_q+2)
-	ADD	HL,HL
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-	ADD	HL,HL
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-	INC	HL
-	; R - T
-	LD	BC,(_sqrt_r)
-	LD	A,C
-	SUB	L
-	LD	C,A
-	LD	A,B
-	SBC	A,H
-	LD	B,A
-	PUSH	BC
-	LD	HL,(_sqrt_r+2)
-	SBC	HL,DE		; carry if R < T
-	POP	BC
-	JR	C,_sqrt_no
-	LD	(_sqrt_r),BC
-	LD	(_sqrt_r+2),HL
-	SCF
-	JR	_sqrt_q2
-_sqrt_no:
+	EX	DE,HL		; DEHL = x
+
+; DEHL = x.  Result in DEHL.  Changes AF and BC.
+_sq_core:
+	LD	A,E
+	RLA
+	LD	A,D
+	RLA			; A = the exponent field, carry = the sign
+	JR	C,_sq_neg
+	CP	255
+	RET	Z		; +inf or a NaN
 	OR	A
-_sqrt_q2:
-	; Q = Q * 2 + carry
-	LD	HL,(_sqrt_q)
-	LD	DE,(_sqrt_q+2)
-	ADC	HL,HL
-	EX	DE,HL
-	ADC	HL,HL
-	EX	DE,HL
-	LD	(_sqrt_q),HL
-	LD	(_sqrt_q+2),DE
-	EXX
-	DEC	B
-	EXX
-	JP	NZ,_sqrt_lp
-
-	; C = 1 when the remainder is not zero
-	LD	BC,(_sqrt_r)
-	LD	A,B
-	OR	C
-	LD	BC,(_sqrt_r+2)
-	OR	B
-	OR	C
-	ADD	A,255
-	SBC	A,A
-	AND	1
-	LD	C,A
-	LD	HL,(_sqrt_q)
-	LD	DE,(_sqrt_q+2)
-	; Q has 25 or 26 bits
-	BIT	1,D
-	JR	NZ,_sqrt_26
-	LD	A,L
-	AND	1
-	ADD	A,A
-	LD	B,A		; bit 1 of B = the round bit
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	LD	D,0		; exponent increment
-	JR	_sqrt_rnd
-_sqrt_26:
-	LD	A,L
-	AND	3
-	LD	B,A		; bit 1 = the round bit, bit 0 = sticky
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	SRL	D
-	RR	E
-	RR	H
-	RR	L
-	LD	D,1
-_sqrt_rnd:
-	BIT	1,B
-	JR	Z,_sqrt_pack
-	LD	A,B
-	AND	1
-	OR	C
-	LD	B,A
-	LD	A,L
-	AND	1
-	OR	B
-	JR	Z,_sqrt_pack	; a tie goes to the even mantissa
-	INC	HL
-	LD	A,H
-	OR	L
-	JR	NZ,_sqrt_pack
-	INC	E
-	JR	NZ,_sqrt_pack
-	LD	E,80H		; the mantissa carried to 2^24
-	INC	D
-_sqrt_pack:
-	LD	A,(_sqrt_e)
-	ADD	A,D
-	SRL	A
-	LD	D,A
-	JR	C,_sqrt_ret
-	RES	7,E
-_sqrt_ret:
-	POP	IX
-	RET
-
-_sqrt_nan:
-	LD	DE,7FC0H
-	LD	HL,0
-	JR	_sqrt_ret
-
-_sqrt_sp:
-	; exponent 255: inf or NaN.  A NaN and +inf are the result, -inf is NaN.
-	LD	A,E
-	AND	7FH
+	JR	NZ,_sq_n
+	LD	A,E		; exponent 0: +0 or a subnormal number
 	OR	H
 	OR	L
-	JR	NZ,_sqrt_ret	; a NaN
-	BIT	7,D
-	JR	NZ,_sqrt_nan
-	JR	_sqrt_ret
-
-_sqrt_z:
-	; exponent 0: zero, or a subnormal number
-	LD	A,E
-	AND	7FH
-	OR	H
-	OR	L
-	JR	Z,_sqrt_ret	; +-0
-	BIT	7,D
-	JR	NZ,_sqrt_nan
-	LD	A,E
-	AND	7FH
-	LD	E,A
-	LD	D,0
-	LD	B,129
-_sqrt_nl:
+	RET	Z
+	LD	B,0		; B = the number of shifts
+_sq_nl:
 	ADD	HL,HL
 	RL	E
-	DEC	B
+	INC	B
 	BIT	7,E
-	JR	Z,_sqrt_nl
-	LD	C,64
-	JP	_sqrt_go
+	JR	Z,_sq_nl
+	LD	A,128
+	SUB	B
+	SRL	A		; the exponent of the root; the carry is 1 when
+	JR	_sq_go		; the exponent of x is even
+_sq_n:
+	SET	7,E		; the implicit bit
+	ADD	A,127
+	RRA			; (e + 127) / 2; the carry is 1 when e is even
+_sq_go:
+	PUSH	AF
+	PUSH	IX
+	LD	D,E		; D:E:H:L = M * 2^8
+	LD	E,H
+	LD	H,L
+	LD	L,0
+	JR	C,_sq_c
+	SRL	D		; M * 2^7
+	RR	E
+	RR	H
+	RR	L
+_sq_c:
+	XOR	A
+	PUSH	AF		; the bytes of N, the last first
+	PUSH	AF
+	PUSH	AF
+	LD	A,L
+	PUSH	AF
+	LD	A,H
+	PUSH	AF
+	LD	A,E
+	PUSH	AF
+	LD	A,D
+	PUSH	AF
+	LD	IX,_sq_x
+	LD	HL,0
+	LD	(_sq_x),HL
+	LD	(_sq_x+2),HL
+	LD	D,H
+	LD	E,L		; R = 0
+	LD	(IX+4),7
+_sq_outer:
+	POP	AF		; A = the next byte of N
+	LD	(IX+5),4
+_sq_inner:
+	RLCA			; R = R * 4 + the next two bits
+	ADC	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	RLCA
+	ADC	HL,HL
+	EX	DE,HL
+	ADC	HL,HL
+	EX	DE,HL
+	PUSH	HL
+	PUSH	DE
+	LD	BC,(_sq_x)
+	SCF
+	SBC	HL,BC		; R - X - 1
+	EX	DE,HL
+	LD	BC,(_sq_x+2)
+	SBC	HL,BC
+	EX	DE,HL
+	JR	C,_sq_no
+	POP	BC		; R >= X + 1: keep the difference
+	POP	BC
+	CALL	_sq_shx
+	SET	2,(IX+0)	; X = X * 2 + 4
+	JR	_sq_next
+_sq_no:
+	POP	DE
+	POP	HL
+	CALL	_sq_shx
+_sq_next:
+	DEC	(IX+5)
+	JR	NZ,_sq_inner
+	DEC	(IX+4)
+	JR	NZ,_sq_outer
+	; the mantissa is (X + 32) >> 6
+	LD	HL,(_sq_x)
+	LD	DE,(_sq_x+2)
+	LD	BC,32
+	ADD	HL,BC
+	JR	NC,_sq_f1
+	INC	DE
+_sq_f1:
+	LD	B,6
+_sq_f2:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	DJNZ	_sq_f2
+	POP	IX
+	POP	AF		; A = the exponent of the root
+	LD	B,A
+	LD	A,D
+	OR	A
+	LD	A,B
+	JR	Z,_sq_p
+	INC	A		; the mantissa carried to 2^24
+	LD	E,80H
+_sq_p:
+	SRL	A
+	LD	D,A
+	RET	C
+	RES	7,E
+	RET
+
+; X = X * 2
+_sq_shx:
+	SLA	(IX+0)
+	RL	(IX+1)
+	RL	(IX+2)
+	RL	(IX+3)
+	RET
+
+; the sign bit is set: -0 is the result for -0, a NaN for a NaN, else a NaN
+_sq_neg:
+	CP	255
+	JR	NZ,_sq_n2
+	LD	A,E
+	AND	7FH
+	OR	H
+	OR	L
+	RET	NZ		; a NaN
+	JR	_sq_nan		; -inf
+_sq_n2:
+	OR	A
+	JR	NZ,_sq_nan
+	LD	A,E
+	OR	H
+	OR	L
+	RET	Z		; -0
+_sq_nan:
+	LD	DE,7FC0H
+	LD	HL,0
+	RET
 
 	COMMON	/lc_sqrt/
-_sqrt_s:
-	DS	4
-_sqrt_r:
-	DS	4
-_sqrt_q:
-	DS	4
-_sqrt_e:
-	DS	1
+_sq_x:
+	DS	6
 
 	END
