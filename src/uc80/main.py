@@ -665,9 +665,11 @@ def main() -> int:
         "--scanf",
         action="append",
         default=[],
-        choices=["int", "long", "llong", "float", "all"],
+        choices=["int", "long", "llong", "float", "text", "all"],
         help="Scanf format support level; ADDITIVE, same closure rules as "
-             "--printf (currently advisory: nothing consumes scanf features yet)"
+             "--printf. float links the %%f conversions and text links the "
+             "%%c, %%s and %%[ conversions; the compiler finds them in the "
+             "format strings, so these options only force them"
     )
     parser.add_argument(
         "--int", dest="int_bits", type=int, choices=[16, 32],
@@ -914,9 +916,11 @@ def main() -> int:
                            isr_safe=args.isr_safe,
                            absolute=sdcc_found.absolute)
         code = gen.generate(merged_ast)
-        if scan_hook.needs_float_scanf(merged_ast, scanf_features):
-            code = scan_hook.add_float_reference(code, module_name,
-                                                 _tail_insert_index)
+        scanf_need = scan_hook.scanf_needs(merged_ast, scanf_features)
+        if scanf_need:
+            code = scan_hook.add_scanf_references(code, module_name,
+                                                  _tail_insert_index,
+                                                  scanf_need)
 
         def label_of(name):
             sym = gen.ctx.globals.get(name)

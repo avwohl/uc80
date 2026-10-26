@@ -1,0 +1,219 @@
+; lc_scan_text.mac - the %c, %s and %[ conversions of the scanf engine
+;
+; In:  A = the conversion character.  The engine has set _scn_w (the width,
+;      0 for none), _scn_skip (not zero for %*) and _scn_f (the format
+;      after the conversion character).  For %[ the routine moves _scn_f
+;      past the closing ].
+; Out: A = 0 for a matching failure, 1 for a conversion without an
+;      assignment (%*), 2 at the end of the input, 3 for an assignment.
+;
+; A set can start with ^ and can have ranges (a-z).  A ] that comes first is a
+; member of the set.  %c reads width characters (default 1) and does not skip
+; white space.  %s skips white space first and stops at white space.
+;
+; The program refers to _sc_text_on (see scan_hook.py in uc80) to link this
+; module instead of lc_scan_tdefault, which defines _sc_text too.
+	.Z80
+
+	CSEG
+
+	EXTRN	__scn_gc
+	EXTRN	__scn_ugc
+	EXTRN	__scn_sp
+	EXTRN	__scn_skipws
+	EXTRN	__scn_arg
+	EXTRN	__scn_f
+	EXTRN	__scn_w
+	EXTRN	__scn_skip
+
+	PUBLIC	__sc_text
+	PUBLIC	__sc_text_on
+__sc_text:
+__sc_text_on:
+	LD	(_sct_conv),A
+	CP	'['
+	JR	NZ,_sct_ns
+	LD	HL,(__scn_f)
+	LD	(_sct_setp),HL
+	LD	E,0
+	CALL	_sct_inset
+	LD	(__scn_f),HL
+	JR	_sct_go
+_sct_ns:
+	CP	's'
+	JR	NZ,_sct_go
+	CALL	__scn_skipws
+	JR	C,_sct_fail
+_sct_go:
+	XOR	A
+	LD	(_sct_eoff),A
+	LD	HL,0
+	LD	A,(__scn_skip)
+	OR	A
+	CALL	Z,__scn_arg
+	LD	(_sct_dst),HL
+	LD	HL,(__scn_w)
+	LD	A,H
+	OR	L
+	JR	NZ,_sct_hw
+	LD	HL,32767
+	LD	A,(_sct_conv)
+	CP	'c'
+	JR	NZ,_sct_hw
+	LD	HL,1
+_sct_hw:
+	LD	(_sct_w),HL
+	LD	HL,0
+	LD	(_sct_cnt),HL
+_sct_lp:
+	LD	HL,(_sct_w)
+	BIT	7,H
+	JR	NZ,_sct_end
+	LD	A,H
+	OR	L
+	JR	Z,_sct_end
+	CALL	__scn_gc
+	BIT	7,H
+	JR	NZ,_sct_eof
+	LD	A,(_sct_conv)
+	CP	'c'
+	JR	Z,_sct_take
+	CP	's'
+	JR	NZ,_sct_set
+	LD	A,L
+	CALL	__scn_sp
+	JR	NC,_sct_take
+_sct_stop:
+	CALL	__scn_ugc
+	JR	_sct_end
+_sct_set:
+	PUSH	HL
+	LD	E,L
+	LD	HL,(_sct_setp)
+	CALL	_sct_inset
+	POP	HL
+	JR	NC,_sct_stop
+_sct_take:
+	LD	DE,(_sct_w)
+	DEC	DE
+	LD	(_sct_w),DE
+	LD	DE,(_sct_cnt)
+	INC	DE
+	LD	(_sct_cnt),DE
+	LD	A,(__scn_skip)
+	OR	A
+	JR	NZ,_sct_lp
+	LD	DE,(_sct_dst)
+	LD	A,L
+	LD	(DE),A
+	INC	DE
+	LD	(_sct_dst),DE
+	JR	_sct_lp
+_sct_eof:
+	LD	A,1
+	LD	(_sct_eoff),A
+_sct_end:
+	LD	HL,(_sct_cnt)
+	LD	A,H
+	OR	L
+	JR	NZ,_sct_some
+	LD	A,(_sct_eoff)
+	OR	A
+	JR	NZ,_sct_fail
+	XOR	A
+	RET
+_sct_some:
+	LD	A,(__scn_skip)
+	OR	A
+	LD	A,1
+	RET	NZ
+	LD	A,(_sct_conv)
+	CP	'c'
+	LD	A,3
+	RET	Z
+	LD	HL,(_sct_dst)
+	LD	(HL),0
+	RET
+_sct_fail:
+	LD	A,2
+	RET
+
+; Is the character E in the set at HL (the text after the [)?  Carry is
+; set when it is.  HL ends after the closing ] (at the end of the text if
+; there is none).
+_sct_inset:
+	LD	D,2		; bit 0: ^, bit 1: no member read yet
+	LD	A,(HL)
+	CP	'^'
+	JR	NZ,_sct_n0
+	INC	HL
+	INC	D
+_sct_n0:
+	LD	A,D
+	AND	1
+	LD	B,A		; B = the result: 1 with ^ until a member is found
+_sct_il:
+	LD	A,(HL)
+	OR	A
+	JR	Z,_sct_ie
+	CP	']'
+	JR	NZ,_sct_m
+	BIT	1,D
+	JR	Z,_sct_ie
+_sct_m:
+	RES	1,D
+	LD	C,A		; C = the low end
+	INC	HL
+	LD	A,(HL)
+	CP	'-'
+	JR	NZ,_sct_one
+	INC	HL
+	LD	A,(HL)		; the high end
+	DEC	HL
+	CP	']'
+	JR	Z,_sct_one
+	OR	A
+	JR	Z,_sct_one
+	INC	HL
+	INC	HL
+	CP	E
+	JR	C,_sct_il	; E is above the high end
+	LD	A,E
+	CP	C
+	JR	C,_sct_il	; E is below the low end
+	JR	_sct_hit
+_sct_one:
+	LD	A,E
+	CP	C
+	JR	NZ,_sct_il
+_sct_hit:
+	LD	A,D
+	AND	1
+	XOR	1
+	LD	B,A
+	JR	_sct_il
+_sct_ie:
+	LD	A,(HL)
+	CP	']'
+	JR	NZ,_sct_ee
+	INC	HL
+_sct_ee:
+	LD	A,B
+	RRA
+	RET
+
+	COMMON	/lc_scan_text/
+_sct_conv:
+	DS	1
+_sct_eoff:
+	DS	1
+_sct_setp:
+	DS	2
+_sct_dst:
+	DS	2
+_sct_w:
+	DS	2
+_sct_cnt:
+	DS	2
+
+	END

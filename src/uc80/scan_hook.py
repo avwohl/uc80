@@ -1,17 +1,18 @@
-"""Link the floating-point part of scanf only for a program that needs it.
+"""Link the larger parts of scanf only for a program that needs them.
 
-The scanf engine (lib/lc/lc_scan_core) calls ``_sc_float`` for %f, %e, %g
-and %a.  Two library modules define that function.  ``lc_scan_fdefault`` is
-the default; it fails every float conversion.  ``lc_scan_float`` reads the
-number and calls strtod (about 5 KB of code).  The linker takes the second
-module only when the program refers to its other entry point,
-``__sc_float_on``.
+The scanf engine (lib/lc/lc_scan_core) does the integer conversions, the
+literal characters and %%, %n.  It calls ``_sc_float`` for %f, %e, %g and
+%a, and ``_sc_text`` for %c, %s and %[.  Two library modules define each of
+these functions.  ``lc_scan_fdefault`` and ``lc_scan_tdefault`` are the
+defaults; they fail every conversion of their kind.  ``lc_scan_float`` reads
+the number and calls strtod (about 5 KB of code).  ``lc_scan_text`` reads
+characters and sets.  The linker takes the real module only when the program
+refers to its other entry point, ``__sc_float_on`` or ``__sc_text_on``.
 
-This module decides from the syntax tree whether the program needs the
-float conversions: a call of a scanf function whose format string has a
-float conversion, or whose format is not a string literal, or a scanf
-function that is used without a call.  It adds an EXTRN of that
-entry point to the assembly that uc80 writes.
+This module decides from the syntax tree what the program needs: a call of a
+scanf function whose format string has a conversion of the kind, or whose
+format is not a string literal, or a scanf function that is used without a
+call.  It adds an EXTRN of each entry point to the assembly that uc80 writes.
 """
 
 import re
@@ -26,8 +27,9 @@ SCANF_FORMAT_ARG = {
     "sscanf": 1, "vsscanf": 1,
 }
 
-# %[*][width][length]conversion, with a float conversion
+# %[*][width][length]conversion, with a float conversion or a text conversion
 _FLOAT_CONV = re.compile(r"%\*?\d*(?:hh|h|ll|l|L|j|z|t|q)?[eEfFgGaA]")
+_TEXT_CONV = re.compile(r"%\*?\d*(?:hh|h|ll|l|L|j|z|t|q)?[cs\[]")
 
 
 def _literal_text(arg):
@@ -38,14 +40,18 @@ def _literal_text(arg):
     return None
 
 
-def needs_float_scanf(unit, features=None):
-    """True if the program needs the float conversions of scanf.
+def scanf_needs(unit, features=None):
+    """The set of optional scanf parts the program needs: "float", "text".
 
     FEATURES is the set from ``#pragma scanf`` or ``--scanf``, or None."""
-    if features and features & {"float", "all"}:
-        return True
+    need = set()
+    if features:
+        if features & {"float", "all"}:
+            need.add("float")
+        if features & {"text", "all"}:
+            need.add("text")
     stack = list(unit.items)
-    while stack:
+    while stack and need != {"float", "text"}:
         node = stack.pop()
         if isinstance(node, (ast.Call, ast.CallNoArgs)):
             func = node.func
@@ -54,10 +60,14 @@ def needs_float_scanf(unit, features=None):
                 args = node.args if isinstance(node, ast.Call) else []
                 index = SCANF_FORMAT_ARG[name]
                 if index >= len(args):
-                    return True
+                    return {"float", "text"}
                 text = _literal_text(args[index])
-                if text is None or _FLOAT_CONV.search(text):
-                    return True
+                if text is None:
+                    return {"float", "text"}
+                if _FLOAT_CONV.search(text):
+                    need.add("float")
+                if _TEXT_CONV.search(text):
+                    need.add("text")
                 for arg in args:
                     if isinstance(arg, list):
                         stack.extend(a for a in arg if hasattr(a, "__dataclass_fields__"))
@@ -66,13 +76,22 @@ def needs_float_scanf(unit, features=None):
                 continue
         elif isinstance(node, ast.Identifier):
             if node.name.text in SCANF_FORMAT_ARG:
-                return True              # the address of a scanf function
+                return {"float", "text"}     # the address of a scanf function
         stack.extend(children(node))
-    return False
+    return need
 
 
-def add_float_reference(code, module_name, tail_index):
-    """Return CODE with a small function that refers to ``__sc_float_on``.
+def needs_float_scanf(unit, features=None):
+    """True if the program needs the float conversions of scanf."""
+    return "float" in scanf_needs(unit, features)
+
+
+_ENTRY = {"float": "__sc_float_on", "text": "__sc_text_on"}
+
+
+def add_scanf_references(code, module_name, tail_index, need):
+    """Return CODE with a small function that refers to the entry points of
+    the optional scanf parts in NEED (a set of "float" and "text").
 
     The assembler writes a request for an external symbol into the object
     file, and the linker takes the library module that defines it.  But
@@ -82,16 +101,15 @@ def add_float_reference(code, module_name, tail_index):
     the place before the BSS block (main._tail_insert_index)."""
     lines = code.splitlines()
     at = tail_index(lines)
-    label = "__sc_float_ref_" + re.sub(r"\W", "_", module_name)
-    block = [
-        "",
-        "; scanf: a reference that links the floating-point conversions",
-        "\textrn\t__sc_float_on",
-        "\tcseg",
-        f"\tpublic\t{label}",
-        f"{label}:",
-        "\tld\tHL,__sc_float_on",
-        "\tret",
-        "",
-    ]
+    label = "__sc_opt_ref_" + re.sub(r"\W", "_", module_name)
+    block = ["", "; scanf: a reference that links the optional conversions"]
+    block += [f"\textrn\t{_ENTRY[k]}" for k in sorted(need)]
+    block += ["\tcseg", f"\tpublic\t{label}", f"{label}:"]
+    block += [f"\tld\tHL,{_ENTRY[k]}" for k in sorted(need)]
+    block += ["\tret", ""]
     return "\n".join(lines[:at] + block + lines[at:]) + "\n"
+
+
+def add_float_reference(code, module_name, tail_index):
+    """Return CODE with a reference that links the float conversions."""
+    return add_scanf_references(code, module_name, tail_index, {"float"})

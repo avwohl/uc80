@@ -1,0 +1,17 @@
+; lc_scan_tdefault.mac - CONCAT-SKIP: lc_scan_text defines _sc_text too
+;
+; The default text conversion of the scanf engine: every %c, %s and %[ is a
+; matching failure.  A program that needs them links lc_scan_text instead
+; (see scan_hook.py in uc80).  The name sorts before the name of the real
+; module: the linker reads the library in the order of the names, so it takes
+; this module only if the real module is not in the program already.
+	.Z80
+
+	CSEG
+
+	PUBLIC	__sc_text
+__sc_text:
+	XOR	A
+	RET
+
+	END

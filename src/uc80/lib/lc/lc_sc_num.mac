@@ -1,36 +1,32 @@
-; lc_sc_num.mac - _sc_muladd, _sc_negate
+; lc_sc_num.mac - _sc_muladd, _sc_negate, _sc_dv
 ;
 ; Arithmetic on a number of 1 to 8 bytes in memory (little endian).  The
-; scanf engine and strtol use it, so that the C code needs no 32-bit or
-; 64-bit multiply routine.
+; scanf engine and strtol use it, so that they need no 32-bit or 64-bit
+; multiply routine.  The routines take their arguments in registers.
 	.Z80
 
 	CSEG
 
 ; ============================================================
-; int _sc_muladd(unsigned char *r, int nb, int mul, int add)
-; r = r * mul + add on nb bytes.  mul is 1 to 36, add is 0 to 255.
-; Returns a value that is not zero when the result did not fit.
+; _sc_muladd: r = r * mul + add on nb bytes
+; In:  HL = r, B = nb (1 to 8), C = mul (1 to 36), A = add (0 to 255)
+; Out: A = the carry out of the last byte, not zero when the result
+;      did not fit.  Changes BC, DE and HL.
 ; ============================================================
 	PUBLIC	__sc_muladd
 __sc_muladd:
 	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)	; HL = r
-	LD	B,(IX+6)	; B = the number of bytes
-	LD	E,(IX+10)	; E = the carry into the first byte
-	LD	D,0
-_scm_byte:
-	LD	A,(HL)
 	PUSH	HL
-	PUSH	BC
-	LD	C,(IX+8)	; C = mul
-	LD	B,8
-	EX	DE,HL		; HL = the carry
-	LD	E,A
+	POP	IX
+	LD	L,A
+	LD	H,0		; HL = the carry into the next byte
+	LD	A,C
+	LD	(_scm_m),A
+_scm_byte:
+	LD	E,(IX+0)
 	LD	D,0		; DE = the byte, shifted left in each step
+	LD	A,(_scm_m)
+	LD	C,A
 _scm_bit:
 	SRL	C
 	JR	NC,_scm_skip
@@ -38,32 +34,24 @@ _scm_bit:
 _scm_skip:
 	SLA	E
 	RL	D
-	DJNZ	_scm_bit
-	LD	A,L		; the new byte
-	LD	E,H		; the carry into the next byte
-	LD	D,0
-	POP	BC
-	POP	HL
-	LD	(HL),A
-	INC	HL
-	DJNZ	_scm_byte
-	LD	L,E
+	LD	A,C
+	OR	A
+	JR	NZ,_scm_bit
+	LD	(IX+0),L
+	LD	L,H
 	LD	H,0
+	INC	IX
+	DJNZ	_scm_byte
+	LD	A,L
 	POP	IX
 	RET
 
 ; ============================================================
-; void _sc_negate(unsigned char *r, int nb)
-; r = -r on nb bytes (two's complement)
+; _sc_negate: r = -r on nb bytes (two's complement)
+; In:  HL = r, B = nb.  Changes A, B and HL.
 ; ============================================================
 	PUBLIC	__sc_negate
 __sc_negate:
-	PUSH	IX
-	LD	IX,0
-	ADD	IX,SP
-	LD	L,(IX+4)
-	LD	H,(IX+5)
-	LD	B,(IX+6)
 	SCF
 _scn_loop:
 	LD	A,(HL)
@@ -72,7 +60,36 @@ _scn_loop:
 	LD	(HL),A
 	INC	HL
 	DJNZ	_scn_loop
-	POP	IX
 	RET
+
+; ============================================================
+; _sc_dv: the value of a digit
+; In:  A = a character.  Out: A = 0 to 9 for '0' to '9', 10 to 35 for
+;      a letter of either case, 99 for any other character.
+; ============================================================
+	PUBLIC	__sc_dv
+__sc_dv:
+	SUB	'0'
+	JR	C,_scd_bad
+	CP	10
+	RET	C
+	SUB	'A'-'0'
+	JR	C,_scd_bad
+	CP	26
+	JR	C,_scd_let
+	SUB	'a'-'A'
+	JR	C,_scd_bad
+	CP	26
+	JR	NC,_scd_bad
+_scd_let:
+	ADD	A,10
+	RET
+_scd_bad:
+	LD	A,99
+	RET
+
+	COMMON	/lc_sc_num/
+_scm_m:
+	DS	1
 
 	END
