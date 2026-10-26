@@ -26,7 +26,7 @@ Numbers from `bench/run.py` (uc80, size mode, 109 programs; the three games `bat
 - davidly-ttt: 3807 B / 13.12M to 3747 B / 12.87M
 - sieve: 253 B / 3.91M, no change
 
-Of the 103 programs that are OK in both runs, 82 get smaller and none gets bigger. The total image falls from 638,662 to 619,188 bytes (geometric mean of the size ratio 0.972). 56 programs get faster and 2 get slower (`embench-md5sum` +373 T-states and `embench-tarfind` +844 T-states); the geometric mean of the T-state ratio is 0.966. No program changed status.
+Of the 103 programs that are OK in both runs, 82 get smaller and none gets bigger. Two programs that fit in 64 KB but are not in this count do get bigger: `mojozork-size` (image 31,736 to 33,965 bytes) and `monop-size` (image +325 bytes, BSS -535). The cause is the call graph change for calls through a pointer (see the CHANGELOG): the functions that such a call can reach lose their `??AUTO` storage and use stack frames with `IX`. The growth shows also with `--no-register-cc` (the COM file of mojozork is 34,688 bytes with it and 34,048 without it), so the register convention does not cause it. The total image falls from 638,662 to 619,188 bytes (geometric mean of the size ratio 0.972). 56 programs get faster and 2 get slower (`embench-md5sum` +373 T-states and `embench-tarfind` +844 T-states); the geometric mean of the T-state ratio is 0.966. No program changed status.
 
 Means against SDCC 4.6.0 (method of `bench/report.py`), main then integrated:
 

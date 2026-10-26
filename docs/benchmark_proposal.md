@@ -628,7 +628,7 @@ Thanks for the question. We built a proper benchmark to answer it, which took a 
 
 - A harness of 112 programs and 9 compilers, including standalone SDCC 4.4.0 (the version ngdevkit builds) and SDCC 4.6.0. It counts Z80 T-states with `z88dk-ticks`.
 - Four of the programs are sound-driver kernels that we wrote for this issue: an NMI command queue, YM2610 register writes with a shadow compare and a busy-wait, a sequencer tick for 4 FM and 3 SSG channels, and note to F-number. Against SDCC 4.4.0, uc80 needs 16 to 53 percent more T-states on three of them and is about 2 percent faster on the fourth. The kernel code is about 25 to 45 percent bigger with uc80.
-- Over all 105 programs that run, uc80 is faster than SDCC on average (about 0.60 of the T-states of SDCC 4.6.0). Most of that lead comes from the uc80 library (`printf`, `qsort`, 32-bit math), which a sound driver does not use. On small integer code with many small calls, SDCC still wins.
+- Over all 105 programs that run, uc80 is faster than SDCC on average (about 0.59 of the T-states of SDCC 4.6.0, over the 78 programs that both compilers run in speed mode). Most of that lead comes from the uc80 library (`printf`, `qsort`, 32-bit math), which a sound driver does not use. On small integer code with many small calls, SDCC still wins.
 
 **Why SDCC wins on driver code:** SDCC passes arguments in registers and keeps locals in registers. uc80 passes every argument on the stack as a 16-bit word and keeps locals in memory.
 
