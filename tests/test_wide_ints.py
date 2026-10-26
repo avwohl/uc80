@@ -28,6 +28,16 @@ uc80 under each flag set below and must print the same text.
   bool_misc           _Bool from every width, in calls, returns and casts
   fold16              (x op c1) op c2 with constants of different widths is
                       not folded to x op c3
+  incdec_ll_binary    ++ and -- on a long long as an operand of a binary
+                      operator (x++ * 2, a++ + g()) keep the other operand
+  inline_narrow_param a wide argument for a short or char parameter of an
+                      inlined function is cut to the parameter type
+  inline_narrow_result a wider body for a result of a 16-bit typedef is cut
+  bool_static_addr    _Bool objects initialised from address constants
+  cse_cast_types      casts of one variable to different types are not one
+                      common subexpression (uc_core CSE key)
+  cast_ll_literal_arg a long long literal under a narrowing cast as an
+                      argument keeps only the bits of the narrow type
   ccfuzz_ll126        seed 126 of bench/ccfuzz.py --ll
 """
 

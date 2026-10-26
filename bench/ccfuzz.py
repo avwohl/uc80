@@ -133,6 +133,7 @@ typedef int I16; typedef long L32;
 #endif
 typedef long long LL; typedef unsigned long long ULL;
 ULL G=0x123456789ULL; L32 GL=77777; I16 GI=-5;
+LL GX=0x100000003LL;   /* only ++ and -- touch GX: no functions read it */
 """
 LL_T = {"ll": "LL", "l": "L32", "i": "I16", "c": "char"}
 
@@ -141,6 +142,8 @@ def make_program_ll(seed):
     r = random.Random(seed)
     funcs = []
     out = [LL_HDR]
+
+    nocall = [False]
 
     def leaf(params):
         c = r.random()
@@ -154,9 +157,12 @@ def make_program_ll(seed):
         if d <= 0 or r.random() < 0.2:
             return f"(ULL)({leaf(params)})"
         c = r.random()
-        if c < 0.25 and funcs:
+        if c < 0.25 and funcs and not nocall[0]:
             f = r.choice(funcs)
-            args = ",".join(f"({LL_T[pt]})({expr(params, d - 1)})"
+            # an argument is cast to the parameter type, or (a third of
+            # the time) passed as a wider value for the implicit conversion
+            args = ",".join((f"({LL_T[pt]})({expr(params, d - 1)})"
+                             if r.random() < 0.67 else f"({expr(params, d - 1)})")
                             for pt in f[1])
             return f"(ULL)({f[0]}({args}))"
         op = r.choice(["+", "-", "*", "^", "&", "|"])
@@ -165,7 +171,8 @@ def make_program_ll(seed):
                     f" >> {r.randrange(0, 5)})")
         return f"({expr(params, d - 1)} {op} {expr(params, d - 1)})"
 
-    for i in range(r.randrange(4, 9)):
+    nfuncs = r.randrange(4, 9)
+    for i in range(nfuncs):
         pts = [r.choice(["ll", "l", "i", "c", "i", "i", "ll"])
                for _ in range(r.randrange(0, 4))]
         rt = r.choice(["ll", "l", "i", "c"])
@@ -175,7 +182,21 @@ def make_program_ll(seed):
         body = f"static {LL_T[rt]} {name}({sig}){{\n"
         for j in range(r.randrange(0, 2)):
             body += f"  LL v{j} = (LL)({expr(params, 2)});\n"
-        e = expr(params, r.randrange(1, 4))
+        if i == nfuncs - 1 and r.random() < 0.8:
+            # ++ or -- of a long long GX (only the last function, which no
+            # other function calls, has it; no function reads or writes
+            # it, and the other operand has no call: no order is
+            # observable) as an operand of a binary operator
+            nocall[0] = True
+            gx = r.choice(["GX++", "GX--", "++GX", "--GX"])
+            op = r.choice(["+", "-", "*", "^", "&", "|", "<", "=="])
+            a, b = f"(ULL)({gx})", expr(params, 2)
+            if r.random() < 0.5:
+                a, b = b, a
+            e = f"(ULL)({a} {op} {b})"
+            nocall[0] = False
+        else:
+            e = expr(params, r.randrange(1, 4))
         if r.random() < 0.3:
             e = f"({e}) + (ULL)(GI)"
         body += f"  return ({LL_T[rt]})({e});\n}}\n"
@@ -184,7 +205,10 @@ def make_program_ll(seed):
     m = "int main(void){\n"
     for _ in range(r.randrange(6, 14)):
         f = r.choice(funcs)
-        args = ",".join(f"({LL_T[pt]})({r.randrange(-300, 70000)}LL)"
+        args = ",".join((f"({LL_T[pt]})({r.randrange(-300, 70000)}LL)"
+                         if r.random() < 0.6 else
+                         r.choice(["70000L", "0x12345678L", "40000", "-70000L",
+                                   "0xfffffff0UL", "0x1fffffff0LL", "G", "GL"]))
                         for pt in f[1])
         m += f'  printf("%ld\\n",(long)(L32)({f[0]}({args})));\n'
     out.append(m + "  return 0;\n}\n")

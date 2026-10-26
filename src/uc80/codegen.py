@@ -2426,8 +2426,11 @@ class CallGraphAnalyzer:
         return sum(self._plain_uses(getattr(node, f.name, None), name, always)
                    for f in dataclasses.fields(node) if f.name != "pos")
 
-    def _inline_strip_typedef(self, t):
-        """``t`` with file-scope typedef names resolved to their type."""
+    def _inline_strip_typedef(self, t, keep16=False):
+        """``t`` with file-scope typedef names resolved to their type.
+        With ``keep16`` a typedef of a 16-bit int (uint16_t) is returned
+        as it was; the caller decides whether the argument needs the
+        wrapping Cast (see _inline_arg_is_int16)."""
         reg = getattr(self, "_inline_typedefs", None) or {}
         orig = t
         seen: set[str] = set()
@@ -2435,14 +2438,102 @@ class CallGraphAnalyzer:
                and t.name not in seen):
             seen.add(t.name)
             t = reg[t.name]
-        if (t is not orig and t is not None and t.kind == "basic"
+        if (keep16 and t is not orig and t is not None and t.kind == "basic"
                 and t.name in ("int", "short")
                 and getattr(self.type_config, "int_size", 2) == 2):
-            # A typedef of a 16-bit int (uint16_t): left alone, as it
-            # always was; the wrapping Cast would only cost code (the
-            # operand is no longer a plain variable for the DE loads).
             return orig
         return t
+
+    def _inline_collect_types(self, node, out: dict) -> None:
+        """Declared type of every variable declared under ``node`` (a
+        parameter list, a body, or the file scope).  A name declared twice
+        with different types is recorded as None (unknown)."""
+        from dataclasses import fields as _dc_fields, is_dataclass
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                self._inline_collect_types(x, out)
+            return
+        if not is_dataclass(node):
+            return
+        if isinstance(node, ast.Declaration):
+            try:
+                if decl_storage_class(node.decl_specs) != "typedef":
+                    for nm, full, _i, is_func in iter_var_decls(node):
+                        if nm is None or is_func:
+                            continue
+                        if nm in out and repr(out[nm]) != repr(full):
+                            out[nm] = None
+                        else:
+                            out[nm] = full
+            except Exception:
+                pass
+        if isinstance(node, ast.FunctionDef):
+            return          # a nested scope of its own is the caller's job
+        for f in _dc_fields(node):
+            self._inline_collect_types(getattr(node, f.name, None), out)
+
+    def _inline_function_types(self, func) -> dict:
+        """Types of the globals, parameters and locals visible in ``func``."""
+        types = dict(self._inline_global_types)
+        local: dict = {}
+        for p in function_params(func):
+            if isinstance(p, ast.ParamDecl):
+                nm = declarator_ident(p.declarator)
+                if nm:
+                    try:
+                        _, t = resolve_type_from_decl(p.decl_specs, p.declarator)
+                    except Exception:
+                        t = None
+                    local[nm] = t
+        self._inline_collect_types(func.body, local)
+        types.update(local)
+        return types
+
+    def _inline_arg_is_int16(self, arg, p_type) -> bool:
+        """True when ``arg`` is known to be an integer of 16 bits with
+        the signedness of the parameter type ``p_type`` (a typedef of a
+        16-bit int), so converting it to the parameter type changes
+        nothing and the wrapping Cast can be left out."""
+        if getattr(self.type_config, "int_size", 2) != 2:
+            return False
+        want_signed = True
+        pt = self._inline_strip_typedef(p_type)
+        if pt is None or pt.kind != "basic" or pt.name not in ("int", "short"):
+            return False
+        want_signed = pt.is_signed is not False
+
+        def is16(t):
+            t = self._inline_strip_typedef(t)
+            return (t is not None and t.kind == "basic"
+                    and t.name in ("int", "short")
+                    and (t.is_signed is not False) == want_signed)
+
+        types = getattr(self, "_inline_var_types", {})
+        if isinstance(arg, ast.IntLiteral):
+            if any(int_flags(arg)[:2]):          # L or LL suffix
+                return False
+            v = int_value(arg)
+            return (-32768 <= v <= 32767) if want_signed else (0 <= v <= 65535)
+        if isinstance(arg, ast.Identifier):
+            t = types.get(arg.name.text)
+            return t is not None and is16(t)
+        if isinstance(arg, ast.Index) and isinstance(arg.array, ast.Identifier):
+            t = types.get(arg.array.name.text)
+            if t is not None and t.kind == "array":
+                return is16(t.element)
+            if t is not None and t.kind == "pointer":
+                return is16(t.pointee)
+            return False
+        if isinstance(arg, ast.Cast):
+            tt = arg.target_type
+            if not isinstance(tt, lt.BasicType):
+                return False
+            reg = getattr(self, "_inline_typedefs", None) or {}
+            if tt.name in reg:
+                return is16(reg[tt.name])
+            return (tt.name in ("int", "short")
+                    and (tt.is_signed is not False) == want_signed)
+        return False
 
     def _body_writes_params(self, func) -> bool:
         """True if the body of ``func`` modifies one of its parameters."""
@@ -2483,7 +2574,8 @@ class CallGraphAnalyzer:
                             continue
                         arg = new_args[i]
                         _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
-                        p_type = self._inline_strip_typedef(p_type)
+                        p_type_raw = p_type
+                        p_type = self._inline_strip_typedef(p_type, keep16=True)
                         # When inlining, the implicit "convert arg to
                         # parameter type" that gen_call would do at the
                         # callee's IX+ slot has to be made explicit —
@@ -2515,6 +2607,21 @@ class CallGraphAnalyzer:
                                         is_signed=(False if p_type.is_signed is False else True)),
                                     expr=arg, pos=ast._Pos(),
                                 )
+                        elif (p_type.kind == "typedef"
+                              and not self._inline_arg_is_int16(arg, p_type)):
+                            # A typedef of a 16-bit int (uint16_t): an
+                            # argument that is not known to be of that
+                            # type is converted to it (a long long or
+                            # long is cut, a signed char is re-signed).
+                            rt16 = self._inline_strip_typedef(p_type)
+                            if (rt16 is not None and rt16.kind == "basic"
+                                    and rt16.name in ("int", "short")):
+                                arg = ast.Cast(
+                                    target_type=lt.BasicType(
+                                        name=rt16.name,
+                                        is_signed=(False if rt16.is_signed is False else True)),
+                                    expr=arg, pos=ast._Pos(),
+                                )
                         param_map[pname] = arg
                     # The trivial-function body is a single ReturnStmtValue.
                     ret_stmt = func.body.items[0]
@@ -2526,7 +2633,7 @@ class CallGraphAnalyzer:
                     # sees 3024 > 0 instead of -48 > 0.
                     _, fn_type = resolve_type_from_decl(func.decl_specs, func.declarator)
                     rt = fn_type.return_type if fn_type.kind == "function" else None
-                    rt = self._inline_strip_typedef(rt)
+                    rt = self._inline_strip_typedef(rt, keep16=True)
                     # Any arithmetic return type: ``long f(int x){return
                     # x;}`` must still yield a long (a variadic argument
                     # pushes 4 bytes), ``unsigned f(...)`` an unsigned.
@@ -2538,6 +2645,20 @@ class CallGraphAnalyzer:
                                 is_signed=(False if rt.is_signed is False else True)),
                             expr=body, pos=ast._Pos(),
                         )
+                    elif (rt is not None and rt.kind == "typedef"
+                          and not self._inline_arg_is_int16(body, rt)):
+                        # A typedef of a 16-bit int (uint16_t) as the
+                        # result type: a wider body (``return a;`` with
+                        # an unsigned long ``a``) is cut to 16 bits.
+                        rt16 = self._inline_strip_typedef(rt)
+                        if (rt16 is not None and rt16.kind == "basic"
+                                and rt16.name in ("int", "short")):
+                            body = ast.Cast(
+                                target_type=lt.BasicType(
+                                    name=rt16.name,
+                                    is_signed=(False if rt16.is_signed is False else True)),
+                                expr=body, pos=ast._Pos(),
+                            )
                     return body
 
             # Return call with inlined arguments.
@@ -2736,6 +2857,12 @@ class CallGraphAnalyzer:
                 except Exception:
                     pass
 
+        self._inline_global_types = {}
+        for item in unit.items or []:
+            if isinstance(item, ast.Declaration):
+                self._inline_collect_types(item, self._inline_global_types)
+        self._inline_var_types = {}
+
         for _ in range(max_iterations):
             # Build function body map keyed by IDENT name extracted from
             # each FunctionDef's declarator chain.
@@ -2773,6 +2900,7 @@ class CallGraphAnalyzer:
             new_items = []
             for item in unit.items or []:
                 if isinstance(item, ast.FunctionDef) and item.body:
+                    self._inline_var_types = self._inline_function_types(item)
                     new_body = self._inline_stmt(item.body, func_bodies, inlineable)
                     new_items.append(ast.FunctionDef(
                         decl_specs=item.decl_specs,
@@ -19231,7 +19359,24 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if inner is not None:
                 return ~inner
         if isinstance(expr, ast.Cast):
-            return self._try_get_ll_literal_value(expr.expr)
+            inner = self._try_get_ll_literal_value(expr.expr)
+            if inner is None:
+                return None
+            # The cast cuts the value to its own width: (ULL)(char)27187LL
+            # is 51, not 27187.
+            t = _to_legacy(expr.target_type)
+            if self._is_float_type(t):
+                return None
+            if self._is_bool_type(t):
+                return 1 if inner else 0
+            if isinstance(t, lt.BasicType) or isinstance(t, lt.PointerType):
+                bits = 8 * self._type_size(t)
+                val = inner & ((1 << bits) - 1)
+                if (isinstance(t, lt.BasicType) and self._is_signed_type(t)
+                        and val >> (bits - 1)):
+                    val -= 1 << bits
+                return val
+            return None
         return None
 
     def _is_wide_expr(self, expr) -> bool:
@@ -19367,9 +19512,11 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 return True
             # Check nested expressions
             return self._uses_tmp64(expr.left) or self._uses_tmp64(expr.right)
-        if isinstance(expr, ast.UnaryOp):
-            return self._uses_tmp64(expr.operand)
-        if isinstance(expr, ast.PostfixOp):
+        if isinstance(expr, (ast.UnaryOp, ast.PostfixOp)):
+            # ++ and -- on a 64-bit lvalue stage the constant 1 in __tmp64.
+            if (expr.op in ("++", "--")
+                    and self._is_long_long_expr(expr.operand)):
+                return True
             return self._uses_tmp64(expr.operand)
         if isinstance(expr, ast.TernaryOp):
             return (self._uses_tmp64(expr.condition) or
@@ -20797,6 +20944,36 @@ class CodeGenerator(Z80IntrinsicsMixin):
         if isinstance(e, ast.UnaryOp) and e.op == "&":
             label, _off = self._try_resolve_address_const(e)
             return True if label is not None else None
+        if isinstance(e, ast.TernaryOp):
+            c = self._const_truth(e.condition)
+            if c is None:
+                return None
+            return self._const_truth(e.true_expr if c else e.false_expr)
+        if (isinstance(e, ast.BinaryOp) and e.op == "-"
+                and not isinstance(e.left, ast.Cast)):
+            # &a[i] - &a[j] in the same object: the offsets decide
+            l1, o1 = self._try_resolve_address_const(e.left)
+            l2, o2 = self._try_resolve_address_const(e.right)
+            if l1 is not None and l1 == l2:
+                return o1 != o2
+        if (isinstance(e, ast.BinaryOp) and e.op in ("+", "-")
+                and not isinstance(e.left, ast.Cast)):
+            label, _off = self._try_resolve_address_const(e)
+            if label is not None:
+                return True
+        if (isinstance(e, ast.Identifier)
+                and self._try_resolve_address_const(e)[0] is not None):
+            return True      # an array or function name
+        if isinstance(e, (ast.Index, ast.Member)):
+            try:
+                is_arr = isinstance(_to_legacy(self._get_expr_type(e)),
+                                    lt.ArrayType)
+            except Exception:
+                is_arr = False
+            if is_arr:       # m[1] of an int m[2][2]: decays to an address
+                label, _off = self._try_resolve_address_const(
+                    ast.UnaryOp(op="&", operand=e, pos=e.pos))
+                return True if label is not None else None
         if isinstance(e, ast.Cast):
             t = _to_legacy(e.target_type)
             if self._is_bool_type(t):
@@ -20819,7 +20996,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 # an address compared with a constant
                 for a, b in ((e.left, e.right), (e.right, e.left)):
                     if (self._const_truth(a) is True
-                            and isinstance(a, (ast.UnaryOp, ast.StringLiteral))
+                            and isinstance(a, (ast.UnaryOp, ast.StringLiteral,
+                                               ast.Identifier, ast.BinaryOp))
                             and self._eval_const_expr(b) == 0):
                         return e.op == "!="
             return None
