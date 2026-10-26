@@ -31,6 +31,7 @@ observable behaviour of a program uc80 compiles.
 
 ### Added
 
+- **Watchdog hook for the ROM target.** A program that defines `__watchdog_kick` (a C function with `#pragma uc80 public _watchdog_kick`, or an assembly file) gets a call of the hook at reset, before `main` and before each `HALT` of the idle loop. A program without the hook has no call and no extra byte. Tested in `bench/romrun` with a port that logs the kicks (`tests/test_rom_target.py`, `TestWatchdogHook`). See `docs/rom.md`.
 - **Interop with SDCC and nullsound** (Phase 5 of `docs/rom_target.md`; see `docs/rom_interop.md`):
   - SDCC `__asm ... __endasm;` blocks, at statement level and at file level. The prepass in `sdcc_compat.py` turns the sdas text of a block into an `asm("...")` statement with MACRO-80 text (`#imm`, `N(ix)`, `.db`, `.dw`, `.ds`, `.ascii`, `.globl`, `1$` labels, `0x` numbers). A directive or an operand it cannot translate is an error with the line number.
   - `--asm-syntax=sdas` (with `--sdas-style=sdcc|ngdevkit` and `--sdas-areas`): the compiler writes sdas text for `sdasz80` and `sdldz80`. New module `src/uc80/sdas.py` (with `asmexpr.py` and `sdas_inline.py`). The default output does not change. The translator keeps the `JR` range rule of um80 (a far `JR` becomes `JP`), splits DSEG into an image area and a RAM area, and maps the vector area to an absolute area (marker `;@RELOC` in `crt0_rom.mac`).

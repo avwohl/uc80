@@ -240,6 +240,103 @@ int main(void)
         assert "LD\tSP,0FF00H" in (tmp_path / "t.mac").read_text()
 
 
+class TestWatchdogHook:
+    """__watchdog_kick: called at reset, before main and in the idle loop.
+    A program without the hook has no call (docs/rom.md)."""
+
+    KICK_PORT = 0x7F
+
+    def kicks(self, m):
+        return [t for (t, kind, port, _v) in m.port_log
+                if kind == "OUT" and port & 0xFF == self.KICK_PORT]
+
+    def run_idle(self, tmp_path, period=4000, until=30000):
+        m = machine(tmp_path)
+        m.stop_on_halt = False
+        m.add_irq_every(period, start=period)
+        m.run(max_tstates=until)
+        return m
+
+    def test_c_hook(self, tmp_path):
+        r = compile_rom(tmp_path, """
+#include <z80.h>
+void _watchdog_kick(void) { z80_out(0x7F, 0xA5); }
+#pragma uc80 public _watchdog_kick
+volatile int counter = 7;
+int main(void) { counter++; z80_ei(); return 0; }
+""")
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        m = self.run_idle(tmp_path)
+        kicks = self.kicks(m)
+        # reset, before main, entry of the idle loop, one for each wake-up
+        assert len(m.accepted) >= 5
+        assert len(kicks) == 3 + len(m.accepted)
+        assert kicks[0] < 100                  # the first call is at reset
+        assert m.peek16("counter") == 8        # the hook does not break init
+
+    def test_assembly_hook(self, tmp_path):
+        (tmp_path / "wd.mac").write_text(
+            "\t.Z80\n\tCSEG\n\tPUBLIC\t__watchdog_kick\n"
+            "__watchdog_kick:\n\tLD\tA,0A5H\n\tOUT\t(7FH),A\n\tRET\n\tEND\n")
+        r = compile_rom(tmp_path, """
+#include <z80.h>
+int main(void) { z80_ei(); return 0; }
+""", files=[str(tmp_path / "wd.mac")])
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        m = self.run_idle(tmp_path)
+        assert len(self.kicks(m)) == 3 + len(m.accepted) >= 8
+
+    def test_hook_stops_a_watchdog_model(self, tmp_path):
+        """A fake watchdog that resets after 6000 T-states without a kick
+        never fires when the hook runs; the main loop here is longer."""
+        r = compile_rom(tmp_path, """
+#include <z80.h>
+void _watchdog_kick(void) { z80_out(0x7F, 0); }
+#pragma uc80 public _watchdog_kick
+volatile unsigned long n;
+int main(void)
+{
+    unsigned i;
+    for (i = 0; i < 200; i++) {
+        n += i;
+        if ((i & 15) == 0)
+            _watchdog_kick();
+    }
+    return 0;
+}
+""")
+        assert r.returncode == 0, r.stderr
+        link_rom(tmp_path)
+        m = machine(tmp_path)
+        assert m.run(max_tstates=500_000).reason == "halt"
+        times = self.kicks(m)
+        assert len(times) == 2 + 13 + 1
+        gaps = [b - a for a, b in zip(times, times[1:])]
+        assert max(gaps) < 6000
+
+    def test_no_hook_no_call(self, program):
+        assert "__WATCHDOG_KICK" not in symbols(program)
+
+    def test_hook_costs_only_the_calls(self, tmp_path):
+        """Three CALLs and the hook: the base program has none of these."""
+        base = tmp_path / "base"
+        base.mkdir()
+        hook = tmp_path / "hook"
+        hook.mkdir()
+        src = "int main(void) { return 0; }\n"
+        r = compile_rom(base, src)
+        assert r.returncode == 0, r.stderr
+        a, _ = link_rom(base)
+        r = compile_rom(hook, src + "void _watchdog_kick(void) { }\n"
+                        "#pragma uc80 public _watchdog_kick\n")
+        assert r.returncode == 0, r.stderr
+        b, _ = link_rom(hook)
+        assert (len(b.rstrip(b"\xff")) - len(a.rstrip(b"\xff"))
+                == 3 * 3 + 1)                # three CALLs and one RET
+
+
 class TestDiagnostics:
     @pytest.mark.parametrize("body,name", [
         ('#include <stdio.h>\nint main(void) { puts("x"); return 0; }', "puts"),

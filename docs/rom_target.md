@@ -20,6 +20,7 @@ Done:
 - Phase 2, interrupt functions: `#pragma uc80 interrupt NAME [critical]` and `#pragma uc80 nmi NAME`. Register save (AF, BC, DE, HL, IY, and the alternate set when the call graph reaches an EXX user), `RETI` or `RETN`, the vector, and the errors for parameters, a return value and a direct call. `asm_dce` knows `RETI` and `RETN`. No peephole rule can match across the prologue or the epilogue (barrier regions in `main.py`). See [rom_hardware.md](rom_hardware.md).
 - Phase 2, hardware access: `<z80.h>` has `z80_out`, `z80_in`, `z80_out16`, `z80_in16`, `z80_di`, `z80_ei`, `z80_irq_save`, `z80_irq_restore`, the critical-section pair, and `z80_load16`. Objects can have a fixed address (`__at`, `[[uc80::at]]`, and volatile integer objects at a constant address). The option `--isr-safe` and two warnings are new: one for work areas at fixed RAM and one for the alternate registers.
 - Phase 3 (the parts that serve the Neo Geo driver): the SDCC spellings `__interrupt`, `__interrupt(n)`, `__critical __interrupt[(n)]`, `__critical { }`, `__sfr __at`, `__sfr __banked __at` and `T x __at(addr)`, with a prepass in `src/uc80/sdcc_compat.py`. `__naked`, `__sdcccall` and `__preserves_regs` stay errors.
+- Phase 1, the watchdog hook: `__watchdog_kick` (C with `#pragma uc80 public`, or assembly) is called at reset, before `main` and in the idle loop. The crt0 has the calls as `;@WDT` lines that `rom.py` enables when the program defines the hook. No hook, no extra byte. Tested in `bench/romrun` with a port that logs the kicks.
 - Phase 2 proof: `bench/rom/isrproof.py` (an NMI command queue, a YM2610 timer interrupt that drives the sequencer, a bank select with `z80_in16`).
 - Phase 3, `__asm ... __endasm;` blocks (statement level and file level): the prepass turns the sdas text of a block into an `asm("...")` statement with MACRO-80 text. A directive or an operand that it cannot translate is an error with the line number. See [rom_interop.md](rom_interop.md).
 - Phase 5, translator to sdas: `uc80 --asm-syntax=sdas` writes a `.s` file (`src/uc80/sdas.py`). The runtime and libc are translated and packed for `sdldz80` (`uc80 --build-sdas-libs DIR`). Measured, not estimated: the four snd-* kernels and the three interrupt proofs link with `sdldz80` to the same image bytes, the same RAM figures and the same T-states as the `ul80` build. All 105 programs of the benchmark set translate and assemble with no error. The work took more than the estimate of one small test, because of the range check of `JR` (um80 changes a far `JR` to `JP`, sdasz80 does not), the vector area, the initial data and the symbol names. See [rom_interop.md](rom_interop.md).
@@ -27,7 +28,6 @@ Done:
 
 Not done (needs `codegen.py` or other work):
 
-- The watchdog hook of the crt0.
 - The optional per-module BSS block for separate compilation.
 - Phase 3: `__naked`. An assembly thunk can be a `.s` or `.mac` file, or an `__asm` block in a normal function.
 - An interrupt form for the RST vectors and for IM 2. The vector pragma gives a plain `RET` function and a warning.
@@ -160,7 +160,7 @@ crt0_rom specification:
 2. Allow `#pragma uc80 vector 38h f` to place a jump to function f.
 3. The crt0 sets SP from a link symbol. The default is the top of RAM.
 4. Order at start: clear BSS, copy the initial data, call `main`, then loop on `halt`.
-5. A hook for a watchdog kick is empty by default. A Z80-side watchdog is unverified.
+5. A hook for a watchdog kick: done. The program defines `__watchdog_kick`, and the crt0 calls the hook at reset, before `main` and in the idle loop. Without the hook the crt0 has no call. A Z80-side watchdog is unverified. See [rom.md](rom.md).
 6. The vectors need ASEG code. ul80 needs the ASEG module first, or a code origin above 68h (`-p 100`). Otherwise ul80 stops with an overlap error (ul80.py:927-936).
 
 Phase 1 test plan: rebuild the four snd-* kernels as freestanding ROM kernels. Run each kernel in the harness. Compare the output with the CP/M run. Phase 1 gives the first measured cycle count for a ROM build.

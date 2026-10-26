@@ -101,14 +101,18 @@ _BLOCK = re.compile(r"^;@(INT|NMI)_BEGIN\n.*?^;@\1_END\n", re.S | re.M)
 
 
 def startup_text(path: Path, int_handler, nmi_handler,
-                 stack_top: str | None, start: str | None = None) -> list:
+                 stack_top: str | None, start: str | None = None,
+                 watchdog: bool = False) -> list:
     """Lines of crt0_rom.mac for embedding.  A user handler replaces the
     default stub at its vector.  int_handler and nmi_handler are None (keep
     the default stub), True (the assembly label __int_handler or
     __nmi_handler), or the label to jump to.  stack_top (an assembler
     expression) replaces __RAM_END.  start is the label that __start calls
-    in place of _main."""
+    in place of _main.  watchdog is True when the program defines
+    __watchdog_kick: the lines that start with ";@WDT" become code."""
     text = path.read_text()
+    if watchdog:
+        text = re.sub(r"^;@WDT", "", text, flags=re.M)
     use = {"INT": int_handler, "NMI": nmi_handler}
     target = {"INT": int_handler if isinstance(int_handler, str)
               else "__int_handler",

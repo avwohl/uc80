@@ -1024,7 +1024,8 @@ def main() -> int:
                         start = label_of(args.entry[0])
                     startup_lines = rom_module.startup_text(
                         startup_path, int_handler, nmi_handler,
-                        args.stack_top, start)
+                        args.stack_top, start,
+                        _defines_label(code, mac_files, "__watchdog_kick"))
                     startup_content = ""
                 for line in startup_content.splitlines():
                     stripped = line.strip().upper()

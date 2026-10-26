@@ -51,6 +51,8 @@ With the ROM target the compiler:
 4. Call `main`. If the program has no `main`, call the first function that `--entry` names (see Roots, entry points and vectors).
 5. Loop on `HALT`. The interrupt state is the state that `main` left.
 
+If the program has a watchdog hook, `__start` also calls the hook (see Watchdog hook).
+
 The link must use `--rom-data` and `--data-origin` (`-d`), because `__DATA_ROM`, `__DATA_RAM` and `__DATA_LEN` come from them. The link must also give `--ram-size` or `--ram-end`, unless you use `--stack-top`.
 
 ### Your own interrupt handlers
@@ -64,6 +66,30 @@ uc80 --target=rom main.c isr.mac -o main.mac
 If `isr.mac` has `PUBLIC __int_handler`, the vector at 0038h becomes `JP __int_handler`. If `isr.mac` has `PUBLIC __nmi_handler`, the vector at 0066h becomes `JP __nmi_handler`. The handler must save the registers it uses and must end with `RETI` (INT) or `RETN` (NMI).
 
 A handler can share a variable with the C program. Define the variable in the assembly file with `PUBLIC _name`, and declare the variable `extern` in the C program. Or define the variable in C and name the variable in `#pragma uc80 public` (see Roots, entry points and vectors). The assembly file then uses `EXTRN _name`.
+
+### Watchdog hook
+
+A program can give the start-up code a function that kicks a watchdog. The function is `__watchdog_kick`. Write the function in C or in assembly:
+
+```
+#include <z80.h>
+void _watchdog_kick(void) { z80_out(0x7F, 0); }
+#pragma uc80 public _watchdog_kick
+```
+
+For assembly, give a `.mac` file to the compiler as a second input file, and put `PUBLIC __watchdog_kick` in the file. The hook must end with `RET`. The hook can change all registers.
+
+When the program defines `__watchdog_kick`, the start-up code calls the hook in three places:
+
+1. At reset, as the first step after the load of SP. The data copy and the BSS clear have not started. A hook in C can use its local variables, but a static variable that the hook sets here is lost when the BSS clear runs.
+2. After the BSS clear, before `main`.
+3. In the idle loop, before each `HALT`. An interrupt that wakes the CPU runs the loop again, so the hook runs after each interrupt.
+
+A program that has no `__watchdog_kick` gets no call and no extra byte. A hook costs 9 bytes of calls, and the bytes of the hook. The program can also call `_watchdog_kick()` from its own code.
+
+The hook works only for a whole-program build, where the compiler embeds the start-up code. The hook must be in the same compilation as the start-up code (a C file or a `.mac` file that the compiler gets), as for `__int_handler`. With `--no-embed-startup`, call the hook from your own start-up code.
+
+The test `tests/test_rom_target.py` (`TestWatchdogHook`) runs a hook in `bench/romrun` with a port that logs each kick.
 
 ## Roots, entry points and vectors
 

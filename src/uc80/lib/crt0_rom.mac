@@ -15,6 +15,13 @@
 ;
 ; Start: set SP, copy the initial data from ROM to RAM, clear the
 ; BSS, call main, then loop on HALT with the interrupt state main left.
+;
+; Watchdog hook.  The lines that start with ";@WDT" are comments here.  When the
+; program defines the public label __watchdog_kick (a C function with
+; #pragma uc80 public _watchdog_kick, or an assembly file), uc80 turns the
+; lines into code.  The start-up code then calls __watchdog_kick at reset,
+; before main, and at each wake-up of the idle HALT loop.  The default is no
+; call, so a program without a hook has no extra bytes.  See docs/rom.md.
 
 	.Z80
 
@@ -85,6 +92,7 @@ __vec_nmi:
 
 __start:
 	LD	SP,__RAM_END
+;@WDT	CALL	__watchdog_kick
 
 	; Copy the initial data from ROM to RAM (nothing if there is none)
 	LD	BC,__DATA_LEN
@@ -117,11 +125,13 @@ __nodata:
 	INC	DE
 	LDIR
 __nobss:
+;@WDT	CALL	__watchdog_kick
 
 	CALL	_main
 
 	; main returned: stop, with the interrupt state main left
 __halt:
+;@WDT	CALL	__watchdog_kick
 	HALT
 	JR	__halt
 
