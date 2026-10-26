@@ -1,0 +1,24 @@
+/* lc_acosh.vc - acosh */
+#include "vm.vh"
+
+/* ALIAS: acosh = acoshf acoshl */
+float acosh(float x)
+{
+    float t;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        if (sgn(x) == 0.0f)
+            return x;
+        return nan;
+    }
+    if (x < 1.0f)
+        return nan;
+    if (x > 16777216.0f)
+        return log(x) + 0.693147182f;
+    if (x > 2.0f)
+        return log(2.0f * x - 1.0f / (x + sqrt(x * x - 1.0f)));
+    t = x - 1.0f;
+    return log1p(t + sqrt(2.0f * t + t * t));
+}

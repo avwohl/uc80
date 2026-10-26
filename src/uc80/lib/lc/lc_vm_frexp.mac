@@ -1,0 +1,54 @@
+; lc_vm_frexp.mac - __vm_frexp1, a routine of the float interpreter
+;
+; DEHL = x, a finite number that is not zero.  The routine returns
+; DEHL = m, with 1 <= m < 2, and (__tmp32) = n as a float, where
+; x = m * 2^n.  It keeps BC and IX.  A subnormal x gives the normalized m
+; and an n below -126.
+	.Z80
+
+	CSEG
+
+	EXTRN	__m_unpack
+	EXTRN	__itof
+	EXTRN	__tmp32
+
+	PUBLIC	__vm_frexp1
+__vm_frexp1:
+	PUSH	BC
+	LD	(_vfx_t),HL
+	PUSH	AF		; room for the exponent
+	LD	HL,0
+	ADD	HL,SP
+	PUSH	HL		; the pointer to it
+	PUSH	DE
+	LD	HL,(_vfx_t)
+	PUSH	HL
+	CALL	__m_unpack	; DEHL = the mantissa, bit 23 set
+	POP	BC
+	POP	BC
+	POP	BC
+	POP	BC		; BC = the biased exponent
+	LD	D,3FH
+	SET	7,E
+	PUSH	HL
+	PUSH	DE
+	LD	HL,-127
+	ADD	HL,BC
+	LD	A,H
+	ADD	A,A
+	SBC	A,A
+	LD	E,A
+	LD	D,A
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	DE
+	POP	HL
+	POP	BC
+	RET
+
+	COMMON	/lc_vm_frexp/
+_vfx_t:
+	DS	2
+
+	END

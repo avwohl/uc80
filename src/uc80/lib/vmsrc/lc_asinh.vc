@@ -1,0 +1,24 @@
+/* lc_asinh.vc - asinh = log(|x| + sqrt(x*x + 1)), in a form that is exact
+ * for small x: log1p(|x| + x*x/(1 + sqrt(1 + x*x))) */
+#include "vm.vh"
+
+/* ALIAS: asinh = asinhf asinhl */
+float asinh(float x)
+{
+    float ax, t, y;
+
+    if (expo(x) == 255.0f)
+        return x;
+    if (expo(x) < 114.0f)
+        return x;
+    ax = fabs(x);
+    if (ax > 16777216.0f) {
+        y = log(ax) + 0.693147182f;
+    } else {
+        t = ax * ax;
+        y = log1p(ax + t / (1.0f + sqrt(1.0f + t)));
+    }
+    if (sgn(x) != 0.0f)
+        return -y;
+    return y;
+}

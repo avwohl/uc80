@@ -1,0 +1,45 @@
+/* lc_expm1.vc - expm1: exp(x) - 1 without the loss near 0 */
+#include "vm.vh"
+
+static const float expm1_p[] = {
+    0.5f, 0.166666672f, 0.0416664667f, 0.00833336078f, 0.00139335997f,
+    0.000198577953f
+};
+
+/* ALIAS: expm1 = expm1f expm1l */
+float expm1(float x)
+{
+    float n, r, y, e;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        if (sgn(x) != 0.0f)
+            return -1.0f;
+        return x;
+    }
+    if (x > 88.7228394f)
+        return inf;
+    if (x < -17.4f)
+        return -1.0f;
+    if (expo(x) < 102.0f)
+        return x;                       /* |x| < 2^-24 */
+    if (x > -0.34657f && x < 0.34657f) {
+        n = 0.0f;
+        r = x;
+    } else {
+        n = x * 1.44269504f;
+        if (x < 0.0f)
+            n = n + -0.5f;
+        else
+            n = n + 0.5f;
+        n = trunc(n);
+        r = (x - n * 0.693359375f) - n * -2.12194440e-4f;
+    }
+    y = poly(r, expm1_p);
+    y = y * r * r + r;                  /* exp(r) - 1 */
+    if (n == 0.0f)
+        return y;
+    e = ldexp(y + 1.0f, n);
+    return e - 1.0f;
+}

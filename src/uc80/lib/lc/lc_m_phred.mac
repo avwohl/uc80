@@ -16,11 +16,50 @@
 	CSEG
 
 	EXTRN	__uitof
+	EXTRN	__itof
 	EXTRN	__fmul
 	EXTRN	__fadd
 	EXTRN	__tmp32
 
 	PUBLIC	__m_phred
+	PUBLIC	__vm_phred
+
+; The routine of the float interpreter (see lc_vm.mac): DEHL = ax.  It
+; returns DEHL = r and (__tmp32) = the quadrant, as a float.  It keeps BC
+; and IX.
+__vm_phred:
+	PUSH	BC
+	LD	(_mph_t),HL
+	LD	(_mph_t+2),DE
+	PUSH	AF		; room for r
+	PUSH	AF
+	LD	HL,0
+	ADD	HL,SP
+	PUSH	HL		; the pointer to r
+	LD	HL,(_mph_t+2)
+	PUSH	HL
+	LD	HL,(_mph_t)
+	PUSH	HL
+	CALL	__m_phred
+	LD	A,L
+	POP	BC
+	POP	BC
+	POP	BC
+	POP	HL		; r
+	POP	DE
+	PUSH	HL
+	PUSH	DE
+	LD	L,A
+	LD	H,0
+	LD	DE,0
+	CALL	__itof
+	LD	(__tmp32),HL
+	LD	(__tmp32+2),DE
+	POP	DE
+	POP	HL
+	POP	BC
+	RET
+
 __m_phred:
 	PUSH	IX
 	LD	IX,0
@@ -272,5 +311,7 @@ _mph_df:
 	DS	4
 _mph_rp:
 	DS	2
+_mph_t:
+	DS	4
 
 	END

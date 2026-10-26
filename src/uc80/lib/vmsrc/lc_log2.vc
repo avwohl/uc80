@@ -1,0 +1,24 @@
+/* lc_log2.vc - log2 */
+#include "vm.vh"
+
+/* ALIAS: log2 = log2f log2l */
+float log2(float x)
+{
+    float y, n, f, z;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        if (sgn(x) == 0.0f)
+            return x;
+        return nan;
+    }
+    if (x == 0.0f)
+        return -inf;
+    if (sgn(x) != 0.0f)
+        return nan;
+    (y, n, f) = m_logk(x);
+    z = f + y;                          /* log(m) */
+    /* log2(e) = 1 + 0.44269504 */
+    return (z * 0.44269504f + z) + n;
+}

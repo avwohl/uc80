@@ -1,0 +1,24 @@
+/* lc_exp.vc - exp */
+#include "vm.vh"
+
+/* ALIAS: exp = expf expl */
+float exp(float x)
+{
+    float y, n;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;                   /* NaN */
+        if (sgn(x) != 0.0f)
+            return 0.0f;                /* exp(-inf) = 0 */
+        return x;                       /* exp(+inf) = inf */
+    }
+    if (x > 88.7228394f)
+        return inf;
+    if (x < -103.972084f)
+        return 0.0f;
+    if (expo(x) < 102.0f)
+        return 1.0f;                    /* |x| < 2^-24 */
+    (y, n) = m_expk(x);
+    return ldexp(y, n);
+}

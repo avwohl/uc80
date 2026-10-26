@@ -1,0 +1,31 @@
+/* lc_atanh.vc - atanh = log1p(2x/(1-x))/2 */
+#include "vm.vh"
+
+/* ALIAS: atanh = atanhf atanhl */
+float atanh(float x)
+{
+    float ax, y;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        return nan;
+    }
+    ax = fabs(x);
+    if (ax > 1.0f)
+        return nan;
+    if (ax == 1.0f) {
+        if (sgn(x) != 0.0f)
+            return -inf;
+        return inf;
+    }
+    if (expo(x) < 114.0f)
+        return x;
+    if (ax < 0.5f)
+        y = 0.5f * log1p(2.0f * ax + 2.0f * ax * ax / (1.0f - ax));
+    else
+        y = 0.5f * log1p(2.0f * ax / (1.0f - ax));
+    if (sgn(x) != 0.0f)
+        return -y;
+    return y;
+}

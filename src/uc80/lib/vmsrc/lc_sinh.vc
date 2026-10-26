@@ -1,0 +1,35 @@
+/* lc_sinh.vc - sinh.  Up to |x| = 1 a kernel x + x*z*P(z); above, through
+ * expm1 (sinh = (t + t/(t+1))/2) and for |x| > 22 through exp(|x|)/2,
+ * scaled by the exponent so that the result can reach FLT_MAX. */
+#include "vm.vh"
+
+static const float sinh_p[] = {
+    0.166666672f, 0.00833333936f, 0.000198381225f, 2.80614177e-06f
+};
+
+/* ALIAS: sinh = sinhf sinhl */
+float sinh(float x)
+{
+    float ax, z, y, t, n;
+
+    if (expo(x) == 255.0f)
+        return x;                       /* NaN, +-inf */
+    if (expo(x) < 114.0f)
+        return x;
+    ax = fabs(x);
+    if (ax <= 1.0f) {
+        z = ax * ax;
+        y = ax + ax * z * poly(z, sinh_p);
+    } else if (ax <= 22.0f) {
+        t = expm1(ax);
+        y = 0.5f * (t + t / (t + 1.0f));
+    } else if (ax > 100.0f) {
+        y = inf;
+    } else {
+        (y, n) = m_expk(ax);
+        y = ldexp(y, n - 1.0f);
+    }
+    if (sgn(x) != 0.0f)
+        return -y;
+    return y;
+}

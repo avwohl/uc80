@@ -1,0 +1,26 @@
+/* lc_m_logk.vc - m_logk, the core of log, log2 and log10.  For x > 0 and
+ * finite the program gives y, n and f with x = m * 2^n, m in [sqrt(1/2),
+ * sqrt(2)], f = m - 1 (exact) and log(m) = f + y.
+ * log(1+f) = f - f*f/2 + f*f*f*P(f) on [sqrt(1/2) - 1, sqrt(2) - 1]. */
+#include "vm.vh"
+
+static const float logk_p[] = {
+    0.333333313f, -0.24999994f, 0.200007141f, -0.166680574f, 0.142493218f,
+    -0.124201484f, 0.116770148f, -0.115145631f, 0.0703758299f
+};
+
+sub3 m_logk(float x)
+{
+    float m, e, f, z, y;
+
+    (m, e) = frexp1(x);
+    if (m > 1.41421356f) {
+        m = m * 0.5f;
+        e = e + 1.0f;
+    }
+    f = m - 1.0f;
+    z = f * f;
+    y = poly(f, logk_p) * f * z;
+    y = y - 0.5f * z;
+    return3(y, e, f);
+}

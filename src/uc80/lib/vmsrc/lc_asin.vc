@@ -1,0 +1,29 @@
+/* lc_asin.vc - asin.  For |x| <= 1/2 the kernel gives asin(x).  Above that,
+ * asin(x) = pi/2 - 2*asin(sqrt((1-x)/2)). */
+#include "vm.vh"
+
+/* ALIAS: asin = asinf asinl */
+float asin(float x)
+{
+    float ax, y;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        return nan;
+    }
+    ax = fabs(x);
+    if (ax > 1.0f)
+        return nan;
+    if (expo(x) < 114.0f)
+        return x;
+    if (ax > 0.5f) {
+        y = m_kasin(sqrt(0.5f * (1.0f - ax)));
+        y = (-2.0f * y + -4.37113883e-08f) + 1.57079637f;
+    } else {
+        y = m_kasin(ax);
+    }
+    if (sgn(x) != 0.0f)
+        return -y;
+    return y;
+}

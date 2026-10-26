@@ -1,9 +1,9 @@
 /* lc_vm.vc - the programs that the float interpreter runs for its own
- * 2SUM and 2PROD operations.  A sub program takes its arguments from the
+ * 2SUM and 2PROD operations.  A program takes its arguments from the
  * stack and leaves its two results in their place. */
 
 /* s + e = a + b exactly (Knuth) */
-sub p2sum(a, b)
+sub2 p2sum(float a, float b)
 {
     float s = a + b;
     float bb = s - a;
@@ -12,7 +12,7 @@ sub p2sum(a, b)
 }
 
 /* p + e = a * b exactly (Dekker, with the Veltkamp split) */
-sub p2prod(a, b)
+sub2 p2prod(float a, float b)
 {
     float p = a * b;
     float ca = 4097.0f * a;

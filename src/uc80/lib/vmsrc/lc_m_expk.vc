@@ -1,0 +1,26 @@
+/* lc_m_expk.vc - m_expk, the core of exp, sinh and cosh.  The program
+ * gives y and n with exp(x) = y * 2^n for |x| < 104 and y in [0.7, 1.42].
+ * x = n*ln2 + r with |r| <= ln2/2; exp(r) = 1 + r + r*r*P(r). */
+#include "vm.vh"
+
+static const float expk_p[] = {
+    0.5f, 0.166666672f, 0.0416664667f, 0.00833336078f, 0.00139335997f,
+    0.000198577953f
+};
+
+sub2 m_expk(float x)
+{
+    float nf, r, y;
+
+    nf = x * 1.44269504f;
+    if (x < 0.0f)
+        nf = nf + -0.5f;
+    else
+        nf = nf + 0.5f;
+    nf = trunc(nf);
+    /* 0.693359375 has 9 bits, so n * 0.693359375 is exact */
+    r = (x - nf * 0.693359375f) - nf * -2.12194440e-4f;
+    y = poly(r, expk_p);
+    y = y * r * r + r;
+    return2(y + 1.0f, nf);
+}

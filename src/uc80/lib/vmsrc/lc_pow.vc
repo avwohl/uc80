@@ -1,0 +1,206 @@
+/* lc_pow.vc - pow(x, y) = 2^(y * log2(x)).
+ *
+ * log2(x) is computed as two floats (about 36 bits): for x close to 1 from
+ * the series of log(1+f), else from a table of log2 of 32 values c and the
+ * series of log(1+u), u = x/c - 1 (u is exact with the Veltkamp split).
+ * The product y*log2(x) and the exponential are also kept in two floats,
+ * so the result is correctly rounded in nearly all cases; it is exact
+ * when the true result is a float (pow(3, 2) is 9).
+ *
+ * The special cases follow Annex F of the C standard.
+ */
+#include "vm.vh"
+
+static const float pow_th[] = {
+    0.0223678108f, 0.0660892203f, 0.108524427f, 0.149747148f,
+    0.189824566f, 0.228818655f, 0.266786546f, 0.303780705f,
+    0.339849979f, 0.375039488f, 0.409390897f, 0.442943513f,
+    0.475733429f, 0.507794619f, 0.539158821f, 0.569855571f,
+    0.599912882f, 0.629356623f, 0.658211529f, 0.68650049f,
+    0.714245439f, 0.741467059f, 0.768184364f, 0.794415832f,
+    0.820178986f, 0.845490098f, 0.870364666f, 0.89481771f,
+    0.918863297f, 0.942514539f, 0.965784192f, 0.988684714f
+};
+static const float pow_tl[] = {
+    8.54366133e-10f, 3.70311404e-09f, 3.08798609e-09f, -1.77919457e-09f,
+    3.38385386e-09f, 5.47867252e-10f, -3.47654461e-09f, 7.16280324e-09f,
+    1.34503297e-08f, -2.9856595e-09f, 1.13630367e-08f, -1.21702159e-08f,
+    -1.30068578e-08f, -1.46854608e-08f, -8.65431105e-09f, -2.42684681e-08f,
+    4.67520911e-09f, -1.27269872e-09f, -2.36616717e-08f, 2.40353124e-08f,
+    2.40021869e-08f, -2.65745612e-08f, 2.27411832e-08f, -1.49726509e-10f,
+    -1.78060571e-08f, 1.87819129e-08f, -1.76132673e-08f, -2.05136406e-08f,
+    1.22845745e-09f, 2.03188648e-08f, 2.40524844e-08f, -2.16938609e-08f
+};
+
+/* the series of log(1+f) after f - f*f/2, of log(1+u) - u, and exp(r) */
+static const float pow_ls[] = {
+    0.333333343f, -0.25f, 0.200000003f, -0.166666672f, 0.142857149f, -0.125f
+};
+static const float pow_lq[] = {
+    -0.5f, 0.333333343f, -0.25f, 0.200000003f, -0.166666672f, 0.142857149f
+};
+static const float pow_ep[] = {
+    0.5f, 0.166666672f, 0.0416664667f, 0.00833336078f, 0.00139335997f,
+    0.000198577953f
+};
+
+/* 1 if y is an even integer, 2 if odd, 0 if not an integer (y finite) */
+static sub pow_isint(float y)
+{
+    float ay, t;
+
+    ay = fabs(y);
+    if (expo(ay) < 127.0f)
+        return 0.0f;
+    if (expo(ay) >= 151.0f)
+        return 1.0f;                    /* 2^24 or more: an even integer */
+    t = trunc(ay);
+    if (t != ay)
+        return 0.0f;
+    if (trunc(t * 0.5f) + trunc(t * 0.5f) == t)
+        return 1.0f;
+    return 2.0f;
+}
+
+/* log2(x) as two floats, for finite x > 0.  The program keeps the number of
+ * its variables small, because the stack of the interpreter is small. */
+static sub2 pow_log2(float x)
+{
+    float m, n, f, p, pe, c, sh, se, s_lo, ph, pl, low, lh, ll, th, tl, j, hi;
+
+    (m, n) = frexp1(x);
+    if (m > 1.41421356f)
+        f = m * 0.5f - 1.0f;
+    else
+        f = m - 1.0f;
+    th = 0.0f;
+    tl = 0.0f;
+    if (f > -0.03125f && f < 0.03125f) {
+        /* near 1: ln(1+f) = f - f*f/2 + f*f*f*(1/3 - f/4 + ...) */
+        if (m > 1.41421356f)
+            n = n + 1.0f;
+        (p, pe) = twoprod(f, f);
+        (sh, se) = twosum(f, -0.5f * p);
+        c = f * p * poly(f, pow_ls);
+        s_lo = se + (c - 0.5f * pe);
+    } else {
+        j = trunc((m - 1.0f) * 32.0f);
+        c = 1.0f + (j + 0.5f) * 0.03125f;
+        ph = 1.0f / c;
+        (p, pe) = twoprod(m, ph);
+        sh = p - 1.0f;                  /* u = sh + pe */
+        pl = sh * sh * poly(sh, pow_lq);
+        s_lo = (pe - pe * sh) + pl;
+        th = tbl(pow_th, j);
+        tl = tbl(pow_tl, j);
+    }
+    /* (sh + s_lo) * log2(e), log2(e) = 1.44269502 + 1.92596303e-8 */
+    (ph, pl) = twoprod(sh, 1.44269502f);
+    low = pl + sh * 1.92596303e-8f + s_lo * 1.44269502f;
+    lh = ph + low;
+    ll = low - (lh - ph);
+    /* + n + table */
+    (ph, pl) = twosum(n, th);
+    (p, pe) = twosum(ph, lh);
+    low = ((pl + pe) + tl) + ll;
+    hi = p + low;
+    low = low - (hi - p);
+    return2(hi, low);
+}
+
+/* ALIAS: pow = powf powl */
+float pow(float x, float y)
+{
+    float yint, neg, n, lh, ll, ph, pl, th, tl, fh, f, fl, rh, re, rl, z, p;
+    float tail, s1, e1, r, ax;
+
+    if (y == 0.0f || x == 1.0f)
+        return 1.0f;
+    if (fabs(x) > inf || fabs(y) > inf)
+        return x + y;                   /* a NaN */
+    ax = fabs(x);
+    if (expo(y) == 255.0f) {
+        /* y = +-inf */
+        if (ax == 1.0f)
+            return 1.0f;
+        if (ax > 1.0f) {
+            if (sgn(y) == 0.0f)
+                return inf;
+            return 0.0f;
+        }
+        if (sgn(y) == 0.0f)
+            return 0.0f;
+        return inf;
+    }
+    yint = pow_isint(y);
+    neg = 0.0f;
+    if (expo(x) == 255.0f || x == 0.0f) {
+        /* x = +-inf or +-0 */
+        if (expo(x) == 255.0f) {
+            if (sgn(y) == 0.0f)
+                r = inf;
+            else
+                r = 0.0f;
+        } else {
+            if (sgn(y) == 0.0f)
+                r = 0.0f;
+            else
+                r = inf;
+        }
+        if (sgn(x) != 0.0f && yint == 2.0f)
+            return -r;
+        return r;
+    }
+    if (sgn(x) != 0.0f) {
+        if (yint == 0.0f)
+            return nan;
+        if (yint == 2.0f)
+            neg = 1.0f;
+    }
+    if (ax == 1.0f) {                   /* x = -1 */
+        r = 1.0f;
+    } else if (expo(y) > 217.0f) {
+        /* |y| > 2^90: the result is inf or 0 (|x| is not 1) */
+        r = 0.0f;
+        if (ax > 1.0f) {
+            if (sgn(y) == 0.0f)
+                r = inf;
+        } else {
+            if (sgn(y) != 0.0f)
+                r = inf;
+        }
+    } else {
+        /* t = y * log2(x) */
+        (lh, ll) = pow_log2(ax);
+        (ph, pl) = twoprod(y, lh);
+        pl = pl + y * ll;
+        if (ph > 130.0f) {
+            r = inf;
+        } else if (ph < -160.0f) {
+            r = 0.0f;
+        } else {
+            th = ph + pl;
+            tl = pl - (th - ph);
+            if (th < 0.0f)
+                n = th + -0.5f;
+            else
+                n = th + 0.5f;
+            n = trunc(n);
+            fh = th - n;
+            (f, fl) = twosum(fh, tl);
+            /* r = f * ln2, ln2 = 0.693147182 - 1.90465421e-9 */
+            (rh, re) = twoprod(f, 0.693147182f);
+            rl = re + f * -1.90465421e-9f + fl * 0.693147182f;
+            /* exp(rh + rl) = 1 + rh + (rl + rh*rl + rh*rh*P(rh)) */
+            z = rh * rh;
+            p = poly(rh, pow_ep);
+            tail = z * p + rh * rl;
+            (s1, e1) = twosum(1.0f, rh);
+            r = s1 + ((e1 + rl) + tail);
+            r = ldexp(r, n);
+        }
+    }
+    if (neg != 0.0f)
+        return -r;
+    return r;
+}

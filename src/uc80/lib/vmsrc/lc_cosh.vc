@@ -1,0 +1,25 @@
+/* lc_cosh.vc - cosh = (e + 1/e)/2; for |x| > 22 exp(|x|)/2, scaled by the
+ * exponent so that the result can reach FLT_MAX. */
+#include "vm.vh"
+
+/* ALIAS: cosh = coshf coshl */
+float cosh(float x)
+{
+    float ax, e, n;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        return fabs(x);                 /* cosh(+-inf) = inf */
+    }
+    if (expo(x) < 114.0f)
+        return 1.0f;
+    ax = fabs(x);
+    if (ax > 100.0f)
+        return inf;
+    (e, n) = m_expk(ax);
+    if (ax > 22.0f)
+        return ldexp(e, n - 1.0f);
+    e = ldexp(e, n);
+    return 0.5f * (e + 1.0f / e);
+}

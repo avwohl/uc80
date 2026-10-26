@@ -1,0 +1,45 @@
+/* lc_hypot.vc - hypot: sqrt(x*x + y*y) without overflow or underflow.
+ *
+ * Both arguments are scaled by a power of two so that the larger one is
+ * in [1, 2).  The sum of the squares is kept as two floats (a Veltkamp
+ * split gives the rounding error of each product), sqrt gives the first
+ * guess, and the exact residual corrects it. */
+#include "vm.vh"
+
+/* ALIAS: hypot = hypotf hypotl */
+float hypot(float x, float y)
+{
+    float a, b, t, m, ex, ey, pa, pb, ea, eb, s, es, lo, r, h, p, pe;
+
+    a = fabs(x);
+    b = fabs(y);
+    if (a == inf || b == inf)
+        return inf;
+    if (expo(a) == 255.0f || expo(b) == 255.0f)
+        return a + b;                   /* a NaN */
+    if (a < b) {
+        t = a;
+        a = b;
+        b = t;
+    }
+    if (b == 0.0f)
+        return a;
+    (m, ex) = frexp1(a);
+    (m, ey) = frexp1(b);
+    if (ex - ey > 30.0f)
+        return a;                       /* b is below the last bit of a */
+    /* scale: a in [1,2), b by the same power of two */
+    a = ldexp(a, -ex);
+    b = ldexp(b, -ex);
+    if (expo(b) == 0.0f)
+        b = 0.0f;
+    (pa, ea) = twoprod(a, a);
+    (pb, eb) = twoprod(b, b);
+    (s, es) = twosum(pa, pb);
+    lo = (ea + eb) + es;
+    h = sqrt(s);
+    (p, pe) = twoprod(h, h);
+    r = ((s - p) - pe) + lo;
+    h = h + r / (h + h);
+    return ldexp(h, ex);
+}

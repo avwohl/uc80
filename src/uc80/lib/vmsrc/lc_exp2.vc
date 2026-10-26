@@ -1,0 +1,43 @@
+/* lc_exp2.vc - exp2.  2^x = 2^n * exp(f*ln2) with f = x - n exact; the
+ * product f*ln2 is split in a main part and a small correction. */
+#include "vm.vh"
+
+static const float exp2_p[] = {
+    0.5f, 0.166666672f, 0.0416664667f, 0.00833336078f, 0.00139335997f,
+    0.000198577953f
+};
+
+/* ALIAS: exp2 = exp2f exp2l */
+float exp2(float x)
+{
+    float n, f, r, c, y, pe, z;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        if (sgn(x) != 0.0f)
+            return 0.0f;
+        return x;
+    }
+    if (x >= 128.0f)
+        return inf;
+    if (x < -150.0f)
+        return 0.0f;
+    if (expo(x) < 102.0f)
+        return 1.0f;
+    n = x;
+    if (x < 0.0f)
+        n = n + -0.5f;
+    else
+        n = n + 0.5f;
+    n = trunc(n);
+    f = x - n;
+    /* r + c = f * ln2, where ln2 = 0.693147182 - 1.90465421e-9 */
+    (r, pe) = twoprod(f, 0.693147182f);
+    c = pe + f * -1.90465421e-9f;
+    z = r * r;
+    y = poly(r, exp2_p);
+    y = y * z + r;
+    y = (y + 1.0f) + (y + 1.0f) * c;
+    return ldexp(y, n);
+}

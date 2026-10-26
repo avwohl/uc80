@@ -7,9 +7,22 @@
 
 	CSEG
 
+; The routine of the float interpreter (see lc_vm.mac): DEHL = x, and the
+; result is in DEHL.  It keeps BC and IX.
+__vm_sqrt:
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	CALL	_sqrt
+	POP	BC
+	POP	BC
+	POP	BC
+	RET
+
 ; ============================================================
 ; double sqrt(double x)
 ; ============================================================
+	PUBLIC	__vm_sqrt
 	PUBLIC	_sqrt
 	PUBLIC	_sqrtf
 	PUBLIC	_sqrtl

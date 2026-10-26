@@ -1,0 +1,29 @@
+/* lc_m_reduce.vc - argument reduction for sin, cos and tan: ax = n * pi/2
+ * + r for ax >= 0 and |r| <= pi/4.  The program gives r and n modulo 4.
+ *
+ * For ax < 6000 the multiple of pi/2 is subtracted in four parts with 12,
+ * 12, 12 and 24 bits, so each product n*part is exact and the result has
+ * full relative accuracy even next to a multiple of pi/2.  Larger
+ * arguments use the Payne-Hanek method (lc_m_phred, assembly): the bits of
+ * 2/pi around the place of the exponent of ax are multiplied by the
+ * mantissa of ax, which gives the quadrant and 102 bits of the fraction
+ * exactly. */
+#include "vm.vh"
+
+sub2 m_reduce(float ax)
+{
+    float nf = 0.0f, q = 0.0f, r = 0.0f;
+
+    if (ax <= 0.785398185f)
+        return2(ax, 0.0f);
+    if (ax >= 6000.0f) {
+        (r, q) = phred(ax);
+        return2(r, q);
+    }
+    nf = trunc(ax * 0.636619747f + 0.5f);
+    r = ((ax - nf * 1.5703125f) - nf * 0.000483751297f)
+        - nf * 7.54953362e-08f;
+    r = r - nf * 2.56334407e-12f;
+    q = nf - 4.0f * trunc(nf * 0.25f);
+    return2(r, q);
+}

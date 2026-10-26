@@ -1,0 +1,26 @@
+/* lc_log1p.vc - log1p: log(1+x), accurate for small x (Kahan's formula) */
+#include "vm.vh"
+
+/* ALIAS: log1p = log1pf log1pl */
+float log1p(float x)
+{
+    float u;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        if (sgn(x) == 0.0f)
+            return x;
+        return nan;
+    }
+    if (x < -1.0f)
+        return nan;
+    if (x == -1.0f)
+        return -inf;
+    if (expo(x) < 102.0f)
+        return x;                       /* |x| < 2^-24 */
+    u = 1.0f + x;
+    if (u == 1.0f)
+        return x;
+    return log(u) * (x / (u - 1.0f));
+}

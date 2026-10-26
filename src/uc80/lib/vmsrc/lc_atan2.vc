@@ -1,0 +1,70 @@
+/* lc_atan2.vc - atan2(y, x): the angle of the point (x, y), -pi to pi.
+ * The special cases follow Annex F of the C standard. */
+#include "vm.vh"
+
+/* ALIAS: atan2 = atan2f atan2l */
+float atan2(float y, float x)
+{
+    float yneg, xneg, ay, ax, t, v;
+
+    if (fabs(y) > inf || fabs(x) > inf)
+        return x + y;                   /* a NaN */
+    /* no subnormal arithmetic: scale two small arguments up, and take a
+     * subnormal next to a large one as zero */
+    if (expo(y) < 100.0f && expo(x) < 100.0f) {
+        y = ldexp(y, 100.0f);
+        x = ldexp(x, 100.0f);
+    } else {
+        if (expo(y) == 0.0f) {
+            if (sgn(y) != 0.0f)
+                y = -0.0f;
+            else
+                y = 0.0f;
+        }
+        if (expo(x) == 0.0f) {
+            if (sgn(x) != 0.0f)
+                x = -0.0f;
+            else
+                x = 0.0f;
+        }
+    }
+    yneg = sgn(y);
+    xneg = sgn(x);
+    ay = fabs(y);
+    ax = fabs(x);
+    if (y == 0.0f) {
+        v = 0.0f;                       /* y = +-0: +-0 or +-pi */
+        if (xneg != 0.0f)
+            v = 3.14159274f;
+    } else if (expo(y) == 255.0f) {
+        v = 1.57079637f;
+        if (expo(x) == 255.0f) {
+            if (xneg != 0.0f)
+                v = 2.35619450f;        /* 3pi/4, pi/4 */
+            else
+                v = 0.785398185f;
+        }
+    } else if (x == 0.0f) {
+        v = 1.57079637f;                /* x = +-0 */
+    } else if (expo(x) == 255.0f) {
+        v = 0.0f;                       /* y finite */
+        if (xneg != 0.0f)
+            v = 3.14159274f;
+    } else if (ay > ax) {
+        t = atan(ax / ay);
+        /* pi/2 - t, then for x < 0: pi/2 + t */
+        if (xneg != 0.0f)
+            v = (t + 4.37113883e-08f) + 1.57079637f;
+        else
+            v = (-t + -4.37113883e-08f) + 1.57079637f;
+    } else {
+        t = atan(ay / ax);
+        if (xneg != 0.0f)
+            v = (-t + -8.74227766e-08f) + 3.14159274f;
+        else
+            v = t;
+    }
+    if (yneg != 0.0f)
+        return -v;
+    return v;
+}

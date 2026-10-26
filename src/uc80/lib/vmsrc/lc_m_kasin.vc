@@ -1,0 +1,14 @@
+/* lc_m_kasin.vc - m_kasin: asin(t) for |t| <= 1/2.
+ * asin(t) = t + t*z*P(z) with z = t*t. */
+
+static const float kasin_p[] = {
+    0.166666657f, 0.0750009865f, 0.04459811f, 0.0311153121f, 0.017081691f,
+    0.0337996557f
+};
+
+sub m_kasin(float t)
+{
+    float z = t * t;
+
+    return t + t * z * poly(z, kasin_p);
+}

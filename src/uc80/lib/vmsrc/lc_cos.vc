@@ -1,0 +1,27 @@
+/* lc_cos.vc - cos */
+
+#include "vm.vh"
+
+/* ALIAS: cos = cosf cosl */
+float cos(float x)
+{
+    float r, q, y;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        return nan;                     /* cos(+-inf) */
+    }
+    if (expo(x) < 114.0f)
+        return 1.0f;                    /* |x| < 2^-13 */
+    (r, q) = m_reduce(fabs(x));
+    if (q == 0.0f)
+        y = m_kcos(r);
+    else if (q == 1.0f)
+        y = -m_ksin(r);
+    else if (q == 2.0f)
+        y = -m_kcos(r);
+    else
+        y = m_ksin(r);
+    return y;
+}

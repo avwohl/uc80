@@ -1,0 +1,25 @@
+/* lc_log.vc - log */
+#include "vm.vh"
+
+/* ALIAS: log = logf logl */
+float log(float x)
+{
+    float y, n, f;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;                   /* NaN */
+        if (sgn(x) == 0.0f)
+            return x;                   /* +inf */
+        return nan;
+    }
+    if (x == 0.0f)
+        return -inf;                    /* log(+-0) = -inf */
+    if (sgn(x) != 0.0f)
+        return nan;
+    (y, n, f) = m_logk(x);
+    /* ln2 = 0.693359375 - 2.12194440e-4 */
+    y = y + n * -2.12194440e-4f;
+    y = y + f;
+    return y + n * 0.693359375f;
+}

@@ -1,0 +1,25 @@
+/* lc_m_ktrig.vc - sin(r) and cos(r) for |r| <= pi/4 (a little more at the
+ * edge), the kernels of sin and cos. */
+
+static const float ksin_p[] = {
+    -0.166666672f, 0.00833333191f, -0.000198400827f, 2.72494117e-06f
+};
+static const float kcos_p[] = {
+    0.0416666679f, -0.00138888881f, 2.48005981e-05f, -2.73006862e-07f
+};
+
+/* sin(r) = r + r*z*P(z) with z = r*r */
+sub m_ksin(float r)
+{
+    float z = r * r;
+
+    return r + r * z * poly(z, ksin_p);
+}
+
+/* cos(r) = 1 - z/2 + z*z*P(z) with z = r*r */
+sub m_kcos(float r)
+{
+    float z = r * r;
+
+    return (1.0f - 0.5f * z) + z * z * poly(z, kcos_p);
+}

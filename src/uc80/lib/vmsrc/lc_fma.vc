@@ -1,0 +1,21 @@
+/* lc_fma.vc - fma: x*y + z with one rounding (the product is exact as two
+ * floats, and the sum of the three is rounded once except in rare double
+ * rounding cases) */
+#include "vm.vh"
+
+/* ALIAS: fma = fmaf fmal */
+float fma(float x, float y, float z)
+{
+    float p, pe, s, es;
+
+    if (expo(x) == 255.0f || expo(y) == 255.0f || expo(z) == 255.0f)
+        return x * y + z;
+    if (x == 0.0f || y == 0.0f)
+        return x * y + z;
+    p = x * y;
+    if (expo(p) == 255.0f || expo(p) < 30.0f)
+        return p + z;                   /* overflow, or no room for the error */
+    (p, pe) = twoprod(x, y);
+    (s, es) = twosum(p, z);             /* the exact error of p + z */
+    return s + (es + pe);
+}

@@ -67,6 +67,7 @@ uc80 = [
     "lib/**/*.mac",
     "lib/**/*.h",
     "lib/csrc/*.c",
+    "lib/vmsrc/*",
     "lib/*.lib",
     "lib/crt0.rel",
     "lib/crt0_rom.rel",

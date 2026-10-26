@@ -1,0 +1,32 @@
+/* lc_tan.vc - tan.  tan(r) = r + r*z*P(z), z = r*r; an odd quadrant uses
+ * -1/tan(r). */
+
+
+static const float tan_p[] = {
+    0.333333343f, 0.13333343f, 0.0539650135f, 0.0219107103f, 0.00860909093f,
+    0.00442569563f, -4.5089871e-07f, 0.00178946124f
+};
+#include "vm.vh"
+
+/* ALIAS: tan = tanf tanl */
+float tan(float x)
+{
+    float neg, r, q, z, y;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        return nan;
+    }
+    if (expo(x) < 114.0f)
+        return x;
+    neg = sgn(x);
+    (r, q) = m_reduce(fabs(x));
+    z = r * r;
+    y = r + r * z * poly(z, tan_p);
+    if (q == 1.0f || q == 3.0f)
+        y = -1.0f / y;
+    if (neg != 0.0f)
+        y = -y;
+    return y;
+}

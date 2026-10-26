@@ -1,0 +1,26 @@
+/* lc_acos.vc - acos */
+#include "vm.vh"
+
+/* ALIAS: acos = acosf acosl */
+float acos(float x)
+{
+    float y;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        return nan;
+    }
+    if (x > 1.0f || x < -1.0f)
+        return nan;
+    if (x > 0.5f) {
+        y = m_kasin(sqrt(0.5f * (1.0f - x)));
+        return y + y;
+    }
+    if (x < -0.5f) {
+        y = m_kasin(sqrt(0.5f * (1.0f + x)));
+        return (-2.0f * y + -8.74227766e-08f) + 3.14159274f;
+    }
+    y = m_kasin(x);
+    return (-y + -4.37113883e-08f) + 1.57079637f;
+}

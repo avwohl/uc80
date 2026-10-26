@@ -1,0 +1,28 @@
+/* lc_log10.vc - log10 */
+#include "vm.vh"
+
+/* ALIAS: log10 = log10f log10l */
+float log10(float x)
+{
+    float y, n, f, z;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        if (sgn(x) == 0.0f)
+            return x;
+        return nan;
+    }
+    if (x == 0.0f)
+        return -inf;
+    if (sgn(x) != 0.0f)
+        return nan;
+    (y, n, f) = m_logk(x);
+    /* log10(e) = 0.43359375 + 7.00731903e-4, log10(2) = 0.30078125 +
+     * 2.48745664e-4; the parts with 8 bits give exact products */
+    z = (f + y) * 7.00731903e-4f;
+    z = z + y * 0.43359375f;
+    z = z + f * 0.43359375f;
+    z = z + n * 2.48745664e-4f;
+    return z + n * 0.30078125f;
+}

@@ -1,0 +1,30 @@
+/* lc_sin.vc - sin */
+
+#include "vm.vh"
+
+/* ALIAS: sin = sinf sinl */
+float sin(float x)
+{
+    float neg, r, q, y;
+
+    if (expo(x) == 255.0f) {
+        if (fabs(x) > inf)
+            return x;
+        return nan;                     /* sin(+-inf) */
+    }
+    if (expo(x) < 114.0f)
+        return x;                       /* |x| < 2^-13 */
+    neg = sgn(x);
+    (r, q) = m_reduce(fabs(x));
+    if (q == 0.0f)
+        y = m_ksin(r);
+    else if (q == 1.0f)
+        y = m_kcos(r);
+    else if (q == 2.0f)
+        y = -m_ksin(r);
+    else
+        y = -m_kcos(r);
+    if (neg != 0.0f)
+        y = -y;
+    return y;
+}
