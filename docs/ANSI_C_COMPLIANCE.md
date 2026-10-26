@@ -161,7 +161,7 @@ Printf links only needed format handlers via `#pragma printf int|long|llong|floa
 - [x] `malloc()`, `calloc()`, `realloc()`, `free()` - first-fit free list, sorted by address, merged on `free()`. The heap grows from `__END__` up to 255 bytes below the stack pointer
 - [x] `abs()`, `labs()`, `div()`, `ldiv()`
 - [x] `rand()`, `srand()` - 16-bit LCG
-- [x] `exit()`, `abort()`, `atexit()` - supports 4 handlers
+- [x] `exit()`, `abort()`, `atexit()` - supports 32 handlers; `main` returning runs them ([exit and files](exit_and_files.md))
 - [ ] `getenv()` - stub (CP/M has no environment)
 - [ ] `system()` - stub (CP/M limited)
 - [x] `bsearch()` - binary search

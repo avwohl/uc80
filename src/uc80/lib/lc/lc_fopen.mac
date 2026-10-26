@@ -19,6 +19,11 @@ MAX_FILES	EQU	4
 
 	PUBLIC	_parse_fcb
 
+	EXTRN	_fclose
+	EXTRN	__exit_run
+	EXTRN	__exit_hook
+	EXTRN	__exit_fhook
+
 	CSEG
 
 ; ============================================================
@@ -174,6 +179,11 @@ _fopen_check:
 	JP	_fopen_ret
 
 _fopen_ok:
+	; exit() and the return from main must close the open files.
+	LD	HL,__exit_run
+	LD	(__exit_hook),HL
+	LD	HL,_fclose_all
+	LD	(__exit_fhook),HL
 	; Set flags and return FILE*
 	POP	BC		; B = mode flags
 	POP	HL		; HL = FILE*
@@ -189,6 +199,25 @@ _fopen_ret:
 	POP	DE
 	POP	BC
 	POP	IX
+	RET
+
+; ============================================================
+; Internal: close every open file (exit() calls this through __exit_fhook).
+; ============================================================
+_fclose_all:
+	LD	HL,_file_slots
+	LD	B,MAX_FILES
+_fclose_all1:
+	PUSH	BC
+	PUSH	HL
+	PUSH	HL		; the argument of fclose
+	CALL	_fclose
+	POP	HL
+	POP	HL
+	LD	DE,FILE_SIZE
+	ADD	HL,DE
+	POP	BC
+	DJNZ	_fclose_all1
 	RET
 
 ; ============================================================

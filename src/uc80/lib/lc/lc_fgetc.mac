@@ -5,10 +5,11 @@ BDOS	EQU	5
 CONOUT	EQU	2
 CONIN	EQU	1
 PRTSTR	EQU	9
-BDOS_READ	EQU	20	; Read sequential
+BDOS_READ	EQU	33	; Read random (the record number is in the FCB, r0 r1)
 BDOS_SETDMA	EQU	26	; Set DMA address
 FILE_BUFPOS	EQU	3	; Current position in buffer
 FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FILE_RECNO	EQU	39	; r0 r1 of the FCB: the number of the next record
 FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
 FLAG_EOF	EQU	02H
 
@@ -138,6 +139,17 @@ _fgetc_refill:
 	; A = 0 success, non-zero = EOF/error
 	OR	A
 	JR	NZ,_fgetc_seteof
+
+	; The next refill reads the next record
+	POP	HL
+	PUSH	HL
+	LD	DE,FILE_RECNO
+	ADD	HL,DE
+	INC	(HL)
+	JR	NZ,_fgetc_rec
+	INC	HL
+	INC	(HL)
+_fgetc_rec:
 
 	; Reset buffer position, set count
 	POP	HL

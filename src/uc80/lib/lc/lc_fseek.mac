@@ -1,22 +1,36 @@
-; lc_fseek.mac - split from lc_file.mac
+; lc_fseek.mac - fseek
+;
+; The position is a byte count.  A file is read and written in records of 128
+; bytes with the random access BDOS calls (33 and 34), so a seek is: write
+; the pending record, put the record number in r0 r1 of the FCB, and read
+; that record when the position is not at the start of a record.  See
+; lc_ftell.mac and docs/libraries.md ("Files").
 	.Z80
 
 BDOS	EQU	5
-CONOUT	EQU	2
-CONIN	EQU	1
-PRTSTR	EQU	9
+BDOS_SETDMA	EQU	26	; Set DMA address
+BDOS_READR	EQU	33	; Read random
+BDOS_SIZE	EQU	35	; Compute file size
+FILE_FLAGS	EQU	1
+FILE_UNGET	EQU	2	; pushed back character, or 0FFH
 FILE_BUFPOS	EQU	3	; Current position in buffer
 FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
+FILE_RECNO	EQU	39	; r0 r1 of the FCB
 FLAG_EOF	EQU	02H
 FLAG_WRITE	EQU	08H
 
 	EXTRN	_fflush_internal
+	EXTRN	_ftell_pos
+	EXTRN	_fpos_calc
 
 	CSEG
 
 ; ============================================================
 ; int fseek(FILE *stream, long offset, int whence)
-; Seek to position in file (simplified - sector-based)
+; Returns 0, or -1 when the stream is not a file, whence is wrong, or
+; the position is below 0 or above 8 MB.  SEEK_END is the end of the data
+; of a text file: before the first Ctrl-Z of the last record.
 ; ============================================================
 	PUBLIC	_fseek
 _fseek:
@@ -30,96 +44,250 @@ _fseek:
 	LD	H,(IX+5)	; stream
 	LD	A,H
 	OR	L
-	JR	Z,_fseek_err
+	JP	Z,_fseek_err
 
 	; Check if file
 	LD	A,(HL)
 	CP	3
-	JR	C,_fseek_err
+	JP	C,_fseek_err
+	LD	(_fsk_fp),HL
 
-	; Flush buffer first if write mode
+	; whence: 0, 1 or 2
+	LD	A,(IX+11)
+	OR	A
+	JP	NZ,_fseek_err
+	LD	A,(IX+10)
+	CP	3
+	JP	NC,_fseek_err
+
+	; Write the pending record of a stream that writes
+	INC	HL
+	LD	A,(HL)
+	DEC	HL
+	AND	FLAG_WRITE
+	JR	Z,_fsk_nf
+	CALL	_fflush_internal
+_fsk_nf:
+	LD	HL,(_fsk_fp)
+	LD	A,(IX+10)
+	OR	A
+	JR	Z,_fsk_set
+	CP	1
+	JR	Z,_fsk_cur
+	CALL	_fsize		; SEEK_END: DEHL = the size
+	JR	_fsk_add
+_fsk_cur:
+	CALL	_ftell_pos	; SEEK_CUR: DEHL = the position
+_fsk_add:
+	LD	C,(IX+6)
+	LD	B,(IX+7)
+	ADD	HL,BC
+	EX	DE,HL
+	LD	C,(IX+8)
+	LD	B,(IX+9)
+	ADC	HL,BC
+	EX	DE,HL
+	JR	_fsk_have
+_fsk_set:
+	LD	L,(IX+6)
+	LD	H,(IX+7)
+	LD	E,(IX+8)
+	LD	D,(IX+9)
+_fsk_have:
+	; DEHL = the new position, from 0 to 2^23-1
+	LD	A,D
+	OR	A
+	JP	NZ,_fseek_err
+	BIT	7,E
+	JP	NZ,_fseek_err
+
+	LD	A,L
+	AND	7FH
+	LD	(_fsk_off),A	; the byte in the record
+	LD	A,L
+	ADD	A,A		; the carry is bit 7 of L
+	LD	A,H
+	ADC	A,A
+	LD	C,A
+	LD	A,E
+	ADC	A,A
+	LD	B,A		; BC = the record number = position / 128
+
+	; An empty buffer, no pushed back character, no end of file
+	LD	HL,(_fsk_fp)
+	PUSH	HL
+	LD	DE,FILE_UNGET
+	ADD	HL,DE
+	LD	(HL),0FFH
+	INC	HL
+	XOR	A
+	LD	(HL),A		; bufpos
+	INC	HL
+	LD	(HL),A		; bufcnt
+	POP	HL
 	PUSH	HL
 	INC	HL
 	LD	A,(HL)
-	AND	FLAG_WRITE
-	JR	Z,_fseek_noflush
-	DEC	HL
-	CALL	_fflush_internal
-	JR	_fseek_doset
-_fseek_noflush:
-	DEC	HL
-_fseek_doset:
+	AND	0FFH-FLAG_EOF
+	LD	(HL),A
 	POP	HL
-	PUSH	HL
-
-	; Get offset (lower 16 bits only for simplicity)
-	LD	E,(IX+6)
-	LD	D,(IX+7)	; offset low word
-
-	; Check whence
-	LD	A,(IX+10)
-	OR	A
-	JR	NZ,_fseek_err_pop	; Only SEEK_SET supported
-
-	; Convert byte offset to record number (divide by 128)
-	; Shift DE right 7 times
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E
-	SRL	D
-	RR	E		; DE = record number
-
-	; Set random record in FCB
-	POP	HL
-	PUSH	HL
-	LD	BC,FILE_FCB+33	; r0, r1 in FCB
-	ADD	HL,BC
-	LD	(HL),E		; r0
+	LD	DE,FILE_RECNO
+	ADD	HL,DE
+	LD	(HL),C
 	INC	HL
-	LD	(HL),D		; r1
+	LD	(HL),B
 	INC	HL
 	LD	(HL),0		; r2
 
-	; Clear buffer
-	POP	HL
-	PUSH	HL
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
-	LD	(HL),0		; bufpos
-	INC	HL
-	LD	(HL),0		; bufcnt
-
-	; Clear EOF flag
-	POP	HL
-	PUSH	HL
-	INC	HL
-	LD	A,(HL)
-	AND	0FFH - FLAG_EOF
-	LD	(HL),A
-
-	POP	HL
+	LD	A,(_fsk_off)
+	OR	A
+	CALL	NZ,_fsk_load	; inside a record: read it
 	LD	HL,0
-	POP	DE
-	POP	BC
-	POP	IX
-	RET
+	JR	_fseek_ret
 
-_fseek_err_pop:
-	POP	HL
 _fseek_err:
 	LD	HL,-1
+_fseek_ret:
 	POP	DE
 	POP	BC
 	POP	IX
 	RET
+
+; Read the record r0 r1 into the buffer and put the position in it.  A
+; stream that reads goes on with the record after it.  When the file has no
+; such record, a stream that reads is at the end of the file, and a stream
+; that writes has zeros before the position.
+_fsk_load:
+	CALL	_fsk_read
+	LD	HL,(_fsk_fp)
+	LD	C,128		; bufcnt: the whole record is valid
+	JR	Z,_fsl_ok
+	INC	HL
+	LD	A,(HL)
+	DEC	HL
+	AND	FLAG_WRITE
+	RET	Z		; a stream that reads is at the end of the file
+	PUSH	HL
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	D,H
+	LD	E,L
+	INC	DE
+	LD	(HL),0
+	LD	BC,127
+	LDIR
+	POP	HL
+	LD	A,(_fsk_off)
+	LD	C,A		; bufcnt: only the zeros before the position
+_fsl_ok:
+	PUSH	HL
+	LD	DE,FILE_BUFPOS
+	ADD	HL,DE
+	LD	A,(_fsk_off)
+	LD	(HL),A
+	INC	HL
+	LD	(HL),C
+	POP	HL
+	INC	HL
+	LD	A,(HL)
+	DEC	HL
+	AND	FLAG_WRITE
+	RET	NZ		; a stream that writes stays at this record
+	LD	DE,FILE_RECNO
+	ADD	HL,DE
+	INC	(HL)
+	RET	NZ
+	INC	HL
+	INC	(HL)
+	RET
+
+; Read the record r0 r1 of the file _fsk_fp into its buffer.  Z when it was
+; read.
+_fsk_read:
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SETDMA
+	CALL	BDOS
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_READR
+	CALL	BDOS
+	OR	A
+	RET
+
+; The size of the file _fsk_fp in bytes (DEHL): the records before the
+; last one, and the bytes of the last record before its first Ctrl-Z.
+; r0 r1 are not changed.
+_fsize:
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_RECNO
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(_fsk_old),DE	; r0 r1 now
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SIZE
+	CALL	BDOS		; r0 r1 = the number of records
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_RECNO
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = records
+	LD	A,D
+	OR	E
+	LD	B,0
+	JR	Z,_fsz_end	; an empty file
+	DEC	DE
+	DEC	HL
+	LD	(HL),E		; read the last record
+	INC	HL
+	LD	(HL),D
+	PUSH	DE
+	CALL	_fsk_read
+	POP	DE
+	LD	B,0
+	JR	NZ,_fsz_end
+	LD	HL,(_fsk_fp)
+	LD	BC,FILE_BUFFER
+	ADD	HL,BC
+	LD	B,0
+_fsz_z:
+	LD	A,B
+	CP	128
+	JR	NC,_fsz_end
+	LD	A,(HL)
+	CP	1AH
+	JR	Z,_fsz_end
+	INC	HL
+	INC	B
+	JR	_fsz_z
+_fsz_end:
+	PUSH	BC
+	PUSH	DE
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_RECNO
+	ADD	HL,DE
+	LD	DE,(_fsk_old)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	POP	DE
+	POP	BC
+	JP	_fpos_calc
+
+	COMMON	/lc_fseek/
+
+_fsk_fp:	DS	2	; the FILE
+_fsk_off:	DS	1	; the byte in the record
+_fsk_old:	DS	2	; r0 r1 saved around BDOS 35
 
 	END

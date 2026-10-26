@@ -58,8 +58,12 @@ Rules for a module in `src/uc80/lib/lc/`:
   The other modules have the label as EXTRN.
 - Each module has its own copy of the EQU constants that the module uses.
 - `lc_printf_core.mac` holds the printf engine and the state that the
-  `%d`, `%e` and `%g` handlers share. `lc_prt_float.mac` holds the `%f`
-  printer and its data. Only `lc_printf_f.mac` refers to `lc_prt_float.mac`.
+  `%d`, `%e` and `%g` handlers share. `lc_prt_float.mac` holds the six float
+  conversions (`%f %F %e %E %g %G`) and the code that makes their digits. The
+  conversions that few programs use have a module each (`lc_printf_n`,
+  `lc_printf_a`, `lc_printf_llo`, `lc_printf_llxu`, `lc_printf_hh`,
+  `lc_printf_skip`). `printf_hook.py` links a module only when a format string
+  of the program needs it ([printf](printf.md)).
 - `lc_qsort.mac` holds `qsort`. `lc_bsearch.mac` holds `bsearch`.
 - `lc_fprintf.mac` holds `fprintf` and `vfprintf`, which share the stream sink.
   `lc_vprintf.mac` and `lc_vsprintf.mac` hold `vprintf` and `vsprintf`.
@@ -145,11 +149,19 @@ These limits are deliberate. The linked documents give the details.
 - **`scanf`.** A `FILE` keeps one pushed-back character. The float
   conversion collects 126 characters. The console gives CR for the Enter
   key and Ctrl-Z for the end of the input ([scanf](scanf.md)).
-- **`printf` of floats.** The `%f`, `%e` and `%g` printers use float
-  arithmetic. A float has 24 bits, so the last printed digit can differ by
-  one from the exact decimal value when the conversion has more than 6 digits.
-  The printers were not changed, except that they now work with the rounding
-  runtime (`tests/test_printf_float_digits.py`).
+- **`printf` of floats.** The output is exact: the same text as the host
+  `printf` for the same float value. The float conversions use integer
+  arithmetic and about 214 bytes of RAM ([printf](printf.md)).
+- **`printf` field width and precision.** A width or a precision above 255 is
+  255. `%jd` (`intmax_t`) is not supported. `%hhd` narrows the argument for
+  the 16-bit `int` only. `%s` with a null pointer reads address 0. `%p`
+  prints `0x` and the hex address (`0x0` for a null pointer).
+- **Program exit.** `main` returning and `exit()` run the `atexit` functions
+  (32 at most), last registered first, and close the open files. CP/M 2.2
+  has no exit status, so the status is not used ([exit and files](exit_and_files.md)).
+- **Files.** A file has records of 128 bytes. `fopen` mode `a` does not append
+  (it makes a new file), and modes with `+` are not supported. `ftell` and
+  `fseek` give exact byte positions up to 8 MB ([exit and files](exit_and_files.md)).
 - **Reentrancy.** The scanf engine, `strtod` and the math functions use
   static storage for their local variables. They are not reentrant and are
   not thread safe.

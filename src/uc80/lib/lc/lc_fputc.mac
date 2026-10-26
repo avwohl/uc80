@@ -5,10 +5,11 @@ BDOS	EQU	5
 CONOUT	EQU	2
 CONIN	EQU	1
 PRTSTR	EQU	9
-BDOS_WRITE	EQU	21	; Write sequential
+BDOS_WRITE	EQU	34	; Write random (the record number is in the FCB, r0 r1)
 BDOS_SETDMA	EQU	26	; Set DMA address
 FILE_BUFPOS	EQU	3	; Current position in buffer
 FILE_FCB	EQU	6	; FCB starts here (36 bytes)
+FILE_RECNO	EQU	39	; r0 r1 of the FCB: the number of the record in the buffer
 FILE_BUFFER	EQU	42	; Buffer starts here (128 bytes)
 FLAG_ERROR	EQU	04H
 
@@ -61,7 +62,7 @@ _fputc_file:
 	CP	128
 	JR	C,_fputc_store
 
-	; Buffer full - flush it
+	; Buffer full - write the record and start the next one
 	POP	HL
 	PUSH	HL
 	CALL	_fflush_internal
@@ -69,6 +70,9 @@ _fputc_file:
 	LD	A,H
 	OR	L
 	JR	NZ,_fputc_flerr
+	POP	HL
+	PUSH	HL
+	CALL	_file_nextrec
 	POP	HL
 	PUSH	HL
 	LD	BC,FILE_BUFPOS
@@ -87,12 +91,19 @@ _fputc_store:
 	LD	A,(IX+4)
 	LD	(HL),A		; Store the byte
 
-	; Increment bufpos
+	; Increment bufpos.  bufcnt is the number of bytes of the record that
+	; are valid (the high water mark), so a flush pads only after them.
 	POP	HL
 	PUSH	HL
 	LD	DE,FILE_BUFPOS
 	ADD	HL,DE
 	INC	(HL)		; bufpos++
+	LD	A,(HL)
+	INC	HL
+	CP	(HL)
+	JR	C,_fputc_hw
+	LD	(HL),A		; bufcnt = bufpos
+_fputc_hw:
 
 	POP	HL
 	LD	L,(IX+4)
@@ -110,31 +121,62 @@ _fputc_ret:
 	RET
 
 ; ============================================================
+; Internal: start the next record.  HL = FILE*
+; ============================================================
+	PUBLIC	_file_nextrec
+_file_nextrec:
+	PUSH	HL
+	LD	DE,FILE_BUFPOS
+	ADD	HL,DE
+	XOR	A
+	LD	(HL),A		; bufpos = 0
+	INC	HL
+	LD	(HL),A		; bufcnt = 0
+	POP	HL
+	LD	DE,FILE_RECNO
+	ADD	HL,DE
+	INC	(HL)
+	RET	NZ
+	INC	HL
+	INC	(HL)
+	RET
+
+; ============================================================
 ; Internal: Flush write buffer
 ; HL = FILE*
 ; Returns HL=0 success, HL=-1 error
+;
+; Writes the record in the buffer (record number r0 r1 of the FCB), padded
+; with Ctrl-Z after the valid bytes.  It does not move on to the next
+; record, so more output after an fflush goes into the same record and no
+; Ctrl-Z stays in the middle of the file.
 ; ============================================================
 _fflush_internal:
 	PUSH	BC
 	PUSH	DE
 	PUSH	HL
 
-	; Check bufpos
+	; A = valid bytes = the larger of bufpos and bufcnt
 	LD	BC,FILE_BUFPOS
 	ADD	HL,BC
 	LD	A,(HL)
+	INC	HL
+	CP	(HL)
+	JR	NC,_fflush_v
+	LD	A,(HL)
+_fflush_v:
 	OR	A
 	JR	Z,_fflush_ok	; Nothing to flush
 
 	; Pad rest of buffer with Ctrl-Z (CP/M EOF)
-	LD	B,A		; B = bytes written
+	LD	B,A		; B = valid bytes
 	POP	HL
 	PUSH	HL
 	LD	DE,FILE_BUFFER
 	ADD	HL,DE
 	LD	E,B
 	LD	D,0
-	ADD	HL,DE		; HL = buffer[bufpos]
+	ADD	HL,DE		; HL = buffer[valid]
 	LD	A,128
 	SUB	B
 	LD	B,A		; B = bytes to pad
@@ -166,13 +208,6 @@ _fflush_write:
 
 	OR	A
 	JR	NZ,_fflush_err
-
-	; Reset bufpos
-	POP	HL
-	PUSH	HL
-	LD	BC,FILE_BUFPOS
-	ADD	HL,BC
-	LD	(HL),0
 
 _fflush_ok:
 	POP	HL

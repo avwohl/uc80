@@ -61,6 +61,10 @@ uc80 program.c --printf float         # add %f
 #pragma printf long
 ```
 
+`%n`, `%a`, `%td`, `%lf`, `%llo`, `%llX` and `%hhd` need no `--printf` value: the
+compiler links their code when a format string uses them
+([printf](printf.md)). `--printf all` links all of them.
+
 ### Console Line Endings
 
 Console output ends a line with CR LF, because that is what a real CP/M
