@@ -30,6 +30,7 @@ write the register.  The wraps carry the comment ``; RL<n>``.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -52,6 +53,7 @@ HI_NAME = {"BC": "B", "DE": "D"}
 OTHER_PAIR = {"BC": "DE", "DE": "BC"}
 _BIT_OF_LETTER = {"B": B, "C": C, "D": D, "E": E}
 MAX_NODES = 2500
+_DUMP = __import__("os").environ.get("UC80_RL_DUMP", "")
 _DBG = bool(__import__("os").environ.get("UC80_RL_DEBUG"))
 
 
@@ -83,7 +85,7 @@ class Node:
 
     __slots__ = ("kind", "text", "op", "ops", "label", "rd", "wr", "flow",
                  "target", "size", "cond", "vr", "vw", "cpm", "xr", "w",
-                 "pro", "wrap")
+                 "pro", "wrap", "tight")
 
     def __init__(self, kind: str, text: str = ""):
         self.kind = kind          # ins label other data marker
@@ -103,6 +105,7 @@ class Node:
         self.xr = 0               # marker that reads a scratch value
         self.w = 1.0
         self.pro = False          # belongs to the prologue
+        self.tight = False        # liveness treats the swap as a permutation
         self.wrap = 0
 
 
@@ -117,6 +120,8 @@ class Env:
     callee_writes: Callable[[str], int] = lambda name: ALL7
     # an estimate of the writes, for the cost model only
     callee_writes_est: Callable[[str], int] = lambda name: ALL7
+    # the bytes the function leaves live at its return (a result)
+    exit_live: int = RET_LIVE
 
 
 _NUM = re.compile(r"^[-+]?\d+$")
@@ -334,7 +339,7 @@ def build_cfg(nodes: list[Node]) -> list[list[int]]:
     return succ
 
 
-def liveness(nodes, succ, exit_live: int = RET_LIVE):
+def liveness(nodes, succ, exit_live: int):
     """Live bytes at the entry of each node (B..E, H, L, A).  The exit
     reads D, E, H, L and A: a result, or the register arguments of a
     tail call."""
@@ -343,6 +348,8 @@ def liveness(nodes, succ, exit_live: int = RET_LIVE):
     live_in[n] = exit_live
     rd = [nd.rd for nd in nodes]
     wr = [nd.wr for nd in nodes]
+    swap = [bool(sw) and _is_swap(nd) for nd, sw in
+            zip(nodes, [getattr(nd, "tight", False) for nd in nodes])]
     changed = True
     while changed:
         changed = False
@@ -350,11 +357,55 @@ def liveness(nodes, succ, exit_live: int = RET_LIVE):
             out = 0
             for s in succ[i]:
                 out |= live_in[s]
-            new = (out & ~wr[i]) | rd[i]
+            if swap[i]:
+                new = (out & ~(D | E | H | L)) | _swap_bits(out)
+            else:
+                new = (out & ~wr[i]) | rd[i]
             if new != live_in[i]:
                 live_in[i] = new
                 changed = True
     return live_in
+
+
+def _is_swap(nd) -> bool:
+    return (nd.kind == "ins" and nd.op == "ex"
+            and [o.upper() for o in nd.ops] == ["DE", "HL"])
+
+
+def _swap_bits(m: int) -> int:
+    """The input bytes of ``ex DE,HL`` that the live output bytes need."""
+    out = 0
+    if m & D:
+        out |= H
+    if m & H:
+        out |= D
+    if m & E:
+        out |= L
+    if m & L:
+        out |= E
+    return out
+
+
+def tighten_swaps(nodes, succ, exit_live: int) -> None:
+    """``ex DE,HL`` reads both pairs, but a pair whose value ends up dead
+    (the new HL or the new DE is never read) is not a real read.  The
+    chain assignment ``ld HL,1 / ex DE,HL / ... ld (HL),E`` leaves such
+    dead values in DE, and the false reads join unrelated values into one
+    web.  This sets the read mask of each swap to what is live afterwards
+    (from a liveness that treats the swap as a byte permutation).  A value
+    that nobody reads stays unread when a later step renames or wraps
+    another instruction, so the mask stays valid."""
+    swaps = [i for i, nd in enumerate(nodes) if _is_swap(nd)]
+    if not swaps:
+        return
+    for nd in nodes:
+        nd.tight = False
+    for i in swaps:
+        nodes[i].tight = True
+    live = liveness(nodes, succ, exit_live)
+    for i in swaps:
+        nodes[i].rd = live[i] & (D | E | H | L)
+        nodes[i].tight = False
 
 
 def live_out_of(succ, live_in, i) -> int:
@@ -444,6 +495,7 @@ class Var:
     param_loc: Optional[str] = None   # A HL E DE: where the value arrives
     weight: float = 0.0
     reg: Optional[str] = None          # "BC" or "DE" in a configuration
+    hint: bool = False                 # declared with 'register'
 
     def bytemap(self):
         lo, hi = LO_NAME[self.reg], HI_NAME[self.reg]
@@ -889,10 +941,10 @@ def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
     other_free = not (taken & om)
     # ---- 1. cleanup pops
     succ = build_cfg(nodes)
-    live = liveness(nodes, succ)
+    live = liveness(nodes, succ, env.exit_live)
     nodes = sink_pops(nodes, succ, M, live, other_free, env)
     succ = build_cfg(nodes)
-    live = liveness(nodes, succ)
+    live = liveness(nodes, succ, env.exit_live)
     vlive = var_liveness(nodes, succ, M)
     n = len(nodes)
 
@@ -973,7 +1025,7 @@ def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
             renamed.add(root)
         if renamed:
             succ = build_cfg(nodes)
-            live = liveness(nodes, succ)
+            live = liveness(nodes, succ, env.exit_live)
             vlive = var_liveness(nodes, succ, M)
             reach = Reach(nodes, succ)
             isf = [bool(foreign(nd)) or (nd.kind == "ins" and (nd.rd | nd.wr) & pm
@@ -1091,7 +1143,7 @@ def peephole(nodes: list[Node], config: list[Var], env: Env) -> list[Node]:
     scratch to be dead afterwards."""
     for _ in range(3):
         succ = build_cfg(nodes)
-        live = liveness(nodes, succ)
+        live = liveness(nodes, succ, env.exit_live)
         out: list[Node] = []
         i = 0
         n = len(nodes)
@@ -1520,10 +1572,19 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
     except Bail as ex:
         _dbg("bail", ex)
         return None
+    # a jump to a label outside the function is a tail call: it reads the
+    # argument registers, so the exit keeps the wide mask.  The jump to
+    # the return label (@name_ret, emitted after the region) is a return.
+    labels = {nd.label for nd in nodes if nd.kind == "label"}
+    if any(nd.kind == "ins" and nd.flow in ("jump", "branch")
+           and (nd.target or "") not in labels
+           and not (nd.target or "").startswith(("$", "@")) for nd in nodes):
+        env = dataclasses.replace(env, exit_live=RET_LIVE)
+    tighten_swaps(nodes, succ, env.exit_live)
     for v in vars_:
         v.weight = _slot_weight(nodes, succ, v)
     cands = sorted([v for v in vars_ if v.weight >= 2.0],
-                   key=lambda v: -v.weight)[:4]
+                   key=lambda v: -v.weight * (2.0 if v.hint else 1.0))[:4]
     _dbg("candidates", [(v.name, v.weight) for v in vars_])
     if not cands:
         return None
@@ -1541,7 +1602,12 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
             finally:
                 v.reg = None
             gain = base - _weighted_cost(new, env) - 0.0
+            if v.hint and gain > 0:
+                gain *= 1.25     # 'register' is a priority hint
             _dbg("single", v.name, reg, "gain", gain)
+            if _DUMP == v.name + ":" + reg:
+                import sys
+                print("\n".join(render(new)), file=sys.stderr)
             singles.append((gain, v, reg, new, pro))
             if gain > best[0] + 3.0:
                 best = (gain, [(v, reg)], (new, pro))
@@ -1565,6 +1631,8 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
                 finally:
                     v1.reg = v2.reg = None
                 gain = base - _weighted_cost(new, env)
+                if gain > 0:
+                    gain *= 1.0 + 0.25 * (v1.hint + v2.hint) / 2
                 _dbg("pair", v1.name, r1, v2.name, r2, "gain", gain)
                 if gain > best[0] + 3.0:
                     best = (gain, [(v1, r1), (v2, r2)], (new, pro))

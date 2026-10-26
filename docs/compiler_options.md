@@ -32,6 +32,8 @@ Default optimizations (all enabled unless disabled):
 
 In whole-program mode, a function that only direct calls reach takes its first two scalar parameters in registers (A or HL, then E or DE). The caller pushes no word for these parameters, and a small function needs no IX frame. `--no-register-cc` passes every argument on the stack. [calling_convention.md](calling_convention.md) lists the rules.
 
+In the same mode, up to two scalar locals of a function live in BC or DE instead of memory. `--no-register-locals` keeps every local in memory. [register_locals.md](register_locals.md) lists the rules.
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or

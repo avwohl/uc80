@@ -164,7 +164,7 @@ Every other SDCC form stays an error: `__naked`, `__banked` on a function, `__sd
 python3 bench/rom/isrproof.py            # nmi, seq, bank
 ```
 
-- `nmi`: the snd-cmdq kernel with a real NMI. The handler (`#pragma uc80 nmi`) reads the command byte from port 0 with `z80_in` and queues it. The main loop dispatches 300 random commands. The port log has the same 1039 writes as a Python model of the dispatch switch. The handler takes 667 T-states from its first instruction to the end of `RETN`. The NMI acknowledge adds 11.
+- `nmi`: the snd-cmdq kernel with a real NMI. The handler (`#pragma uc80 nmi`) reads the command byte from port 0 with `z80_in` and queues it. The main loop dispatches 300 random commands. The port log has the same 1039 writes as a Python model of the dispatch switch. The handler takes 630 T-states from its first instruction to the end of `RETN`. The NMI acknowledge adds 11.
 - `seq`: the snd-seq kernel driven by the YM2610 timer A (IM 1). The handler (`interrupt NAME critical`) reads the status with `z80_in`, resets the flag, and runs one sequencer tick. After 500 interrupts the YM write log has the same 7934 writes, in the same order, as the plain loop version of the kernel. A tick takes 19589 to 50300 T-states. The longest timer period is 36864 T-states, so a long tick makes the next interrupt come at once after `RETI`. The compiler prints no warning for this ROM, because the tick reaches no routine with fixed RAM.
 - `bank`: `z80_in16` with the bank number in B selects banks 2 to 7 of the window at 8000h. The port log has the 16-bit port addresses 020Bh to 070Bh, and the bytes read through the window are the bytes of the image.
 

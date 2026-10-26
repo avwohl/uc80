@@ -6930,7 +6930,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                     sym_type=decl.var_type,
                     offset=self.ctx.local_offset
                 )
-            self._rl_note(self.ctx.locals[decl.name])
+            self._rl_note(self.ctx.locals[decl.name],
+                          hint=getattr(decl, 'storage_class', None) == 'register')
 
             # Initialize if there's an initializer
             if decl.init:

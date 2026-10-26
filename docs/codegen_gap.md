@@ -9,6 +9,17 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-26: family G, step 1 (simple register residency) is done
+
+Step 1 of family G is in the code (branch `reglocals`, see [register_locals.md](register_locals.md)). A text pass moves up to two scalar locals of a function into BC or DE. The pass runs after the body is generated, so the code generator is unchanged. It renames or wraps the scratch uses of BC and DE (`ld BC,_arr` / `add HL,BC`, calls) and a checker proves each result. The `register` keyword is a priority hint. Interrupt functions and `main` are not changed.
+
+Numbers: `bench/run.py` (uc80, size mode) on the 109 programs of the size run, from the same tree, step 1 of G against the tree before (84cfebf). Status: no change. Image: 87 programs smaller, none bigger, total 794,019 to 782,696 bytes. T-states: 79 programs faster, 1 slower (`micro+a32`, +0.15%). Mean against SDCC 4.6.0: size 0.95 to 0.94, T-states (speed mode) 0.59 to 0.56, without `sort-*` 0.71 to 0.69.
+
+- `snd-cmdq` 10.60M to 9.90M T-states (-6.6%) and -43 B. `snd-ymreg` -5.5% and -38 B. `snd-seq` -5.0% and -73 B. `snd-fnum` -3.4% and -36 B.
+- `sieve` -17.8% and -10 B. `tak` -14.4% and -41 B. `stanford-perm` -4.0%. `stanford-towers` -7.1% and -57 B. `davidly-ttt` -1.7% and -48 B.
+- `queens` gains only 0.7%, and `stanford-bubble` gains nothing. The loop counters of `queens` sit in a recursive function, and every array index uses BC and DE as scratch registers. A local in BC then pays a push and a pop for each index. The chain assignment `a[i]=b[j]=1` keeps DE busy, so the rename cannot move the scratch pair. This is the prerequisite of section G: the expression idioms must stop using BC and DE. Family H (CSE of array addresses) is the fix.
+- What is not done: IY as a struct pointer, HL residency, more than two locals, and giving back the `??AUTO` slot of a local that moved. The call graph analyser still reserves the slot.
+
 ## Status on 2026-10-26: family F is integrated with the C library
 
 The branch `regcc` is merged into the tree that has the libc rewrite in C, the float interpreter and the ROM work (branch `integrate5`). The library modules in `src/uc80/lib/lc/` come from `gen_c_modules.py` and `gen_vm_modules.py`, which compile with `--no-whole-program`. The register convention needs the whole program in view, so every library function keeps the stack convention. Running both generators again with the merged compiler gave files that are the same, byte for byte, as the files in the repository, and `--build-libs` gave the same `libc.mac`, `libc.lib` and `runtime.lib`. `tests/test_libm_vm.py` and `tests/test_sdas.py` pass.

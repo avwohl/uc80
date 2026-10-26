@@ -147,7 +147,7 @@ class RegLocalsMixin:
         self._rl_vol = self._vol_names
         self._rl_fn_ok = True
 
-    def _rl_note(self, sym, loc=None) -> None:
+    def _rl_note(self, sym, loc=None, hint: bool = False) -> None:
         """A local or a parameter slot was handed out."""
         if not self._rl_fn_ok or sym is None or not sym.name:
             return
@@ -175,7 +175,7 @@ class RegLocalsMixin:
             nbytes = size
         self._rl_vars.append(reglocals.Var(
             sym.name, kind, base, size, nbytes, is_param=loc is not None,
-            param_loc=loc))
+            param_loc=loc, hint=hint))
 
     def _rl_finish(self, name: str, region_start: int, entry_idx: int,
                    frame_mode: bool) -> None:
@@ -186,7 +186,9 @@ class RegLocalsMixin:
         region = lines[region_start:]
         if any(_SETJMP.search(ln) for ln in region if ln.startswith("\tcall")):
             return
-        res = reglocals.allocate(region, self._rl_vars, self._rl_env(),
+        env = dataclasses.replace(self._rl_env(),
+                                  exit_live=self._rl_exit_live())
+        res = reglocals.allocate(region, self._rl_vars, env,
                                  frame_mode, self._rl_wrap_id)
         if res is None:
             return
@@ -198,6 +200,24 @@ class RegLocalsMixin:
             print(f"reglocals: {name}: "
                   + ", ".join(f"{v.name}->{v.reg}" for v in res.assigned)
                   + f" (gain {res.gain:.0f})", file=sys.stderr)
+
+    def _rl_exit_live(self) -> int:
+        """The bytes a return leaves live: nothing for void, A and HL for a
+        scalar of up to two bytes, the wide mask for the rest."""
+        from . import codegen as cg
+        t = self.ctx.current_return_type
+        try:
+            t = cg._to_legacy(t)
+            if isinstance(t, cg.lt.BasicType) and t.name == "void":
+                return 0
+            if (isinstance(t, (cg.lt.BasicType, cg.lt.PointerType,
+                               cg.lt.EnumType))
+                    and not self._is_float_type(t)
+                    and self._type_size(t) <= 2):
+                return reglocals.A | reglocals.H | reglocals.L
+        except Exception:
+            pass
+        return reglocals.RET_LIVE
 
     _rl_debug = False
 
