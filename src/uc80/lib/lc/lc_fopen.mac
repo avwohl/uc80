@@ -34,6 +34,21 @@ FLAG_APPEND	EQU	40H	; every write goes to the end
 ; Open a file.  Modes: r, w, a, and r+, w+, a+ ("b" and "t" are ignored)
 ; ============================================================
 	PUBLIC	_fopen
+	PUBLIC	__fopen_at
+; ============================================================
+; Internal: __fopen_at(pathname, mode, FILE *slot).  Like fopen, but the
+; file goes in the given slot (freopen uses it).
+; ============================================================
+__fopen_at:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	PUSH	DE
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	JP	_fopen_found
+
 _fopen:
 	PUSH	IX
 	LD	IX,0

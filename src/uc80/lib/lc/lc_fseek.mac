@@ -10,6 +10,7 @@
 BDOS	EQU	5
 BDOS_SETDMA	EQU	26	; Set DMA address
 BDOS_READR	EQU	33	; Read random
+BDOS_WRITER	EQU	34	; Write random
 BDOS_SIZE	EQU	35	; Compute file size
 FILE_FLAGS	EQU	1
 FILE_UNGET	EQU	2	; pushed back character, or 0FFH
@@ -113,6 +114,13 @@ _fsk_have:
 	ADC	A,A
 	LD	B,A		; BC = the record number = position / 128
 
+	; A stream that can write: when the position is after the end of the
+	; data, the Ctrl-Z fill of the last record becomes zeros
+	LD	HL,(_fsk_fp)
+	INC	HL
+	BIT	5,(HL)
+	CALL	NZ,_fsk_gap
+
 	; A stream that appends goes to the end of the file at its next
 	; write, so after the seek it is in the reading state.  (The
 	; position above was computed in the state it had.)
@@ -173,6 +181,91 @@ _fseek_ret:
 	POP	DE
 	POP	BC
 	POP	IX
+	RET
+
+; The position (record BC, byte _fsk_off) is after the end of the data of
+; the file when the last record has Ctrl-Z fill before it.  Then the fill
+; up to the position (or to the end of the record, when the position is in
+; a later record) becomes zeros, as a C program expects of a gap, and the
+; record is written back.  BC is not changed.
+_fsk_gap:
+	PUSH	BC
+	LD	(_fsk_rec),BC
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_SIZE
+	CALL	BDOS		; r0 r1 = the number of records
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_RECNO
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)		; DE = records
+	LD	A,D
+	OR	E
+	JR	Z,_fgap_end	; an empty file
+	DEC	DE		; the last record
+	LD	(HL),D
+	DEC	HL
+	LD	(HL),E
+	LD	(_fsk_last),DE
+	CALL	_fsk_read
+	JR	NZ,_fgap_end
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_BUFFER+127
+	ADD	HL,DE
+	LD	B,128
+_fgap_s:
+	LD	A,(HL)
+	CP	1AH
+	JR	NZ,_fgap_f
+	DEC	HL
+	DJNZ	_fgap_s
+_fgap_f:
+	LD	A,B		; the bytes before the Ctrl-Z fill
+	CP	128
+	JR	Z,_fgap_end	; no fill
+	LD	(_fsk_t),A
+	LD	HL,(_fsk_last)
+	LD	DE,(_fsk_rec)
+	OR	A
+	SBC	HL,DE
+	JR	Z,_fgap_same
+	JR	NC,_fgap_end	; the position is in the data records
+	LD	C,128		; zeros up to the end of the record
+	JR	_fgap_fill
+_fgap_same:
+	LD	A,(_fsk_off)
+	LD	C,A		; zeros up to the position
+	LD	A,(_fsk_t)
+	CP	C
+	JR	NC,_fgap_end	; the position is in the data
+_fgap_fill:
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_BUFFER
+	ADD	HL,DE
+	LD	A,(_fsk_t)
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE		; the first byte of the fill
+	LD	A,C
+	SUB	E
+	LD	C,A		; the number of zeros
+_fgap_z:
+	LD	(HL),0
+	INC	HL
+	DEC	C
+	JR	NZ,_fgap_z
+	LD	HL,(_fsk_fp)
+	LD	DE,FILE_FCB
+	ADD	HL,DE
+	EX	DE,HL
+	LD	C,BDOS_WRITER
+	CALL	BDOS
+_fgap_end:
+	POP	BC
 	RET
 
 ; Read the record r0 r1 into the buffer and put the position in it.  A
@@ -311,5 +404,8 @@ _fsz_end:
 _fsk_fp:	DS	2	; the FILE
 _fsk_off:	DS	1	; the byte in the record
 _fsk_old:	DS	2	; r0 r1 saved around BDOS 35
+_fsk_rec:	DS	2	; the new record number
+_fsk_last:	DS	2	; the last record of the file
+_fsk_t:		DS	1	; the data bytes of the last record
 
 	END

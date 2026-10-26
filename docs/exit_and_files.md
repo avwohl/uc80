@@ -85,6 +85,12 @@ The limits:
   write changes only the bytes that it writes. When the file has no such
   record, the bytes before the position are 0. A write that goes into the next
   record of such a stream also keeps the bytes of that record.
+- When the position is after the end of the data, `fseek` on a stream that can
+  write changes the Ctrl-Z fill of the last record to zeros up to the position
+  (or to the end of the record, when the position is in a later record). Then
+  a write after the gap is not lost, and the gap holds zeros as in C. A file of
+  binary data that ends in 0x1A bytes has these bytes changed to zeros when
+  the position is after them.
 - `cpmemu` keeps the Ctrl-Z padding of the last record on the host when the
   program writes a file with LF line ends. The data before the padding is
   correct. A real CP/M disk has the same padding.
@@ -109,6 +115,12 @@ Each write to a stream in mode `a` or `a+` goes to the end of the data (as for
 position for the next read only. After `fopen`, the position of the stream is
 the start of the file: `ftell` gives 0, and the first read of an `a+` stream
 gives the first byte. After a write, `ftell` gives the end of the file.
+
+`freopen(path, mode, f)` closes `f` and opens `path` in the same `FILE`, so the
+result is `f`. It works for a stream from `fopen` or `tmpfile`. For `NULL`,
+`stdin`, `stdout` and `stderr` it returns NULL and does nothing, because these
+streams have no room for a file. When the open fails, `f` is closed and the
+result is NULL.
 
 The C standard requires `fflush`, `fseek` or `rewind` between a write and a
 read on one stream. It also requires `fseek` or `rewind` between a read and a

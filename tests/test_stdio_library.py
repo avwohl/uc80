@@ -533,3 +533,61 @@ int main(void)
 """).split("\n")
     assert out[:4] == ["fgetc on w: -1", "fputc on closed: -1",
                        "fputc on r: -1", "fgetc on r: a"]
+
+
+# ---- freopen and a gap made by fseek ------------------------------------
+
+def test_freopen_reuses_the_stream(tmp_path):
+    out = build_and_run(tmp_path, r"""
+#include <stdio.h>
+int main(void)
+{
+    FILE *f = fopen("s.txt", "w"), *g; int c;
+    fputs("one", f);
+    g = freopen("s.txt", "a", f);
+    printf("same %d\n", g == f);
+    fputs("two", g);
+    g = freopen("s.txt", "r", f);
+    printf("same %d\n", g == f);
+    while ((c = fgetc(g)) != EOF) putchar(c);
+    putchar('\n');
+    g = freopen("s.txt", "w", f);
+    fputs("new", g);
+    fclose(g);
+    f = fopen("nothere.txt", "r");
+    g = fopen("s.txt", "r");
+    g = freopen("nothere.txt", "r", g);
+    printf("missing %d\n", g == NULL);
+    g = freopen("s.txt", "w", stdout);
+    printf("stdout %d\n", g == NULL);
+    return 0;
+}
+""").split("\n")
+    assert [x for x in out if x] == [
+        "same 1", "same 1", "onetwo", "missing 1", "stdout 1"]
+    assert (tmp_path / "s.txt").read_bytes().rstrip(b"\x1a") == b"new"
+
+
+def test_fseek_past_the_end_leaves_zeros(tmp_path):
+    build_and_run(tmp_path, r"""
+#include <stdio.h>
+int main(void)
+{
+    FILE *f;
+    f = fopen("a.txt", "w"); fputs("12345", f);
+    fseek(f, 10L, SEEK_SET); fputc('z', f); fclose(f);
+    f = fopen("b.txt", "w+"); fputs("12345", f);
+    fseek(f, 200L, SEEK_SET); fputc('y', f); fclose(f);
+    f = fopen("c.txt", "w"); fputs("abc", f); fclose(f);
+    f = fopen("c.txt", "r+"); fseek(f, 7L, SEEK_SET); fputc('x', f);
+    fclose(f);
+    return 0;
+}
+""")
+    a = (tmp_path / "a.txt").read_bytes()
+    assert a[:11] == b"12345" + b"\0" * 5 + b"z" and set(a[11:]) <= {0x1A}
+    b = (tmp_path / "b.txt").read_bytes()
+    assert b[:5] == b"12345" and set(b[5:200]) == {0}
+    assert b[200:201] == b"y" and set(b[201:]) <= {0x1A}
+    c = (tmp_path / "c.txt").read_bytes()
+    assert c[:8] == b"abc" + b"\0" * 4 + b"x" and set(c[8:]) <= {0x1A}
