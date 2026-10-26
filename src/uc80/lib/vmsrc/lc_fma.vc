@@ -8,6 +8,8 @@ float fma(float x, float y, float z)
 {
     float p, pe, s, es;
 
+    if (expo(z) == 255.0f && expo(x) != 255.0f && expo(y) != 255.0f && z == z)
+        return z;                       /* the exact x*y is finite */
     if (expo(x) == 255.0f || expo(y) == 255.0f || expo(z) == 255.0f)
         return x * y + z;
     if (x == 0.0f || y == 0.0f)

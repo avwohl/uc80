@@ -316,7 +316,11 @@ def test_fma_rounds_once(tmp_path):
                 (0x40000000, 0x40400000, 0xC0C00000),
                 (0x7F800000, 0x3F800000, 0x3F800000),
                 (0x7FC00000, 0x3F800000, 0x3F800000),
-                (0x3F800000, 0x7F800000, 0xFF800000)]
+                (0x3F800000, 0x7F800000, 0xFF800000),
+                # the product overflows the float range, the sum is exact
+                (0x60AD78EC, 0x60AD78EC, 0xFF800000),
+                (0xE0AD78EC, 0x60AD78EC, 0x7F800000),
+                (0x60AD78EC, 0x60AD78EC, 0x7F800000)]
     table_ = ",".join("{0x%08xUL,0x%08xUL,0x%08xUL}" % t for t in triples)
     out = build_and_run(tmp_path, PROLOGUE + r"""
 static const unsigned long T[][3] = {%s};
@@ -336,6 +340,8 @@ int main(void)
         got = int(line, 16)
         if any(map(math.isnan, (x, y, z))):
             ok = math.isnan(decode_f32(got))
+        elif math.isinf(z) and not math.isinf(x) and not math.isinf(y):
+            ok = got == c       # a finite exact product never changes an infinity
         elif any(map(math.isinf, (x, y, z))):
             ok = got in (0x7F800000, 0xFF800000, 0x7FC00000) or \
                 same(got, x * y + z if not math.isnan(x * y + z) else math.nan)
