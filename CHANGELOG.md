@@ -8,6 +8,7 @@ observable behaviour of a program uc80 compiles.
 
 ### Fixed
 
+- scanf `%f` is correctly rounded for a mantissa of any length. Before, the scanner dropped all mantissa characters past 119 without a correction, so a long number could round wrong or get the wrong magnitude. `tests/test_strtod_exact.py` now tests `atof` and `sscanf` too.
 - `strtod`, `strtof`, `strtold`, `atof` and scanf `%f` round every decimal string correctly, also a string with more than 19 digits that is close to the middle of two floats (before, such a string could give the neighbour: `2.52540519340982427820563316345214843751e-6` was one unit too low, and a string just above 2^-150 gave 0 and not the smallest subnormal number). The converter uses 64-bit arithmetic and, for a string within 2^-48 of a tie, compares the digits with the tie in big integers (`lc_strtod.c`). Cost for a program that links `strtod`: +708 bytes of code and +170 bytes of RAM (`atof` program 6059 to 6767 bytes, `sscanf("%f")` 8422 to 9130). Test: `tests/test_strtod_exact.py`.
 - `__fdiv` gives the IEEE result for an infinity or NaN operand and keeps the sign of a zero numerator (`inf/2` was a huge finite number, `inf/inf` was 1.0, `0/-1` was `+0`). Float comparison with a NaN stays non-IEEE; recorded in `docs/FLOAT_STATUS.md`.
 - `strtol`, `strtoul`, `strtoll`, `strtoull` and scanf `%i` accept the C23 prefix `0b`; scanf has the `%b` conversion.

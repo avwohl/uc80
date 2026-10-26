@@ -1,8 +1,11 @@
 /* lc_scan_float.c - the floating-point conversion of the scanf engine.
  *
  * The characters of the number go into a buffer and strtod converts the
- * buffer.  The buffer takes up to 126 characters; the rest of a longer
- * number is dropped.  Like glibc, the reader takes "1e" and "1e+" as the
+ * buffer.  The buffer takes about 118 characters of the mantissa.  Zeros
+ * before the first nonzero digit are not stored, and digits past the end of
+ * the buffer are counted: the exponent is corrected and one extra digit "1"
+ * is added when a dropped digit is not zero, so strtod rounds the full
+ * number correctly.  Like glibc, the reader takes "1e" and "1e+" as the
  * number 1 and leaves no character back.
  *
  * Returns 1 for a number, 0 for a matching failure, -1 at the end of the
@@ -26,6 +29,7 @@ int _sc_float(struct sc *in, int width, void *dst)
 {
     char buf[BUFSZ + 1];
     int n = 0, c, w, hex = 0, digits = 0, dot = 0, i;
+    int nz = 0, sdot = 0, dropint = 0, zfrac = 0, sticky = 0, mn, ev = 0, esg = 1;
     char *end;
     double d;
 
@@ -119,32 +123,83 @@ int _sc_float(struct sc *in, int width, void *dst)
     for (;;) {
         if (c == '.' && !dot) {
             dot = 1;
+            if (n < BUFSZ - 9) {
+                buf[n++] = '.';
+                sdot = 1;
+            }
         } else if ((c >= '0' && c <= '9') ||
                    (hex && sf_lower(c) >= 'a' && sf_lower(c) <= 'f')) {
             digits = 1;
+            if (!nz && c == '0') {
+                if (dot)
+                    zfrac++;
+            } else {
+                nz = 1;
+                if (n < BUFSZ - 9) {
+                    buf[n++] = (char)c;
+                } else {
+                    if (!dot)
+                        dropint++;
+                    if (c != '0')
+                        sticky = 1;
+                }
+            }
         } else {
             break;
         }
-        if (n < BUFSZ - 8)
-            buf[n++] = (char)c;
         c = (w > 0) ? _sc_getc(in) : -2;
         w--;
     }
+    mn = n;
     if (digits && (hex ? sf_lower(c) == 'p' : sf_lower(c) == 'e')) {
-        buf[n++] = (char)c;
+        int rew = dropint || zfrac || sticky;
+
+        if (!rew)
+            buf[n++] = (char)c;
         c = (w > 0) ? _sc_getc(in) : -2;
         w--;
         if (c == '-' || c == '+') {
-            buf[n++] = (char)c;
+            if (!rew)
+                buf[n++] = (char)c;
+            if (c == '-')
+                esg = -1;
             c = (w > 0) ? _sc_getc(in) : -2;
             w--;
         }
         while (c >= '0' && c <= '9') {
-            if (n < BUFSZ)
+            if (!rew && n < BUFSZ)
                 buf[n++] = (char)c;
+            if (ev < 99999)
+                ev = ev * 10 + (c - '0');
             c = (w > 0) ? _sc_getc(in) : -2;
             w--;
         }
+    }
+    if (dropint || zfrac || sticky) {
+        /* rebuild the number: mantissa, "1" for the dropped digits, and an
+         * exponent with the corrections */
+        long e = (long)esg * ev;
+        char tmp[8];
+        int t = 0;
+
+        n = mn;
+        if (sticky) {
+            buf[n++] = '1';
+            if (!sdot)
+                dropint--;
+        }
+        e += (long)(hex ? 4 : 1) * (dropint - zfrac);
+        buf[n++] = hex ? 'p' : 'e';
+        if (e < 0) {
+            buf[n++] = '-';
+            e = -e;
+        }
+        do {
+            tmp[t++] = (char)('0' + (int)(e % 10));
+            e /= 10;
+        } while (e);
+        while (t)
+            buf[n++] = tmp[--t];
     }
     _sc_ungetc(in, c);
     if (!digits)

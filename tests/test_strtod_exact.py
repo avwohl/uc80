@@ -88,6 +88,7 @@ def spellings(value, rnd):
         dot = "" if "." in mant else "."
         out.append(mant + dot + "0" * rnd.randint(0, 40) + "1" + ex)
         out.append(mant + dot + "9" * rnd.randint(1, 40) + ex)
+        out.append(mant + dot + "0" * rnd.randint(100, 140) + "1" + ex)
         last = max(i for i, c in enumerate(mant) if c.isdigit())
         if mant[last] != "0":
             lower = mant[:last] + str(int(mant[last]) - 1) + mant[last + 1:]
@@ -98,15 +99,20 @@ def spellings(value, rnd):
     return out
 
 
-def run_strtod(tmp_path, texts):
+def run_strtod(tmp_path, texts, mode="strtod"):
     """The float bits (hex text) that strtod gives for each string."""
     tmp_path.mkdir()
     src = ("#include <stdio.h>\n#include <stdlib.h>\nstatic const char *t[] = {\n"
            + ",\n".join('"%s"' % t for t in texts) + "\n};\n"
            "int main(void)\n{\n    int i;\n"
-           "    for (i = 0; i < %d; i++) {\n        double d = strtod(t[i], 0);\n"
+           "    for (i = 0; i < %d; i++) {\n        double d = CONV;\n"
            '        printf("%%08lx\\n", *(unsigned long *)&d);\n    }\n'
            "    return 0;\n}\n" % len(texts))
+    conv = {"strtod": "strtod(t[i], 0)", "atof": "atof(t[i])",
+            "sscanf": ""}[mode]
+    if mode == "sscanf":
+        src = src.replace("double d = CONV;", "float d = 0; sscanf(t[i], \"%f\", &d);")
+    src = src.replace("CONV", conv)
     (tmp_path / "p.c").write_text(src)
     r = subprocess.run([sys.executable, "-m", "uc80.main", str(tmp_path / "p.c"),
                         "-o", str(tmp_path / "p.mac")], capture_output=True,
@@ -126,7 +132,8 @@ def run_strtod(tmp_path, texts):
     return got
 
 
-def test_strings(tmp_path):
+@pytest.mark.parametrize("mode", ["strtod", "atof", "sscanf"])
+def test_strings(tmp_path, mode):
     rnd = random.Random(20260511)
     texts = ["16777217", "16777219", "8388608.5", "8388609.5",
              "0.1", "0.3", "1e38", "3.4028235e38", "3.4028236e38",
@@ -136,7 +143,9 @@ def test_strings(tmp_path):
              "0x1.fffffep127", "0x1.ffffffp127", "0x1p-149", "0x1p-150",
              "0x1.0000010000000001p0", "123456789012345678901234567890",
              "0." + "0" * 40 + "1" + "5" * 130,
-             "1" + "0" * 130, "1" + "0" * 130 + "e-130"]
+             "1" + "0" * 130, "1" + "0" * 130 + "e-130",
+             "1" + "0" * 129 + "1", "1" + "0" * 150 + "7e-150",
+             "5.31052624" + "0" * 110 + "5e8"]
     ties = [0, 1, 2, 3, 0x7FFFFF, 0x800000, 0x800001, 0x3F7FFFFF, 0x3F800000,
             0x4B7FFFFF, 0x4B800000, 0x7F7FFFFE, 0x7F7FFFFF]
     ties += [rnd.randrange(0, 0x7F7FFFFF) for _ in range(14)]
@@ -163,7 +172,7 @@ def test_strings(tmp_path):
     batches.append(cur)
     bad = []
     for number, batch in enumerate(batches):
-        for text, out in zip(batch, run_strtod(tmp_path / str(number), batch)):
+        for text, out in zip(batch, run_strtod(tmp_path / str(number), batch, mode)):
             want = hexfloat[text] if text in hexfloat else reference(text)
             if int(out, 16) != want:
                 bad.append((text[:80], out, "%08x" % want))

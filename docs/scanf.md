@@ -45,8 +45,10 @@ matching failure.
   If not, the number is `0` and the `x` stays in the input. A `FILE` keeps
   only one pushed-back character. After `0xg` the `g` is lost for a `FILE`.
   A string keeps all characters.
-- The float conversion collects 126 characters and drops the rest of a longer
-  number. A string source puts every unused character back. A `FILE` keeps
+- The float conversion stores about 118 characters of the mantissa. It
+  counts the digits past that limit: it corrects the exponent and it adds one
+  digit `1` if a dropped digit is not zero. Zeros before the first nonzero
+  digit are not stored. The result is right for a mantissa of any length. A string source puts every unused character back. A `FILE` keeps
   only the last one.
 - On the console, the Enter key gives CR (13) and the end of the input is
   Ctrl-Z (26), as in CP/M. `%c` can return 13.

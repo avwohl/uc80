@@ -27,6 +27,20 @@ __sc_float_on:
 	ld	(??AUTO_scan_float+136),HL
 	ld	HL,0
 	ld	(??AUTO_scan_float+138),HL
+	ld	HL,0
+	ld	(??AUTO_scan_float+142),HL
+	ld	HL,0
+	ld	(??AUTO_scan_float+144),HL
+	ld	HL,0
+	ld	(??AUTO_scan_float+146),HL
+	ld	HL,0
+	ld	(??AUTO_scan_float+148),HL
+	ld	HL,0
+	ld	(??AUTO_scan_float+150),HL
+	ld	HL,0
+	ld	(??AUTO_scan_float+154),HL
+	ld	HL,1
+	ld	(??AUTO_scan_float+156),HL
 	ld	A,(IX+6)
 	or	(IX+7)
 	jr z,@TERN_E1_scan_float
@@ -202,7 +216,7 @@ __sc_float_on:
 @TERN_E21_scan_float:
 	ld	HL,@STR2_scan_float
 @TERN_END22_scan_float:
-	ld	(??AUTO_scan_float+148),HL
+	ld	(??AUTO_scan_float+164),HL
 	ld	HL,0
 	ld	(??AUTO_scan_float+140),HL
 @FOR25_scan_float:
@@ -220,7 +234,7 @@ __sc_float_on:
 	ld	HL,(??AUTO_scan_float+140)
 	inc	HL
 	ld	(??AUTO_scan_float+140),HL
-	ld	BC,(??AUTO_scan_float+148)
+	ld	BC,(??AUTO_scan_float+164)
 	add	HL,BC
 	ld	A,(HL)
 	or	A
@@ -275,7 +289,7 @@ __sc_float_on:
 @TERN_END35_scan_float:
 	push	HL
 	ld	HL,(??AUTO_scan_float+140)
-	ld	BC,(??AUTO_scan_float+148)
+	ld	BC,(??AUTO_scan_float+164)
 	add	HL,BC
 	ld	L,(HL)
 	ld	A,L
@@ -300,7 +314,7 @@ __sc_float_on:
 @FORUPD26_scan_float:
 	jp	@FOR25_scan_float
 @ENDFOR27_scan_float:
-	ld	HL,(??AUTO_scan_float+148)
+	ld	HL,(??AUTO_scan_float+164)
 	ld	A,(HL)
 	cp	105
 	jp	NZ,@ELSE36_scan_float
@@ -676,6 +690,25 @@ __sc_float_on:
 	jr nz,@ELSE78_scan_float
 	ld	HL,1
 	ld	(??AUTO_scan_float+138),HL
+	ld	HL,(??AUTO_scan_float+128)
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	118
+	ld	A,D
+	sbc	A,128
+	jr nc,@ENDIF81_scan_float
+	push	HL
+	inc	HL
+	ld	(??AUTO_scan_float+128),HL
+	pop	HL
+	ld	BC,??AUTO_scan_float+0
+	add	HL,BC
+	ld	(HL),46
+	ld	HL,1
+	ld	(??AUTO_scan_float+144),HL
+@ENDIF81_scan_float:
 	jp	@ENDIF79_scan_float
 @ELSE78_scan_float:
 	ld	HL,(??AUTO_scan_float+130)
@@ -686,7 +719,7 @@ __sc_float_on:
 	sub	48
 	ld	A,D
 	sbc	A,128
-	jr c,@AND_S83_scan_float
+	jr c,@AND_S85_scan_float
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -694,43 +727,11 @@ __sc_float_on:
 	sub	58
 	ld	A,D
 	sbc	A,128
-	jr c,@OR_S82_scan_float
-@AND_S83_scan_float:
+	jr c,@OR_S84_scan_float
+@AND_S85_scan_float:
 	ld	A,(??AUTO_scan_float+134)
 	or	A
-	jr z,@ELSE80_scan_float
-	ld	HL,(??AUTO_scan_float+130)
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	65
-	ld	A,D
-	sbc	A,128
-	jr c,@TERN_E84_scan_float
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	91
-	ld	A,D
-	sbc	A,128
-	jr nc,@TERN_E84_scan_float
-	ld	HL,(??AUTO_scan_float+130)
-	ld	DE,32
-	add	HL,DE
-	jr @TERN_END85_scan_float
-@TERN_E84_scan_float:
-	ld	HL,(??AUTO_scan_float+130)
-@TERN_END85_scan_float:
-	ld	A,H
-	xor	128
-	ld	D,A
-	ld	A,L
-	sub	97
-	ld	A,D
-	sbc	A,128
-	jr c,@ELSE80_scan_float
+	jp	Z,@ELSE82_scan_float
 	ld	HL,(??AUTO_scan_float+130)
 	ld	A,H
 	xor	128
@@ -759,27 +760,73 @@ __sc_float_on:
 	xor	128
 	ld	D,A
 	ld	A,L
+	sub	97
+	ld	A,D
+	sbc	A,128
+	jp	C,@ELSE82_scan_float
+	ld	HL,(??AUTO_scan_float+130)
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	65
+	ld	A,D
+	sbc	A,128
+	jr c,@TERN_E88_scan_float
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
+	sub	91
+	ld	A,D
+	sbc	A,128
+	jr nc,@TERN_E88_scan_float
+	ld	HL,(??AUTO_scan_float+130)
+	ld	DE,32
+	add	HL,DE
+	jr @TERN_END89_scan_float
+@TERN_E88_scan_float:
+	ld	HL,(??AUTO_scan_float+130)
+@TERN_END89_scan_float:
+	ld	A,H
+	xor	128
+	ld	D,A
+	ld	A,L
 	sub	103
 	ld	A,D
 	sbc	A,128
-	jr nc,@ELSE80_scan_float
-@OR_S82_scan_float:
+	jr nc,@ELSE82_scan_float
+@OR_S84_scan_float:
 	ld	HL,1
 	ld	(??AUTO_scan_float+136),HL
-	jr @ENDIF81_scan_float
-@ELSE80_scan_float:
-	jr @ENDFOR77_scan_float
-@ENDIF81_scan_float:
-@ENDIF79_scan_float:
+	ld	A,(??AUTO_scan_float+142)
+	or	A
+	jr nz,@ELSE90_scan_float
+	ld	HL,(??AUTO_scan_float+130)
+	ld	A,L
+	xor	48
+	or	H
+	jr nz,@ELSE90_scan_float
+	ld	A,(??AUTO_scan_float+138)
+	or	A
+	jr z,@ENDIF93_scan_float
+	ld	HL,(??AUTO_scan_float+148)
+	inc	HL
+	ld	(??AUTO_scan_float+148),HL
+@ENDIF93_scan_float:
+	jr @ENDIF83_scan_float
+@ELSE90_scan_float:
+	ld	HL,1
+	ld	(??AUTO_scan_float+142),HL
 	ld	HL,(??AUTO_scan_float+128)
 	ld	A,H
 	xor	128
 	ld	D,A
 	ld	A,L
-	sub	119
+	sub	118
 	ld	A,D
 	sbc	A,128
-	jr nc,@ENDIF89_scan_float
+	jr nc,@ELSE94_scan_float
 	ld	A,(??AUTO_scan_float+130)
 	push	AF
 	push	HL
@@ -790,7 +837,30 @@ __sc_float_on:
 	add	HL,BC
 	pop	AF
 	ld	(HL),A
-@ENDIF89_scan_float:
+	jr @ENDIF95_scan_float
+@ELSE94_scan_float:
+	ld	A,(??AUTO_scan_float+138)
+	or	A
+	jr nz,@ENDIF97_scan_float
+	ld	HL,(??AUTO_scan_float+146)
+	inc	HL
+	ld	(??AUTO_scan_float+146),HL
+@ENDIF97_scan_float:
+	ld	HL,(??AUTO_scan_float+130)
+	ld	A,L
+	xor	48
+	or	H
+	jr z,@ENDIF99_scan_float
+	ld	HL,1
+	ld	(??AUTO_scan_float+150),HL
+@ENDIF99_scan_float:
+@ENDIF95_scan_float:
+@ENDIF91_scan_float:
+	jr @ENDIF83_scan_float
+@ELSE82_scan_float:
+	jr @ENDFOR77_scan_float
+@ENDIF83_scan_float:
+@ENDIF79_scan_float:
 	ld	HL,(??AUTO_scan_float+132)
 	ld	A,H
 	xor	128
@@ -799,16 +869,16 @@ __sc_float_on:
 	sub	1
 	ld	A,D
 	sbc	A,128
-	jr c,@TERN_E90_scan_float
+	jr c,@TERN_E100_scan_float
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
 	call	__sc_getc
 	pop	DE
-	jr @TERN_END91_scan_float
-@TERN_E90_scan_float:
+	jr @TERN_END101_scan_float
+@TERN_E100_scan_float:
 	ld	HL,-2
-@TERN_END91_scan_float:
+@TERN_END101_scan_float:
 	ld	(??AUTO_scan_float+130),HL
 	ld	HL,(??AUTO_scan_float+132)
 	dec	HL
@@ -816,12 +886,14 @@ __sc_float_on:
 @FORUPD76_scan_float:
 	jp	@FOR75_scan_float
 @ENDFOR77_scan_float:
+	ld	HL,(??AUTO_scan_float+128)
+	ld	(??AUTO_scan_float+152),HL
 	ld	A,(??AUTO_scan_float+136)
 	or	A
-	jp	Z,@ENDIF93_scan_float
+	jp	Z,@ENDIF103_scan_float
 	ld	A,(??AUTO_scan_float+134)
 	or	A
-	jr z,@TERN_E94_scan_float
+	jr z,@TERN_E104_scan_float
 	ld	HL,(??AUTO_scan_float+130)
 	ld	A,H
 	xor	128
@@ -830,7 +902,7 @@ __sc_float_on:
 	sub	65
 	ld	A,D
 	sbc	A,128
-	jr c,@TERN_E96_scan_float
+	jr c,@TERN_E106_scan_float
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -838,23 +910,23 @@ __sc_float_on:
 	sub	91
 	ld	A,D
 	sbc	A,128
-	jr nc,@TERN_E96_scan_float
+	jr nc,@TERN_E106_scan_float
 	ld	HL,(??AUTO_scan_float+130)
 	ld	DE,32
 	add	HL,DE
-	jr @TERN_END97_scan_float
-@TERN_E96_scan_float:
+	jr @TERN_END107_scan_float
+@TERN_E106_scan_float:
 	ld	HL,(??AUTO_scan_float+130)
-@TERN_END97_scan_float:
+@TERN_END107_scan_float:
 	ld	A,L
 	xor	112
 	or	H
 	ld	HL,1
-	jr z,@CMP_E98_scan_float
+	jr z,@CMP_E108_scan_float
 	dec	L
-@CMP_E98_scan_float:
-	jr @TERN_END95_scan_float
-@TERN_E94_scan_float:
+@CMP_E108_scan_float:
+	jr @TERN_END105_scan_float
+@TERN_E104_scan_float:
 	ld	HL,(??AUTO_scan_float+130)
 	ld	A,H
 	xor	128
@@ -863,7 +935,7 @@ __sc_float_on:
 	sub	65
 	ld	A,D
 	sbc	A,128
-	jr c,@TERN_E99_scan_float
+	jr c,@TERN_E109_scan_float
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -871,25 +943,45 @@ __sc_float_on:
 	sub	91
 	ld	A,D
 	sbc	A,128
-	jr nc,@TERN_E99_scan_float
+	jr nc,@TERN_E109_scan_float
 	ld	HL,(??AUTO_scan_float+130)
 	ld	DE,32
 	add	HL,DE
-	jr @TERN_END100_scan_float
-@TERN_E99_scan_float:
+	jr @TERN_END110_scan_float
+@TERN_E109_scan_float:
 	ld	HL,(??AUTO_scan_float+130)
-@TERN_END100_scan_float:
+@TERN_END110_scan_float:
 	ld	A,L
 	xor	101
 	or	H
 	ld	HL,1
-	jr z,@CMP_E101_scan_float
+	jr z,@CMP_E111_scan_float
 	dec	L
-@CMP_E101_scan_float:
-@TERN_END95_scan_float:
+@CMP_E111_scan_float:
+@TERN_END105_scan_float:
 	ld	A,H
 	or	L
-	jp	Z,@ENDIF93_scan_float
+	jp	Z,@ENDIF103_scan_float
+	ld	HL,(??AUTO_scan_float+146)
+	ld	A,H
+	or	L
+	jr nz,@OR_T112_scan_float
+	ld	HL,(??AUTO_scan_float+148)
+	ld	A,H
+	or	L
+	jr nz,@OR_T112_scan_float
+	ld	A,(??AUTO_scan_float+150)
+	or	A
+	jr nz,@OR_T112_scan_float
+	ld	HL,0
+	jr @OR_E113_scan_float
+@OR_T112_scan_float:
+	ld	HL,1
+@OR_E113_scan_float:
+	ld	(??AUTO_scan_float+166),HL
+	ld	A,H
+	or	L
+	jr nz,@ENDIF115_scan_float
 	ld	A,(??AUTO_scan_float+130)
 	push	AF
 	ld	HL,(??AUTO_scan_float+128)
@@ -901,6 +993,7 @@ __sc_float_on:
 	add	HL,BC
 	pop	AF
 	ld	(HL),A
+@ENDIF115_scan_float:
 	ld	HL,(??AUTO_scan_float+132)
 	ld	A,H
 	xor	128
@@ -909,16 +1002,16 @@ __sc_float_on:
 	sub	1
 	ld	A,D
 	sbc	A,128
-	jr c,@TERN_E102_scan_float
+	jr c,@TERN_E116_scan_float
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
 	call	__sc_getc
 	pop	DE
-	jr @TERN_END103_scan_float
-@TERN_E102_scan_float:
+	jr @TERN_END117_scan_float
+@TERN_E116_scan_float:
 	ld	HL,-2
-@TERN_END103_scan_float:
+@TERN_END117_scan_float:
 	ld	(??AUTO_scan_float+130),HL
 	ld	HL,(??AUTO_scan_float+132)
 	dec	HL
@@ -927,12 +1020,16 @@ __sc_float_on:
 	ld	A,L
 	xor	45
 	or	H
-	jr z,@OR_S106_scan_float
+	jr z,@OR_S120_scan_float
 	ld	A,L
 	xor	43
 	or	H
-	jr nz,@ENDIF105_scan_float
-@OR_S106_scan_float:
+	jr nz,@ENDIF119_scan_float
+@OR_S120_scan_float:
+	ld	HL,(??AUTO_scan_float+166)
+	ld	A,H
+	or	L
+	jr nz,@ENDIF122_scan_float
 	ld	A,(??AUTO_scan_float+130)
 	push	AF
 	ld	HL,(??AUTO_scan_float+128)
@@ -944,6 +1041,15 @@ __sc_float_on:
 	add	HL,BC
 	pop	AF
 	ld	(HL),A
+@ENDIF122_scan_float:
+	ld	HL,(??AUTO_scan_float+130)
+	ld	A,L
+	xor	45
+	or	H
+	jr nz,@ENDIF124_scan_float
+	ld	HL,-1
+	ld	(??AUTO_scan_float+156),HL
+@ENDIF124_scan_float:
 	ld	HL,(??AUTO_scan_float+132)
 	ld	A,H
 	xor	128
@@ -952,22 +1058,22 @@ __sc_float_on:
 	sub	1
 	ld	A,D
 	sbc	A,128
-	jr c,@TERN_E107_scan_float
+	jr c,@TERN_E125_scan_float
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
 	call	__sc_getc
 	pop	DE
-	jr @TERN_END108_scan_float
-@TERN_E107_scan_float:
+	jr @TERN_END126_scan_float
+@TERN_E125_scan_float:
 	ld	HL,-2
-@TERN_END108_scan_float:
+@TERN_END126_scan_float:
 	ld	(??AUTO_scan_float+130),HL
 	ld	HL,(??AUTO_scan_float+132)
 	dec	HL
 	ld	(??AUTO_scan_float+132),HL
-@ENDIF105_scan_float:
-@WHILE109_scan_float:
+@ENDIF119_scan_float:
+@WHILE127_scan_float:
 	ld	HL,(??AUTO_scan_float+130)
 	ld	A,H
 	xor	128
@@ -976,7 +1082,7 @@ __sc_float_on:
 	sub	48
 	ld	A,D
 	sbc	A,128
-	jr c,@ENDWHILE110_scan_float
+	jp	C,@ENDWHILE128_scan_float
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -984,7 +1090,11 @@ __sc_float_on:
 	sub	58
 	ld	A,D
 	sbc	A,128
-	jr nc,@ENDWHILE110_scan_float
+	jp	NC,@ENDWHILE128_scan_float
+	ld	HL,(??AUTO_scan_float+166)
+	ld	A,H
+	or	L
+	jr nz,@ENDIF130_scan_float
 	ld	HL,(??AUTO_scan_float+128)
 	ld	A,H
 	xor	128
@@ -993,7 +1103,7 @@ __sc_float_on:
 	sub	127
 	ld	A,D
 	sbc	A,128
-	jr nc,@ENDIF112_scan_float
+	jr nc,@ENDIF130_scan_float
 	ld	A,(??AUTO_scan_float+130)
 	push	AF
 	push	HL
@@ -1004,7 +1114,39 @@ __sc_float_on:
 	add	HL,BC
 	pop	AF
 	ld	(HL),A
-@ENDIF112_scan_float:
+@ENDIF130_scan_float:
+	ld	HL,(??AUTO_scan_float+154)
+	ld	A,H
+	rlca
+	sbc	A,A
+	ld	E,A
+	ld d,a
+	xor	128
+	ld	B,A
+	ld	A,L
+	sub	159
+	ld	A,H
+	sbc	A,134
+	ld	A,E
+	sbc	A,1
+	ld	A,B
+	sbc	A,128
+	jr nc,@ENDIF132_scan_float
+	ld	HL,(??AUTO_scan_float+154)
+	ld	D,H
+	ld	E,L
+	add	HL,HL
+	add	HL,HL
+	add	HL,DE
+	add	HL,HL
+	push	HL
+	ld	HL,(??AUTO_scan_float+130)
+	ld	DE,65488
+	add	HL,DE
+	pop	DE
+	add	HL,DE
+	ld	(??AUTO_scan_float+154),HL
+@ENDIF132_scan_float:
 	ld	HL,(??AUTO_scan_float+132)
 	ld	A,H
 	xor	128
@@ -1013,23 +1155,204 @@ __sc_float_on:
 	sub	1
 	ld	A,D
 	sbc	A,128
-	jr c,@TERN_E113_scan_float
+	jr c,@TERN_E133_scan_float
 	ld	L,(IX+4)
 	ld	H,(IX+5)
 	push	HL
 	call	__sc_getc
 	pop	DE
-	jr @TERN_END114_scan_float
-@TERN_E113_scan_float:
+	jr @TERN_END134_scan_float
+@TERN_E133_scan_float:
 	ld	HL,-2
-@TERN_END114_scan_float:
+@TERN_END134_scan_float:
 	ld	(??AUTO_scan_float+130),HL
 	ld	HL,(??AUTO_scan_float+132)
 	dec	HL
 	ld	(??AUTO_scan_float+132),HL
-	jr @WHILE109_scan_float
-@ENDWHILE110_scan_float:
-@ENDIF93_scan_float:
+	jp	@WHILE127_scan_float
+@ENDWHILE128_scan_float:
+@ENDIF103_scan_float:
+	ld	HL,(??AUTO_scan_float+146)
+	ld	A,H
+	or	L
+	jr nz,@OR_S137_scan_float
+	ld	HL,(??AUTO_scan_float+148)
+	ld	A,H
+	or	L
+	jr nz,@OR_S137_scan_float
+	ld	A,(??AUTO_scan_float+150)
+	or	A
+	jp	Z,@ENDIF136_scan_float
+@OR_S137_scan_float:
+	ld	HL,(??AUTO_scan_float+154)
+	ld	A,H
+	rlca
+	sbc	A,A
+	ld	E,A
+	ld	D,A
+	ld	BC,(??AUTO_scan_float+156)
+	ld	(__tmp32),BC
+	ld	A,(??AUTO_scan_float+157)
+	rlca
+	sbc	A,A
+	ld	C,A
+	ld	B,A
+	ld	(__tmp32+2),BC
+	call	__smul32
+	ld	(??AUTO_scan_float+168),HL
+	ld	(??AUTO_scan_float+170),DE
+	ld	HL,0
+	ld	(??AUTO_scan_float+180),HL
+	ld	HL,(??AUTO_scan_float+152)
+	ld	(??AUTO_scan_float+128),HL
+	ld	A,(??AUTO_scan_float+150)
+	or	A
+	jr z,@ENDIF139_scan_float
+	push	HL
+	inc	HL
+	ld	(??AUTO_scan_float+128),HL
+	pop	HL
+	ld	BC,??AUTO_scan_float+0
+	add	HL,BC
+	ld	(HL),49
+	ld	A,(??AUTO_scan_float+144)
+	or	A
+	jr nz,@ENDIF141_scan_float
+	ld	HL,(??AUTO_scan_float+146)
+	dec	HL
+	ld	(??AUTO_scan_float+146),HL
+@ENDIF141_scan_float:
+@ENDIF139_scan_float:
+	ld	HL,(??AUTO_scan_float+146)
+	ld	DE,(??AUTO_scan_float+148)
+	or	A
+	sbc	HL,DE
+	ld	A,H
+	rlca
+	sbc	A,A
+	ld	E,A
+	ld	D,A
+	ld	(__tmp32),HL
+	ld	(__tmp32+2),DE
+	ld	A,(??AUTO_scan_float+134)
+	or	A
+	jr z,@TERN_E142_scan_float
+	ld	HL,4
+	jr @TERN_END143_scan_float
+@TERN_E142_scan_float:
+	ld	HL,1
+@TERN_END143_scan_float:
+	ld	A,H
+	rlca
+	sbc	A,A
+	ld	E,A
+	ld	D,A
+	call	__smul32
+	ld	BC,(??AUTO_scan_float+168)
+	add	HL,BC
+	ex	DE,HL
+	ld	BC,(??AUTO_scan_float+170)
+	adc	HL,BC
+	ex	DE,HL
+	ld	(??AUTO_scan_float+168),HL
+	ld	(??AUTO_scan_float+170),DE
+	ld	A,(??AUTO_scan_float+134)
+	or	A
+	jr z,@TERN_E144_scan_float
+	ld	HL,112
+	jr @TERN_END145_scan_float
+@TERN_E144_scan_float:
+	ld	HL,101
+@TERN_END145_scan_float:
+	push	HL
+	ld	HL,(??AUTO_scan_float+128)
+	push	HL
+	inc	HL
+	ld	(??AUTO_scan_float+128),HL
+	pop	HL
+	ld	BC,??AUTO_scan_float+0
+	add	HL,BC
+	pop	DE
+	ld	(HL),E
+	ld	HL,(??AUTO_scan_float+168)
+	ld	DE,(??AUTO_scan_float+170)
+	bit	7,D
+	jr z,@ENDIF147_scan_float
+	ld	HL,(??AUTO_scan_float+128)
+	push	HL
+	inc	HL
+	ld	(??AUTO_scan_float+128),HL
+	pop	HL
+	ld	BC,??AUTO_scan_float+0
+	add	HL,BC
+	ld	(HL),45
+	ld	HL,(??AUTO_scan_float+168)
+	ld	DE,(??AUTO_scan_float+170)
+	call	__neg32
+	ld	(??AUTO_scan_float+168),HL
+	ld	(??AUTO_scan_float+170),DE
+@ENDIF147_scan_float:
+@DO148_scan_float:
+	ld	HL,(??AUTO_scan_float+168)
+	ld	DE,(??AUTO_scan_float+170)
+	ld	BC,10
+	ld	(__tmp32),BC
+	ld	BC,0
+	ld	(__tmp32+2),BC
+	call	__smod32
+	ld	A,L
+	add	A,48
+	push	AF
+	ld	HL,(??AUTO_scan_float+180)
+	push	HL
+	inc	HL
+	ld	(??AUTO_scan_float+180),HL
+	pop	HL
+	ld	BC,??AUTO_scan_float+172
+	add	HL,BC
+	pop	AF
+	ld	(HL),A
+	ld	HL,(??AUTO_scan_float+168)
+	ld	DE,(??AUTO_scan_float+170)
+	ld	BC,10
+	ld	(__tmp32),BC
+	ld	BC,0
+	ld	(__tmp32+2),BC
+	call	__sdiv32
+	ld	(??AUTO_scan_float+168),HL
+	ld	(??AUTO_scan_float+170),DE
+@DOCOND149_scan_float:
+	ld	HL,(??AUTO_scan_float+168)
+	ld	DE,(??AUTO_scan_float+170)
+	ld	A,H
+	or	L
+	or	E
+	or	D
+	jr nz,@DO148_scan_float
+@ENDDO150_scan_float:
+@WHILE151_scan_float:
+	ld	HL,(??AUTO_scan_float+180)
+	ld	A,H
+	or	L
+	jr z,@ENDWHILE152_scan_float
+	dec	HL
+	ld	(??AUTO_scan_float+180),HL
+	ld	BC,??AUTO_scan_float+172
+	add	HL,BC
+	ld	A,(HL)
+	push	AF
+	ld	HL,(??AUTO_scan_float+128)
+	push	HL
+	inc	HL
+	ld	(??AUTO_scan_float+128),HL
+	pop	HL
+	ld	BC,??AUTO_scan_float+0
+	add	HL,BC
+	pop	AF
+	ld	(HL),A
+	jr @WHILE151_scan_float
+@ENDWHILE152_scan_float:
+@ENDIF136_scan_float:
 	ld	HL,(??AUTO_scan_float+130)
 	push	HL
 	ld	L,(IX+4)
@@ -1040,41 +1363,41 @@ __sc_float_on:
 	pop	DE
 	ld	A,(??AUTO_scan_float+136)
 	or	A
-	jr nz,@ENDIF116_scan_float
+	jr nz,@ENDIF154_scan_float
 	ld	HL,0
 	jp	@_sc_float_ret
-@ENDIF116_scan_float:
+@ENDIF154_scan_float:
 @L__sc_float_convert:
 	ld	HL,(??AUTO_scan_float+128)
 	ld	BC,??AUTO_scan_float+0
 	add	HL,BC
 	ld	(HL),0
-	ld	HL,??AUTO_scan_float+142
+	ld	HL,??AUTO_scan_float+158
 	push	HL
 	ld	HL,??AUTO_scan_float+0
 	push	HL
 	call	_strtod
 	pop	BC
 	pop	BC
-	ld	(??AUTO_scan_float+144),HL
-	ld	(??AUTO_scan_float+146),DE
+	ld	(??AUTO_scan_float+160),HL
+	ld	(??AUTO_scan_float+162),DE
 	ld	HL,??AUTO_scan_float+0
-	ld	DE,(??AUTO_scan_float+142)
+	ld	DE,(??AUTO_scan_float+158)
 	ex	DE,HL
 	or	A
 	sbc	HL,DE
 	ld	(??AUTO_scan_float+140),HL
-@WHILE117_scan_float:
+@WHILE155_scan_float:
 	ld	HL,(??AUTO_scan_float+128)
 	ld	DE,(??AUTO_scan_float+140)
 	ld	A,E
 	sub	L
 	ld	A,D
 	sbc	A,H
-	jp	PO,@CMP_NV119_scan_float
+	jp	PO,@CMP_NV157_scan_float
 	xor	128
-@CMP_NV119_scan_float:
-	jp	P,@ENDWHILE118_scan_float
+@CMP_NV157_scan_float:
+	jp	P,@ENDWHILE156_scan_float
 	dec	HL
 	ld	(??AUTO_scan_float+128),HL
 	ld	BC,??AUTO_scan_float+0
@@ -1089,20 +1412,20 @@ __sc_float_on:
 	call	__sc_ungetc
 	pop	DE
 	pop	DE
-	jr @WHILE117_scan_float
-@ENDWHILE118_scan_float:
+	jr @WHILE155_scan_float
+@ENDWHILE156_scan_float:
 	ld	HL,(??AUTO_scan_float+140)
 	ld	A,H
 	or	L
-	jr nz,@ENDIF121_scan_float
+	jr nz,@ENDIF159_scan_float
 	ld	HL,0
 	jr @_sc_float_ret
-@ENDIF121_scan_float:
+@ENDIF159_scan_float:
 	ld	A,(IX+8)
 	or	(IX+9)
-	jr z,@ENDIF123_scan_float
-	ld	HL,(??AUTO_scan_float+144)
-	ld	DE,(??AUTO_scan_float+146)
+	jr z,@ENDIF161_scan_float
+	ld	HL,(??AUTO_scan_float+160)
+	ld	DE,(??AUTO_scan_float+162)
 	push	DE
 	push	HL
 	ld	L,(IX+8)
@@ -1118,12 +1441,19 @@ __sc_float_on:
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
-@ENDIF123_scan_float:
+@ENDIF161_scan_float:
 	ld	HL,1
 @_sc_float_ret:
 	pop	IX
 	ret
 
+
+; Runtime library functions
+	EXTRN	__neg32
+	EXTRN	__sdiv32
+	EXTRN	__smod32
+	EXTRN	__smul32
+	EXTRN	__tmp32
 
 ; Implicit external functions
 	EXTRN	__sc_getc
@@ -1146,6 +1476,6 @@ ___sc_float_S0:
 	COMMON	/lc_scan_float/
 ; Shared automatic storage
 ??AUTO_scan_float:
-	ds	150
+	ds	182
 
 	END
