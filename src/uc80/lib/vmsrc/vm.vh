@@ -8,6 +8,8 @@ extern rtn float2 frexp1(float) = __vm_frexp1;
 extern rtn float2 phred(float) = __vm_phred;
 
 /* programs of other modules */
+extern vm float2 m_2sum(float, float);
+extern vm float2 m_2prod(float, float);
 extern vm float  m_ksin(float);
 extern vm float  m_kcos(float);
 extern vm float2 m_reduce(float);

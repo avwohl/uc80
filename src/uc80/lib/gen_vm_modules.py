@@ -52,13 +52,12 @@ STACK_BYTES = 256
 
 # opcodes below 20H: a table index; 80H and up: a jump
 LOW = ["RET", "RET2", "RET3", "ADD", "SUB", "MUL", "NEG", "ABS", "DROP",
-       "POLY", "TRUNC", "2SUM", "2PROD", "CALL", "CALLU", "CALLB", "CALLU2",
+       "POLY", "TRUNC", "CALL", "CALLU", "CALLB", "CALLU2",
        "SGN", "EXPO", "TBL", "PICKX", "PUTX", "LDCX", "JMPL"]
 HIGH = ["JLT", "JLE", "JGT", "JGE", "JEQ", "JNE", "JMP"]
 HANDLER = {"RET": "ret", "ADD": "add", "SUB": "sub", "MUL": "mul",
            "NEG": "neg", "ABS": "abs", "DROP": "drop",
-           "POLY": "poly", "TRUNC": "trunc", "2SUM": "2sum",
-           "2PROD": "2prod", "RET2": "ret2", "RET3": "ret3", "CALL": "call",
+           "POLY": "poly", "TRUNC": "trunc", "RET2": "ret2", "RET3": "ret3", "CALL": "call",
            "CALLU": "callu", "CALLB": "callb", "CALLU2": "callu2",
            "SGN": "sgn", "EXPO": "expo",
            "TBL": "tbl_op", "PICKX": "pickx", "PUTX": "putx",
@@ -459,6 +458,7 @@ class Gen:
 
     def call_target(self, name, nargs, want):
         """Emit a call; returns the number of results."""
+        name = {"twosum": "m_2sum", "twoprod": "m_2prod"}.get(name, name)
         if name in self.funcs:
             f = self.funcs[name]
             if len(f["args"]) != nargs:
@@ -534,8 +534,6 @@ class Gen:
                 return
             for a in args:
                 self.expr(a)
-            if name in ("twosum", "twoprod"):
-                raise Error("%s: twosum and twoprod give two results" % self.fn["name"])
             if self.call_target(name, len(args), 1) != 1:
                 raise Error("%s: %s gives two results" % (self.fn["name"], name))
         else:
@@ -601,11 +599,7 @@ class Gen:
             name, args = e[1], e[2]
             for a in args:
                 self.expr(a)
-            if name in ("twosum", "twoprod"):
-                if len(args) != 2 or len(names) != 2:
-                    raise Error("%s takes two arguments, two results" % name)
-                self.emit(OP["2SUM" if name == "twosum" else "2PROD"])
-            elif self.call_target(name, len(args), len(names)) != len(names):
+            if self.call_target(name, len(args), len(names)) != len(names):
                 raise Error("%s: %s does not give %d results" % (self.fn["name"], name, len(names)))
             for n in reversed(names):
                 if n not in self.vars:
@@ -786,29 +780,24 @@ def compile_function(fn, tables, funcs, externs, suffix):
 
 
 def generate(name):
-    src_path = os.path.join(SRC, name + ".vc")
-    text = open(src_path).read()
-    tables, funcs, externs, aliases = parse_file(text)
     suffix = name[3:] if name.startswith("lc_") else name
     if name == "lc_vm":
         tmpl = open(os.path.join(SRC, "lc_vm.mac.in")).read()
-        subs = []
-        for fn in funcs:
-            lines, _, _, _, _, _ = compile_function(fn, tables, funcs, externs, suffix)
-            subs.append("_vm_%s:" % fn["name"])
-            subs += lines
         table = []
         for i in range(0, len(LOW), 4):
             table.append("\tDW\t" + ", ".join("_vm_" + HANDLER[n] for n in LOW[i:i + 4]))
         for i in range(0, len(HIGH), 4):
             table.append("\tDW\t" + ", ".join("_vm_" + HANDLER[n] for n in HIGH[i:i + 4]))
-        text = (tmpl.replace(";;SUBS", "\n".join(subs))
+        text = (tmpl.replace(";;SUBS\n", "")
                 .replace(";;TABLE", "\n".join(table))
                 .replace(";;NLOW", str(len(LOW)))
                 .replace(";;STACK", str(STACK_BYTES)))
         open(os.path.join(OUT, name + ".mac"), "w").write(text)
         print("  %s.mac" % name)
         return
+    src_path = os.path.join(SRC, name + ".vc")
+    text = open(src_path).read()
+    tables, funcs, externs, aliases = parse_file(text)
     pub, ext, body = [], set(), []
     for fn in funcs:
         n = fn["name"]
@@ -844,7 +833,8 @@ def generate(name):
 
 
 def main(argv):
-    names = argv or sorted(f[:-3] for f in os.listdir(SRC) if f.endswith(".vc"))
+    names = argv or ["lc_vm"] + sorted(f[:-3] for f in os.listdir(SRC)
+                                       if f.endswith(".vc"))
     for n in names:
         generate(n)
 

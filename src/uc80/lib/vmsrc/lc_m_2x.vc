@@ -1,9 +1,9 @@
-/* lc_vm.vc - the programs that the float interpreter runs for its own
- * 2SUM and 2PROD operations.  A program takes its arguments from the
- * stack and leaves its two results in their place. */
+/* lc_m_2x.vc - the error-free transformations: the sum or the product of
+ * two floats and its exact rounding error.  The programs use them through
+ * twosum(a, b) and twoprod(a, b). */
 
 /* s + e = a + b exactly (Knuth) */
-sub2 p2sum(float a, float b)
+sub2 m_2sum(float a, float b)
 {
     float s = a + b;
     float bb = s - a;
@@ -12,7 +12,7 @@ sub2 p2sum(float a, float b)
 }
 
 /* p + e = a * b exactly (Dekker, with the Veltkamp split) */
-sub2 p2prod(float a, float b)
+sub2 m_2prod(float a, float b)
 {
     float p = a * b;
     float ca = 4097.0f * a;
