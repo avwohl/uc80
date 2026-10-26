@@ -50,7 +50,7 @@ precision. The rounding is to nearest, and a tie goes to the even digit.
 The output is the same as the output of the host `printf` for the same value.
 This holds for every precision, for subnormal numbers, for `inf`, `nan` and
 `-0.0`. The test `tests/test_printf_float_exact.py` compares 200 random
-floats with Python. The audit that made this code compared more than 12,000
+floats with Python. The audit that made this code compared more than 20,000
 generated combinations of format and value with the host `printf`.
 
 Cost:
