@@ -12,7 +12,7 @@ The size ratio compares with the size mode of the other compiler. The T-state ra
 
 | Other compiler | Programs (size) | Size ratio | Programs (T-states) | T-state ratio | T-state ratio without sort-* |
 |---|---|---|---|---|---|
-| sdcc 4.6.0 | 96 | 0.93 | 78 | 0.56 | 0.68 |
+| sdcc 4.6.0 | 96 | 0.94 | 78 | 0.56 | 0.68 |
 | sdcc 4.4.0 | 92 | 0.91 | 75 | 0.55 | 0.67 |
 | z88dk zsdcc | 91 | 0.95 | 74 | 0.69 | 0.81 |
 | z88dk sccz80 | 83 | 0.89 | 57 | 0.48 | 0.57 |

@@ -53,6 +53,7 @@ A text that the pass does not know makes the whole function keep its locals in m
 
 ## Interaction with other parts
 
+- Code generator fixes (branch `bugfix2`, merged in `integrate6`). The pass reads the text that the code generator makes, so each change of that text can break the pass. Four changes matter: the 16-bit negation that keeps DE, the float compare with the NaN test (`__fcmp` gives Z and C together), the inlined `uint16_t` literal arguments, and the 64-bit (`long long`) code. The merged tree has no break. The checker accepts all four. The 75 programs of the test family and the fuzz runs give the same output with the pass on and off. `tests/test_regl_bugfix_interaction.py` keeps one program for each of the four. The programs that use float get 56 to 71 bytes bigger, because `__fcmp` and the libc helpers (`__toll`) grew. The pass does not cause this.
 - Interrupts. An interrupt function pushes AF, BC, DE, HL and IY on entry. A register local therefore survives an interrupt. The pass does not change an interrupt function. `bench/rom/isrproof.py` proves the port logs.
 - Register convention. Parameter 1 can arrive in E or DE. The prologue moves the value to its register in the right order. The pass rejects a configuration that needs a cycle of moves.
 - Shared storage. The `??AUTO` slot of a local that moved to a register stays reserved. The call graph analyser sizes `??AUTO` before the body exists, so the slot is not given back. This costs no code, only RAM. A later step can shrink the area.

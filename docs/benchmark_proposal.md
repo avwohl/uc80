@@ -24,10 +24,10 @@ What is done:
 
 Result against SDCC 4.6.0 (96 programs for size and 78 for T-states that are OK on both, geometric mean of uc80 divided by SDCC):
 
-- Size: 0.93. The first run gave 2.01 on 61 programs, and the run before the library split gave 1.53. uc80 is smaller on 66 programs and bigger on 30. The library split (families A to C of [codegen_gap.md](codegen_gap.md)) made most of this gain, and the register calling convention (family F) made the rest (0.99 to 0.96 on the integrated tree, measured again on the tree without it). Register locals (family G, steps 1 and 2) made the ratio 0.93.
+- Size: 0.94 (0.935). The first run gave 2.01 on 61 programs, and the run before the library split gave 1.53. uc80 is smaller on 66 programs and bigger on 30. The library split (families A to C of [codegen_gap.md](codegen_gap.md)) made most of this gain, and the register calling convention (family F) made the rest (0.99 to 0.96 on the integrated tree, measured again on the tree without it). Register locals (family G, steps 1 and 2) made the ratio 0.93.
 - T-states against the speed mode of SDCC: 0.56 (0.563). uc80 is faster. The first run gave 0.87 on 61 programs. Without the `sort-*` programs the mean is 0.68 (0.684). uc80 is faster on 60 programs and slower on 18.
 - Games (18 games that run on both compilers, whole-run T-states): size 0.79, T-states 1.00. The stdio games are faster on uc80 and the curses games are 30 to 48 percent slower.
-- The "uc80 wins on size" claim is still false as a general claim (ratio 0.93, a small lead), but uc80 is smaller than SDCC 4.6.0 on 66 of 96 programs. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
+- The "uc80 wins on size" claim is still false as a general claim (ratio 0.94, a small lead), but uc80 is smaller than SDCC 4.6.0 on 66 of 96 programs. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
 
 What is left:
 

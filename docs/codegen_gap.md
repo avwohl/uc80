@@ -9,6 +9,18 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-27: family G is done and merged with the bug fixes
+
+Family G (steps 1 and 2) and the fixes of `bugfix2` are in one tree (branch `integrate6`). Family G is done: up to two scalar locals in BC and DE, and one pointer local in IY. The merge costs a little: the programs that use float get 56 to 71 bytes bigger (the NaN test in `__fcmp`). Means against SDCC 4.6.0, `bench/report.py` method, 96 programs for size and 78 for T-states:
+
+- size minus the empty program: 0.958 (84cfebf), 0.934 (G alone), 0.935 (merged)
+- whole image: 0.900 (merged)
+- T-states against the speed mode: 0.585, 0.563, 0.563; without `sort-*`: 0.715, 0.684, 0.684
+- T-states against the size mode: 0.5437 (without `sort-*`: 0.6585)
+- uc80 is faster than SDCC (speed mode) on 60 of 78 programs and smaller on 66 of 96
+
+The details of step 2 are in the next section. [register_locals.md](register_locals.md) says how the pass meets the code generator fixes.
+
 ## Status on 2026-10-27: family G, step 2 (a pointer in IY, tuning) is done
 
 Step 2 adds one pointer local in IY (`src/uc80/iyptr.py`, [register_locals.md](register_locals.md)). A field access `p->m` becomes `ld A,(IY+d)` (19 T-states) and needs no HL, DE or BC. `p++` is `inc IY`. A call that can change IY, while the pointer is live, gets `push IY` and `pop IY` (the tag `; RYn`). `prune_iy` removes the wraps whose callees never change IY, and a runtime helper never changes IY. An interrupt function saves IY already. The proof `iy` of `bench/rom/isrproof.py` runs a function with IY, a callee with IY and an NMI function under a real NMI.
