@@ -49,6 +49,7 @@ class Found:
     absolute: dict = field(default_factory=dict)  # name -> address
     asm_blocks: int = 0                           # __asm blocks, all files
     naked: list = field(default_factory=list)     # (name, file, line)
+    naked_protos: list = field(default_factory=list)  # (name, file, line)
 
 
 _TOKEN = re.compile(
@@ -155,6 +156,93 @@ def _asm_blocks(source: str, filename: str, found: Found) -> str:
     return "".join(out)
 
 
+_ASM_WORDS = ("asm", "__asm__", "__asm")
+_ASM_QUALS = ("volatile", "__volatile__", "__volatile", "inline", "goto")
+
+
+def _asm_substatements(source: str) -> str:
+    """Put braces round an asm statement that is the body of if, else, for,
+    while or do without braces.  The grammar of uc_core (statement in
+    data/c23.json) has asm only as a declaration in a block, not as a
+    sub-statement.  The line count stays the same."""
+    if not re.search(r"\b(?:asm|__asm__|__asm)\b", source):
+        return source
+    toks = [(m.lastgroup, m.group(), m.start(), m.end())
+            for m in _TOKEN.finditer(source)]
+    sig = [i for i, t in enumerate(toks) if t[0] not in ("ws", "cmt")]
+    n = len(sig)
+
+    def text(k):
+        return toks[sig[k]][1] if 0 <= k < n else ""
+
+    edits = []
+    for k in range(1, n):
+        if toks[sig[k]][0] != "id" or text(k) not in _ASM_WORDS:
+            continue
+        prev = text(k - 1)
+        if prev == ")":
+            op = _match_paren_back(toks, sig, k - 1)
+            if op is None or text(op - 1) not in ("if", "for", "while",
+                                                  "switch"):
+                continue
+        elif prev not in ("else", "do"):
+            continue
+        j = k + 1
+        while text(j) in _ASM_QUALS:
+            j += 1
+        if text(j) != "(":
+            continue
+        depth = 0
+        while j < n:
+            if text(j) == "(":
+                depth += 1
+            elif text(j) == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        if j + 1 >= n or text(j + 1) != ";":
+            continue
+        edits.append((toks[sig[j + 1]][3], " }"))
+        edits.append((toks[sig[k]][2], "{ "))
+    for pos, ins in sorted(edits, reverse=True):
+        source = source[:pos] + ins + source[pos:]
+    return source
+
+
+_GNU_ATTR = re.compile(
+    r"__attribute(?:__)?\s*\(\(([^()]*(?:\([^()]*\)[^()]*)*)\)\)")
+_NAKED_WORD = re.compile(r"^(?:__)?naked(?:__)?$")
+
+
+def _attribute_naked(source: str) -> str:
+    """Write ``__attribute__((naked))`` as ``[[uc80::naked]]``.  The other
+    attributes of the list go away (the frontend would strip them), except
+    ``interrupt``: the list stays as it is, and the frontend refuses it.
+    The line count stays the same."""
+    if "naked" not in source:
+        return source
+
+    def swap(m):
+        items = [x.strip() for x in m.group(1).split(",")]
+        if not any(_NAKED_WORD.match(x) for x in items):
+            return m.group(0)
+        if any(re.match(r"^(?:__)?interrupt(?:__)?\b", x) for x in items):
+            return m.group(0)
+        return "[[uc80::naked]]" + "\n" * m.group(0).count("\n")
+
+    out, pos = [], 0
+    for m in _TOKEN.finditer(source):       # skip strings and comments
+        if m.lastgroup == "id" and m.group().startswith("__attribute"):
+            a = _GNU_ATTR.match(source, m.start())
+            if a and a.start() >= pos:
+                out.append(source[pos:a.start()])
+                out.append(swap(a))
+                pos = a.end()
+    out.append(source[pos:])
+    return "".join(out)
+
+
 def _naked_pass(source: str, filename: str, found: Found) -> str:
     """Find ``__naked`` and ``[[uc80::naked]]`` on function definitions,
     record the function names, and blank the spellings.  The check of the
@@ -196,9 +284,19 @@ def _naked_pass(source: str, filename: str, found: Found) -> str:
                                     "switch"):
             raise SdccCompatError(filename, line_of(at),
                                   f"'{what}' must be on a function")
+        x = op - 1
+        while x > 0 and text(x - 1) not in (";", "{", "}"):
+            x -= 1
+            if text(x) == "typedef":
+                raise SdccCompatError(
+                    filename, line_of(at),
+                    f"'{what}' on the typedef '{name}': a function type "
+                    f"cannot be naked; put it on each function definition")
         if text(k) == "{":
             found.naked.append((name, filename, line_of(at)))
-        elif text(k) != ";":
+        elif text(k) == ";":
+            found.naked_protos.append((name, filename, line_of(op - 1)))
+        else:
             raise SdccCompatError(filename, line_of(at),
                                   f"'{what}' must be on a function")
 
@@ -258,9 +356,62 @@ def _naked_pass(source: str, filename: str, found: Found) -> str:
     return source
 
 
+def _fn_name_token(declarator):
+    """The name token of a function declarator, or None when the
+    declarator is not a function (the FnDeclarator that wraps the name)."""
+    d, prev = declarator, None
+    while hasattr(d, "inner"):
+        d, prev = d.inner, d
+    name = getattr(d, "name", None)
+    if prev is not None and type(prev).__name__.startswith("FnDeclarator"):
+        return name
+    return None
+
+
+def naked_mismatches(asts, paths, found: Found) -> list:
+    """Warnings for a function that is naked in its definition but not in
+    a prototype, or the reverse.  The code of the call never changes, but
+    the programmer meant one of the two."""
+    naked_defs = {n for n, _f, _l in found.naked}
+    proto_marks = {(n, f, l) for n, f, l in found.naked_protos}
+    defined = {}                  # name -> (file, line) of a definition
+    protos = []                   # (name, file, line) of each prototype
+    for unit, path in zip(asts, paths):
+        for item in unit.items or []:
+            if isinstance(item, ast.FunctionDef):
+                tok = _fn_name_token(item.declarator)
+                if tok is not None:
+                    defined.setdefault(tok.text, (path, tok.line))
+            elif isinstance(item, ast.Declaration):
+                if any(getattr(sp, "kw", None) is not None
+                       and sp.kw.text == "typedef"
+                       for sp in item.decl_specs or []):
+                    continue
+                for d in item.declarators or []:
+                    tok = _fn_name_token(getattr(d, "declarator", d))
+                    if tok is not None:
+                        protos.append((tok.text, path, tok.line))
+    out = []
+    for name, f, l in sorted(proto_marks):
+        if name in defined and name not in naked_defs:
+            df, dl = defined[name]
+            out.append(f"{f}:{l}: the prototype of '{name}' is naked, but "
+                       f"the definition at {df}:{dl} is not, so the function "
+                       f"gets a normal frame code and RET. Write __naked "
+                       f"on the definition")
+    for name, f, l in protos:
+        if name in naked_defs and (name, f, l) not in proto_marks:
+            out.append(f"{f}:{l}: '{name}' is naked in its definition, but "
+                       f"this declaration is not; write __naked on every "
+                       f"declaration of the function")
+    return out
+
+
 def prepass(source: str, filename: str, found: Found) -> str:
     """Rewrite ``source`` and add what it declares to ``found``."""
     source = _asm_blocks(source, filename, found)
+    source = _asm_substatements(source)
+    source = _attribute_naked(source)
     source = _naked_pass(source, filename, found)
     if not re.search(r"__interrupt|__critical|__sfr|__at\b|uc80::at|"
                      r"__naked|__banked|__sdcccall|__preserves_regs|"

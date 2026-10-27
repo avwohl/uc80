@@ -37,7 +37,7 @@ def uc80_cmd(*args):
     return [sys.executable, "-m", "uc80.main", *args]
 
 
-def build(tmp_path, source, flow, rom_libs=None):
+def build(tmp_path, source, flow, rom_libs=None, rom_size=0x8000):
     """Build t.c; return (bin, sym) paths."""
     if flow == "um80" and not HAVE_UM80:
         pytest.skip("needs um80 and ul80")
@@ -47,7 +47,7 @@ def build(tmp_path, source, flow, rom_libs=None):
     if flow == "sdas":
         from uc80 import sdas
         steps = [uc80_cmd("--target=rom", "--asm-syntax=sdas", "-I", INC,
-                          "t.c", "-o", "t.s"),
+                          "--rom-size", "%X" % rom_size, "t.c", "-o", "t.s"),
                  ["sdasz80", "-g", "-l", "-o", "t.s"]]
         for cmd in steps:
             _run(cmd, tmp_path)
@@ -62,7 +62,8 @@ def build(tmp_path, source, flow, rom_libs=None):
         _run(uc80_cmd("--target=rom", "t.c", "-o", "t.mac"), tmp_path)
         _run(["um80", "t.mac", "-o", "t.rel"], tmp_path)
         _run(["ul80", "--bin", "-p", "0", "-d", "F800", "--rom-data",
-              "--rom-size", "8000", "--ram-size", "800", "--min-stack", "40",
+              "--rom-size", "%X" % rom_size, "--ram-size", "800",
+              "--min-stack", "40",
               "-o", "t.bin", "-S", "t.sym", "t.rel",
               str(LIB / "libc_rom.lib"), str(LIB / "runtime.lib")], tmp_path)
     return tmp_path / "t.bin", tmp_path / "t.sym"
@@ -74,8 +75,9 @@ def _run(cmd, cwd):
     return r
 
 
-def machine(paths):
-    m = Machine(banks=None, ram_fill="random", sp="poison", track=True)
+def machine(paths, rom_size=0x8000):
+    m = Machine(rom_size=rom_size, banks=None, ram_fill="random",
+                sp="poison", track=True)
     m.load_rom(str(paths[0]))
     m.load_symbols(str(paths[1]))
     return m
@@ -177,6 +179,86 @@ def test_im2_table_address_is_free_to_choose(flow, tmp_path, libs):
     assert res.reason == "halt"
     assert m.cpu.get()["I"] == 0x04
     assert m.peek8("_count_a") == 4 and m.peek8("_count_b") == 60
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+@pytest.mark.parametrize("table", [0x4000, 0xA000])
+def test_im2_table_address_with_a_hex_digit_first(flow, table, tmp_path, libs):
+    """0A000H needs its leading 0: um80 reads A000H as a name and sdas
+    refuses ORG A000H.  The ROM is large enough for the table."""
+    src = f"#pragma uc80 im2table {table:#x}\n" + IM2_PROGRAM
+    paths = build(tmp_path, src, flow, libs, rom_size=0xC000)
+    sy = {n.upper(): a for n, a in _syms(paths[1]).items()}
+    assert sy["__IM2_TABLE"] == table
+    assert sy["_MAIN"] >= table + 0x100
+    m = machine(paths, rom_size=0xC000)
+    for k in range(4):
+        m.add_irq_at(4000 + 3000 * k, 0x06)
+        m.add_irq_at(5000 + 3000 * k, 0x14)
+    m.add_irq_at(20000, 0x14)
+    m.add_irq_at(21000, 0x14)
+    res = m.run(max_tstates=400_000)
+    assert res.reason == "halt"
+    assert m.cpu.get()["I"] == table >> 8
+    assert m.peek8("_count_a") == 4 and m.peek8("_count_b") == 60
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_im2_table_at_the_top_of_a_64k_rom_builds(flow, tmp_path, libs):
+    """FE00h is the highest table: the code starts at FF00h."""
+    src = "#pragma uc80 im2table 0xFE00\n" + IM2_PROGRAM
+    paths = build(tmp_path, src, flow, libs, rom_size=0x10000)
+    sy = {n.upper(): a for n, a in _syms(paths[1]).items()}
+    assert sy["__IM2_TABLE"] == 0xFE00
+    assert 0xFF00 <= sy["_MAIN"] < 0x10000
+    assert 0xFF00 < len(paths[0].read_bytes()) <= 0x10000
+
+
+def test_hex_constants_of_the_start_up_text_start_with_a_digit():
+    from uc80 import rom
+    assert rom.hex_const(0xA000) == "0A000H"
+    assert rom.hex_const(0xA0, 2) == "0A0H"
+    assert rom.hex_const(0x4000) == "4000H"
+    assert rom.hex_const(0xFF, 2) == "0FFH"
+    assert rom.hex_const(0x100) == "0100H"
+    text = "\n".join(rom.startup_text(
+        LIB / "crt0_rom.mac", None, None, None, im2=({3: "_h"}, 0xF000)))
+    assert "LD\tA,0F0H" in text and "ORG\t0F000H" in text
+    assert "ORG\t0F100H" in text and ";@RELOC 0F100H" in text
+
+
+def sdas_compile(tmp_path, source, *flags):
+    (tmp_path / "t.c").write_text(source)
+    return subprocess.run(
+        uc80_cmd("--target=rom", "--asm-syntax=sdas", *flags, "-I", INC,
+                 "t.c", "-o", "t.s"), cwd=tmp_path, capture_output=True,
+        text=True)
+
+
+@pytest.mark.parametrize("table", [0x7F00, 0x8000, 0xA000])
+def test_sdas_flow_reports_rom_overflow_of_a_high_table(table, tmp_path):
+    """ul80 stops with ROM overflow; the sdas flow now stops too."""
+    r = sdas_compile(tmp_path, f"#pragma uc80 im2table {table:#x}\n"
+                     + IM2_PROGRAM)
+    assert r.returncode == 1, r.stderr
+    assert "uc80: error: ROM overflow" in r.stderr
+    assert f"starts at {table + 0x100:04X}h" in r.stderr
+    assert "--rom-size" in r.stderr
+    assert not (tmp_path / "t.s").exists()
+
+
+def test_sdas_flow_accepts_a_high_table_with_a_larger_rom(tmp_path):
+    r = sdas_compile(tmp_path, "#pragma uc80 im2table 0x8000\n"
+                     + IM2_PROGRAM, "--rom-size", "C000")
+    assert r.returncode == 0, r.stderr
+    r = sdas_compile(tmp_path, "#pragma uc80 im2table 0x7E00\n"
+                     + IM2_PROGRAM)
+    assert r.returncode == 0, r.stderr
+
+
+def test_rom_size_must_be_hex(tmp_path):
+    r = sdas_compile(tmp_path, IM2_PROGRAM, "--rom-size", "zz")
+    assert r.returncode == 1 and "--rom-size zz" in r.stderr
 
 
 RST_PROGRAM = """
@@ -318,6 +400,8 @@ F = "void f(void) { }\nvoid g(void) { }\nint main(void) { return 0; }\n"
     ("im2 5 f critical\n#pragma uc80 im2 6 f", "interrupt function of another"),
     ("im2table 0x180", "a multiple of 100h"),
     ("im2table 0x0", "a multiple of 100h"),
+    ("im2table 0xFF00", "from 0100h to FE00h"),
+    ("im2table 0x10000", "from 0100h to FE00h"),
     ("im2table 0x200\n#pragma uc80 im2table 0x300", "already at 0200h"),
     ("im2 5 nothere", "'nothere' is named"),
 ])
@@ -448,3 +532,146 @@ def test_im2_start_up_code_fits_below_the_table(flow, tmp_path, libs):
     paths = build(tmp_path, WORST_CASE, flow, libs)
     sy = {n.upper(): a for n, a in _syms(paths[1]).items()}
     assert sy["__IM2_DEFAULT"] + 2 <= sy["__IM2_TABLE"] == 0x100
+
+
+# ---- names in more than one file ---------------------------------------------
+
+def _build_files(tmp_path, files):
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+    _run(uc80_cmd("--target=rom", *files, "-o", "t.mac"), tmp_path)
+    _run(["um80", "t.mac", "-o", "t.rel"], tmp_path)
+    _run(["ul80", "--bin", "-p", "0", "-d", "F800", "--rom-data",
+          "--rom-size", "8000", "--ram-size", "800", "--min-stack", "40",
+          "-o", "t.bin", "-S", "t.sym", "t.rel",
+          str(LIB / "libc_rom.lib"), str(LIB / "runtime.lib")], tmp_path)
+    return tmp_path / "t.bin", tmp_path / "t.sym"
+
+
+A_C = """
+#pragma uc80 %s 1 h
+volatile unsigned char x;
+static void h(void) { x++; }
+"""
+B_C = """
+#pragma uc80 %s 2 h
+extern volatile unsigned char x;
+volatile unsigned char y;
+static void h(void) { y += 2; }
+int main(void)
+{
+    __asm__("\\tei");
+    while (x < 4 || y < 8)
+        ;
+    __asm__("\\tdi");
+    return 0;
+}
+"""
+
+
+@pytest.mark.skipif(not HAVE_UM80, reason="needs um80 and ul80")
+def test_two_static_handlers_of_one_name_are_an_error(tmp_path):
+    """Both slots used to bind to the h of b.c (x stayed 0)."""
+    (tmp_path / "a.c").write_text(A_C % "im2")
+    (tmp_path / "b.c").write_text(B_C % "im2")
+    r = subprocess.run(uc80_cmd("--target=rom", "a.c", "b.c", "-o", "t.mac"),
+                       cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 1
+    assert ("a.c:2: #pragma uc80 im2: 'h' is defined in more than one file "
+            "(a.c, b.c)") in r.stderr, r.stderr
+
+
+def test_the_interrupt_pragma_has_the_same_check(tmp_path):
+    (tmp_path / "a.c").write_text(
+        "#pragma uc80 interrupt h\nstatic void h(void) { }\n")
+    (tmp_path / "b.c").write_text(
+        "static void h(void) { }\nint main(void) { return 0; }\n")
+    r = subprocess.run(uc80_cmd("--target=rom", "a.c", "b.c", "-o", "t.mac"),
+                       cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 1
+    assert "a.c:1: #pragma uc80 interrupt: 'h' is defined in more than one " \
+           "file" in r.stderr, r.stderr
+
+
+@pytest.mark.skipif(not HAVE_UM80, reason="needs um80 and ul80")
+def test_handlers_with_different_names_in_two_files_run(tmp_path):
+    a = (A_C % "im2").replace("h(", "ha(").replace(" h\n", " ha\n")
+    b = (B_C % "im2").replace("h(", "hb(").replace(" h\n", " hb\n")
+    paths = _build_files(tmp_path, {"a.c": a, "b.c": b})
+    m = machine(paths)
+    for k in range(4):
+        m.add_irq_at(4000 + 2000 * k, 0x02)      # slot 1: ha
+        m.add_irq_at(5000 + 2000 * k, 0x04)      # slot 2: hb
+    res = m.run(max_tstates=400_000)
+    assert res.reason == "halt", res
+    assert m.peek8("_x") == 4 and m.peek8("_y") == 8
+
+
+# ---- the pragmas in a CP/M program ---------------------------------------------
+
+@pytest.mark.parametrize("pragma,text", [
+    ("im2 3 h", "the IM 2 vector table is not written: only --target=rom"),
+    ("im2table 0x4000", "the IM 2 vector table is not written"),
+    ("rst 10h h", "the RST 10h vector is not set to 'h': only "
+                  "--target=rom writes the vectors"),
+    ("interrupt h", "the INT (38h) vector is not set to 'h': only "
+                    "--target=rom writes the vectors"),
+    ("nmi h", "the NMI (66h) vector is not set to 'h': only "
+              "--target=rom writes the vectors"),
+    ("vector 38h h", "the INT (38h) vector is not set to 'h'"),
+])
+def test_vector_pragmas_warn_when_the_target_is_cpm(pragma, text, tmp_path):
+    (tmp_path / "c.c").write_text(
+        f"#pragma uc80 {pragma}\nvoid h(void) {{ }}\n"
+        "int main(void) { return 0; }\n")
+    r = subprocess.run(uc80_cmd("c.c", "-o", "c.mac"), cwd=tmp_path,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert f"uc80: warning: {text}" in r.stderr, r.stderr
+
+
+def test_a_cpm_program_without_the_pragmas_has_no_warning(tmp_path):
+    (tmp_path / "c.c").write_text("int main(void) { return 0; }\n")
+    r = subprocess.run(uc80_cmd("c.c", "-o", "c.mac"), cwd=tmp_path,
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and "warning" not in r.stderr
+
+
+# ---- a naked handler ---------------------------------------------------------
+
+NAKED_HANDLER = """
+volatile unsigned char n;
+#pragma uc80 im2 3 h
+%s
+{
+    __asm__("\\tpush af\\n\\tld a,(_n)\\n\\tinc a\\n\\tld (_n),a\\n"
+            "\\tpop af\\n\\tei\\n\\treti\\n");
+}
+int main(void)
+{
+    __asm__("\\tei");
+    while (n < 3)
+        ;
+    __asm__("\\tdi");
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+@pytest.mark.parametrize("spelling", [
+    "void h(void) __attribute__((naked))",
+    "void h(void) __naked",
+    "__attribute__((naked)) void h(void)",
+    "[[uc80::naked]] void h(void)"])
+def test_a_naked_im2_handler_has_no_prologue(flow, spelling, tmp_path, libs):
+    paths = build(tmp_path, NAKED_HANDLER % spelling, flow, libs)
+    sy = {k.upper(): v for k, v in _syms(paths[1]).items()}
+    img = paths[0].read_bytes()
+    assert img[sy["_H"]] == 0xF5            # PUSH AF, not PUSH IX
+    m = machine(paths)
+    for k in range(3):
+        m.add_irq_at(4000 + 2000 * k, 0x06)
+    res = m.run(max_tstates=300_000)
+    assert res.reason == "halt", res
+    assert m.peek8("_n") == 3

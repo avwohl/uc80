@@ -3531,6 +3531,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
         # Naked functions (SDCC __naked, [[uc80::naked]]): no frame code,
         # the body is asm statements only.  See docs/rom_hardware.md.
         self.naked = set(naked_funcs or ())
+        self.naked_file: dict[str, str] = {}    # name -> file, for messages
         # Register calling convention (docs/calling_convention.md): on by
         # default; off for separate compilation, whatever this says.
         # foreign_asm_names: lower-case names that the hand-written
@@ -6617,18 +6618,37 @@ class CodeGenerator(Z80IntrinsicsMixin):
         """A naked function: the label, then the asm statements of the
         body.  No frame, no parameter code, no RET.  The asm blocks carry
         the region markers, so no pass touches them."""
+        file = self.naked_file.get(name)
+
+        def loc(node):
+            line = _node_line(node)
+            return (f"{file}:{line}: " if file and line else
+                    f"line {line}: " if line else "")
+
+        here = loc(func)
+        if self._current_sret_size:
+            raise CodegenError(
+                f"{here}naked function '{name}' returns a structure or "
+                f"union: the caller passes a hidden result pointer that a "
+                f"naked function cannot see; return a pointer or a value "
+                f"of at most 2 bytes")
+        if function_is_variadic(func):
+            raise CodegenError(
+                f"{here}naked function '{name}' takes a variable argument "
+                f"list: a naked function has no frame to read the "
+                f"arguments from; remove the '...'")
         has_asm = False
         for item in func.body.items or []:
             if isinstance(item, ast.AsmDeclaration):
                 has_asm = True
             elif not isinstance(item, ast.EmptyStmt):
                 raise CodegenError(
+                    loc(item) +
                     f"naked function '{name}': the body may hold only "
-                    f"asm statements, but it has another statement",
-                    item)
+                    f"asm statements, but it has another statement")
         if not has_asm:
             self.warnings.append(
-                f"naked function '{name}' has no asm statement; the "
+                f"{here}naked function '{name}' has no asm statement; the "
                 f"function has no code and falls into the next one")
         self.gen_compound_stmt(func.body)
         self.ctx.emit()

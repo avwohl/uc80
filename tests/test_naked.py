@@ -289,7 +289,7 @@ def test_naked_without_asm_warns(tmp_path):
     r = compile_only(tmp_path, "void f(void) __naked { }\n"
                      "int main(void) { f(); return 0; }\n")
     assert r.returncode == 0
-    assert "naked function 'f' has no asm" in r.stderr
+    assert "e.c:1: naked function 'f' has no asm" in r.stderr
 
 
 def test_naked_on_a_variable_is_an_error(tmp_path):
@@ -400,3 +400,201 @@ int main(void) { work(); while (n < 9) ; return 0; }
         "; Function work")[1].split("; Function")[0]
     r = compile_only(tmp_path, src, "--target=rom")
     assert "called from an interrupt function and from" in r.stderr
+
+
+# ---- attribute spelling, struct and variadic results, mismatches ---------------
+
+ATTR_FORMS = [
+    "int add2(int a, int b) __attribute__((naked))",
+    "__attribute__((naked)) int add2(int a, int b)",
+    "int __attribute__((__naked__, noinline)) add2(int a, int b)",
+]
+GNU_BODY = ATTR_ADD.split("\n", 1)[1].split("{", 1)[1]
+
+
+@pytest.mark.skipif(not HAVE_CPM, reason="needs um80, ul80 and cpmemu")
+@pytest.mark.parametrize("head", ATTR_FORMS)
+def test_gnu_naked_attribute_is_a_naked_function_in_cpm(tmp_path, head):
+    out = run_cpm(tmp_path, head + "\n{" + GNU_BODY + MAIN_PRINT)
+    assert out.split() == ["1234", "-2", "10"]
+    code = (tmp_path / "p.mac").read_text()
+    body = code.split("_add2:")[1].split("; Function main")[0]
+    assert "push" not in body.lower() and "ix" not in body.lower()
+
+
+def test_gnu_interrupt_attribute_is_still_an_error(tmp_path):
+    r = compile_only(tmp_path, "void f(void) __attribute__((interrupt)) { }\n"
+                     "int main(void) { return 0; }\n")
+    assert r.returncode == 1
+    assert "does not support '__attribute__((interrupt))'" in r.stderr
+    r = compile_only(tmp_path, "void f(void) __attribute__((interrupt, naked))"
+                     " { }\nint main(void) { return 0; }\n")
+    assert r.returncode == 1
+    assert "does not support '__attribute__((interrupt))'" in r.stderr
+
+
+@pytest.mark.parametrize("head", [
+    "struct S f(void) __naked",
+    "[[uc80::naked]] struct S f(void)",
+    "struct S f(void) __attribute__((naked))"])
+def test_naked_function_returning_a_big_struct_is_an_error(tmp_path, head):
+    r = compile_only(tmp_path, "struct S { int a, b, c; };\n" + head
+                     + " { asm(\"\\tret\"); }\n"
+                     "int main(void) { f(); return 0; }\n")
+    assert r.returncode == 1, r.stdout
+    assert "e.c:2: naked function 'f' returns a structure or union" \
+        in r.stderr
+    assert "hidden result pointer" in r.stderr
+
+
+def test_naked_function_returning_a_union_is_an_error(tmp_path):
+    r = compile_only(tmp_path, "union U { char c[4]; long l; };\n"
+                     "union U f(void) __naked { asm(\"\\tret\"); }\n"
+                     "int main(void) { f(); return 0; }\n")
+    assert r.returncode == 1
+    assert "naked function 'f' returns a structure or union" in r.stderr
+
+
+def test_naked_function_returning_a_small_struct_comes_back_in_hl(tmp_path):
+    r = compile_only(tmp_path, "struct S { char a; };\n"
+                     "struct S f(void) __naked { asm(\"\\tret\"); }\n"
+                     "int main(void) { return 0; }\n")
+    assert r.returncode == 0, r.stderr
+
+
+def test_variadic_naked_function_is_an_error(tmp_path):
+    r = compile_only(tmp_path, "int f(int a, ...) __naked\n{\n"
+                     "    asm(\"\\tret\");\n}\n"
+                     "int main(void) { return f(1); }\n")
+    assert r.returncode == 1
+    assert "e.c:1: naked function 'f' takes a variable argument list" \
+        in r.stderr
+
+
+def test_naked_prototype_with_a_plain_definition_warns(tmp_path):
+    r = compile_only(tmp_path, "void f(void) __naked;\n"
+                     "void f(void) { asm(\"\\tret\"); }\n"
+                     "int main(void) { f(); return 0; }\n")
+    assert r.returncode == 0, r.stderr
+    assert ("uc80: warning: e.c:1: the prototype of 'f' is naked, but the "
+            "definition at e.c:2 is not") in r.stderr
+
+
+def test_plain_prototype_with_a_naked_definition_warns(tmp_path):
+    r = compile_only(tmp_path, "void f(void);\n"
+                     "[[uc80::naked]] void f(void) { asm(\"\\tret\"); }\n"
+                     "int main(void) { f(); return 0; }\n")
+    assert r.returncode == 0, r.stderr
+    assert ("uc80: warning: e.c:1: 'f' is naked in its definition, but this "
+            "declaration is not") in r.stderr
+
+
+def test_matching_naked_prototype_and_definition_do_not_warn(tmp_path):
+    r = compile_only(tmp_path, "void f(void) __naked;\n"
+                     "void f(void) __naked { asm(\"\\tret\"); }\n"
+                     "void g(void);\nvoid g(void) { }\n"
+                     "int main(void) { f(); g(); return 0; }\n")
+    assert r.returncode == 0 and "warning" not in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("src", [
+    "typedef int F(int) __naked;\n",
+    "typedef int F(int) [[uc80::naked]];\n",
+    "typedef int F(int) __attribute__((naked));\n"])
+def test_naked_on_a_typedef_is_an_error(tmp_path, src):
+    r = compile_only(tmp_path, src + "int main(void) { return 0; }\n")
+    assert r.returncode == 1
+    assert "e.c:1: " in r.stderr and "on the typedef 'F'" in r.stderr, r.stderr
+
+
+# ---- an alternate entry label ---------------------------------------------------
+
+TWO_ENTRIES = """
+int g(void) __naked
+{
+    __asm
+        ld hl,#1
+        ret
+_g_alt::
+        ld hl,#2
+        ret
+    __endasm;
+}
+extern int g_alt(void);
+"""
+
+
+@pytest.mark.skipif(not HAVE_CPM, reason="needs um80, ul80 and cpmemu")
+def test_double_colon_label_in_an_asm_block_is_public_in_cpm(tmp_path):
+    out = run_cpm(tmp_path, '#include <stdio.h>\n' + TWO_ENTRIES + """
+int main(void) { printf("%d %d\\n", g(), g_alt()); return 0; }
+""")
+    assert out.split() == ["1", "2"]
+
+
+@pytest.mark.skipif(not HAVE_ROM, reason="needs um80 and ul80")
+def test_double_colon_label_in_an_asm_block_is_public_in_a_rom(tmp_path):
+    build(tmp_path, TWO_ENTRIES + """
+volatile int r1, r2;
+int main(void) { r1 = g(); r2 = g_alt(); return 0; }
+""")
+    m = machine(tmp_path)
+    assert m.run(max_tstates=500_000).reason == "halt"
+    assert (m.peek16("_r1"), m.peek16("_r2")) == (1, 2)
+    assert "_G_ALT" in symbols(tmp_path)
+
+
+@pytest.mark.skipif(not HAVE_ROM, reason="needs um80 and ul80")
+def test_double_colon_label_in_asm_text_is_public_in_a_rom(tmp_path):
+    build(tmp_path, """
+int g(void) __naked
+{
+    asm("\\tld hl,1\\n\\tret\\n_g_alt::\\n\\tld hl,2\\n\\tret\\n");
+}
+extern int g_alt(void);
+volatile int r1, r2;
+int main(void) { r1 = g(); r2 = g_alt(); return 0; }
+""")
+    m = machine(tmp_path)
+    assert m.run(max_tstates=500_000).reason == "halt"
+    assert (m.peek16("_r1"), m.peek16("_r2")) == (1, 2)
+
+
+# ---- asm as the body of a statement, without braces ----------------------------
+
+@pytest.mark.skipif(not HAVE_ROM, reason="needs um80 and ul80")
+def test_asm_statement_as_the_body_of_for_without_braces(tmp_path):
+    build(tmp_path, """
+volatile int r;
+int main(void)
+{
+    r = 5;
+    for (;;) __asm__("\\thalt");
+}
+""")
+    m = machine(tmp_path)
+    assert m.run(max_tstates=100_000).reason == "halt"
+    assert m.peek16("_r") == 5
+
+
+@pytest.mark.skipif(not HAVE_CPM, reason="needs um80, ul80 and cpmemu")
+def test_asm_statement_as_the_body_of_if_else_while_do_without_braces(
+        tmp_path):
+    out = run_cpm(tmp_path, """
+#include <stdio.h>
+volatile int n;
+int main(void)
+{
+    int i;
+    for (i = 0; i < 3; i++) asm("\\tld hl,_n\\n\\tinc (hl)\\n");
+    if (n == 3) asm volatile("\\tld hl,_n\\n\\tinc (hl)\\n");
+    else __asm__("\\tnop");
+    if (n == 0) asm("\\tnop"); else __asm__ volatile("\\tld hl,_n\\n\\tinc (hl)\\n");
+    i = 2;
+    while (i--) __asm__("\\tld hl,_n\\n\\tinc (hl)\\n");
+    do __asm__("\\tld hl,_n\\n\\tinc (hl)\\n"); while (0);
+    printf("%d\\n", n);
+    return 0;
+}
+""")
+    assert out.split() == ["8"]

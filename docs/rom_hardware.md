@@ -80,7 +80,9 @@ The option `--isr-safe` keeps the locals of all functions that an interrupt func
 
 ## RST vectors and IM 2
 
-The RST vectors 0008h to 0030h and the IM 2 vector table are new. Both need `--target=rom` with the start-up code that uc80 embeds (whole-program mode, no `--startup-lib`). With another start-up code, the compiler prints a warning and your code must set the vector.
+The RST vectors 0008h to 0030h and the IM 2 vector table are new. Both need `--target=rom` with the start-up code that uc80 embeds (whole-program mode, no `--startup-lib`). With another start-up code, or with the CP/M target, the compiler prints a warning (for example "the RST 10h vector is not set"). Then your code must set the vector. The pragmas `rst`, `im2`, `im2table`, `vector`, `interrupt` and `nmi` have no effect in a CP/M program.
+
+A pragma names a function by its name alone. Suppose two input files define a function with this name (two `static` functions). Then the compiler stops with an error that names both files, because the pragma cannot tell which function it means. Give each function its own name.
 
 ### RST vectors
 
@@ -119,16 +121,18 @@ An `im2` pragma, or an `im2table` pragma, selects IM 2 for the whole program:
 
 - The reset vector at 0000h does `DI`, `IM 2` (in place of `IM 1`).
 - `__start` loads I with the high byte of the table address, before `main`. The program must run `EI` itself, as for IM 1.
-- The compiler writes the table of 256 bytes at the address of `im2table`. The default address is 0100h. The address must be a multiple of 100h from 0100h to FF00h, because the start-up code must fit below the table. The PUBLIC label of the table is `__im2_table`.
+- The compiler writes the table of 256 bytes at the address of `im2table`. The default address is 0100h. The address must be a multiple of 100h from 0100h to FE00h. The start-up code must fit below the table, and the program code follows the table, so the table ends below 10000h. The table has the PUBLIC label `__im2_table`.
 - A slot with no pragma points to `__im2_default` (PUBLIC), which does `EI` and `RETI`. Then a bus byte for an unbound slot does no harm.
-- The program code starts after the table (at 0200h for the default). The ROM has a gap between the end of the start-up code and the table. The start-up code with every option (watchdog, user INT handler, user NMI handler) must stay below the table. A test checks this limit. The cost of IM 2 is 256 bytes for the table and the gap. A program with no IM 2 pragma has the same image as before.
+- The program code starts after the table (at 0200h for the default). The ROM has a gap between the end of the start-up code and the table. The start-up code with every option (watchdog, user INT handler, user NMI handler) must stay below the table. A test checks this limit. The cost of IM 2 is 256 bytes for the table and the gap. The gap is part of the ROM image: a table at 0A000h makes an image of more than 40 kilobytes, and the ROM must be large enough (`--rom-size` of `ul80`). `ul80` stops with "ROM overflow" when the code does not fit.
+- With `--asm-syntax=sdas`, `sdldz80` does not check the size of the image. So the compiler checks the address where the program code starts. It stops with "ROM overflow" when this address is not below the end of the ROM. The default ROM size is 8000h. Use `--rom-size HEX` for a larger ROM.
+- A hex constant in the assembly text has a leading 0 when it starts with A to F (`0A000H`). MACRO-80 reads `A000H` as a name.
 - A handler is an interrupt function as for `#pragma uc80 interrupt NAME`: `EI` first (not with `critical`), five pushes, and `RETI`. One function can serve two slots when both pragmas use the same form. The vector at 0038h is not used in IM 2.
 
 The compiler stops with an error in these cases:
 
 - A slot is not in 0 to 127.
 - Two pragmas bind the same slot.
-- An `im2table` address is not a multiple of 100h, or is below 0100h.
+- An `im2table` address is not a multiple of 100h, is below 0100h or is above FE00h.
 - Two `im2table` pragmas give different addresses.
 - The function is not defined, takes a parameter, returns a value, or has a caller in C.
 - The function has only a prototype in C, and no assembly input file defines its PUBLIC label.
@@ -252,12 +256,18 @@ int add2(int a, int b) __naked
 [[uc80::naked]] void f(void) { asm("\tret"); }
 ```
 
-Spellings: `__naked` after the parameter list (also with `__interrupt` and `__critical`), and the C23 attribute `[[uc80::naked]]` before the declaration or after the parameter list. A `__naked` on a prototype has no effect.
+Spellings: `__naked` after the parameter list (also with `__interrupt` and `__critical`), and the C23 attribute `[[uc80::naked]]` before the declaration or after the parameter list. The GNU form `__attribute__((naked))` also marks a naked function. It can stand before the declaration or after the parameter list. uc80 ignores the other attributes in the same list. `__attribute__((interrupt))` stays an error, also in a list with `naked`.
+
+Write the naked marker on every declaration of a function. If the prototype and the definition differ (in either direction), the compiler prints a warning with the file and the line. The definition decides: a definition without the marker gets the frame code of a normal function.
+
+A typedef of a function type cannot have the marker: `typedef int F(int) __naked;` is an error.
 
 Rules:
 
 - The body holds only `asm("...")` statements, `__asm ... __endasm;` blocks and empty statements. Any other statement or declaration is an error with the line number. SDCC allows C code in the body, but the result is not defined. So uc80 refuses it.
-- A body with no asm statement gives a warning: the function has no code and runs into the next function.
+- A body with no asm statement gives a warning with the file and the line: the function has no code and runs into the next function.
+- A naked function must not return a structure or a union of more than 2 bytes, and must not take a variable argument list (`...`). Both are an error with the file and the line. The caller of a function that returns a large structure passes a hidden result pointer. A naked function has no frame to read the pointer from. A structure of 1 or 2 bytes comes back in HL, as an `int` does.
+- An alternate entry point is a label with two colons in the asm text: `_g_alt::`. The label is PUBLIC, as in MACRO-80 and in sdas, and C code can call it as `g_alt` after `extern int g_alt(void);`. In an `__asm` block, `.globl _g_alt` also works.
 - You must write the `RET` (or `RETI`, `RETN`, or a `JP`). The compiler never adds one.
 - No pass changes the asm text. The peephole optimizer and the assembly dead-code pass keep each asm block as it is. The compiler never inlines a naked function and never propagates a constant into one.
 - A naked function uses the stack convention, never the register convention. At entry, `(SP)` is the return address. The caller pushed each argument as a 16-bit word, the last argument first. So the first parameter is at `(SP+2)`, the second at `(SP+4)`, and so on. A `long` or `float` takes two words (low word at the lower address). Do not change `IX`: the C caller needs it.
@@ -267,6 +277,8 @@ Rules:
 - The interrupt check treats the body as opaque text. It follows each `_name` in the asm text as a call. So a C function that a naked handler calls counts as reached by the interrupt: `--isr-safe` and the shared-storage warning apply to the function. The compiler saves no registers for a naked handler, so the note about the alternate registers does not apply.
 
 A naked function as an interrupt function (`#pragma uc80 interrupt NAME [critical]`, `#pragma uc80 nmi NAME`, `__interrupt`): the vector jump goes to the label. The compiler writes no `EI`, no register saves and no `RETI` or `RETN`.
+
+An asm statement can be the body of `if`, `else`, `for`, `while` and `do` without braces (`for (;;) __asm__("halt");`). The prepass adds the braces.
 
 The asm must save every register that it changes, and must end with `RETI` or `RETN` (and `EI` before `RETI` if the handler must enable interrupts). The kind of the pragma sets only the vector (38h or 66h). The function must still return `void` and take no parameters. No C code can call the function.
 

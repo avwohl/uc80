@@ -99,6 +99,12 @@ def undefined_in_rom(lib_dir: Path, code: str) -> list:
 
 # ---- start-up code -----------------------------------------------------
 
+def hex_const(value: int, width: int = 4) -> str:
+    """An M80 hex constant: 0A000H, not A000H (M80 reads A000H as a name)."""
+    text = f"{value:0{width}X}"
+    return ("0" + text if text[0] in "ABCDEF" else text) + "H"
+
+
 _BLOCK = re.compile(r"^;@(INT|NMI)_BEGIN\n.*?^;@\1_END\n", re.S | re.M)
 
 
@@ -127,7 +133,7 @@ def startup_text(path: Path, int_handler, nmi_handler,
     if im2:
         text = text.replace("\tIM\t1\n", "\tIM\t2\n")
         text = re.sub(r"^;@IM2", "", text, flags=re.M).replace(
-            "__IM2_HI", f"{im2[1] >> 8:02X}H")
+            "__IM2_HI", hex_const(im2[1] >> 8, 2))
     if watchdog:
         text = re.sub(r"^;@WDT", "", text, flags=re.M)
     use = {"INT": int_handler, "NMI": nmi_handler}
@@ -163,13 +169,13 @@ def startup_text(path: Path, int_handler, nmi_handler,
     if im2:
         slots, table = im2
         out += ["\tPUBLIC\t__im2_default", "__im2_default:", "\tEI", "\tRETI",
-                f"\tORG\t{table:04X}H", "\tPUBLIC\t__im2_table",
+                f"\tORG\t{hex_const(table)}", "\tPUBLIC\t__im2_table",
                 "__im2_table:"]
         names = [slots.get(i, "__im2_default") for i in range(128)]
         out += ["\tDW\t" + ",".join(names[i:i + 8])
                 for i in range(0, 128, 8)]
-        out.append(f"\tORG\t{table + 256:04X}H")
-        out.append(f";@RELOC {table + 256:04X}H")      # sdas: code from here
+        out.append(f"\tORG\t{hex_const(table + 256)}")
+        out.append(f";@RELOC {hex_const(table + 256)}")      # sdas: code from here
     return out
 
 
