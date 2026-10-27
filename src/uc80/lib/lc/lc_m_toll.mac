@@ -111,14 +111,32 @@ __m_toll:
 	sub	190
 	ld	A,D
 	sbc	A,128
-	jp	C,@ENDIF4_m_toll
+	jr c,@ENDIF4_m_toll
 	ld	A,(??AUTO_m_toll+3)
 	and	128
-	jp	Z,@TERN_E5_m_toll
-	ld	HL,-9223372036854775808
+	jr z,@TERN_E5_m_toll
+	ld	HL,0
+	ld	(__acc64),HL
+	ld	HL,0
+	ld	(__acc64+2),HL
+	ld	HL,0
+	ld	(__acc64+4),HL
+	ld	HL,32768
+	ld	(__acc64+6),HL
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
 	jp @_m_toll_ret
 @TERN_E5_m_toll:
-	ld	HL,9223372036854775807
+	ld	HL,65535
+	ld	(__acc64),HL
+	ld	HL,65535
+	ld	(__acc64+2),HL
+	ld	HL,65535
+	ld	(__acc64+4),HL
+	ld	HL,32767
+	ld	(__acc64+6),HL
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
 @TERN_END6_m_toll:
 	jp	@_m_toll_ret
 @ENDIF4_m_toll:
@@ -150,10 +168,12 @@ __m_toll:
 	jr @ENDIF8_m_toll
 @ELSE7_m_toll:
 	ld	HL,(??AUTO_m_toll+12)
-	ex	DE,HL
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	call	__sext64_hl
 	call	__mov64
 	ld	HL,??AUTO_m_toll+4
@@ -173,10 +193,16 @@ __m_toll:
 	ld	HL,(__acc64)
 	ld	DE,(__acc64+2)
 	call	__neg64
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
 	jr @TERN_END10_m_toll
 @TERN_E9_m_toll:
 	ld	HL,??AUTO_m_toll+4
 	call	__load64
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
 	ld	HL,(__acc64)
 	ld	DE,(__acc64+2)
 @TERN_END10_m_toll:

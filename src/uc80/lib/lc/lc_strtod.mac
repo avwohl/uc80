@@ -438,10 +438,12 @@ _sd_mulp:
 	ld	H,(IX+9)
 	bit	7,H
 	jr z,@ENDIF30_strtod
-	ex	DE,HL
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	ld	(IX+8),L
 	ld	(IX+9),H
 	ld	L,(IX+6)
@@ -878,10 +880,12 @@ _sd_pow10:
 	ld	H,(IX+7)
 	bit	7,H
 	jr z,@ELSE70_strtod
-	ex	DE,HL
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	ld	(IX+6),L
 	ld	(IX+7),H
 	ld	HL,52428
@@ -2044,10 +2048,12 @@ _strtod:
 	or	L
 	jr z,@TERN_E202_strtod
 	ld	HL,(??AUTO_strtod+23)
-	ex	DE,HL
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	jr @TERN_END203_strtod
 @TERN_E202_strtod:
 	ld	HL,(??AUTO_strtod+23)

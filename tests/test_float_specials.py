@@ -36,9 +36,8 @@ int main(void) {
 def test_infinity_and_nan_are_what_they_claim(tmp_path):
     out = build_and_run(tmp_path, MACROS, ("--printf", "int"))
     assert "1 1 1 1\n" in out, out
-    # NAN used to be 0.0, so this compared equal.  (uc80's float compare
-    # does not implement NaN's unordered result -- `n == n` is still true.
-    # Recorded in todo.txt; the runtime never produces a NaN by itself.)
+    # NAN used to be 0.0, so this compared equal.  (A NaN compares
+    # unordered now: tests/test_float_nan_compare.py.)
     assert "0\n" in out, out
 
 

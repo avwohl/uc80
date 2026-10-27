@@ -168,11 +168,9 @@ Library
     when y is a whole number in range -- would fix the common cases.
     sqrt() is exact.
 
-  - Float comparison does not implement NaN's unordered result: `x == x` is
-    true for a NaN, and `<` / `>` on one are whatever the magnitude compare
-    happens to give.  No arithmetic in rt_float produces a NaN, so this is
-    only reachable through the NAN macro or a bit pattern read back as a
-    float.  Adding the test costs every float comparison in every program.
+  - (Done) Float comparison gives the unordered result for a NaN: __fcmp
+    returns Z and C both set, and the code after the call tests that pair.
+    The test costs about 59 T-states in every __fcmp call.
 
   - Float arithmetic has no infinity or NaN handling either: `inf - inf` is
     0.0 and `inf` compares as an ordinary large number.  Same trade.

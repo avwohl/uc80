@@ -973,6 +973,18 @@ def _is_rom_type(t) -> bool:
     return False
 
 
+def _untyped_auto(decl) -> bool:
+    """A declaration with the C23 storage class ``auto`` and no type
+    specifier: the type comes from the initializer."""
+    specs = decl.decl_specs or []
+    if not any(isinstance(sp, ast.StorageClass) and sp.kw.text == "auto"
+               for sp in specs):
+        return False
+    return not any(
+        not isinstance(sp, (ast.StorageClass, ast.TypeQualifier))
+        for sp in specs)
+
+
 def _from_legacy(t) -> Optional[ResolvedType]:
     """The inverse of ``_to_legacy``: a ResolvedType for a legacy type
     (what ``CodeGenerator._get_expr_type`` returns).  None when ``t`` is
@@ -2513,7 +2525,11 @@ class CallGraphAnalyzer:
             if any(int_flags(arg)[:2]):          # L or LL suffix
                 return False
             v = int_value(arg)
-            return (-32768 <= v <= 32767) if want_signed else (0 <= v <= 65535)
+            if want_signed:
+                return -32768 <= v <= 32767
+            # A decimal 40000 has type long, not unsigned int: left alone
+            # it would make ``x + x`` of the unsigned parameter 32 bits.
+            return 0 <= v <= (65535 if int_flags(arg)[2] else 32767)
         if isinstance(arg, ast.Identifier):
             t = types.get(arg.name.text)
             return t is not None and is16(t)
@@ -4035,6 +4051,9 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 if isinstance(x, (ast.TypeofExpr, ast.TypeofUnqualExpr)):
                     found[0] = True
                     return
+                if isinstance(x, ast.Declaration) and _untyped_auto(x):
+                    found[0] = True
+                    return
                 stack.extend(_children(x))
         scan(unit)
         if not found[0]:
@@ -4043,6 +4062,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
         # operators, so the Token operators go first (idempotent).
         self._normalize_op_fields(unit)
         saved = (self.ctx.locals, self.ctx.globals)
+        saved_structs = (dict(self.ctx.structs), dict(self.ctx.struct_sizes),
+                         dict(self.ctx.anon_members))
         self.ctx.locals, self.ctx.globals = {}, {}
         undo: list[list] = []          # per scope: (dict, name, old Symbol)
 
@@ -4055,6 +4076,13 @@ class CodeGenerator(Z80IntrinsicsMixin):
                                  is_global=table is self.ctx.globals)
 
         def declare_decl(decl, table):
+            try:
+                # A struct defined here, so typeof(s.m) and auto x = s.m
+                # find the member (undone when the pass ends).
+                self._register_inline_types(
+                    _to_legacy(resolve_base_type(decl.decl_specs)))
+            except Exception:
+                pass
             try:
                 is_td = decl_storage_class(decl.decl_specs) == "typedef"
                 for nm, full, _init, _fn in iter_var_decls(decl):
@@ -4077,6 +4105,30 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 else:
                     table[name] = old
 
+        def deduce_auto(decl):
+            """C23 6.7.10: ``auto x = init;`` has the unqualified type of
+            init, after array and function decay.  The declaration gets
+            a typeof_unqual(init) specifier with its type already set."""
+            ds = decl.declarators
+            if len(ds) != 1 or not isinstance(ds[0],
+                                              ast.InitDeclaratorWithInit):
+                return
+            init = ds[0].init
+            if not dataclasses.is_dataclass(init):
+                return
+            walk(init)
+            try:
+                t = self._c_expr_type(init)
+            except Exception:
+                t = None
+            if t is None:
+                return
+            if isinstance(t, lt.ArrayType):
+                t = lt.PointerType(base_type=t.base_type)
+            spec = ast.TypeofUnqualExpr(operand=copy.deepcopy(init))
+            spec._resolved = _from_legacy(t)
+            decl.decl_specs = list(decl.decl_specs) + [spec]
+
         def walk(n):
             if isinstance(n, list):
                 for x in n:
@@ -4089,7 +4141,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 if getattr(n, "_resolved", None) is None:
                     try:
                         n._resolved = _from_legacy(
-                            self._get_expr_type(n.operand))
+                            self._c_expr_type(n.operand))
                     except Exception:
                         n._resolved = None
                 return
@@ -4115,6 +4167,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 pop()
                 return
             if isinstance(n, ast.Declaration):
+                if _untyped_auto(n):
+                    deduce_auto(n)
                 walk(n.decl_specs)
                 walk(n.declarators)
                 declare_decl(n, self.ctx.locals if undo
@@ -4134,6 +4188,10 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 walk(item)
         finally:
             self.ctx.locals, self.ctx.globals = saved
+            for tbl, old in zip((self.ctx.structs, self.ctx.struct_sizes,
+                                 self.ctx.anon_members), saved_structs):
+                tbl.clear()
+                tbl.update(old)
 
     @contextmanager
     def _emitting_to(self, buf: list):
@@ -9763,10 +9821,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 self.ctx.emit_instr("ld", f"HL,{size}")
             else:
                 # Infer type of expression and compute its size
-                expr_type = self._get_expr_type(expr.operand)
-                if expr_type:
-                    size = self._type_size(expr_type)
-                else:
+                size = self._sizeof_operand_size(expr.operand)
+                if size is None:
                     size = 2  # Default to int if type cannot be inferred
                 self.ctx.emit_instr("ld", f"HL,{size}")
 
@@ -9857,9 +9913,18 @@ class CodeGenerator(Z80IntrinsicsMixin):
         """The type of the operand of ``typeof``, as a ResolvedType;
         None when the type is not known (then the object is an int)."""
         try:
-            return _from_legacy(self._get_expr_type(operand))
+            return _from_legacy(self._c_expr_type(operand))
         except Exception:
             return None
+
+    def _c_expr_type(self, expr):
+        """The type of EXPR as C names it: _get_expr_type, except that a
+        plain character constant is an int (C23 6.4.4.5), which the code
+        generator itself keeps as a char for its byte paths."""
+        if (isinstance(expr, ast.CharLiteral)
+                and expr.value.text.startswith("'")):
+            return lt.BasicType(name="int")
+        return self._get_expr_type(expr)
 
     def _resolve_typename(self, t):
         """Resolve an auto-AST TypeName / type-spec list to a legacy type.
@@ -9894,7 +9959,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
     def gen_generic_selection(self, expr: ast.GenericSelection, force_long: bool = False) -> None:
         """Generate code for _Generic selection expression."""
         # Get the type of the controlling expression
-        ctrl_type = _to_legacy(self._get_expr_type(expr.controlling_expr))
+        ctrl_type = _to_legacy(self._c_expr_type(expr.controlling_expr))
 
         # Find the matching association
         default_expr = None
@@ -11018,23 +11083,32 @@ class CodeGenerator(Z80IntrinsicsMixin):
         false_label = self.ctx.new_label("FCMP_F")
         end_label = self.ctx.new_label("FCMP_E")
 
-        # Call float comparison - returns flags: Z if equal, C if left < right
+        # __fcmp: Z if equal, C if left < right, both Z and C when either
+        # operand is a NaN (unordered: every operator but != gives false).
         self._call_runtime("__fcmp")
+        e = self.ctx.emit_instr
 
         if op == "==":
-            self.ctx.emit_instr("jp", f"Z,{true_label}")
+            e("jr", f"NZ,{false_label}")
+            e("jr", f"NC,{true_label}")
         elif op == "!=":
-            self.ctx.emit_instr("jp", f"NZ,{true_label}")
+            e("jr", f"NZ,{true_label}")
+            e("jr", f"C,{true_label}")
         elif op == "<":
-            self.ctx.emit_instr("jp", f"C,{true_label}")
+            e("jr", f"Z,{false_label}")
+            e("jr", f"C,{true_label}")
         elif op == ">=":
-            self.ctx.emit_instr("jp", f"NC,{true_label}")
+            e("jr", f"NC,{true_label}")
         elif op == ">":
-            self.ctx.emit_instr("jp", f"Z,{false_label}")
-            self.ctx.emit_instr("jp", f"NC,{true_label}")
+            e("jr", f"Z,{false_label}")
+            e("jr", f"NC,{true_label}")
         elif op == "<=":
-            self.ctx.emit_instr("jp", f"Z,{true_label}")
-            self.ctx.emit_instr("jp", f"C,{true_label}")
+            zset = self.ctx.new_label("FCMP_Z")
+            e("jr", f"Z,{zset}")
+            e("jr", f"C,{true_label}")
+            e("jr", false_label)
+            self.ctx.emit_label(zset)
+            e("jr", f"NC,{true_label}")
 
         self.ctx.emit_label(false_label)
         self.ctx.emit_instr("ld", "HL,0")
@@ -15410,7 +15484,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             return true_type or false_type
         elif isinstance(expr, ast.GenericSelection):
             # Resolve the _Generic to get matched expression's type
-            ctrl_type = _to_legacy(self._get_expr_type(expr.controlling_expr))
+            ctrl_type = _to_legacy(self._c_expr_type(expr.controlling_expr))
             for assoc in (expr.assocs or []):
                 if isinstance(assoc, ast.GenericDefault):
                     continue
@@ -22323,11 +22397,20 @@ class CodeGenerator(Z80IntrinsicsMixin):
             tt = self._resolve_typename(expr.target_type) if hasattr(self, "_resolve_typename") else expr.target_type
             return self._type_size(tt)
         elif isinstance(expr, ast.SizeofExpr):
-            expr_type = self._get_expr_type(expr.operand)
-            if expr_type:
-                return self._type_size(expr_type)
-            return None
+            return self._sizeof_operand_size(expr.operand)
         return None  # Not a constant expression
+
+    def _sizeof_operand_size(self, operand) -> int | None:
+        """sizeof of an expression, or None when its type is unknown.  A
+        plain character constant has type int (C23 6.4.4.5), not char,
+        although the code generator treats it as a char for its value."""
+        if (isinstance(operand, ast.CharLiteral)
+                and operand.value.text.startswith("'")):
+            return self._type_size(lt.BasicType(name="int"))
+        expr_type = self._get_expr_type(operand)
+        if expr_type:
+            return self._type_size(expr_type)
+        return None
 
     def _escape_string(self, s: str) -> str:
         """Escape a string for assembly.

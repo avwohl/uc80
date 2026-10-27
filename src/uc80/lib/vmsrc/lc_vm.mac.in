@@ -350,7 +350,11 @@ _vm_jcc:
 	CALL	_vm_getab
 	CALL	__fcmp
 	LD	A,2
-	JR	Z,_vm_j1
+	JR	NZ,_vm_j0
+	JR	NC,_vm_j1		; equal
+	LD	A,4			; Z and C: unordered counts as greater, so
+	JR	_vm_j1			; fabs(x) > inf is true for a NaN
+_vm_j0:
 	LD	A,1
 	JR	C,_vm_j1
 	LD	A,4

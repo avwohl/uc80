@@ -46,10 +46,9 @@ IEEE result for an infinity or a NaN operand.
 
 ## Limits
 
-- The comparison operators do not give the unordered result for a NaN
-  (`n == n` is true, `n > 1` can be true). Use `isnan`, `isunordered` or the
-  comparison macros of `math.h`. The code generator reads only the Z and C
-  flags of `__fcmp`, so it cannot tell the unordered case.
+- The comparison operators give the unordered result for a NaN (`n == n` is
+  false, `n != n` is true, `n > 1` is false). `__fcmp` sets Z and C together
+  for an unordered pair, and the code generator tests that pair.
 - The runtime has no subnormal numbers. Arithmetic takes a subnormal operand
   as zero. It changes a subnormal result to a zero. The functions that only
   move bits work with subnormal numbers: `frexp`, `ldexp`, `scalbn`,

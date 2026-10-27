@@ -95,8 +95,8 @@ _fdiml:
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	call	__fcmp
-	jr z,@FCMP_F8_fdim
-	jr nc,@FCMP_T7_fdim
+	jr	Z,@FCMP_F8_fdim
+	jr	NC,@FCMP_T7_fdim
 @FCMP_F8_fdim:
 	ld	HL,0
 	jr @FCMP_E9_fdim

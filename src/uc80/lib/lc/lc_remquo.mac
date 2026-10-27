@@ -443,9 +443,13 @@ _remquol:
 	ld	E,(HL)
 	inc	HL
 	ld	D,(HL)
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	ex	DE,HL
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	ex	DE,HL
 	ld	L,(IX+12)
 	ld	H,(IX+13)
