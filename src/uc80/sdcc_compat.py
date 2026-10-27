@@ -14,6 +14,8 @@ A prepass on the preprocessed text (before the parser) rewrites:
     __critical { ... }                        interrupts off for the block
     __asm ... __endasm;                       inline assembly (sdas syntax),
                                               statement or file level
+    void f(void) __naked { __asm ... }        naked function: no frame code,
+    [[uc80::naked]] void f(void) { ... }      the body is assembly only
 
 and records the result.  The text is changed in place, and every newline
 stays, so the line numbers of later messages stay right.  Every other
@@ -46,6 +48,7 @@ class Found:
     sfrs: dict = field(default_factory=dict)      # name -> (port, banked)
     absolute: dict = field(default_factory=dict)  # name -> address
     asm_blocks: int = 0                           # __asm blocks, all files
+    naked: list = field(default_factory=list)     # (name, file, line)
 
 
 _TOKEN = re.compile(
@@ -59,8 +62,8 @@ _TOKEN = re.compile(
     r"|(?P<p>.)", re.S)
 
 _LEFTOVER = {
-    "__naked": "'__naked' is not supported; write the function in "
-               "assembly, or use #pragma uc80 interrupt",
+    "__naked": "'__naked' must follow the parameter list of a function: "
+               "'void f(void) __naked { __asm ... __endasm; }'",
     "__critical": "'__critical' is supported only as '__critical { ... }' "
                   "or in front of '__interrupt'",
     "__banked": "'__banked' is supported only in '__sfr __banked "
@@ -152,9 +155,113 @@ def _asm_blocks(source: str, filename: str, found: Found) -> str:
     return "".join(out)
 
 
+def _naked_pass(source: str, filename: str, found: Found) -> str:
+    """Find ``__naked`` and ``[[uc80::naked]]`` on function definitions,
+    record the function names, and blank the spellings.  The check of the
+    body (asm only) is made by the code generator, which knows the lines
+    of the statements."""
+    if "naked" not in source:
+        return source
+    toks = [(m.lastgroup, m.group(), m.start(), m.end())
+            for m in _TOKEN.finditer(source)]
+    sig = [i for i, t in enumerate(toks) if t[0] not in ("ws", "cmt")]
+    n = len(sig)
+    edits = []
+
+    def text(k):
+        return toks[sig[k]][1] if 0 <= k < n else ""
+
+    def line_of(k):
+        return source.count("\n", 0, toks[sig[k]][2]) + 1
+
+    def record(close, at, what):
+        """``close`` is the ')' of the parameter list."""
+        op = _match_paren_back(toks, sig, close)
+        name = None
+        if op is not None and op > 0 and toks[sig[op - 1]][0] == "id":
+            name = text(op - 1)
+        k = close + 1
+        while True:
+            if text(k) == "[[" and text(k + 4) == "naked":
+                k += 6
+            elif text(k) in ("__critical", "__interrupt", "__naked"):
+                k += 1
+                if text(k) == "(":
+                    while k < n and text(k) != ")":
+                        k += 1
+                    k += 1
+            else:
+                break
+        if name is None or name in ("__interrupt", "if", "while", "for",
+                                    "switch"):
+            raise SdccCompatError(filename, line_of(at),
+                                  f"'{what}' must be on a function")
+        if text(k) == "{":
+            found.naked.append((name, filename, line_of(at)))
+        elif text(k) != ";":
+            raise SdccCompatError(filename, line_of(at),
+                                  f"'{what}' must be on a function")
+
+    for k in range(n):
+        tx = text(k)
+        if tx == "__naked" and toks[sig[k]][0] == "id":
+            j = k - 1
+            while True:
+                if text(j) in ("__critical", "__interrupt"):
+                    j -= 1
+                elif text(j) == ")":
+                    op = _match_paren_back(toks, sig, j)
+                    if op is not None and op > 0 and text(op - 1) == \
+                            "__interrupt":
+                        j = op - 2
+                    else:
+                        break
+                else:
+                    break
+            if text(j) != ")":
+                continue            # left for the leftover check
+            record(j, k, "__naked")
+            edits.append((toks[sig[k]][2], toks[sig[k]][3]))
+        elif (tx == "[[" and text(k + 1) == "uc80" and text(k + 2) == ":"
+              and text(k + 3) == ":" and text(k + 4) == "naked"
+              and text(k + 5) == "]]"):
+            end = k + 5
+            if text(k - 1) == ")":
+                close = k - 1
+            else:
+                x = end + 1
+                while x < n and text(x) not in ("(", "{", ";"):
+                    x += 1
+                if text(x) != "(":
+                    raise SdccCompatError(
+                        filename, line_of(k),
+                        "'[[uc80::naked]]' must be on a function")
+                close = x
+                depth = 0
+                while close < n:
+                    if text(close) == "(":
+                        depth += 1
+                    elif text(close) == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    close += 1
+            if close >= n or text(close) != ")":
+                raise SdccCompatError(
+                    filename, line_of(k),
+                    "'[[uc80::naked]]' must be on a function")
+            record(close, k, "[[uc80::naked]]")
+            edits.append((toks[sig[k]][2], toks[sig[end]][3]))
+    for st, en in sorted(edits, reverse=True):
+        source = (source[:st] + re.sub(r"[^\n]", " ", source[st:en])
+                  + source[en:])
+    return source
+
+
 def prepass(source: str, filename: str, found: Found) -> str:
     """Rewrite ``source`` and add what it declares to ``found``."""
     source = _asm_blocks(source, filename, found)
+    source = _naked_pass(source, filename, found)
     if not re.search(r"__interrupt|__critical|__sfr|__at\b|uc80::at|"
                      r"__naked|__banked|__sdcccall|__preserves_regs|"
                      r"__using", source):

@@ -80,4 +80,4 @@ The port log shows `OUT 18` (close), the YM setup and `OUT 08` (open). Each NMI 
 
 ## Assembly sound libraries
 
-uc80 has no `__naked`, no `__asm ... __endasm` and no `__sdcccall`. To use a routine of an assembly library (for example nullsound), write a small thunk in a `.mac` file. Give the file to the compiler as a second input file (see "Your own interrupt handlers" in [rom.md](rom.md)). The thunk moves the arguments to the registers that the routine needs. The C file declares the thunk as `extern`.
+uc80 has no `__sdcccall`. `__naked` and `__asm ... __endasm` work (see [rom_hardware.md](rom_hardware.md)), but a naked function takes its parameters from the stack. To use a routine of an assembly library (for example nullsound), write a small thunk in a `.mac` file. Give the file to the compiler as a second input file (see "Your own interrupt handlers" in [rom.md](rom.md)). The thunk moves the arguments to the registers that the routine needs. The C file declares the thunk as `extern`.

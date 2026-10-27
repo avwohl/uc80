@@ -154,7 +154,51 @@ __asm ... __endasm;                        inline assembly in sdas syntax
 - `__interrupt(n)` does not make a vector. The compiler sets the vector as for the pragma.
 - An `__asm` block becomes an `asm("...")` statement with MACRO-80 text. [rom_interop.md](rom_interop.md) lists the forms.
 
-Every other SDCC form stays an error: `__naked`, `__banked` on a function, `__sdcccall`, `__preserves_regs`, `__using`, a bare `__critical`, `[[gnu::interrupt]]`, `__attribute__((interrupt))`, `__interrupt` before the declarator, and a bare `__fastcall`. The compiler never drops one of them without a message.
+The section "Naked functions" describes `__naked`. Every other SDCC form stays an error: `__banked` on a function, `__sdcccall`, `__preserves_regs`, `__using`, a bare `__critical`, `[[gnu::interrupt]]`, `__attribute__((interrupt))`, `__interrupt` before the declarator, and a bare `__fastcall`. The compiler never drops one of them without a message.
+
+## Naked functions
+
+A naked function has no frame code. The compiler writes the label and the body only. It writes no `push IX`, no stack space for locals, no code for the parameters and no `RET`. The body is the assembly of the programmer.
+
+```
+int add2(int a, int b) __naked
+{
+    __asm
+        ld hl,#2
+        add hl,sp
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld a,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,a
+        add hl,de
+        ret
+    __endasm;
+}
+
+[[uc80::naked]] void f(void) { asm("\tret"); }
+```
+
+Spellings: `__naked` after the parameter list (also with `__interrupt` and `__critical`), and the C23 attribute `[[uc80::naked]]` before the declaration or after the parameter list. A `__naked` on a prototype has no effect.
+
+Rules:
+
+- The body holds only `asm("...")` statements, `__asm ... __endasm;` blocks and empty statements. Any other statement or declaration is an error with the line number. SDCC allows C code in the body, but the result is not defined. So uc80 refuses it.
+- A body with no asm statement gives a warning: the function has no code and runs into the next function.
+- You must write the `RET` (or `RETI`, `RETN`, or a `JP`). The compiler never adds one.
+- No pass changes the asm text. The peephole optimizer and the assembly dead-code pass keep each asm block as it is. The compiler never inlines a naked function and never propagates a constant into one.
+- A naked function uses the stack convention, never the register convention. At entry, `(SP)` is the return address. The caller pushed each argument as a 16-bit word, the last argument first. So the first parameter is at `(SP+2)`, the second at `(SP+4)`, and so on. A `long` or `float` takes two words (low word at the lower address). Do not change `IX`: the C caller needs it.
+- The result goes in HL (DEHL for a `long` or `float`). A `char` result goes in HL too.
+- The caller removes the arguments. The asm must not remove them.
+- A C function can call a naked function. Only assembly can also reference one. The compiler reads each `_name` in the asm text as a reference. So a function that only asm calls stays in the program. A naked function that no C code and no asm text names is dead code, and the compiler removes it. Use `#pragma uc80 keep NAME` to keep a function that other assembly files use.
+- The interrupt check treats the body as opaque text. It follows each `_name` in the asm text as a call. So a C function that a naked handler calls counts as reached by the interrupt: `--isr-safe` and the shared-storage warning apply to the function. The compiler saves no registers for a naked handler, so the note about the alternate registers does not apply.
+
+A naked function as an interrupt function (`#pragma uc80 interrupt NAME [critical]`, `#pragma uc80 nmi NAME`, `__interrupt`): the vector jump goes to the label. The compiler writes no `EI`, no register saves and no `RETI` or `RETN`.
+
+The asm must save every register that it changes, and must end with `RETI` or `RETN` (and `EI` before `RETI` if the handler must enable interrupts). The kind of the pragma sets only the vector (38h or 66h). The function must still return `void` and take no parameters. No C code can call the function.
 
 ## Proof
 

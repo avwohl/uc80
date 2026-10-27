@@ -56,6 +56,9 @@ observable behaviour of a program uc80 compiles.
 
 ### Added
 
+- **Naked functions: SDCC `__naked` and `[[uc80::naked]]`** ([docs/rom_hardware.md](docs/rom_hardware.md)). A naked function has no prologue, no epilogue, no frame and no `RET`: the body is the asm of the programmer. The body may hold only `asm(...)` statements, `__asm` blocks and empty statements; any other statement is an error with the line number. Parameters use the stack convention (first parameter at `(SP+2)` at entry). A naked function can be a vector target of `#pragma uc80 interrupt` or `nmi`; the compiler then writes nothing around the body. Never inlined, never given a constant parameter, never in the register convention; the call graph follows each `_name` in the asm text. Tests: `tests/test_naked.py`, `tests/test_sdcc_compat.py`, `tests/test_rom_interop.py` (sdas flow).
+
+
 - **Watchdog hook for the ROM target.** A program that defines `__watchdog_kick` (a C function with `#pragma uc80 public _watchdog_kick`, or an assembly file) gets a call of the hook at reset, before `main` and before each `HALT` of the idle loop. A program without the hook has no call and no extra byte. Tested in `bench/romrun` with a port that logs the kicks (`tests/test_rom_target.py`, `TestWatchdogHook`). See `docs/rom.md`.
 - **Interop with SDCC and nullsound** (Phase 5 of `docs/rom_target.md`; see `docs/rom_interop.md`):
   - SDCC `__asm ... __endasm;` blocks, at statement level and at file level. The prepass in `sdcc_compat.py` turns the sdas text of a block into an `asm("...")` statement with MACRO-80 text (`#imm`, `N(ix)`, `.db`, `.dw`, `.ds`, `.ascii`, `.globl`, `1$` labels, `0x` numbers). A directive or an operand it cannot translate is an error with the line number.

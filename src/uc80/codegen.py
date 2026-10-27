@@ -1408,6 +1408,9 @@ class CallGraphAnalyzer:
     isr_roots: set[str] = field(default_factory=set)
     isr_reentrant: set[str] = field(default_factory=set)  # EI first
     isr_safe: bool = False
+    # Naked functions (docs/rom_hardware.md): never inlined, never given a
+    # constant parameter.
+    naked: set[str] = field(default_factory=set)
 
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
@@ -2233,6 +2236,10 @@ class CallGraphAnalyzer:
         if func.body is None:
             return False
 
+        # A naked function is the assembly of the programmer
+        if func_name in self.naked:
+            return False
+
         # Don't inline recursive functions
         if self.is_recursive(func_name):
             return False
@@ -3003,7 +3010,7 @@ class CallGraphAnalyzer:
                 continue
 
             # Don't propagate if function's address is taken
-            if func_name in self.address_taken:
+            if func_name in self.address_taken or func_name in self.naked:
                 continue
 
             # When not in whole_program mode, don't propagate to PUBLIC functions
@@ -3518,8 +3525,12 @@ class CodeGenerator(Z80IntrinsicsMixin):
                  isr_safe: bool = False,
                  absolute: "dict[str, int] | None" = None,
                  register_cc: bool = True,
-                 foreign_asm_names: "set[str] | None" = None):
+                 foreign_asm_names: "set[str] | None" = None,
+                 naked_funcs: "set[str] | None" = None):
         self.module_name = module_name
+        # Naked functions (SDCC __naked, [[uc80::naked]]): no frame code,
+        # the body is asm statements only.  See docs/rom_hardware.md.
+        self.naked = set(naked_funcs or ())
         # Register calling convention (docs/calling_convention.md): on by
         # default; off for separate compilation, whatever this says.
         # foreign_asm_names: lower-case names that the hand-written
@@ -4130,7 +4141,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                                  isr_reentrant={n for n, k in
                                                 self.isr_funcs.items()
                                                 if k == "int"},
-                                 isr_safe=self.isr_safe)
+                                 isr_safe=self.isr_safe,
+                                 naked=set(self.naked))
 
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
@@ -6186,7 +6198,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if name is None or name == "main":
                 continue
             if (name in self.keep_names or name in self.public_names
-                    or name in self.isr_funcs or name in self.absolute
+                    or name in self.naked or name in self.isr_funcs or name in self.absolute
                     or name in isr_reach or name in scan.value_refs
                     or name in scan.asm_funcs):
                 continue
@@ -6374,6 +6386,11 @@ class CodeGenerator(Z80IntrinsicsMixin):
         else:
             self.ctx.emit(f"; Function {name}")
         self.ctx.emit_label(func_label)
+
+        if name in self.naked:
+            self._gen_naked_body(func, name)
+            self._type_scope_restore(type_scope)
+            return
 
         isr_kind = self.isr_funcs.get(name)
         if isr_kind is not None:
@@ -6583,6 +6600,31 @@ class CodeGenerator(Z80IntrinsicsMixin):
         self._current_sret_size = None
         self._sret_slot_addrs = {}
         self._type_scope_restore(type_scope)
+
+    def _gen_naked_body(self, func, name: str) -> None:
+        """A naked function: the label, then the asm statements of the
+        body.  No frame, no parameter code, no RET.  The asm blocks carry
+        the region markers, so no pass touches them."""
+        has_asm = False
+        for item in func.body.items or []:
+            if isinstance(item, ast.AsmDeclaration):
+                has_asm = True
+            elif not isinstance(item, ast.EmptyStmt):
+                raise CodegenError(
+                    f"naked function '{name}': the body may hold only "
+                    f"asm statements, but it has another statement",
+                    item)
+        if not has_asm:
+            self.warnings.append(
+                f"naked function '{name}' has no asm statement; the "
+                f"function has no code and falls into the next one")
+        self.gen_compound_stmt(func.body)
+        self.ctx.emit()
+        self.ctx.current_function = None
+        self.ctx.current_return_type = None
+        self._use_shared_storage = False
+        self._current_sret_size = None
+        self._sret_slot_addrs = {}
 
     _TAIL_CALL = re.compile(r"^\tcall\t(_[A-Za-z0-9][A-Za-z0-9_]*)\s*(;.*)?$")
     _NO_TAIL_NAME = re.compile(r"setjmp", re.IGNORECASE)

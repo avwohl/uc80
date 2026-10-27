@@ -177,6 +177,88 @@ def test_asm_block_runs_in_a_rom(flow, rom_libs, tmp_path):
     assert _ports(m) == ASM_EXPECT
 
 
+NAKED_PROGRAM = r"""
+#include <z80.h>
+volatile unsigned char n;
+
+int add2(int a, int b) __naked
+{
+    __asm
+        ld hl,#2
+        add hl,sp
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld a,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,a
+        add hl,de
+        ret
+    __endasm;
+}
+
+#pragma uc80 nmi on_nmi
+void on_nmi(void) __naked
+{
+    __asm
+        push af
+        push hl
+        ld hl,#_n
+        inc (hl)
+        pop hl
+        pop af
+        retn
+    __endasm;
+}
+
+int main(void)
+{
+    int x = add2(1000, 234);
+    while (n < 3)
+        ;
+    z80_out(0x10, (unsigned char) x);
+    z80_out(0x11, (unsigned char) (x >> 8));
+    z80_out(0xFE, 0);
+    return 0;
+}
+"""
+
+
+def test_naked_functions_run_in_a_rom_through_sdas(rom_libs, tmp_path):
+    """A naked helper called from C and a naked NMI handler, translated to
+    sdas syntax, assembled with sdasz80 and run."""
+    from uc80 import sdas
+    (tmp_path / "a.c").write_text(NAKED_PROGRAM)
+    inc = str(REPO / "src" / "uc80" / "lib" / "include")
+
+    def step(cmd):
+        r = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True)
+        assert r.returncode == 0, " ".join(cmd) + "\n" + r.stdout + r.stderr
+
+    step([sys.executable, "-m", "uc80.main", "--target=rom",
+          "--asm-syntax=sdas", "-I", inc, "a.c", "-o", "a.s"])
+    text = (tmp_path / "a.s").read_text()
+    # the vector at 66h is a JP, so the code starts at 69h
+    flags = sndrom.sdas_link_flags(origin=sdas.code_origin_of(text) or 0x68)
+    step(["sdasz80", "-g", "-l", "-o", "a.s"])
+    step(["sdldz80", *flags, "-i", "-j", "a.ihx", "a.rel",
+          "-l", str(rom_libs / "uc80_lc.lib"),
+          "-l", str(rom_libs / "uc80_rt.lib")])
+    step(["sdobjcopy", "-I", "ihex", "-O", "binary", "a.ihx", "a.bin"])
+    sndrom.noi_to_sym(tmp_path / "a.noi", tmp_path / "a.sym")
+    body = text.split("_on_nmi:")[1].split("; Function main")[0]
+    assert "push\tix" not in body.lower() and "ix" not in body.lower()
+    m = Machine(nmi_gate=False, ram_fill="random", sp="poison")
+    m.load_rom(str(tmp_path / "a.bin"))
+    m.load_symbols(str(tmp_path / "a.sym"))
+    m.magic_ports.add(0xFE)
+    m.add_nmi_every(1000, start=1000, count=3)
+    m.run(max_tstates=2_000_000)
+    assert _ports(m) == [(0x10, 1234 & 0xFF), (0x11, 1234 >> 8), (0xFE, 0)]
+
+
 def test_cli_prints_the_sdas_commands(tmp_path):
     (tmp_path / "a.c").write_text("int main(void) { return 0; }\n")
     r = subprocess.run([sys.executable, "-m", "uc80.main", "--target=rom",

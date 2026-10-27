@@ -39,4 +39,4 @@ The SDCC form `__asm ... __endasm;` (sdas syntax in the block) also works. The c
 Extended asm, which has an operand or clobber list, for example
 `asm("ld hl,%0" : : "r"(x))`, is not supported. `asm goto` is not supported.
 Both stop the compilation with an error message. Pass values through global
-variables instead. `#asm`/`#endasm` and `__naked` are also not supported.
+variables instead. `#asm`/`#endasm` is also not supported. For a function that is all assembly, see "Naked functions" in [rom_hardware.md](rom_hardware.md).

@@ -934,7 +934,8 @@ def main() -> int:
                                             or args.embed_lib
                                             or args.runtime_lib
                                             or args.startup_lib),
-                           foreign_asm_names=regcc.asm_text_names(mac_files))
+                           foreign_asm_names=regcc.asm_text_names(mac_files),
+                           naked_funcs={n for n, _f, _l in sdcc_found.naked})
         code = gen.generate(merged_ast)
         printf_need = printf_hook.printf_needs(merged_ast, printf_features)
         code = printf_hook.patch_tables(code, printf_need)
@@ -1428,6 +1429,10 @@ def main() -> int:
             isr_labels = {n: label_of(n) for n in roots.isrs}
             reports = isr_check.analyze(
                 code, isr_labels, lib_dir() if lib_dir().is_dir() else None)
+            # a naked handler saves its own registers: no marker, no note
+            for r in reports:
+                if r.name in gen.naked:
+                    r.alt_chain = None
             code = isr_check.resolve_alt_markers(
                 code, {r.name for r in reports if r.alt_chain})
             for msg in isr_check.format_reports(reports):
