@@ -25,6 +25,7 @@ from uc_core.volatility import children as _children
 from .volatile_fence import VOL_BEGIN, VOL_END
 from . import absaddr
 from . import regcc
+from .reglocals_gen import RegLocalsMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE)
@@ -3646,7 +3647,7 @@ class _Src32:
         self.signed = signed
 
 
-class CodeGenerator(Z80IntrinsicsMixin):
+class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
     """Z80 code generator."""
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
@@ -3664,8 +3665,11 @@ class CodeGenerator(Z80IntrinsicsMixin):
                  isr_safe: bool = False,
                  absolute: "dict[str, int] | None" = None,
                  register_cc: bool = True,
-                 foreign_asm_names: "set[str] | None" = None):
+                 foreign_asm_names: "set[str] | None" = None,
+                 register_locals: bool = True):
         self.module_name = module_name
+        self.enable_register_locals = register_locals
+        self._rl_debug = bool(os.environ.get("UC80_RL_DEBUG"))
         # Register calling convention (docs/calling_convention.md): on by
         # default; off for separate compilation, whatever this says.
         # foreign_asm_names: lower-case names that the hand-written
@@ -4505,6 +4509,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
         # shared storage is sized (a register parameter is stored on entry,
         # and that store needs a slot).
         self._plan_register_cc(unit)
+        self._rl_plan(unit, self.enable_register_locals)
 
         # Shared storage allocation.  It runs here, rather than straight
         # after the call graph is built, because the region a function
@@ -6391,6 +6396,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 or self.type_config.int_size != 2):
             return
         scan = regcc.scan_program(unit, function_name)
+        self._regcc_scan = scan
         libnames = regcc.lib_asm_names()
         asm_names = scan.asm_tokens | self.foreign_asm_names
         isr_reach: set[str] = set()
@@ -6559,6 +6565,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
         self.ctx.current_function = name
         self.ctx.current_return_type = return_type
         self._vol_names = self._vol.names_for(func)
+        self._rl_begin(name, func)
         self.ctx.locals.clear()
         self.ctx.local_offset = 0
         self.ctx.regs.reset()
@@ -6583,6 +6590,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
         self._shared_base_offset = shared_base_offset
         self._shared_local_offset = 0
 
+        rl_text_start = len(self.ctx.lines)
         sym = self.ctx.globals.get(name)
         func_label = sym.label() if sym else f"_{name}"
         if storage != "static" or name in self.public_names:
@@ -6627,6 +6635,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
 
         frame_size = 0
         pushed = 0
+        rl_entry_idx = 0
         if not use_shared_storage:
             frame_size = locals_size + sret_total
             # The register parameters that the body names go to the top of
@@ -6638,6 +6647,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                             "push", {"A": "AF", "HL": "HL", "E": "DE",
                                      "DE": "DE"}[plan.loc[i]])
                         pushed += 2
+            rl_entry_idx = len(self.ctx.lines)
             if frame_size - pushed > 0:
                 self.ctx.emit_instr("ld", f"HL,-{frame_size - pushed}")
                 self.ctx.emit_instr("add", "HL,SP")
@@ -6700,6 +6710,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                                        is_param=True, offset=off)
                     self.ctx.locals[p_name] = sym_p
                     spills.append((sym_p, plan.loc[p_index]))
+                    self._rl_note(sym_p, plan.loc[p_index])
                 continue
             if p_name is not None:
                 self.ctx.locals[p_name] = Symbol(
@@ -6751,6 +6762,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 regcc.push_pop_slots(
                     self.ctx.lines, fwd_start,
                     [k[1] for k in fwd_slots if k[0] == "a"])
+        self._rl_finish(name, fwd_start, rl_entry_idx, not use_shared_storage)
 
         # The prologue reserved locals_size before a line of the body was
         # generated; the body then handed out the slots.  If it wanted more
@@ -6796,6 +6808,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             self.ctx.emit_instr("ret")
         self.ctx.emit()
 
+        self._rl_end(name, rl_text_start)
         self.ctx.current_function = None
         self.ctx.current_return_type = None
         self._use_shared_storage = False
@@ -7136,6 +7149,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     sym_type=decl.var_type,
                     offset=self.ctx.local_offset
                 )
+            self._rl_note(self.ctx.locals[decl.name],
+                          hint=getattr(decl, 'storage_class', None) == 'register')
 
             # Initialize if there's an initializer
             if decl.init:
