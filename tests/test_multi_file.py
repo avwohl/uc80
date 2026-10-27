@@ -70,3 +70,19 @@ def test_statics_typedefs_and_tags_of_two_files_stay_apart(tmp_path, flags):
 def test_header_statics_locals_and_shadowing(tmp_path, flags):
     out = build_files_and_run(tmp_path, HEADER, flags)
     assert out == HEADER_OUT, out
+
+
+ENUMS = {
+    "m1.c": '#include <stdio.h>\nenum {RED, BLUE=6};\nstatic int tbl[2]={RED,BLUE};\nstatic int one=BLUE;\nint g=BLUE+1;\nint arr1[BLUE];\ntypedef enum {LO=3, HI} Color;\nstatic Color gc=HI;\nint m2(void); int m2tbl(int); int m2g(void);\nint main(void){\n  int BLUE_local = BLUE;\n  { int RED = 77; printf("%d\\n", RED); }\n  printf("%d %d %d %d %d\\n", tbl[0], tbl[1], one, g, (int)(sizeof arr1/sizeof arr1[0]));\n  printf("%d %d %d\\n", gc, LO, BLUE_local);\n  printf("%d %d %d\\n", m2(), m2tbl(1), m2g());\n  return 0;}\n',
+    "m2.c": 'enum {BLUE=100, RED=200};\ntypedef enum {LO=30, HI=31} Color;\nstatic int tbl2[2]={RED,BLUE};\nstatic Color gc2=HI;\nint g2=BLUE+RED;\nint m2(void){ return BLUE + RED + LO + gc2; }\nint m2tbl(int i){ return tbl2[i]; }\nint m2g(void){ return g2; }\n',
+}
+
+ENUMS_OUT = "77\n0 6 6 7 6\n4 3 6\n361 100 300\n"
+
+
+@pytest.mark.parametrize("flags", FLAGS)
+def test_enumerators_of_the_same_name_in_two_files(tmp_path, flags):
+    """RED and BLUE have other values in the second file: the constant
+    initialisers of static data, array sizes and code use their own file's."""
+    out = build_files_and_run(tmp_path, ENUMS, flags)
+    assert out == ENUMS_OUT, out

@@ -36,6 +36,9 @@ def _ccfuzz():
     (10657, "--no-ast-optimize"),
     (11636, "--no-ast-optimize"),
     (40035, "-O0"),
+    (90258, "--no-ast-optimize"),
+    (80548, "-O0"),
+    (80548, ""),
 ])
 def test_ccfuzz_seed_matches_the_host(tmp_path, seed, flags):
     mod = _ccfuzz()

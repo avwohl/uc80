@@ -340,3 +340,57 @@ def uniquify_types(units) -> int:
                         if holder is not None:
                             rename(holder, "name", td)
     return count
+
+
+# ----------------------------------------------------------- enumerators
+
+def _enumerator_definitions(unit) -> dict[str, set]:
+    """{enumerator name: {shape of each enum definition that declares it}}.
+    The shape is that of the whole enum, because an enumerator's value
+    depends on the enumerators before it."""
+    defs: dict[str, set] = {}
+    for item in unit.items:
+        for n in _iter(item):
+            if isinstance(n, (ast.EnumDef, ast.EnumAnon)):
+                shape = _shape(n, set())
+                for v in n.values or ():
+                    tok = getattr(v, "name", None)
+                    if tok is not None:
+                        defs.setdefault(tok.text, set()).add(shape)
+    return defs
+
+
+def uniquify_enumerators(units) -> int:
+    """Give an enumerator that two files define with different enums a
+    private name in each file (``RED__e0``); return how many (unit, name)
+    pairs were renamed.  Constant initialisers of static data, array sizes
+    and code then take the values of their own file."""
+    if len(units) < 2:
+        return 0
+    per_unit = [_enumerator_definitions(u) for u in units]
+    count = 0
+    for i, unit in enumerate(units):
+        mapping = {}
+        for name, shapes in per_unit[i].items():
+            for j, other in enumerate(per_unit):
+                if j != i and name in other and (other[name] != shapes):
+                    mapping[name] = f"{name}__e{i}"
+                    break
+        if not mapping:
+            continue
+        count += len(mapping)
+        for item in unit.items:
+            for n in _iter(item):
+                if isinstance(n, (ast.EnumDef, ast.EnumAnon)):
+                    for v in n.values or ():
+                        tok = getattr(v, "name", None)
+                        if tok is not None and tok.text in mapping:
+                            object.__setattr__(v, "name", dataclasses.replace(
+                                tok, text=mapping[tok.text]))
+        rn = _Renamer(mapping)
+        for item in unit.items:
+            if isinstance(item, ast.FunctionDef):
+                rn.function(item)
+            else:
+                rn.walk(item)
+    return count

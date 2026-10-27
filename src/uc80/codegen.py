@@ -11950,10 +11950,14 @@ class CodeGenerator(Z80IntrinsicsMixin):
             else:
                 # 16-bit negate: 0 - HL
                 self.gen_expr(expr.operand)
-                self.ctx.emit_instr("ex", "DE,HL")
-                self.ctx.emit_instr("ld", "HL,0")
-                self.ctx.emit_instr("or", "A")
-                self.ctx.emit_instr("sbc", "HL,DE")
+                # Leaves DE alone: a register call may hold argument 2
+                # there while argument 1 is computed.
+                self.ctx.emit_instr("xor", "A")
+                self.ctx.emit_instr("sub", "L")
+                self.ctx.emit_instr("ld", "L,A")
+                self.ctx.emit_instr("sbc", "A,A")
+                self.ctx.emit_instr("sub", "H")
+                self.ctx.emit_instr("ld", "H,A")
 
         elif op == "+":
             self.gen_expr(expr.operand)  # No-op
@@ -15073,6 +15077,34 @@ class CodeGenerator(Z80IntrinsicsMixin):
                         return mtype
         return None
 
+    def _expand_typedefs_deep(self, tt, depth: int = 0):
+        """Replace every typedef name inside ``tt`` -- also behind pointers,
+        arrays and function types -- by the type it names.  ``(T *)p->m``
+        and ``(*(F *)p)(x)`` need the struct or the function type behind
+        the pointer, not an opaque BasicType named T."""
+        if depth > 16:
+            return tt
+        if isinstance(tt, lt.BasicType) and tt.name in self.ctx.typedefs:
+            return self._expand_typedefs_deep(
+                _to_legacy(self.ctx.typedefs[tt.name]), depth + 1)
+        if isinstance(tt, lt.PointerType):
+            nb = self._expand_typedefs_deep(tt.base_type, depth + 1)
+            if nb is not tt.base_type:
+                return lt.PointerType(base_type=nb, is_const=tt.is_const,
+                                      is_volatile=tt.is_volatile)
+        elif isinstance(tt, lt.ArrayType):
+            nb = self._expand_typedefs_deep(tt.base_type, depth + 1)
+            if nb is not tt.base_type:
+                return lt.ArrayType(base_type=nb, size=tt.size,
+                                    is_vector=tt.is_vector)
+        elif isinstance(tt, lt.FunctionType):
+            nr = self._expand_typedefs_deep(tt.return_type, depth + 1)
+            if nr is not tt.return_type:
+                return lt.FunctionType(return_type=nr,
+                                       param_types=tt.param_types,
+                                       is_variadic=tt.is_variadic)
+        return tt
+
     def _get_expr_type(self, expr) -> "ResolvedType | None":
         """Try to infer the type of an expression (returns ResolvedType)."""
         if isinstance(expr, _SavedAddrValue):
@@ -15282,9 +15314,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # an opaque ``BasicType(name="uint32_t")`` whose
             # ``is_signed`` field is unset.
             tt = self._resolve_typename(expr.target_type)
-            if isinstance(tt, lt.BasicType) and tt.name in self.ctx.typedefs:
-                tt = _to_legacy(self.ctx.typedefs[tt.name])
-            return tt
+            return self._expand_typedefs_deep(tt)
         elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
             # Known GCC builtins we handle inline — record their return
             # types here so callers don't widen the 16-bit HL output
@@ -15717,8 +15747,13 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if is_arrow:
                 if isinstance(struct_type, lt.PointerType):
                     struct_type = struct_type.base_type
+                elif isinstance(struct_type, lt.ArrayType):
+                    # arr->m: the array decays to a pointer to its element.
+                    struct_type = struct_type.base_type
                 elif isinstance(struct_type, ResolvedType) and struct_type.kind == "pointer":
                     struct_type = struct_type.pointee
+                elif isinstance(struct_type, ResolvedType) and struct_type.kind == "array":
+                    struct_type = struct_type.elem
             if is_struct_type(struct_type):
                 offset = self._resolve_member_offset(struct_type, expr.member)
                 if offset > 0:
