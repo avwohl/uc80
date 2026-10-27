@@ -240,6 +240,11 @@ class Uc80ASTOptimizer(ASTOptimizer):
             if rule is not None:
                 t1 = self._literal_type(inner.right)
                 t2 = self._literal_type(expr.right)
+                if t1[0] != t2[0]:
+                    # The inner operation wraps at the width of its own
+                    # type: `(u + 65535u) - 256ULL` is `3 - 256` in 64
+                    # bits, not `u + 65279`.
+                    return None
                 rank, unsigned = self._common(t1, t2)
                 c3 = rule[1](self._wrap(t1[2], t1[0], t1[1]),
                              self._wrap(t2[2], t2[0], t2[1]))
@@ -256,6 +261,14 @@ class Uc80ASTOptimizer(ASTOptimizer):
                     return inner.left
                 return _binop(new_op, inner.left,
                               self._mint(c3, rank, unsigned))
+        if (isinstance(expr.right, ast.IntLiteral)
+                and isinstance(inner, ast.BinaryOp)
+                and isinstance(inner.right, ast.IntLiteral)
+                and self._literal_type(inner.right)[0]
+                != self._literal_type(expr.right)[0]
+                and (expr.op.text if hasattr(expr.op, "text") else expr.op)
+                in ("+", "-", "*")):
+            return None
         result = super()._nested_const_fold(expr)
         if (isinstance(result, ast.BinaryOp)
                 and isinstance(result.right, ast.IntLiteral)

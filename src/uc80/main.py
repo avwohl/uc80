@@ -34,6 +34,8 @@ from . import rom as rom_module
 from . import printf_hook
 from . import scan_hook
 from . import file_hook
+from .multi_unit import (uniquify_enumerators, uniquify_statics,
+                         uniquify_types)
 
 from . import peep_local
 
@@ -867,6 +869,11 @@ def main() -> int:
         if len(asts) == 1:
             merged_ast = asts[0]
         else:
+            # A static of one file must stay apart from a same-named
+            # static (or global) of another file.
+            uniquify_enumerators(asts)
+            uniquify_types(asts)
+            uniquify_statics(asts)
             merged_ast = ast_module.TranslationUnit(items=[])
             for unit in asts:
                 merged_ast.items.extend(unit.items)

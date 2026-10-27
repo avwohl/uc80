@@ -4960,8 +4960,8 @@ _fdiml:
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	call	__fcmp
-	jr z,@FCMP_F8_fdim
-	jr nc,@FCMP_T7_fdim
+	jr	Z,@FCMP_F8_fdim
+	jr	NC,@FCMP_T7_fdim
 @FCMP_F8_fdim:
 	ld	HL,0
 	jr @FCMP_E9_fdim
@@ -5864,8 +5864,8 @@ _fmaxl:
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	call	__fcmp
-	jr z,@FCMP_F8_fmax
-	jr nc,@FCMP_T7_fmax
+	jr	Z,@FCMP_F8_fmax
+	jr	NC,@FCMP_T7_fmax
 @FCMP_F8_fmax:
 	ld	HL,0
 	jr @FCMP_E9_fmax
@@ -5893,8 +5893,8 @@ _fmaxl:
 	ld	E,(IX+10)
 	ld	D,(IX+11)
 	call	__fcmp
-	jr z,@FCMP_F13_fmax
-	jr nc,@FCMP_T12_fmax
+	jr	Z,@FCMP_F13_fmax
+	jr	NC,@FCMP_T12_fmax
 @FCMP_F13_fmax:
 	ld	HL,0
 	jr @FCMP_E14_fmax
@@ -6041,7 +6041,8 @@ _fminl:
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	call	__fcmp
-	jr c,@FCMP_T7_fmin
+	jr	Z,@FCMP_F8_fmin
+	jr	C,@FCMP_T7_fmin
 @FCMP_F8_fmin:
 	ld	HL,0
 	jr @FCMP_E9_fmin
@@ -6069,7 +6070,8 @@ _fminl:
 	ld	E,(IX+10)
 	ld	D,(IX+11)
 	call	__fcmp
-	jr c,@FCMP_T12_fmin
+	jr	Z,@FCMP_F13_fmin
+	jr	C,@FCMP_T12_fmin
 @FCMP_F13_fmin:
 	ld	HL,0
 	jr @FCMP_E14_fmin
@@ -11456,14 +11458,32 @@ __m_toll:
 	sub	190
 	ld	A,D
 	sbc	A,128
-	jp	C,@ENDIF4_m_toll
+	jr c,@ENDIF4_m_toll
 	ld	A,(??AUTO_m_toll+3)
 	and	128
-	jp	Z,@TERN_E5_m_toll
-	ld	HL,-9223372036854775808
+	jr z,@TERN_E5_m_toll
+	ld	HL,0
+	ld	(__acc64),HL
+	ld	HL,0
+	ld	(__acc64+2),HL
+	ld	HL,0
+	ld	(__acc64+4),HL
+	ld	HL,32768
+	ld	(__acc64+6),HL
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
 	jp @_m_toll_ret
 @TERN_E5_m_toll:
-	ld	HL,9223372036854775807
+	ld	HL,65535
+	ld	(__acc64),HL
+	ld	HL,65535
+	ld	(__acc64+2),HL
+	ld	HL,65535
+	ld	(__acc64+4),HL
+	ld	HL,32767
+	ld	(__acc64+6),HL
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
 @TERN_END6_m_toll:
 	jp	@_m_toll_ret
 @ENDIF4_m_toll:
@@ -11495,10 +11515,12 @@ __m_toll:
 	jr @ENDIF8_m_toll
 @ELSE7_m_toll:
 	ld	HL,(??AUTO_m_toll+12)
-	ex	DE,HL
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	call	__sext64_hl
 	call	__mov64
 	ld	HL,??AUTO_m_toll+4
@@ -11518,10 +11540,16 @@ __m_toll:
 	ld	HL,(__acc64)
 	ld	DE,(__acc64+2)
 	call	__neg64
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
 	jr @TERN_END10_m_toll
 @TERN_E9_m_toll:
 	ld	HL,??AUTO_m_toll+4
 	call	__load64
+	ld	HL,(__acc64)
+	ld	DE,(__acc64+2)
 	ld	HL,(__acc64)
 	ld	DE,(__acc64+2)
 @TERN_END10_m_toll:
@@ -18659,9 +18687,13 @@ _remquol:
 	ld	E,(HL)
 	inc	HL
 	ld	D,(HL)
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	ex	DE,HL
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	ex	DE,HL
 	ld	L,(IX+12)
 	ld	H,(IX+13)
@@ -24024,10 +24056,12 @@ _sd_mulp:
 	ld	H,(IX+9)
 	bit	7,H
 	jr z,@ENDIF30_strtod
-	ex	DE,HL
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	ld	(IX+8),L
 	ld	(IX+9),H
 	ld	L,(IX+6)
@@ -24464,10 +24498,12 @@ _sd_pow10:
 	ld	H,(IX+7)
 	bit	7,H
 	jr z,@ELSE70_strtod
-	ex	DE,HL
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	ld	(IX+6),L
 	ld	(IX+7),H
 	ld	HL,52428
@@ -25630,10 +25666,12 @@ _strtod:
 	or	L
 	jr z,@TERN_E202_strtod
 	ld	HL,(??AUTO_strtod+23)
-	ex	DE,HL
-	ld	HL,0
-	or	A
-	sbc	HL,DE
+	xor	A
+	sub	L
+	ld	L,A
+	sbc	A,A
+	sub	H
+	ld	H,A
 	jr @TERN_END203_strtod
 @TERN_E202_strtod:
 	ld	HL,(??AUTO_strtod+23)
@@ -28036,7 +28074,11 @@ _vm_jcc:
 	CALL	_vm_getab
 	CALL	__fcmp
 	LD	A,2
-	JR	Z,_vm_j1
+	JR	NZ,_vm_j0
+	JR	NC,_vm_j1		; equal
+	LD	A,4			; Z and C: unordered counts as greater, so
+	JR	_vm_j1			; fabs(x) > inf is true for a NaN
+_vm_j0:
 	LD	A,1
 	JR	C,_vm_j1
 	LD	A,4

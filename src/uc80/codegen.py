@@ -973,6 +973,18 @@ def _is_rom_type(t) -> bool:
     return False
 
 
+def _untyped_auto(decl) -> bool:
+    """A declaration with the C23 storage class ``auto`` and no type
+    specifier: the type comes from the initializer."""
+    specs = decl.decl_specs or []
+    if not any(isinstance(sp, ast.StorageClass) and sp.kw.text == "auto"
+               for sp in specs):
+        return False
+    return not any(
+        not isinstance(sp, (ast.StorageClass, ast.TypeQualifier))
+        for sp in specs)
+
+
 def _from_legacy(t) -> Optional[ResolvedType]:
     """The inverse of ``_to_legacy``: a ResolvedType for a legacy type
     (what ``CodeGenerator._get_expr_type`` returns).  None when ``t`` is
@@ -2426,8 +2438,11 @@ class CallGraphAnalyzer:
         return sum(self._plain_uses(getattr(node, f.name, None), name, always)
                    for f in dataclasses.fields(node) if f.name != "pos")
 
-    def _inline_strip_typedef(self, t):
-        """``t`` with file-scope typedef names resolved to their type."""
+    def _inline_strip_typedef(self, t, keep16=False):
+        """``t`` with file-scope typedef names resolved to their type.
+        With ``keep16`` a typedef of a 16-bit int (uint16_t) is returned
+        as it was; the caller decides whether the argument needs the
+        wrapping Cast (see _inline_arg_is_int16)."""
         reg = getattr(self, "_inline_typedefs", None) or {}
         orig = t
         seen: set[str] = set()
@@ -2435,14 +2450,108 @@ class CallGraphAnalyzer:
                and t.name not in seen):
             seen.add(t.name)
             t = reg[t.name]
-        if (t is not orig and t is not None and t.kind == "basic"
+        if (keep16 and t is not orig and t is not None and t.kind == "basic"
                 and t.name in ("int", "short")
                 and getattr(self.type_config, "int_size", 2) == 2):
-            # A typedef of a 16-bit int (uint16_t): left alone, as it
-            # always was; the wrapping Cast would only cost code (the
-            # operand is no longer a plain variable for the DE loads).
             return orig
         return t
+
+    def _inline_collect_types(self, node, out: dict) -> None:
+        """Declared type of every variable declared under ``node`` (a
+        parameter list, a body, or the file scope).  A name declared twice
+        with different types is recorded as None (unknown)."""
+        from dataclasses import fields as _dc_fields, is_dataclass
+        if isinstance(node, (list, tuple)):
+            for x in node:
+                self._inline_collect_types(x, out)
+            return
+        if not is_dataclass(node):
+            return
+        if isinstance(node, ast.Declaration):
+            try:
+                if decl_storage_class(node.decl_specs) != "typedef":
+                    for nm, full, _i, is_func in iter_var_decls(node):
+                        if nm is None or is_func:
+                            continue
+                        if nm in out and repr(out[nm]) != repr(full):
+                            out[nm] = None
+                        else:
+                            out[nm] = full
+            except Exception:
+                pass
+        if isinstance(node, ast.FunctionDef):
+            return          # a nested scope of its own is the caller's job
+        for f in _dc_fields(node):
+            self._inline_collect_types(getattr(node, f.name, None), out)
+
+    def _inline_function_types(self, func) -> dict:
+        """Types of the globals, parameters and locals visible in ``func``."""
+        types = dict(self._inline_global_types)
+        local: dict = {}
+        for p in function_params(func):
+            if isinstance(p, ast.ParamDecl):
+                nm = declarator_ident(p.declarator)
+                if nm:
+                    try:
+                        _, t = resolve_type_from_decl(p.decl_specs, p.declarator)
+                    except Exception:
+                        t = None
+                    local[nm] = t
+        self._inline_collect_types(func.body, local)
+        types.update(local)
+        return types
+
+    def _inline_arg_is_int16(self, arg, p_type) -> bool:
+        """True when ``arg`` is known to be an integer of 16 bits with
+        the signedness of the parameter type ``p_type`` (a typedef of a
+        16-bit int), so converting it to the parameter type changes
+        nothing and the wrapping Cast can be left out."""
+        if getattr(self.type_config, "int_size", 2) != 2:
+            return False
+        want_signed = True
+        pt = self._inline_strip_typedef(p_type)
+        if pt is None or pt.kind != "basic" or pt.name not in ("int", "short"):
+            return False
+        want_signed = pt.is_signed is not False
+
+        def is16(t):
+            t = self._inline_strip_typedef(t)
+            return (t is not None and t.kind == "basic"
+                    and t.name in ("int", "short")
+                    and (t.is_signed is not False) == want_signed)
+
+        types = getattr(self, "_inline_var_types", {})
+        if isinstance(arg, ast.IntLiteral):
+            if any(int_flags(arg)[:2]):          # L or LL suffix
+                return False
+            v = int_value(arg)
+            if want_signed:
+                return -32768 <= v <= 32767
+            # A decimal 40000 has type long, not unsigned int: left alone
+            # it would make ``x + x`` of the unsigned parameter 32 bits.
+            # Nor is a plain 300: it is a signed int, so -x, ~x and
+            # comparisons would run signed.  Only a U literal is unsigned.
+            return int_flags(arg)[2] and 0 <= v <= 65535
+        if isinstance(arg, ast.Identifier):
+            t = types.get(arg.name.text)
+            return t is not None and is16(t)
+        if isinstance(arg, ast.Index) and isinstance(arg.array, ast.Identifier):
+            t = types.get(arg.array.name.text)
+            if t is not None and t.kind == "array":
+                return is16(t.element)
+            if t is not None and t.kind == "pointer":
+                return is16(t.pointee)
+            return False
+        if isinstance(arg, ast.Cast):
+            tt = arg.target_type
+            if not isinstance(tt, lt.BasicType):
+                return False
+            reg = getattr(self, "_inline_typedefs", None) or {}
+            if tt.name in reg:
+                return is16(reg[tt.name])
+            return (tt.name in ("int", "short")
+                    and (tt.is_signed is not False) == want_signed)
+        return False
 
     def _body_writes_params(self, func) -> bool:
         """True if the body of ``func`` modifies one of its parameters."""
@@ -2483,7 +2592,8 @@ class CallGraphAnalyzer:
                             continue
                         arg = new_args[i]
                         _, p_type = resolve_type_from_decl(p.decl_specs, p.declarator)
-                        p_type = self._inline_strip_typedef(p_type)
+                        p_type_raw = p_type
+                        p_type = self._inline_strip_typedef(p_type, keep16=True)
                         # When inlining, the implicit "convert arg to
                         # parameter type" that gen_call would do at the
                         # callee's IX+ slot has to be made explicit —
@@ -2515,6 +2625,21 @@ class CallGraphAnalyzer:
                                         is_signed=(False if p_type.is_signed is False else True)),
                                     expr=arg, pos=ast._Pos(),
                                 )
+                        elif (p_type.kind == "typedef"
+                              and not self._inline_arg_is_int16(arg, p_type)):
+                            # A typedef of a 16-bit int (uint16_t): an
+                            # argument that is not known to be of that
+                            # type is converted to it (a long long or
+                            # long is cut, a signed char is re-signed).
+                            rt16 = self._inline_strip_typedef(p_type)
+                            if (rt16 is not None and rt16.kind == "basic"
+                                    and rt16.name in ("int", "short")):
+                                arg = ast.Cast(
+                                    target_type=lt.BasicType(
+                                        name=rt16.name,
+                                        is_signed=(False if rt16.is_signed is False else True)),
+                                    expr=arg, pos=ast._Pos(),
+                                )
                         param_map[pname] = arg
                     # The trivial-function body is a single ReturnStmtValue.
                     ret_stmt = func.body.items[0]
@@ -2526,7 +2651,7 @@ class CallGraphAnalyzer:
                     # sees 3024 > 0 instead of -48 > 0.
                     _, fn_type = resolve_type_from_decl(func.decl_specs, func.declarator)
                     rt = fn_type.return_type if fn_type.kind == "function" else None
-                    rt = self._inline_strip_typedef(rt)
+                    rt = self._inline_strip_typedef(rt, keep16=True)
                     # Any arithmetic return type: ``long f(int x){return
                     # x;}`` must still yield a long (a variadic argument
                     # pushes 4 bytes), ``unsigned f(...)`` an unsigned.
@@ -2538,6 +2663,20 @@ class CallGraphAnalyzer:
                                 is_signed=(False if rt.is_signed is False else True)),
                             expr=body, pos=ast._Pos(),
                         )
+                    elif (rt is not None and rt.kind == "typedef"
+                          and not self._inline_arg_is_int16(body, rt)):
+                        # A typedef of a 16-bit int (uint16_t) as the
+                        # result type: a wider body (``return a;`` with
+                        # an unsigned long ``a``) is cut to 16 bits.
+                        rt16 = self._inline_strip_typedef(rt)
+                        if (rt16 is not None and rt16.kind == "basic"
+                                and rt16.name in ("int", "short")):
+                            body = ast.Cast(
+                                target_type=lt.BasicType(
+                                    name=rt16.name,
+                                    is_signed=(False if rt16.is_signed is False else True)),
+                                expr=body, pos=ast._Pos(),
+                            )
                     return body
 
             # Return call with inlined arguments.
@@ -2736,6 +2875,12 @@ class CallGraphAnalyzer:
                 except Exception:
                     pass
 
+        self._inline_global_types = {}
+        for item in unit.items or []:
+            if isinstance(item, ast.Declaration):
+                self._inline_collect_types(item, self._inline_global_types)
+        self._inline_var_types = {}
+
         for _ in range(max_iterations):
             # Build function body map keyed by IDENT name extracted from
             # each FunctionDef's declarator chain.
@@ -2773,6 +2918,7 @@ class CallGraphAnalyzer:
             new_items = []
             for item in unit.items or []:
                 if isinstance(item, ast.FunctionDef) and item.body:
+                    self._inline_var_types = self._inline_function_types(item)
                     new_body = self._inline_stmt(item.body, func_bodies, inlineable)
                     new_items.append(ast.FunctionDef(
                         decl_specs=item.decl_specs,
@@ -3907,6 +4053,9 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 if isinstance(x, (ast.TypeofExpr, ast.TypeofUnqualExpr)):
                     found[0] = True
                     return
+                if isinstance(x, ast.Declaration) and _untyped_auto(x):
+                    found[0] = True
+                    return
                 stack.extend(_children(x))
         scan(unit)
         if not found[0]:
@@ -3915,6 +4064,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
         # operators, so the Token operators go first (idempotent).
         self._normalize_op_fields(unit)
         saved = (self.ctx.locals, self.ctx.globals)
+        saved_structs = (dict(self.ctx.structs), dict(self.ctx.struct_sizes),
+                         dict(self.ctx.anon_members))
         self.ctx.locals, self.ctx.globals = {}, {}
         undo: list[list] = []          # per scope: (dict, name, old Symbol)
 
@@ -3927,6 +4078,13 @@ class CodeGenerator(Z80IntrinsicsMixin):
                                  is_global=table is self.ctx.globals)
 
         def declare_decl(decl, table):
+            try:
+                # A struct defined here, so typeof(s.m) and auto x = s.m
+                # find the member (undone when the pass ends).
+                self._register_inline_types(
+                    _to_legacy(resolve_base_type(decl.decl_specs)))
+            except Exception:
+                pass
             try:
                 is_td = decl_storage_class(decl.decl_specs) == "typedef"
                 for nm, full, _init, _fn in iter_var_decls(decl):
@@ -3949,6 +4107,58 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 else:
                     table[name] = old
 
+        def split_auto(items):
+            """``auto a = 1, b = 2.5;`` deduces each declarator on its
+            own, so the declaration becomes one declaration per
+            declarator (in place, in the list that holds it)."""
+            i = 0
+            while i < len(items):
+                d = items[i]
+                if (isinstance(d, ast.Declaration) and _untyped_auto(d)
+                        and len(d.declarators) > 1):
+                    parts = [ast.Declaration(
+                        decl_specs=list(d.decl_specs), declarators=[dc],
+                        pos=d.pos) for dc in d.declarators]
+                    items[i:i + 1] = parts
+                i += 1
+
+        def deduce_auto(decl):
+            """C23 6.7.10: ``auto x = init;`` has the unqualified type of
+            init, after array and function decay.  The declaration gets
+            a typeof_unqual(init) specifier with its type already set."""
+            ds = decl.declarators
+            if len(ds) < 1 or not isinstance(ds[0],
+                                             ast.InitDeclaratorWithInit):
+                return
+            if not isinstance(ds[0].declarator, ast.Declarator):
+                raise CodegenError(
+                    "auto declaration needs a plain identifier "
+                    "(auto x = init;), not a pointer, array or function "
+                    "declarator")
+            init = ds[0].init
+            if isinstance(init, list) and len(init) >= 1:
+                # Adjacent string literals arrive as a list.
+                init = init[0]
+            if not dataclasses.is_dataclass(init):
+                return
+            walk(init)
+            try:
+                t = self._c_expr_type(init)
+            except Exception:
+                t = None
+            if (isinstance(init, ast.StringLiteral)
+                    and init.value.text.startswith('"')):
+                t = lt.PointerType(base_type=lt.BasicType(name="char"))
+            if t is None:
+                return
+            if isinstance(t, lt.ArrayType):
+                t = lt.PointerType(base_type=t.base_type)
+            elif isinstance(t, lt.FunctionType):
+                t = lt.PointerType(base_type=t)
+            spec = ast.TypeofUnqualExpr(operand=copy.deepcopy(init))
+            spec._resolved = _from_legacy(t)
+            decl.decl_specs = list(decl.decl_specs) + [spec]
+
         def walk(n):
             if isinstance(n, list):
                 for x in n:
@@ -3961,7 +4171,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 if getattr(n, "_resolved", None) is None:
                     try:
                         n._resolved = _from_legacy(
-                            self._get_expr_type(n.operand))
+                            self._c_expr_type(n.operand))
                     except Exception:
                         n._resolved = None
                 return
@@ -3987,6 +4197,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 pop()
                 return
             if isinstance(n, ast.Declaration):
+                if _untyped_auto(n):
+                    deduce_auto(n)
                 walk(n.decl_specs)
                 walk(n.declarators)
                 declare_decl(n, self.ctx.locals if undo
@@ -3994,6 +4206,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 return
             if isinstance(n, (ast.CompoundStmt, ast.ForStmt)):
                 push()
+                if isinstance(n, ast.CompoundStmt):
+                    split_auto(n.items)
                 for c in _children(n):
                     walk(c)
                 pop()
@@ -4002,10 +4216,15 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 walk(c)
 
         try:
+            split_auto(unit.items)
             for item in unit.items or []:
                 walk(item)
         finally:
             self.ctx.locals, self.ctx.globals = saved
+            for tbl, old in zip((self.ctx.structs, self.ctx.struct_sizes,
+                                 self.ctx.anon_members), saved_structs):
+                tbl.clear()
+                tbl.update(old)
 
     @contextmanager
     def _emitting_to(self, buf: list):
@@ -6923,10 +7142,13 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 # Unwrap compound literal if needed
                 init = decl.init
                 init_type = _to_legacy(decl.var_type)
-                if isinstance(decl.init, ast.Compound):
+                if (isinstance(decl.init, ast.Compound)
+                        and isinstance(_to_legacy(decl.var_type),
+                                       (lt.ArrayType, lt.StructType))):
                     init = decl.init.init  # Get InitializerList from Compound
                     init_type = _to_legacy(decl.init.target_type)
 
+                self._bool_norm_init(init_type, init)
                 # Auto-AST wraps adjacent string literals as a list.
                 if (isinstance(init_type, lt.ArrayType) and isinstance(init, list)
                         and init and all(isinstance(p, ast.StringLiteral) for p in init)):
@@ -6976,6 +7198,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                         op="=", left=make_identifier(decl.name),
                         right=decl.init))
                 else:
+                    if self._is_bool_type(decl.var_type):
+                        decl.init = self._bool_wrap(decl.init)
                     is_long = self._is_long_type(decl.var_type)
                     is_long_long = self._is_long_long_type(decl.var_type)
                     is_float = self._is_float_type(decl.var_type)
@@ -7033,14 +7257,14 @@ class CodeGenerator(Z80IntrinsicsMixin):
 
                         # Extend to 32-bit if target is long (not float) but source is not 32-bit
                         # (Don't extend for float targets - they're already 32-bit in DEHL)
-                        if is_long and not is_float and not self._is_long_expr(decl.init) and not self._is_float_expr(decl.init):
+                        if is_long and not is_float and not self._is_wide_expr(decl.init) and not self._is_float_expr(decl.init):
                             is_signed = not self._is_unsigned_expr(decl.init)
                             self._extend_hl_to_dehl(is_signed)
 
                         # Convert int to float if target is float but source is integer
                         if is_float and not self._is_float_expr(decl.init):
                             # First extend integer to 32-bit if needed
-                            if not self._is_long_expr(decl.init):
+                            if not self._is_wide_expr(decl.init):
                                 is_signed = not self._is_unsigned_expr(decl.init)
                                 self._extend_hl_to_dehl(is_signed)
                             # Then convert to float
@@ -7243,6 +7467,11 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # Convert int literal to float if target is float
             if is_float and isinstance(val, ast.IntLiteral):
                 val = _make_synthetic_float_literal(float(int_value(val)))
+
+            # A 64-bit element: the value in __acc64, stored to the slot
+            if self._is_long_long_type(elem_type):
+                self._store_init_ll(sym, offset, val)
+                continue
 
             # Generate the value in HL (or DEHL for 32-bit)
             self.gen_expr(val, force_long=is_32bit)
@@ -7513,13 +7742,15 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     self.gen_expr(val)
                 else:
                     self.gen_expr(val, force_long=True)
-                    if not self._is_long_expr(val):
+                    if not self._is_wide_expr(val):
                         is_signed = not self._is_unsigned_expr(val)
                         self._extend_hl_to_dehl(is_signed)
                 self.ctx.emit_instr("ld", f"({label}+{moff}),HL")
                 self.ctx.emit_instr("ld", f"({label}+{moff + 2}),DE")
+            elif self._is_long_long_type(mt):
+                self._store_ll_label(f"{label}+{moff}", val)
             else:
-                # > 4-byte member (nested struct/array or long long).
+                # > 4-byte member (nested struct/array).
                 # If the value is itself an aggregate lvalue (Identifier,
                 # Member, ArrowMember, Index, Call returning struct),
                 # take its address and LDIR ``msize`` bytes into the
@@ -7571,12 +7802,14 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     self.gen_expr(v)
                 else:
                     self.gen_expr(v, force_long=True)
-                    if not self._is_long_expr(v):
+                    if not self._is_wide_expr(v):
                         is_signed = not self._is_unsigned_expr(v)
                         self._extend_hl_to_dehl(is_signed)
                 self.ctx.emit_instr("ld", f"({label}+{off}),HL")
                 self.ctx.emit_instr("ld", f"({label}+{off + 2}),DE")
-            # 8-byte / exotic sizes: skip until needed.
+            elif self._is_long_long_type(base_type):
+                self._store_ll_label(f"{label}+{off}", v)
+            # other sizes: skip until needed.
 
     def _emit_sret_dest_address(self, call, size: int) -> None:
         """HL = where the result of ``call`` is to be written.
@@ -7702,7 +7935,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     self.gen_expr(val)
                 else:
                     self.gen_expr(val, force_long=True)
-                    if not self._is_long_expr(val):
+                    if not self._is_wide_expr(val):
                         is_signed = not self._is_unsigned_expr(val)
                         self._extend_hl_to_dehl(is_signed)
                 self.ctx.emit_instr("push", "DE")     # high word
@@ -7770,6 +8003,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # the destination — otherwise the non-const slots end up as
             # ``ds N`` in DSEG and the runtime values (e.g. ``++i``)
             # are lost on every iteration of an enclosing loop.
+            self._bool_norm_init(right.target_type, right.init)
             if (isinstance(expr.left, ast.Identifier)
                     and isinstance(right.init, ast.InitializerList)
                     and self._compound_has_nonconst(right.init)):
@@ -8302,15 +8536,18 @@ class CodeGenerator(Z80IntrinsicsMixin):
             else:
                 # Scalar element or nested InitializerList
                 consumed += 1
+                if self._is_long_long_type(elem_type):
+                    self._store_init_ll(sym, offset, val)
+                    continue
                 # Convert int literal to float if target is float
                 if is_float and isinstance(val, ast.IntLiteral):
                     val = _make_synthetic_float_literal(float(int_value(val)))
                 self.gen_expr(val, force_long=is_32bit)
-                if is_long and not is_float and not self._is_long_expr(val) and not self._is_float_expr(val):
+                if is_long and not is_float and not self._is_wide_expr(val) and not self._is_float_expr(val):
                     is_signed = not self._is_unsigned_expr(val)
                     self._extend_hl_to_dehl(is_signed)
                 if is_float and not self._is_float_expr(val):
-                    if not self._is_long_expr(val):
+                    if not self._is_wide_expr(val):
                         is_signed = not self._is_unsigned_expr(val)
                         self._extend_hl_to_dehl(is_signed)
                     self._call_runtime("__itof")
@@ -8421,6 +8658,33 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 else:
                     self.ctx.emit_instr("ld", f"({ix_off(frame_off + i)}),L")
 
+    def _reload_dehl_from_acc64(self) -> None:
+        """DEHL = the low 32 bits of __acc64, after a 64-bit runtime call."""
+        self.ctx.runtime_used.add("__acc64")
+        self.ctx.emit_instr("ld", "HL,(__acc64)")
+        self.ctx.emit_instr("ld", "DE,(__acc64+2)")
+
+    def _store_ll_label(self, where: str, val) -> None:
+        """Store the 64-bit value of ``val`` at the address ``where``."""
+        self._gen_64bit_operand(val, to_tmp=False)
+        self.ctx.runtime_used.add("__acc64")
+        self.ctx.emit_instr("ld", f"HL,{where}")
+        self._call_runtime("__store64")
+
+    def _store_init_ll(self, sym: 'Symbol', offset: int, val) -> None:
+        """Store the 64-bit value of ``val`` at byte ``offset`` of the local
+        object ``sym``."""
+        self._gen_64bit_operand(val, to_tmp=False)
+        self.ctx.runtime_used.add("__acc64")
+        if sym.uses_shared_storage:
+            self.ctx.emit_instr("ld", f"HL,??AUTO+{sym.shared_offset + offset}")
+        else:
+            self.ctx.emit_instr("push", "IX")
+            self.ctx.emit_instr("pop", "HL")
+            self.ctx.emit_instr("ld", f"DE,{sym.offset + offset}")
+            self.ctx.emit_instr("add", "HL,DE")
+        self._call_runtime("__store64")
+
     def _gen_store_member_value(self, sym: 'Symbol', member_type: lt.TypeNode,
                                  offset: int, val: ast.Expression) -> None:
         """Store a value at a struct member's location."""
@@ -8470,11 +8734,15 @@ class CodeGenerator(Z80IntrinsicsMixin):
             self._gen_struct_copy_from_addr_expr(sym, offset, val, member_size)
             return
 
+        if self._is_long_long_type(member_type):
+            self._store_init_ll(sym, offset, val)
+            return
+
         # Generate the value expression
         self.gen_expr(val, force_long=is_32bit)
 
         # Extend to 32-bit if needed (for long but not float - float is already 32-bit)
-        if is_long and not is_float and not self._is_long_expr(val) and not self._is_float_expr(val):
+        if is_long and not is_float and not self._is_wide_expr(val) and not self._is_float_expr(val):
             is_signed = not self._is_unsigned_expr(val)
             self._extend_hl_to_dehl(is_signed)
 
@@ -8661,18 +8929,22 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 self._gen_struct_copy_from_addr_expr(sym, offset, val, elem_size)
                 continue
 
+            if self._is_long_long_type(elem_type):
+                self._store_init_ll(sym, offset, val)
+                continue
+
             # Convert int literal to float if target is float
             if is_float and isinstance(val, ast.IntLiteral):
                 val = _make_synthetic_float_literal(float(int_value(val)))
 
             # Generate value
             self.gen_expr(val, force_long=is_32bit)
-            if is_long and not is_float and not self._is_long_expr(val) and not self._is_float_expr(val):
+            if is_long and not is_float and not self._is_wide_expr(val) and not self._is_float_expr(val):
                 is_signed = not self._is_unsigned_expr(val)
                 self._extend_hl_to_dehl(is_signed)
             # Convert int to float if needed
             if is_float and not self._is_float_expr(val):
-                if not self._is_long_expr(val):
+                if not self._is_wide_expr(val):
                     is_signed = not self._is_unsigned_expr(val)
                     self._extend_hl_to_dehl(is_signed)
                 self._call_runtime("__itof")
@@ -8892,6 +9164,11 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # ret_type is a ResolvedType (kind: basic / pointer / array /
             # function / struct / enum / typedef).
             ret_kind = getattr(ret_type, "kind", None) if ret_type else None
+            if (ret_type is not None and not self._current_sret_size
+                    and not isinstance(value, list)
+                    and self._is_bool_type(_to_legacy(ret_type))):
+                # A _Bool result is 0 or 1 (C 6.3.1.2, 6.8.6.4).
+                value = self._bool_wrap(value)
 
             # _current_sret_size is what gen_function decided when it laid
             # out the parameters.  Asking it, rather than resolving the
@@ -8902,6 +9179,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 # The caller left the address to write to at IX+4 and
                 # expects it back in HL.  Nothing here is bounded by a
                 # buffer, so the aggregate can be any size.
+                if isinstance(value, ast.Compound):
+                    self._bool_norm_init(value.target_type, value.init)
                 if (isinstance(value, ast.Compound)
                         and isinstance(value.init, ast.InitializerList)
                         and self._compound_has_nonconst(value.init)):
@@ -8946,10 +9225,10 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 if expr_is_float and not return_is_float:
                     self._call_runtime("__ftoi")
                 elif return_is_float and not expr_is_float:
-                    if not self._is_long_expr(value):
+                    if not self._is_wide_expr(value):
                         self._extend_hl_to_dehl(self._is_signed_type(self._get_expr_type(value)))
                     self._call_runtime("__itof")
-                elif return_is_long and not self._is_long_expr(value) and not expr_is_float:
+                elif return_is_long and not self._is_wide_expr(value) and not expr_is_float:
                     is_signed = self._is_signed_type(self._get_expr_type(value))
                     self._extend_hl_to_dehl(is_signed)
                 else:
@@ -9157,7 +9436,24 @@ class CodeGenerator(Z80IntrinsicsMixin):
 
     def _gen_switch_dispatch(self, stmt, cases, fall_label) -> None:
         """Evaluate the controlling expression and jump to a case."""
-        if self._is_long_expr(stmt.expr) and not self._is_float_expr(stmt.expr):
+        if (self._is_long_long_expr(stmt.expr)
+                and not self._is_float_expr(stmt.expr)):
+            # A 64-bit controlling expression: all eight bytes of each case
+            # value take part.
+            e = self.ctx.emit_instr
+            self._gen_64bit_operand(stmt.expr, to_tmp=False)
+            for value, label in cases:
+                nxt = self.ctx.new_label("SWNEXT")
+                for i in range(8):
+                    e("ld", f"A,(__acc64+{i})" if i else "A,(__acc64)")
+                    e("cp", str((value >> (8 * i)) & 0xFF))
+                    if i < 7:
+                        e("jr", f"NZ,{nxt}")
+                    else:
+                        e("jp", f"Z,{label}")
+                self.ctx.emit_label(nxt)
+            e("jp", fall_label)
+        elif self._is_long_expr(stmt.expr) and not self._is_float_expr(stmt.expr):
             # A 32-bit controlling expression: all four bytes of each case
             # value take part (the 16-bit chains compare HL alone).
             e = self.ctx.emit_instr
@@ -9442,7 +9738,17 @@ class CodeGenerator(Z80IntrinsicsMixin):
             return
         if isinstance(expr, ast.IntLiteral):
             v = int_value(expr)
-            if self._is_long_expr(expr) or force_long:
+            if self._is_long_long_expr(expr):
+                # A 64-bit value lives in __acc64; DEHL has the low 32 bits.
+                self.ctx.runtime_used.add("__acc64")
+                val = v & 0xFFFFFFFFFFFFFFFF
+                for i in range(4):
+                    self.ctx.emit_instr("ld", f"HL,{(val >> (16 * i)) & 0xFFFF}")
+                    self.ctx.emit_instr(
+                        "ld", "(__acc64),HL" if i == 0 else f"(__acc64+{2 * i}),HL")
+                self.ctx.emit_instr("ld", f"DE,{(val >> 16) & 0xFFFF}")
+                self.ctx.emit_instr("ld", f"HL,{val & 0xFFFF}")
+            elif self._is_long_expr(expr) or force_long:
                 val = v & 0xFFFFFFFF
                 low = val & 0xFFFF
                 high = (val >> 16) & 0xFFFF
@@ -9548,16 +9854,15 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 self.ctx.emit_instr("ld", f"HL,{size}")
             else:
                 # Infer type of expression and compute its size
-                expr_type = self._get_expr_type(expr.operand)
-                if expr_type:
-                    size = self._type_size(expr_type)
-                else:
+                size = self._sizeof_operand_size(expr.operand)
+                if size is None:
                     size = 2  # Default to int if type cannot be inferred
                 self.ctx.emit_instr("ld", f"HL,{size}")
 
         elif isinstance(expr, ast.Compound):
             # Compound literal: (type){initializer}
             target_type = expr.target_type
+            self._bool_norm_init(target_type, expr.init)
             # Resolve typedef for the type-check below.
             tt_resolved = target_type
             if (isinstance(tt_resolved, lt.BasicType)
@@ -9641,9 +9946,50 @@ class CodeGenerator(Z80IntrinsicsMixin):
         """The type of the operand of ``typeof``, as a ResolvedType;
         None when the type is not known (then the object is an int)."""
         try:
-            return _from_legacy(self._get_expr_type(operand))
+            return _from_legacy(self._c_expr_type(operand))
         except Exception:
             return None
+
+    def _c_expr_type(self, expr):
+        """The type of EXPR as C names it: _get_expr_type, except that a
+        plain character constant is an int (C23 6.4.4.5), which the code
+        generator itself keeps as a char for its byte paths."""
+        if (isinstance(expr, ast.CharLiteral)
+                and expr.value.text.startswith("'")):
+            return lt.BasicType(name="int")
+        return self._get_expr_type(expr)
+
+    @staticmethod
+    def _fill_typeof(resolved, decl_specs):
+        """The core resolver leaves a typeof(expr) specifier of a type
+        name as a "typeof" type; swap in the type the typeof pass found
+        for it (sizeof(typeof(x)), casts to typeof(x), _Generic)."""
+        found = unqual = None
+        for sp in decl_specs or []:
+            if isinstance(sp, (ast.TypeofExpr, ast.TypeofUnqualExpr)):
+                found = getattr(sp, "_resolved", None)
+                unqual = isinstance(sp, ast.TypeofUnqualExpr)
+        if found is None:
+            return resolved
+
+        def fill(r):
+            if r is None:
+                return r
+            if r.kind == "typeof":
+                n = copy.copy(found)
+                n.is_const = n.is_const or r.is_const
+                n.is_volatile = n.is_volatile or r.is_volatile
+                if unqual:
+                    n.is_const = n.is_volatile = False
+                return n
+            if r.kind == "pointer":
+                r = copy.copy(r)
+                r.pointee = fill(r.pointee)
+            elif r.kind == "array":
+                r = copy.copy(r)
+                r.element = fill(r.element)
+            return r
+        return fill(resolved)
 
     def _resolve_typename(self, t):
         """Resolve an auto-AST TypeName / type-spec list to a legacy type.
@@ -9664,7 +10010,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             from uc_core.codegen_helpers import resolve_type_from_decl as _core_resolve
             _, resolved = _core_resolve(
                 t.decl_specs, getattr(t, "abstract_declarator", None))
-            return _to_legacy(resolved)
+            return _to_legacy(self._fill_typeof(resolved, t.decl_specs))
         if hasattr(ast, "TypeNameWithDeclarator") and isinstance(t, ast.TypeNameWithDeclarator):
             # Use uc_core's resolve_type_from_decl directly — uc80's
             # local one doesn't handle abstract pointer/array
@@ -9672,13 +10018,13 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # silently dropping the pointer/array shape).
             from uc_core.codegen_helpers import resolve_type_from_decl as _core_resolve
             _, resolved = _core_resolve(t.decl_specs, t.declarator)
-            return _to_legacy(resolved)
+            return _to_legacy(self._fill_typeof(resolved, t.decl_specs))
         return t
 
     def gen_generic_selection(self, expr: ast.GenericSelection, force_long: bool = False) -> None:
         """Generate code for _Generic selection expression."""
         # Get the type of the controlling expression
-        ctrl_type = _to_legacy(self._get_expr_type(expr.controlling_expr))
+        ctrl_type = _to_legacy(self._c_expr_type(expr.controlling_expr))
 
         # Find the matching association
         default_expr = None
@@ -10787,7 +11133,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
         else:
             # Integer expression, need to convert to float
             self.gen_expr(expr, force_long=True)
-            if not self._is_long_expr(expr):
+            if not self._is_wide_expr(expr):
                 is_signed = not self._is_unsigned_expr(expr)
                 self._extend_hl_to_dehl(is_signed)
             # Convert integer in DEHL to float
@@ -10802,23 +11148,32 @@ class CodeGenerator(Z80IntrinsicsMixin):
         false_label = self.ctx.new_label("FCMP_F")
         end_label = self.ctx.new_label("FCMP_E")
 
-        # Call float comparison - returns flags: Z if equal, C if left < right
+        # __fcmp: Z if equal, C if left < right, both Z and C when either
+        # operand is a NaN (unordered: every operator but != gives false).
         self._call_runtime("__fcmp")
+        e = self.ctx.emit_instr
 
         if op == "==":
-            self.ctx.emit_instr("jp", f"Z,{true_label}")
+            e("jr", f"NZ,{false_label}")
+            e("jr", f"NC,{true_label}")
         elif op == "!=":
-            self.ctx.emit_instr("jp", f"NZ,{true_label}")
+            e("jr", f"NZ,{true_label}")
+            e("jr", f"C,{true_label}")
         elif op == "<":
-            self.ctx.emit_instr("jp", f"C,{true_label}")
+            e("jr", f"Z,{false_label}")
+            e("jr", f"C,{true_label}")
         elif op == ">=":
-            self.ctx.emit_instr("jp", f"NC,{true_label}")
+            e("jr", f"NC,{true_label}")
         elif op == ">":
-            self.ctx.emit_instr("jp", f"Z,{false_label}")
-            self.ctx.emit_instr("jp", f"NC,{true_label}")
+            e("jr", f"Z,{false_label}")
+            e("jr", f"NC,{true_label}")
         elif op == "<=":
-            self.ctx.emit_instr("jp", f"Z,{true_label}")
-            self.ctx.emit_instr("jp", f"C,{true_label}")
+            zset = self.ctx.new_label("FCMP_Z")
+            e("jr", f"Z,{zset}")
+            e("jr", f"C,{true_label}")
+            e("jr", false_label)
+            self.ctx.emit_label(zset)
+            e("jr", f"NC,{true_label}")
 
         self.ctx.emit_label(false_label)
         self.ctx.emit_instr("ld", "HL,0")
@@ -10954,8 +11309,91 @@ class CodeGenerator(Z80IntrinsicsMixin):
         """Emit instruction for register allocator callbacks."""
         self.ctx.emit_instr(instr, operand)
 
+    def _bool_wrap(self, e):
+        """``e`` converted to _Bool (C 6.3.1.2: 0 if it compares equal to
+        0, else 1) for a store into a _Bool object.  gen_cast tests every
+        byte of a 16, 32 or 64-bit integer, a pointer or a float."""
+        if isinstance(e, ast.Cast) and self._is_bool_type(e.target_type):
+            return e
+        if isinstance(e, ast.BoolLiteral):
+            return e
+        if isinstance(e, ast.BinaryOp) and e.op in (
+                "==", "!=", "<", ">", "<=", ">=", "&&", "||"):
+            return e
+        if isinstance(e, ast.UnaryOp) and e.op == "!":
+            return e
+        if isinstance(e, (ast.InitializerList, ast.Compound, list)):
+            return e
+        try:
+            if self._is_bool_type(_to_legacy(self._get_expr_type(e))):
+                return e
+        except Exception:
+            pass
+        return ast.Cast(target_type=lt.BasicType(name="_Bool"), expr=e,
+                        pos=getattr(e, "pos", None) or ast._Pos())
+
+    def _bool_norm_init(self, t, init) -> None:
+        """Wrap, in place, every value of the braced initializer ``init``
+        of type ``t`` that initializes a _Bool in a Cast to _Bool, so the
+        stores see 0 or 1 (C 6.7.9, 6.3.1.2).  Brace elision is followed
+        only as far as a scalar value in front of an aggregate member
+        stops the count of members."""
+        t = _to_legacy(t)
+        if (isinstance(t, lt.BasicType) and t.name
+                and t.name in self.ctx.typedefs):
+            t = _to_legacy(self.ctx.typedefs[t.name])
+        if isinstance(init, list) or not isinstance(init, ast.InitializerList):
+            return
+
+        def leaf(vt, v):
+            vt = _to_legacy(vt)
+            if (isinstance(vt, lt.BasicType) and vt.name
+                    and vt.name in self.ctx.typedefs):
+                vt = _to_legacy(self.ctx.typedefs[vt.name])
+            if isinstance(v, ast.InitializerList):
+                self._bool_norm_init(vt, v)
+                return v, True
+            if isinstance(v, list):
+                return v, False
+            if self._is_bool_type(vt):
+                return self._bool_wrap(v), True
+            return v, not isinstance(vt, (lt.StructType, lt.ArrayType))
+
+        if isinstance(t, lt.ArrayType):
+            for i, v in enumerate(init.values):
+                if isinstance(v, ast.DesignatedInit):
+                    v.value, ok = leaf(t.base_type, v.value)
+                else:
+                    init.values[i], ok = leaf(t.base_type, v)
+                if not ok:
+                    return
+        elif isinstance(t, lt.StructType):
+            members = [m for m in self._get_struct_members(t) if m[0]]
+            by_name = {m[0]: m[1] for m in members}
+            pos = 0
+            for i, v in enumerate(init.values):
+                if isinstance(v, ast.DesignatedInit):
+                    d = v.designators[0] if v.designators else None
+                    nm = d if isinstance(d, str) else getattr(
+                        getattr(d, "field", None), "text", None)
+                    if len(v.designators) != 1 or nm not in by_name:
+                        return
+                    v.value, ok = leaf(by_name[nm], v.value)
+                    pos = [m[0] for m in members].index(nm) + 1
+                else:
+                    if pos >= len(members) or (t.is_union and pos > 0):
+                        return
+                    init.values[i], ok = leaf(members[pos][1], v)
+                    pos += 1
+                if not ok:
+                    return
+
     def gen_assignment(self, expr: ast.BinaryOp) -> None:
         """Generate code for assignment."""
+        if self._op_of(expr) == "=" and not isinstance(expr.right, list):
+            _tt = self._get_expr_type(expr.left)
+            if _tt is not None and self._is_bool_type(_to_legacy(_tt)):
+                expr.right = self._bool_wrap(expr.right)
         # A statement ``x = x op K`` on a long variable is ``x op= K``.
         rhs = expr.right
         if (expr is self._discard_expr and isinstance(expr.left, ast.Identifier)
@@ -11304,6 +11742,10 @@ class CodeGenerator(Z80IntrinsicsMixin):
             self._gen_64bit_operand(expr.right, to_tmp=False)  # Value into __acc64
             self.ctx.emit_instr("pop", "HL")    # Restore address
             self._call_runtime("__store64")
+        # The value of the assignment: its low 32 bits in DEHL, as after
+        # any other 64-bit operation (``g = (a.m += 1)`` reads them).
+        if expr is not self._discard_expr:
+            self._reload_dehl_from_acc64()
 
     def gen_compound_assignment(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate code for compound assignment (+=, -=, etc.)."""
@@ -11374,7 +11816,10 @@ class CodeGenerator(Z80IntrinsicsMixin):
         self.ctx.emit_instr("pop", "HL")
         self.ctx.emit_instr("push", "HL")
         size = self._type_size(node.ctype)
-        if size == 1:
+        if size == 8:
+            self._call_runtime("__load64")
+            self._reload_dehl_from_acc64()
+        elif size == 1:
             self.ctx.emit_instr("ld", "L,(HL)")
             self._emit_char_to_hl(self._is_signed_type(node.ctype))
         elif size == 4:
@@ -11405,6 +11850,16 @@ class CodeGenerator(Z80IntrinsicsMixin):
         self.ctx.emit_instr("push", "HL")
         inner = ast.BinaryOp(op=op, left=_SavedAddrValue(target_type),
                              right=expr.right)
+        if target_size == 8:
+            # A long long: the result is in __acc64; store it through the
+            # saved address, leave the low 32 bits in DEHL.
+            self.gen_binary_op(inner)
+            self.ctx.runtime_used.add("__acc64")
+            self.ctx.emit_instr("pop", "HL")
+            self._call_runtime("__store64")
+            if expr is not self._discard_expr:
+                self._reload_dehl_from_acc64()
+            return
         self.gen_binary_op(inner)
         result_float = self._is_float_expr(inner)
         result_wide = (self._is_long_expr(inner) or result_float
@@ -11465,7 +11920,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
         if not is_bitfield and self._gen_compound16_inplace(expr, op):
             return
         if (isinstance(t, (lt.BasicType, lt.PointerType, lt.EnumType))
-                and target_size in (1, 2, 4) and not is_bitfield):
+                and (target_size in (1, 2, 4)
+                     or self._is_long_long_type(t)) and not is_bitfield):
             self._gen_compound_assignment_once(expr, op, t, target_size)
             return
 
@@ -11617,6 +12073,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 # 64-bit negate: generate to __acc64, call __neg64
                 self._gen_64bit_operand(expr.operand, to_tmp=False)
                 self._call_runtime("__neg64")
+                self._reload_dehl_from_acc64()
             elif self._is_float_expr(expr.operand):
                 # Float negate: flip sign bit (bit 31 = bit 7 of high byte of DE)
                 # Float stored as: HL=low word, DE=high word
@@ -11632,10 +12089,14 @@ class CodeGenerator(Z80IntrinsicsMixin):
             else:
                 # 16-bit negate: 0 - HL
                 self.gen_expr(expr.operand)
-                self.ctx.emit_instr("ex", "DE,HL")
-                self.ctx.emit_instr("ld", "HL,0")
-                self.ctx.emit_instr("or", "A")
-                self.ctx.emit_instr("sbc", "HL,DE")
+                # Leaves DE alone: a register call may hold argument 2
+                # there while argument 1 is computed.
+                self.ctx.emit_instr("xor", "A")
+                self.ctx.emit_instr("sub", "L")
+                self.ctx.emit_instr("ld", "L,A")
+                self.ctx.emit_instr("sbc", "A,A")
+                self.ctx.emit_instr("sub", "H")
+                self.ctx.emit_instr("ld", "H,A")
 
         elif op == "+":
             self.gen_expr(expr.operand)  # No-op
@@ -11651,17 +12112,20 @@ class CodeGenerator(Z80IntrinsicsMixin):
             self.ctx.emit_instr("inc", "L")
 
         elif op == "~":
-            self.gen_expr(expr.operand)
             if self._is_long_long_expr(expr.operand):
                 # 64-bit bitwise NOT using runtime
+                self._gen_64bit_operand(expr.operand, to_tmp=False)
                 self._call_runtime("__not64")
+                self._reload_dehl_from_acc64()
             elif self._is_long_expr(expr.operand):
+                self.gen_expr(expr.operand)
                 # 32-bit bitwise NOT: complement each register inline
                 for r in ("L", "H", "E", "D"):
                     self.ctx.emit_instr("ld", f"A,{r}")
                     self.ctx.emit_instr("cpl")
                     self.ctx.emit_instr("ld", f"{r},A")
             else:
+                self.gen_expr(expr.operand)
                 # 16-bit bitwise NOT
                 self.ctx.emit_instr("ld", "A,H")
                 self.ctx.emit_instr("cpl")
@@ -11677,6 +12141,10 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # Check if we're dereferencing a function pointer
             # Dereferencing a function pointer is a no-op (functions decay to pointers)
             operand_type = self._get_expr_type(expr.operand)
+            if isinstance(operand_type, lt.FunctionType):
+                # **f: the operand ``*f`` is a function designator, which
+                # decays to the pointer already in HL.
+                return
             if isinstance(operand_type, lt.PointerType):
                 if isinstance(operand_type.base_type, lt.FunctionType):
                     # *func_ptr is just func_ptr - no actual load needed
@@ -12858,10 +13326,19 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     f"{len(reg_plan.types)} parameter(s)")
             param_types = reg_plan.types
 
+        # An argument for a _Bool parameter is converted to _Bool: 0 or 1
+        # (C 6.5.2.2, 6.3.1.2), whatever its width.
+        call_args = list(expr.args)
+        for _i, _a in enumerate(call_args):
+            _pt = param_types[_i] if _i < len(param_types) else None
+            if (_pt is not None and not isinstance(_a, list)
+                    and self._is_bool_type(_to_legacy(_pt))):
+                call_args[_i] = self._bool_wrap(_a)
+
         # Push arguments right-to-left, tracking total stack size
         stack_size = 0
         num_args = len(expr.args)
-        for i, arg in enumerate(reversed(expr.args)):
+        for i, arg in enumerate(reversed(call_args)):
             arg_idx = num_args - 1 - i  # Index in forward order
             if reg_plan is not None and reg_plan.loc[arg_idx] is not None:
                 continue
@@ -13079,7 +13556,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                             stack_size += 2
 
         if reg_plan is not None:
-            self._gen_reg_args(reg_plan, expr.args)
+            self._gen_reg_args(reg_plan, call_args)
 
         # An aggregate wider than HL comes back through a destination the
         # caller supplies.  Push it last so it lands at IX+4, ahead of the
@@ -13257,7 +13734,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     # Extend HL to DEHL based on expression type
                     self._extend_hl_to_dehl(not expr_unsigned)
                 # Extend DEHL to 64-bit based on force_unsigned or expr type
-                is_unsigned = force_unsigned or expr_unsigned
+                is_unsigned = expr_unsigned  # the source decides (C 6.3.1.3)
                 if is_unsigned:
                     self._call_runtime("__zext64")
                 else:
@@ -13303,7 +13780,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 self.gen_expr(arg)
                 self._extend_hl_to_dehl(not expr_unsigned)
             # Extend DEHL to 64-bit based on force_unsigned or expr type
-            is_unsigned = force_unsigned or expr_unsigned
+            is_unsigned = expr_unsigned  # the source decides (C 6.3.1.3)
             if is_unsigned:
                 self._call_runtime("__zext64")
             else:
@@ -13314,6 +13791,24 @@ class CodeGenerator(Z80IntrinsicsMixin):
         """Generate code for ternary conditional."""
         else_label = self.ctx.new_label("TERN_E")
         end_label = self.ctx.new_label("TERN_END")
+
+        # A 64-bit branch makes the result 64-bit (C 6.5.15p5): each branch
+        # leaves its value, converted, in __acc64 (and its low half in DEHL).
+        if (not self._is_float_expr(expr.true_expr)
+                and not self._is_float_expr(expr.false_expr)
+                and (self._is_long_long_expr(expr.true_expr)
+                     or self._is_long_long_expr(expr.false_expr))):
+            self._gen_cond_false_jump(expr.condition, else_label)
+            for i, br in enumerate((expr.true_expr, expr.false_expr)):
+                self._gen_64bit_operand(br, to_tmp=False)
+                self.ctx.runtime_used.add("__acc64")
+                self.ctx.emit_instr("ld", "HL,(__acc64)")
+                self.ctx.emit_instr("ld", "DE,(__acc64+2)")
+                if i == 0:
+                    self.ctx.emit_instr("jp", end_label)
+                    self.ctx.emit_label(else_label)
+            self.ctx.emit_label(end_label)
+            return
 
         # Check if either branch is 32-bit - both branches must match width
         true_is_long = self._is_long_expr(expr.true_expr) or self._is_float_expr(expr.true_expr)
@@ -13354,11 +13849,21 @@ class CodeGenerator(Z80IntrinsicsMixin):
         target_is_long = self._is_long_type(target_type) or force_long
         source_is_long = self._is_long_expr(expr.expr)
         source_is_float = self._is_float_expr(expr.expr)
+        source_is_64 = self._is_long_long_expr(expr.expr)
         target_is_float = self._is_float_type(target_type)
 
         # Constant fold: cast of integer literal can be computed at compile time
         # This avoids peephole issues with LD HL,N; LD A,L being collapsed
         target_is_64 = self._is_long_long_type(target_type)
+        if self._is_bool_type(target_type) and not force_long:
+            _fl = expr.expr
+            if isinstance(_fl, ast.UnaryOp) and _fl.op == "-":
+                _fl = _fl.operand
+            if isinstance(_fl, ast.FloatLiteral):
+                # _Bool of a float constant: 1 unless it is zero.
+                self.ctx.emit_instr(
+                    "ld", "HL,0" if float_value(_fl) == 0.0 else "HL,1")
+                return
         if (isinstance(expr.expr, (ast.IntLiteral, ast.CharLiteral)) and not target_is_float
                 and not source_is_float and not target_is_64):
             # expr.expr.value is a uplox Token for IntLiteral; decode.
@@ -13419,7 +13924,11 @@ class CodeGenerator(Z80IntrinsicsMixin):
         if (char_signed is not None and not force_long
                 and not target_is_float and not source_is_float):
             src = self._peel_int_casts(src)
-        self.gen_expr(src, force_long=False)
+        if self._is_bool_type(target_type) and self._is_long_long_expr(src):
+            # _Bool of a 64-bit value tests all eight bytes of __acc64.
+            self._gen_64bit_operand(src, to_tmp=False)
+        else:
+            self.gen_expr(src, force_long=False)
         # The operand is a char load of the same signedness: H is right.
         same_char = (src is not expr.expr or char_signed is not None) and \
             self._char_ext_operand(src) is char_signed and \
@@ -13427,9 +13936,21 @@ class CodeGenerator(Z80IntrinsicsMixin):
 
         # _Bool normalization: any non-zero value becomes 1 (C99 6.3.1.2)
         if self._is_bool_type(target_type):
-            if source_is_long or source_is_float:
-                # 32-bit: check all 4 bytes (DEHL)
+            if source_is_64:
+                self.ctx.runtime_used.add("__acc64")
+                self.ctx.emit_instr("ld", "A,(__acc64)")
+                for off in range(1, 8):
+                    self.ctx.emit_instr("ld", "B,A")
+                    self.ctx.emit_instr("ld", f"A,(__acc64+{off})")
+                    self.ctx.emit_instr("or", "B")
+                self.ctx.emit_instr("ld", "HL,0")
+                self.ctx.emit_instr("jr", "Z,$+3")
+                self.ctx.emit_instr("inc", "L")
+            elif source_is_long or source_is_float:
+                # 32-bit: check all 4 bytes (DEHL); -0.0 is zero too
                 self.ctx.emit_instr("ld", "A,D")
+                if source_is_float:
+                    self.ctx.emit_instr("and", "127")
                 self.ctx.emit_instr("or", "E")
                 self.ctx.emit_instr("or", "H")
                 self.ctx.emit_instr("or", "L")
@@ -14695,35 +15216,55 @@ class CodeGenerator(Z80IntrinsicsMixin):
                         return mtype
         return None
 
+    def _expand_typedefs_deep(self, tt, depth: int = 0):
+        """Replace every typedef name inside ``tt`` -- also behind pointers,
+        arrays and function types -- by the type it names.  ``(T *)p->m``
+        and ``(*(F *)p)(x)`` need the struct or the function type behind
+        the pointer, not an opaque BasicType named T."""
+        if depth > 16:
+            return tt
+        if isinstance(tt, lt.BasicType) and tt.name in self.ctx.typedefs:
+            return self._expand_typedefs_deep(
+                _to_legacy(self.ctx.typedefs[tt.name]), depth + 1)
+        if isinstance(tt, lt.PointerType):
+            nb = self._expand_typedefs_deep(tt.base_type, depth + 1)
+            if nb is not tt.base_type:
+                return lt.PointerType(base_type=nb, is_const=tt.is_const,
+                                      is_volatile=tt.is_volatile)
+        elif isinstance(tt, lt.ArrayType):
+            nb = self._expand_typedefs_deep(tt.base_type, depth + 1)
+            if nb is not tt.base_type:
+                return lt.ArrayType(base_type=nb, size=tt.size,
+                                    is_vector=tt.is_vector)
+        elif isinstance(tt, lt.FunctionType):
+            nr = self._expand_typedefs_deep(tt.return_type, depth + 1)
+            if nr is not tt.return_type:
+                return lt.FunctionType(return_type=nr,
+                                       param_types=tt.param_types,
+                                       is_variadic=tt.is_variadic)
+        return tt
+
     def _get_expr_type(self, expr) -> "ResolvedType | None":
         """Try to infer the type of an expression (returns ResolvedType)."""
         if isinstance(expr, _SavedAddrValue):
             return expr.ctype
         if isinstance(expr, ast.IntLiteral):
+            # C23 6.4.4.1: the first type of the list for the suffix and
+            # base in which the value fits.  _is_long_long_expr and
+            # _is_long_expr give the width; the signedness is here.
             is_long, is_long_long, is_unsigned, is_hex = int_flags(expr)
             val = int_value(expr)
-            if is_long_long:
+            tc = self.type_config
+            if self._is_long_long_expr(expr):
+                uns = is_unsigned or val > (1 << 63) - 1
                 return ResolvedType(kind="basic", name="long long",
-                                    is_signed=not is_unsigned)
-            if is_long:
+                                    is_signed=not uns)
+            if self._is_long_expr(expr):
+                uns = is_unsigned or (is_hex and val > tc.long_max)
                 return ResolvedType(kind="basic", name="long",
-                                    is_signed=not is_unsigned)
-            if is_hex and not is_unsigned:
-                if 32768 <= val <= 65535:
-                    return ResolvedType(kind="basic", name="int", is_signed=False)
-                if val > 65535 and val <= 2147483647:
-                    return ResolvedType(kind="basic", name="long", is_signed=True)
-                if val > 2147483647 and val <= 4294967295:
-                    return ResolvedType(kind="basic", name="long", is_signed=False)
-                if val > 4294967295:
-                    return ResolvedType(kind="basic", name="long long", is_signed=False)
-            elif not is_hex and not is_unsigned:
-                if val > 32767 and val <= 2147483647:
-                    return ResolvedType(kind="basic", name="long", is_signed=True)
-                if val > 2147483647:
-                    return ResolvedType(kind="basic", name="long long", is_signed=True)
-            return ResolvedType(kind="basic", name="int",
-                                is_signed=not is_unsigned)
+                                    is_signed=not uns)
+            uns = is_unsigned or (is_hex and val > tc.int_max)
+            return ResolvedType(kind="basic", name="int", is_signed=not uns)
         elif isinstance(expr, ast.CharLiteral):
             return lt.BasicType(name="char")
         elif isinstance(expr, ast.StringLiteral):
@@ -14756,6 +15297,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 return ptr_type.base_type
             elif isinstance(ptr_type, lt.ArrayType):
                 return ptr_type.base_type
+            elif isinstance(ptr_type, lt.FunctionType):
+                return ptr_type     # *g is the function designator again
         elif isinstance(expr, ast.UnaryOp) and expr.op == "&":
             # Address-of: return pointer to operand type
             operand_type = self._get_expr_type(expr.operand)
@@ -14817,9 +15360,15 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     # ptr - ptr is a ptrdiff_t (int), not a pointer, so a
                     # following ``+ 21`` is not scaled by the pointee size.
                     return lt.BasicType(name="int", is_signed=True)
+                # An array operand decays: ``gs + i`` is a pointer to the
+                # element, so ``(gs + i)->m`` still adds the offset of m.
+                if isinstance(left_type, lt.ArrayType):
+                    return lt.PointerType(base_type=left_type.base_type)
                 if isinstance(left_type, ptr_t):
                     return left_type
-                if isinstance(right_type, (lt.PointerType, lt.ArrayType)) and expr.op == "+":
+                if isinstance(right_type, lt.ArrayType) and expr.op == "+":
+                    return lt.PointerType(base_type=right_type.base_type)
+                if isinstance(right_type, lt.PointerType) and expr.op == "+":
                     return right_type
 
             # For shift operations, result type is the promoted LEFT operand (C99 6.5.7)
@@ -14904,9 +15453,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # an opaque ``BasicType(name="uint32_t")`` whose
             # ``is_signed`` field is unset.
             tt = self._resolve_typename(expr.target_type)
-            if isinstance(tt, lt.BasicType) and tt.name in self.ctx.typedefs:
-                tt = _to_legacy(self.ctx.typedefs[tt.name])
-            return tt
+            return self._expand_typedefs_deep(tt)
         elif isinstance(expr, (ast.Call, ast.CallNoArgs)):
             # Known GCC builtins we handle inline — record their return
             # types here so callers don't widen the 16-bit HL output
@@ -15002,7 +15549,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             return true_type or false_type
         elif isinstance(expr, ast.GenericSelection):
             # Resolve the _Generic to get matched expression's type
-            ctrl_type = _to_legacy(self._get_expr_type(expr.controlling_expr))
+            ctrl_type = _to_legacy(self._c_expr_type(expr.controlling_expr))
             for assoc in (expr.assocs or []):
                 if isinstance(assoc, ast.GenericDefault):
                     continue
@@ -15339,8 +15886,13 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if is_arrow:
                 if isinstance(struct_type, lt.PointerType):
                     struct_type = struct_type.base_type
+                elif isinstance(struct_type, lt.ArrayType):
+                    # arr->m: the array decays to a pointer to its element.
+                    struct_type = struct_type.base_type
                 elif isinstance(struct_type, ResolvedType) and struct_type.kind == "pointer":
                     struct_type = struct_type.pointee
+                elif isinstance(struct_type, ResolvedType) and struct_type.kind == "array":
+                    struct_type = struct_type.elem
             if is_struct_type(struct_type):
                 offset = self._resolve_member_offset(struct_type, expr.member)
                 if offset > 0:
@@ -15403,6 +15955,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # field stores into the DSEG slot before exposing it (same
             # rationale as ``gen_expr`` for Compound — the materialised
             # storage's static slot is ``ds N`` for non-const inits).
+            self._bool_norm_init(expr.target_type, expr.init)
             label = self._materialize_compound_literal(expr)
             tt = expr.target_type
             if (isinstance(tt, lt.BasicType) and tt.name in self.ctx.typedefs):
@@ -15650,8 +16203,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if isinstance(e, ast.SizeofExpr):
                 if isinstance(e.operand, ast.StringLiteral):
                     return None
-                t = self._get_expr_type(e.operand)
-                return self._type_size(t) if t else None
+                return self._sizeof_operand_size(e.operand)
             if isinstance(e, ast.UnaryOp):
                 if e.op not in ("-", "+", "~"):
                     return None
@@ -18992,8 +19544,30 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if inner is not None:
                 return ~inner
         if isinstance(expr, ast.Cast):
-            return self._try_get_ll_literal_value(expr.expr)
+            inner = self._try_get_ll_literal_value(expr.expr)
+            if inner is None:
+                return None
+            # The cast cuts the value to its own width: (ULL)(char)27187LL
+            # is 51, not 27187.
+            t = _to_legacy(expr.target_type)
+            if self._is_float_type(t):
+                return None
+            if self._is_bool_type(t):
+                return 1 if inner else 0
+            if isinstance(t, lt.BasicType) or isinstance(t, lt.PointerType):
+                bits = 8 * self._type_size(t)
+                val = inner & ((1 << bits) - 1)
+                if (isinstance(t, lt.BasicType) and self._is_signed_type(t)
+                        and val >> (bits - 1)):
+                    val -= 1 << bits
+                return val
+            return None
         return None
+
+    def _is_wide_expr(self, expr) -> bool:
+        """True if gen_expr leaves a 32-bit or wider integer in DEHL (the
+        low 32 bits of a 64-bit value): no extension of HL is needed."""
+        return self._is_long_expr(expr) or self._is_long_long_expr(expr)
 
     def _is_long_expr(self, expr) -> bool:
         """Check if an expression has 32-bit type (long but not long long)."""
@@ -19123,9 +19697,11 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 return True
             # Check nested expressions
             return self._uses_tmp64(expr.left) or self._uses_tmp64(expr.right)
-        if isinstance(expr, ast.UnaryOp):
-            return self._uses_tmp64(expr.operand)
-        if isinstance(expr, ast.PostfixOp):
+        if isinstance(expr, (ast.UnaryOp, ast.PostfixOp)):
+            # ++ and -- on a 64-bit lvalue stage the constant 1 in __tmp64.
+            if (expr.op in ("++", "--")
+                    and self._is_long_long_expr(expr.operand)):
+                return True
             return self._uses_tmp64(expr.operand)
         if isinstance(expr, ast.TernaryOp):
             return (self._uses_tmp64(expr.condition) or
@@ -20540,6 +21116,78 @@ class CodeGenerator(Z80IntrinsicsMixin):
         # Unknown escape: pass through the second char unchanged.
         return ord(c) if c else 0
 
+    def _const_truth(self, e):
+        """True or False when the constant expression ``e`` is non-zero
+        or zero (a float is tested whole, an address is non-zero); None
+        when it is not a constant."""
+        if isinstance(e, ast.FloatLiteral):
+            return float_value(e) != 0.0
+        if isinstance(e, ast.UnaryOp) and e.op in ("-", "+"):
+            return self._const_truth(e.operand)
+        if isinstance(e, ast.StringLiteral):
+            return True
+        if isinstance(e, ast.UnaryOp) and e.op == "&":
+            label, _off = self._try_resolve_address_const(e)
+            return True if label is not None else None
+        if isinstance(e, ast.TernaryOp):
+            c = self._const_truth(e.condition)
+            if c is None:
+                return None
+            return self._const_truth(e.true_expr if c else e.false_expr)
+        if (isinstance(e, ast.BinaryOp) and e.op == "-"
+                and not isinstance(e.left, ast.Cast)):
+            # &a[i] - &a[j] in the same object: the offsets decide
+            l1, o1 = self._try_resolve_address_const(e.left)
+            l2, o2 = self._try_resolve_address_const(e.right)
+            if l1 is not None and l1 == l2:
+                return o1 != o2
+        if (isinstance(e, ast.BinaryOp) and e.op in ("+", "-")
+                and not isinstance(e.left, ast.Cast)):
+            label, _off = self._try_resolve_address_const(e)
+            if label is not None:
+                return True
+        if (isinstance(e, ast.Identifier)
+                and self._try_resolve_address_const(e)[0] is not None):
+            return True      # an array or function name
+        if isinstance(e, (ast.Index, ast.Member)):
+            try:
+                is_arr = isinstance(_to_legacy(self._get_expr_type(e)),
+                                    lt.ArrayType)
+            except Exception:
+                is_arr = False
+            if is_arr:       # m[1] of an int m[2][2]: decays to an address
+                label, _off = self._try_resolve_address_const(
+                    ast.UnaryOp(op="&", operand=e, pos=e.pos))
+                return True if label is not None else None
+        if isinstance(e, ast.Cast):
+            t = _to_legacy(e.target_type)
+            if self._is_bool_type(t):
+                return self._const_truth(e.expr)
+            if (isinstance(t, lt.BasicType) and self._type_size(t) <= 2
+                    and not self._is_float_type(t)):
+                v = self._eval_const_expr(e.expr)
+                if isinstance(v, int):
+                    return (v & ((1 << (8 * self._type_size(t))) - 1)) != 0
+                return None
+            return self._const_truth(e.expr)
+        if isinstance(e, ast.Identifier):
+            name = e.name.text if hasattr(e.name, "text") else e.name
+            if name in self.ctx.enum_constants:
+                return self.ctx.enum_constants[name] != 0
+            return None
+        v = self._eval_const_expr(e)
+        if v is None:
+            if isinstance(e, ast.BinaryOp) and e.op in ("==", "!="):
+                # an address compared with a constant
+                for a, b in ((e.left, e.right), (e.right, e.left)):
+                    if (self._const_truth(a) is True
+                            and isinstance(a, (ast.UnaryOp, ast.StringLiteral,
+                                               ast.Identifier, ast.BinaryOp))
+                            and self._eval_const_expr(b) == 0):
+                        return e.op == "!="
+            return None
+        return v != 0
+
     def _emit_initializer(self, init, elem_type) -> None:
         """Emit initialized data for a global variable or array element."""
         # Auto-AST wraps adjacent string literals in a Python list; collapse
@@ -20569,6 +21217,15 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 and elem_type.name in self.ctx.typedefs):
             elem_type = _to_legacy(self.ctx.typedefs[elem_type.name])
         elem_size = self._type_size(elem_type)
+
+        if (self._is_bool_type(elem_type)
+                and not isinstance(init, (ast.InitializerList, list))):
+            # A _Bool object holds 0 or 1 (C 6.3.1.2): the value 256 or
+            # 0.5 is 1, whatever its low byte.
+            truth = self._const_truth(init)
+            if truth is not None:
+                self.ctx.emit_instr("db", "1" if truth else "0")
+                return
 
         if isinstance(init, ast.InitializerList):
             # Handle array or struct initializer
@@ -20829,6 +21486,12 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     self._emit_float_value(float(val))
                 else:
                     self._emit_int_value(val, elem_size)
+            elif (isinstance(elem_type, lt.BasicType)
+                    and not self._is_float_type(elem_type)
+                    and elem_size != 2):
+                # A variable, not a constant, in a wide integer element
+                # (a compound literal; the code stores it at run time).
+                self.ctx.emit_instr("ds", str(elem_size))
             else:
                 # Address of a symbol - emit as label reference
                 sym = self.ctx.lookup(name)
@@ -21798,11 +22461,20 @@ class CodeGenerator(Z80IntrinsicsMixin):
             tt = self._resolve_typename(expr.target_type) if hasattr(self, "_resolve_typename") else expr.target_type
             return self._type_size(tt)
         elif isinstance(expr, ast.SizeofExpr):
-            expr_type = self._get_expr_type(expr.operand)
-            if expr_type:
-                return self._type_size(expr_type)
-            return None
+            return self._sizeof_operand_size(expr.operand)
         return None  # Not a constant expression
+
+    def _sizeof_operand_size(self, operand) -> int | None:
+        """sizeof of an expression, or None when its type is unknown.  A
+        plain character constant has type int (C23 6.4.4.5), not char,
+        although the code generator treats it as a char for its value."""
+        if (isinstance(operand, ast.CharLiteral)
+                and operand.value.text.startswith("'")):
+            return self._type_size(lt.BasicType(name="int"))
+        expr_type = self._get_expr_type(operand)
+        if expr_type:
+            return self._type_size(expr_type)
+        return None
 
     def _escape_string(self, s: str) -> str:
         """Escape a string for assembly.

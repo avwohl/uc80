@@ -44,7 +44,7 @@ Notes for the codegen work that follows:
 - The user INT and NMI handler substitution works in whole-program mode only.
 - A C object that only assembly uses is removed in whole-program mode, unless the C source names the object in `#pragma uc80 public`.
 - A C function at a vector (`#pragma uc80 vector`) has no register save and no `RETI`. Use `#pragma uc80 interrupt` or `nmi` for a real interrupt function.
-- The compiler puts a compound literal in ROM only when the literal is const and no code writes the literal. A local pointer that points to a compound array literal (`const int *p = (const int[]){1, 2};` in a function) stops with an internal error. This defect is older than this change.
+- The compiler puts a compound literal in ROM only when the literal is const and no code writes the literal. A local pointer that points to a compound array literal (`const int *p = (const int[]){1, 2};` in a function) compiles and runs; `tests/test_c_type_corners.py` pins it.
 
 
 ## 1. Answer to the issue

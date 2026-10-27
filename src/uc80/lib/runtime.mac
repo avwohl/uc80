@@ -2022,11 +2022,27 @@ __fa_s:
 	CSEG
 ; ============================================================
 ; Float Comparison: Compare DEHL with (__tmp32)
-; Returns: Z if equal, C if DEHL < __tmp32
+; Returns: Z if equal, C if DEHL < __tmp32.
+; Unordered (either operand is a NaN): Z and C both set.  That pair
+; never comes from an ordered compare, so the code generator tests it
+; where an unordered result must give false (or true for !=).
 ; ============================================================
 	PUBLIC	__fcmp
 __fcmp:
 	PUSH	BC
+
+	; NaN check.  An exponent of FFH is D = 7FH|xx and E bit 7 set;
+	; only then look at the mantissa.  Fast path: two compares.
+	LD	A,D
+	AND	7FH
+	CP	7FH
+	JR	Z,__fcmp_lchk
+__fcmp_lok:
+	LD	A,(__tmp32+3)
+	AND	7FH
+	CP	7FH
+	JR	Z,__fcmp_rchk
+__fcmp_rok:
 
 	; IEEE 754: -0.0 == +0.0. Special-case zero before the bit-pattern
 	; compare so a signed-zero pair doesn't end up "left < right" just
@@ -2114,6 +2130,33 @@ __fcmp_neg:
 	CP	L
 
 __fcmp_diff:
+	POP	BC
+	RET
+
+__fcmp_lchk:
+	BIT	7,E
+	JR	Z,__fcmp_lok		; exponent FEH: finite
+	LD	A,E
+	AND	7FH
+	OR	H
+	OR	L
+	JR	Z,__fcmp_lok		; infinity
+	JR	__fcmp_unord
+__fcmp_rchk:
+	LD	A,(__tmp32+2)
+	BIT	7,A
+	JR	Z,__fcmp_rok		; exponent FEH: finite
+	AND	7FH
+	LD	B,A
+	LD	A,(__tmp32+1)
+	OR	B
+	LD	B,A
+	LD	A,(__tmp32)
+	OR	B
+	JR	Z,__fcmp_rok		; infinity
+__fcmp_unord:
+	XOR	A			; Z
+	SCF				; and C
 	POP	BC
 	RET
 

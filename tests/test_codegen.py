@@ -163,7 +163,7 @@ class TestUnaryOperators:
     def test_negation(self):
         """Unary negation."""
         code = gen("int main(void) { return -5; }")
-        assert "sbc\tHL,DE" in code  # 0 - 5
+        assert "sub\tH" in code  # 0 - 5, DE untouched
 
     def test_logical_not(self):
         """Logical NOT."""

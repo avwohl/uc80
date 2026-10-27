@@ -57,7 +57,8 @@ from run import normalize, run_ticks, ticks_path  # noqa: E402
 
 GEN_VERSION = 2
 FOCI = ["all", "char-arith", "const-ops", "conditions", "assign",
-        "bitfields", "shifts", "mul-div-const", "long", "switch", "calls",
+        "bitfields", "shifts", "mul-div-const", "long", "llong", "switch",
+        "calls",
         "incdec", "memory"]
 
 
@@ -92,6 +93,9 @@ I = CType("int", 16, True)
 U = CType("unsigned int", 16, False)
 L = CType("long", 32, True)
 UL = CType("unsigned long", 32, False)
+LL = CType("long long", 64, True)
+ULL = CType("unsigned long long", 64, False)
+LIT_TYPES = (I, U, L, UL, LL, ULL)     # the types a literal can have
 SCALARS = [CH, SC, UC, I, U, L, UL]
 CHARS = (CH, SC, UC)
 
@@ -117,6 +121,10 @@ def promote(t):
 def arith(a, b):
     """The type of the usual arithmetic conversions (int is 16 bits)."""
     a, b = promote(a), promote(b)
+    if a is ULL or b is ULL:
+        return ULL
+    if a is LL or b is LL:
+        return LL         # long long holds every unsigned long value
     if a is UL or b is UL:
         return UL
     if a is L or b is L:
@@ -127,7 +135,7 @@ def arith(a, b):
 
 
 def unsigned_of(t):
-    return U if t is I else UL if t is L else t
+    return U if t is I else UL if t is L else ULL if t is LL else t
 
 
 def conv_range(e, t):
@@ -138,14 +146,15 @@ def conv_range(e, t):
 
 def lit_type(t):
     """The type of a literal that holds every value of t."""
-    if t is I or t is U or t is L or t is UL:
+    if t in LIT_TYPES:
         return t
     return U if t.bf and not t.signed and t.bits == 16 else I
 
 
 def cconst(v, t, style=None):
     """C text for the constant v of type t (int, unsigned, long, ulong)."""
-    suf = {id(I): "", id(U): "u", id(L): "L", id(UL): "UL"}[id(t)]
+    suf = {id(I): "", id(U): "u", id(L): "L", id(UL): "UL", id(LL): "LL",
+           id(ULL): "ULL"}[id(t)]
     if style == "char" and t is I and 32 <= v < 127 and chr(v) not in "'\\":
         return f"'{chr(v)}'"
     if v < 0:
@@ -701,12 +710,19 @@ class Ck(S):
         self.e = e
 
     def lines(self, ind):
+        if self.e.t.bits == 64:
+            # both halves of a 64-bit value
+            return [f"{ind}ck({self.e.c()});",
+                    f"{ind}ck((unsigned long)((unsigned long long)"
+                    f"({self.e.c()}) >> 32));"]
         return [f"{ind}ck({self.e.c()});"]
 
     def ex(self, env):
         env.step()
-        v = wrap(self.e.ev(env), UL)
-        env.ck = ((((env.ck << 5) | (env.ck >> 27)) & 0xFFFFFFFF) ^ v)
+        x = self.e.ev(env)
+        for v in ((wrap(x, UL),) if self.e.t.bits < 64 else
+                  (wrap(x, UL), wrap(x >> 32, UL))):
+            env.ck = ((((env.ck << 5) | (env.ck >> 27)) & 0xFFFFFFFF) ^ v)
 
 
 class PCk(S):
@@ -1141,6 +1157,14 @@ INTERESTING = {
             -0x80000000],
     id(UL): [0, 1, 255, 256, 0xFFFF, 0x10000, 0x7FFFFFFF, 0x80000000,
              0xFFFFFFFF, 0x12345678],
+    id(LL): [0, 1, 2, 10, 255, 256, 65535, 65536, 0x7FFFFFFF, 0x80000000,
+             0xFFFFFFFF, 0x100000000, 0x123456789, 0x7FFFFFFFFFFFFFFF,
+             0x1000000000000, 0x8000, 0x7FFF, -1, -2, -256, -65536, -32768,
+             -32769, -0x80000000, -0x80000001, -0x100000000,
+             -0x7FFFFFFFFFFFFFFF - 1],
+    id(ULL): [0, 1, 255, 256, 0xFFFF, 0x10000, 0x7FFFFFFF, 0x80000000,
+              0xFFFFFFFF, 0x100000000, 0x123456789, 0x8000000000000000,
+              0xFFFFFFFFFFFFFFFF, 0x1234567],
 }
 MDC = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 25, 32, 60, 64, 100, 127, 128,
        255, 256, 1000, 1024, 10000, -1, -2, -3, -4, -8, -10, -16, -128, -256]
@@ -1159,7 +1183,8 @@ def focus_cfg(focus):
               "brk": 0.5},
         const_p=0.3, depth=3, n_main=(15, 30), n_pure=(2, 4), n_proc=(1, 3),
         n_params=(1, 3), n_glob=(6, 12), n_arr=(1, 2), n_struct=(1, 1),
-        n_ptr=(1, 2), bf_p=0.5, mdc=False, shiftc=False)
+        n_ptr=(1, 2), bf_p=0.5, mdc=False, shiftc=False,
+        lit={I: 5, U: 2, L: 1, UL: 1})
     if focus == "char-arith":
         c["types"] = {CH: 3, SC: 3, UC: 4, I: 1, U: 1, L: 0.3, UL: 0.3}
         c["expr"]["cast"] = 3
@@ -1186,6 +1211,11 @@ def focus_cfg(focus):
         c["mdc"] = True
     elif focus == "long":
         c["types"] = {CH: 0.5, SC: 0.5, UC: 0.5, I: 1, U: 1, L: 4, UL: 4}
+    elif focus == "llong":
+        c["types"] = {CH: 0.5, SC: 0.5, UC: 0.5, I: 1, U: 1, L: 2, UL: 2,
+                      LL: 4, ULL: 4}
+        c["lit"] = {I: 3, U: 1, L: 1, UL: 1, LL: 3, ULL: 3}
+        c["binop"].update({"<<": 2.5, ">>": 2.5})
     elif focus == "switch":
         c["stmt"].update(switch=8)
     elif focus == "calls":
@@ -1260,7 +1290,7 @@ class Gen:
 
     def const(self, t=None, style=None):
         if t is None:
-            t = self.pick({I: 5, U: 2, L: 1, UL: 1})
+            t = self.pick(self.cfg["lit"])
         if style is None:
             s = self.r.random()
             style = "hex" if s < 0.15 else "char" if s < 0.2 else None
@@ -1298,7 +1328,7 @@ class Gen:
     def shift_count(self, ctx, w, d):
         if self.cfg["shiftc"] or self.r.random() < 0.6:
             pool = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 14, 15, 16, 17, 23, 24,
-                    31]
+                    31, 32, 33, 40, 47, 48, 56, 63]
             return Const(self.r.choice([p for p in pool if p < w]),
                          self.r.choice([I, I, I, U, L]))
         e = self.expr(ctx, max(d - 1, 0))
@@ -1323,7 +1353,7 @@ class Gen:
                 if self.cfg["mdc"] and op in "*/%":
                     t = arith(a.t, I)
                     v = r.choice([m for m in MDC if t.lo <= m <= t.hi])
-                    b = Const(v, t if t in (I, U, L, UL) else I)
+                    b = Const(v, t if t in LIT_TYPES else I)
                 else:
                     b = self.const()
                 if r.random() < 0.2 and op not in "/%":
@@ -1490,7 +1520,7 @@ class Gen:
                 t = arith(lv.t, I)
                 rhs = Const(self.r.choice([m for m in MDC
                                            if t.lo <= m <= t.hi]),
-                            t if t in (I, U, L, UL) else I)
+                            t if t in LIT_TYPES else I)
             else:
                 rhs = self.const()
         else:
@@ -1659,7 +1689,7 @@ class Gen:
         gs, ga, gst, gp, gsp = [], [], [], [], []
         for _ in range(self.rint(cfg["n_glob"])):
             t = self.typ()
-            ct = t if t in (I, U, L, UL) else I
+            ct = t if t in LIT_TYPES else I
             init = Const(self.value(t), ct) if t not in CHARS else \
                 Const(self.value(t), I)
             gs.append(Var(self.name("g"), "scalar", t, init=init,
@@ -1839,6 +1869,10 @@ def classify(u: Res, s: Res, model: str) -> str:
     if u.status != "ok":
         return f"UC80-{u.status.upper()}"
     if s.status != "ok":
+        # No SDCC answer (SDCC cannot build every long long program): the
+        # model alone says whether uc80 is right.
+        if u.out != model:
+            return "UC80-WRONG"
         return f"SDCC-{s.status.upper()}"
     uo, so = u.out == model, s.out == model
     if uo and so:

@@ -515,11 +515,17 @@ python3 bench/difftest.py --print 17 --focus calls
 ```
 
 The focus areas are `all`, `char-arith`, `const-ops`, `conditions`,
-`assign`, `bitfields`, `shifts`, `mul-div-const`, `long`, `switch`,
+`assign`, `bitfields`, `shifts`, `mul-div-const`, `long`, `llong`, `switch`,
 `calls`, `incdec` and `memory`. A focus area changes the weights of
 the types, operators and statements. Program *i* of a run has the seed
 `--seed` + *i*. The same seed, focus area and tester version always
 give the same program.
+
+The focus area `llong` gives much weight to `long long` and
+`unsigned long long`. SDCC cannot build or run every such program
+correctly. When SDCC does not agree with the model, only the model
+decides: the status is `UC80-WRONG` if uc80 differs from the model.
+A checksum takes both halves of a 64-bit value.
 
 | Option | Meaning |
 |---|---|

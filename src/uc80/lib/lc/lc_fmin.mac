@@ -95,7 +95,8 @@ _fminl:
 	ld	E,(IX+6)
 	ld	D,(IX+7)
 	call	__fcmp
-	jr c,@FCMP_T7_fmin
+	jr	Z,@FCMP_F8_fmin
+	jr	C,@FCMP_T7_fmin
 @FCMP_F8_fmin:
 	ld	HL,0
 	jr @FCMP_E9_fmin
@@ -123,7 +124,8 @@ _fminl:
 	ld	E,(IX+10)
 	ld	D,(IX+11)
 	call	__fcmp
-	jr c,@FCMP_T12_fmin
+	jr	Z,@FCMP_F13_fmin
+	jr	C,@FCMP_T12_fmin
 @FCMP_F13_fmin:
 	ld	HL,0
 	jr @FCMP_E14_fmin
