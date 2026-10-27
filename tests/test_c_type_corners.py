@@ -201,3 +201,101 @@ int main(void) {
 def test_typeof_of_a_function_type(tmp_path):
     out = build_and_run(tmp_path, TYPEOF_FN, PRINTF)
     assert out == "7 5\n", out
+
+
+INLINE16_SMALL = r"""#include <stdio.h>
+#include <stdint.h>
+static long f(uint16_t x) { return (long)(-x); }
+static long g(uint16_t x) { return (long)(~x); }
+static long h(uint16_t x) { return (long)(2 - x); }
+static int k(uint16_t x) { return (-x) > 100; }
+static long m(uint16_t x) { return (long)(x - 1); }
+int main(void) {
+    printf("%ld %ld %ld %d\n", f(300), g(300), h(300), k(300));
+    printf("%ld %ld %ld\n", f(32767), f(sizeof(int)), m(0));
+    printf("%ld %ld\n", f(300u), f(0));
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flags", CONFIGS)
+def test_inlined_uint16_parameter_with_a_small_literal(tmp_path, flags):
+    # A plain decimal literal is a signed int: it must be converted to the
+    # unsigned parameter type before -x, ~x or a comparison sees it.
+    out = build_and_run(tmp_path, INLINE16_SMALL, PRINTF + flags)
+    assert out == ("65236 65235 65238 1\n32769 65534 65535\n"
+                   "65236 0\n"), out
+
+
+AUTO_SHAPES = r"""#include <stdio.h>
+int fn(void) { return 5; }
+struct S { char c; long l; } gm;
+long gl;
+int main(void) {
+    auto s = "str";
+    auto s2 = "ye" "s";
+    printf("%c %c %c %d\n", s[0], s[1], *(s + 2), (int)sizeof(*s));
+    s2++;
+    printf("%c %c\n", *s2, s2[1]);
+    auto fp = fn;
+    printf("%d\n", fp());
+    auto x1 = 1.5, x2 = 2.5;
+    printf("%d\n", (int)(x1 + x2));
+    auto i1 = 100000L, i2 = 7L, i3 = i1 / i2;
+    printf("%d %d\n", (int)i3, (int)sizeof i2);
+    auto c1 = 'a', c2 = 1.5f;
+    printf("%d %d\n", (int)sizeof c1, (int)sizeof c2);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flags", CONFIGS)
+def test_auto_string_function_and_several_declarators(tmp_path, flags):
+    out = build_and_run(tmp_path, AUTO_SHAPES, PRINTF + flags)
+    assert out == "s t r 1\ne s\n5\n4\n14285 4\n2 4\n", out
+
+
+SIZEOF_TYPEOF = r"""#include <stdio.h>
+struct M { char c; long l; } gm;
+long gl;
+int main(void) {
+    long ll;
+    printf("%d %d %d %d\n", (int)sizeof(typeof(gl)), (int)sizeof(typeof(gm)),
+           (int)sizeof(typeof(gm.l)), (int)sizeof(typeof(1L)));
+    printf("%d %d\n", (int)sizeof(typeof(ll)), (int)sizeof(typeof(ll) *));
+    printf("%d %d %d\n", (int)sizeof('a') == 2,
+           (int)sizeof 'a' == (int)sizeof(int),
+           (long)sizeof('a') == (long)sizeof(int));
+    int a = (int)sizeof('a');
+    printf("%d\n", a);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flags", CONFIGS)
+def test_sizeof_of_typeof_and_char_constant_in_a_comparison(tmp_path, flags):
+    out = build_and_run(tmp_path, SIZEOF_TYPEOF, PRINTF + flags)
+    assert out == "4 5 4 4\n4 2\n1 1 1\n2\n", out
+
+
+ROUND = r"""#include <stdio.h>
+#include <math.h>
+int main(void) {
+    printf("%ld %ld %ld %ld\n", lround(2.5), lround(-2.5), lround(0.4),
+           lround(123456.5));
+    printf("%lld %lld %lld\n", llround(1e10), llround(-1e10), llround(-0.5));
+    printf("%ld %ld\n", lround(1e30), lround(-1e30));
+    printf("%lld %lld\n", llround(1e30), llround(-1e30));
+    return 0;
+}
+"""
+
+
+def test_lround_and_llround_saturate(tmp_path):
+    out = build_and_run(tmp_path, ROUND, PRINTF)
+    assert out == ("3 -3 0 123457\n10000000000 -10000000000 -1\n"
+                   "2147483647 -2147483648\n"
+                   "9223372036854775807 -9223372036854775808\n"), out

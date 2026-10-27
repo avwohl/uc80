@@ -2529,7 +2529,9 @@ class CallGraphAnalyzer:
                 return -32768 <= v <= 32767
             # A decimal 40000 has type long, not unsigned int: left alone
             # it would make ``x + x`` of the unsigned parameter 32 bits.
-            return 0 <= v <= (65535 if int_flags(arg)[2] else 32767)
+            # Nor is a plain 300: it is a signed int, so -x, ~x and
+            # comparisons would run signed.  Only a U literal is unsigned.
+            return int_flags(arg)[2] and 0 <= v <= 65535
         if isinstance(arg, ast.Identifier):
             t = types.get(arg.name.text)
             return t is not None and is16(t)
@@ -4105,15 +4107,38 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 else:
                     table[name] = old
 
+        def split_auto(items):
+            """``auto a = 1, b = 2.5;`` deduces each declarator on its
+            own, so the declaration becomes one declaration per
+            declarator (in place, in the list that holds it)."""
+            i = 0
+            while i < len(items):
+                d = items[i]
+                if (isinstance(d, ast.Declaration) and _untyped_auto(d)
+                        and len(d.declarators) > 1):
+                    parts = [ast.Declaration(
+                        decl_specs=list(d.decl_specs), declarators=[dc],
+                        pos=d.pos) for dc in d.declarators]
+                    items[i:i + 1] = parts
+                i += 1
+
         def deduce_auto(decl):
             """C23 6.7.10: ``auto x = init;`` has the unqualified type of
             init, after array and function decay.  The declaration gets
             a typeof_unqual(init) specifier with its type already set."""
             ds = decl.declarators
-            if len(ds) != 1 or not isinstance(ds[0],
-                                              ast.InitDeclaratorWithInit):
+            if len(ds) < 1 or not isinstance(ds[0],
+                                             ast.InitDeclaratorWithInit):
                 return
+            if not isinstance(ds[0].declarator, ast.Declarator):
+                raise CodegenError(
+                    "auto declaration needs a plain identifier "
+                    "(auto x = init;), not a pointer, array or function "
+                    "declarator")
             init = ds[0].init
+            if isinstance(init, list) and len(init) >= 1:
+                # Adjacent string literals arrive as a list.
+                init = init[0]
             if not dataclasses.is_dataclass(init):
                 return
             walk(init)
@@ -4121,10 +4146,15 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 t = self._c_expr_type(init)
             except Exception:
                 t = None
+            if (isinstance(init, ast.StringLiteral)
+                    and init.value.text.startswith('"')):
+                t = lt.PointerType(base_type=lt.BasicType(name="char"))
             if t is None:
                 return
             if isinstance(t, lt.ArrayType):
                 t = lt.PointerType(base_type=t.base_type)
+            elif isinstance(t, lt.FunctionType):
+                t = lt.PointerType(base_type=t)
             spec = ast.TypeofUnqualExpr(operand=copy.deepcopy(init))
             spec._resolved = _from_legacy(t)
             decl.decl_specs = list(decl.decl_specs) + [spec]
@@ -4176,6 +4206,8 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 return
             if isinstance(n, (ast.CompoundStmt, ast.ForStmt)):
                 push()
+                if isinstance(n, ast.CompoundStmt):
+                    split_auto(n.items)
                 for c in _children(n):
                     walk(c)
                 pop()
@@ -4184,6 +4216,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 walk(c)
 
         try:
+            split_auto(unit.items)
             for item in unit.items or []:
                 walk(item)
         finally:
@@ -9926,6 +9959,38 @@ class CodeGenerator(Z80IntrinsicsMixin):
             return lt.BasicType(name="int")
         return self._get_expr_type(expr)
 
+    @staticmethod
+    def _fill_typeof(resolved, decl_specs):
+        """The core resolver leaves a typeof(expr) specifier of a type
+        name as a "typeof" type; swap in the type the typeof pass found
+        for it (sizeof(typeof(x)), casts to typeof(x), _Generic)."""
+        found = unqual = None
+        for sp in decl_specs or []:
+            if isinstance(sp, (ast.TypeofExpr, ast.TypeofUnqualExpr)):
+                found = getattr(sp, "_resolved", None)
+                unqual = isinstance(sp, ast.TypeofUnqualExpr)
+        if found is None:
+            return resolved
+
+        def fill(r):
+            if r is None:
+                return r
+            if r.kind == "typeof":
+                n = copy.copy(found)
+                n.is_const = n.is_const or r.is_const
+                n.is_volatile = n.is_volatile or r.is_volatile
+                if unqual:
+                    n.is_const = n.is_volatile = False
+                return n
+            if r.kind == "pointer":
+                r = copy.copy(r)
+                r.pointee = fill(r.pointee)
+            elif r.kind == "array":
+                r = copy.copy(r)
+                r.element = fill(r.element)
+            return r
+        return fill(resolved)
+
     def _resolve_typename(self, t):
         """Resolve an auto-AST TypeName / type-spec list to a legacy type.
 
@@ -9945,7 +10010,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             from uc_core.codegen_helpers import resolve_type_from_decl as _core_resolve
             _, resolved = _core_resolve(
                 t.decl_specs, getattr(t, "abstract_declarator", None))
-            return _to_legacy(resolved)
+            return _to_legacy(self._fill_typeof(resolved, t.decl_specs))
         if hasattr(ast, "TypeNameWithDeclarator") and isinstance(t, ast.TypeNameWithDeclarator):
             # Use uc_core's resolve_type_from_decl directly — uc80's
             # local one doesn't handle abstract pointer/array
@@ -9953,7 +10018,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             # silently dropping the pointer/array shape).
             from uc_core.codegen_helpers import resolve_type_from_decl as _core_resolve
             _, resolved = _core_resolve(t.decl_specs, t.declarator)
-            return _to_legacy(resolved)
+            return _to_legacy(self._fill_typeof(resolved, t.decl_specs))
         return t
 
     def gen_generic_selection(self, expr: ast.GenericSelection, force_long: bool = False) -> None:
@@ -16138,8 +16203,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
             if isinstance(e, ast.SizeofExpr):
                 if isinstance(e.operand, ast.StringLiteral):
                     return None
-                t = self._get_expr_type(e.operand)
-                return self._type_size(t) if t else None
+                return self._sizeof_operand_size(e.operand)
             if isinstance(e, ast.UnaryOp):
                 if e.op not in ("-", "+", "~"):
                     return None
