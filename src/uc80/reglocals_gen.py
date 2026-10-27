@@ -14,7 +14,7 @@ import re
 from uc_core import ast
 from uc_core.volatility import children as _children
 
-from . import reglocals
+from . import iyptr, reglocals
 
 _SETJMP = re.compile(r"setjmp", re.IGNORECASE)
 
@@ -56,6 +56,8 @@ class RegLocalsMixin:
         self._rl_on = False
         self._rl_fn_w: dict = {}
         self._rl_wrap_id = [0]
+        self._rl_iy_clean: set = set()
+        self._rl_iy_on = not __import__("os").environ.get("UC80_NO_IY")
         self._rl_reads_cache = None
         scan = getattr(self, "_regcc_scan", None)
         if (not enabled or not reglocals.enabled() or scan is None
@@ -165,6 +167,7 @@ class RegLocalsMixin:
             size = self._type_size(t)
         except Exception:
             return
+        is_ptr = isinstance(t, cg.lt.PointerType)
         if size not in (1, 2):
             return
         if sym.uses_shared_storage:
@@ -175,7 +178,7 @@ class RegLocalsMixin:
             nbytes = size
         self._rl_vars.append(reglocals.Var(
             sym.name, kind, base, size, nbytes, is_param=loc is not None,
-            param_loc=loc, hint=hint))
+            param_loc=loc, hint=hint, is_ptr=is_ptr))
 
     def _rl_finish(self, name: str, region_start: int, entry_idx: int,
                    frame_mode: bool) -> None:
@@ -190,16 +193,41 @@ class RegLocalsMixin:
                                   exit_live=self._rl_exit_live())
         res = reglocals.allocate(region, self._rl_vars, env,
                                  frame_mode, self._rl_wrap_id)
-        if res is None:
+        base_lines = res.lines if res is not None else list(region)
+        base_pro = res.prologue if res is not None else []
+        assigned = list(res.assigned) if res is not None else []
+        gain = res.gain if res is not None else 0.0
+        iy = None
+        only = __import__("os").environ.get("UC80_IY_ONLY")
+        if self._rl_iy_on and (not only or name in only.split(",")):
+            iy = iyptr.best(region, self._rl_vars, env, frame_mode,
+                            self._rl_wrap_id, base_lines, base_pro,
+                            self._rl_iy_is_clean)
+        if iy is not None:
+            lines_n, pro_n, assigned_n, ivar, igain = iy
+            for v in self._rl_vars:
+                v.reg = None
+            for v in assigned_n:
+                v.reg = v.reg or "?"
+            ivar.reg = "IY"
+            base_lines, base_pro = lines_n, pro_n
+            assigned = [ivar] + assigned_n
+            gain = igain
+        elif res is None:
             return
-        lines[region_start:] = res.lines
-        if res.prologue:
-            lines[entry_idx:entry_idx] = res.prologue
+        lines[region_start:] = base_lines
+        if base_pro:
+            lines[entry_idx:entry_idx] = base_pro
         if self._rl_debug:
             import sys
             print(f"reglocals: {name}: "
-                  + ", ".join(f"{v.name}->{v.reg}" for v in res.assigned)
-                  + f" (gain {res.gain:.0f})", file=sys.stderr)
+                  + ", ".join(f"{v.name}->{v.reg}" for v in assigned)
+                  + f" (gain {gain:.0f})", file=sys.stderr)
+
+    _rl_iy_on = True
+
+    def _rl_iy_is_clean(self, target: str) -> bool:
+        return target in self._rl_iy_clean or iyptr.helper_clean(target)
 
     def _rl_exit_live(self) -> int:
         """The bytes a return leaves live: nothing for void, A and HL for a
@@ -228,3 +256,6 @@ class RegLocalsMixin:
         lbl = self._rl_label(name)
         self._rl_fn_w[lbl] = reglocals.function_writes(
             self.ctx.lines[text_start:], self._rl_env(), lbl)
+        if iyptr.function_clean(self.ctx.lines[text_start:], self._rl_env(),
+                                lbl, self._rl_iy_is_clean):
+            self._rl_iy_clean.add(lbl)

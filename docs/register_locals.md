@@ -2,6 +2,8 @@
 
 Without this pass, every named local lives in memory. The slot is a static `??AUTO` byte range or an IX frame slot. Each access costs 13 to 19 T-states. A register move costs 4 T-states. The pass moves up to two scalar locals of a function into BC or DE. It is step 1 of family G in [codegen_gap.md](codegen_gap.md).
 
+Step 2 adds one pointer local in IY (see "A pointer in IY"). The code is in `src/uc80/iyptr.py`. "Tuning" lists the constants and the measured effect of each one.
+
 ## Which locals qualify
 
 A local qualifies when all of these are true:
@@ -10,7 +12,7 @@ A local qualifies when all of these are true:
 - Nothing takes the address of the local.
 - The local is not `volatile`.
 - The function has no inline assembly, no `setjmp` call and no statement expression.
-- The function is not an interrupt function, not `main`, and no outside code reaches the function (an assembly file, a function pointer, `public`).
+- The function is not an interrupt function. No outside code reaches the function (an assembly file, a function pointer, `public`). `main` qualifies.
 
 A register parameter qualifies too. The prologue already stores the parameter in a slot. The pass moves the parameter from A, HL, E or DE to its new register.
 
@@ -56,6 +58,67 @@ A text that the pass does not know makes the whole function keep its locals in m
 - Shared storage. The `??AUTO` slot of a local that moved to a register stays reserved. The call graph analyser sizes `??AUTO` before the body exists, so the slot is not given back. This costs no code, only RAM. A later step can shrink the area.
 - Recursion. A function in frame mode (IX frame) pushes and pops the resident registers around each recursive call. The cost model counts this.
 
+## A pointer in IY
+
+A field access through a pointer is slow. With the pointer in memory, `p->next` at offset 4 costs 77 T-states. The code is `ld HL,(p)`, `ld DE,4`, `add HL,DE`, two byte loads and `ex DE,HL`.
+
+With the pointer in BC, the same access costs 62 T-states. With the pointer in IY, the access is `ld L,(IY+4)` and `ld H,(IY+5)`. It costs 38 T-states and does not use HL, DE or BC. IY also frees BC and DE for two other locals.
+
+The module `iyptr.py` puts one pointer local of a function in IY. The pass for BC and DE then works on the other locals. One function can have one pointer in IY and two locals in BC and DE.
+
+### Which pointers qualify
+
+A pointer local qualifies when it meets the rules of "Which locals qualify". The pointer can point to a struct or to any other type. A pointer parameter in a register qualifies. A parameter on the stack does not qualify, because the code generator gives the pass no slot for it. `main` qualifies. An interrupt function does not.
+
+### Stage 1: the accesses
+
+The pass reads each access to the slot of the pointer. If an access has a form that the pass does not know, the pointer stays out of IY.
+
+- `ld HL,(p)`, then `inc HL` or `ld DE,k` with `add HL,DE` (also `ld BC,k`), then an access through `(HL)`, becomes an access through `(IY+k)`. The pass handles byte and word loads and stores, `inc (HL)`, `dec (HL)`, ALU operations, `bit`, `set`, `res` and shifts. The offset must be in the range -128 to 126.
+- HL must be dead after the last access. DE or BC must be dead too when the pass removes a `ld DE,k`. If HL is live, the pass keeps the old text and reads the pointer with `push IY` and `pop HL`.
+- The pass folds `ex DE,HL` after a word load. The text `ld E,(IY+4)`, `ld D,(IY+5)`, `ex DE,HL` becomes `ld L,(IY+4)`, `ld H,(IY+5)`.
+- The pass folds `inc (HL)`, `jr nz,L`, `inc HL`, `inc (HL)`, `L:` (a word in memory) into two `inc (IY+k)`.
+- The code `p++` and `p += k` becomes `inc IY` or `ld DE,k` with `add IY,DE`. The value of `*p++` is the access followed by `inc IY`.
+- Any other read of the pointer becomes `push IY` and `pop HL`. It costs 25 T-states, and the read from memory costs 16. A store of the pointer becomes `push HL` and `pop IY`. No cheaper move from HL to IY exists.
+- A frame function (`--no-shared-storage` or recursion) moves a pointer parameter from HL or DE to IY at the entry. The move comes before the moves of the other parameters.
+
+### Stage 2: the calls
+
+A callee can change IY. Stage 2 runs after the pass for BC and DE. If the pointer is live after a call, the pass puts `push IY` before the call group and `pop IY` after it. The comment `; RYn` marks the two instructions. The call group contains the pushes of the arguments, so the stack of the callee stays correct.
+
+If an argument is a call, the wraps nest. Both wraps stay, because the code reads the pointer after the inner call and inside the outer region.
+
+The code generator does not wrap a call to a clean callee. These callees are clean:
+
+- A runtime helper of `lib/rt` (`__mul16`, `__div32` and others). Each routine keeps IY. `__callhl` is not clean.
+- A function that the code generator finished earlier, if the text has no IY and calls only clean code.
+
+All other callees are of unknown type. Examples are a function that the code generator has not yet made, a library routine, an assembly file and a call through a pointer.
+
+`prune_iy` runs on the final program, after `reglocals.prune`. It removes a wrap when the routines inside never change IY. It follows calls and jumps through the whole text. A callee that the code generator did not know is now known. A routine that the pass cannot follow counts as a routine that changes IY.
+
+### Interrupts
+
+An interrupt function pushes AF, BC, DE, HL and IY on entry and pops them at the exit. A pointer in IY therefore survives an interrupt. An interrupt function never keeps a local in IY. The functions that an interrupt function calls can use IY, because the interrupt function saves IY.
+
+The proof `iy` in `bench/rom/isrproof.py` runs a function with IY, a callee with IY and an NMI function that calls a function with IY. It compares the three sums with a Python model.
+
+### The choice
+
+The pass tries each of the three heaviest pointers in IY. For each pointer, it runs the pass for BC and DE on the other locals and adds the wraps. The cost model of "How the pass chooses" gives the cost. The text with IY wins when its cost is lower than the best text without IY by more than 3 weighted T-states. The estimate counts a wrap for each unknown callee.
+
+### Debugging IY
+
+- `UC80_NO_IY=1` turns off IY.
+- `UC80_IY_ONLY=f,g` allows IY only in the functions `f` and `g`. Use this switch to find the function of a wrong answer.
+- `UC80_RL_DEBUG=1` prints the cost of each IY candidate and the cost without IY.
+
+## Debugging
+
+- `UC80_NO_IY=1` turns off IY.
+- `UC80_IY_ONLY=f,g` allows IY only in the functions `f` and `g`. Use it to find the function of a wrong answer: switch IY off in the other functions.
+- `UC80_RL_DEBUG=1` prints the cost of each IY candidate and the base cost.
+
 ## Debugging
 
 - `UC80_RL_DEBUG=1` prints the candidates, the gain of each configuration and the rejections.
@@ -68,6 +131,8 @@ A text that the pass does not know makes the whole function keep its locals in m
 
 ## Known limits
 
-- Only two locals, only BC and DE. IY and HL are not used.
+- Only two locals in BC and DE, and one pointer in IY. HL is not used.
+- A function with two hot pointers (`*d++ = *s++`) puts only one of them in IY.
+- A call to an unknown callee costs 29 T-states when the pointer is live (`push IY`, `pop IY`). A loop with an unknown call in it often keeps the pointer in BC.
 - Array element addresses still use `ld BC,_arr` and `add HL,BC`. When both pairs are busy, the code pays a wrap. The chain assignment `a[i]=b[j]=1` is the worst case.
 - A local that lives across many calls often loses against memory. The cost model then keeps the local in memory.

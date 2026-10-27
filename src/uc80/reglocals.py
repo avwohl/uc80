@@ -54,6 +54,22 @@ OTHER_PAIR = {"BC": "DE", "DE": "BC"}
 _BIT_OF_LETTER = {"B": B, "C": C, "D": D, "E": E}
 MAX_NODES = 2500
 _DUMP = __import__("os").environ.get("UC80_RL_DUMP", "")
+
+
+def _knob(name: str, default: float) -> float:
+    """A tuning constant.  The environment variable is for the experiments
+    of docs/register_locals.md (Tuning); the default is the shipped value."""
+    try:
+        return float(__import__("os").environ.get(name, default))
+    except ValueError:
+        return default
+
+
+SIZE_W = _knob("UC80_RL_SIZEW", 6.0)        # weighted T-states per byte
+MIN_GAIN = _knob("UC80_RL_MINGAIN", 3.0)    # the smallest gain that pays
+LOOP_BASE = _knob("UC80_RL_LOOPB", 8.0)     # weight of one loop level
+MIN_WEIGHT = _knob("UC80_RL_MINWEIGHT", 2.0)  # the lightest candidate
+PRICE_PRUNE = _knob("UC80_RL_PRICEPRUNE", 1.0)  # 0: price every wrap
 _DBG = bool(__import__("os").environ.get("UC80_RL_DEBUG"))
 
 
@@ -501,6 +517,7 @@ class Var:
     weight: float = 0.0
     reg: Optional[str] = None          # "BC" or "DE" in a configuration
     hint: bool = False                 # declared with 'register'
+    is_ptr: bool = False               # a pointer (a candidate for IY)
 
     def bytemap(self):
         lo, hi = LO_NAME[self.reg], HI_NAME[self.reg]
@@ -1321,6 +1338,13 @@ def _tstates(nd: Node) -> int:
     def ixm(o):
         return o.startswith("(IX") or o.startswith("(IY")
 
+    if op == "ld" and n == 2 and "IY" in ops:
+        d, s = ops
+        if d == "IY":
+            return 20 if mem(s) else 14
+        return 10 if d == "SP" else 20
+    if op in ("inc", "dec") and ops == ["IY"]:
+        return 10
     if op == "ld" and n == 2:
         d, s = ops
         if d in ("A", "B", "C", "D", "E", "H", "L") and s in ("A", "B", "C", "D", "E", "H", "L"):
@@ -1411,7 +1435,7 @@ def loop_weights(nodes, succ) -> list[float]:
     d = 0
     for i in range(n):
         d += diff[i]
-        out.append(8.0 ** min(d, 3))
+        out.append(LOOP_BASE ** min(d, 3))
     return out
 
 
@@ -1464,7 +1488,7 @@ def _weighted_cost(nodes, env: Env) -> float:
                 if wr & pm and not _wrap_tag(x):
                     ok = False
                     break
-            if ok:
+            if ok and PRICE_PRUNE:
                 free.add(s)
                 free.add(i)
     for i, nd in enumerate(nodes):
@@ -1472,7 +1496,7 @@ def _weighted_cost(nodes, env: Env) -> float:
             continue
         t += w[i] * _tstates(nd)
         nb += nd.size
-    return t + 6.0 * nb
+    return t + SIZE_W * nb
 
 
 _WRAP = re.compile(r";\s*RL(\d+)\s*$")
@@ -1611,7 +1635,7 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
     tighten_swaps(nodes, succ, env.exit_live)
     for v in vars_:
         v.weight = _slot_weight(nodes, succ, v)
-    cands = sorted([v for v in vars_ if v.weight >= 2.0],
+    cands = sorted([v for v in vars_ if v.weight >= MIN_WEIGHT],
                    key=lambda v: -v.weight * (2.0 if v.hint else 1.0))[:4]
     _dbg("candidates", [(v.name, v.weight) for v in vars_])
     if not cands:
@@ -1637,7 +1661,7 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
                 import sys
                 print("\n".join(render(new)), file=sys.stderr)
             singles.append((gain, v, reg, new, pro))
-            if gain > best[0] + 3.0:
+            if gain > best[0] + MIN_GAIN:
                 best = (gain, [(v, reg)], (new, pro))
     singles.sort(key=lambda t: -t[0])
     if max_vars >= 2 and len(cands) >= 2:
@@ -1662,7 +1686,7 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
                 if gain > 0:
                     gain *= 1.0 + 0.25 * (v1.hint + v2.hint) / 2
                 _dbg("pair", v1.name, r1, v2.name, r2, "gain", gain)
-                if gain > best[0] + 3.0:
+                if gain > best[0] + MIN_GAIN:
                     best = (gain, [(v1, r1), (v2, r2)], (new, pro))
     if best[1] is None:
         return None
@@ -1772,6 +1796,9 @@ def _lenient_succ(nodes, i, labels, entries):
 class _Summaries:
     """May-write masks of the routines of a text, from the text."""
 
+    # what a routine the pass cannot follow may write (iyptr adds a bit)
+    FULL = ALL7
+
     def __init__(self, nodes):
         self.nodes = nodes
         self.labels = {nd.label: i for i, nd in enumerate(nodes)
@@ -1805,18 +1832,18 @@ class _Summaries:
                 deps.add(nd.label)
                 continue
             if nd.kind == "data":
-                return ALL7, set()
+                return self.FULL, set()
             if nd.kind == "ins":
                 if nd.flow != "call":
                     w |= nd.wr
             succ, ext = _lenient_succ(nodes, i, labels, self.entries)
             if succ is None:
-                return ALL7, set()
+                return self.FULL, set()
             if ext is not None:
                 if ext in labels:
                     deps.add(ext)
                 else:
-                    return ALL7, set()
+                    return self.FULL, set()
             stack.extend(succ)
         return w, deps
 
@@ -1824,7 +1851,7 @@ class _Summaries:
         if label in self.memo:
             return self.memo[label]
         if label not in self.labels:
-            return ALL7
+            return self.FULL
         busy = _busy if _busy is not None else set()
         if label in busy:
             return 0            # a cycle adds nothing of its own
@@ -1839,7 +1866,7 @@ class _Summaries:
                 continue
             w |= self.writes(d, busy)
         busy.discard(label)
-        if w == ALL7 or not cyc or not busy:
+        if w == self.FULL or not cyc or not busy:
             self.memo[label] = w
         return w
 

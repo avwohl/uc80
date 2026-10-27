@@ -36,7 +36,7 @@ from . import scan_hook
 from . import file_hook
 
 from . import peep_local
-from . import reglocals
+from . import iyptr, reglocals
 
 # Import peephole optimizer from upeepz80 library
 from upeepz80 import PeepholeOptimizer
@@ -1508,6 +1508,7 @@ def main() -> int:
         # The register-locals wraps that protect nothing (the peephole
         # pass has run: the callees are final).
         code = reglocals.prune(code)
+        code = iyptr.prune_iy(code)
 
         # The volatile markers and fence labels are for the passes above only.
         code = volatile_fence.strip(code)

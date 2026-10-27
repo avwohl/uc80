@@ -6,7 +6,7 @@ Part of the uc80 benchmark harness.  SPDX-License-Identifier: GPL-3.0-or-later
 See docs/rom.md ("Proof: interrupts and ports").
 
     python3 bench/rom/isrproof.py            # all three
-    python3 bench/rom/isrproof.py nmi seq bank
+    python3 bench/rom/isrproof.py nmi seq bank iy
     python3 bench/rom/isrproof.py --sdas     # uc80 --asm-syntax=sdas, sdldz80
 
 nmi   The snd-cmdq kernel with a real NMI.  The NMI handler (#pragma uc80
@@ -21,6 +21,12 @@ bank  Bank selection with z80_in16: IN with the bank number in B, then
       reads through the banked window at 8000h.  The port log must be the
       expected sequence of 16-bit port addresses and the bytes read must
       be the bytes of the image.
+iy    Pointer locals in IY and registers in BC and DE under a real NMI.
+      walk_main () keeps its list pointer in IY and calls mark (), which
+      uses IY too (the caller must save IY).  The NMI function runs
+      walk_isr () on another list (the interrupt function must save IY).
+      The three sums must equal a Python model, and each of the three
+      functions must use (IY+d).
 """
 
 import random
@@ -392,7 +398,176 @@ def prove_bank(work: Path):
                 bank_ports=sorted({p for p, _v in got_in}))
 
 
-PROOFS = {"nmi": prove_nmi, "seq": prove_seq, "bank": prove_bank}
+# ---- iy: a pointer in IY and register locals survive an NMI --------------
+
+IY_SRC = r"""
+#include "snd.h"
+#include <z80.h>
+
+struct rec { uint8_t a; uint8_t b; uint16_t c; uint8_t f; struct rec *next; };
+static struct rec recs[6];
+static struct rec irecs[4];
+static struct rec mrecs[3];
+static volatile uint16_t isr_total, isr_n;
+static uint16_t side;
+
+/* Each function keeps its list pointer p in IY.  mark () runs inside the
+ * loop of walk_main (): walk_main () must save IY around the call.  The NMI
+ * function runs walk_isr (): the interrupt function must save IY.  Each
+ * function has its own copy, so no function shares locals with an interrupt. */
+static void mark(void)
+{
+    struct rec *q = mrecs;
+    while (q) {
+        q->b++;
+        q->f = (uint8_t) (q->f + q->b);
+        side = (uint16_t) (side + q->a + q->c + q->f);
+        q->c = (uint16_t) (q->c + 1);
+        q = q->next;
+    }
+}
+
+static uint16_t walk_main(void)
+{
+    struct rec *p = recs;
+    uint16_t t = 0;
+    while (p) {
+        t = (uint16_t) (t + p->a + p->c);
+        p->b++;
+        p->f = (uint8_t) (p->a ^ p->b);
+        if (p->f & 1)
+            t++;
+        mark();
+        t = (uint16_t) (t + p->c);
+        p = p->next;
+    }
+    return t;
+}
+
+static uint16_t walk_isr(void)
+{
+    struct rec *p = irecs;
+    uint16_t t = 0;
+    while (p) {
+        t = (uint16_t) (t + p->a + p->c);
+        p->b++;
+        p->f = (uint8_t) (p->a ^ p->b);
+        if (p->f & 1)
+            t++;
+        t = (uint16_t) (t + p->c);
+        p = p->next;
+    }
+    return t;
+}
+
+#pragma uc80 nmi nmi_isr
+void nmi_isr(void)
+{
+    isr_total = (uint16_t) (isr_total + walk_isr());
+    isr_n++;
+}
+
+static void fill(struct rec *r, int n, uint8_t seed)
+{
+    for (int i = 0; i < n; i++) {
+        r[i].a = (uint8_t) (seed + 7 * i);
+        r[i].b = 0;
+        r[i].c = (uint16_t) (seed * 100 + 13 * i);
+        r[i].next = i + 1 < n ? &r[i + 1] : 0;
+    }
+}
+
+int main(void)
+{
+    uint16_t total = 0;
+
+    isr_total = 0;
+    isr_n = 0;
+    fill(recs, 6, 11);
+    fill(irecs, 4, 90);
+    fill(mrecs, 3, 40);
+    for (int r = 0; r < 120; r++)
+        total = (uint16_t) (total + walk_main());
+    out(0x10, (uint8_t) total);
+    out(0x11, (uint8_t) (total >> 8));
+    out(0x12, (uint8_t) isr_total);
+    out(0x13, (uint8_t) (isr_total >> 8));
+    out(0x14, (uint8_t) isr_n);
+    out(0x15, (uint8_t) (isr_n >> 8));
+    out(0x16, (uint8_t) side);
+    out(0x17, (uint8_t) (side >> 8));
+    out(PORT_END, 0);
+    return 0;
+}
+"""
+
+
+def _model_walk(n, seed, rounds, marks=0):
+    """The sum that walk_main () or walk_isr () returns over the rounds
+    (b counts the visits, f = a ^ b)."""
+    recs = [dict(a=(seed + 7 * i) & 255, b=0, c=(seed * 100 + 13 * i) & 0xFFFF)
+            for i in range(n)]
+    tot = []
+    for _ in range(rounds):
+        t = 0
+        for r in recs:
+            t += r["a"] + r["c"]
+            r["b"] = (r["b"] + 1) & 255
+            if (r["a"] ^ r["b"]) & 1:
+                t += 1
+            t += r["c"]
+        tot.append(t & 0xFFFF)
+    return tot
+
+
+def prove_iy(work: Path, period=3000, rounds=120, nmis=100, start=40000):
+    info = build_source(work / "iy", "iyptr.c", IY_SRC)
+    if not info["ok"]:
+        return dict(ok=False, why="build failed\n" + info["log"])
+    mac_path = work / "iy" / "k.mac"        # none with --sdas
+    mac = mac_path.read_text() if mac_path.exists() else ""
+    uses = {}
+    for fn in ("walk_main", "walk_isr", "mark") if mac else ():
+        body = mac.split(f"\n_{fn}:")[1].split(f"@{fn}_ret")[0] \
+            if f"\n_{fn}:" in mac else ""
+        uses[fn] = "(IY+" in body
+    m = Machine(ram=NEOGEO["ram"], banks=None, ram_fill="random", sp="poison",
+                track=True)
+    m.load_rom(str(info["bin"]))
+    m.load_symbols(str(info["sym"]))
+    m.magic_ports.add(0xFF)
+    m.add_nmi_every(period, start=start, count=nmis)
+    res = m.run(max_tstates=200_000_000)
+    got = {p & 0xFF: v for (_t, k, p, v) in m.port_log if k == "OUT"}
+    word = lambda lo: got.get(lo, 0) | (got.get(lo + 1, 0) << 8)   # noqa: E731
+    n = word(0x14)
+    exp_main = sum(_model_walk(6, 11, rounds)) & 0xFFFF
+    # the NMI function visits irecs n times: b counts across the calls
+    exp_isr = sum(_model_walk(4, 90, n)) & 0xFFFF if n else 0
+    # mark () runs 6 times per walk_main (): it changes b, f and c of mrecs
+    mr = [dict(a=(40 + 7 * i) & 255, b=0, c=(4000 + 13 * i) & 0xFFFF, f=0)
+          for i in range(3)]
+    side = 0
+    for _ in range(6 * rounds):
+        for r in mr:
+            r["b"] = (r["b"] + 1) & 255
+            r["f"] = (r["f"] + r["b"]) & 255
+            side += r["a"] + r["c"] + r["f"]
+            r["c"] = (r["c"] + 1) & 0xFFFF
+            side &= 0xFFFF
+    exp_side = side
+    ok = (res.reason.startswith("port:") and n == nmis
+          and word(0x10) == exp_main and word(0x12) == exp_isr
+          and word(0x16) == exp_side and all(uses.values())
+          and m.rom_writes == [])
+    return dict(ok=ok, nmis=n, main_total=word(0x10), exp_main=exp_main,
+                isr_total=word(0x12), exp_isr=exp_isr, side=word(0x16),
+                exp_side=exp_side, reason=res.reason, uses_iy=uses,
+                stack=m.stack_depth(top=0x10000))
+
+
+PROOFS = {"nmi": prove_nmi, "seq": prove_seq, "bank": prove_bank,
+          "iy": prove_iy}
 
 
 def main(argv=None):
