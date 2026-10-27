@@ -172,7 +172,7 @@ def _main(argv=None) -> int:
     if a.nmi_every:
         m.add_nmi_every(a.nmi_every, a.nmi_start)
     if a.ym2610 is not None:
-        YM2610(m, a.ym2610, a.ym_clock_ratio, a.ym_busy)
+        YM2610(m, a.ym2610, a.ym_clock_ratio, a.ym_busy, irq_vec=a.irq_vec)
     for spec in a.ins:
         parse_in(m, spec)
     m.magic_ports.update(a.magic_port)

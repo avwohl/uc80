@@ -121,7 +121,7 @@ An `im2` pragma, or an `im2table` pragma, selects IM 2 for the whole program:
 - `__start` loads I with the high byte of the table address, before `main`. The program must run `EI` itself, as for IM 1.
 - The compiler writes the table of 256 bytes at the address of `im2table`. The default address is 0100h. The address must be a multiple of 100h from 0100h to FF00h, because the start-up code must fit below the table. The PUBLIC label of the table is `__im2_table`.
 - A slot with no pragma points to `__im2_default` (PUBLIC), which does `EI` and `RETI`. Then a bus byte for an unbound slot does no harm.
-- The program code starts after the table (at 0200h for the default). The ROM has a gap between the end of the start-up code and the table. The cost of IM 2 is 256 bytes for the table and the gap. A program with no IM 2 pragma has the same image as before.
+- The program code starts after the table (at 0200h for the default). The ROM has a gap between the end of the start-up code and the table. The start-up code with every option (watchdog, user INT handler, user NMI handler) must stay below the table. A test checks this limit. The cost of IM 2 is 256 bytes for the table and the gap. A program with no IM 2 pragma has the same image as before.
 - A handler is an interrupt function as for `#pragma uc80 interrupt NAME`: `EI` first (not with `critical`), five pushes, and `RETI`. One function can serve two slots when both pragmas use the same form. The vector at 0038h is not used in IM 2.
 
 The compiler stops with an error in these cases:
@@ -131,6 +131,9 @@ The compiler stops with an error in these cases:
 - An `im2table` address is not a multiple of 100h, or is below 0100h.
 - Two `im2table` pragmas give different addresses.
 - The function is not defined, takes a parameter, returns a value, or has a caller in C.
+- The function has only a prototype in C, and no assembly input file defines its PUBLIC label.
+
+A handler can be a function in an assembly input file. Declare the function in C (`extern void ih(void);`) and name the function in the `im2` pragma, or in the `rst ... interrupt` pragma. The compiler does not add code to the function. The assembly code must save the registers it changes, and must end with `EI` and `RETI` (`RETI` alone for a critical handler).
 
 Example, with a device that puts 06h (slot 3) or 14h (slot 10) on the bus:
 

@@ -1065,6 +1065,11 @@ def main() -> int:
                       f"embeds (whole-program mode, no --startup-lib) sets "
                       f"the vectors; make your own start-up code jump to "
                       f"{label_of(_name)}", file=sys.stderr)
+        for n in sorted(gen.asm_isrs):
+            if not _defines_label(code, mac_files, label_of(n)):
+                raise CodegenError(
+                    f"'{n}' is named as an interrupt function and declared "
+                    f"here, but no assembly file defines {label_of(n)}")
         for n in sorted(roots.keep):
             if (n not in gen.ctx.globals
                     and not _defines_label(code, mac_files, label_of(n))):

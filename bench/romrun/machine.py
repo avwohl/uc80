@@ -367,9 +367,15 @@ class Machine:
                                     self._seq, kind, fn, (period, count)))
         self.cpu.poke()
 
-    def set_irq_level(self, level: bool, source: object) -> None:
+    def set_irq_level(self, level: bool, source: object,
+                      vec: int | None = None) -> None:
+        """Set the INT line level of source.  vec is the data bus byte for
+        an IM 2 acknowledge (see add_irq_at); None keeps the last value."""
         self._irq_levels[source] = level
-        self.cpu.poke(irq_level=any(self._irq_levels.values()))
+        if level and vec is not None:
+            self.cpu.poke(irq_level=any(self._irq_levels.values()), ivec=vec)
+        else:
+            self.cpu.poke(irq_level=any(self._irq_levels.values()))
 
     def _fire(self, t: int):
         h = self._heap

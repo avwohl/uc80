@@ -9,6 +9,7 @@ observable behaviour of a program uc80 compiles.
 ### Added
 
 - **RST vectors and IM 2 in the ROM target** ([docs/rom_hardware.md](docs/rom_hardware.md)). `#pragma uc80 rst ADDR NAME` binds a plain function (a software call target) to RST 08h to 30h, and `rst ADDR NAME interrupt [critical]` binds an interrupt function. `#pragma uc80 im2 SLOT NAME [critical]` and `#pragma uc80 im2table ADDR` select IM 2: the start-up code sets I and `IM 2`, and writes an aligned table of 128 vectors (an unbound slot points to a default `EI`, `RETI`). The compiler stops with an error for an address out of range, a vector or slot in use twice, and a misaligned table. A program with no such pragma has the same image as before. `bench/romrun` delivers an interrupt with a data bus byte (`add_irq_at(t, vec)`, `--irq-vec`), and no longer forces bit 0 of the IM 2 byte to 0. Tests: `tests/test_rom_vectors.py`, with `ul80` and with `--asm-syntax=sdas`.
+- An `im2` or `rst ... interrupt` pragma can name a handler that an assembly input file defines (declare the function in C). `bench/romrun`: a level-triggered source (`set_irq_level`, `YM2610`) can give an IM 2 data bus byte. A test checks that the IM 2 start-up code stays below the table.
 
 ### Changed
 

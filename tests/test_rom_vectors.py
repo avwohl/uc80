@@ -351,3 +351,100 @@ int main(void)
     m = machine(paths)
     m.run(max_tstates=100_000)
     assert m.peek8("_n") == 2
+
+
+# ---- handlers written in assembly -----------------------------------------
+
+ASM_HANDLER = """\tPUBLIC\t_ih
+\textrn\t_asm_count
+_ih:
+\tpush\taf
+\tld\ta,(_asm_count)
+\tinc\ta
+\tld\t(_asm_count),a
+\tpop\taf
+\tei
+\treti
+\tdseg
+\tpublic\t_asm_count
+_asm_count:\tdb\t0
+\tcseg
+"""
+
+ASM_C = """
+extern void ih(void);
+#pragma uc80 im2 3 ih
+int main(void)
+{
+    __asm__("\\tei");
+    for (;;) {
+        __asm__("\\thalt");
+    }
+}
+"""
+
+
+@pytest.mark.skipif(not HAVE_UM80, reason="needs um80 and ul80")
+def test_im2_slot_can_name_a_handler_in_an_assembly_file(tmp_path):
+    (tmp_path / "t.c").write_text(ASM_C)
+    (tmp_path / "a.mac").write_text(ASM_HANDLER.replace(
+        "\textrn\t_asm_count\n", "").replace("\tdseg", "\tdseg"))
+    _run(uc80_cmd("--target=rom", "t.c", "a.mac", "-o", "t.mac"), tmp_path)
+    _run(["um80", "t.mac", "-o", "t.rel"], tmp_path)
+    _run(["ul80", "--bin", "-p", "0", "-d", "F800", "--rom-data",
+          "--rom-size", "8000", "--ram-size", "800", "--min-stack", "40",
+          "-o", "t.bin", "-S", "t.sym", "t.rel",
+          str(LIB / "libc_rom.lib"), str(LIB / "runtime.lib")], tmp_path)
+    img = (tmp_path / "t.bin").read_bytes()
+    sy = {n.upper(): a for n, a in _syms(tmp_path / "t.sym").items()}
+    assert int.from_bytes(img[0x100 + 6:0x100 + 8], "little") == sy["_IH"]
+    m = machine((tmp_path / "t.bin", tmp_path / "t.sym"))
+    for k in range(3):
+        m.add_irq_at(3000 + 3000 * k, 0x06)
+    m.run(max_tstates=30_000)
+    assert m.peek8("_asm_count") == 3
+
+
+def test_im2_slot_with_no_definition_anywhere_is_an_error(tmp_path):
+    _compile_error(tmp_path, "extern void ih(void);\n"
+                   "#pragma uc80 im2 3 ih\nint main(void) { return 0; }\n",
+                   "no assembly file defines")
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_im2_level_source_carries_a_data_bus_byte(flow, tmp_path, libs):
+    """A level-triggered source (set_irq_level) with vec 14h reaches slot
+    10 only; slot 3 never runs."""
+    paths = build(tmp_path, IM2_PROGRAM, flow, libs)
+    m = machine(paths)
+    src = object()
+    m.at(3000, lambda mm, t: mm.set_irq_level(True, src, 0x14), kind="call")
+    m.at(9000, lambda mm, t: mm.set_irq_level(False, src), kind="call")
+    m.run(max_tstates=20_000)
+    assert m.peek8("_count_a") == 0
+    assert m.peek8("_count_b") >= 10
+
+
+WORST_CASE = """
+#include <z80.h>
+volatile unsigned char n, k;
+void _watchdog_kick(void) { z80_out(0x7F, 0xA5); }
+#pragma uc80 public _watchdog_kick
+#pragma uc80 interrupt on_int
+void on_int(void) { n++; }
+#pragma uc80 nmi on_nmi
+void on_nmi(void) { k++; }
+#pragma uc80 im2 0 on_a
+void on_a(void) { n++; }
+int main(void) { return 0; }
+"""
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_im2_start_up_code_fits_below_the_table(flow, tmp_path, libs):
+    """With the watchdog, a user INT and a user NMI handler (the most
+    start-up code), __im2_default, the last label before the table, is still
+    below the table: the table ORG never goes backward."""
+    paths = build(tmp_path, WORST_CASE, flow, libs)
+    sy = {n.upper(): a for n, a in _syms(paths[1]).items()}
+    assert sy["__IM2_DEFAULT"] + 2 <= sy["__IM2_TABLE"] == 0x100

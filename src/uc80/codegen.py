@@ -3545,6 +3545,7 @@ class CodeGenerator(Z80IntrinsicsMixin):
         # Interrupt functions: name -> "int" (EI first, RETI), "int_crit"
         # (EI before RETI) or "nmi" (RETN).  See docs/rom.md.
         self.isr_funcs = dict(isr_funcs or {})
+        self.asm_isrs = set()   # interrupt functions an .mac file defines
         # --isr-safe: a function an interrupt function can reach keeps its
         # locals on the stack, never in the shared ??AUTO area.
         self.isr_safe = isr_safe
@@ -4104,8 +4105,19 @@ class CodeGenerator(Z80IntrinsicsMixin):
                 nm = function_name(d)
                 if nm in self.isr_funcs:
                     defs[nm] = d
+        protos = set()
+        for d in unit.items:
+            if isinstance(d, ast.Declaration):
+                protos.update(n for n, _f, _i, is_fn in iter_var_decls(d)
+                              if n and is_fn)
         for nm in sorted(self.isr_funcs):
             d = defs.get(nm)
+            if d is None and nm in protos:
+                # declared here, defined in an assembly file: the file
+                # saves the registers and ends in RETI itself; main.py
+                # checks that the file defines the label
+                self.asm_isrs.add(nm)
+                continue
             if d is None:
                 raise CodegenError(
                     f"'{nm}' is named as an interrupt function but the "

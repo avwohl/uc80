@@ -254,6 +254,7 @@ Command line form of `--in`: `PORT=V`, `PORT=seq:V,V,...`,
 Maskable interrupt (INT):
 
 - `add_irq_at(t, vec=None)`, `add_irq_every(period, start=None, count=None, vec=None)`. `vec` is the byte of the data bus (`--irq-vec`): the low byte of the vector in IM 2, the opcode in IM 0. The CPU does not force bit 0 of the byte to 0. Without `vec`, the last value stays (FFh at reset).
+- `set_irq_level(level, source, vec=None)` and `YM2610(..., irq_vec=None)` give the same data bus byte to a level-triggered source. The `--irq-vec` option sets `irq_vec` of the YM2610 model.
 - The request stays until the CPU takes the request. The CPU takes the
   request when IFF1 is set and one instruction has run after EI.
 - IM 0 uses the RST opcode in `IVEC` (default FFh, RST 38h). IM 1 jumps
