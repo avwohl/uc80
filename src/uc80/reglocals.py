@@ -466,6 +466,11 @@ class Reach:
                     if s < n and not inq[s]:
                         inq[s] = True
                         work.append(s)
+        # the exit: what reaches a return or the end of the text
+        acc = 0
+        for p in pred[n]:
+            acc |= rout[p]
+        rin[n] = acc
         self.rin = rin
 
     def defs_at(self, i: int, bit: int) -> list[int]:
@@ -977,6 +982,16 @@ def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
                                  and not (nd.vr | nd.vw) & pm)
            for nd in nodes]
     entry_read = [False] * n
+    exit_read = [False] * n
+    # the exit reads the result bytes: a scratch value that reaches the
+    # exit is read there, though no instruction reads it
+    for bit in (B, C, D, E):
+        if bit & pm & env.exit_live:
+            for k in reach.defs_at(n, bit):
+                di = reach.defs[k][0]
+                if di >= 0 and isf[di]:
+                    exit_read[di] = True
+                    entry_read[di] = True
     for i, nd in enumerate(nodes):
         if nd.kind != "ins" or not isf[i]:
             continue
@@ -1051,6 +1066,8 @@ def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
     for root, idxs in webs.items():
         if not any(nodes[i].wr & M & ~nodes[i].vw and dirty(i) for i in idxs):
             continue
+        if any(exit_read[i] for i in idxs):
+            raise Reject("result in the resident register")
         lo, hi = min(idxs), max(idxs)
         for i in idxs:
             if nodes[i].flow == "call":
@@ -1244,12 +1261,19 @@ def _try_rules(nodes, succ, live, config, env, i):
 # The checker
 # ---------------------------------------------------------------------------
 
-def check(nodes: list[Node], resident: int) -> bool:
+def check(nodes: list[Node], resident: int, exit_live: int = 0) -> bool:
     """True when, for the bytes in ``resident``, every read as a local
     sees only writes as a local, and every other read sees only other
     writes.  The value at the entry counts as both."""
     succ = build_cfg(nodes)
     reach = Reach(nodes, succ)
+    n = len(nodes)
+    for bit in (B, C, D, E):
+        if bit & resident & exit_live:
+            for k in reach.defs_at(n, bit):
+                di = reach.defs[k][0]
+                if di >= 0 and (nodes[di].vw & bit):
+                    return False      # the result is the local
     for i, nd in enumerate(nodes):
         if nd.kind not in ("ins", "marker"):
             continue
@@ -1529,8 +1553,12 @@ def try_config(base_nodes: list[Node], config: list[Var], env: Env,
             if u is not v:
                 taken |= PAIR_MASK[u.reg]
         nodes = fix_foreign(nodes, v, taken, env, wrap_id)
+    # the check runs before the peephole too: the peephole removes copies
+    # of an entry value that the check must see
+    if not check(nodes, resident, env.exit_live):
+        raise Reject("check before the peephole")
     nodes = peephole(nodes, config, env)
-    if not check(nodes, resident):
+    if not check(nodes, resident, env.exit_live):
         raise Reject("check")
     return nodes, pro
 

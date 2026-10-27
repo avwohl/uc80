@@ -43,6 +43,10 @@ The liveness analysis knows the result of the function. A `void` function leaves
 
 A checker proves the finished text for each configuration. For each resident byte, every read as a local must see only writes as a local. Every scratch read must see only scratch writes. The entry value counts as both. If a configuration fails the check, the pass drops the configuration and keeps the local in memory.
 
+The checker runs two times: before the peephole and after the peephole. The peephole can remove a copy of an entry value, for example `ld L,E` that reads parameter 1 in DE. Without the first run, the checker does not see that the code wrote a local into DE before that read.
+
+The exit of the function counts as a read of the bytes in the exit mask. A scratch value that reaches the exit in a result byte (for example the high word of a long in DE) is not renamed to the other pair. The pass does not wrap such a value in `push` and `pop` either. A local that is the last write to a result byte at the exit also fails the check.
+
 A text that the pass does not know makes the whole function keep its locals in memory. Examples are an unknown instruction, `exx`, a barrier region, a conditional call and a function with more than 2500 lines.
 
 ## Interaction with other parts
@@ -60,7 +64,7 @@ A text that the pass does not know makes the whole function keep its locals in m
 
 ## Tests
 
-`tests/test_register_locals.py` checks the shape of the code and the answers of nine programs with and without the pass, in both storage modes. `bench/ccfuzz.py` and `bench/difftest.py` run random programs.
+`tests/test_register_locals.py` checks the shape of the code and the answers of the answer programs, with and without the pass, in both storage modes. Two programs are regression tests for ccfuzz seeds 40548 (parameter 1 in DE) and 40278 (the high word of a long result in DE). `bench/ccfuzz.py` and `bench/difftest.py` run random programs.
 
 ## Known limits
 

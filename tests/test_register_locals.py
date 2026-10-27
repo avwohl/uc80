@@ -4,7 +4,7 @@ The pass moves up to two scalar locals of a function into BC or DE.  The
 tests check three things:
 
   - the shape: a loop counter really leaves memory, and a local that must
-    stay in memory (address taken, volatile, named in setjmp code) does;
+    stay in memory (address taken, volatile) does;
   - the answers: each program gives the same output with and without the
     pass, in both storage modes, for the cases that go wrong first (calls
     that destroy BC and DE, array addresses, 32-bit helpers, recursion);
@@ -152,3 +152,86 @@ def test_register_hint_is_honored(tmp_path):
     off, _ = compile_mac(tmp_path, src, "--no-inlining",
                          "--no-register-locals")
     assert body_of(mac, "f") != body_of(off, "f")
+
+
+# ---- the miscompiles found by review (ccfuzz seeds 40548 and 40278)
+
+# A local that moved into DE destroyed parameter 1, which was still in DE
+# and read as a scratch value.  The peephole removed the copy before the
+# checker saw the read.
+ENTRY_DE = r"""#include <stdio.h>
+struct S { signed char c; int i; long l; unsigned char u; };
+struct S gs[4]; unsigned char buf[16] = {0,1,2,3,4,5,6,7,0,9,10,11,12,13,14,15}; int ib[8] = {0,1,2,3,0,5,6,7};
+int gi = 3;
+int f(int p0, unsigned char * p1) { if (p1[7] > 3) return (int)((long)p0 * 70001L + gi); return (int)((long)p0 / 7 - gi); }
+int main(void) { gs[1].u = 3; gs[2].u = 0; printf("%d %d %d\n", f((int)(300), buf+1), f((int)(300), buf+8), f((int)(5), buf+3)); return 0; }
+"""
+
+# The high word of a long result (DE) was written as a scratch value that
+# nothing reads but the exit; the pass renamed it to BC.
+RESULT_DE = r"""#include <stdio.h>
+long gl = 0x12340005L;
+long ma(int p0, unsigned char p1)
+{
+  if (p1 == 0)
+    return (long)((unsigned long)((unsigned)gl) ^ (unsigned long)((unsigned)p1));
+  return 7L + ma(p0, p1 - 1);
+}
+int main(void)
+{
+  printf("%ld %ld\n", ma(1, 3), ma(9, 0));
+  return 0;
+}
+"""
+
+EXTRA = {
+    "entry_de": (ENTRY_DE, "39 28783 22328\n"),
+    "result_de": (RESULT_DE, "26 5\n"),
+    "long_tail": ("""
+#include <stdio.h>
+long g(int a, int b) { return (long)a * b; }
+void v(int a, int b) { printf("%d\\n", a + b); }
+long f(int n) {
+    int t = 0;
+    for (int i = 0; i < n; i++) t += i;
+    if (n > 5) return g(t, n);
+    v(t, n);
+    return 123456L + t;
+}
+int main(void) { printf("%ld\\n", f(10)); printf("%ld\\n", f(4)); return 0; }
+""", "450\n10\n123462\n"),
+}
+
+
+@needs_run
+@pytest.mark.parametrize("name", sorted(EXTRA))
+@pytest.mark.parametrize("flags", MODES, ids=["off", "on", "on-frame"])
+def test_extra_same_answer(tmp_path, name, flags):
+    src, expected = EXTRA[name]
+    assert build_run(tmp_path, src, "--no-inlining", *flags) == expected
+
+
+@needs_run
+def test_register_hint_beats_heavier_local(tmp_path):
+    src = """
+int f(int n) {
+    register int a = 0; int b = 0;
+    for (int i = 0; i < n; i++) { b += i; b ^= 3; b += n; b -= 1; }
+    a += n;
+    return a + b;
+}
+int main(void) { return f(3); }
+"""
+    mac, _ = compile_mac(tmp_path, src, "--no-inlining")
+    off, _ = compile_mac(tmp_path, src, "--no-inlining",
+                         "--no-register-locals")
+    assert body_of(mac, "f") != body_of(off, "f")
+
+
+def test_volatile_stays_in_memory(tmp_path):
+    src = """
+int f(int n) { volatile int v = 0; for (int i = 0; i < n; i++) v += i; return v; }
+int main(void) { return f(3); }
+"""
+    mac, _ = compile_mac(tmp_path, src, "--no-inlining")
+    assert re.search(r"\(\?\?AUTO\+\d+\)|\(IX[+-]\d+\)", body_of(mac, "f"))
