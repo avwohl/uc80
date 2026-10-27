@@ -15189,9 +15189,15 @@ class CodeGenerator(Z80IntrinsicsMixin):
                     # ptr - ptr is a ptrdiff_t (int), not a pointer, so a
                     # following ``+ 21`` is not scaled by the pointee size.
                     return lt.BasicType(name="int", is_signed=True)
+                # An array operand decays: ``gs + i`` is a pointer to the
+                # element, so ``(gs + i)->m`` still adds the offset of m.
+                if isinstance(left_type, lt.ArrayType):
+                    return lt.PointerType(base_type=left_type.base_type)
                 if isinstance(left_type, ptr_t):
                     return left_type
-                if isinstance(right_type, (lt.PointerType, lt.ArrayType)) and expr.op == "+":
+                if isinstance(right_type, lt.ArrayType) and expr.op == "+":
+                    return lt.PointerType(base_type=right_type.base_type)
+                if isinstance(right_type, lt.PointerType) and expr.op == "+":
                     return right_type
 
             # For shift operations, result type is the promoted LEFT operand (C99 6.5.7)
