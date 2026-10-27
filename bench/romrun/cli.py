@@ -79,6 +79,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--irq-every", type=num, default=None, metavar="N",
                     help="a maskable interrupt every N T-states")
     ap.add_argument("--irq-start", type=num, default=None)
+    ap.add_argument("--irq-vec", type=num, default=None, metavar="BYTE",
+                    help="the data bus byte of each maskable interrupt (IM 2: "
+                    "low byte of the vector address)")
     ap.add_argument("--nmi-at", action="append", default=[], type=num,
                     metavar="T")
     ap.add_argument("--nmi-every", type=num, default=None, metavar="N")
@@ -161,11 +164,11 @@ def _main(argv=None) -> int:
     if a.im is not None:
         m.cpu.set(IM=a.im)
     for t in a.irq_at:
-        m.add_irq_at(t)
+        m.add_irq_at(t, a.irq_vec)
     for t in a.nmi_at:
         m.add_nmi_at(t)
     if a.irq_every:
-        m.add_irq_every(a.irq_every, a.irq_start)
+        m.add_irq_every(a.irq_every, a.irq_start, vec=a.irq_vec)
     if a.nmi_every:
         m.add_nmi_every(a.nmi_every, a.nmi_start)
     if a.ym2610 is not None:

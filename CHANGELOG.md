@@ -6,6 +6,10 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Added
+
+- **RST vectors and IM 2 in the ROM target** ([docs/rom_hardware.md](docs/rom_hardware.md)). `#pragma uc80 rst ADDR NAME` binds a plain function (a software call target) to RST 08h to 30h, and `rst ADDR NAME interrupt [critical]` binds an interrupt function. `#pragma uc80 im2 SLOT NAME [critical]` and `#pragma uc80 im2table ADDR` select IM 2: the start-up code sets I and `IM 2`, and writes an aligned table of 128 vectors (an unbound slot points to a default `EI`, `RETI`). The compiler stops with an error for an address out of range, a vector or slot in use twice, and a misaligned table. A program with no such pragma has the same image as before. `bench/romrun` delivers an interrupt with a data bus byte (`add_irq_at(t, vec)`, `--irq-vec`), and no longer forces bit 0 of the IM 2 byte to 0. Tests: `tests/test_rom_vectors.py`, with `ul80` and with `--asm-syntax=sdas`.
+
 ### Changed
 
 - **Register calling convention merged with the libc rewrite in C, the float interpreter and the ROM work.** The generated library modules (`lc/*.mac`) are unchanged by the merge: the generators compile with `--no-whole-program`, so every library function keeps the stack convention. Against the tree before the merge (run again with the same harness): 82 of 103 OK programs smaller, none bigger (the FITS games `mojozork-size` +2,229 bytes of image and `monop-size` +325 bytes of image are bigger: the call graph change below moves their locals from `??AUTO` to stack frames), image total 638,662 to 619,188 bytes; 56 programs faster, 2 slower; no status change. Mean against SDCC 4.6.0: size 0.987 to 0.958, T-states (speed mode) 0.606 to 0.585, without `sort-*` 0.743 to 0.715. `snd-cmdq` 13.72M to 10.60M T-states, `snd-seq` 14.52M to 12.34M (faster than SDCC speed mode). `docs/benchmarks.md`, `docs/benchmarks_speed.md`, `docs/codegen_gap.md` and `docs/benchmark_proposal.md` have the new numbers.

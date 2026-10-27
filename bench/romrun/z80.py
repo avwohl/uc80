@@ -692,7 +692,7 @@ def _tail(out: list[str]) -> None:
                 else: WBAD(w_, pc_ & 255)
                 ONACC('irq', T)
                 if IM == 2:
-                    vec = (I << 8) | (IVEC & 254)
+                    vec = (I << 8) | IVEC
                     PC = mem[vec] | (mem[(vec + 1) & 65535] << 8)
                     T += 19
                 elif IM == 1:
@@ -763,7 +763,8 @@ def _tail(out: list[str]) -> None:
     out.append("        WAKE = wake; BPHIT = bphit; ONACC = onacc")
     out.append("")
     out.append("    def poke(**kw):")
-    out.append("        nonlocal EV, STOP, NMI_P, IRQ_P, IRQ_L, BUDGET")
+    out.append("        nonlocal EV, STOP, NMI_P, IRQ_P, IRQ_L, BUDGET, IVEC")
+    out.append("        if 'ivec' in kw: IVEC = kw['ivec']")
     out.append("        if 'stop' in kw: STOP = kw['stop']")
     out.append("        if 'nmi' in kw: NMI_P = kw['nmi']")
     out.append("        if 'irq' in kw: IRQ_P = kw['irq']")

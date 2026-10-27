@@ -27,11 +27,11 @@ Done:
 - Phase 5, proof with nullsound: nullsound (ngdevkit commit 5106cbd1414a) is built with `sdasz80` as its Makefile does. A table entry jumps to C functions from uc80, one C function calls `ym2610_write_port_a` through an assembly shim, and the ROM runs in romrun with an NMI that carries the command byte. The YM2610 register writes equal the expected sequence (`bench/rom/nullsound.py`, `tests/test_rom_interop.py`). The area names that ngdevkit links are `CODE` and `DATA` (not `_CODE`, `_DATA`), so the translator has the style `ngdevkit`. The register contract is verified from the nullsound sources.
 
 - Phase 3, naked functions: SDCC `__naked` and `[[uc80::naked]]`. The compiler writes the label and the asm text of the body, with no frame code and no `RET`. Only asm statements are allowed in the body. A naked function can be a vector target (`#pragma uc80 interrupt` or `nmi`): the asm saves the registers and ends with `RETI` or `RETN`. Tested in cpmemu and in romrun, and through `--asm-syntax=sdas` with `sdasz80` (`tests/test_naked.py`, `tests/test_rom_interop.py`). See [rom_hardware.md](rom_hardware.md).
+- Phase 2, RST vectors and IM 2: `#pragma uc80 rst ADDR NAME [interrupt [critical]]` (software call or interrupt function at 08h to 30h), `#pragma uc80 im2 SLOT NAME [critical]` and `#pragma uc80 im2table ADDR` (an aligned table of 128 vectors, I and `IM 2` set by the start-up code, `EI` and `RETI` as default handler). The runner `bench/romrun` delivers an interrupt with a data bus byte (`add_irq_at(t, vec)`, `--irq-vec`). A program with no such pragma has the same image. Tested with `ul80` and with `--asm-syntax=sdas` in `tests/test_rom_vectors.py`. See [rom_hardware.md](rom_hardware.md).
 
 Not done (needs `codegen.py` or other work):
 
 - The optional per-module BSS block for separate compilation.
-- An interrupt form for the RST vectors and for IM 2. The vector pragma gives a plain `RET` function and a warning.
 - The interrupt check cannot see a call through a function pointer.
 - A pointer variable that holds a constant address is not changed to a direct access.
 - Phase 4 and the later phases. The diagnostic for a C function with `EXX` code next to nullsound is open.

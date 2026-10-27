@@ -355,9 +355,15 @@ class _Roots:
     public: set      # names that get a PUBLIC label even if static
     vectors: dict    # {0x38: name, 0x66: name}
     isrs: dict = None  # interrupt functions: name -> "int", "int_crit", "nmi"
+    rst: dict = None   # {0x08..0x30: name}: RST vectors (docs/rom_hardware.md)
+    im2: dict = None   # {slot 0..127: name}: IM 2 vector table slots
+    im2_table: int | None = None  # address of the IM 2 table, or None
+    im2_on: bool = False          # IM 2 is in use
 
 
 _VECTORS = {0x38: "INT (38h)", 0x66: "NMI (66h)"}
+_RST_ADDRS = (0x08, 0x10, 0x18, 0x20, 0x28, 0x30)
+IM2_DEFAULT_TABLE = 0x100
 
 
 def _parse_address(text: str):
@@ -378,8 +384,49 @@ def _roots_from_options(entries: list, pragmas: list,
     """The names --entry and #pragma uc80 keep/public/vector pin down.
     Raises CodegenError for a pragma it does not understand: a vector
     that is silently dropped is a ROM that does not start."""
-    roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={})
+    roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={},
+                   rst={}, im2={})
     ident = re.compile(r"^[A-Za-z_]\w*$")
+
+    def add_rst(addr, name, kind, where):
+        if addr not in _RST_ADDRS:
+            hint = (" (0000h is the reset vector; use '#pragma uc80 "
+                    "interrupt NAME' for 0038h)" if addr in (0, 0x38) else "")
+            raise CodegenError(
+                f"{where}: the RST address must be 08h, 10h, 18h, 20h, 28h "
+                f"or 30h{hint}")
+        if addr in roots.rst:
+            raise CodegenError(
+                f"{where}: the RST {addr:02X}h vector is already set to "
+                f"{roots.rst[addr][0]}")
+        if kind is not None:
+            if roots.isrs.get(name, kind) != kind:
+                raise CodegenError(
+                    f"{where}: '{name}' is already an interrupt function of "
+                    f"another kind")
+            roots.isrs[name] = kind
+        roots.rst[addr] = (name, kind)
+        roots.keep.add(name)
+        roots.public.add(name)
+
+    def add_im2(slot, name, kind, where):
+        if not 0 <= slot <= 127:
+            raise CodegenError(
+                f"{where}: the IM 2 slot must be 0 to 127 (the data bus "
+                f"byte is 2 times the slot)")
+        if slot in roots.im2:
+            raise CodegenError(
+                f"{where}: IM 2 slot {slot} is already set to "
+                f"{roots.im2[slot]}")
+        if roots.isrs.get(name, kind) != kind:
+            raise CodegenError(
+                f"{where}: '{name}' is already an interrupt function of "
+                f"another kind")
+        roots.isrs[name] = kind
+        roots.im2[slot] = name
+        roots.im2_on = True
+        roots.keep.add(name)
+        roots.public.add(name)
 
     def add_isr(kind, name, where):
         addr = 0x66 if kind == "nmi" else 0x38
@@ -406,8 +453,47 @@ def _roots_from_options(entries: list, pragmas: list,
             roots.keep.update(words)
             if verb == "public":
                 roots.public.update(words)
+        elif verb == "rst":
+            addr = _parse_address(words[0]) if words else None
+            ok = (len(words) in (2, 3, 4) and addr is not None
+                  and ident.match(words[1])
+                  and (len(words) == 2 or words[2] == "interrupt")
+                  and (len(words) < 4 or words[3] == "critical"))
+            if not ok:
+                raise CodegenError(
+                    f"{where}: expected '#pragma uc80 rst 08h NAME' or "
+                    f"'#pragma uc80 rst 08h NAME interrupt [critical]'")
+            kind = (None if len(words) == 2 else
+                    "int_crit" if len(words) == 4 else "int")
+            add_rst(addr, words[1], kind, where)
+        elif verb == "im2table":
+            addr = _parse_address(words[0]) if len(words) == 1 else None
+            if addr is None or addr % 256 or not 0x100 <= addr <= 0xFF00:
+                raise CodegenError(
+                    f"{where}: expected '#pragma uc80 im2table ADDR' with "
+                    f"ADDR a multiple of 100h from 0100h to FF00h")
+            if roots.im2_table not in (None, addr):
+                raise CodegenError(
+                    f"{where}: the IM 2 table is already at "
+                    f"{roots.im2_table:04X}h")
+            roots.im2_table = addr
+            roots.im2_on = True
+        elif verb == "im2":
+            slot = (_parse_address(words[0])
+                    if len(words) in (2, 3) else None)
+            if (slot is None or not ident.match(words[1])
+                    or (len(words) == 3 and words[2] != "critical")):
+                raise CodegenError(
+                    f"{where}: expected '#pragma uc80 im2 SLOT NAME' or "
+                    f"'#pragma uc80 im2 SLOT NAME critical'")
+            add_im2(slot, words[1], "int_crit" if len(words) == 3 else "int",
+                    where)
         elif verb == "vector":
             addr = _parse_address(words[0]) if words else None
+            if (len(words) == 2 and addr in _RST_ADDRS
+                    and ident.match(words[1])):
+                add_rst(addr, words[1], None, where)
+                continue
             if len(words) != 2 or addr not in _VECTORS or not ident.match(words[1]):
                 raise CodegenError(
                     f"{where}: expected '#pragma uc80 vector 38h NAME' or "
@@ -432,7 +518,7 @@ def _roots_from_options(entries: list, pragmas: list,
         else:
             raise CodegenError(
                 f"{where}: unknown verb; uc80 knows keep, public, vector, "
-                f"interrupt and nmi")
+                f"interrupt, nmi, rst, im2 and im2table")
     return roots
 
 
@@ -960,6 +1046,18 @@ def main() -> int:
             return sym.label() if sym else f"_{name}"
 
         keep_labels = {label_of(n) for n in roots.keep}
+        if rom and (roots.rst or roots.im2_on) and (
+                not embed_startup or args.startup_lib):
+            for _addr, (_name, _k) in sorted(roots.rst.items()):
+                print(f"uc80: warning: the RST {_addr:02X}h vector is not "
+                      f"set to '{_name}': only the start-up code that uc80 "
+                      f"embeds sets the vectors; make your own start-up "
+                      f"code jump to {label_of(_name)}", file=sys.stderr)
+            if roots.im2_on:
+                print("uc80: warning: the IM 2 vector table is not "
+                      "written: only the start-up code that uc80 embeds "
+                      "writes the table and sets the I register and IM 2",
+                      file=sys.stderr)
         if rom and roots.vectors and (not embed_startup or args.startup_lib):
             for _addr, _name in sorted(roots.vectors.items()):
                 print(f"uc80: warning: the {_VECTORS[_addr]} vector is not "
@@ -1061,7 +1159,12 @@ def main() -> int:
                     startup_lines = rom_module.startup_text(
                         startup_path, int_handler, nmi_handler,
                         args.stack_top, start,
-                        _defines_label(code, mac_files, "__watchdog_kick"))
+                        _defines_label(code, mac_files, "__watchdog_kick"),
+                        rst={a: label_of(n) for a, (n, _k)
+                             in roots.rst.items()},
+                        im2=({s: label_of(n) for s, n in roots.im2.items()},
+                             roots.im2_table or IM2_DEFAULT_TABLE)
+                        if roots.im2_on else None)
                     startup_content = ""
                 for line in startup_content.splitlines():
                     stripped = line.strip().upper()

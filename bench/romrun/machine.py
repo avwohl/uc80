@@ -337,10 +337,13 @@ class Machine:
         heapq.heappush(self._heap, (int(t), self._seq, "nmi", None, None))
         self.cpu.poke()
 
-    def add_irq_at(self, t: int) -> None:
+    def add_irq_at(self, t: int, vec: int | None = None) -> None:
+        """An INT request at t.  vec is the byte the device puts on the data
+        bus (IM 2: the low byte of the vector address; IM 0: the opcode);
+        None keeps the last value (FFh at reset)."""
         self._seq += 1
         self._irq_sources += 1
-        heapq.heappush(self._heap, (int(t), self._seq, "irq", None, None))
+        heapq.heappush(self._heap, (int(t), self._seq, "irq", vec, None))
         self.cpu.poke()
 
     def add_nmi_every(self, period: int, start: int | None = None,
@@ -348,10 +351,11 @@ class Machine:
         self._periodic("nmi", period, start, count)
 
     def add_irq_every(self, period: int, start: int | None = None,
-                      count: int | None = None) -> None:
-        self._periodic("irq", period, start, count)
+                      count: int | None = None,
+                      vec: int | None = None) -> None:
+        self._periodic("irq", period, start, count, vec)
 
-    def _periodic(self, kind, period, start, count) -> None:
+    def _periodic(self, kind, period, start, count, fn=None) -> None:
         if period <= 0:
             raise ValueError("period must be positive")
         if kind == "nmi":
@@ -360,7 +364,7 @@ class Machine:
             self._irq_sources += 1
         self._seq += 1
         heapq.heappush(self._heap, (int(period if start is None else start),
-                                    self._seq, kind, None, (period, count)))
+                                    self._seq, kind, fn, (period, count)))
         self.cpu.poke()
 
     def set_irq_level(self, level: bool, source: object) -> None:
@@ -379,7 +383,10 @@ class Machine:
                 else:
                     self.cpu.poke(nmi=True)
             elif kind == "irq":
-                self.cpu.poke(irq=True)
+                if fn is None:
+                    self.cpu.poke(irq=True)
+                else:
+                    self.cpu.poke(irq=True, ivec=fn)
             else:
                 fn(self, when)
             if per is not None:

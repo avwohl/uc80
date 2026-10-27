@@ -924,3 +924,28 @@ def test_golden_sweep_ticks_differs_only_where_ticks_is_wrong():
     bad = {c[0].hex() for c in cases if c[2] != c[3]}
     # ADC A,H takes 7 T-states in ticks (4 on the Z80); ED 8Bh is undefined
     assert bad == {"8c", "ed8b"}
+
+
+def test_im2_interrupt_carries_the_data_bus_byte():
+    """IM 2: the vector is (I << 8) | bus byte; each request has its own
+    byte, and the CPU does not force bit 0 to zero."""
+    rom = bytearray(0x200)
+    prog = bytes([0xF3, 0x3E, 0x01, 0xED, 0x47, 0xED, 0x5E, 0xFB,   # DI LD A,1 LD I,A IM 2 EI
+                  0x18, 0xFE])                                      # JR $
+    rom[0:len(prog)] = prog
+    # handler 1 at 0x40: LD A,11h / OUT (0AAh),A / EI / RETI; handler 2 at 0x50 likewise
+    rom[0x40:0x48] = bytes([0x3E, 0x11, 0xD3, 0xAA, 0xFB, 0xED, 0x4D, 0])
+    rom[0x50:0x58] = bytes([0x3E, 0x22, 0xD3, 0xAA, 0xFB, 0xED, 0x4D, 0])
+    rom[0x106:0x108] = (0x40).to_bytes(2, "little")      # bus byte 06h
+    rom[0x114:0x116] = (0x50).to_bytes(2, "little")      # bus byte 14h
+    rom[0x121:0x123] = (0x50).to_bytes(2, "little")      # odd bus byte 21h
+    m = Machine(banks=None)
+    m.load_rom(bytes(rom))
+    m.add_irq_at(500, 0x06)
+    m.add_irq_at(1500, 0x14)
+    m.add_irq_at(2500, 0x21)
+    m.add_irq_every(1000, start=3500, count=1, vec=0x06)
+    r = m.run(max_tstates=6000)
+    assert r.reason == "budget"
+    outs = [v for (_t, k, p, v) in m.port_log if k == "OUT"]
+    assert outs == [0x11, 0x22, 0x22, 0x11]

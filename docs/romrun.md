@@ -253,11 +253,11 @@ Command line form of `--in`: `PORT=V`, `PORT=seq:V,V,...`,
 
 Maskable interrupt (INT):
 
-- `add_irq_at(t)`, `add_irq_every(period, start=None, count=None)`.
+- `add_irq_at(t, vec=None)`, `add_irq_every(period, start=None, count=None, vec=None)`. `vec` is the byte of the data bus (`--irq-vec`): the low byte of the vector in IM 2, the opcode in IM 0. The CPU does not force bit 0 of the byte to 0. Without `vec`, the last value stays (FFh at reset).
 - The request stays until the CPU takes the request. The CPU takes the
   request when IFF1 is set and one instruction has run after EI.
 - IM 0 uses the RST opcode in `IVEC` (default FFh, RST 38h). IM 1 jumps
-  to 0038h and takes 13 T-states. IM 2 reads the vector at `(I << 8) | IVEC`
+  to 0038h and takes 13 T-states. IM 2 reads the vector at `(I << 8) | IVEC` (the `vec` byte)
   and takes 19 T-states.
 - A device can hold the line high with `set_irq_level`. The line stays
   high until the device lowers the line.

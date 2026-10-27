@@ -37,8 +37,8 @@ With the ROM target the compiler:
 
 `crt0_rom.mac` puts the vectors in CSEG with `ORG`. Link with `-p 0`. The gaps between the vectors are zero bytes.
 
-- 0000h: `DI`, `IM 1`, `JP __start`.
-- 0008h, 0010h, 0018h, 0020h, 0028h, 0030h: `RET`.
+- 0000h: `DI`, `IM 1`, `JP __start`. With `#pragma uc80 im2`, `IM 2` and the table of 256 bytes at 0100h (see [rom_hardware.md](rom_hardware.md)).
+- 0008h, 0010h, 0018h, 0020h, 0028h, 0030h: `RET`, or `JP NAME` with `#pragma uc80 rst` (see [rom_hardware.md](rom_hardware.md)).
 - 0038h: `EI`, `RETI`. The default INT vector.
 - 0066h: `RETN`. The default NMI vector.
 - 0068h: `__start`. The code of the program follows.
@@ -105,7 +105,7 @@ In whole-program mode the compiler removes each function that no code calls, and
 - `--entry NAME` (repeatable) is the same as `#pragma uc80 keep NAME`. The option also has a second use: a ROM program may have no `main`. The start-up code then calls the first `--entry` function in place of `main`. A ROM program with no `main` and no `--entry` is an error.
 - A kept function has the same storage rules as a function whose address the code takes. No other function shares the local storage of the kept function, because hardware can enter the function at any time.
 - A function in a `vector` pragma is kept. The vector becomes `JP _NAME`. The compiler gives an error when a `vector` pragma and an assembly `__int_handler` (or `__nmi_handler`) both set the same vector.
-- The compiler gives an error in three cases: an unknown pragma verb, a vector address that is not 38h or 66h, and a name that the program does not define.
+- The compiler gives an error in three cases: an unknown pragma verb, a vector address that is not 08h to 30h (a multiple of 8), 38h or 66h, and a name that the program does not define.
 
 A C function in a `vector` pragma has no interrupt prologue and no `RETI`. It ends with `RET`. The compiler prints a warning for each such `vector` pragma. Use a `vector` target only for code that handles this itself. For a real interrupt function, use `#pragma uc80 interrupt NAME` or `#pragma uc80 nmi NAME`: these set the vector for you and print no warning.
 
