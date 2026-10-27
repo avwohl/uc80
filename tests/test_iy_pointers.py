@@ -179,3 +179,56 @@ def test_answer_without_the_pass(tmp_path, monkeypatch, name):
     monkeypatch.setenv("UC80_NO_IY", "1")
     src, expected = PROGRAMS[name]
     assert build_run(tmp_path, src, "--no-inlining") == expected
+
+
+# setjmp/longjmp: a function that calls setjmp keeps its locals in memory
+# (reglocals_gen), and a caller of that function must still get its pointer
+# back when a helper that uses IY longjmps.
+SETJMP = """
+#include <stdio.h>
+#include <setjmp.h>
+struct N { int a; int b; int c; struct N *next; };
+struct N pool[3];
+jmp_buf jb;
+int sink;
+void thrower(int k) {
+    struct N *q = pool;
+    while (q) { q->a += k; q->b ^= q->a; q->c = q->a + q->b; sink += q->c; q = q->next; }
+    if (k > 0) longjmp(jb, k);
+}
+int guarded(struct N *p, int k) {
+    int r = setjmp(jb);
+    if (r == 0) { p->a += 1; p->b += 2; thrower(k); return -1; }
+    p->c += r;
+    return r + p->a + p->b + p->c;
+}
+int outer(struct N *p, int n) {
+    int t = 0;
+    while (n--) { t += p->a + p->b; p->c = t; t += guarded(p, n + 1); t += p->a + p->c; p = p->next; }
+    return t;
+}
+int main(void) {
+    pool[0].next = &pool[1]; pool[1].next = &pool[2]; pool[2].next = 0;
+    pool[0].a = 1; pool[1].a = 2; pool[2].a = 3;
+    printf("%d %d %d\\n", outer(pool, 3), pool[0].c, sink);
+    return 0;
+}
+"""
+
+
+@needs_run
+@pytest.mark.parametrize("flags", [("--no-inlining",),
+                                   ("--no-inlining", "--no-shared-storage")],
+                         ids=["shared", "frame"])
+def test_setjmp_with_pointer_locals(tmp_path, monkeypatch, flags):
+    want = build_run(tmp_path, SETJMP, "--no-register-locals", *flags)
+    assert want.strip()
+    assert build_run(tmp_path, SETJMP, *flags) == want
+    monkeypatch.setenv("UC80_NO_IY", "1")
+    assert build_run(tmp_path, SETJMP, *flags) == want
+
+
+def test_setjmp_caller_keeps_a_pointer_in_iy(tmp_path):
+    mac = comp(tmp_path, SETJMP)
+    assert has_iy(body_of(mac, "outer"))
+    assert not has_iy(body_of(mac, "guarded"))
