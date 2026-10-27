@@ -68,8 +68,11 @@ def _knob(name: str, default: float) -> float:
 SIZE_W = _knob("UC80_RL_SIZEW", 6.0)        # weighted T-states per byte
 MIN_GAIN = _knob("UC80_RL_MINGAIN", 3.0)    # the smallest gain that pays
 LOOP_BASE = _knob("UC80_RL_LOOPB", 8.0)     # weight of one loop level
-MIN_WEIGHT = _knob("UC80_RL_MINWEIGHT", 2.0)  # the lightest candidate
+MIN_WEIGHT = _knob("UC80_RL_MINWEIGHT", 1.0)  # the lightest candidate
 PRICE_PRUNE = _knob("UC80_RL_PRICEPRUNE", 1.0)  # 0: price every wrap
+MAX_VARS = int(_knob("UC80_RL_MAXVARS", 2))  # locals in BC and DE
+RENAME = _knob("UC80_RL_RENAME", 1.0)       # 0: wrap, never rename
+PRUNE = _knob("UC80_RL_PRUNE", 1.0)         # 0: keep every wrap
 _DBG = bool(__import__("os").environ.get("UC80_RL_DEBUG"))
 
 
@@ -1026,7 +1029,7 @@ def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
         if isf[i]:
             webs.setdefault(find(i), []).append(i)
     # ---- 3. rename the webs that can move to the other pair
-    if other_free:
+    if other_free and RENAME:
         renamed = set()
         for root, idxs in sorted(webs.items(), key=lambda kv: min(kv[1])):
             if not any(dirty(i) for i in idxs if nodes[i].wr & M):
@@ -1613,7 +1616,7 @@ def _slot_weight(nodes, succ, v: Var) -> float:
 
 
 def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
-             wrap_id: list[int], max_vars: int = 2) -> Optional[Result]:
+             wrap_id: list[int], max_vars: int = MAX_VARS) -> Optional[Result]:
     """Choose registers for the locals in ``vars_`` and return the new text
     of the function body, or None when nothing pays."""
     if _effect is None or not vars_:
@@ -2020,6 +2023,8 @@ def prune(code: str) -> str:
     routines it calls are in it or in lib/rt."""
     if "; RL" not in code or _effect is None:
         return code
+    if not PRUNE:
+        return strip_tags(code)
     lines = code.split("\n")
     pairs: dict[str, list[int]] = {}
     for i, ln in enumerate(lines):

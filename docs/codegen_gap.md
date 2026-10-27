@@ -9,6 +9,18 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-27: family G, step 2 (a pointer in IY, tuning) is done
+
+Step 2 adds one pointer local in IY (`src/uc80/iyptr.py`, [register_locals.md](register_locals.md)). A field access `p->m` becomes `ld A,(IY+d)` (19 T-states) and needs no HL, DE or BC. `p++` is `inc IY`. A call that can change IY, while the pointer is live, gets `push IY` and `pop IY` (the tag `; RYn`). `prune_iy` removes the wraps whose callees never change IY, and a runtime helper never changes IY. An interrupt function saves IY already. The proof `iy` of `bench/rom/isrproof.py` runs a function with IY, a callee with IY and an NMI function under a real NMI.
+
+Numbers: `bench/run.py` (uc80, size mode), the 109 programs of the size run, step 2 against step 1 (7f20482). Status: no change. Image: 38 programs smaller, 1 bigger (`embench-huffbench` +3 bytes), total 601,579 to 600,061 bytes for the 104 programs with a result in every run. T-states: 38 programs faster, none slower. Against SDCC 4.6.0 (geometric mean, `bench/report.py`): size 0.936 to 0.934, whole image 0.901 to 0.899, T-states in speed mode 0.565 to 0.563, without `sort-*` 0.687 to 0.684. Against the tree before step 1 (84cfebf) the means are 0.959, 0.921, 0.585 and 0.715.
+
+- `snd-seq` 12.92M to 12.02M T-states (-6.95%) and -118 B (the sequencer `tick` and `fetch` walk a `struct chan` pointer). `stanford-queens` -7.5% and -9 B. `stanford-tree` -2.7% and -35 B. `dhrystone21` -0.72% and -10 B. `embench-slre` -175 B, `mille` -365 B, `monop-size` -320 B, `hamurabi` -110 B, `robots` -110 B.
+- `snd-cmdq`, `snd-ymreg`, `snd-fnum`, `sieve`, `queens`, `tak`, `stanford-perm`, `stanford-towers`, `stanford-bubble` and `davidly-ttt` do not change: they have no pointer that pays in IY. Their gains stay as in step 1 (against 84cfebf: cmdq -7.1%, ymreg -5.8%, fnum -4.1%, sieve -13.0%, tak -14.4%, perm -4.0%, towers -7.1%, ttt -1.7%, queens -0.75%).
+- The IY gain over BC is small for a pointer that has few fields. `ld H,B / ld L,C` costs 8 T-states, and `ld A,(IY+0)` costs 19 against 15 for `ld A,(HL)` after the copy. IY wins when the pointer has many field accesses, because BC and DE stay free for two other locals, and a field at offset 4 or more costs 19 T-states against 28 with BC.
+- Tuning (part b): the constants of step 1 are near the best value on a set of 32 programs. One change is better in every column: a local needs a weight of 1 (not 2) to be a candidate (-8 B, six programs smaller and six faster, none worse). The table of every constant is in [register_locals.md](register_locals.md). Each part of the pass has a measured gain on the same set: the rename of scratch values 1.7% of the T-states, the IY pass 0.8%, the second local in BC or DE 0.24%, the prune of the wraps 0.04% (BC and DE) and 0.09% (IY).
+- What is not done: HL residency, more than two locals in BC and DE, a second pointer (IX is the frame pointer in a frame function, but free in a shared-storage function), a pointer parameter on the stack, and giving back the `??AUTO` slot of a local that moved.
+
 ## Status on 2026-10-26: family G, step 1 (simple register residency) is done
 
 Step 1 of family G is in the code (branch `reglocals`, see [register_locals.md](register_locals.md)). A text pass moves up to two scalar locals of a function into BC or DE. The pass runs after the body is generated, so the code generator is unchanged. It renames or wraps the scratch uses of BC and DE (`ld BC,_arr` / `add HL,BC`, calls) and a checker proves each result. The `register` keyword is a priority hint. Interrupt functions and `main` are not changed.
@@ -18,7 +30,7 @@ Numbers: `bench/run.py` (uc80, size mode) on the 109 programs of the size run, f
 - `snd-cmdq` 10.60M to 9.90M T-states (-6.6%) and -43 B. `snd-ymreg` -5.5% and -38 B. `snd-seq` -5.0% and -73 B. `snd-fnum` -3.4% and -36 B.
 - `sieve` -17.8% and -10 B. `tak` -14.4% and -41 B. `stanford-perm` -4.0%. `stanford-towers` -7.1% and -57 B. `davidly-ttt` -1.7% and -48 B.
 - `queens` gains only 0.7%, and `stanford-bubble` gains nothing. The loop counters of `queens` sit in a recursive function, and every array index uses BC and DE as scratch registers. A local in BC then pays a push and a pop for each index. The chain assignment `a[i]=b[j]=1` keeps DE busy, so the rename cannot move the scratch pair. This is the prerequisite of section G: the expression idioms must stop using BC and DE. Family H (CSE of array addresses) is the fix.
-- What is not done: IY as a struct pointer, HL residency, more than two locals, and giving back the `??AUTO` slot of a local that moved. The call graph analyser still reserves the slot.
+- What was not done in step 1: IY as a struct pointer (done in step 2), HL residency, more than two locals, and giving back the `??AUTO` slot of a local that moved. The call graph analyser still reserves the slot.
 
 ## Status on 2026-10-26: family F is integrated with the C library
 
@@ -333,7 +345,7 @@ The `RegisterAllocator` class (`codegen.py:1010`) has bc and de descriptors with
 
 - Prerequisite (inside the effort figure): remove every BC and DE overwrite from expression idioms. Many array paths use `ld BC,_arr / add HL,BC` (`_gen_address`, `gen_index`). The first cmdq edit of the reviewer gave a wrong CRC (38711 instead of 17781) because `dispatch` clobbered the resident register. Callees such as `out`, `cmd_pop` and `nmi_cmd` also needed a rewrite or a push/pop. The 34 T inline pattern worked in queens.
 - Simple version: leaf functions and counted-loop variables. Pick the 1 to 2 scalars with the highest use count weighted by loop depth. They must not be address-taken or volatile. Assign them to BC and DE (a byte variable to C, E, B or D). Honor `register` as a priority hint (`decl_storage_class`, `codegen.py:371`). Save and restore BC or DE around calls with push and pop (21 T and 2 B per call). Also handle shared-storage `??AUTO` allocation and `CallGraphAnalyzer` (`codegen.py:1235`), which assume locals are memory.
-- IY as a struct pointer base (about 2 days within this family): `ld A,(IY+d)` at 19 T. Save and restore IY at call boundaries.
+- IY as a struct pointer base (about 2 days within this family): `ld A,(IY+d)` at 19 T. Save and restore IY at call boundaries. Done in step 2 (see the status section).
 - Full version: a liveness-based allocator with call-clobber handling and spill code.
 - Where: `codegen.py:1010-1040`, 5208-5322, 5862-5973, 7599.
 - Test: the same as family F, plus the sieve, queens, tak and ttt timings.

@@ -22,7 +22,7 @@ The pass runs only in whole-program mode with the register convention on and wit
 
 The pass works on the text of one function after the code generator finishes the body. It does not change the code generator.
 
-1. Each candidate gets a weight: the number of accesses, multiplied by 10 for each loop level.
+1. Each candidate gets a weight: the number of accesses, multiplied by 8 for each loop level (3 levels at most). A local with a weight below 1 stays in memory.
 2. For the four best candidates, the pass builds the text with the local in BC and in DE. It builds each pair of two locals too.
 3. A cost model gives each text a score in T-states weighted by loop depth. The text with the best score wins. The pass keeps memory when no text gains more than 3 T-states.
 4. A local declared with `register` gets a bonus of 25 percent on the gain, and it sorts first when weights are close.
@@ -112,6 +112,21 @@ The pass tries each of the three heaviest pointers in IY. For each pointer, it r
 - `UC80_NO_IY=1` turns off IY.
 - `UC80_IY_ONLY=f,g` allows IY only in the functions `f` and `g`. Use this switch to find the function of a wrong answer.
 - `UC80_RL_DEBUG=1` prints the cost of each IY candidate and the cost without IY.
+
+## Tuning
+
+The cost model has a few constants in `reglocals.py` and `iyptr.py`. An environment variable overrides each constant. The variables are for experiments.
+
+The measurement uses 32 programs of the size run. The set has the four `snd-*` kernels, `sieve`, `queens`, `tak`, five `stanford-*` programs, `davidly-ttt`, `dhrystone21`, `coremark-unofficial`, `micro`, `lz4`, `crc`, `fannkuch`, `binary-trees`, `fasta` and others. The total image of the default build is 156,553 bytes.
+
+Each row changes one constant and keeps the others. The columns show the change of the total image, the number of programs with a smaller or bigger image, the number of programs with more or fewer T-states, and the change of the geometric mean of the T-states. A positive change is worse.
+
+
+The first five rows give the value of each part of the pass. The rename of scratch values is the largest (1.7% of the T-states). The IY pass gives 0.8%. A second local in BC or DE gives 0.24%. The prune of the wraps gives 0.04% (BC and DE) and 0.09% (IY).
+
+The other rows show that the constants of step 1 are near the best value. A smaller weight of one loop level (4) and a weight of a byte of 12 give a smaller image, but they make some programs slower. An IY margin of 0 does the same. The defaults stay.
+
+One change is better in every column: the lightest candidate goes from 2 to 1. Six programs get smaller, six get faster, and no program gets worse. The value 0 gives the same result. The new default is 1.
 
 ## Debugging
 

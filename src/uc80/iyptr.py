@@ -40,6 +40,8 @@ _SHIFT = ("rlc", "rrc", "rl", "rr", "sla", "sra", "srl", "sll")
 _NUM = re.compile(r"^[-+]?\d+$")
 _BITOF = {"B": B, "C": C, "D": D, "E": E}
 MAX_GROUP = 40
+N_CANDS = int(rl._knob("UC80_IY_CANDS", 3))   # pointers tried in IY
+IY_PRUNE = rl._knob("UC80_IY_PRUNE", 1.0)    # 0: keep every wrap
 MARGIN = rl._knob("UC80_IY_MARGIN", 3.0)    # the least gain of IY over BC and DE
 
 # the IY wraps carry this tag in the comment
@@ -523,7 +525,7 @@ def candidates(vars_, nodes, succ) -> list[Var]:
         if v.weight >= 3.0:
             out.append(v)
     out.sort(key=lambda v: -v.weight)
-    return out[:3]
+    return out[:N_CANDS]
 
 
 def apply(lines: list[str], var: Var, rest: list[Var], env: Env, frame: bool,
@@ -681,6 +683,8 @@ def prune_iy(code: str) -> str:
     never change IY.  The text is the final program."""
     if "; RY" not in code or rl._effect is None:
         return code
+    if not IY_PRUNE:
+        return re.sub(r"[ \t]*; RY\d+[ \t]*(?=\n|$)", "", code)
     lines = code.split("\n")
     pairs: dict[str, list[int]] = {}
     for i, ln in enumerate(lines):
@@ -701,6 +705,10 @@ def prune_iy(code: str) -> str:
     def callee_writes(t: Optional[str]) -> bool:
         if not t:
             return True
+        # a runtime helper keeps IY (rt_div32 saves it): the table, not the
+        # embedded text, tells
+        if t.startswith("__") and t.lower() in table:
+            return table[t.lower()]
         if t in sums.labels:
             return bool(sums.writes(t) & IYW)
         return table.get(t.lower(), True)
