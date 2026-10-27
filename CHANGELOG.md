@@ -6,6 +6,26 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Added
+
+- **RST vectors and IM 2 in the ROM target** ([docs/rom_hardware.md](docs/rom_hardware.md)). `#pragma uc80 rst ADDR NAME` binds a plain function (a software call target) to RST 08h to 30h, and `rst ADDR NAME interrupt [critical]` binds an interrupt function. `#pragma uc80 im2 SLOT NAME [critical]` and `#pragma uc80 im2table ADDR` select IM 2: the start-up code sets I and `IM 2`, and writes an aligned table of 128 vectors (an unbound slot points to a default `EI`, `RETI`). The compiler stops with an error for an address out of range, a vector or slot in use twice, and a misaligned table. A program with no such pragma has the same image as before. `bench/romrun` delivers an interrupt with a data bus byte (`add_irq_at(t, vec)`, `--irq-vec`), and no longer forces bit 0 of the IM 2 byte to 0. Tests: `tests/test_rom_vectors.py`, with `ul80` and with `--asm-syntax=sdas`.
+- An `im2` or `rst ... interrupt` pragma can name a handler that an assembly input file defines (declare the function in C). `bench/romrun`: a level-triggered source (`set_irq_level`, `YM2610`) can give an IM 2 data bus byte. A test checks that the IM 2 start-up code stays below the table.
+
+### Fixed in the ROM work
+
+- **IM 2 table at an address that starts with A to F.** `#pragma uc80 im2table 0xA000` wrote `LD A,A0H` and `ORG A000H`, and `um80` stopped with "Undefined symbol A0H" (sdas: "ORG needs a constant address"). The start-up text now writes `0A0H` and `0A000H`. The accepted range is now 0100h to FE00h: a table at FF00h put the program code at 10000h, which `um80` wrote over the start of the image without a message. Tests at 4000h, A000h and FE00h run in `bench/romrun`, with `ul80` and with sdas; FF00h is an error.
+- **`--asm-syntax=sdas` checks the ROM size of the table.** `sdldz80` built a 32802-byte image for a table at 7F00h, where `ul80` stops with "ROM overflow". The compiler now stops with "ROM overflow" when the program code starts at the end of the ROM or above. The new option `--rom-size HEX` (default 8000) sets the end.
+- **A vector pragma names a function in the file that holds the pragma.** Two `static` functions `h` in two files made both IM 2 slots (or `interrupt` vectors) jump to the `h` of the last file. The compiler now stops with an error that names both files when two input files define the function of a vector pragma.
+- **The vector pragmas warn in a CP/M program.** `im2`, `im2table`, `rst`, `vector`, `interrupt` and `nmi` had no effect with the CP/M target and no message. They now print the "not set" warning, as for `--no-embed-startup`.
+- **`__attribute__((naked))` is a naked function.** It was dropped without a message, so a naked handler got a normal prologue. `__attribute__((interrupt))` stays an error.
+- **An asm statement after `case` or `default`** (`case 0: asm("nop");`) gave "internal error: unexpected token KW_ASM". The prepass now adds the braces, as for `if` and `for`.
+- **The naked checks run for a naked function that nothing calls.** The big structure result, the variable argument list and the "no asm statement" checks were skipped, because dead-function removal dropped the function first. A naked function is now a root of the call graph, so the function stays in the output (asm code can enter a naked function by name). The docs say where a `char`, `long`, `float` and `long long` result is read.
+- **The CP/M warnings of the vector pragmas carry the file and the line** of the pragma.
+- **`--rom-size` is checked in every flow.** A value above 10000h or 0 is an error. With `um80` and `ul80`, the `ul80` line that `-v` prints now uses the value. The docs say that the sdas check looks at the code start only.
+- A naked function that returns a structure or union of more than 2 bytes, or takes `...`, is an error. A naked marker that differs between prototype and definition gives a warning. `typedef int F(int) __naked;` is an error. The "no asm statement" warning and the naked errors carry file and line.
+- **A label with two colons in an `__asm` block is PUBLIC** (`_g_alt::`), as in sdas and MACRO-80. It was an ordinary label, so the link failed with "Undefined symbol".
+- **An asm statement as the body of `if`, `else`, `for`, `while` and `do` without braces** (`for (;;) __asm__("halt");`) gave "unexpected token KW_ASM". The prepass in `sdcc_compat.py` adds the braces. The grammar of uc_core (`statement` in `data/c23.json`) has no asm as a statement, only as a declaration in a block; this is not changed in uc_core.
+
 ### Changed
 
 - **Integration of `bugfix2` and `reglocals` (branch `integrate6`).** One tree now holds both branches. `bugfix2` brings wide integers, IEEE NaN compares, calls through `**f`, several C files, C23 `auto` and inlined `uint16_t` literals. `reglocals` brings register locals in BC, DE and IY (family G, steps 1 and 2). The two failures of `test_printf_puts` that `bugfix2` reported came from its older base and are gone.
@@ -85,6 +105,9 @@ observable behaviour of a program uc80 compiles.
 - `rint`, `nearbyint`, `lrint`, `llrint`, `lround`, `llround`, `remquo`, `nexttoward` and their `f` and `l` forms are new (`math.h` declared several of them but the library had none).
 
 ### Added
+
+- **Naked functions: SDCC `__naked` and `[[uc80::naked]]`** ([docs/rom_hardware.md](docs/rom_hardware.md)). A naked function has no prologue, no epilogue, no frame and no `RET`: the body is the asm of the programmer. The body may hold only `asm(...)` statements, `__asm` blocks and empty statements; any other statement is an error with the line number. Parameters use the stack convention (first parameter at `(SP+2)` at entry). A naked function can be a vector target of `#pragma uc80 interrupt` or `nmi`; the compiler then writes nothing around the body. Never inlined, never given a constant parameter, never in the register convention; the call graph follows each `_name` in the asm text. Tests: `tests/test_naked.py`, `tests/test_sdcc_compat.py`, `tests/test_rom_interop.py` (sdas flow).
+
 
 - **Watchdog hook for the ROM target.** A program that defines `__watchdog_kick` (a C function with `#pragma uc80 public _watchdog_kick`, or an assembly file) gets a call of the hook at reset, before `main` and before each `HALT` of the idle loop. A program without the hook has no call and no extra byte. Tested in `bench/romrun` with a port that logs the kicks (`tests/test_rom_target.py`, `TestWatchdogHook`). See `docs/rom.md`.
 - **Interop with SDCC and nullsound** (Phase 5 of `docs/rom_target.md`; see `docs/rom_interop.md`):

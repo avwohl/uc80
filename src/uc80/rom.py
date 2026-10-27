@@ -99,20 +99,41 @@ def undefined_in_rom(lib_dir: Path, code: str) -> list:
 
 # ---- start-up code -----------------------------------------------------
 
+def hex_const(value: int, width: int = 4) -> str:
+    """An M80 hex constant: 0A000H, not A000H (M80 reads A000H as a name)."""
+    text = f"{value:0{width}X}"
+    return ("0" + text if text[0] in "ABCDEF" else text) + "H"
+
+
 _BLOCK = re.compile(r"^;@(INT|NMI)_BEGIN\n.*?^;@\1_END\n", re.S | re.M)
 
 
 def startup_text(path: Path, int_handler, nmi_handler,
                  stack_top: str | None, start: str | None = None,
-                 watchdog: bool = False) -> list:
+                 watchdog: bool = False, rst: dict | None = None,
+                 im2: tuple | None = None) -> list:
     """Lines of crt0_rom.mac for embedding.  A user handler replaces the
     default stub at its vector.  int_handler and nmi_handler are None (keep
     the default stub), True (the assembly label __int_handler or
     __nmi_handler), or the label to jump to.  stack_top (an assembler
     expression) replaces __RAM_END.  start is the label that __start calls
     in place of _main.  watchdog is True when the program defines
-    __watchdog_kick: the lines that start with ";@WDT" become code."""
+    __watchdog_kick: the lines that start with ";@WDT" become code.
+    rst maps an RST address (08H to 30H) to the label its vector jumps to
+    (no entry: the vector stays RET).  im2 is None (IM 1 stays) or
+    ({slot: label}, table address): the reset vector selects IM 2, the
+    start-up code loads I, and an aligned table of 128 words follows the
+    start-up code; the program code follows the table.  An unbound slot
+    points at __im2_default (EI, RETI).  See docs/rom_hardware.md."""
     text = path.read_text()
+    for addr, label in sorted((rst or {}).items()):
+        pat = f"__vec_rst{addr:02x}:\n\tRET\n"
+        assert pat in text, pat
+        text = text.replace(pat, f"__vec_rst{addr:02x}:\n\tJP\t{label}\n")
+    if im2:
+        text = text.replace("\tIM\t1\n", "\tIM\t2\n")
+        text = re.sub(r"^;@IM2", "", text, flags=re.M).replace(
+            "__IM2_HI", hex_const(im2[1] >> 8, 2))
     if watchdog:
         text = re.sub(r"^;@WDT", "", text, flags=re.M)
     use = {"INT": int_handler, "NMI": nmi_handler}
@@ -138,11 +159,23 @@ def startup_text(path: Path, int_handler, nmi_handler,
         s = line.strip().upper()
         if s in {".Z80", "DSEG"} or s.startswith("END"):
             continue
+        if im2 and s.startswith(";@RELOC"):
+            continue        # the start-up code stays below the table
         if s.startswith("EXTRN") and "_MAIN" in s and "__" not in s:
             continue
         if start and s.startswith("CALL") and s.split()[-1] == "_MAIN":
             line = f"\tCALL\t{start}"
         out.append(line)
+    if im2:
+        slots, table = im2
+        out += ["\tPUBLIC\t__im2_default", "__im2_default:", "\tEI", "\tRETI",
+                f"\tORG\t{hex_const(table)}", "\tPUBLIC\t__im2_table",
+                "__im2_table:"]
+        names = [slots.get(i, "__im2_default") for i in range(128)]
+        out += ["\tDW\t" + ",".join(names[i:i + 8])
+                for i in range(0, 128, 8)]
+        out.append(f"\tORG\t{hex_const(table + 256)}")
+        out.append(f";@RELOC {hex_const(table + 256)}")      # sdas: code from here
     return out
 
 
@@ -162,8 +195,8 @@ def strip_empty_printf_tables(code: str) -> str:
     return _PRINTF_TABLES.sub("\n", code)
 
 
-def link_command(output: str = "prog") -> str:
+def link_command(output: str = "prog", rom_size: int = 0x8000) -> str:
     """The ul80 command line for a ROM built from one module."""
-    return (f"ul80 --bin -p 0 -d F800 --rom-data --rom-size 8000 "
+    return (f"ul80 --bin -p 0 -d F800 --rom-data --rom-size {rom_size:X} "
             f"--ram-size 800 --min-stack 100 -o {output}.bin -S {output}.sym "
             f"{output}.rel libc_rom.lib runtime.lib")

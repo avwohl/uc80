@@ -18,7 +18,7 @@ from uc_core.type_config import TypeConfig, Z80_CPM
 
 from . import lib_dir, lib_file
 from .codegen import (generate, CodeGenerator, CodegenError, BSS_BANNER_PREFIX,
-                      drop_unreferenced_externs)
+                      drop_unreferenced_externs, function_name)
 from .runtime import (RuntimeLibrary, load_lib_modules, load_runtime_library,
                       leave_to_library)
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
@@ -358,9 +358,16 @@ class _Roots:
     public: set      # names that get a PUBLIC label even if static
     vectors: dict    # {0x38: name, 0x66: name}
     isrs: dict = None  # interrupt functions: name -> "int", "int_crit", "nmi"
+    rst: dict = None   # {0x08..0x30: name}: RST vectors (docs/rom_hardware.md)
+    im2: dict = None   # {slot 0..127: name}: IM 2 vector table slots
+    im2_table: int | None = None  # address of the IM 2 table, or None
+    im2_on: bool = False          # IM 2 is in use
+    where: dict = None            # {("rst", 8) | ("vec", 0x38): "file:line"}
 
 
 _VECTORS = {0x38: "INT (38h)", 0x66: "NMI (66h)"}
+_RST_ADDRS = (0x08, 0x10, 0x18, 0x20, 0x28, 0x30)
+IM2_DEFAULT_TABLE = 0x100
 
 
 def _parse_address(text: str):
@@ -376,15 +383,88 @@ def _parse_address(text: str):
         return None
 
 
+def _ambiguous_functions(asts: list, paths: list) -> dict:
+    """{name: [file, ...]} for each function that more than one input file
+    defines.  A vector pragma names a function by its name alone, so such a
+    name cannot be bound (two static functions of one name in two files)."""
+    seen = {}
+    for ast, path in zip(asts, paths):
+        for item in ast.items or []:
+            if isinstance(item, ast_module.FunctionDef):
+                name = function_name(item)
+                if name and path not in seen.setdefault(name, []):
+                    seen[name].append(path)
+    return {n: f for n, f in seen.items() if len(f) > 1}
+
+
 def _roots_from_options(entries: list, pragmas: list,
-                        sdcc_isrs: list = ()) -> _Roots:
+                        sdcc_isrs: list = (), ambiguous: dict = None) -> _Roots:
     """The names --entry and #pragma uc80 keep/public/vector pin down.
     Raises CodegenError for a pragma it does not understand: a vector
     that is silently dropped is a ROM that does not start."""
-    roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={})
+    roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={},
+                   rst={}, im2={}, where={})
     ident = re.compile(r"^[A-Za-z_]\w*$")
+    ambiguous = ambiguous or {}
+
+    def unambiguous(name, where):
+        if name in ambiguous:
+            raise CodegenError(
+                f"{where}: '{name}' is defined in more than one file ("
+                f"{', '.join(ambiguous[name])}); a vector names a function "
+                f"by its name alone, so uc80 cannot tell which one is "
+                f"meant. Give each function its own name")
+
+    def remember(key, where):
+        m = re.match(r"(.*?:\d+):", where)
+        roots.where.setdefault(key, m.group(1) + ": " if m else "")
+
+    def add_rst(addr, name, kind, where):
+        unambiguous(name, where)
+        if addr not in _RST_ADDRS:
+            hint = (" (0000h is the reset vector; use '#pragma uc80 "
+                    "interrupt NAME' for 0038h)" if addr in (0, 0x38) else "")
+            raise CodegenError(
+                f"{where}: the RST address must be 08h, 10h, 18h, 20h, 28h "
+                f"or 30h{hint}")
+        if addr in roots.rst:
+            raise CodegenError(
+                f"{where}: the RST {addr:02X}h vector is already set to "
+                f"{roots.rst[addr][0]}")
+        if kind is not None:
+            if roots.isrs.get(name, kind) != kind:
+                raise CodegenError(
+                    f"{where}: '{name}' is already an interrupt function of "
+                    f"another kind")
+            roots.isrs[name] = kind
+        roots.rst[addr] = (name, kind)
+        remember(("rst", addr), where)
+        roots.keep.add(name)
+        roots.public.add(name)
+
+    def add_im2(slot, name, kind, where):
+        unambiguous(name, where)
+        if not 0 <= slot <= 127:
+            raise CodegenError(
+                f"{where}: the IM 2 slot must be 0 to 127 (the data bus "
+                f"byte is 2 times the slot)")
+        if slot in roots.im2:
+            raise CodegenError(
+                f"{where}: IM 2 slot {slot} is already set to "
+                f"{roots.im2[slot]}")
+        if roots.isrs.get(name, kind) != kind:
+            raise CodegenError(
+                f"{where}: '{name}' is already an interrupt function of "
+                f"another kind")
+        roots.isrs[name] = kind
+        roots.im2[slot] = name
+        roots.im2_on = True
+        remember(("im2", 0), where)
+        roots.keep.add(name)
+        roots.public.add(name)
 
     def add_isr(kind, name, where):
+        unambiguous(name, where)
         addr = 0x66 if kind == "nmi" else 0x38
         if roots.isrs.get(name, kind) != kind:
             raise CodegenError(
@@ -396,6 +476,7 @@ def _roots_from_options(entries: list, pragmas: list,
                 f"{roots.vectors[addr]}")
         roots.isrs[name] = kind
         roots.vectors[addr] = name
+        remember(("vec", addr), where)
         roots.keep.add(name)
         roots.public.add(name)
 
@@ -409,8 +490,50 @@ def _roots_from_options(entries: list, pragmas: list,
             roots.keep.update(words)
             if verb == "public":
                 roots.public.update(words)
+        elif verb == "rst":
+            addr = _parse_address(words[0]) if words else None
+            ok = (len(words) in (2, 3, 4) and addr is not None
+                  and ident.match(words[1])
+                  and (len(words) == 2 or words[2] == "interrupt")
+                  and (len(words) < 4 or words[3] == "critical"))
+            if not ok:
+                raise CodegenError(
+                    f"{where}: expected '#pragma uc80 rst 08h NAME' or "
+                    f"'#pragma uc80 rst 08h NAME interrupt [critical]'")
+            kind = (None if len(words) == 2 else
+                    "int_crit" if len(words) == 4 else "int")
+            add_rst(addr, words[1], kind, where)
+        elif verb == "im2table":
+            addr = _parse_address(words[0]) if len(words) == 1 else None
+            if addr is None or addr % 256 or not 0x100 <= addr <= 0xFE00:
+                raise CodegenError(
+                    f"{where}: expected '#pragma uc80 im2table ADDR' with "
+                    f"ADDR a multiple of 100h from 0100h to FE00h "
+                    f"(the program code follows the table, 256 bytes long, "
+                    f"and must start below 10000h)")
+            if roots.im2_table not in (None, addr):
+                raise CodegenError(
+                    f"{where}: the IM 2 table is already at "
+                    f"{roots.im2_table:04X}h")
+            roots.im2_table = addr
+            roots.im2_on = True
+            remember(("im2", 0), where)
+        elif verb == "im2":
+            slot = (_parse_address(words[0])
+                    if len(words) in (2, 3) else None)
+            if (slot is None or not ident.match(words[1])
+                    or (len(words) == 3 and words[2] != "critical")):
+                raise CodegenError(
+                    f"{where}: expected '#pragma uc80 im2 SLOT NAME' or "
+                    f"'#pragma uc80 im2 SLOT NAME critical'")
+            add_im2(slot, words[1], "int_crit" if len(words) == 3 else "int",
+                    where)
         elif verb == "vector":
             addr = _parse_address(words[0]) if words else None
+            if (len(words) == 2 and addr in _RST_ADDRS
+                    and ident.match(words[1])):
+                add_rst(addr, words[1], None, where)
+                continue
             if len(words) != 2 or addr not in _VECTORS or not ident.match(words[1]):
                 raise CodegenError(
                     f"{where}: expected '#pragma uc80 vector 38h NAME' or "
@@ -419,7 +542,9 @@ def _roots_from_options(entries: list, pragmas: list,
                 raise CodegenError(
                     f"{where}: the {_VECTORS[addr]} vector is already set "
                     f"to {roots.vectors[addr]}")
+            unambiguous(words[1], where)
             roots.vectors[addr] = words[1]
+            remember(("vec", addr), where)
             roots.keep.add(words[1])
         elif verb in ("interrupt", "nmi"):
             ok = (len(words) == 1 or (verb == "interrupt" and len(words) == 2
@@ -435,7 +560,7 @@ def _roots_from_options(entries: list, pragmas: list,
         else:
             raise CodegenError(
                 f"{where}: unknown verb; uc80 knows keep, public, vector, "
-                f"interrupt and nmi")
+                f"interrupt, nmi, rst, im2 and im2table")
     return roots
 
 
@@ -606,6 +731,16 @@ def main() -> int:
              "image. Selects lib/crt0_rom.mac (vectors, SP, data copy, BSS "
              "clear), no BDOS, and refuses exit, abort, console and file "
              "I/O and main(argc, argv). See docs/rom.md"
+    )
+    parser.add_argument(
+        "--rom-size", metavar="HEX", default="8000",
+        help="--target=rom with --asm-syntax=sdas: the ROM size in hex "
+             "(default 8000, as in the ul80 command of docs/rom.md; 1 to "
+             "10000). With um80 and ul80 the option only changes the "
+             "ul80 command that -v prints: give the size to ul80. uc80 "
+             "refuses a program whose code starts at or above the end of "
+             "the ROM (an IM 2 table near the top). ul80 checks the size "
+             "of the image by itself"
     )
     parser.add_argument(
         "-ffreestanding", dest="freestanding", action="store_true",
@@ -926,8 +1061,10 @@ def main() -> int:
         if scanf_features is not None:
             scanf_features = _close_format_features(scanf_features)
 
-        roots = _roots_from_options(args.entry, target_pragmas,
-                                    sdcc_found.isrs)
+        roots = _roots_from_options(
+            args.entry, target_pragmas, sdcc_found.isrs,
+            _ambiguous_functions(asts, [str(p) for p in input_paths
+                                        if p.suffix.lower() != ".mac"]))
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                            enable_inlining, enable_const_propagation, whole_program,
                            embed_runtime=embed_runtime,
@@ -948,7 +1085,13 @@ def main() -> int:
                                             or args.runtime_lib
                                             or args.startup_lib),
                            foreign_asm_names=regcc.asm_text_names(mac_files),
-                           register_locals=not args.no_register_locals)
+                           register_locals=not args.no_register_locals,
+                           naked_funcs={n for n, _f, _l in sdcc_found.naked})
+        gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
+        for msg in sdcc_compat.naked_mismatches(
+                asts, [str(p) for p in input_paths
+                       if p.suffix.lower() != ".mac"], sdcc_found):
+            print(f"uc80: warning: {msg}", file=sys.stderr)
         code = gen.generate(merged_ast)
         printf_need = printf_hook.printf_needs(merged_ast, printf_features)
         code = printf_hook.patch_tables(code, printf_need)
@@ -973,13 +1116,34 @@ def main() -> int:
             return sym.label() if sym else f"_{name}"
 
         keep_labels = {label_of(n) for n in roots.keep}
-        if rom and roots.vectors and (not embed_startup or args.startup_lib):
+        # The vectors, the IM 2 table and the I register are set by the
+        # start-up code of --target=rom only.
+        no_vec = (not rom or not embed_startup or args.startup_lib)
+        why_rst = ("only --target=rom writes the vectors" if not rom else
+                   "only the start-up code that uc80 embeds (whole-program "
+                   "mode, no --startup-lib) sets the vectors")
+        if no_vec:
+            for _addr, (_name, _k) in sorted(roots.rst.items()):
+                print(f"uc80: warning: {roots.where.get(('rst', _addr), '')}"
+                      f"the RST {_addr:02X}h vector is not "
+                      f"set to '{_name}': {why_rst}; make your own start-up "
+                      f"code jump to {label_of(_name)}", file=sys.stderr)
+            if roots.im2_on:
+                print("uc80: warning: " + roots.where.get(("im2", 0), "")
+                      + "the IM 2 vector table is not written: " + ("only --target=rom writes the table "
+                      if not rom else "only the start-up code that uc80 "
+                      "embeds writes the table ") + "and sets the I "
+                      "register and IM 2", file=sys.stderr)
             for _addr, _name in sorted(roots.vectors.items()):
-                print(f"uc80: warning: the {_VECTORS[_addr]} vector is not "
-                      f"set to '{_name}': only the start-up code that uc80 "
-                      f"embeds (whole-program mode, no --startup-lib) sets "
-                      f"the vectors; make your own start-up code jump to "
-                      f"{label_of(_name)}", file=sys.stderr)
+                print(f"uc80: warning: {roots.where.get(('vec', _addr), '')}"
+                      f"the {_VECTORS[_addr]} vector is not "
+                      f"set to '{_name}': {why_rst}; make your own start-up "
+                      f"code jump to {label_of(_name)}", file=sys.stderr)
+        for n in sorted(gen.asm_isrs):
+            if not _defines_label(code, mac_files, label_of(n)):
+                raise CodegenError(
+                    f"'{n}' is named as an interrupt function and declared "
+                    f"here, but no assembly file defines {label_of(n)}")
         for n in sorted(roots.keep):
             if (n not in gen.ctx.globals
                     and not _defines_label(code, mac_files, label_of(n))):
@@ -1074,7 +1238,12 @@ def main() -> int:
                     startup_lines = rom_module.startup_text(
                         startup_path, int_handler, nmi_handler,
                         args.stack_top, start,
-                        _defines_label(code, mac_files, "__watchdog_kick"))
+                        _defines_label(code, mac_files, "__watchdog_kick"),
+                        rst={a: label_of(n) for a, (n, _k)
+                             in roots.rst.items()},
+                        im2=({s: label_of(n) for s, n in roots.im2.items()},
+                             roots.im2_table or IM2_DEFAULT_TABLE)
+                        if roots.im2_on else None)
                     startup_content = ""
                 for line in startup_content.splitlines():
                     stripped = line.strip().upper()
@@ -1442,6 +1611,10 @@ def main() -> int:
             isr_labels = {n: label_of(n) for n in roots.isrs}
             reports = isr_check.analyze(
                 code, isr_labels, lib_dir() if lib_dir().is_dir() else None)
+            # a naked handler saves its own registers: no marker, no note
+            for r in reports:
+                if r.name in gen.naked:
+                    r.alt_chain = None
             code = isr_check.resolve_alt_markers(
                 code, {r.name for r in reports if r.alt_chain})
             for msg in isr_check.format_reports(reports):
@@ -1529,6 +1702,13 @@ def main() -> int:
         code = drop_unreferenced_externs(code)
 
         # Write output
+        rom_end = _parse_address(
+            "0x" + args.rom_size.lower().removeprefix("0x").rstrip("h"))
+        if rom_end is None or not 0 < rom_end <= 0x10000:
+            print(f"uc80: error: --rom-size {args.rom_size}: expected a "
+                  f"size in hex, 1 to 10000h (the Z80 has 64 kilobytes of "
+                  f"address space)", file=sys.stderr)
+            return 1
         sdas_origin = None
         if args.asm_syntax == "sdas":
             try:
@@ -1545,6 +1725,16 @@ def main() -> int:
                       f"uc80: the MACRO-80 text is in {keep}", file=sys.stderr)
                 return 1
             sdas_origin = sdas.code_origin_of(code)
+            if rom and sdas_origin is not None and sdas_origin >= rom_end:
+                print(f"uc80: error: ROM overflow: the program code starts "
+                      f"at {sdas_origin:04X}h" + (
+                          f", after the IM 2 table at "
+                          f"{roots.im2_table or IM2_DEFAULT_TABLE:04X}h"
+                          if roots.im2_on else "")
+                      + f", but the ROM is {rom_end:04X}h bytes and ends "
+                      f"at {rom_end:04X}h; put the table lower, or give "
+                      f"--rom-size", file=sys.stderr)
+                return 1
             if args.sdas_style == "ngdevkit" and rom:
                 nm = sdas.area_names(args.sdas_style, args.sdas_areas)
                 cur, init_data = None, False
@@ -1574,7 +1764,7 @@ def main() -> int:
                 stem = output_path.with_suffix("").name
                 print("  ROM link (adjust -d, --rom-size, --ram-size):")
                 print("    um80 " + output_path.name)
-                print("    " + rom_module.link_command(stem))
+                print("    " + rom_module.link_command(stem, rom_end))
 
         return 0
 

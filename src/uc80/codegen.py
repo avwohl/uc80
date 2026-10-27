@@ -1421,6 +1421,9 @@ class CallGraphAnalyzer:
     isr_roots: set[str] = field(default_factory=set)
     isr_reentrant: set[str] = field(default_factory=set)  # EI first
     isr_safe: bool = False
+    # Naked functions (docs/rom_hardware.md): never inlined, never given a
+    # constant parameter.
+    naked: set[str] = field(default_factory=set)
 
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
@@ -2142,6 +2145,10 @@ class CallGraphAnalyzer:
             # Functions whose addresses are taken are also entry points
             # (they could be called via function pointers)
             entry_points.update(self.address_taken)
+            # A naked function is the assembly of the programmer: asm code
+            # can enter it, so it stays (and its checks run)
+            entry_points.update(n for n in getattr(self, "naked", ())
+                                if n in self.call_graph)
 
             # When not in whole_program mode, all PUBLIC functions are entry points
             # since external code might call them
@@ -2244,6 +2251,10 @@ class CallGraphAnalyzer:
 
         func = func_bodies[func_name]
         if func.body is None:
+            return False
+
+        # A naked function is the assembly of the programmer
+        if func_name in self.naked:
             return False
 
         # Don't inline recursive functions
@@ -3150,7 +3161,7 @@ class CallGraphAnalyzer:
                 continue
 
             # Don't propagate if function's address is taken
-            if func_name in self.address_taken:
+            if func_name in self.address_taken or func_name in self.naked:
                 continue
 
             # When not in whole_program mode, don't propagate to PUBLIC functions
@@ -3666,10 +3677,15 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                  absolute: "dict[str, int] | None" = None,
                  register_cc: bool = True,
                  foreign_asm_names: "set[str] | None" = None,
-                 register_locals: bool = True):
+                 register_locals: bool = True,
+                 naked_funcs: "set[str] | None" = None):
         self.module_name = module_name
         self.enable_register_locals = register_locals
         self._rl_debug = bool(os.environ.get("UC80_RL_DEBUG"))
+        # Naked functions (SDCC __naked, [[uc80::naked]]): no frame code,
+        # the body is asm statements only.  See docs/rom_hardware.md.
+        self.naked = set(naked_funcs or ())
+        self.naked_file: dict[str, str] = {}    # name -> file, for messages
         # Register calling convention (docs/calling_convention.md): on by
         # default; off for separate compilation, whatever this says.
         # foreign_asm_names: lower-case names that the hand-written
@@ -3684,6 +3700,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         # Interrupt functions: name -> "int" (EI first, RETI), "int_crit"
         # (EI before RETI) or "nmi" (RETN).  See docs/rom.md.
         self.isr_funcs = dict(isr_funcs or {})
+        self.asm_isrs = set()   # interrupt functions an .mac file defines
         # --isr-safe: a function an interrupt function can reach keeps its
         # locals on the stack, never in the shared ??AUTO area.
         self.isr_safe = isr_safe
@@ -4316,8 +4333,19 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 nm = function_name(d)
                 if nm in self.isr_funcs:
                     defs[nm] = d
+        protos = set()
+        for d in unit.items:
+            if isinstance(d, ast.Declaration):
+                protos.update(n for n, _f, _i, is_fn in iter_var_decls(d)
+                              if n and is_fn)
         for nm in sorted(self.isr_funcs):
             d = defs.get(nm)
+            if d is None and nm in protos:
+                # declared here, defined in an assembly file: the file
+                # saves the registers and ends in RETI itself; main.py
+                # checks that the file defines the label
+                self.asm_isrs.add(nm)
+                continue
             if d is None:
                 raise CodegenError(
                     f"'{nm}' is named as an interrupt function but the "
@@ -4353,7 +4381,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                                  isr_reentrant={n for n, k in
                                                 self.isr_funcs.items()
                                                 if k == "int"},
-                                 isr_safe=self.isr_safe)
+                                 isr_safe=self.isr_safe,
+                                 naked=set(self.naked))
 
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
@@ -6411,7 +6440,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             if name is None or name == "main":
                 continue
             if (name in self.keep_names or name in self.public_names
-                    or name in self.isr_funcs or name in self.absolute
+                    or name in self.naked or name in self.isr_funcs or name in self.absolute
                     or name in isr_reach or name in scan.value_refs
                     or name in scan.asm_funcs):
                 continue
@@ -6601,6 +6630,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         else:
             self.ctx.emit(f"; Function {name}")
         self.ctx.emit_label(func_label)
+
+        if name in self.naked:
+            self._gen_naked_body(func, name)
+            self._type_scope_restore(type_scope)
+            return
 
         isr_kind = self.isr_funcs.get(name)
         if isr_kind is not None:
@@ -6815,6 +6849,50 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         self._current_sret_size = None
         self._sret_slot_addrs = {}
         self._type_scope_restore(type_scope)
+
+    def _gen_naked_body(self, func, name: str) -> None:
+        """A naked function: the label, then the asm statements of the
+        body.  No frame, no parameter code, no RET.  The asm blocks carry
+        the region markers, so no pass touches them."""
+        file = self.naked_file.get(name)
+
+        def loc(node):
+            line = _node_line(node)
+            return (f"{file}:{line}: " if file and line else
+                    f"line {line}: " if line else "")
+
+        here = loc(func)
+        if self._current_sret_size:
+            raise CodegenError(
+                f"{here}naked function '{name}' returns a structure or "
+                f"union: the caller passes a hidden result pointer that a "
+                f"naked function cannot see; return a pointer or a value "
+                f"of at most 2 bytes")
+        if function_is_variadic(func):
+            raise CodegenError(
+                f"{here}naked function '{name}' takes a variable argument "
+                f"list: a naked function has no frame to read the "
+                f"arguments from; remove the '...'")
+        has_asm = False
+        for item in func.body.items or []:
+            if isinstance(item, ast.AsmDeclaration):
+                has_asm = True
+            elif not isinstance(item, ast.EmptyStmt):
+                raise CodegenError(
+                    loc(item) +
+                    f"naked function '{name}': the body may hold only "
+                    f"asm statements, but it has another statement")
+        if not has_asm:
+            self.warnings.append(
+                f"{here}naked function '{name}' has no asm statement; the "
+                f"function has no code and falls into the next one")
+        self.gen_compound_stmt(func.body)
+        self.ctx.emit()
+        self.ctx.current_function = None
+        self.ctx.current_return_type = None
+        self._use_shared_storage = False
+        self._current_sret_size = None
+        self._sret_slot_addrs = {}
 
     _TAIL_CALL = re.compile(r"^\tcall\t(_[A-Za-z0-9][A-Za-z0-9_]*)\s*(;.*)?$")
     _NO_TAIL_NAME = re.compile(r"setjmp", re.IGNORECASE)

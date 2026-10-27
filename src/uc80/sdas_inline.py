@@ -14,6 +14,7 @@ uses in practice:
     .ds .blkb .blkw    DS
     .ascii .asciz      DB with the characters
     .globl name        PUBLIC when the block defines the label, else EXTRN
+    name::             a global label: PUBLIC name, then the label
     name = value       EQU (and .equ)
     1$: ... jr 1$      a local label; the scope ends at the next global label
     0x1F 0b101 <x >x   0FFH style numbers, LOW x and HIGH x
@@ -203,6 +204,8 @@ class _Block:
                 self.scope += 1
             sym = self.sym(name)
             self.defined.add(sym)
+            if m.group(2) == "::":      # a global label, as in sdas
+                self.out.append(f"\tPUBLIC\t{sym}")
             self.out.append(f"{sym}:")
             rest = rest[m.end():]
         rest = rest.strip()

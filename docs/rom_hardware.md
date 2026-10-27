@@ -78,6 +78,86 @@ them. Compile with --isr-safe to keep them on the stack.
 
 The option `--isr-safe` keeps the locals of all functions that an interrupt function reaches on the stack. The code is a little larger and slower. The option does not change functions that no interrupt function reaches.
 
+## RST vectors and IM 2
+
+The RST vectors 0008h to 0030h and the IM 2 vector table are new. Both need `--target=rom` with the start-up code that uc80 embeds (whole-program mode, no `--startup-lib`). With another start-up code, or with the CP/M target, the compiler prints a warning (for example "the RST 10h vector is not set"). Then your code must set the vector. The pragmas `rst`, `im2`, `im2table`, `vector`, `interrupt` and `nmi` have no effect in a CP/M program.
+
+A pragma names a function by its name alone. Suppose two input files define a function with this name (two `static` functions). Then the compiler stops with an error that names both files, because the pragma cannot tell which function it means. Give each function its own name.
+
+### RST vectors
+
+```
+#pragma uc80 rst 10h NAME                       software call: a plain function
+#pragma uc80 rst 18h NAME interrupt             interrupt function: EI, saves, RETI
+#pragma uc80 rst 18h NAME interrupt critical    interrupt function: EI before RETI
+#pragma uc80 vector 10h NAME                    the same as rst 10h NAME
+```
+
+The address is 08h, 10h, 18h, 20h, 28h or 30h. A decimal number and `0x10` also work. The start-up code changes the `RET` at the vector to `JP NAME`. A vector that has no pragma keeps `RET`.
+
+- Software call. The function is a plain C function with the form `void NAME(void)`. An assembly caller runs `RST 10h`, and the function ends with `RET`. The function saves no registers beyond the normal C rules, so the caller must expect that any register changes. The C convention for the stack and for the registers still applies. A naked function is also a valid target: it gets the stack as the `RST` left it.
+- Interrupt function. Use this form when a device puts an RST opcode on the data bus in IM 0. The function has the same prologue and epilogue as `#pragma uc80 interrupt NAME`: `EI` first (not with `critical`), `PUSH AF, BC, DE, HL, IY`, and `RETI`. The function must not take a parameter or return a value. No C code can call the function.
+
+The compiler stops with an error in these cases:
+
+- The address is 00h (the reset vector). Use `#pragma uc80 interrupt NAME` for 38h.
+- The address is not a multiple of 8 from 08h to 30h.
+- Two pragmas set the same RST vector.
+- The function is not defined.
+
+RST 38h and 66h keep their own pragmas. The SDCC form `__interrupt(n)` makes no vector, and n has no effect. Add the pragma for the vector.
+
+### IM 2
+
+```
+#pragma uc80 im2 SLOT NAME              bind NAME to a slot of the vector table
+#pragma uc80 im2 SLOT NAME critical     the same, with EI before RETI
+#pragma uc80 im2table ADDR              set the address of the table
+```
+
+The device puts one byte on the data bus. The CPU makes the address of a vector from the register I (high byte) and the data bus byte (low byte). The CPU reads a 16-bit handler address at this place. A device puts an even byte on the bus, so one table has 128 slots of two bytes. The bus byte is two times SLOT, and SLOT is 0 to 127.
+
+An `im2` pragma, or an `im2table` pragma, selects IM 2 for the whole program:
+
+- The reset vector at 0000h does `DI`, `IM 2` (in place of `IM 1`).
+- `__start` loads I with the high byte of the table address, before `main`. The program must run `EI` itself, as for IM 1.
+- The compiler writes the table of 256 bytes at the address of `im2table`. The default address is 0100h. The address must be a multiple of 100h from 0100h to FE00h. The start-up code must fit below the table, and the program code follows the table, so the table ends below 10000h. The table has the PUBLIC label `__im2_table`.
+- A slot with no pragma points to `__im2_default` (PUBLIC), which does `EI` and `RETI`. Then a bus byte for an unbound slot does no harm.
+- The program code starts after the table (at 0200h for the default). The ROM has a gap between the end of the start-up code and the table. The start-up code with every option (watchdog, user INT handler, user NMI handler) must stay below the table. A test checks this limit. The cost of IM 2 is 256 bytes for the table and the gap. The gap is part of the ROM image: a table at 0A000h makes an image of more than 40 kilobytes, and the ROM must be large enough (`--rom-size` of `ul80`). `ul80` stops with "ROM overflow" when the code does not fit.
+- With `--asm-syntax=sdas`, `sdldz80` does not check the size of the image. So the compiler checks the address where the program code starts. It stops with "ROM overflow" when this address is not below the end of the ROM. The default ROM size is 8000h. Use `--rom-size HEX` for a larger ROM (the largest value is 10000h). The check looks at the start of the code only. It does not add the size of the program. A program that is larger than the space after the table can still overflow the ROM, and `sdldz80` then writes a larger image. With `um80` and `ul80`, the option only changes the `ul80` command that `-v` prints: give the same size to `ul80`.
+- A hex constant in the assembly text has a leading 0 when it starts with A to F (`0A000H`). MACRO-80 reads `A000H` as a name.
+- A handler is an interrupt function as for `#pragma uc80 interrupt NAME`: `EI` first (not with `critical`), five pushes, and `RETI`. One function can serve two slots when both pragmas use the same form. The vector at 0038h is not used in IM 2.
+
+The compiler stops with an error in these cases:
+
+- A slot is not in 0 to 127.
+- Two pragmas bind the same slot.
+- An `im2table` address is not a multiple of 100h, is below 0100h or is above FE00h.
+- Two `im2table` pragmas give different addresses.
+- The function is not defined, takes a parameter, returns a value, or has a caller in C.
+- The function has only a prototype in C, and no assembly input file defines its PUBLIC label.
+
+A handler can be a function in an assembly input file. Declare the function in C (`extern void ih(void);`) and name the function in the `im2` pragma, or in the `rst ... interrupt` pragma. The compiler does not add code to the function. The assembly code must save the registers it changes, and must end with `EI` and `RETI` (`RETI` alone for a critical handler).
+
+Example, with a device that puts 06h (slot 3) or 14h (slot 10) on the bus:
+
+```
+#pragma uc80 im2 3 on_a
+#pragma uc80 im2 10 on_b
+void on_a(void) { count_a++; }
+void on_b(void) { count_b++; }
+```
+
+The 257-byte table (every byte equal, so that any bus byte gives the same handler) for a device that puts an odd or floating byte on the bus is not supported. Use an assembly start-up code for such a device. The runner `bench/romrun` does not force bit 0 of the bus byte to 0, as the real CPU does not.
+
+Tests in `tests/test_rom_vectors.py`. Each test runs with `ul80` and with `--asm-syntax=sdas` (`sdasz80`, `sdldz80`). The sdas flow links the code at the origin after the table. The tests run these cases:
+
+- Two IM 2 handlers on two slots.
+- An unbound slot.
+- The RST software call.
+- The RST interrupt function in IM 0.
+- IM 1 with no IM 2.
+
 ## Port input and output
 
 `<z80.h>` has the port functions. Each function is a compiler intrinsic. The compiler writes the instruction in line. No optimizer pass moves, merges or removes the instruction, as for a volatile access. Two calls with the same port and value are two `OUT` instructions.
@@ -154,7 +234,60 @@ __asm ... __endasm;                        inline assembly in sdas syntax
 - `__interrupt(n)` does not make a vector. The compiler sets the vector as for the pragma.
 - An `__asm` block becomes an `asm("...")` statement with MACRO-80 text. [rom_interop.md](rom_interop.md) lists the forms.
 
-Every other SDCC form stays an error: `__naked`, `__banked` on a function, `__sdcccall`, `__preserves_regs`, `__using`, a bare `__critical`, `[[gnu::interrupt]]`, `__attribute__((interrupt))`, `__interrupt` before the declarator, and a bare `__fastcall`. The compiler never drops one of them without a message.
+The section "Naked functions" describes `__naked`. Every other SDCC form stays an error: `__banked` on a function, `__sdcccall`, `__preserves_regs`, `__using`, a bare `__critical`, `[[gnu::interrupt]]`, `__attribute__((interrupt))`, `__interrupt` before the declarator, and a bare `__fastcall`. The compiler never drops one of them without a message.
+
+## Naked functions
+
+A naked function has no frame code. The compiler writes the label and the body only. It writes no `push IX`, no stack space for locals, no code for the parameters and no `RET`. The body is the assembly of the programmer.
+
+```
+int add2(int a, int b) __naked
+{
+    __asm
+        ld hl,#2
+        add hl,sp
+        ld e,(hl)
+        inc hl
+        ld d,(hl)
+        inc hl
+        ld a,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,a
+        add hl,de
+        ret
+    __endasm;
+}
+
+[[uc80::naked]] void f(void) { asm("\tret"); }
+```
+
+Spellings: `__naked` after the parameter list (also with `__interrupt` and `__critical`), and the C23 attribute `[[uc80::naked]]` before the declaration or after the parameter list. The GNU form `__attribute__((naked))` also marks a naked function. It can stand before the declaration or after the parameter list. uc80 ignores the other attributes in the same list. `__attribute__((interrupt))` stays an error, also in a list with `naked`.
+
+Write the naked marker on every declaration of a function. If the prototype and the definition differ (in either direction), the compiler prints a warning with the file and the line. The definition decides: a definition without the marker gets the frame code of a normal function.
+
+A typedef of a function type cannot have the marker: `typedef int F(int) __naked;` is an error.
+
+Rules:
+
+- The body holds only `asm("...")` statements, `__asm ... __endasm;` blocks and empty statements. Any other statement or declaration is an error with the line number. SDCC allows C code in the body, but the result is not defined. So uc80 refuses it.
+- A body with no asm statement gives a warning with the file and the line: the function has no code and runs into the next function.
+- A naked function must not return a structure or a union of more than 2 bytes, and must not take a variable argument list (`...`). Both are an error with the file and the line. The caller of a function that returns a large structure passes a hidden result pointer. A naked function has no frame to read the pointer from. A structure of 1 or 2 bytes comes back in HL, as an `int` does. Other results follow the stack convention, and the asm must do the same. A caller reads a `char`, an `int` or a pointer from HL (a `char` from L). A caller reads a `long` or a `float` from DEHL. A caller reads a `long long` from the 8 bytes at `__acc64` (low byte first). The compiler does not check the asm.
+- The compiler keeps a naked function that no code calls, so these checks run for the function. Asm code can enter a naked function by name.
+- An alternate entry point is a label with two colons in the asm text: `_g_alt::`. The label is PUBLIC, as in MACRO-80 and in sdas, and C code can call it as `g_alt` after `extern int g_alt(void);`. In an `__asm` block, `.globl _g_alt` also works.
+- You must write the `RET` (or `RETI`, `RETN`, or a `JP`). The compiler never adds one.
+- No pass changes the asm text. The peephole optimizer and the assembly dead-code pass keep each asm block as it is. The compiler never inlines a naked function and never propagates a constant into one.
+- A naked function uses the stack convention, never the register convention. At entry, `(SP)` is the return address. The caller pushed each argument as a 16-bit word, the last argument first. So the first parameter is at `(SP+2)`, the second at `(SP+4)`, and so on. A `long` or `float` takes two words (low word at the lower address). Do not change `IX`: the C caller needs it.
+- The result goes in HL (DEHL for a `long` or `float`). A `char` result goes in HL too.
+- The caller removes the arguments. The asm must not remove them.
+- A C function can call a naked function. Only assembly can also reference one. The compiler reads each `_name` in the asm text as a reference. So a function that only asm calls stays in the program. A naked function that no C code and no asm text names is dead code, and the compiler removes it. Use `#pragma uc80 keep NAME` to keep a function that other assembly files use.
+- The interrupt check treats the body as opaque text. It follows each `_name` in the asm text as a call. So a C function that a naked handler calls counts as reached by the interrupt: `--isr-safe` and the shared-storage warning apply to the function. The compiler saves no registers for a naked handler, so the note about the alternate registers does not apply.
+
+A naked function as an interrupt function (`#pragma uc80 interrupt NAME [critical]`, `#pragma uc80 nmi NAME`, `__interrupt`): the vector jump goes to the label. The compiler writes no `EI`, no register saves and no `RETI` or `RETN`.
+
+An asm statement can be the body of `if`, `else`, `for`, `while` and `do`, and can follow a `case` or `default` label, without braces (`for (;;) __asm__("halt");`). The prepass adds the braces.
+
+The asm must save every register that it changes, and must end with `RETI` or `RETN` (and `EI` before `RETI` if the handler must enable interrupts). The kind of the pragma sets only the vector (38h or 66h). The function must still return `void` and take no parameters. No C code can call the function.
 
 ## Proof
 

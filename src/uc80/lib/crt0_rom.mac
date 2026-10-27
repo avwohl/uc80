@@ -13,6 +13,12 @@
 ;   0066H  RETN; or JP __nmi_handler when the program defines it
 ; Link with -p 0.  The program code follows the NMI vector at 0068H.
 ;
+; RST vectors and IM 2: when the program binds a function to an RST vector
+; (#pragma uc80 rst) uc80 changes the RET at the vector to JP.  With
+; #pragma uc80 im2 or im2table, uc80 changes IM 1 at reset to IM 2, turns
+; the ";@IM2" lines into code (load I) and writes the table of 128 vectors
+; after this start-up code, at a 256-byte boundary.  See docs/rom_hardware.md.
+;
 ; Start: set SP, copy the initial data from ROM to RAM, clear the
 ; BSS, call main, then loop on HALT with the interrupt state main left.
 ;
@@ -92,6 +98,8 @@ __vec_nmi:
 
 __start:
 	LD	SP,__RAM_END
+;@IM2	LD	A,__IM2_HI
+;@IM2	LD	I,A
 ;@WDT	CALL	__watchdog_kick
 
 	; Copy the initial data from ROM to RAM (nothing if there is none)

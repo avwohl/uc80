@@ -75,7 +75,8 @@ def test_critical_block_becomes_two_calls():
     ("int x __at(foo);", "must be an integer constant"),
     ("int x __at(0x10000);", "16-bit address"),
     ("int x __at(0x10) = 3;", "no initial value"),
-    ("void f(void) __naked { }", "'__naked' is not supported"),
+    ("int __naked x;", "'__naked' must follow the parameter list"),
+    ("[[uc80::naked]] int x;\nint main(void) { return 0; }", "must be on a function"),
     ("void f(void) __critical { }", "'__critical' is supported only"),
     ("void f(void) { int x __at(0x10); }", "file-scope"),
 ])
@@ -197,10 +198,26 @@ def test_asm_without_endasm_and_endasm_alone():
     assert "without '__asm'" in str(e.value) and e.value.line == 2
 
 
-def test_naked_stays_an_error_next_to_an_asm_block():
-    with pytest.raises(sc.SdccCompatError) as e:
-        run("void f(void) __naked { __asm\n ret\n __endasm; }\n")
-    assert "__naked" in str(e.value)
+@pytest.mark.parametrize("src,name", [
+    ("void f(void) __naked { }", "f"),
+    ("int f(int a, int b) __naked { __asm\n ret\n __endasm; }", "f"),
+    ("[[uc80::naked]] void g(void) { }", "g"),
+    ("void g(void) [[uc80::naked]] { }", "g"),
+    ("static void g(void) __interrupt __naked { }", "g"),
+    ("void g(void) __critical __interrupt(1) __naked { }", "g"),
+    ("void g(void) __naked __interrupt { }", "g"),
+])
+def test_naked_spellings_are_recorded_and_erased(src, name):
+    out, found = run(src + "\n")
+    assert [n for n, _f, _l in found.naked] == [name]
+    assert "naked" not in out
+    assert out.count("\n") == src.count("\n") + 1
+
+
+def test_prototype_with_naked_is_erased_but_not_recorded():
+    out, found = run("void f(void) __naked;\n")
+    assert found.naked == [] and "naked" not in out
+
 
 
 def test_unbraced_asm_body_gets_braces():

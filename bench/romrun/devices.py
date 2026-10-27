@@ -102,13 +102,16 @@ class YM2610:
 
     chip_clock_per_tstate: chip clocks for one Z80 T-state.  The Neo Geo
     has an 8 MHz YM2610 and a 4 MHz Z80, so the default is 2.
+    irq_vec: the data bus byte of the IM 2 acknowledge (None: last value).
     busy_tstates: how long the busy bit stays set after a data write.  The
     value 48 is an estimate; change it when the hardware figure is known.
     """
 
     def __init__(self, machine, base: int = 0x04,
-                 chip_clock_per_tstate: float = 2.0, busy_tstates: int = 48):
+                 chip_clock_per_tstate: float = 2.0, busy_tstates: int = 48,
+                 irq_vec: int | None = None):
         self.m = machine
+        self.irq_vec = irq_vec      # IM 2 data bus byte, None: last value
         self.base = base
         self.ratio = chip_clock_per_tstate
         self.busy_tstates = busy_tstates
@@ -196,7 +199,8 @@ class YM2610:
                   kind="call")
 
     def _irq(self) -> None:
-        self.m.set_irq_level(bool(self.status & self.enable & 3), self)
+        self.m.set_irq_level(bool(self.status & self.enable & 3), self,
+                             self.irq_vec)
 
     def can_wake(self) -> bool:
         return any(self.running) and bool(self.enable)

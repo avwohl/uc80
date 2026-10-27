@@ -49,7 +49,7 @@ What the compiler refuses, with the line number of the block:
 - `.db "text"`. Use `.ascii "text"`.
 - A block with no `__endasm`, and `__endasm` with no `__asm`.
 
-`__naked` stays an error. The block is not a replacement for a naked function, because the compiler writes the frame code of the function. The frame of uc80 is not the frame of SDCC. Do not use `N(ix)` for a C parameter in a block that you share with SDCC.
+In a normal function the compiler writes the frame code, and the frame of uc80 is not the frame of SDCC. For a function that is all assembly, use `__naked` (see "Naked functions" in [rom_hardware.md](rom_hardware.md)): the compiler writes no frame code, and the parameters are at `(SP+2)`, `(SP+4)` at entry. Do not use `N(ix)` for a C parameter in a block that you share with SDCC.
 
 ## The option --asm-syntax=sdas
 
