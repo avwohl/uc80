@@ -359,6 +359,7 @@ class _Roots:
     im2: dict = None   # {slot 0..127: name}: IM 2 vector table slots
     im2_table: int | None = None  # address of the IM 2 table, or None
     im2_on: bool = False          # IM 2 is in use
+    where: dict = None            # {("rst", 8) | ("vec", 0x38): "file:line"}
 
 
 _VECTORS = {0x38: "INT (38h)", 0x66: "NMI (66h)"}
@@ -399,7 +400,7 @@ def _roots_from_options(entries: list, pragmas: list,
     Raises CodegenError for a pragma it does not understand: a vector
     that is silently dropped is a ROM that does not start."""
     roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={},
-                   rst={}, im2={})
+                   rst={}, im2={}, where={})
     ident = re.compile(r"^[A-Za-z_]\w*$")
     ambiguous = ambiguous or {}
 
@@ -410,6 +411,10 @@ def _roots_from_options(entries: list, pragmas: list,
                 f"{', '.join(ambiguous[name])}); a vector names a function "
                 f"by its name alone, so uc80 cannot tell which one is "
                 f"meant. Give each function its own name")
+
+    def remember(key, where):
+        m = re.match(r"(.*?:\d+):", where)
+        roots.where.setdefault(key, m.group(1) + ": " if m else "")
 
     def add_rst(addr, name, kind, where):
         unambiguous(name, where)
@@ -430,6 +435,7 @@ def _roots_from_options(entries: list, pragmas: list,
                     f"another kind")
             roots.isrs[name] = kind
         roots.rst[addr] = (name, kind)
+        remember(("rst", addr), where)
         roots.keep.add(name)
         roots.public.add(name)
 
@@ -450,6 +456,7 @@ def _roots_from_options(entries: list, pragmas: list,
         roots.isrs[name] = kind
         roots.im2[slot] = name
         roots.im2_on = True
+        remember(("im2", 0), where)
         roots.keep.add(name)
         roots.public.add(name)
 
@@ -466,6 +473,7 @@ def _roots_from_options(entries: list, pragmas: list,
                 f"{roots.vectors[addr]}")
         roots.isrs[name] = kind
         roots.vectors[addr] = name
+        remember(("vec", addr), where)
         roots.keep.add(name)
         roots.public.add(name)
 
@@ -506,6 +514,7 @@ def _roots_from_options(entries: list, pragmas: list,
                     f"{roots.im2_table:04X}h")
             roots.im2_table = addr
             roots.im2_on = True
+            remember(("im2", 0), where)
         elif verb == "im2":
             slot = (_parse_address(words[0])
                     if len(words) in (2, 3) else None)
@@ -532,6 +541,7 @@ def _roots_from_options(entries: list, pragmas: list,
                     f"to {roots.vectors[addr]}")
             unambiguous(words[1], where)
             roots.vectors[addr] = words[1]
+            remember(("vec", addr), where)
             roots.keep.add(words[1])
         elif verb in ("interrupt", "nmi"):
             ok = (len(words) == 1 or (verb == "interrupt" and len(words) == 2
@@ -717,7 +727,9 @@ def main() -> int:
     parser.add_argument(
         "--rom-size", metavar="HEX", default="8000",
         help="--target=rom with --asm-syntax=sdas: the ROM size in hex "
-             "(default 8000, as in the ul80 command of docs/rom.md). uc80 "
+             "(default 8000, as in the ul80 command of docs/rom.md; 1 to "
+             "10000). With um80 and ul80 the option only changes the "
+             "ul80 command that -v prints: give the size to ul80. uc80 "
              "refuses a program whose code starts at or above the end of "
              "the ROM (an IM 2 table near the top). ul80 checks the size "
              "of the image by itself"
@@ -1098,17 +1110,19 @@ def main() -> int:
                    "mode, no --startup-lib) sets the vectors")
         if no_vec:
             for _addr, (_name, _k) in sorted(roots.rst.items()):
-                print(f"uc80: warning: the RST {_addr:02X}h vector is not "
+                print(f"uc80: warning: {roots.where.get(('rst', _addr), '')}"
+                      f"the RST {_addr:02X}h vector is not "
                       f"set to '{_name}': {why_rst}; make your own start-up "
                       f"code jump to {label_of(_name)}", file=sys.stderr)
             if roots.im2_on:
-                print("uc80: warning: the IM 2 vector table is not "
-                      "written: " + ("only --target=rom writes the table "
+                print("uc80: warning: " + roots.where.get(("im2", 0), "")
+                      + "the IM 2 vector table is not written: " + ("only --target=rom writes the table "
                       if not rom else "only the start-up code that uc80 "
                       "embeds writes the table ") + "and sets the I "
                       "register and IM 2", file=sys.stderr)
             for _addr, _name in sorted(roots.vectors.items()):
-                print(f"uc80: warning: the {_VECTORS[_addr]} vector is not "
+                print(f"uc80: warning: {roots.where.get(('vec', _addr), '')}"
+                      f"the {_VECTORS[_addr]} vector is not "
                       f"set to '{_name}': {why_rst}; make your own start-up "
                       f"code jump to {label_of(_name)}", file=sys.stderr)
         for n in sorted(gen.asm_isrs):
@@ -1669,6 +1683,13 @@ def main() -> int:
         code = drop_unreferenced_externs(code)
 
         # Write output
+        rom_end = _parse_address(
+            "0x" + args.rom_size.lower().removeprefix("0x").rstrip("h"))
+        if rom_end is None or not 0 < rom_end <= 0x10000:
+            print(f"uc80: error: --rom-size {args.rom_size}: expected a "
+                  f"size in hex, 1 to 10000h (the Z80 has 64 kilobytes of "
+                  f"address space)", file=sys.stderr)
+            return 1
         sdas_origin = None
         if args.asm_syntax == "sdas":
             try:
@@ -1685,12 +1706,6 @@ def main() -> int:
                       f"uc80: the MACRO-80 text is in {keep}", file=sys.stderr)
                 return 1
             sdas_origin = sdas.code_origin_of(code)
-            rom_end = _parse_address(
-                "0x" + args.rom_size.lower().removeprefix("0x").rstrip("h"))
-            if rom_end is None or rom_end <= 0:
-                print(f"uc80: error: --rom-size {args.rom_size}: expected a "
-                      f"size in hex", file=sys.stderr)
-                return 1
             if rom and sdas_origin is not None and sdas_origin >= rom_end:
                 print(f"uc80: error: ROM overflow: the program code starts "
                       f"at {sdas_origin:04X}h" + (
@@ -1730,7 +1745,7 @@ def main() -> int:
                 stem = output_path.with_suffix("").name
                 print("  ROM link (adjust -d, --rom-size, --ram-size):")
                 print("    um80 " + output_path.name)
-                print("    " + rom_module.link_command(stem))
+                print("    " + rom_module.link_command(stem, rom_end))
 
         return 0
 

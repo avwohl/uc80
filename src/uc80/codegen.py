@@ -2132,6 +2132,10 @@ class CallGraphAnalyzer:
             # Functions whose addresses are taken are also entry points
             # (they could be called via function pointers)
             entry_points.update(self.address_taken)
+            # A naked function is the assembly of the programmer: asm code
+            # can enter it, so it stays (and its checks run)
+            entry_points.update(n for n in getattr(self, "naked", ())
+                                if n in self.call_graph)
 
             # When not in whole_program mode, all PUBLIC functions are entry points
             # since external code might call them

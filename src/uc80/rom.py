@@ -195,8 +195,8 @@ def strip_empty_printf_tables(code: str) -> str:
     return _PRINTF_TABLES.sub("\n", code)
 
 
-def link_command(output: str = "prog") -> str:
+def link_command(output: str = "prog", rom_size: int = 0x8000) -> str:
     """The ul80 command line for a ROM built from one module."""
-    return (f"ul80 --bin -p 0 -d F800 --rom-data --rom-size 8000 "
+    return (f"ul80 --bin -p 0 -d F800 --rom-data --rom-size {rom_size:X} "
             f"--ram-size 800 --min-stack 100 -o {output}.bin -S {output}.sym "
             f"{output}.rel libc_rom.lib runtime.lib")

@@ -256,6 +256,32 @@ def test_sdas_flow_accepts_a_high_table_with_a_larger_rom(tmp_path):
     assert r.returncode == 0, r.stderr
 
 
+@pytest.mark.parametrize("size", ["20000", "1FFFF", "0"])
+def test_rom_size_above_the_address_space_is_an_error(size, tmp_path):
+    r = sdas_compile(tmp_path, IM2_PROGRAM, "--rom-size", size)
+    assert r.returncode == 1
+    assert f"--rom-size {size}: expected a size in hex, 1 to 10000h" \
+        in r.stderr
+
+
+def test_rom_size_reaches_the_ul80_line_that_verbose_prints(tmp_path):
+    (tmp_path / "t.c").write_text("int main(void) { return 0; }\n")
+    r = subprocess.run(uc80_cmd("--target=rom", "-v", "--rom-size", "4000",
+                                "t.c", "-o", "t.mac"), cwd=tmp_path,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert "--rom-size 4000 " in r.stdout and "--rom-size 8000" \
+        not in r.stdout
+
+
+def test_rom_size_is_checked_in_the_um80_flow_too(tmp_path):
+    (tmp_path / "t.c").write_text("int main(void) { return 0; }\n")
+    r = subprocess.run(uc80_cmd("--target=rom", "--rom-size", "20000",
+                                "t.c", "-o", "t.mac"), cwd=tmp_path,
+                       capture_output=True, text=True)
+    assert r.returncode == 1 and "--rom-size 20000" in r.stderr
+
+
 def test_rom_size_must_be_hex(tmp_path):
     r = sdas_compile(tmp_path, IM2_PROGRAM, "--rom-size", "zz")
     assert r.returncode == 1 and "--rom-size zz" in r.stderr
@@ -627,7 +653,7 @@ def test_vector_pragmas_warn_when_the_target_is_cpm(pragma, text, tmp_path):
     r = subprocess.run(uc80_cmd("c.c", "-o", "c.mac"), cwd=tmp_path,
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    assert f"uc80: warning: {text}" in r.stderr, r.stderr
+    assert f"uc80: warning: c.c:1: {text}" in r.stderr, r.stderr
 
 
 def test_a_cpm_program_without_the_pragmas_has_no_warning(tmp_path):

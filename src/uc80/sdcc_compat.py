@@ -160,6 +160,29 @@ _ASM_WORDS = ("asm", "__asm__", "__asm")
 _ASM_QUALS = ("volatile", "__volatile__", "__volatile", "inline", "goto")
 
 
+def _after_case_label(toks, sig, colon: int) -> bool:
+    """True when the ':' at sig[colon] ends a ``case X:`` or ``default:``
+    label (and not a goto label or a ``?:``)."""
+    depth = 0
+    j = colon - 1
+    while j >= 0:
+        t = toks[sig[j]][1]
+        if t in (")", "]"):
+            depth += 1
+        elif t in ("(", "["):
+            depth -= 1
+        elif depth == 0:
+            if t in (";", "{", "}"):
+                return False
+            if t in ("case", "default"):
+                return True
+            if t == ":" and j < colon:
+                # an earlier label or a ?: ; a label ends the walk
+                return False
+        j -= 1
+    return False
+
+
 def _asm_substatements(source: str) -> str:
     """Put braces round an asm statement that is the body of if, else, for,
     while or do without braces.  The grammar of uc_core (statement in
@@ -184,6 +207,9 @@ def _asm_substatements(source: str) -> str:
             op = _match_paren_back(toks, sig, k - 1)
             if op is None or text(op - 1) not in ("if", "for", "while",
                                                   "switch"):
+                continue
+        elif prev == ":":
+            if not _after_case_label(toks, sig, k - 1):
                 continue
         elif prev not in ("else", "do"):
             continue

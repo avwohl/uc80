@@ -598,3 +598,88 @@ int main(void)
 }
 """)
     assert out.split() == ["8"]
+
+
+@pytest.mark.skipif(not HAVE_CPM, reason="needs um80, ul80 and cpmemu")
+def test_asm_statement_after_case_and_default_labels(tmp_path):
+    out = run_cpm(tmp_path, """
+#include <stdio.h>
+volatile int n;
+int pick(int v)
+{
+    switch (v) {
+    case 0: __asm__("\\tld hl,_n\\n\\tinc (hl)\\n"); break;
+    case 1: asm volatile("\\tld hl,_n\\n\\tinc (hl)\\n");
+    case 2: n += 10; break;
+    default: asm("\\tld hl,_n\\n\\tinc (hl)\\n");
+    }
+    return n;
+}
+int main(void)
+{
+    int a = pick(0), b = pick(1), c = pick(2), d = pick(9);
+    printf("%d %d %d %d\\n", a, b, c, d);
+    return 0;
+}
+""")
+    assert out.split() == ["1", "12", "22", "23"]
+
+
+# ---- the checks run for a naked function that nothing calls --------------------
+
+def test_unreferenced_naked_function_with_a_big_struct_result_is_an_error(
+        tmp_path):
+    r = compile_only(tmp_path, "struct S { int a, b, c; };\n"
+                     "struct S f(void) __naked { asm(\"\\tret\"); }\n"
+                     "int main(void) { return 0; }\n")
+    assert r.returncode == 1, r.stdout
+    assert "e.c:2: naked function 'f' returns a structure or union" \
+        in r.stderr
+
+
+def test_unreferenced_variadic_naked_function_is_an_error(tmp_path):
+    r = compile_only(tmp_path, "int f(int a, ...) __naked\n{\n"
+                     "    asm(\"\\tret\");\n}\n"
+                     "int main(void) { return 0; }\n")
+    assert r.returncode == 1
+    assert "e.c:1: naked function 'f' takes a variable argument list" \
+        in r.stderr
+
+
+def test_unreferenced_naked_function_with_no_asm_warns_with_the_line(
+        tmp_path):
+    r = compile_only(tmp_path, "\nint f(void) __naked {}\n"
+                     "int main(void) { return 0; }\n")
+    assert r.returncode == 0, r.stderr
+    assert "e.c:2: naked function 'f' has no asm statement" in r.stderr
+
+
+def test_unreferenced_naked_function_is_still_in_the_output(tmp_path):
+    r = compile_only(tmp_path, "int f(void) __naked { asm(\"\\tret\"); }\n"
+                     "int main(void) { return 0; }\n")
+    assert r.returncode == 0, r.stderr
+    assert "_f:" in (tmp_path / "e.mac").read_text()
+
+
+@pytest.mark.skipif(not HAVE_CPM, reason="needs um80, ul80 and cpmemu")
+def test_naked_results_come_back_where_the_docs_say(tmp_path):
+    """docs/rom_hardware.md: char in L, long in DEHL, long long at __acc64."""
+    out = run_cpm(tmp_path, """
+#include <stdio.h>
+char c(void) __naked { asm("\\tld hl,0x1241\\n\\tret\\n"); }
+long l(void) __naked { asm("\\tld de,0x0003\\n\\tld hl,0x0004\\n\\tret\\n"); }
+long long q(void) __naked
+{
+    asm("\\tld hl,5\\n\\tld (__acc64),hl\\n\\tld hl,6\\n\\tld (__acc64+2),hl\\n"
+        "\\tld hl,0\\n\\tld (__acc64+4),hl\\n\\tld (__acc64+6),hl\\n\\tret\\n");
+}
+int main(void)
+{
+    char a = c();
+    long b = l();
+    long long d = q();
+    printf("%d %ld %ld\\n", a, b, (long)(d >> 16));
+    return 0;
+}
+""")
+    assert out.split() == ["65", "196612", "6"]
