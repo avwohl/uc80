@@ -24,10 +24,10 @@ What is done:
 
 Result against SDCC 4.6.0 (96 programs for size and 78 for T-states that are OK on both, geometric mean of uc80 divided by SDCC):
 
-- Size: 0.96. The first run gave 2.01 on 61 programs, and the run before the library split gave 1.53. uc80 is smaller on 63 programs and bigger on 33. The library split (families A to C of [codegen_gap.md](codegen_gap.md)) made most of this gain, and the register calling convention (family F) made the rest (0.99 to 0.96 on the integrated tree, measured again on the tree without it).
-- T-states against the speed mode of SDCC: 0.59 (0.585). uc80 is faster. The first run gave 0.87 on 61 programs. Without the `sort-*` programs the mean is 0.71 (0.715). uc80 is faster on 58 programs and slower on 20.
+- Size: 0.93. The first run gave 2.01 on 61 programs, and the run before the library split gave 1.53. uc80 is smaller on 66 programs and bigger on 30. The library split (families A to C of [codegen_gap.md](codegen_gap.md)) made most of this gain, and the register calling convention (family F) made the rest (0.99 to 0.96 on the integrated tree, measured again on the tree without it). Register locals (family G, steps 1 and 2) made the ratio 0.93.
+- T-states against the speed mode of SDCC: 0.56 (0.563). uc80 is faster. The first run gave 0.87 on 61 programs. Without the `sort-*` programs the mean is 0.68 (0.684). uc80 is faster on 60 programs and slower on 18.
 - Games (18 games that run on both compilers, whole-run T-states): size 0.79, T-states 1.00. The stdio games are faster on uc80 and the curses games are 30 to 48 percent slower.
-- The "uc80 wins on size" claim is still false as a general claim (ratio 0.96, a small lead), but uc80 is smaller than SDCC 4.6.0 on 63 of 96 programs. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
+- The "uc80 wins on size" claim is still false as a general claim (ratio 0.93, a small lead), but uc80 is smaller than SDCC 4.6.0 on 66 of 96 programs. The expectation in section 8 that uc80 loses on cycles is false for the mean. It is true for small integer loops, for code with many small functions and for the curses games.
 
 What is left:
 
@@ -628,7 +628,7 @@ Thanks for the question. We built a proper benchmark to answer it, which took a 
 
 - A harness of 112 programs and 9 compilers, including standalone SDCC 4.4.0 (the version ngdevkit builds) and SDCC 4.6.0. It counts Z80 T-states with `z88dk-ticks`.
 - Four of the programs are sound-driver kernels that we wrote for this issue: an NMI command queue, YM2610 register writes with a shadow compare and a busy-wait, a sequencer tick for 4 FM and 3 SSG channels, and note to F-number. Against SDCC 4.4.0, uc80 needs 16 to 53 percent more T-states on three of them and is about 2 percent faster on the fourth. The kernel code is about 25 to 45 percent bigger with uc80.
-- Over all 105 programs that run, uc80 is faster than SDCC on average (about 0.59 of the T-states of SDCC 4.6.0, over the 78 programs that both compilers run in speed mode). Most of that lead comes from the uc80 library (`printf`, `qsort`, 32-bit math), which a sound driver does not use. On small integer code with many small calls, SDCC still wins.
+- Over all 105 programs that run, uc80 is faster than SDCC on average (about 0.56 of the T-states of SDCC 4.6.0, over the 78 programs that both compilers run in speed mode). Most of that lead comes from the uc80 library (`printf`, `qsort`, 32-bit math), which a sound driver does not use. On small integer code with many small calls, SDCC still wins.
 
 **Why SDCC wins on driver code:** SDCC passes arguments in registers and keeps locals in registers. uc80 passes every argument on the stack as a 16-bit word and keeps locals in memory.
 
