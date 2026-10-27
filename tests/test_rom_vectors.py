@@ -596,22 +596,43 @@ int main(void)
 
 
 @pytest.mark.skipif(not HAVE_UM80, reason="needs um80 and ul80")
-def test_two_static_handlers_of_one_name_are_an_error(tmp_path):
-    """Both slots used to bind to the h of b.c (x stayed 0)."""
-    (tmp_path / "a.c").write_text(A_C % "im2")
-    (tmp_path / "b.c").write_text(B_C % "im2")
-    r = subprocess.run(uc80_cmd("--target=rom", "a.c", "b.c", "-o", "t.mac"),
-                       cwd=tmp_path, capture_output=True, text=True)
-    assert r.returncode == 1
-    assert ("a.c:2: #pragma uc80 im2: 'h' is defined in more than one file "
-            "(a.c, b.c)") in r.stderr, r.stderr
+def test_two_static_handlers_of_one_name_each_bind_in_their_own_file(tmp_path):
+    """A pragma resolves in its own file: slot 1 is the h of a.c (h__s0),
+    slot 2 is the h of b.c (h__s1).  The code runs: x and y both count."""
+    paths = _build_files(tmp_path, {"a.c": A_C % "im2", "b.c": B_C % "im2"})
+    m = machine(paths)
+    for k in range(4):
+        m.add_irq_at(4000 + 2000 * k, 0x02)      # slot 1: h of a.c
+        m.add_irq_at(5000 + 2000 * k, 0x04)      # slot 2: h of b.c
+    res = m.run(max_tstates=400_000)
+    assert res.reason == "halt", res
+    assert m.peek8("_x") == 4 and m.peek8("_y") == 8
 
 
-def test_the_interrupt_pragma_has_the_same_check(tmp_path):
+@pytest.mark.skipif(not HAVE_UM80, reason="needs um80 and ul80")
+def test_the_interrupt_pragma_binds_to_the_static_of_its_own_file(tmp_path):
+    a = ("#pragma uc80 interrupt h\nvolatile unsigned char x;\n"
+         "static void h(void) { x++; }\n")
+    b = ("extern volatile unsigned char x;\nvolatile unsigned char y;\n"
+         "static void h(void) { y += 5; }\n"
+         "int main(void)\n{\n    __asm__(\"\\tim 1\\n\\tei\");\n"
+         "    while (x < 3)\n        ;\n    __asm__(\"\\tdi\");\n"
+         "    return y;\n}\n")
+    paths = _build_files(tmp_path, {"a.c": a, "b.c": b})
+    m = machine(paths)
+    for k in range(3):
+        m.add_irq_at(4000 + 2000 * k, 0xFF)
+    res = m.run(max_tstates=400_000)
+    assert res.reason == "halt", res
+    assert m.peek8("_x") == 3 and m.peek8("_y") == 0   # b.c h never ran
+
+
+def test_two_external_definitions_are_still_ambiguous(tmp_path):
+    """No file owns the name: the pragma cannot tell which function."""
     (tmp_path / "a.c").write_text(
-        "#pragma uc80 interrupt h\nstatic void h(void) { }\n")
+        "#pragma uc80 interrupt h\nvoid h(void) { }\n")
     (tmp_path / "b.c").write_text(
-        "static void h(void) { }\nint main(void) { return 0; }\n")
+        "void h(void) { }\nint main(void) { return 0; }\n")
     r = subprocess.run(uc80_cmd("--target=rom", "a.c", "b.c", "-o", "t.mac"),
                        cwd=tmp_path, capture_output=True, text=True)
     assert r.returncode == 1

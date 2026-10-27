@@ -34,7 +34,7 @@ from . import rom as rom_module
 from . import printf_hook
 from . import scan_hook
 from . import file_hook
-from .multi_unit import (uniquify_enumerators, uniquify_statics,
+from .multi_unit import (uniquify_enumerators, uniquify_statics_map,
                          uniquify_types)
 
 from . import peep_local
@@ -395,6 +395,40 @@ def _ambiguous_functions(asts: list, paths: list) -> dict:
                 if name and path not in seen.setdefault(name, []):
                     seen[name].append(path)
     return {n: f for n, f in seen.items() if len(f) > 1}
+
+
+_NAME_WORDS = {"rst": (1,), "im2": (1,), "vector": (1,),
+               "interrupt": (0,), "nmi": (0,)}
+
+
+def resolve_pragma_names(pragmas: list, units: list, maps: list) -> list:
+    """Replace the function name of each pragma with the name that the
+    merge gave it in the file of the pragma (a renamed static)."""
+    out = []
+    for (verb, words, fname, line), u in zip(pragmas, units):
+        m = maps[u] if u < len(maps) else {}
+        if m and (verb in ("keep", "public") or verb in _NAME_WORDS):
+            idx = (range(len(words)) if verb in ("keep", "public")
+                   else _NAME_WORDS[verb])
+            words = [m.get(w, w) if i in idx else w
+                     for i, w in enumerate(words)]
+        out.append((verb, words, fname, line))
+    return out
+
+
+def resolve_found_names(found, paths: list, maps: list) -> None:
+    """The same for the __interrupt and __naked marks of the SDCC syntax,
+    which carry the path of their file."""
+    where = {p: i for i, p in enumerate(paths)}
+
+    def mapped(name, path):
+        i = where.get(path)
+        return maps[i].get(name, name) if i is not None and i < len(maps) \
+            else name
+    found.isrs[:] = [(k, mapped(n, f), f, l) for k, n, f, l in found.isrs]
+    found.naked[:] = [(mapped(n, f), f, l) for n, f, l in found.naked]
+    found.naked_protos[:] = [(mapped(n, f), f, l)
+                             for n, f, l in found.naked_protos]
 
 
 def _roots_from_options(entries: list, pragmas: list,
@@ -911,6 +945,7 @@ def main() -> int:
         printf_features: set[str] | None = None  # From #pragma printf
         scanf_features: set[str] | None = None   # From #pragma scanf
         target_pragmas = []                      # From #pragma uc80 ...
+        pragma_units = []                        # unit index of each pragma
 
         for input_path in input_paths:
             # Handle .mac assembly files - pass through
@@ -966,6 +1001,7 @@ def main() -> int:
                 source = pp.preprocess(source, str(input_path))
 
                 target_pragmas.extend(pp.target_pragmas)
+                pragma_units.extend([len(asts)] * len(pp.target_pragmas))
 
                 # Collect #pragma printf/scanf features
                 if pp.printf_features:
@@ -1007,6 +1043,7 @@ def main() -> int:
             return 0
 
         # Merge ASTs into single TranslationUnit
+        static_maps = [{} for _ in asts]
         if len(asts) == 1:
             merged_ast = asts[0]
         else:
@@ -1014,7 +1051,7 @@ def main() -> int:
             # static (or global) of another file.
             uniquify_enumerators(asts)
             uniquify_types(asts)
-            uniquify_statics(asts)
+            static_maps = uniquify_statics_map(asts)
             merged_ast = ast_module.TranslationUnit(items=[])
             for unit in asts:
                 merged_ast.items.extend(unit.items)
@@ -1061,6 +1098,13 @@ def main() -> int:
         if scanf_features is not None:
             scanf_features = _close_format_features(scanf_features)
 
+        # A pragma, __interrupt or __naked names a function of its own
+        # file: a static that the merge renamed (h -> h__s0) is found
+        # through the map of that file.
+        c_paths = [str(p) for p in input_paths if p.suffix.lower() != ".mac"]
+        target_pragmas = resolve_pragma_names(
+            target_pragmas, pragma_units, static_maps)
+        resolve_found_names(sdcc_found, c_paths, static_maps)
         roots = _roots_from_options(
             args.entry, target_pragmas, sdcc_found.isrs,
             _ambiguous_functions(asts, [str(p) for p in input_paths

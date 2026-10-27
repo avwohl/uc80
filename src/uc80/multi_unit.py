@@ -180,10 +180,18 @@ class _Renamer:
 def uniquify_statics(units) -> int:
     """Rename conflicting file-scope statics of UNITS in place; return how
     many names were renamed."""
+    return sum(len(m) for m in uniquify_statics_map(units))
+
+
+def uniquify_statics_map(units) -> list[dict[str, str]]:
+    """Rename conflicting file-scope statics of UNITS in place; return, for
+    each unit, the {old name: new name} map.  A vector pragma, an
+    ``__interrupt`` or a ``__naked`` of a file names a function of its own
+    file, so the caller maps those names with the map of that file."""
+    maps: list[dict[str, str]] = [{} for _ in units]
     if len(units) < 2:
-        return 0
+        return maps
     names = [_file_scope_names(u) for u in units]
-    count = 0
     for i, unit in enumerate(units):
         others: set[str] = set()
         for j, (every, _st) in enumerate(names):
@@ -192,7 +200,7 @@ def uniquify_statics(units) -> int:
         mapping = {n: f"{n}__s{i}" for n in names[i][1] if n in others}
         if not mapping:
             continue
-        count += len(mapping)
+        maps[i] = mapping
         rn = _Renamer(mapping)
         for item in unit.items:
             if isinstance(item, ast.FunctionDef):
@@ -201,7 +209,7 @@ def uniquify_statics(units) -> int:
                 rn.function(item)
             else:
                 rn.walk(item)
-    return count
+    return maps
 
 
 # ---------------------------------------------------------------- types
