@@ -8,10 +8,12 @@ locals in BC, DE and IY.  The output must be the same with the pass on
 and off, and must match the expected text.
 """
 
+import re
+
 import pytest
 
-from .test_register_cc import needs_run
-from .test_register_locals import MODES, build_run
+from .test_register_cc import compile_mac, needs_run
+from .test_register_locals import MODES, body_of, build_run
 
 PROG = r"""
 #include <stdio.h>
@@ -68,3 +70,19 @@ EXPECT = ["24", "231", "327660", "2", "-2999999998"]
 @pytest.mark.parametrize("flags", MODES)
 def test_same_output(tmp_path, flags):
     assert build_run(tmp_path, PROG, *flags).split() == EXPECT
+
+
+def _mem(text):
+    return len(re.findall(r"\(\?\?AUTO\+\d+\)|\(IX[+-]\d+\)|\(IY[+-]\d+\)", text))
+
+
+def test_pass_acts_and_sequences_stay(tmp_path):
+    """Each function keeps its bugfix sequence and has fewer memory accesses."""
+    on = compile_mac(tmp_path, PROG)[0]
+    off = compile_mac(tmp_path, PROG, "--no-register-locals")[0]
+    for name in ("neg_loop", "fcount", "lits", "walk", "wide"):
+        assert _mem(body_of(on, name)) < _mem(body_of(off, name)), name
+    assert "sbc\tA,A" in body_of(on, "neg_loop")
+    assert "sbc\tA,A" in body_of(on, "walk")
+    assert "__fcmp" in body_of(on, "fcount")
+    assert "IY" in body_of(on, "walk")

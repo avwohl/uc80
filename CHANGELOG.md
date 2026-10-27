@@ -64,7 +64,7 @@ observable behaviour of a program uc80 compiles.
 - `bench/difftest.py` has a `llong` focus (and `long long` in `all`): `long long` and `unsigned long long` variables, constants, arrays, struct members and parameters; the status is `UC80-WRONG` when SDCC cannot build the program and uc80 differs from the model.
 - scanf `%f` is correctly rounded for a mantissa of any length. Before, the scanner dropped all mantissa characters past 119 without a correction, so a long number could round wrong or get the wrong magnitude. `tests/test_strtod_exact.py` now tests `atof` and `sscanf` too.
 - `strtod`, `strtof`, `strtold`, `atof` and scanf `%f` round every decimal string correctly, also a string with more than 19 digits that is close to the middle of two floats (before, such a string could give the neighbour: `2.52540519340982427820563316345214843751e-6` was one unit too low, and a string just above 2^-150 gave 0 and not the smallest subnormal number). The converter uses 64-bit arithmetic and, for a string within 2^-48 of a tie, compares the digits with the tie in big integers (`lc_strtod.c`). Cost for a program that links `strtod`: +708 bytes of code and +170 bytes of RAM (`atof` program 6059 to 6767 bytes, `sscanf("%f")` 8422 to 9130). Test: `tests/test_strtod_exact.py`.
-- `__fdiv` gives the IEEE result for an infinity or NaN operand and keeps the sign of a zero numerator (`inf/2` was a huge finite number, `inf/inf` was 1.0, `0/-1` was `+0`). Float comparison with a NaN stays non-IEEE; recorded in `docs/FLOAT_STATUS.md`.
+- `__fdiv` gives the IEEE result for an infinity or NaN operand and keeps the sign of a zero numerator (`inf/2` was a huge finite number, `inf/inf` was 1.0, `0/-1` was `+0`). Float comparison with a NaN was non-IEEE when this entry was written; the NaN compare entry above in this section (Float comparison follows IEEE 754) replaces this statement.
 - `strtol`, `strtoul`, `strtoll`, `strtoull` and scanf `%i` accept the C23 prefix `0b`; scanf has the `%b` conversion.
 - The tests use the `src` directory of their own checkout (`PYTHONPATH` set in `tests/conftest.py`).
 - `?:` after a side effect in the condition: `int a=v; return (a++ > 0) ? a : 99;` read `a` as `v` (uc80's own `?:` walk skipped the sequence point after the condition). uc80 now uses uc_core's walk and keeps only its typed constant fold (`_fold_ternary`). Needs the uc_core copy-propagation fix.
@@ -755,7 +755,8 @@ Recorded so they are not rediscovered; `todo.txt` has the full list.
   and `_prt_hex` go through `_printf_putc`.
 - Float comparison does not implement NaN's unordered result, so `x == x` is
   true for a NaN. No arithmetic in the runtime produces one; only the `NAN`
-  macro and a bit pattern read back as a float can.
+  macro and a bit pattern read back as a float can. (Fixed later: see the
+  NaN compare entry in the Unreleased section.)
 
 ## 0.6.0
 
