@@ -7,7 +7,7 @@ second dereference loaded code bytes and the member offset was dropped.
 
 import pytest
 
-from tests.test_struct_return_abi import build_and_run  # noqa: F401
+from tests.test_struct_return_abi import build_and_run, pytestmark  # noqa: F401
 
 PROG = r"""
 #include <stdio.h>
