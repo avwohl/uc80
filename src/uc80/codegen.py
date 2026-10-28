@@ -26,6 +26,7 @@ from .volatile_fence import VOL_BEGIN, VOL_END
 from . import absaddr
 from . import regcc
 from .reglocals_gen import RegLocalsMixin
+from .addrcse import AddrCseMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE)
@@ -3647,7 +3648,7 @@ class _Src32:
         self.signed = signed
 
 
-class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
+class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin):
     """Z80 code generator."""
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
@@ -3666,8 +3667,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                  absolute: "dict[str, int] | None" = None,
                  register_cc: bool = True,
                  foreign_asm_names: "set[str] | None" = None,
-                 register_locals: bool = True):
+                 register_locals: bool = True,
+                 addr_cse: bool = True,
+                 chain_store: bool = True):
         self.module_name = module_name
+        self.enable_addr_cse = addr_cse
+        self.enable_chain_store = chain_store
         self.enable_register_locals = register_locals
         self._rl_debug = bool(os.environ.get("UC80_RL_DEBUG"))
         # Register calling convention (docs/calling_convention.md): on by
@@ -4508,6 +4513,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         # generated (a forward call needs the callee's plan) and before the
         # shared storage is sized (a register parameter is stored on entry,
         # and that store needs a slot).
+        # Address CSE and chained constant stores (docs/addr_cse.md): an
+        # AST rewrite, so it runs before anything sizes a frame.
+        self.addr_cse_stats = self._acse_run(unit)
         self._plan_register_cc(unit)
         self._rl_plan(unit, self.enable_register_locals)
 

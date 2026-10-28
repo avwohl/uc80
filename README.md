@@ -64,6 +64,7 @@ z88dk output. uc80 passes all 220 c-testsuite tests. Numbers are in
 - [Compiler options](https://github.com/avwohl/uc80/blob/main/docs/compiler_options.md) - whole-program optimization, `--printf`, CR LF line endings, `--int`/`--long`, separate compilation
 - [Calling convention](https://github.com/avwohl/uc80/blob/main/docs/calling_convention.md) - register and stack convention, which functions qualify, `--no-register-cc`
 - [Register locals](https://github.com/avwohl/uc80/blob/main/docs/register_locals.md) - up to two scalar locals of a function live in BC or DE, and one pointer lives in IY, `--no-register-locals`
+- [Address CSE](https://github.com/avwohl/uc80/blob/main/docs/addr_cse.md) - the compiler computes a repeated array element address once, `a = b = K` stores K to each target, `--no-addr-cse`, `--no-chain-store`
 - [Inline assembly](https://github.com/avwohl/uc80/blob/main/docs/inline_assembly.md) - `asm("...")` rules and limits
 - [Volatile objects](https://github.com/avwohl/uc80/blob/main/docs/volatile.md) - every volatile access happens as written, and how each pass keeps that
 - [Binary size and test results](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md) - speed and size against 8 compilers, and external test suite pass rates

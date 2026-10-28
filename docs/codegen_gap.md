@@ -9,6 +9,18 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-27: family H, part 1 (address CSE and chained constant stores) is done
+
+Part 1 of family H is in the code (branch `famh`, [addr_cse.md](addr_cse.md)). The pass is `src/uc80/addrcse.py`. It works on the AST before the frames are sized. A repeated element address (`a[i]`, `a[i + 1]`, `p[i]`, `s.arr[i]`, `p->arr[i]`, `a[i][j]`) becomes one new pointer local. The register-locals pass can move the pointer to IY, BC or DE. A key can hold local variables, loads from named arrays and global scalars. A run of statements ends at an assignment to a variable of the key, a label, and (for a key with a load) a call, a store through a pointer, a store into the array of the load and a volatile access. A program with an interrupt function gets no key with a load. The statement `a[i] = b[j] = K` with a constant K that fits each target becomes one store for each target when a target is a byte. `--no-addr-cse` and `--no-chain-store` turn the parts off. The change of the register-locals pass for the names under `&` ([register_locals.md](register_locals.md)) comes with this part.
+
+Numbers: `bench/run.py` (uc80, size mode), the 109 programs of the size run, against the tree before (e28deae). Status: no change. Image: 56 programs smaller, 1 bigger (`bsd-bcd` +2 B), total of 107 programs 677,727 to 672,357 bytes. T-states: 48 programs faster, 2 slower (`snd-ymreg` +0.42%, `v7-arithmetic` +0.002%). Against SDCC 4.6.0 (`bench/report.py` method): size 0.9353 to 0.9276, whole image 0.9000 to 0.8928, T-states in speed mode 0.5628 to 0.5515, without `sort-*`: 0.6844 to 0.6691, in size mode 0.5437 to 0.5327 (without `sort-*`: 0.6585 to 0.6438). uc80 is faster than SDCC (speed mode) on 62 of 78 programs (60 before) and faster without `sort-*` on 54 of 70 (52 before).
+
+- Targets of the section: `stanford-towers` -12.89% T-states and -47 B (the hand CSE gave 17.7%), `stanford-bubble` -12.45% and -40 B (hand CSE 42.4%), `queens` -20.57% and -24 B (the chain `col[c] = diag1[d1] = diag2[d2] = 1` is now three stores of the constant), `stanford-perm` -5.17% and -12 B (from the names under `&`, not from the CSE or the chain).
+- Other programs: `coremark-unofficial` -21.55% and -628 B, `embench-matmult-int` -18.57%, `embench-ud` -5.95%, `fannkuch` -4.96%, `stanford-quick` -2.64%, `stanford-tree` -2.31%, `invaders` -2.22%, `dhrystone21` -2.01%, `curses-demo` -1.91% and -323 B.
+- No change: `sieve`, `tak`, `snd-cmdq`, `snd-seq` and `snd-fnum`. `sieve` and `tak` have no repeated address, and the `snd-*` kernels no chain. `snd-ymreg` gets 0.42% slower and 3 bytes smaller from the change of the names under `&`: the cost model of the register-locals pass chooses a worse register for `ym_write`.
+- The gain of `stanford-bubble` is smaller than the hand CSE because the loads of the long values stay: the hand version also keeps each value in a register. Value CSE is not done (see [addr_cse.md](addr_cse.md), "Not done").
+- What is not done in family H: value CSE, dead-store and dead-local removal (the `count` of `sieve`), and inline LDIR for `memset` and `memcpy` with a constant size.
+
 ## Status on 2026-10-27: family G is done and merged with the bug fixes
 
 Family G (steps 1 and 2) and the fixes of `bugfix2` are in one tree (branch `integrate6`). Family G is done: up to two scalar locals in BC and DE, and one pointer local in IY. The merge costs a little: the programs that use float get 56 to 71 bytes bigger (the NaN test in `__fcmp`). Means against SDCC 4.6.0, `bench/report.py` method, 96 programs for size and 78 for T-states:
@@ -367,11 +379,11 @@ The `RegisterAllocator` class (`codegen.py:1010`) has bc and de descriptors with
 
 `ast_opt.py` is a thin subclass of the external `uc_core` optimizer. It has no types, no alias data and no dead-store logic. H therefore needs a new typed pass in `codegen.py`, or a change to `uc_core`. All measured gains are on small-loop programs. No snd kernel has a measured H gain. Put H after G in priority.
 
-- Change:
-  - block-local CSE of pure address expressions. Invalidate on a write to the index variable or on a call.
+- Change (part 1 is done, see the status of 2026-10-27 at the top):
+  - block-local CSE of pure address expressions. Invalidate on a write to the index variable or on a call. Done.
   - a dead-store and dead-local pass (iterate, because removing `count -= !flags[k]` makes `!flags[k]` dead).
   - inline `memset` and `memcpy` with a constant size as LDIR (`codegen.py:11064`, 11123-11130).
-  - store a constant directly into each lvalue of a chain `a=b=K`.
+  - store a constant directly into each lvalue of a chain `a=b=K`. Done.
 - Test: pytest, `difftest.py`, bench towers, bubble, sieve.
 - Risk: aliasing. Restrict CSE to global arrays that are indexed by a local that is not written in between.
 

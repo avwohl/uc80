@@ -564,6 +564,16 @@ def main() -> int:
         help="Keep every local in memory (docs/register_locals.md)"
     )
     parser.add_argument(
+        "--no-addr-cse",
+        action="store_true",
+        help="Compute every array element address again (docs/addr_cse.md)"
+    )
+    parser.add_argument(
+        "--no-chain-store",
+        action="store_true",
+        help="Keep a = b = K as one chain (docs/addr_cse.md)"
+    )
+    parser.add_argument(
         "--no-embed-runtime",
         action="store_true",
         help="Don't embed runtime library (use EXTRN references instead)"
@@ -948,7 +958,9 @@ def main() -> int:
                                             or args.runtime_lib
                                             or args.startup_lib),
                            foreign_asm_names=regcc.asm_text_names(mac_files),
-                           register_locals=not args.no_register_locals)
+                           register_locals=not args.no_register_locals,
+                           addr_cse=not args.no_addr_cse,
+                           chain_store=not args.no_chain_store)
         code = gen.generate(merged_ast)
         printf_need = printf_hook.printf_needs(merged_ast, printf_features)
         code = printf_hook.patch_tables(code, printf_need)
@@ -1008,6 +1020,11 @@ def main() -> int:
             if gen._regcc:
                 print(f"  Register calling convention: {len(gen._regcc)} "
                       f"function(s): {', '.join(sorted(gen._regcc))}")
+            acse = getattr(gen, "addr_cse_stats", None) or {}
+            if acse.get("n") or acse.get("chain"):
+                print(f"  Address CSE: "
+                      f"{acse.get('n', 0) - acse.get('pruned', 0)} pointer(s), "
+                      f"{acse.get('chain', 0)} chained store(s) split")
             if gen.call_graph_analyzer and gen.call_graph_analyzer.total_shared_storage > 0:
                 cga = gen.call_graph_analyzer
                 shared_count = len(cga.storage_offsets)

@@ -28,7 +28,8 @@ def address_taken_names(body) -> set:
     object itself count: the name in ``&x`` and the object of ``&s.m``.
     Any other operand counts every name inside it.  The switch
     ``UC80_RL_TAINT_ALL=1`` counts every name under every ``&`` (the rule
-    before 2026-10-27), for a bisect."""
+    before 2026-10-27), for a bisect.  The pointer that addrcse.py makes
+    for ``&a[i]`` (the flag ``_acse``) never takes an address."""
     out: set = set()
     taint_all = bool(__import__("os").environ.get("UC80_RL_TAINT_ALL"))
     stack = [body]
@@ -36,7 +37,7 @@ def address_taken_names(body) -> set:
         node = stack.pop()
         if isinstance(node, ast.UnaryOp):
             op = getattr(node.op, "text", node.op)
-            if op == "&":
+            if op == "&" and not getattr(node, "_acse", False):
                 sub = [node.operand]
                 while sub:
                     x = sub.pop()
