@@ -50,7 +50,9 @@ def gen(source: str) -> str:
     return generate(_frontend_parse(source, "<test>"), enable_inlining=False,
                     enable_const_propagation=False,
                     enable_dead_elimination=False,
-                    register_cc=False)
+                    register_cc=False,
+                    # the tests keep locals that nothing reads
+                    dead_store=False)
 
 
 def ops(code: str, name: str = "f") -> list[str]:

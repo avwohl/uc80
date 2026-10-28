@@ -27,6 +27,7 @@ from . import absaddr
 from . import regcc
 from .reglocals_gen import RegLocalsMixin
 from .addrcse import AddrCseMixin
+from .deadstore import DeadStoreMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE)
@@ -3648,7 +3649,8 @@ class _Src32:
         self.signed = signed
 
 
-class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin):
+class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
+                    DeadStoreMixin):
     """Z80 code generator."""
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
@@ -3669,10 +3671,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin):
                  foreign_asm_names: "set[str] | None" = None,
                  register_locals: bool = True,
                  addr_cse: bool = True,
-                 chain_store: bool = True):
+                 chain_store: bool = True,
+                 dead_store: bool = True):
         self.module_name = module_name
         self.enable_addr_cse = addr_cse
         self.enable_chain_store = chain_store
+        self.enable_dead_store = dead_store
         self.enable_register_locals = register_locals
         self._rl_debug = bool(os.environ.get("UC80_RL_DEBUG"))
         # Register calling convention (docs/calling_convention.md): on by
@@ -4515,6 +4519,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin):
         # and that store needs a slot).
         # Address CSE and chained constant stores (docs/addr_cse.md): an
         # AST rewrite, so it runs before anything sizes a frame.
+        self.dead_store_stats = self._dse_run(unit)
         self.addr_cse_stats = self._acse_run(unit)
         self._plan_register_cc(unit)
         self._rl_plan(unit, self.enable_register_locals)
@@ -22536,9 +22541,11 @@ def generate(unit: ast.TranslationUnit, module_name: str = "main",
              whole_program: bool = True,
              embed_runtime: bool = False,
              crlf_console: bool = True,
-             register_cc: bool = True) -> str:
+             register_cc: bool = True,
+             dead_store: bool = True) -> str:
     """Generate Z80 assembly for a translation unit."""
     gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                        enable_inlining, enable_const_propagation, whole_program, embed_runtime,
-                       crlf_console=crlf_console, register_cc=register_cc)
+                       crlf_console=crlf_console, register_cc=register_cc,
+                       dead_store=dead_store)
     return drop_unreferenced_externs(gen.generate(unit))

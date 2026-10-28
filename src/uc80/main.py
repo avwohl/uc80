@@ -574,6 +574,11 @@ def main() -> int:
         help="Keep a = b = K as one chain (docs/addr_cse.md)"
     )
     parser.add_argument(
+        "--no-dead-store",
+        action="store_true",
+        help="Keep stores to locals that nothing reads (docs/dead_store.md)"
+    )
+    parser.add_argument(
         "--no-embed-runtime",
         action="store_true",
         help="Don't embed runtime library (use EXTRN references instead)"
@@ -960,7 +965,8 @@ def main() -> int:
                            foreign_asm_names=regcc.asm_text_names(mac_files),
                            register_locals=not args.no_register_locals,
                            addr_cse=not args.no_addr_cse,
-                           chain_store=not args.no_chain_store)
+                           chain_store=not args.no_chain_store,
+                           dead_store=not args.no_dead_store)
         # A vector handler or hand-written assembly can change a global
         # behind the program: addrcse keeps no loaded value over it.
         gen.vector_funcs = set(roots.vectors.values()) | (
@@ -1024,6 +1030,10 @@ def main() -> int:
             if gen._regcc:
                 print(f"  Register calling convention: {len(gen._regcc)} "
                       f"function(s): {', '.join(sorted(gen._regcc))}")
+            dse = getattr(gen, "dead_store_stats", None) or {}
+            if dse.get("stores") or dse.get("decls"):
+                print(f"  Dead locals: {dse.get('decls', 0)} removed, "
+                      f"{dse.get('stores', 0)} store(s) dropped")
             acse = getattr(gen, "addr_cse_stats", None) or {}
             if acse.get("n") or acse.get("chain"):
                 print(f"  Address CSE: "
