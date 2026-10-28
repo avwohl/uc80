@@ -50,7 +50,7 @@ A variable is a candidate when all of these are true:
 
 A declaration with several declarators and an effect in the initializer of a dead variable stays as it is. The pass cannot move the effect and keep the order of the initializers.
 
-A function is not changed when it holds a statement expression, `setjmp`, a naked function, or inline assembly with operands or with instructions. A label alone (`asm("TIMER_START::")`, the timing label of the benchmark harness) is not a reason: it holds no instruction and cannot read a local.
+A function is not changed when it holds a statement expression, `setjmp`, a naked function, or inline assembly with operands or with instructions. A label alone (`asm("TIMER_START::")`, the timing label of the benchmark harness) is not a reason for the first part: it holds no instruction and cannot read a local. Other assembly can jump to the label, so a function with any `asm` skips the overwritten-store part.
 
 An interrupt function and a function with `--isr-safe` are changed like other functions. The locals of a function are not visible to an interrupt, so no interrupt can read a dead local.
 

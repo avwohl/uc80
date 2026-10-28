@@ -400,8 +400,8 @@ int main(void)
 EXPECT = '1\n114 114\n3\n5\n12\n12\n7\n23\n8\n7\n77\n0 4\n8\n2 7 8\n-1 -1\n6\n7\n8 8\n10 6 41\n2 1 10 20\n10 1\n4 5\n6 7\n6 2 1\n10 6 11\n2 1 10 20\n10 1\n4 5\n6 7\n6 2 1\n8 16\n'
 
 
-def build_run(tmp_path, source, *flags):
-    _, mac = compile_mac(tmp_path, source, *flags)
+def build_run(tmp_path, source, *flags, files=()):
+    _, mac = compile_mac(tmp_path, source, *flags, files=files)
     return run_mac(tmp_path, mac)
 
 
@@ -531,3 +531,147 @@ int main(void)
     on, _ = compile_mac(tmp_path, src, "--no-inlining")
     off, _ = compile_mac(tmp_path, src, "--no-inlining", "--no-dead-store")
     assert len(on.splitlines()) < len(off.splitlines())
+
+
+def test_label_asm_turns_the_overwritten_part_off(tmp_path):
+    src = r"""
+int g;
+int f3(void) { int x = 1; asm("TIMER_START::"); x = 2; return g + x; }
+int f4(void) { int x = 1; g = 3; x = 2; return g + x; }
+int main(void) { return f3() + f4(); }
+"""
+    over = pass_log(tmp_path, src, want_over=True)
+    assert "f3" not in over
+    assert over.get("f4") == {"x"}
+
+
+def test_two_files_with_the_same_local_and_global_name(tmp_path):
+    a = r"""
+#include <stdio.h>
+int shared_v = 7;
+int other(void);
+int main(void)
+{
+    int gb = 3;
+    gb = 4;
+    printf("%d %d\n", shared_v, other());
+    return 0;
+}
+"""
+    b = r"""
+extern int shared_v;
+int gb = 40;
+int other(void)
+{
+    int shared_w = 5;
+    shared_w = 6;
+    shared_v += 1;
+    return shared_v + gb - 40;
+}
+"""
+    (tmp_path / "b.c").write_text(b)
+    got = build_run(tmp_path, a, files=[tmp_path / "b.c"])
+    assert got == "8 8\n"
+
+
+def test_verbose_line_counts_removed_locals(tmp_path):
+    c = tmp_path / "v.c"
+    c.write_text("int main(void) { int a = 1; int b = 2; a = 3; return b; }\n")
+    r = subprocess.run(
+        [sys.executable, "-m", "uc80.main", str(c), "-v", "-o",
+         str(tmp_path / "v.mac")],
+        capture_output=True, text=True, cwd=str(REPO))
+    assert r.returncode == 0, r.stderr
+    assert "Dead locals: 1 removed" in r.stdout + r.stderr
+
+
+def test_long_flat_function_compiles_fast(tmp_path):
+    """The overwritten-store scan is linear in the list length."""
+    import time
+    n = 1500
+    lines = ["int g;", "int main(void)", "{"]
+    lines += [f"    int a{i}; a{i} = g + {i};" for i in range(n)]
+    lines.append("    int s = 0;")
+    lines += [f"    s += a{i};" for i in range(0, n, 7)]
+    lines.append("    return s;")
+    lines.append("}")
+    c = tmp_path / "long.c"
+    c.write_text("\n".join(lines) + "\n")
+
+    def timed(*flags):
+        t = time.time()
+        r = subprocess.run(
+            [sys.executable, "-m", "uc80.main", str(c), *flags, "-o",
+             str(tmp_path / "l.mac")],
+            capture_output=True, text=True, cwd=str(REPO))
+        assert r.returncode == 0, r.stderr
+        return time.time() - t
+
+    base = timed("--no-dead-store")
+    with_pass = timed()
+    assert with_pass < base * 2.5 + 5, (base, with_pass)
+
+
+NMI_SRC = r"""
+#include <z80.h>
+#include <stdint.h>
+void out(uint8_t port, uint8_t value);
+static volatile uint8_t ticks;
+static uint8_t total;
+
+#pragma uc80 nmi nmi_isr
+void nmi_isr(void)
+{
+    int junk = 5, extra;
+    uint8_t v;
+    junk += 3;
+    extra = junk * 2;
+    v = z80_in(0x00);
+    total += v;
+    ticks++;
+}
+
+int main(void)
+{
+    int dead = 0, i;
+    unsigned char t;
+    dead = 9;
+    for (i = 0; i < 1; i++)
+        dead += i;
+    for (;;) {
+        t = ticks;
+        if (t >= 5)
+            break;
+    }
+    out(0x10, total);
+    out(0xFF, 0);
+    return 0;
+}
+"""
+
+
+def test_nmi_handler_with_dead_locals_in_a_rom_run(tmp_path, monkeypatch):
+    import shutil
+    from .test_rom_target import _ul80_has_rom_options
+    if not (shutil.which("um80") and _ul80_has_rom_options()):
+        pytest.skip("needs um80 and a ul80 with ROM options")
+    sys.path.insert(0, str(REPO / "bench" / "rom"))
+    import isrproof
+    ports = []
+    for tag, env in (("on", None), ("off", "1")):
+        if env:
+            monkeypatch.setenv("UC80_NO_DSE", env)
+        info = isrproof.build_source(tmp_path / tag, "nmid.c", NMI_SRC)
+        assert info["ok"], info["log"]
+        n = isrproof.NEOGEO
+        m = isrproof.Machine(ram=n["ram"], banks=None, ram_fill="random",
+                             sp="poison", track=True)
+        m.load_rom(str(info["bin"]))
+        m.load_symbols(str(info["sym"]))
+        m.magic_ports.add(0xFF)
+        m.feed.queue(0x00, [1, 2, 3, 4, 5])
+        m.add_nmi_every(6000, start=6000, count=5)
+        res = m.run(max_tstates=500_000)
+        assert res.reason.startswith("port:"), res.reason
+        ports.append(isrproof.ports_of(m, 0, 0xFD))
+    assert ports[0] == ports[1] == [(0x10, 15)]

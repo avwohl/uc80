@@ -92,6 +92,12 @@ def _unsafe(body) -> bool:
     return False
 
 
+def _has_asm(body) -> bool:
+    """A label asm can be a jump target of other assembly: no store of the
+    function may be judged overwritten by the flow of the C text."""
+    return any(type(n).__name__ == "AsmDeclaration" for n in _walk(body))
+
+
 def _label_only(asm) -> bool:
     """``asm("name::")``: a label, no instruction."""
     text = ""
@@ -145,6 +151,7 @@ class _Fn:
         self.cands: set = set()
         self.reads: dict = {}
         self.skip_name = None
+        self._info: dict = {}
 
     # -- purity -----------------------------------------------------------
 
@@ -452,17 +459,26 @@ class _Fn:
         item of the list before anything reads it?"""
         for k in range(i + 1, len(items)):
             it = items[k]
-            if self.overwrite_of(it) == nm:
+            names, jmp, ow = self.info(it)
+            if ow == nm:
                 return True
-            if isinstance(it, ast.ForStmt) and isinstance(it.init, ast.Declaration):
-                if self.refs(it, nm) or self.jumps(it):
-                    return False
-                continue
-            if self.refs(it, nm) or self.jumps(it):
+            if nm in names or jmp:
                 return False
-            if isinstance(it, ast.Declaration):
-                continue
         return False
+
+    def info(self, it):
+        """(names in the item, has a jump or label, overwrite_of) of one
+        item, cached so that a long flat list is scanned once, not once per
+        store.  A stale entry only has too many names, which is safe."""
+        c = self._info.get(id(it))
+        if c is None or c[0] is not it:
+            names = set()
+            for n in _walk(it):
+                if isinstance(n, ast.Identifier):
+                    names.add(n.name.text)
+            c = (it, names, self.jumps(it), self.overwrite_of(it))
+            self._info[id(it)] = c
+        return c[1], c[2], c[3]
 
     def overwritten(self, items: list) -> bool:
         """Remove each store in ``items`` that a later store of the same
@@ -486,6 +502,7 @@ class _Fn:
                             changed = True
                             continue
                         it.expr = new
+                        self._info.pop(id(it), None)
                         changed = True
             elif isinstance(it, ast.Declaration):
                 ds = it.declarators or []
@@ -506,6 +523,7 @@ class _Fn:
                     if self.kill(items, i, nm):
                         self.note(nm)
                         ds[di] = ast.InitDeclarator(declarator=d.declarator)
+                        self._info.pop(id(it), None)
                         self.stats["stores"] = self.stats.get("stores", 0) + 1
                         changed = True
                         if not self.pure(init):
@@ -537,6 +555,7 @@ class _Fn:
             if not self.cands:
                 return
             changed = False
+            self._info.clear()
             self.count()
             self.dead = {nm for nm, r in self.reads.items() if r == 0}
             backup = copy.deepcopy(self.func.body.items)
@@ -556,6 +575,7 @@ class _Fn:
                     self.cands -= self.dead
                     changed = True
                 if (not os.environ.get("UC80_NO_DSE_OVERWRITE")
+                        and not _has_asm(self.func.body)
                         and self.overwritten(self.func.body.items)):
                     changed = True
             except RecursionError:
