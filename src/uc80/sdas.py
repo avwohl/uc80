@@ -801,6 +801,10 @@ def build_library(out_dir, style="sdcc", lib_dir=None, kinds=("rt", "lc"),
     ``out_dir``/uc80_<kind>.lib.  Returns {"libs": [...], "failed":
     [(module, message), ...]}.
 
+    ``out_dir``/crt0_rom.rel and ``out_dir``/crt0_rom_vec.rel are the
+    start-up modules for separately compiled modules (ROM libraries only);
+    the second one is for modules that bind interrupt vectors.
+
     uc80_rt.lib has the runtime (the helpers for 16-bit and 32-bit
     arithmetic, float, long long, setjmp).  uc80_lc.lib has libc.  The
     libc modules that use the CP/M BDOS are in the library too.  A ROM
@@ -847,6 +851,23 @@ def build_library(out_dir, style="sdcc", lib_dir=None, kinds=("rt", "lc"),
             failed.append((f"uc80_{kind}.lib", r.stdout + r.stderr))
         else:
             libs.append(str(lib_path))
+    # the start-up modules of a program in separately compiled modules
+    # (docs/rom_hardware.md): crt0_rom.rel, and crt0_rom_vec.rel when the
+    # modules bind interrupt vectors
+    for stem in ("crt0_rom", "crt0_rom_vec"):
+        src = lib / f"{stem}.mac"
+        if flat_data or not src.exists():
+            continue
+        s = out / f"{stem}.s"
+        try:
+            s.write_text(translate(src.read_text(), style=style,
+                                   module=stem, filename=f"{stem}.mac",
+                                   comments=False))
+            ok, msg = assemble(s, flags=("-g",))
+            if not ok:
+                failed.append((stem, msg.strip()))
+        except SdasError as e:
+            failed.append((stem, str(e)))
     return {"libs": libs, "failed": failed}
 
 

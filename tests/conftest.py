@@ -24,7 +24,7 @@ if _SRC not in sys.path:
 
 import uc80  # noqa: E402
 
-NEEDED = ("crt0_rom.rel", "libc_rom.lib", "runtime.lib", "libc.lib", "crt0.rel")
+NEEDED = ("crt0_rom.rel", "crt0_rom_vec.rel", "libc_rom.lib", "runtime.lib", "libc.lib", "crt0.rel")
 
 
 def pytest_configure(config):

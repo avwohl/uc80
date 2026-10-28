@@ -1,0 +1,140 @@
+; crt0_rom_vec.mac - the start-up of crt0_rom.mac for a program in separately
+; compiled modules that bind interrupt vectors.  Made by uc80.rom.vec_startup_module
+; from crt0_rom.mac: do not edit.  Every vector jumps to a label that a module
+; of the program defines (__int_handler, __nmi_handler, __rst08_handler to __rst30_handler).
+; libc_rom.lib has a default module for each label.  Link this file in place of
+; crt0_rom.rel.  See docs/rom_hardware.md.
+; uc80 C Compiler
+;
+; Link with ul80 --rom-data and --ram-end (or --ram-size), for example
+;   ul80 --bin -p 0 -d F800 --rom-data --rom-size 8000 --ram-size 800 ...
+; The linker defines __DATA_ROM, __DATA_RAM, __DATA_LEN, __BSS_START,
+; __BSS_END and __RAM_END.  See docs/rom.md.
+;
+; Vectors (CSEG, placed with ORG; the gaps between them are zero bytes):
+;   0000H  DI, IM 1, JP __start
+;   0008H to 0030H  RET (RST 08H to RST 30H)
+;   0038H  EI, RETI; or JP __int_handler when the program defines it
+;   0066H  RETN; or JP __nmi_handler when the program defines it
+; Link with -p 0.  The program code follows the NMI vector at 0068H.
+;
+; RST vectors and IM 2: when the program binds a function to an RST vector
+; (#pragma uc80 rst) uc80 changes the RET at the vector to JP.  With
+; #pragma uc80 im2 or im2table, uc80 changes IM 1 at reset to IM 2, turns
+; the ";@IM2" lines into code (load I) and writes the table of 128 vectors
+; after this start-up code, at a 256-byte boundary.  See docs/rom_hardware.md.
+;
+; Start: set SP, copy the initial data from ROM to RAM, clear the
+; BSS, call main, then loop on HALT with the interrupt state main left.
+;
+; Watchdog hook.  The lines that start with ";@WDT" are comments here.  When the
+; program defines the public label __watchdog_kick (a C function with
+; #pragma uc80 public _watchdog_kick, or an assembly file), uc80 turns the
+; lines into code.  The start-up code then calls __watchdog_kick at reset,
+; before main, and at each wake-up of the idle HALT loop.  The default is no
+; call, so a program without a hook has no extra bytes.  See docs/rom.md.
+
+	.Z80
+
+	CSEG
+	ORG	0000H
+	PUBLIC	__vec_reset
+	PUBLIC	__crt0_rom_vec
+__vec_reset:
+__crt0_rom_vec:
+	DI
+	IM	1
+	JP	__start
+
+	ORG	0008H
+	PUBLIC	__vec_rst08
+__vec_rst08:
+	JP	__rst08_handler
+	ORG	0010H
+	PUBLIC	__vec_rst10
+__vec_rst10:
+	JP	__rst10_handler
+	ORG	0018H
+	PUBLIC	__vec_rst18
+__vec_rst18:
+	JP	__rst18_handler
+	ORG	0020H
+	PUBLIC	__vec_rst20
+__vec_rst20:
+	JP	__rst20_handler
+	ORG	0028H
+	PUBLIC	__vec_rst28
+__vec_rst28:
+	JP	__rst28_handler
+	ORG	0030H
+	PUBLIC	__vec_rst30
+__vec_rst30:
+	JP	__rst30_handler
+
+	ORG	0038H
+	PUBLIC	__vec_int
+__vec_int:
+	JP	__int_handler
+
+	ORG	0066H
+	PUBLIC	__vec_nmi
+__vec_nmi:
+	JP	__nmi_handler
+;@RELOC 69H
+
+	EXTRN	__rst08_handler,__rst10_handler,__rst18_handler,__rst20_handler,__rst28_handler,__rst30_handler,__int_handler,__nmi_handler
+	PUBLIC	__start
+
+	EXTRN	_main
+	EXTRN	__DATA_ROM,__DATA_RAM,__DATA_LEN
+	EXTRN	__BSS_START,__BSS_END
+	EXTRN	__RAM_END
+
+__start:
+	LD	SP,__RAM_END
+;@IM2	LD	A,__IM2_HI
+;@IM2	LD	I,A
+;@WDT	CALL	__watchdog_kick
+
+	; Copy the initial data from ROM to RAM (nothing if there is none)
+	LD	BC,__DATA_LEN
+	LD	A,B
+	OR	C
+	JR	Z,__nodata
+	LD	HL,__DATA_ROM
+	LD	DE,__DATA_RAM
+	LDIR
+__nodata:
+
+	; Zero the BSS (COMMON): BC = size, nothing if empty
+	LD	HL,__BSS_END
+	LD	DE,__BSS_START
+	OR	A
+	SBC	HL,DE
+	LD	B,H
+	LD	C,L
+	LD	A,B
+	OR	C
+	JR	Z,__nobss
+	LD	HL,__BSS_START
+	LD	(HL),0
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	Z,__nobss
+	LD	D,H
+	LD	E,L
+	INC	DE
+	LDIR
+__nobss:
+;@WDT	CALL	__watchdog_kick
+
+	CALL	_main
+
+	; main returned: stop, with the interrupt state main left
+__halt:
+;@WDT	CALL	__watchdog_kick
+	HALT
+	JR	__halt
+
+	END	__start

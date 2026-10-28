@@ -24,11 +24,13 @@ from uc_core.volatility import VolatileInfo, declared_names
 from uc_core.volatility import children as _children
 from .volatile_fence import VOL_BEGIN, VOL_END
 from . import absaddr
+from . import ptrabs
 from . import regcc
 from .reglocals_gen import RegLocalsMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
-                             ISR_ALT_SAVE, ISR_ALT_RESTORE)
+                             ISR_ALT_SAVE, ISR_ALT_RESTORE,
+                             ISR_WA_SAVE, ISR_WA_RESTORE)
 # Codegen-internal synthetic resolved types — the parser doesn't
 # produce these (the auto-AST is declarator-shaped), but codegen
 # needs concrete BasicType / PointerType / ArrayType / FunctionType /
@@ -863,6 +865,30 @@ def _is_resolved_type(t) -> bool:
     return isinstance(t, _CoreRT)
 
 
+def _legacy_pointee(pt):
+    """The legacy type of the object that a pointer points to.  A volatile
+    qualifier written on a typedef-name (`volatile uint16_t *q`, or
+    `typedef volatile uint16_t vreg; vreg *q`) is kept: the conversion of
+    a typedef-name drops it, and without it a store through q was not a
+    volatile access (the compound forms wrote the high byte first).  A
+    copy carries the qualifier: the typedef itself stays as it is."""
+    base = _to_legacy(pt)
+    vol = False
+    x = pt
+    seen = 0
+    while _is_resolved_type(x) and seen < 16:
+        vol = vol or bool(x.is_volatile)
+        if x.kind != "typedef" or _ACTIVE_TYPEDEFS is None:
+            break
+        x = _ACTIVE_TYPEDEFS.get(x.name)
+        seen += 1
+    if (vol and isinstance(base, lt.BasicType)
+            and not getattr(base, "is_volatile", False)):
+        base = copy.copy(base)
+        base.is_volatile = True
+    return base
+
+
 def _to_legacy(t, ctx=None):
     """Convert a ResolvedType (either uc80- or uc_core-class) to its
     ast_legacy equivalent.
@@ -912,7 +938,8 @@ def _to_legacy(t, ctx=None):
         return lt.BasicType(name=t.name or "int", is_signed=t.is_signed,
                             is_const=t.is_const, is_volatile=t.is_volatile)
     if k == "pointer":
-        return lt.PointerType(base_type=_to_legacy(t.pointee),
+        base = _legacy_pointee(t.pointee)
+        return lt.PointerType(base_type=base,
                               is_const=t.is_const, is_volatile=t.is_volatile)
     if k == "array":
         return lt.ArrayType(base_type=_to_legacy(t.element), size=t.size_expr)
@@ -3680,6 +3707,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                  register_locals: bool = True,
                  naked_funcs: "set[str] | None" = None):
         self.module_name = module_name
+        # Name of the per-module BSS block (separate compilation), or None.
+        self.bss_block: str | None = None
+        # Accesses through a constant pointer made direct (ptrabs.py).
+        self.direct_pointers = True
+        self.direct_pointer_accesses = 0
         self.enable_register_locals = register_locals
         self._rl_debug = bool(os.environ.get("UC80_RL_DEBUG"))
         # Naked functions (SDCC __naked, [[uc80::naked]]): no frame code,
@@ -4389,7 +4421,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         self._annotate_typeof(unit)
         # *(volatile T *)K: a name at address K, so the global-variable
         # code paths apply (LD A,(K), LD (K),A, LD HL,(K)).
-        self.absolute.update(absaddr.rewrite(unit, self._const_int_operand))
+        self.absolute.update(absaddr.rewrite(
+            unit, self._const_int_operand, self._type_size))
         if self.isr_funcs:
             self._check_isr_functions(unit)
         # Build call graph for optimizations
@@ -4516,6 +4549,24 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                                                           declared=declared,
                                                           node=decl)
                         self.ctx.globals[nm] = Symbol(name=nm, sym_type=var_type, is_global=True)
+
+        # A pointer variable that holds one constant address: its accesses
+        # become accesses of a name at that address (ptrabs.py).
+        if self.direct_pointers:
+            new_decls, new_syms, n_changed = ptrabs.rewrite(
+                self, unit, set(self.public_names) | set(self.keep_names)
+                | set(self.foreign_asm_names))
+            if new_syms:
+                self.absolute.update(new_syms)
+                for decl in new_decls:
+                    for nm, full, _init, _fn in iter_var_decls(decl):
+                        self.ctx.globals[nm] = Symbol(
+                            name=nm, sym_type=_to_legacy(full),
+                            is_global=True)
+            if n_changed:
+                self.direct_pointer_accesses = n_changed
+                self._vol = VolatileInfo(unit)
+                self._vol_names = self._vol.file_names
 
         # Disambiguate globals whose case-folded names collide.  The MACRO-80
         # assembler we target is case-insensitive, so e.g. `int sprite` and
@@ -4849,14 +4900,18 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         #
         # Whole-program output is one module, so the blank COMMON block is
         # its alone: crt0 zeroes the region and the bytes stay out of the
-        # .com image.  Separate compilation cannot use it.  L80 overlays
-        # every module's blank COMMON at the same address -- that is what a
-        # common block is for -- so two units' uninitialized globals, and
-        # two units' ??AUTO regions, would land on top of each other and
-        # corrupt each other with nothing said.  There the storage goes in
-        # DSEG, which the linker gives each module its own space for.  It
-        # costs those bytes in the image, where they are already zero, so
-        # crt0 has nothing to do for them.
+        # .com image.  Separate compilation cannot use the BLANK block.  L80
+        # overlays every module's blank COMMON at the same address -- that
+        # is what a common block is for -- so two units' uninitialized
+        # globals, and two units' ??AUTO regions, would land on top of each
+        # other and corrupt each other with nothing said.  A separately
+        # compiled module therefore has ONE NAMED COMMON block of its own
+        # (`COMMON /uc_<stem>_<hash>/`, name made by main.py): the linker
+        # gives each name its own space after the blank block, and
+        # __BSS_START .. __BSS_END span all of them, so crt0 clears them
+        # and they stay out of the image.  Without a block name (callers
+        # that use the generator directly) the storage stays in DSEG, as
+        # before: the bytes cost image space and need no clearing.
         has_bss = uninit_globals or uninit_statics or (
             self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0)
 
@@ -4865,6 +4920,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             if self.whole_program:
                 self.ctx.emit(f"{BSS_BANNER_PREFIX} (zeroed by crt0)")
                 self.ctx.emit("\tcommon\t//")
+            elif self.bss_block:
+                self.ctx.emit(f"{BSS_BANNER_PREFIX} (zeroed by crt0, "
+                              f"block of this module)")
+                self.ctx.emit(f"\tcommon\t/{self.bss_block}/")
             else:
                 self.ctx.emit(f"{BSS_BANNER_PREFIX} -- DSEG, not COMMON, because")
                 self.ctx.emit("; the linker overlays every module's blank COMMON"
@@ -6940,12 +6999,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         for reg in ("AF", "BC", "DE", "HL", "IY"):
             e("push", reg)
         self.ctx.emit(f"{ISR_ALT_SAVE} {name}")
+        self.ctx.emit(f"{ISR_WA_SAVE} {name}")
         self.ctx.emit(BARRIER_END)
 
     def _emit_isr_epilogue(self, name: str, kind: str) -> None:
         """Exit of an interrupt function (inside the barrier region that
         gen_function opened at the epilogue label)."""
         e = self.ctx.emit_instr
+        self.ctx.emit(f"{ISR_WA_RESTORE} {name}")
         self.ctx.emit(f"{ISR_ALT_RESTORE} {name}")
         for reg in ("IY", "HL", "DE", "BC", "AF"):
             e("pop", reg)

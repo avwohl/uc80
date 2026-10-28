@@ -43,14 +43,28 @@ An interrupt function with `EI` at the start never keeps its locals in the share
 
 ### Alternate registers
 
-The prologue also saves the alternate registers (`EX AF,AF'`, `EXX`) when the handler can reach code that uses them. The compiler checks the call graph of the final assembly, with the library sources for routines that are not in the program. The float runtime of the compiler does not use the alternate registers today. Hand-written assembly does. The compiler prints a warning that names the call chain:
+The prologue also saves the alternate registers (`EX AF,AF'`, `EXX`) when the handler can reach code that uses them. The compiler checks the call graph of the final assembly, with the library sources for routines that are not in the program. The float division (`__fdiv`) uses the alternate registers. Hand-written assembly can use them too. The compiler prints a warning that names the call chain:
 
 ```
 uc80: warning: interrupt function 'tick' reaches code that uses the alternate
 registers (tick -> _alt_user); the prologue saves and restores them
 ```
 
-The check cannot see a call through a function pointer.
+### Calls through a function pointer
+
+The check follows calls by name. A call through a function pointer (`hook()`) has no name. The compiler cannot tell which function the pointer holds.
+
+So it takes the safe view. Suppose an interrupt function, or a function that the interrupt function calls, calls through a pointer. Then every function whose address the program takes can run in the interrupt. The compiler prints a note:
+
+```
+uc80: note: interrupt function 'isr' calls through a function pointer
+(_isr -> __callhl); uc80 cannot tell the target, so it treats every function
+whose address is taken as reachable from the interrupt (div7, other)
+```
+
+All the checks of this page then apply to these functions: the alternate registers, the work areas of the runtime, and `--isr-safe`.
+
+A library routine that calls back (`qsort`, `bsearch`) has the same effect. A library routine that the interrupt function reaches can also take the address of a function itself. The compiler adds that function too. The note names at most eight functions. The interrupt functions are not in the list.
 
 ### Routines with fixed RAM
 
@@ -64,7 +78,58 @@ rt_arith32) at a fixed address (isr -> _divide -> __div32); main code that calls
 the same routine can be corrupted by the interrupt
 ```
 
-The warning is safe to ignore when the main program never uses the same routine. The simple cure is to avoid long division, 64-bit arithmetic and floating point in a handler.
+The warning is safe to ignore when the main program never uses the same routine. One cure is to avoid long division, 64-bit arithmetic and floating point in a handler. The other cure is to let the handler save the work areas.
+
+### Work areas that the handler saves
+
+The option `--isr-save-workareas` makes each interrupt function save and restore the work areas that its call graph can reach. One handler can ask for this alone:
+
+```
+#pragma uc80 isr_save_workareas NAME [NAME ...]
+```
+
+NAME is an interrupt function (`interrupt`, `nmi`, `im2`, or `rst ... interrupt`). The compiler stops with an error when NAME is not an interrupt function, and when NAME is a naked function. A naked function must save the areas in its own assembly text.
+
+The prologue of the handler copies each reached work area to the stack, after the register saves. The epilogue copies the area back, before the register restores. The main program then finds its temporary values as it left them.
+ 
+The compiler saves the work areas as the program text places them. The whole-program build puts the data of the runtime in one block of the program. The order there is not the order of the library files. The compiler takes the address and the size of each label from the program text.
+
+Labels that follow each other join into one area. The warning names the block of the library file, for example `rt_rem32`. An area of up to 6 bytes goes through the stack in words. A larger area goes with `LDIR`. The compiler prints a note with the cost.
+
+```
+uc80: note: interrupt function 'isr' saves and restores the work areas of
+rt_rem32, rt_tmp32 (12 bytes of RAM, 27 bytes of code, 592 T-states for each
+interrupt)
+```
+
+The RAM figure is also the extra stack that each interrupt uses. Add it to the `--min-stack` figure of `ul80`. A handler that starts with `EI` (the `interrupt` form) can get a nested interrupt during the save. The nested interrupt saves its own copy, and the stack figure of the note does not count this copy. Use `critical` or an NMI when the stack is small.
+
+The compiler does not save the blocks that hold state and not temporary values: `errno`, the heap, the table of `atexit` handlers, the signal table, the state of `strtok` and the file table. A handler that changes these changes them for good. For these blocks the warning stays.
+
+Three more limits apply:
+
+- The data labels of the libc modules (`sin`, `sqrt`, `printf`, and others) are private to the library. The compiler cannot name them, so it does not save these blocks and the warning stays. The compiler embeds the runtime blocks (`rt_*`), and the option saves them.
+- The option needs the whole program. With `--no-whole-program` the option is an error for a handler that reaches a work area or calls a routine of another module (that routine is invisible), and for the pragma. A handler that reaches nothing gets no save code and no message, so a makefile can pass the option to every module.
+- A handler that calls a routine that the compilation does not define (`extern` in `--no-whole-program`) gets a warning: the compiler cannot see the work areas or the alternate registers of that routine.
+
+The option does not cover the shared automatic storage (`??AUTO`) of the functions in your program. Use `--isr-safe` for that. The option does not cover the registers: the prologue saves them as before.
+
+Measured cost for one interrupt, from `bench/romrun` with one NMI (the figure of the compiler is the same). The handler does the work in the first column:
+
+```
+handler                  work areas saved                    RAM  code  T-states
+32-bit multiply          rt_tmp32                              4    16       106
+32-bit divide            rt_rem32, rt_tmp32                   12    27       592
+64-bit multiply          rt_acc64, rt_mul64                   32    27      1432
+64-bit divide            rt_acc64, rt_rem64                   32    27      1432
+float add                rt_fadd, rt_tmp32                    23    27      1054
+float multiply           rt_fdata, rt_fmul, rt_tmp32          34    27      1516
+float divide             rt_fdata, rt_tmp32                   18    27       844
+```
+
+The handlers of `bench/rom/isrproof.py` (the NMI command queue, the YM2610 timer, the bank select and the IY walk) reach no work area. The option adds no byte and no T-state to them (`isrproof.py --save-workareas` gives the same results).
+
+Take a handler and a main loop that both do 32-bit arithmetic. Without the option the result is wrong. With the option the result is right. `tests/test_isr_workareas.py` runs this with IM 2, NMI and `interrupt`, and also with 64-bit and float math, in both flows.
 
 ### Shared automatic storage
 
@@ -80,7 +145,7 @@ The option `--isr-safe` keeps the locals of all functions that an interrupt func
 
 ## RST vectors and IM 2
 
-The RST vectors 0008h to 0030h and the IM 2 vector table are new. Both need `--target=rom` with the start-up code that uc80 embeds (whole-program mode, no `--startup-lib`). With another start-up code, or with the CP/M target, the compiler prints a warning (for example "the RST 10h vector is not set"). Then your code must set the vector. The pragmas `rst`, `im2`, `im2table`, `vector`, `interrupt` and `nmi` have no effect in a CP/M program.
+The RST vectors 0008h to 0030h and the IM 2 vector table are new. Both need `--target=rom` with the start-up code that uc80 embeds (whole-program mode, no `--startup-lib`). With another start-up code, or with the CP/M target, the compiler prints a warning (for example "the RST 10h vector is not set"). Then your code must set the vector. A program in separately compiled modules can bind the RST, INT and NMI vectors (see "Vectors in separately compiled modules"). The pragmas `rst`, `im2`, `im2table`, `vector`, `interrupt` and `nmi` have no effect in a CP/M program.
 
 A pragma names a function of the file that holds the pragma. Suppose two input files each define a `static` function `h`. The compiler gives each one a private name (`h__s0`, `h__s1`) when it merges the files. A pragma in `a.c` that names `h` binds to the `h` of `a.c`.
 
@@ -160,6 +225,42 @@ Tests in `tests/test_rom_vectors.py`. Each test runs with `ul80` and with `--asm
 - The RST interrupt function in IM 0.
 - IM 1 with no IM 2.
 
+## Vectors in separately compiled modules
+
+With `--no-whole-program` each C file becomes its own module. Your module then has no start-up code, so uc80 cannot write the vectors. Use `crt0_rom_vec.rel` in place of `crt0_rom.rel`:
+
+- `crt0_rom_vec.rel` has the vectors of `crt0_rom.rel`, but each vector (INT, NMI and RST 08h to 30h) jumps to a label: `__int_handler`, `__nmi_handler`, `__rst08_handler`, `__rst10_handler`, and so on to `__rst30_handler`.
+- A module that has a handler with `#pragma uc80 interrupt`, `nmi`, `rst` or `vector` defines the label of the vector at the start of the handler. The label is a public symbol. It costs no byte.
+- `libc_rom.lib` has a small default module for each label: `EI` and `RETI` for INT, `RETN` for NMI, and `RET` for RST. The linker takes the module only when no other module defines the label. A vector that no module binds keeps the default.
+- Each module that binds a vector also holds one word that refers to the symbol `__crt0_rom_vec`. Only `crt0_rom_vec.rel` defines the symbol. If you link `crt0_rom.rel` by mistake, the link stops with `Undefined symbol: __CRT0_ROM_VEC` (`ul80`) or `Undefined Global __crt0_rom_vec` (`sdldz80`). The ROM does not start with vectors that jump nowhere.
+
+The compiler prints a note for each vector it binds:
+
+```
+uc80: note: v.c:2: the INT (38h) vector jumps to __int_handler, the label of
+'tick'; link crt0_rom_vec.rel in place of crt0_rom.rel
+```
+
+Two modules can bind two different vectors. Two modules that bind the same vector give a link error with `sdldz80`. `ul80` only prints a warning for the second definition (`defined in H and in H2`) and drops the second handler. Pass `--fatal-mult-def` to `ul80` to make this an error.
+
+```
+uc80 --target=rom --no-whole-program main.c -o main.mac
+uc80 --target=rom --no-whole-program handlers.c -o handlers.mac
+um80 main.mac -o main.rel
+um80 handlers.mac -o handlers.rel
+ul80 --bin -p 0 -d F800 --rom-data --rom-size 8000 --ram-size 800 --min-stack 40 \
+     -o prog.bin -S prog.sym crt0_rom_vec.rel main.rel handlers.rel \
+     libc_rom.lib runtime.lib
+```
+
+With `--asm-syntax=sdas` the command `uc80 --build-sdas-libs DIR` also writes `DIR/crt0_rom.rel` and `DIR/crt0_rom_vec.rel`. Link the start-up module first, and use the code origin in `DIR/crt0_rom_vec.s` (first line, `code-origin`) for `-b _CODE=`.
+
+Limits:
+
+- IM 2 does not work in separate compilation. The vector table and the code that loads I come from the whole-program mode. The compiler stops with an error. Write the table in assembly and use `--no-embed-startup`.
+- With `--no-embed-startup` (your own start-up code) the compiler still defines the labels `__int_handler` and so on at the handlers. It does not add the reference word. The compiler prints the "not set" warning, and your start-up code must jump to a label.
+- `crt0_rom_vec.rel` does not call `__watchdog_kick`.
+
 ## Port input and output
 
 `<z80.h>` has the port functions. Each function is a compiler intrinsic. The compiler writes the instruction in line. No optimizer pass moves, merges or removes the instruction, as for a volatile access. Two calls with the same port and value are two `OUT` instructions.
@@ -213,7 +314,54 @@ The compiler also treats a volatile integer object at a constant address like th
 REG8 |= 4;           /* LD A,(F900h) / OR 4 / LD (F900h),A */
 ```
 
-The same holds for `((volatile T *) K)[i]` with a constant `i`. Only integer types change. A pointer variable that holds the address (`volatile unsigned char *const p = (...) 0xF900`) is a normal pointer.
+The same holds for `((volatile T *) K)[i]` with a constant `i`. Only integer types change. A pointer variable that holds the address has the same result (see the next section).
+
+## Pointers to hardware
+
+A pointer variable that holds one constant address gives direct accesses. The code below shows the usual way to write a memory-mapped chip in C:
+
+```
+static volatile uint8_t *const ym = (volatile uint8_t *)0x4000;
+static struct chip *const ch = (struct chip *)0x4100;   /* volatile members */
+static volatile uint8_t *kick;                           /* set once */
+void setup(void) { kick = (volatile uint8_t *)0x4020; }
+
+ym[1] = x;           /* LD (4001h),A                  */
+ch->data = y;        /* LD (4101h),A  (address + the offset of the member) */
+*kick = z;           /* LD (4020h),A                  */
+```
+
+The compiler gives each address a name with no storage, as for `__at`, and uses `LD A,(nn)`, `LD (nn),A` and the 16-bit forms. The load of the pointer into HL goes away. The pass is in `src/uc80/ptrabs.py`.
+
+A pointer variable qualifies when all of these are true:
+
+- The pointer points to an integer type or to a struct. The target (or the member that the code reaches) must be `volatile`. The pointer itself must not be `volatile`, and must not be a parameter.
+- The pointer has the type `T *const` and a constant initial value that is not 0. Or the pointer is local or `static`, and every `=` and the initial value give the same constant that is not 0. No `++` or `+=` is in the program. A `&p` of a `const` pointer does not stop the change, because the pointer cannot change. The pointer then keeps its storage.
+- The name of the pointer is not in the text of an `asm` statement, and not in a `#pragma uc80 public` or `keep`.
+- A path in a struct has constant indexes and no bit-field. `p->a.b`, `p->arr[2]` and `p[1].reg` are all direct.
+
+Only an access of a volatile integer object changes. Each access stays one access with the same width, in the same order. A pointer that does not qualify stays a normal pointer. A use that the compiler cannot change (the pointer passed to a function, `p + i` with a variable `i`) keeps the pointer variable. When no use stays, the variable and its assignments go away. A `const` pointer with external linkage keeps its definition, because another file can use the pointer.
+
+Limits:
+
+- A non-const pointer holds its constant from the start. A read through the pointer before the first assignment (a read of address 0 in the C sense) reads the constant address.
+- A struct that you declare inside a function is found by its tag name, like any other struct. This limit is old. A local struct can have the same tag as a global struct with another layout. Then the compiler uses the global layout, with and without this pass.
+- An access that is outside the address space (`p[-3]` with `p` at 2, or a 16-bit access at FFFFh) is not changed. The pointer variable stays for such an access.
+- A compound write (`ch->w += 0x101`, `++`) to a 16-bit register writes the low byte first. The older code wrote the high byte first. The rule is the same for a constant pointer and for any other pointer (a parameter, a global pointer), and for a plain store; SDCC writes the low byte first too. A pointer to `volatile T`, with T a typedef-name such as `uint16_t`, lost the qualifier in the compound path before this repair, so the high byte was written first there. After `--*p` the new code does not read the register again. The older code read the register twice. Both are inside the rules of C for a volatile access, but the access log is not equal to the older log in these cases.
+- A non-volatile target is not changed. Another C object can use the same memory, so the order of the accesses is not free.
+- The option `--no-direct-pointers` switches the pass off.
+
+Measured with `bench/rom/mmio.py` (`mmio_ym.c`). The program writes a YM2610 register table through a struct pointer, with a busy wait on the status bit. It makes 272 writes, and the chip is at 4000h:
+
+```
+                     image bytes   T-states
+pointer in HL            421         88211
+direct access            393         79071      -28 bytes, -9140 T-states (-10.4%)
+```
+
+The log of the 272 writes is equal in both builds. One busy-wait read of the status changes from `LD HL,(_ym) / LD A,(HL)` (16 + 7 T-states) to `LD A,(4000h)` (13 T-states). The access to `addr_b` and `data_b` loses the `INC HL` that added the member offset. The measured gain is on `mmio_ym.c`, a driver written to use the feature. The snd-* kernels and the programs of `isrproof.py` do not use the feature: they use port instructions (`z80_out`, `z80_in`) and no pointer variable. Their images and T-states do not change: `sndrom.py --layout neogeo` and `isrproof.py nmi seq bank iy` give the same bytes, T-states and port logs with and without `--no-direct-pointers`.
+
+Tests: `tests/test_direct_pointers.py` and `tests/test_direct_pointers_init.py` (a local that starts from a register, an access outside the address space, and the option sets `-O0`, `--no-inlining`, `--no-register-locals` and `--isr-safe`). The tests run in `bench/romrun`, with `ul80` and with sdas. A breakpoint on each read instruction gives a scripted value to the read. The log of the runner has each write. Together they show that every access happens in order.
 
 ## SDCC spellings
 
@@ -286,6 +434,7 @@ Rules:
 - Register locals (BC, DE, IY) never change a naked function: no prologue is made, and the body is your text. A call to a naked function is a call like any other. The callee may change A, BC, DE, HL and IY. So a C caller saves a local in BC, DE or IY around the call. A function that calls a naked function is never IY-clean. You can change these registers in a naked function. You must keep IX and the stack. See [register_locals.md](register_locals.md).
 - The asm text of a file can name a `static` function or variable of the same file (`_helper`, `_cnt`). Suppose two files define a `static` with the same name. Then the compiler writes the private name of the file in the asm text (`_helper__s0`). The rule holds for `asm(...)` in a naked function, in a normal function and at file scope.
 - An asm text can use `0x5A5A` as a hex number. Both flows accept the number.
+- The interrupt check reads `JP (HL)` after `EX DE,HL` as a switch jump, not as a call through a pointer. Hand-written assembly that jumps to a computed address in this way is not an indirect call for the check. Use `CALL __callhl` or put another instruction between the two.
 - The interrupt check treats the body as opaque text. It follows each `_name` in the asm text as a call. So a C function that a naked handler calls counts as reached by the interrupt: `--isr-safe` and the shared-storage warning apply to the function. The compiler saves no registers for a naked handler, so the note about the alternate registers does not apply.
 
 A naked function as an interrupt function (`#pragma uc80 interrupt NAME [critical]`, `#pragma uc80 nmi NAME`, `__interrupt`): the vector jump goes to the label. The compiler writes no `EI`, no register saves and no `RETI` or `RETN`.

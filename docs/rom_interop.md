@@ -72,7 +72,9 @@ uc80 --target=rom --build-sdas-libs DIR
 
 The command translates every module of `runtime.lib` and `libc.lib`, assembles the modules with `sdasz80`, and packs them with `sdar` into `DIR/uc80_rt.lib` and `DIR/uc80_lc.lib`. Give each library to `sdldz80` with `-l`. With `-l` the linker takes only the modules that the program needs. A library on the command line without `-l` links every module.
 
-The libraries come from a translation of the library modules. They are not a `ul80` blob. The translation has no fixed addresses. The linker places the library code and data together with your code and data. The libraries are build output. They are not in the repository. Build them with the same `--sdas-style` and the same `--target` as your program.
+The libraries come from a translation of the library modules. They are not a `ul80` blob. The translation has no fixed addresses.
+
+The linker places the library code and data together with your code and data. The libraries are build output. They are not in the repository. Build them with the same `--sdas-style` and the same `--target` as your program.
 
 ### Area names
 
@@ -191,7 +193,7 @@ Verified in the nullsound sources:
 - The main loop calls a command with `push bc; push hl; ret`. The return address is `_ret_from_cmd`. The loop has pushed HL before the call. The loop saves no other register. A command can change A, BC, DE and HL.
 - IX and IY are not live in the main loop. A uc80 function saves and restores IX (its frame pointer) and does not use IY.
 - The NMI handler uses AF', BC', DE' and HL' at any time. C code must not use them. uc80 code does not use them, except the code of the float runtime. Do not call float, `double` or 64-bit arithmetic from a command.
-- The INT handler at 38h keeps all registers. It calls `ym2610_restore_port_context`. That routine repairs the YM2610 address latch only when the interrupted code used `ym2610_write_port_a` or `ym2610_write_port_b`. So C code must write the YM2610 only through these nullsound routines (with a shim). A raw `OUT` or a port intrinsic in C can race with the timer interrupt.
+- The INT handler at 38h keeps all registers. It calls `ym2610_restore_port_context`. That routine repairs the YM2610 address latch only when the interrupted code used `ym2610_write_port_a` or `ym2610_write_port_b`. So C code must use these nullsound routines (with a shim) to write the YM2610. A raw `OUT` or a port intrinsic in C can race with the timer interrupt.
 - A command runs in the main loop, never in the NMI. The NMI can interrupt the command.
 - The stack top is FFFDh. The nullsound data in the MVS build uses 1942 bytes from F800h. The data of the C module (5 bytes in the example) and the stack use the rest, about 100 bytes. Keep both small.
 - The post-init hook is the word at FFFEh. Entry 2 of the table is the hook that nullsound calls after the driver start (command 02h, "eye catcher"). Use it to set the variables of the C code. No code clears `DATA` and no code copies initial data. So the C module has no initialised global. In the ngdevkit style, `uc80` prints a warning when the module has one.
@@ -221,14 +223,36 @@ The script compares the port log with the expected sequence. It rebuilds the reg
 
 Command 04h before command 02h would see undefined `DATA`, because no code clears `DATA`. The proof always sends 02h first. The test `tests/test_rom_interop.py` runs this with zero RAM and with two random RAM patterns. It also checks the RAM variables and the stack.
 
-`python3 bench/rom/nullsound.py --irq-period 997` also tests the INT handler. Command 06h (in `ns_user.s`) starts YM2610 timer B, and `timer_tempo` executes `EI`. Then romrun injects an interrupt every 997 T-states. About 4900 interrupts come and some of them (13 in the run) land inside a C command. The expected YM2610 sequence stays the same. With a period of 311 T-states the main loop of nullsound gets no time to run the command, because the INT handler is too slow. The test uses the periods 997 and 1213.
+`python3 bench/rom/nullsound.py --irq-period 997` also tests the INT handler. Command 06h (in `ns_user.s`) starts YM2610 timer B, and `timer_tempo` executes `EI`. Then romrun injects an interrupt every 997 T-states. About 4900 interrupts come.
+
+Some of them (13 in the run) land inside a C command. The expected YM2610 sequence stays the same. With a period of 311 T-states the main loop of nullsound gets no time to run the command, because the INT handler is too slow. The test uses the periods 997 and 1213.
 
 This proves the build, the link, the register contract and the two call directions. It does not run nullsound music. The ADPCM, SSG and FM sections of nullsound are not tested, and the YM2610 model of romrun makes no sound.
+
+### Alternate registers next to nullsound
+
+The NMI handler of nullsound uses AF', BC', DE' and HL' at any time. C code that executes `EXX` or `EX AF,AF'` can change the state of nullsound. The float division of uc80 (`__fdiv`) does this. The math functions that the ROM libraries link (`sin`, `sqrt` and others) do not.
+
+uc80 checks the call graph of the final assembly when one of these is true:
+
+- You give the option `--with-nullsound`.
+- You use `--asm-syntax=sdas --sdas-style=ngdevkit` with `--entry`. The build of this page does this.
+
+The roots of the check are the `--entry` functions, `main`, and the interrupt functions. For each root that reaches such code, the compiler prints a warning with the call chain. It prints one more warning for each function and each runtime helper that has the `EXX` or `EX AF,AF'` instruction:
+
+```
+uc80: warning: runtime helper '__fdiv_man' uses EXX or EX AF,AF' (the alternate
+registers); the NMI handler of nullsound uses them at any time, so the code can
+corrupt the state of nullsound (reached from entry function 'cmd_key_on':
+_cmd_key_on -> __fdiv -> __fdiv_man)
+```
+
+The compiler prints each function once. A call through a function pointer reaches every function whose address the program takes (see [rom_hardware.md](rom_hardware.md)). `tests/test_nullsound_alt.py` runs programs with float division and with `EXX` in C, in both flows.
 
 ## Limits and open work
 
 - The output is for ROMs. A CP/M program in sdas syntax links and runs (the tests do this), but the CP/M target is not a goal.
 - Another track changes the convention for calls in uc80. Check each shim after that change.
-- In the ngdevkit style, `uc80` warns when an `--entry` function reaches code with `EXX` or `EX AF,AF'` (the call graph of `isr_check`). The warning does not see code that only the linker adds, for example a library that you link later.
+- `uc80` warns about code with `EXX` or `EX AF,AF'` next to nullsound (see "Alternate registers next to nullsound" above). The warning does not see code that only the linker adds, for example a library that you link later.
 - A C module with initialised globals (uc80 warns) needs `-b INITIALIZER=...` and `-b INITIALIZED=...` and a copy loop that you write. nullsound has no such code.
 - Tests: `tests/test_sdas.py`, `tests/test_sdcc_compat.py` (the `__asm` block), `tests/test_rom_interop.py`. They skip when the SDCC tools are missing.

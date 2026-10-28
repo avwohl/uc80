@@ -27681,6 +27681,143 @@ _ungetc_err:
 
 	CSEG
 ; ============================================================
+; lc_vec_int.mac
+; ============================================================
+; lc_vec_int.mac - default handler of the INT vector (38h): enable interrupts and return
+; The label __int_handler is the target of a vector in crt0_rom_vec.mac.  A module
+; of the program that binds the vector defines the label itself; the linker
+; takes this module of the library only when no module does.  See
+; docs/rom_hardware.md.
+
+
+	CSEG
+	PUBLIC	__int_handler
+__int_handler:
+	EI
+	RETI
+
+
+	CSEG
+; ============================================================
+; lc_vec_nmi.mac
+; ============================================================
+; lc_vec_nmi.mac - default handler of the NMI vector (66h): return
+; The label __nmi_handler is the target of a vector in crt0_rom_vec.mac.  A module
+; of the program that binds the vector defines the label itself; the linker
+; takes this module of the library only when no module does.  See
+; docs/rom_hardware.md.
+
+
+	CSEG
+	PUBLIC	__nmi_handler
+__nmi_handler:
+	RETN
+
+
+	CSEG
+; ============================================================
+; lc_vec_rst08.mac
+; ============================================================
+; lc_vec_rst08.mac - default handler of the RST 08h vector: return
+; The label __rst08_handler is the target of a vector in crt0_rom_vec.mac.  A module
+; of the program that binds the vector defines the label itself; the linker
+; takes this module of the library only when no module does.  See
+; docs/rom_hardware.md.
+
+
+	CSEG
+	PUBLIC	__rst08_handler
+__rst08_handler:
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_vec_rst10.mac
+; ============================================================
+; lc_vec_rst10.mac - default handler of the RST 10h vector: return
+; The label __rst10_handler is the target of a vector in crt0_rom_vec.mac.  A module
+; of the program that binds the vector defines the label itself; the linker
+; takes this module of the library only when no module does.  See
+; docs/rom_hardware.md.
+
+
+	CSEG
+	PUBLIC	__rst10_handler
+__rst10_handler:
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_vec_rst18.mac
+; ============================================================
+; lc_vec_rst18.mac - default handler of the RST 18h vector: return
+; The label __rst18_handler is the target of a vector in crt0_rom_vec.mac.  A module
+; of the program that binds the vector defines the label itself; the linker
+; takes this module of the library only when no module does.  See
+; docs/rom_hardware.md.
+
+
+	CSEG
+	PUBLIC	__rst18_handler
+__rst18_handler:
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_vec_rst20.mac
+; ============================================================
+; lc_vec_rst20.mac - default handler of the RST 20h vector: return
+; The label __rst20_handler is the target of a vector in crt0_rom_vec.mac.  A module
+; of the program that binds the vector defines the label itself; the linker
+; takes this module of the library only when no module does.  See
+; docs/rom_hardware.md.
+
+
+	CSEG
+	PUBLIC	__rst20_handler
+__rst20_handler:
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_vec_rst28.mac
+; ============================================================
+; lc_vec_rst28.mac - default handler of the RST 28h vector: return
+; The label __rst28_handler is the target of a vector in crt0_rom_vec.mac.  A module
+; of the program that binds the vector defines the label itself; the linker
+; takes this module of the library only when no module does.  See
+; docs/rom_hardware.md.
+
+
+	CSEG
+	PUBLIC	__rst28_handler
+__rst28_handler:
+	RET
+
+
+	CSEG
+; ============================================================
+; lc_vec_rst30.mac
+; ============================================================
+; lc_vec_rst30.mac - default handler of the RST 30h vector: return
+; The label __rst30_handler is the target of a vector in crt0_rom_vec.mac.  A module
+; of the program that binds the vector defines the label itself; the linker
+; takes this module of the library only when no module does.  See
+; docs/rom_hardware.md.
+
+
+	CSEG
+	PUBLIC	__rst30_handler
+__rst30_handler:
+	RET
+
+
+	CSEG
+; ============================================================
 ; lc_vfscanf.mac
 ; ============================================================
 ; lc_vfscanf.mac - GENERATED from csrc/lc_vfscanf.c by gen_c_modules.py

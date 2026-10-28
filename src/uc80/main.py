@@ -127,6 +127,46 @@ def _tail_insert_index(lines: list[str]) -> int:
     return len(lines)
 
 
+def _bss_block_name(path) -> str:
+    """Name of the BSS block of a separately compiled module: the file stem
+    and a hash of the full path, so two files `a.c` in two directories do
+    not share (overlay) one block.  The hash uses the path relative to the
+    working directory when the file is below it, so the same tree gives the
+    same object in any checkout."""
+    import zlib
+    p = Path(path).resolve()
+    try:
+        key = p.relative_to(Path.cwd().resolve())
+    except ValueError:
+        key = p
+    stem = re.sub(r'[^A-Za-z0-9_]', '_', p.stem)[:12]
+    return f"uc_{stem}_{zlib.crc32(str(key).encode()) & 0xFFFF:04x}"
+
+
+VEC_REF_LABEL = "__vec_ref"
+
+
+def _add_vector_labels(code: str, labels: dict, ref: bool) -> str:
+    """Define the vector labels ({handler label: [vector labels]}) at the
+    handler: PUBLIC lines and a label line in front of the label of the
+    function.  With ``ref`` the module also refers to ``__crt0_rom_vec``
+    (a word in CSEG: 2 bytes), which only crt0_rom_vec.rel defines."""
+    for handler, names in labels.items():
+        pat = re.compile(r"^(" + re.escape(handler) + r"::?(?:\s|$))",
+                         re.M)
+        add = "".join(f"\tPUBLIC\t{n}\n{n}:\n" for n in names)
+        code, n = pat.subn(lambda m: add + m.group(1), code, count=1)
+        if not n:
+            raise CodegenError(f"no label {handler} to bind to the vector")
+    if ref:
+        lines = code.split("\n")
+        at = _tail_insert_index(lines)
+        lines[at:at] = ["", f"\tEXTRN\t{rom_module.VEC_REF}", "\tCSEG",
+                        f"{VEC_REF_LABEL}:", f"\tDW\t{rom_module.VEC_REF}"]
+        code = "\n".join(lines)
+    return code
+
+
 def _filter_hand_written_asm(asm_text: str):
     """Prepare one hand-written assembly module for appending to the output.
 
@@ -319,7 +359,7 @@ class _BuildLibsAction(argparse.Action):
             # report "Unknown target: --build-libs".
             build_libs.main(["runtime", "libc"])
             # build_libs.py builds the libraries but not the startup module.
-            for stem in ("crt0", "crt0_rom"):
+            for stem in ("crt0", "crt0_rom", "crt0_rom_vec"):
                 crt0_mac, crt0_rel = target / f"{stem}.mac", target / f"{stem}.rel"
                 if crt0_mac.exists():
                     result = subprocess.run(
@@ -363,6 +403,7 @@ class _Roots:
     im2_table: int | None = None  # address of the IM 2 table, or None
     im2_on: bool = False          # IM 2 is in use
     where: dict = None            # {("rst", 8) | ("vec", 0x38): "file:line"}
+    save_wa: set = None           # interrupt functions that save work areas
 
 
 _VECTORS = {0x38: "INT (38h)", 0x66: "NMI (66h)"}
@@ -399,6 +440,7 @@ def _ambiguous_functions(asts: list, paths: list) -> dict:
 
 _NAME_WORDS = {"rst": (1,), "im2": (1,), "vector": (1,),
                "interrupt": (0,), "nmi": (0,)}
+_ALL_NAMES = ("keep", "public", "isr_save_workareas")
 
 
 def source_name(name: str) -> str:
@@ -428,8 +470,8 @@ def resolve_pragma_names(pragmas: list, units: list, maps: list,
                         f"{fname}:{line}: #pragma uc80 {verb}: '{w}' is not "
                         f"defined in this file; it is a static function of "
                         f"another file, which this file cannot name")
-        if m and (verb in ("keep", "public") or verb in _NAME_WORDS):
-            idx = (range(len(words)) if verb in ("keep", "public")
+        if m and (verb in _ALL_NAMES or verb in _NAME_WORDS):
+            idx = (range(len(words)) if verb in _ALL_NAMES
                    else _NAME_WORDS[verb])
             words = [m.get(w, w) if i in idx else w
                      for i, w in enumerate(words)]
@@ -458,7 +500,7 @@ def _roots_from_options(entries: list, pragmas: list,
     Raises CodegenError for a pragma it does not understand: a vector
     that is silently dropped is a ROM that does not start."""
     roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={},
-                   rst={}, im2={}, where={})
+                   rst={}, im2={}, where={}, save_wa=set())
     ident = re.compile(r"^[A-Za-z_]\w*$")
     ambiguous = ambiguous or {}
 
@@ -535,6 +577,7 @@ def _roots_from_options(entries: list, pragmas: list,
         roots.keep.add(name)
         roots.public.add(name)
 
+    save_where = {}
     for kind, name, fname, line in sdcc_isrs:
         add_isr(kind, name, f"{fname}:{line}: __interrupt")
     for verb, words, fname, line in pragmas:
@@ -601,6 +644,15 @@ def _roots_from_options(entries: list, pragmas: list,
             roots.vectors[addr] = words[1]
             remember(("vec", addr), where)
             roots.keep.add(words[1])
+        elif verb == "isr_save_workareas":
+            if not words or not all(ident.match(w) for w in words):
+                raise CodegenError(
+                    f"{where}: expected one or more names of interrupt "
+                    f"functions")
+            for w in words:
+                unambiguous(w, where)
+            roots.save_wa.update(words)
+            save_where.update({w: where for w in words})
         elif verb in ("interrupt", "nmi"):
             ok = (len(words) == 1 or (verb == "interrupt" and len(words) == 2
                                       and words[1] == "critical"))
@@ -615,7 +667,13 @@ def _roots_from_options(entries: list, pragmas: list,
         else:
             raise CodegenError(
                 f"{where}: unknown verb; uc80 knows keep, public, vector, "
-                f"interrupt, nmi, rst, im2 and im2table")
+                f"interrupt, nmi, rst, im2, im2table and isr_save_workareas")
+    for name in sorted(roots.save_wa):
+        if name not in roots.isrs:
+            raise CodegenError(
+                f"{save_where[name]}: '{source_name(name)}' is not an "
+                f"interrupt function; name it in #pragma uc80 interrupt, "
+                f"nmi, im2 or rst ... interrupt")
     return roots
 
 
@@ -744,6 +802,18 @@ def main() -> int:
         help="Keep every local in memory (docs/register_locals.md)"
     )
     parser.add_argument(
+        "--no-module-bss",
+        action="store_true",
+        help="With --no-whole-program, put the zero-start data of the module "
+             "in DSEG (in the image) and not in a BSS block of its own"
+    )
+    parser.add_argument(
+        "--no-direct-pointers",
+        action="store_true",
+        help="Keep every access through a pointer that holds a constant "
+             "address as an access through the pointer (docs/rom_hardware.md)"
+    )
+    parser.add_argument(
         "--no-embed-runtime",
         action="store_true",
         help="Don't embed runtime library (use EXTRN references instead)"
@@ -845,6 +915,22 @@ def main() -> int:
              "stack, never in the shared ??AUTO area. Use it when main "
              "code and an interrupt function call the same function. "
              "See docs/rom.md"
+    )
+    parser.add_argument(
+        "--isr-save-workareas", action="store_true",
+        help="Every interrupt function saves and restores the fixed work "
+             "areas of the runtime that its call graph can reach "
+             "(__tmp32, __div32_dvd, __acc64 and so on), so main code that "
+             "uses the same routines is not corrupted. One handler: "
+             "#pragma uc80 isr_save_workareas NAME. See docs/rom_hardware.md"
+    )
+    parser.add_argument(
+        "--with-nullsound", action="store_true",
+        help="The program links with nullsound (the Neo Geo sound "
+             "driver): warn for every function and runtime helper on a "
+             "path from --entry, main or an interrupt function that uses "
+             "EXX or EX AF,AF'. The ngdevkit style with --entry has the "
+             "check without the option. See docs/rom_interop.md"
     )
     parser.add_argument(
         "--no-crlf",
@@ -1160,11 +1246,14 @@ def main() -> int:
                            foreign_asm_names=regcc.asm_text_names(mac_files),
                            register_locals=not args.no_register_locals,
                            naked_funcs={n for n, _f, _l in sdcc_found.naked})
+        gen.direct_pointers = not args.no_direct_pointers
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
                 asts, [str(p) for p in input_paths
                        if p.suffix.lower() != ".mac"], sdcc_found):
             print(f"uc80: warning: {msg}", file=sys.stderr)
+        if not whole_program and not args.no_module_bss:
+            gen.bss_block = _bss_block_name(input_paths[0])
         code = gen.generate(merged_ast)
         printf_need = printf_hook.printf_needs(merged_ast, printf_features)
         code = printf_hook.patch_tables(code, printf_need)
@@ -1195,12 +1284,42 @@ def main() -> int:
         why_rst = ("only --target=rom writes the vectors" if not rom else
                    "only the start-up code that uc80 embeds (whole-program "
                    "mode, no --startup-lib) sets the vectors")
+        # Vectors in a module without the start-up code of uc80 (separate
+        # compilation, or --no-embed-startup): the handler gets the label
+        # that its vector jumps to (rom.VEC_LABELS).  crt0_rom_vec.rel has
+        # the vectors.  A module of a separate compilation also refers to
+        # that file, so the link with crt0_rom.rel fails on an undefined
+        # symbol instead of making a ROM that never takes the interrupt.
+        alias_vec = rom and not embed_startup
+        via_vec_crt0 = (alias_vec and not whole_program
+                        and not args.no_embed_startup)
+        vec_names = {}                     # handler name -> [vector labels]
+        if alias_vec:
+            for _addr, _name in roots.vectors.items():
+                vec_names.setdefault(_name, []).append(
+                    rom_module.VEC_LABELS[_addr])
+            for _addr, (_name, _k) in roots.rst.items():
+                vec_names.setdefault(_name, []).append(
+                    rom_module.VEC_LABELS[_addr])
+        if via_vec_crt0 and roots.im2_on:
+            raise CodegenError(
+                roots.where.get(("im2", 0), "") + "IM 2 in separate "
+                "compilation (--no-whole-program) is not supported: the "
+                "vector table and the start-up code that loads I come from "
+                "the whole-program mode. Compile the program in whole-program "
+                "mode, or write the table in assembly and use "
+                "--no-embed-startup")
         if no_vec:
             for _addr, (_name, _k) in sorted(roots.rst.items()):
+                if via_vec_crt0:
+                    continue
                 print(f"uc80: warning: {roots.where.get(('rst', _addr), '')}"
                       f"the RST {_addr:02X}h vector is not "
                       f"set to '{_name}': {why_rst}; make your own start-up "
-                      f"code jump to {label_of(_name)}", file=sys.stderr)
+                      f"code jump to {label_of(_name)}"
+                      + (f" (the label {rom_module.VEC_LABELS[_addr]} is "
+                         f"there too)" if alias_vec else ""),
+                      file=sys.stderr)
             if roots.im2_on:
                 print("uc80: warning: " + roots.where.get(("im2", 0), "")
                       + "the IM 2 vector table is not written: " + ("only --target=rom writes the table "
@@ -1208,10 +1327,28 @@ def main() -> int:
                       "embeds writes the table ") + "and sets the I "
                       "register and IM 2", file=sys.stderr)
             for _addr, _name in sorted(roots.vectors.items()):
+                if via_vec_crt0:
+                    continue
                 print(f"uc80: warning: {roots.where.get(('vec', _addr), '')}"
                       f"the {_VECTORS[_addr]} vector is not "
                       f"set to '{_name}': {why_rst}; make your own start-up "
-                      f"code jump to {label_of(_name)}", file=sys.stderr)
+                      f"code jump to {label_of(_name)}"
+                      + (f" (the label {rom_module.VEC_LABELS[_addr]} is "
+                         f"there too)" if alias_vec else ""),
+                      file=sys.stderr)
+        if via_vec_crt0:
+            for _addr, _name in sorted(roots.vectors.items()):
+                print(f"uc80: note: {roots.where.get(('vec', _addr), '')}"
+                      f"the {_VECTORS[_addr]} vector jumps to "
+                      f"{rom_module.VEC_LABELS[_addr]}, the label of "
+                      f"'{source_name(_name)}'; link crt0_rom_vec.rel in "
+                      f"place of crt0_rom.rel", file=sys.stderr)
+            for _addr, (_name, _k) in sorted(roots.rst.items()):
+                print(f"uc80: note: {roots.where.get(('rst', _addr), '')}"
+                      f"the RST {_addr:02X}h vector jumps to "
+                      f"{rom_module.VEC_LABELS[_addr]}, the label of "
+                      f"'{source_name(_name)}'; link crt0_rom_vec.rel in "
+                      f"place of crt0_rom.rel", file=sys.stderr)
         for n in sorted(gen.asm_isrs):
             if not _defines_label(code, mac_files, label_of(n)):
                 raise CodegenError(
@@ -1678,35 +1815,115 @@ def main() -> int:
             if args.verbose:
                 print(f"  Appended {len(mac_files)} assembly file(s)")
 
+        if vec_names:
+            code = _add_vector_labels(
+                code, {label_of(n): v for n, v in vec_names.items()},
+                ref=via_vec_crt0)
+            if via_vec_crt0:
+                keep_labels.add(VEC_REF_LABEL)
+
         # Interrupt functions: do they reach code that uses the alternate
         # registers, or a routine with work areas at fixed addresses?
         if roots.isrs:
             isr_labels = {n: label_of(n) for n in roots.isrs}
-            reports = isr_check.analyze(
-                code, isr_labels, lib_dir() if lib_dir().is_dir() else None)
+            cga = gen.call_graph_analyzer
+            taken_labels = ({label_of(n) for n in cga.address_taken}
+                            if cga is not None else set())
+            reports, graph = isr_check.analyze(
+                code, isr_labels, lib_dir() if lib_dir().is_dir() else None,
+                taken_labels, with_graph=True)
             # a naked handler saves its own registers: no marker, no note
             for r in reports:
                 if r.name in gen.naked:
                     r.alt_chain = None
+            # --isr-save-workareas and the pragma: the prologue saves the
+            # work areas of the runtime that the handler can reach
+            wa_plan, wa_saved = {}, {}
+            for r in reports:
+                if r.name in roots.save_wa and r.name in gen.naked:
+                    raise CodegenError(
+                        f"#pragma uc80 isr_save_workareas {source_name(r.name)}: "
+                        f"a naked function saves nothing; save the work "
+                        f"areas in its assembly text")
+                if not (args.isr_save_workareas or r.name in roots.save_wa) \
+                        or r.name in gen.naked:
+                    continue
+                if not whole_program:
+                    if (r.name not in roots.save_wa
+                            and not r.fixed and not r.unknown):
+                        # the global option on a handler that reaches no
+                        # work area and no routine of another module:
+                        # nothing to save, and a makefile may pass the
+                        # option to every module
+                        continue
+                    raise CodegenError(
+                        f"interrupt function '{source_name(r.name)}': "
+                        f"saving the work areas needs the whole program "
+                        f"(the labels of the runtime work areas are private "
+                        f"to the library, and a routine of another module "
+                        f"is invisible); drop --no-whole-program, or save "
+                        f"the areas in a naked handler")
+                plan, _skipped, saved = isr_check.save_plan(graph, r)
+                if plan:
+                    wa_plan[r.name] = plan
+                    wa_saved[r.name] = saved
+                    nbytes, tstates = isr_check.wa_cost(plan)
+                    print(f"uc80: note: interrupt function "
+                          f"'{source_name(r.name)}' saves and restores the "
+                          f"work areas of "
+                          f"{', '.join(sorted(saved))} "
+                          f"({sum(n for _b, _l, n in plan)} bytes of RAM, "
+                          f"{nbytes} bytes of code, {tstates} T-states for "
+                          f"each interrupt)", file=sys.stderr)
             code = isr_check.resolve_alt_markers(
-                code, {r.name for r in reports if r.alt_chain})
-            for msg in isr_check.format_reports(reports):
+                code, {r.name for r in reports if r.alt_chain}, wa_plan)
+            for msg in isr_check.format_notes(reports):
+                print(f"uc80: note: {msg}", file=sys.stderr)
+            for msg in isr_check.format_reports(reports, wa_saved):
                 print(f"uc80: warning: {msg}", file=sys.stderr)
 
         # C code linked next to nullsound (docs/rom_interop.md): its NMI
-        # handler owns the alternate registers, so an entry function must
-        # not reach code that uses EXX or EX AF,AF'.
-        if (getattr(args, "asm_syntax", None) == "sdas"
-                and args.sdas_style == "ngdevkit" and args.entry):
-            ent = {n: label_of(n) for n in args.entry}
-            for rep in isr_check.analyze(
-                    code, ent, lib_dir() if lib_dir().is_dir() else None):
+        # handler owns the alternate registers, so no function that the
+        # nullsound code calls may reach code that uses EXX or EX AF,AF'.
+        # The check runs with --with-nullsound, and for --entry functions
+        # in the ngdevkit style (the build of docs/rom_interop.md).
+        ns_style = (getattr(args, "asm_syntax", None) == "sdas"
+                    and args.sdas_style == "ngdevkit" and args.entry)
+        if args.with_nullsound or ns_style:
+            ns_roots = {f"entry function '{n}'": label_of(n)
+                        for n in args.entry}
+            for n in roots.isrs:
+                ns_roots[f"interrupt function '{source_name(n)}'"] = \
+                    label_of(n)
+            if gen.ctx.globals.get("main") is not None:
+                ns_roots["'main'"] = label_of("main")
+            cga = gen.call_graph_analyzer
+            ns_taken = ({label_of(n) for n in cga.address_taken}
+                        if cga is not None else set())
+            ns_reports = isr_check.analyze(
+                code, {k: v for k, v in ns_roots.items()},
+                lib_dir() if lib_dir().is_dir() else None, ns_taken)
+            seen_users = set()
+            for rep in ns_reports:
                 if rep.alt_chain:
-                    print(f"uc80: warning: entry function '{rep.name}' "
+                    print(f"uc80: warning: {rep.name} "
                           f"reaches code that uses the alternate registers "
                           f"({' -> '.join(rep.alt_chain)}); nullsound's NMI "
                           f"handler keeps its state there",
                           file=sys.stderr)
+                for lab, chain in sorted(rep.alt_users.items()):
+                    user = chain[-1]
+                    if user in seen_users:
+                        continue
+                    seen_users.add(user)
+                    kind = ("runtime helper" if user.startswith("__")
+                            else "function")
+                    print(f"uc80: warning: {kind} '{user}' uses EXX or "
+                          f"EX AF,AF' (the alternate registers); the NMI "
+                          f"handler of nullsound uses them at any time, so "
+                          f"the code can corrupt the state of nullsound "
+                          f"(reached from {rep.name}: "
+                          f"{' -> '.join(chain)})", file=sys.stderr)
 
         # Assembly-level dead code elimination (after runtime embedding, before peephole)
         if not args.no_asm_dce and (embed_runtime or mac_files):

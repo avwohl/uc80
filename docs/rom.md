@@ -23,6 +23,8 @@ Run `uc80 --build-libs` once after a checkout. The command builds `libc_rom.lib`
 - `--target=rom`: build for a ROM. `--target=cpm` is the default.
 - `-ffreestanding`: the same as `--target=rom`.
 - `--isr-safe`: keep the locals of each function that an interrupt function reaches on the stack (see [rom_hardware.md](rom_hardware.md)).
+- `--isr-save-workareas`: each interrupt function saves and restores the work areas of the runtime that its call graph can reach (see [rom_hardware.md](rom_hardware.md)). The pragma `isr_save_workareas NAME` does this for one handler.
+- `--with-nullsound`: the program links with nullsound. The compiler warns for each function and runtime helper on a path that uses `EXX` or `EX AF,AF'` (see [rom_interop.md](rom_interop.md)).
 - `--stack-top EXPR`: the first value of SP, an assembler expression such as `0FF00H`. The default value is the symbol `__RAM_END`. The command `ul80` sets `__RAM_END` from `--ram-size` or `--ram-end`. Only the ROM target accepts `--stack-top`.
 
 With the ROM target the compiler:
@@ -105,7 +107,10 @@ In whole-program mode the compiler removes each function that no code calls, and
 - `--entry NAME` (repeatable) is the same as `#pragma uc80 keep NAME`. The option also has a second use: a ROM program may have no `main`. The start-up code then calls the first `--entry` function in place of `main`. A ROM program with no `main` and no `--entry` is an error.
 - A kept function has the same storage rules as a function whose address the code takes. No other function shares the local storage of the kept function, because hardware can enter the function at any time.
 - A function in a `vector` pragma is kept. The vector becomes `JP _NAME`. The compiler gives an error when a `vector` pragma and an assembly `__int_handler` (or `__nmi_handler`) both set the same vector.
-- The compiler gives an error in three cases: an unknown pragma verb, a vector address that is not 08h to 30h (a multiple of 8), 38h or 66h, and a name that the program does not define.
+- The compiler gives an error in three cases:
+  - an unknown pragma verb
+  - a vector address that is not 08h to 30h (a multiple of 8), 38h or 66h
+  - a name that the program does not define
 
 A C function in a `vector` pragma has no interrupt prologue and no `RETI`. It ends with `RET`. The compiler prints a warning for each such `vector` pragma. Use a `vector` target only for code that handles this itself. For a real interrupt function, use `#pragma uc80 interrupt NAME` or `#pragma uc80 nmi NAME`: these set the vector for you and print no warning.
 
@@ -164,12 +169,31 @@ This change also makes the CP/M images that use these modules smaller, because t
 
 ## Limits today
 
-- The compiler sets the vectors only in whole-program mode with the embedded start-up code. With `--no-whole-program` or `--startup-lib`, the compiler prints a warning and your own start-up code must jump to the interrupt function.
+- The compiler writes the vectors only in whole-program mode with the embedded start-up code. With `--no-whole-program`, link `crt0_rom_vec.rel` in place of `crt0_rom.rel` (see [rom_hardware.md](rom_hardware.md)). With `--startup-lib` or `--no-embed-startup`, the compiler prints a warning and your own start-up code must jump to the interrupt function.
 - A call of an interrupt function from C is an error. A handler cannot take arguments or return a value.
 - The heap and `sprintf` are not available.
 - The helpers of the runtime keep their temporaries at fixed RAM addresses. A routine that an interrupt handler and the main program both call can fail. The compiler prints a warning with the call chain when a handler reaches such a routine. Do not call long division, 64-bit arithmetic or float in a handler that the main program shares them with.
-- The float runtime of uc80 does not use the alternate registers. Assembly code can. The prologue of a handler saves the alternate registers when the handler reaches code that uses them.
-- Each C object that the program defines is one object of one module. A second C file does not get its own BSS block (the plan lists this as optional).
+- The float division of uc80 (`__fdiv`) uses the alternate registers. Assembly code can too. The prologue of a handler saves the alternate registers when the handler reaches code that uses them.
+- With `--no-whole-program` each module has one BSS block of its own (see "Separate compilation: the BSS block of each module").
+
+## Separate compilation: the BSS block of each module
+
+With `--no-whole-program` the compiler makes one object file for each C file. Each module puts all its zero-start data in one named COMMON block, `COMMON /uc_<stem>_<hash>/`. The name has the file stem and a hash of the full path. Two files with the same name in two directories do not share a block. The data in the block is:
+
+- the globals and the static variables that have no initial value,
+- the shared storage of the local variables of the module (`??AUTO`).
+
+The linker gives each block name its own space. `__BSS_START` to `__BSS_END` cover all the blocks, so the start-up code clears them, and the ROM image has no copy of the zero bytes. Data with a non-zero initial value stays in DSEG and the start-up code copies the data to RAM. The CP/M start-up code clears the same range, and the `.com` file is smaller for the same reason. The sdas flow puts each block in the BSS area. The blank COMMON block stays reserved for the whole-program build, because the linker puts the blank block of each module at one address.
+
+Before this change, a separately compiled module had its zero-start data in DSEG. That kept the modules apart, but the bytes were in the image. In a ROM the start-up code copied the bytes from ROM to RAM. Measured with two modules of `tests/test_module_bss.py` (190 bytes of zero-start data, 8 bytes of initial data, ROM target, `ul80`):
+
+```
+                     ROM image bytes   RAM data   RAM bss   copied at start
+before (DSEG)             705             198         0          198
+now (named COMMON)        515               8       190            8
+```
+
+The option `--no-module-bss` selects the old placement. Tests: `tests/test_module_bss.py`. The tests use the `ul80` flow and the sdas flow with random RAM at the start. A CP/M program in `cpmemu` checks the size of the `.com` file.
 
 ## Refused spellings
 

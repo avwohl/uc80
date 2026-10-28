@@ -1,0 +1,14 @@
+; lc_vec_rst20.mac - default handler of the RST 20h vector: return
+; The label __rst20_handler is the target of a vector in crt0_rom_vec.mac.  A module
+; of the program that binds the vector defines the label itself; the linker
+; takes this module of the library only when no module does.  See
+; docs/rom_hardware.md.
+
+	.Z80
+
+	CSEG
+	PUBLIC	__rst20_handler
+__rst20_handler:
+	RET
+
+	END
