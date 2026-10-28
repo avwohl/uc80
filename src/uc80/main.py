@@ -579,6 +579,12 @@ def main() -> int:
         help="Keep stores to locals that nothing reads (docs/dead_store.md)"
     )
     parser.add_argument(
+        "--no-blockops",
+        action="store_true",
+        help="Call memset and memcpy for a constant size, no inline "
+             "LDIR (docs/blockops.md)"
+    )
+    parser.add_argument(
         "--no-embed-runtime",
         action="store_true",
         help="Don't embed runtime library (use EXTRN references instead)"
@@ -966,7 +972,8 @@ def main() -> int:
                            register_locals=not args.no_register_locals,
                            addr_cse=not args.no_addr_cse,
                            chain_store=not args.no_chain_store,
-                           dead_store=not args.no_dead_store)
+                           dead_store=not args.no_dead_store,
+                           blockops=not args.no_blockops)
         # A vector handler or hand-written assembly can change a global
         # behind the program: addrcse keeps no loaded value over it.
         gen.vector_funcs = set(roots.vectors.values()) | (
