@@ -377,3 +377,49 @@ int main(void) { f(); return g[0]; }
     assert "ldir" not in body and "call" not in body
     assert "ld\t(_g),HL" in body
     assert body.count("\tldi\n") == 2
+
+
+USER_NAMES = r"""#include <stdio.h>
+static void memset(int *p, int v, int n) { while (n--) *p++ = v; }
+static void memcpy(int *d, const int *s, int n) { while (n--) *d++ = *s++; }
+int w[8], v[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+int main(void)
+{
+    memset(w, 7, 8);
+    memcpy(w + 1, v, 4);
+    printf("%d %d %d %d\n", w[0], w[1], w[5], w[7]);
+    return 0;
+}
+"""
+
+
+@needs_run
+def test_program_defined_memset_is_not_inlined(tmp_path):
+    for flags in ((), ("--no-inlining",), ("-O0",)):
+        text, mac = compile_mac(tmp_path, USER_NAMES, *flags)
+        assert run_mac(tmp_path, mac) == "7 1 7 7\n"
+        assert "ldi" not in func(text, "main")
+
+
+FILLS1 = r"""#include <stdio.h>
+#include <string.h>
+unsigned char g[16];
+int main(void)
+{
+    int i;
+    memset(g + 3, 9, 1);
+    memset(g + 8, 4, 5);
+    memcpy(g + 1, g + 3, 1);
+    for (i = 0; i < 16; i++) printf("%d ", g[i]);
+    printf("\n");
+    return 0;
+}
+"""
+
+
+@needs_run
+@pytest.mark.parametrize("unroll", ["0", "1", "2", "8"])
+def test_unroll_limit_variable(tmp_path, monkeypatch, unroll):
+    monkeypatch.setenv("UC80_BLOCKOP_UNROLL", unroll)
+    _, mac = compile_mac(tmp_path, FILLS1)
+    assert run_mac(tmp_path, mac) == "0 9 0 9 0 0 0 0 4 4 4 4 4 0 0 0 \n"

@@ -29,9 +29,13 @@ A fill of N bytes with the value V:
 
 An argument that is a constant address (`buf`, `&g`, a string) goes straight into HL or DE with one `LD`. The code does not use `PUSH`, `POP` or `EX` for such an argument.
 
-A call is never smaller than the inline code. The inline fill is 13 bytes. The call is about 15 bytes. The library routine stays in the image only if a call still uses the routine. Therefore the compiler has no size limit for a constant size.
+A fill or a copy of more than 4 bytes is never larger than the call. The inline fill is 13 bytes. The call is about 15 bytes. The library routine stays in the image only if a call still uses the routine. Therefore the compiler has no size limit for a constant size.
 
-uc80 has one code selection. The options `--opt-code-size` and `--opt-code-speed` do not exist in uc80. The unroll limit of 4 is a compromise: an unrolled copy is at most 3 bytes longer than `LDIR`. `UC80_BLOCKOP_UNROLL=n` changes the limit, for a test.
+A copy of 3 or 4 bytes is 6 or 8 bytes of `LDI`. A `LD BC,N` and `LDIR` copy is 5 bytes. The `LDI` copy is larger by 1 or 3 bytes but faster.
+
+A struct assignment of 3 or 4 bytes can make a program bigger (embench-slre: +6 bytes).
+
+uc80 has one code selection. The options `--opt-code-size` and `--opt-code-speed` do not exist in uc80. The unroll limit of 4 is a compromise: an unrolled copy is at most 3 bytes longer than `LDIR`. `UC80_BLOCKOP_UNROLL=n` changes the limit, for a test. The smallest value is 1.
 
 ## Other places that use the code
 
@@ -46,7 +50,9 @@ The register-locals pass treats `LDIR` and `LDI` as instructions that change BC,
 
 ## Switches
 
-- `--no-blockops` keeps the library calls and the old copy code.
+- `--no-blockops` keeps the library calls and the old copy code, including the PUSH and POP around a constant destination. The register-locals change (LDI does not read BC, runs of wraps join) has no switch. The join also changes programs that have no block operation.
+- A program that defines a function named `memset` or `memcpy` (static or not) keeps all calls of that name.
+- The order of evaluation of the arguments changes for an inline call. The code evaluates the source first for `memcpy`, then the destination. For `memset` the code evaluates the destination first, then the value. The C standard leaves the order unspecified. The library call evaluated the arguments from right to left.
 - `UC80_NO_BLOCKOPS=1` does the same, for a script.
 - `UC80_BLOCKOP_ONLY=f,g` limits the change of calls to the named functions, for a bisect.
 

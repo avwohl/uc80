@@ -32,7 +32,7 @@ from uc_core._const import int_value
 from .addrcse import _fields, _is_node
 
 # up to this size a copy or fill is unrolled
-UNROLL = int(os.environ.get("UC80_BLOCKOP_UNROLL", 4))
+UNROLL = max(1, int(os.environ.get("UC80_BLOCKOP_UNROLL", 4)))
 _LD_HL_CONST = re.compile(r"\tld\tHL,([^(\s;][^;\s]*)$", re.IGNORECASE)
 _NAMES = ("memset", "memcpy")
 
@@ -200,11 +200,20 @@ class BlockOpsMixin:
             return False
         if self.ctx.current_function == name or self.ctx.current_function == "_" + name:
             return False
+        # A program that defines its own memset or memcpy (static or
+        # not) means that function, whatever its parameters are.
+        if name in getattr(self, "user_defined_funcs", ()):
+            return False
         sym = self.ctx.lookup(name)
         if sym is None or not isinstance(
                 self._to_legacy_type(sym.sym_type), lt.FunctionType):
             return False
         if len(self._to_legacy_type(sym.sym_type).param_types) != 3:
+            return False
+        # The library declaration: (pointer, pointer, size) or (pointer, int, size).
+        pts = self._to_legacy_type(sym.sym_type).param_types
+        if not all(isinstance(t, (lt.PointerType, lt.ArrayType))
+                   for t in (pts[:2] if name == "memcpy" else pts[:1])):
             return False
         n = self._eval_const_expr(args[2])
         if n is None or not (1 <= n <= 0xFFFF):

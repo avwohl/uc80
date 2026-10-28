@@ -4370,6 +4370,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
         self._annotate_typeof(unit)
+        self.user_defined_funcs = {
+            declarator_ident(i.declarator) for i in unit.items or []
+            if isinstance(i, ast.FunctionDef)}
         # *(volatile T *)K: a name at address K, so the global-variable
         # code paths apply (LD A,(K), LD (K),A, LD HL,(K)).
         self.absolute.update(absaddr.rewrite(unit, self._const_int_operand))
@@ -7632,7 +7635,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
             self._gen_address(init)
 
         # Now HL has source address, copy bytes to destination
-        const_dest = sym.uses_shared_storage or sym.is_global
+        const_dest = self.enable_blockops and (sym.uses_shared_storage or sym.is_global)
         if not const_dest:
             self.ctx.emit_instr("push", "HL")  # Save source
 
@@ -8455,7 +8458,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         # HL has source address, copy bytes to destination using LDIR
         # Get destination address.  A constant address goes straight into
         # DE (HL keeps the source); a frame address needs HL as scratch.
-        const_dest = dest_sym.uses_shared_storage or dest_sym.is_global
+        const_dest = self.enable_blockops and (dest_sym.uses_shared_storage or dest_sym.is_global)
         if not const_dest:
             self.ctx.emit_instr("push", "HL")  # Save source
         if dest_sym.uses_shared_storage:
@@ -8484,7 +8487,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         # HL has source address, copy bytes to destination using LDIR
         # Get destination address.  A constant address goes straight into
         # DE (HL keeps the source); a frame address needs HL as scratch.
-        const_dest = dest_sym.uses_shared_storage or dest_sym.is_global
+        const_dest = self.enable_blockops and (dest_sym.uses_shared_storage or dest_sym.is_global)
         if not const_dest:
             self.ctx.emit_instr("push", "HL")  # Save source
         if dest_sym.uses_shared_storage:
