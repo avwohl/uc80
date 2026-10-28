@@ -56,6 +56,15 @@ The register-locals pass treats `LDIR` and `LDI` as instructions that change BC,
 - `UC80_NO_BLOCKOPS=1` does the same, for a script.
 - `UC80_BLOCKOP_ONLY=f,g` limits the change of calls to the named functions, for a bisect.
 
+## Constant addresses, volatile and the work areas
+
+- A call with a pointer that holds a constant address of a volatile object (`static volatile uint8_t *const p = (volatile uint8_t *)0x4000;`) stays a call. A cast to `void *` that drops the qualifier (`memset((void *)0x4300, 0, 8)`) is a cast that the program wrote, and the call becomes inline code.
+- A structure copy to a volatile target uses `LDI` or `LDIR`. Both copy from the low address to the high address. A 16-bit member gets the low byte first, as the rule for volatile stores needs.
+- `--isr-save-workareas`: an inline copy in an interrupt function reaches no work area of the runtime. The plan of the compiler has one routine less to save, and the plan never grows.
+- The body of a naked function is assembly text only. It has no call of `memset` or `memcpy`, and the pass does not change it.
+- `--no-whole-program`: each module makes its own inline code, and the result is the same as in the whole program.
+- `tests/test_famh_rom_integration.py` runs these cases in the ROM runner, in the um80 flow and in the sdas flow.
+
 ## Tests
 
 `tests/test_blockops.py` runs one program in eleven modes against the host compiler. The program has fills and copies of 1 to 400 bytes at global, pointer, local and string addresses. It also has side effects in the arguments, a used result and volatile objects. It has `memmove` with areas that overlap, and pointers that point to the same array. The shape tests check which calls stay: a variable size, `memmove`, a volatile object, a size of 0 and a used result.

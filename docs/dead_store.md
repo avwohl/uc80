@@ -98,6 +98,16 @@ The numbers come from `bench/run.py -c uc80`. They cover 109 programs (not `batt
 - `sieve` -46.13% T-states and -49 bytes, `fannkuch` -2.79% and -67 bytes, `dhrystone21` -0.55%, `embench-tarfind` -0.51% and -22 bytes, `whetstone` -0.26% and -43 bytes, `binary-trees` -54 bytes, `monop-size` -41 bytes.
 - `sieve+static` does not change. Its locals are `static`.
 
+## Constant addresses, volatile and interrupt functions
+
+The pass removes only locals that are not volatile, and the stores to these locals. The pass never removes a store through a pointer.
+
+The ROM pass (`ptrabs.py`) runs before this pass. It changes a volatile access through a pointer with a constant address into a named volatile object. The dead-store pass never removes a store to such an object.
+
+The pass treats a handler for an interrupt as it treats any other function. A store to a local with no reader goes. A store to a global, to a volatile object or to a work area stays. The pass skips a naked function (`deadstore.py` checks the names in `naked`).
+
+`tests/test_famh_rom_integration.py` runs these cases in the ROM runner, in the um80 flow and in the sdas flow. The test compares the writes with the build with `--no-dead-store`.
+
 ## Tests
 
 `tests/test_dead_store.py` runs one program in ten modes against the host compiler. The program has dead stores and stores that only look dead. These are: a call in the right side, a volatile read, an address taken, a global with the same name, a read in a branch, and a value that the enclosing expression uses. The shape tests check which names the pass removes and which it keeps.

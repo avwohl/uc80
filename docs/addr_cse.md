@@ -100,6 +100,12 @@ A run of plain variables stays a chain of its own (`x = y = K`), because one loa
 
 The shape tests check which functions get a pointer. Part of the register-locals tests (`tests/test_regl_bugfix_interaction.py`) uses `--no-addr-cse`, because the pass moves the gain of `fcount` out of the register-locals pass.
 
+## Constant addresses and the ROM pass
+
+The ROM pass (`ptrabs.py`) runs first. It changes a volatile access through a pointer with a constant address into a named object at that address (`static volatile uint8_t *const p = (volatile uint8_t *)0x4000;`). The address CSE pass sees such an object as a global volatile object. A volatile access ends a run, and the object is never a key.
+
+An access that is not volatile stays an access through the pointer. An example is `static struct S *const sp = (struct S *)0xFA00;` with plain members. The address CSE pass can make a new pointer local for a repeated element address there. The writes are the same with `--no-direct-pointers`. `tests/test_famh_rom_integration.py` compares the writes and the RAM with the build that has no pass.
+
 ## Measured effect
 
 The runs use `bench/run.py -c uc80` (size mode) on the 109 programs of the size run, without `battlestar-size`, `rogue36-size` and `empire-trefonas`. The base is the file `bench/results/results.csv` of the tree before this work (commit e28deae). No program changes its status.

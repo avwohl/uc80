@@ -9,6 +9,14 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-28: family H is integrated with the ROM work (branch `integrate8`)
+
+The three passes of family H (address CSE and chained constant stores, dead locals and overwritten stores, inline block operations) and the register-locals change for names under `&` are merged with `main` (register locals, naked functions, RST and IM 2 vectors, ROM wave 4). The merge needed no change of a pass. `tests/test_famh_rom_integration.py` runs the interactions in the ROM runner, in the um80 flow and in the sdas flow: the ROM pass for constant-address pointers (`ptrabs.py`) runs first, and the three passes keep every volatile access, every store through a constant-address volatile pointer, the low-byte-first order of 16-bit volatile stores (also for a structure copy to a volatile target), the work areas of an interrupt function (`--isr-save-workareas`), naked functions, and separate compilation with a BSS block for each module.
+
+Numbers: `bench/run.py -c uc80`, 109 programs, no status change. Against SDCC 4.6.0: size 0.9162, whole image 0.8837, T-states (speed mode) 0.5456, without `sort-*` 0.6611. uc80 is faster than SDCC on 63 of 78 programs. `main` alone: 0.9353, 0.9000, 0.5628, 0.6844, 60 of 78. `famh` alone: 0.9164, 0.8838, 0.5459, 0.6615, 63 of 78. See the entry of `integrate8` in the [CHANGELOG](../CHANGELOG.md).
+
+- Not done in family H (unchanged): value CSE, a flow graph for the dead-store part, inline `memset` and `memcpy` when the program uses the result.
+
 ## Status on 2026-10-28: family H, part 3 (inline block operations) is done
 
 Part 3 of family H is in the code (branch `famh`, [blockops.md](blockops.md)). The pass is `src/uc80/blockops.py`. A call of `memset` or `memcpy` with a constant size and an unused result becomes `ldi` (up to 4 bytes) or `ld bc,N` and `ldir`. A fill stores the first byte and copies the byte with `ldir`. A constant address goes straight into HL or DE. `memmove`, a volatile argument, a size that is not constant and a used result keep the call. The same copy serves a structure assignment and a structure initialisation, and a zero initialiser of a local array in shared storage is one `ldir` fill. `--no-blockops` turns the pass off. The register-locals pass got two small changes (`ldi` does not read BC, and wrap intervals that touch join) so that a loop counter in BC survives an unrolled copy.
