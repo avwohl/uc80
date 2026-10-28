@@ -22,7 +22,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .z80_intrinsics import ISR_ALT_SAVE, ISR_ALT_RESTORE
+from .z80_intrinsics import (ISR_ALT_SAVE, ISR_ALT_RESTORE, ISR_WA_SAVE,
+                             ISR_WA_RESTORE)
 
 _LABEL = re.compile(r"^([A-Za-z_@?$.][\w@?$.]*)\s*:{0,2}(?=\s|$|;)")
 _LABEL_COLON = re.compile(r"^([A-Za-z_@?$.][\w@?$.]*)::?")
@@ -31,6 +32,8 @@ _TERMINAL = re.compile(
     r"^(RET|RETI|RETN|JP\s+(?!(?:NZ|Z|NC|C|PO|PE|P|M)\s*,)\S.*|"
     r"JR\s+(?!(?:NZ|Z|NC|C)\s*,)\S.*|HALT)$", re.I)
 _ALT = re.compile(r"^(EXX|EX\s+AF\s*,\s*AF')$", re.I)
+_BRANCH = {"CALL", "JP", "JR", "DJNZ", "RST", "RET", "RETI", "RETN"}
+_INDIRECT = re.compile(r"^JP\s+\((HL|IX|IY)\)$", re.I)
 _DIRECTIVE = re.compile(
     r"^(PUBLIC|EXTRN|EXT|EXTERNAL|COMMON|DSEG|CSEG|ASEG|ORG|END|DS|DB|DW|DD|"
     r"EQU|\.Z80|\.PHASE|\.DEPHASE|NAME|TITLE|SUBTTL|PAGE|IF|ELSE|ENDIF)\b",
@@ -42,6 +45,8 @@ class Region:
     label: str
     unit: int
     uses_alt: bool = False
+    indirect: bool = False         # calls through a function pointer
+    addr_refs: set = field(default_factory=set)   # symbols named, not jumped to
     refs: set = field(default_factory=set)
     falls_through: bool = True
     next_label: str | None = None
@@ -52,6 +57,34 @@ class Graph:
     regions: dict = field(default_factory=dict)    # label -> Region
     fixed: dict = field(default_factory=dict)      # data label -> block name
     display: set = field(default_factory=set)      # labels worth printing
+    # work area layout: block name -> [(label, size or None), ...] in
+    # the order of the file; fixed_size: data label -> size or None
+    blocks: dict = field(default_factory=dict)
+    fixed_size: dict = field(default_factory=dict)
+    # symbols that an instruction or a DW names without a jump or a call:
+    # the functions whose address is taken (when the label has a region)
+    taken: set = field(default_factory=set)      # of the program (unit 0)
+    unit_taken: dict = field(default_factory=dict)   # unit -> DW symbols
+
+
+def _eval_size(text: str, equs: dict):
+    """The value of a DS operand: a number, an EQU name, + - *.  None
+    when the text has something else."""
+    expr = text.strip()
+    for _ in range(4):
+        expr = re.sub(r"[A-Za-z_@?$.][\w@?$.]*",
+                      lambda m: "(" + equs[m.group(0).upper()] + ")"
+                      if m.group(0).upper() in equs
+                      and not re.fullmatch(r"[0-9][0-9A-F]*H", m.group(0),
+                                           re.I) else m.group(0), expr)
+    expr = re.sub(r"\b([0-9][0-9A-Fa-f]*)[hH]\b",
+                  lambda m: str(int(m.group(1), 16)), expr)
+    if not re.fullmatch(r"[0-9+\-*() ]+", expr):
+        return None
+    try:
+        return int(eval(expr, {"__builtins__": {}}, {}))
+    except Exception:
+        return None
 
 
 def _strip(line):
@@ -79,6 +112,9 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
     cur = None
     publics = set()
     labels_here = []
+    equs = {}
+    pending = []
+    prev_op = ""
     for raw in text.splitlines():
         line = _strip(raw)
         if not line.strip():
@@ -112,11 +148,27 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
         if up.startswith("PUBLIC"):
             publics.update(w.strip() for w in body[6:].split(",") if w.strip())
             continue
+        meq = re.match(r"^EQU\s+(.*)$", body, re.I)
+        if label is not None and meq:
+            equs[label.upper()] = meq.group(1).strip()
         if label is not None and seg == "COMMON":
             # a work area of a library module (named COMMON block)
             if common:
                 graph.fixed[label] = common
+                pending.append(label)
+        if seg == "COMMON":
+            md = re.match(r"^(?:DS|DEFS)\s+(.*)$", body, re.I)
+            if md and common:
+                size = _eval_size(md.group(1), equs)
+                for lab in pending:
+                    graph.fixed_size[lab] = size
+                    graph.blocks.setdefault(common, []).append((lab, size))
+                pending = []
             continue
+        mdw = re.match(r"^(?:DW|DEFW|DD)\s+(.*)$", body, re.I)
+        if mdw:
+            (graph.taken if unit == 0 else graph.unit_taken.setdefault(
+                unit, set())).update(_SYM.findall(mdw.group(1)))
         if seg != "CSEG":
             continue
         if label is not None:
@@ -134,9 +186,20 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
             continue
         if _ALT.match(body):
             cur.uses_alt = True
-        for sym in _SYM.findall(body.split(None, 1)[1] if " " in body or
-                                "\t" in body else ""):
+        operands = body.split(None, 1)[1] if " " in body or "\t" in body \
+            else ""
+        for sym in _SYM.findall(operands):
             cur.refs.add(sym)
+        op = up.split()[0] if up else ""
+        if op not in _BRANCH:
+            cur.addr_refs.update(_SYM.findall(operands))
+            if unit == 0:
+                graph.taken.update(cur.addr_refs)
+        if _INDIRECT.match(up) and (
+                is_lib or cur.label.upper() == "__CALLHL"
+                or prev_op != "EX"):
+            cur.indirect = True
+        prev_op = op
         cur.falls_through = not _TERMINAL.match(body)
     for r in labels_here:
         if r.label in publics or not r.label.startswith(("@", "?")):
@@ -170,23 +233,57 @@ def build_graph(code: str, lib_dir: Path | None) -> Graph:
     return g
 
 
-def _reach(g: Graph, start: str):
-    """BFS from ``start``: {label: parent label}."""
-    parent = {start: None}
-    queue = [start]
-    while queue:
-        cur = queue.pop(0)
-        r = g.regions.get(cur)
-        if r is None:
-            continue
-        nxt = [s for s in r.refs if s in g.regions]
-        if r.falls_through and r.next_label:
-            nxt.append(r.next_label)
-        for s in nxt:
-            if s not in parent:
-                parent[s] = cur
-                queue.append(s)
-    return parent
+def taken_regions(g: Graph, extra=()) -> list:
+    """The labels of the functions whose address the program takes: a
+    region label that an instruction or a DW of the program names without
+    a jump or a call, and the labels in ``extra`` (the C functions that the
+    call graph of the code generator lists as address-taken).  A library
+    routine adds its own when the interrupt function reaches the routine
+    (see _reach)."""
+    return sorted(s for s in (g.taken | set(extra))
+                  if _is_function(g, s))
+
+
+def _is_function(g: Graph, label: str) -> bool:
+    return label in g.regions and not label.startswith(("@", "?"))
+
+
+def _reach(g: Graph, start: str, taken=()):
+    """BFS from ``start``: {label: parent label}.  A region that calls
+    through a pointer (JP (HL) of ``__callhl``) reaches every label in
+    ``taken``, and every function whose address a reached library routine
+    takes.  Run again until no function is added."""
+    taken = set(taken)
+    while True:
+        parent = {start: None}
+        queue = [start]
+        units = {0}
+        seen_taken = set(taken)
+        indirect = False
+        while queue:
+            cur = queue.pop(0)
+            r = g.regions.get(cur)
+            if r is None:
+                continue
+            nxt = [s for s in r.refs if s in g.regions]
+            if r.indirect:
+                indirect = True
+                nxt.extend(sorted(taken))
+            if r.unit not in units:
+                units.add(r.unit)
+                seen_taken |= {s for s in g.unit_taken.get(r.unit, ())
+                               if _is_function(g, s)}
+            seen_taken |= {s for s in r.addr_refs if _is_function(g, s)
+                           and r.unit != 0}
+            if r.falls_through and r.next_label:
+                nxt.append(r.next_label)
+            for s in nxt:
+                if s not in parent:
+                    parent[s] = cur
+                    queue.append(s)
+        if not indirect or seen_taken == taken:
+            return parent
+        taken = seen_taken
 
 
 def _chain(g: Graph, parent: dict, end: str) -> list:
@@ -207,21 +304,63 @@ class IsrReport:
     alt_chain: list | None = None            # path to code that uses EXX
     # work-area block -> (symbols used, shortest call chain to a user)
     fixed: dict = field(default_factory=dict)
+    indirect_chain: list | None = None       # path to a call through a pointer
+    taken: list = field(default_factory=list)  # labels reached through it
+    alt_users: dict = field(default_factory=dict)  # label -> chain
 
 
-def analyze(code: str, isrs: dict, lib_dir: Path | None) -> list:
-    """``isrs`` maps an interrupt function name to its label."""
+# The blocks that hold state, not temporaries: an interrupt function that
+# reaches them changes them for good, so the save-and-restore of the work
+# areas never touches them.
+STATE_BLOCKS = frozenset({
+    "lc_errno", "lc_exit_data", "lc_exit_hook", "lc_fslots", "lc_malloc",
+    "lc_malloc_data", "lc_quick_exit", "lc_signal", "lc_strtok",
+    "lc_thread_mode", "lc_fseek", "lc_fread", "lc_fwrite", "lc_fprintf",
+})
+
+
+def save_plan(g: Graph, rep: "IsrReport") -> tuple:
+    """([(block, first label, bytes)], [block, ...]): the work areas of
+    ``rep`` that the save code covers, and the reached blocks that it
+    cannot (state, or a size that the file does not give)."""
+    plan, skipped = [], []
+    for block in sorted(rep.fixed):
+        labels = g.blocks.get(block)
+        sizes = [sz for _l, sz in labels or []]
+        if (block in STATE_BLOCKS or not labels or None in sizes
+                or sum(sizes) == 0):
+            skipped.append(block)
+            continue
+        plan.append((block, labels[0][0], sum(sizes)))
+    return plan, skipped
+
+
+def analyze(code: str, isrs: dict, lib_dir: Path | None,
+            address_taken=(), with_graph=False):
+    """``isrs`` maps an interrupt function name to its label.
+    ``address_taken`` are the labels of the C functions whose address the
+    code generator found.  With ``with_graph`` the result is
+    (reports, graph)."""
     g = build_graph(code, lib_dir)
+    taken = [t for t in taken_regions(g, address_taken)
+             if t not in set(isrs.values())]
     reports = []
     for name, label in sorted(isrs.items()):
         rep = IsrReport(name, label)
-        parent = _reach(g, label)
+        parent = _reach(g, label, taken)
         order = sorted(parent, key=lambda x: (len(_chain(g, parent, x)), x))
         for lab in order:
             r = g.regions.get(lab)
-            if r is not None and r.uses_alt:
-                rep.alt_chain = _chain(g, parent, lab)
+            if r is not None and r.indirect:
+                rep.indirect_chain = _chain(g, parent, lab)
+                rep.taken = taken
                 break
+        for lab in order:
+            r = g.regions.get(lab)
+            if r is not None and r.uses_alt:
+                rep.alt_users[lab] = _chain(g, parent, lab)
+                if rep.alt_chain is None:
+                    rep.alt_chain = rep.alt_users[lab]
         for lab in order:
             r = g.regions.get(lab)
             if r is None:
@@ -233,11 +372,30 @@ def analyze(code: str, isrs: dict, lib_dir: Path | None) -> list:
                         block, (set(), _chain(g, parent, lab)))
                     syms.add(sym)
         reports.append(rep)
-    return reports
+    return (reports, g) if with_graph else reports
 
 
-def format_reports(reports: list) -> list:
-    """Warning lines for the reports."""
+def format_notes(reports: list) -> list:
+    """Note lines: the handlers that call through a function pointer."""
+    out = []
+    for rep in reports:
+        if rep.indirect_chain:
+            names = ", ".join(t.lstrip("_") or t for t in rep.taken[:8])
+            more = (f" and {len(rep.taken) - 8} more"
+                    if len(rep.taken) > 8 else "")
+            out.append(
+                f"interrupt function '{rep.name}' calls through a function "
+                f"pointer ({' -> '.join(rep.indirect_chain)}); uc80 cannot "
+                f"tell the target, so it treats every function whose "
+                f"address is taken as reachable from the interrupt "
+                f"({names}{more})")
+    return out
+
+
+def format_reports(reports: list, saved=None) -> list:
+    """Warning lines for the reports.  ``saved`` maps an interrupt
+    function name to the set of blocks that its prologue saves: no
+    warning for those."""
     out = []
     for rep in reports:
         if rep.alt_chain:
@@ -246,6 +404,8 @@ def format_reports(reports: list) -> list:
                 f"the alternate registers ({' -> '.join(rep.alt_chain)}); "
                 f"the prologue saves and restores them")
         for block, (syms, chain) in sorted(rep.fixed.items()):
+            if block in (saved or {}).get(rep.name, ()):
+                continue
             names = ", ".join(sorted(syms))
             out.append(
                 f"interrupt function '{rep.name}' reaches {names} "
@@ -261,12 +421,58 @@ ALT_RESTORE = ("\texx\n\tpop\tHL\n\tpop\tDE\n\tpop\tBC\n\texx\n"
                "\tex\tAF,AF'\n\tpop\tAF\n\tex\tAF,AF'")
 
 
-def resolve_alt_markers(code: str, need_alt: set) -> str:
-    """Replace the two marker lines of each interrupt function: with the
+def _wa_word_area(label: str, size: int):
+    """(save lines, restore lines) of an area of up to 6 bytes: words by
+    HL on the stack, a last odd byte by A (AF is already saved)."""
+    save, restore = [], []
+    off = 0
+    sym = lambda o: f"{label}+{o}" if o else label
+    while size - off >= 2:
+        save += [f"\tld\tHL,({sym(off)})", "\tpush\tHL"]
+        restore.insert(0, f"\tld\t({sym(off)}),HL")
+        restore.insert(0, "\tpop\tHL")
+        off += 2
+    if size - off:
+        save += [f"\tld\tA,({sym(off)})", "\tpush\tAF"]
+        restore.insert(0, f"\tld\t({sym(off)}),A")
+        restore.insert(0, "\tpop\tAF")
+    return save, restore
+
+
+WA_WORD_LIMIT = 6        # bytes: up to this size a word copy is shorter
+
+
+def wa_code(plan: list) -> tuple:
+    """(save text, restore text) for ``plan``, a list of (block, label,
+    bytes).  The registers are free: the prologue saved AF, BC, DE, HL.
+    An area of up to WA_WORD_LIMIT bytes is copied word by word through
+    the stack; a larger one is copied to the stack with LDIR."""
+    save, restore = [], []
+    for _block, label, size in plan:
+        if size <= WA_WORD_LIMIT:
+            s, r = _wa_word_area(label, size)
+        else:
+            s = [f"\tld\tHL,-{size}", "\tadd\tHL,SP", "\tld\tSP,HL",
+                 "\tex\tDE,HL", f"\tld\tHL,{label}", f"\tld\tBC,{size}",
+                 "\tldir"]
+            r = ["\tld\tHL,0", "\tadd\tHL,SP", f"\tld\tDE,{label}",
+                 f"\tld\tBC,{size}", "\tldir", "\tld\tSP,HL"]
+        save += s
+        restore = r + restore          # the last area saved comes back first
+    return "\n".join(save), "\n".join(restore)
+
+
+def resolve_alt_markers(code: str, need_alt: set, wa: dict | None = None) -> str:
+    """Replace the marker lines of each interrupt function: with the
     save and restore code for a function in ``need_alt``, else with
-    nothing."""
+    nothing.  ``wa`` maps an interrupt function name to its plan for the
+    work areas (see wa_code); a function not in it gets nothing."""
     if ISR_ALT_SAVE not in code:
         return code
+    wa = wa or {}
+    declared = {w.strip().upper() for m in re.finditer(
+        r"^\s*(?:EXTRN|EXT|EXTERNAL)\s+([^;\n]+)", code, re.I | re.M)
+        for w in m.group(1).split(",")}
     out = []
     for line in code.split("\n"):
         s = line.strip()
@@ -276,6 +482,34 @@ def resolve_alt_markers(code: str, need_alt: set) -> str:
         elif s.startswith(ISR_ALT_RESTORE):
             if s[len(ISR_ALT_RESTORE):].strip() in need_alt:
                 out.append(ALT_RESTORE)
+        elif s.startswith(ISR_WA_SAVE):
+            plan = wa.get(s[len(ISR_WA_SAVE):].strip())
+            if plan:
+                for _b, lab, _n in plan:
+                    if lab.upper() not in declared and not re.search(
+                            r"^" + re.escape(lab) + r"::?", code,
+                            re.I | re.M):
+                        declared.add(lab.upper())
+                        out.append(f"\tEXTRN\t{lab}")
+                out.append(wa_code(plan)[0])
+        elif s.startswith(ISR_WA_RESTORE):
+            plan = wa.get(s[len(ISR_WA_RESTORE):].strip())
+            if plan:
+                out.append(wa_code(plan)[1])
         else:
             out.append(line)
     return "\n".join(out)
+
+
+def wa_cost(plan: list) -> tuple:
+    """(bytes, T-states) that the save and the restore of ``plan`` add."""
+    nbytes = tstates = 0
+    for _b, _l, size in plan:
+        if size <= WA_WORD_LIMIT:
+            words, odd = divmod(size, 2)
+            nbytes += words * 8 + odd * 8        # LD,PUSH ... POP,LD
+            tstates += words * 53 + odd * (13 + 11 + 10 + 13)
+        else:
+            nbytes += 27
+            tstates += 51 + 21 * size - 5 + 47 + 21 * size - 5
+    return nbytes, tstates

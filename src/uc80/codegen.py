@@ -28,7 +28,8 @@ from . import regcc
 from .reglocals_gen import RegLocalsMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
-                             ISR_ALT_SAVE, ISR_ALT_RESTORE)
+                             ISR_ALT_SAVE, ISR_ALT_RESTORE,
+                             ISR_WA_SAVE, ISR_WA_RESTORE)
 # Codegen-internal synthetic resolved types — the parser doesn't
 # produce these (the auto-AST is declarator-shaped), but codegen
 # needs concrete BasicType / PointerType / ArrayType / FunctionType /
@@ -6940,12 +6941,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         for reg in ("AF", "BC", "DE", "HL", "IY"):
             e("push", reg)
         self.ctx.emit(f"{ISR_ALT_SAVE} {name}")
+        self.ctx.emit(f"{ISR_WA_SAVE} {name}")
         self.ctx.emit(BARRIER_END)
 
     def _emit_isr_epilogue(self, name: str, kind: str) -> None:
         """Exit of an interrupt function (inside the barrier region that
         gen_function opened at the epilogue label)."""
         e = self.ctx.emit_instr
+        self.ctx.emit(f"{ISR_WA_RESTORE} {name}")
         self.ctx.emit(f"{ISR_ALT_RESTORE} {name}")
         for reg in ("IY", "HL", "DE", "BC", "AF"):
             e("pop", reg)

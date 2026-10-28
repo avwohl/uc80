@@ -32,6 +32,9 @@ BARRIER_END = "; __UC80_BARRIER_END__"
 # alternate register set, or with nothing (isr_check.py decides).
 ISR_ALT_SAVE = "; __UC80_ISR_ALT_SAVE__"
 ISR_ALT_RESTORE = "; __UC80_ISR_ALT_RESTORE__"
+# the same for the save of the work areas of the runtime (--isr-save-workareas)
+ISR_WA_SAVE = "; __UC80_ISR_WA_SAVE__"
+ISR_WA_RESTORE = "; __UC80_ISR_WA_RESTORE__"
 
 # name -> (return type name or None for void, number of arguments)
 Z80_BUILTINS = {

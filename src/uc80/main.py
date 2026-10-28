@@ -363,6 +363,7 @@ class _Roots:
     im2_table: int | None = None  # address of the IM 2 table, or None
     im2_on: bool = False          # IM 2 is in use
     where: dict = None            # {("rst", 8) | ("vec", 0x38): "file:line"}
+    save_wa: set = None           # interrupt functions that save work areas
 
 
 _VECTORS = {0x38: "INT (38h)", 0x66: "NMI (66h)"}
@@ -399,6 +400,7 @@ def _ambiguous_functions(asts: list, paths: list) -> dict:
 
 _NAME_WORDS = {"rst": (1,), "im2": (1,), "vector": (1,),
                "interrupt": (0,), "nmi": (0,)}
+_ALL_NAMES = ("keep", "public", "isr_save_workareas")
 
 
 def source_name(name: str) -> str:
@@ -428,8 +430,8 @@ def resolve_pragma_names(pragmas: list, units: list, maps: list,
                         f"{fname}:{line}: #pragma uc80 {verb}: '{w}' is not "
                         f"defined in this file; it is a static function of "
                         f"another file, which this file cannot name")
-        if m and (verb in ("keep", "public") or verb in _NAME_WORDS):
-            idx = (range(len(words)) if verb in ("keep", "public")
+        if m and (verb in _ALL_NAMES or verb in _NAME_WORDS):
+            idx = (range(len(words)) if verb in _ALL_NAMES
                    else _NAME_WORDS[verb])
             words = [m.get(w, w) if i in idx else w
                      for i, w in enumerate(words)]
@@ -458,7 +460,7 @@ def _roots_from_options(entries: list, pragmas: list,
     Raises CodegenError for a pragma it does not understand: a vector
     that is silently dropped is a ROM that does not start."""
     roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={},
-                   rst={}, im2={}, where={})
+                   rst={}, im2={}, where={}, save_wa=set())
     ident = re.compile(r"^[A-Za-z_]\w*$")
     ambiguous = ambiguous or {}
 
@@ -535,6 +537,7 @@ def _roots_from_options(entries: list, pragmas: list,
         roots.keep.add(name)
         roots.public.add(name)
 
+    save_where = {}
     for kind, name, fname, line in sdcc_isrs:
         add_isr(kind, name, f"{fname}:{line}: __interrupt")
     for verb, words, fname, line in pragmas:
@@ -601,6 +604,15 @@ def _roots_from_options(entries: list, pragmas: list,
             roots.vectors[addr] = words[1]
             remember(("vec", addr), where)
             roots.keep.add(words[1])
+        elif verb == "isr_save_workareas":
+            if not words or not all(ident.match(w) for w in words):
+                raise CodegenError(
+                    f"{where}: expected one or more names of interrupt "
+                    f"functions")
+            for w in words:
+                unambiguous(w, where)
+            roots.save_wa.update(words)
+            save_where.update({w: where for w in words})
         elif verb in ("interrupt", "nmi"):
             ok = (len(words) == 1 or (verb == "interrupt" and len(words) == 2
                                       and words[1] == "critical"))
@@ -615,7 +627,13 @@ def _roots_from_options(entries: list, pragmas: list,
         else:
             raise CodegenError(
                 f"{where}: unknown verb; uc80 knows keep, public, vector, "
-                f"interrupt, nmi, rst, im2 and im2table")
+                f"interrupt, nmi, rst, im2, im2table and isr_save_workareas")
+    for name in sorted(roots.save_wa):
+        if name not in roots.isrs:
+            raise CodegenError(
+                f"{save_where[name]}: '{source_name(name)}' is not an "
+                f"interrupt function; name it in #pragma uc80 interrupt, "
+                f"nmi, im2 or rst ... interrupt")
     return roots
 
 
@@ -845,6 +863,22 @@ def main() -> int:
              "stack, never in the shared ??AUTO area. Use it when main "
              "code and an interrupt function call the same function. "
              "See docs/rom.md"
+    )
+    parser.add_argument(
+        "--isr-save-workareas", action="store_true",
+        help="Every interrupt function saves and restores the fixed work "
+             "areas of the runtime that its call graph can reach "
+             "(__tmp32, __div32_dvd, __acc64 and so on), so main code that "
+             "uses the same routines is not corrupted. One handler: "
+             "#pragma uc80 isr_save_workareas NAME. See docs/rom_hardware.md"
+    )
+    parser.add_argument(
+        "--with-nullsound", action="store_true",
+        help="The program links with nullsound (the Neo Geo sound "
+             "driver): warn for every function and runtime helper on a "
+             "path from --entry, main or an interrupt function that uses "
+             "EXX or EX AF,AF'. The ngdevkit style with --entry has the "
+             "check without the option. See docs/rom_interop.md"
     )
     parser.add_argument(
         "--no-crlf",
@@ -1682,31 +1716,89 @@ def main() -> int:
         # registers, or a routine with work areas at fixed addresses?
         if roots.isrs:
             isr_labels = {n: label_of(n) for n in roots.isrs}
-            reports = isr_check.analyze(
-                code, isr_labels, lib_dir() if lib_dir().is_dir() else None)
+            cga = gen.call_graph_analyzer
+            taken_labels = ({label_of(n) for n in cga.address_taken}
+                            if cga is not None else set())
+            reports, graph = isr_check.analyze(
+                code, isr_labels, lib_dir() if lib_dir().is_dir() else None,
+                taken_labels, with_graph=True)
             # a naked handler saves its own registers: no marker, no note
             for r in reports:
                 if r.name in gen.naked:
                     r.alt_chain = None
+            # --isr-save-workareas and the pragma: the prologue saves the
+            # work areas of the runtime that the handler can reach
+            wa_plan, wa_saved = {}, {}
+            for r in reports:
+                if r.name in roots.save_wa and r.name in gen.naked:
+                    raise CodegenError(
+                        f"#pragma uc80 isr_save_workareas {source_name(r.name)}: "
+                        f"a naked function saves nothing; save the work "
+                        f"areas in its assembly text")
+                if not (args.isr_save_workareas or r.name in roots.save_wa) \
+                        or r.name in gen.naked:
+                    continue
+                plan, _skipped = isr_check.save_plan(graph, r)
+                if plan:
+                    wa_plan[r.name] = plan
+                    wa_saved[r.name] = {b for b, _l, _n in plan}
+                    nbytes, tstates = isr_check.wa_cost(plan)
+                    print(f"uc80: note: interrupt function "
+                          f"'{source_name(r.name)}' saves and restores the "
+                          f"work areas of "
+                          f"{', '.join(b for b, _l, _n in plan)} "
+                          f"({sum(n for _b, _l, n in plan)} bytes of RAM, "
+                          f"{nbytes} bytes of code, {tstates} T-states for "
+                          f"each interrupt)", file=sys.stderr)
             code = isr_check.resolve_alt_markers(
-                code, {r.name for r in reports if r.alt_chain})
-            for msg in isr_check.format_reports(reports):
+                code, {r.name for r in reports if r.alt_chain}, wa_plan)
+            for msg in isr_check.format_notes(reports):
+                print(f"uc80: note: {msg}", file=sys.stderr)
+            for msg in isr_check.format_reports(reports, wa_saved):
                 print(f"uc80: warning: {msg}", file=sys.stderr)
 
         # C code linked next to nullsound (docs/rom_interop.md): its NMI
-        # handler owns the alternate registers, so an entry function must
-        # not reach code that uses EXX or EX AF,AF'.
-        if (getattr(args, "asm_syntax", None) == "sdas"
-                and args.sdas_style == "ngdevkit" and args.entry):
-            ent = {n: label_of(n) for n in args.entry}
-            for rep in isr_check.analyze(
-                    code, ent, lib_dir() if lib_dir().is_dir() else None):
+        # handler owns the alternate registers, so no function that the
+        # nullsound code calls may reach code that uses EXX or EX AF,AF'.
+        # The check runs with --with-nullsound, and for --entry functions
+        # in the ngdevkit style (the build of docs/rom_interop.md).
+        ns_style = (getattr(args, "asm_syntax", None) == "sdas"
+                    and args.sdas_style == "ngdevkit" and args.entry)
+        if args.with_nullsound or ns_style:
+            ns_roots = {f"entry function '{n}'": label_of(n)
+                        for n in args.entry}
+            for n in roots.isrs:
+                ns_roots[f"interrupt function '{source_name(n)}'"] = \
+                    label_of(n)
+            if gen.ctx.globals.get("main") is not None:
+                ns_roots["'main'"] = label_of("main")
+            cga = gen.call_graph_analyzer
+            ns_taken = ({label_of(n) for n in cga.address_taken}
+                        if cga is not None else set())
+            ns_reports = isr_check.analyze(
+                code, {k: v for k, v in ns_roots.items()},
+                lib_dir() if lib_dir().is_dir() else None, ns_taken)
+            seen_users = set()
+            for rep in ns_reports:
                 if rep.alt_chain:
-                    print(f"uc80: warning: entry function '{rep.name}' "
+                    print(f"uc80: warning: {rep.name} "
                           f"reaches code that uses the alternate registers "
                           f"({' -> '.join(rep.alt_chain)}); nullsound's NMI "
                           f"handler keeps its state there",
                           file=sys.stderr)
+                for lab, chain in sorted(rep.alt_users.items()):
+                    user = chain[-1]
+                    if user in seen_users:
+                        continue
+                    seen_users.add(user)
+                    kind = ("runtime helper" if user.startswith("__")
+                            else "function")
+                    print(f"uc80: warning: {kind} '{user}' uses EXX or "
+                          f"EX AF,AF' (the alternate registers); the NMI "
+                          f"handler of nullsound uses them at any time, so "
+                          f"the code can corrupt the state of nullsound "
+                          f"(reached from {rep.name}: "
+                          f"{' -> '.join(chain)})", file=sys.stderr)
 
         # Assembly-level dead code elimination (after runtime embedding, before peephole)
         if not args.no_asm_dce and (embed_runtime or mac_files):

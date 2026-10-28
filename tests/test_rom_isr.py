@@ -323,21 +323,24 @@ int main(void)
         assert m.peek16("_alt_hl") == 0x9ABC
         assert m.peek16("_alt_af") >> 8 == 0xA5
 
-    def test_without_the_save_the_alternates_are_lost(self, tmp_path):
-        """The same program with the routine hidden from the analysis
-        (the ISR reaches it through a pointer): the check cannot see the
-        EXX user, so the alternates are not saved and the test shows what
-        the save is for."""
+    def test_a_pointer_to_an_exx_user_saves_the_alternates(self, tmp_path):
+        """The ISR reaches the EXX routine through a pointer.  The check
+        treats every function whose address is taken as reachable, so the
+        alternates are saved and a note tells why."""
         (tmp_path / "alt.mac").write_text(self.ALT_ASM)
         src = self.ALT_ISR.replace(
             "void tick(void) { alt_user(); ticks++; }",
             "void (*volatile hide)(void) = alt_user;\n"
             "void tick(void) { hide(); ticks++; }")
-        build(tmp_path, src, files=[str(tmp_path / "alt.mac")])
+        err = build(tmp_path, src, files=[str(tmp_path / "alt.mac")])
+        assert "calls through a function pointer" in err
+        assert "uc80: note:" in err and "alt_user" in err
+        assert "alternate registers" in err
         m = machine(tmp_path)
         m.add_irq_every(6000, start=6000)
         assert m.run(max_tstates=2_000_000).reason == "halt"
-        assert m.peek16("_alt_bc") != 0x1234
+        assert m.peek16("_alt_bc") == 0x1234
+        assert m.peek16("_alt_de") == 0x5678
 
     def test_plain_isr_does_not_save_alternates(self, tmp_path):
         err = build(tmp_path, TICK % """
