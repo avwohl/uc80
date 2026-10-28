@@ -38,6 +38,8 @@ The pass computes a repeated element address (`a[i]` read and written, or `a[i]`
 
 The dead-local pass removes a local that no expression reads, with all its stores, and a store that a later store of the same list overwrites. A right side with an effect (a call, `++`, a volatile access) stays as a statement. `--no-dead-store` keeps every store. [dead_store.md](dead_store.md) lists the rules and the debug switches.
 
+The inline block-operation pass changes a call of `memset` or `memcpy` with a constant size (1 to 65535) into `LDIR` or `LDI` code, when the program does not use the result and no argument is volatile. `--no-blockops` keeps the library calls. [blockops.md](blockops.md) lists the rules and the switches.
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or
