@@ -751,6 +751,22 @@ def test_no_memory_keys_with_an_interrupt_function(tmp_path):
     assert not any("g:stack" in ln for ln in rom_keys(tmp_path, True))
 
 
+def test_no_memory_keys_with_a_vector_only_handler(tmp_path):
+    # a handler bound with '#pragma uc80 vector' (not an interrupt function
+    # for the compiler) can change stack[] too
+    c_file = tmp_path / "v.c"
+    c_file.write_text(ROM_SRC % (
+        "#pragma uc80 vector 38h isr\nvoid isr(void) { ticks++; }"))
+    env = dict(os.environ, UC80_ACSE_DEBUG="1")
+    r = subprocess.run(
+        [sys.executable, "-m", "uc80.main", str(c_file), "--target", "rom",
+         "-o", str(tmp_path / "v.mac")],
+        capture_output=True, text=True, cwd=str(REPO), env=env)
+    assert r.returncode == 0, r.stderr
+    assert not any(" key=" in ln and "g:stack" in ln
+                   for ln in r.stderr.splitlines())
+
+
 def test_switches_turn_the_pass_off(tmp_path):
     assert pass_log(tmp_path, ADDR, "--no-addr-cse") == [
         ln for ln in pass_log(tmp_path, ADDR, "--no-addr-cse")

@@ -961,6 +961,10 @@ def main() -> int:
                            register_locals=not args.no_register_locals,
                            addr_cse=not args.no_addr_cse,
                            chain_store=not args.no_chain_store)
+        # A vector handler or hand-written assembly can change a global
+        # behind the program: addrcse keeps no loaded value over it.
+        gen.vector_funcs = set(roots.vectors.values()) | (
+            {"<asm>"} if mac_files else set())
         code = gen.generate(merged_ast)
         printf_need = printf_hook.printf_needs(merged_ast, printf_features)
         code = printf_hook.patch_tables(code, printf_need)

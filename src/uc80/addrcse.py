@@ -138,6 +138,7 @@ class _Fn:
         self.skip_node = None
         self.anc: list = []           # ids of the registered Index ancestors
         self.mem_ok = (not gen.isr_funcs
+                       and not getattr(gen, "vector_funcs", ())
                        and not os.environ.get("UC80_ACSE_NO_MEM"))
         self.vol_cache: dict = {}
         self.temps: list = []         # (name, block, decl) of each pointer
@@ -1193,7 +1194,7 @@ class AddrCseMixin:
             name = cg.function_name(item)
             if name is None or (only is not None and name not in only):
                 continue
-            if _unsafe(item.body):
+            if name in getattr(self, "naked", ()) or _unsafe(item.body):
                 continue
             snap = self._type_scope_snapshot()
             self.ctx.locals = {}

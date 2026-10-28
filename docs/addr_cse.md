@@ -46,6 +46,8 @@ A run is a list of consecutive statements of one block. All the accesses of a ru
 
 A leaf that is a local variable can only change by an assignment in the function. A call, a store through a pointer or an interrupt cannot change such a variable, so they end no run. A memory leaf can change in all these ways. A function that the program marks as an interrupt function (`#pragma uc80 interrupt`) turns memory leaves off for the whole program.
 
+A handler that `#pragma uc80 vector` binds, and a program with hand-written assembly files, do the same. A naked function and a function with inline assembly are not changed. A function with a variable length array is not supported by the compiler, so the pass does not treat this case in a special way.
+
 The pass does not touch a function with inline assembly, a statement expression or a call of `setjmp`.
 
 Each variable of a key must be visible at the declaration of the pointer. A variable of an inner block cannot be in the key of a run of an outer block.
