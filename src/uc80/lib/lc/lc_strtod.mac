@@ -69,6 +69,7 @@ _sd_mulhi:
 	add	HL,HL
 	ld	BC,??AUTO_strtod+59
 	add	HL,BC
+	ld	(??AUTO_strtod+85),HL
 	ld	E,(HL)
 	inc	HL
 	ld	D,(HL)
@@ -114,14 +115,8 @@ _sd_mulhi:
 	ld	(??AUTO_strtod+77),DE
 	ld	HL,(??AUTO_strtod+75)
 	ld	DE,(??AUTO_strtod+77)
-	push	HL
-	ld	HL,(??AUTO_strtod+81)
-	ld	DE,(??AUTO_strtod+83)
-	add	HL,DE
-	add	HL,HL
-	ld	BC,??AUTO_strtod+59
-	add	HL,BC
-	pop	DE
+	ex	DE,HL
+	ld	HL,(??AUTO_strtod+85)
 	ld	(HL),E
 	inc	HL
 	ld	(HL),D
@@ -837,9 +832,9 @@ _sd_pow10:
 	ld	IX,0
 	add	IX,SP
 	ld	HL,0
-	ld	(??AUTO_strtod+95),HL
+	ld	(??AUTO_strtod+97),HL
 @FOR67_strtod:
-	ld	HL,(??AUTO_strtod+95)
+	ld	HL,(??AUTO_strtod+97)
 	ld	A,H
 	xor	128
 	ld	D,A
@@ -850,16 +845,16 @@ _sd_pow10:
 	jr nc,@ENDFOR69_strtod
 	ld	L,(IX+4)
 	ld	H,(IX+5)
-	ld	DE,(??AUTO_strtod+95)
+	ld	DE,(??AUTO_strtod+97)
 	add	HL,DE
 	add	HL,DE
 	ld	(HL),0
 	inc	HL
 	ld	(HL),0
 @FORUPD68_strtod:
-	ld	HL,(??AUTO_strtod+95)
+	ld	HL,(??AUTO_strtod+97)
 	inc	HL
-	ld	(??AUTO_strtod+95),HL
+	ld	(??AUTO_strtod+97),HL
 	jr @FOR67_strtod
 @ENDFOR69_strtod:
 	ld	L,(IX+4)
@@ -889,27 +884,27 @@ _sd_pow10:
 	ld	(IX+6),L
 	ld	(IX+7),H
 	ld	HL,52428
+	ld	(??AUTO_strtod+93),HL
+	ld	HL,52428
 	ld	(??AUTO_strtod+91),HL
 	ld	HL,52428
 	ld	(??AUTO_strtod+89),HL
-	ld	HL,52428
-	ld	(??AUTO_strtod+87),HL
 	ld	HL,52429
-	ld	(??AUTO_strtod+85),HL
+	ld	(??AUTO_strtod+87),HL
 	ld	HL,65533
-	ld	(??AUTO_strtod+93),HL
+	ld	(??AUTO_strtod+95),HL
 	jr @ENDIF71_strtod
 @ELSE70_strtod:
 	ld	HL,40960
+	ld	(??AUTO_strtod+93),HL
+	ld	HL,0
 	ld	(??AUTO_strtod+91),HL
 	ld	HL,0
 	ld	(??AUTO_strtod+89),HL
 	ld	HL,0
 	ld	(??AUTO_strtod+87),HL
-	ld	HL,0
-	ld	(??AUTO_strtod+85),HL
 	ld	HL,4
-	ld	(??AUTO_strtod+93),HL
+	ld	(??AUTO_strtod+95),HL
 @ENDIF71_strtod:
 @WHILE72_strtod:
 	ld	A,(IX+6)
@@ -917,7 +912,7 @@ _sd_pow10:
 	jr z,@ENDWHILE73_strtod
 	bit	0,(IX+6)
 	jr z,@ENDIF75_strtod
-	ld	HL,??AUTO_strtod+85
+	ld	HL,??AUTO_strtod+87
 	push	HL
 	ld	L,(IX+4)
 	ld	H,(IX+5)
@@ -935,9 +930,9 @@ _sd_pow10:
 	ld	A,(IX+6)
 	or	(IX+7)
 	jr z,@ENDIF77_strtod
-	ld	HL,??AUTO_strtod+85
+	ld	HL,??AUTO_strtod+87
 	push	HL
-	ld	HL,??AUTO_strtod+85
+	ld	HL,??AUTO_strtod+87
 	push	HL
 	call	_sd_mulhi
 	pop	DE

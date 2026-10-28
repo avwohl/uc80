@@ -11,10 +11,10 @@ def parse(source: str):
     return _frontend_parse(source, "<test>")
 
 
-def gen(source: str) -> str:
+def gen(source: str, dead_store: bool = True) -> str:
     """Parse and generate code from source."""
     unit = parse(source)
-    return generate(unit)
+    return generate(unit, dead_store=dead_store)
 
 
 class TestFunctionGeneration:
@@ -256,7 +256,8 @@ class TestStringLiterals:
 
     def test_string_literal(self):
         """String literal creates data segment entry."""
-        code = gen('int main(void) { char *s = "hello"; return 0; }')
+        code = gen('int main(void) { char *s = "hello"; return 0; }',
+                   dead_store=False)
         assert "dseg" in code
         assert "@STR" in code
         assert "'hello',0" in code
@@ -293,7 +294,8 @@ class TestSegments:
 
     def test_cseg_dseg(self):
         """Code and data segments are properly declared."""
-        code = gen('int main(void) { char *s = "test"; return 0; }')
+        code = gen('int main(void) { char *s = "test"; return 0; }',
+                   dead_store=False)
         assert "cseg" in code
         assert "dseg" in code
 
@@ -949,7 +951,9 @@ class TestSharedStorageCodeGen:
             void bar(void) { int b = 2; }
             int main(void) { foo(); bar(); return 0; }
         """
-        code = generate(parse(source), enable_shared_storage=True)
+        # the locals are never read: the dead-local pass would remove them
+        code = generate(parse(source), enable_shared_storage=True,
+                        dead_store=False)
         assert "??AUTO" in code
         assert "; Shared automatic storage" in code
 

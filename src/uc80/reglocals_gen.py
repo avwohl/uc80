@@ -21,19 +21,39 @@ _SETJMP = re.compile(r"setjmp", re.IGNORECASE)
 
 def address_taken_names(body) -> set:
     """Names that occur under an ``&`` in the body (a local named there
-    must stay in memory)."""
+    must stay in memory).
+
+    ``&a[i]``, ``&p->m`` and ``&*p`` read ``i``, ``p`` and the other names
+    inside; they take no address of a scalar local.  Only the names of the
+    object itself count: the name in ``&x`` and the object of ``&s.m``.
+    Any other operand counts every name inside it.  The switch
+    ``UC80_RL_TAINT_ALL=1`` counts every name under every ``&`` (the rule
+    before 2026-10-27), for a bisect.  The pointer that addrcse.py makes
+    for ``&a[i]`` (the flag ``_acse``) never takes an address."""
     out: set = set()
+    taint_all = bool(__import__("os").environ.get("UC80_RL_TAINT_ALL"))
     stack = [body]
     while stack:
         node = stack.pop()
         if isinstance(node, ast.UnaryOp):
             op = getattr(node.op, "text", node.op)
-            if op == "&":
+            if op == "&" and not getattr(node, "_acse", False):
                 sub = [node.operand]
                 while sub:
                     x = sub.pop()
                     if isinstance(x, ast.Identifier):
                         out.add(x.name.text)
+                    elif taint_all:
+                        if (dataclasses.is_dataclass(x)
+                                and not isinstance(x, type)):
+                            sub.extend(_children(x))
+                    elif isinstance(x, ast.Member):
+                        sub.append(x.obj)
+                    elif isinstance(x, (ast.Index, ast.ArrowMember)):
+                        pass
+                    elif (isinstance(x, ast.UnaryOp)
+                          and getattr(x.op, "text", x.op) == "*"):
+                        pass
                     elif dataclasses.is_dataclass(x) and not isinstance(x, type):
                         sub.extend(_children(x))
         if dataclasses.is_dataclass(node) and not isinstance(node, type):

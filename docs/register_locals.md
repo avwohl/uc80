@@ -9,7 +9,7 @@ Step 2 adds one pointer local in IY (see "A pointer in IY"). The code is in `src
 A local qualifies when all of these are true:
 
 - The type is a char, a short, an int, an enum or a pointer (one or two bytes).
-- Nothing takes the address of the local.
+- Nothing takes the address of the local. A name inside `&a[i]`, `&p->m` or `&*p` is only read, so the name does not count. The name in `&x` counts, and the object of `&s.m` counts. `UC80_RL_TAINT_ALL=1` counts every name under an `&`, as the pass did before 2026-10-27 (for a bisect).
 - The local is not `volatile`.
 - The function has no inline assembly, no `setjmp` call and no statement expression.
 - The function is not an interrupt function. No outside code reaches the function (an assembly file, a function pointer, `public`). `main` qualifies.

@@ -814,6 +814,27 @@ def main() -> int:
              "address as an access through the pointer (docs/rom_hardware.md)"
     )
     parser.add_argument(
+        "--no-addr-cse",
+        action="store_true",
+        help="Compute every array element address again (docs/addr_cse.md)"
+    )
+    parser.add_argument(
+        "--no-chain-store",
+        action="store_true",
+        help="Keep a = b = K as one chain (docs/addr_cse.md)"
+    )
+    parser.add_argument(
+        "--no-dead-store",
+        action="store_true",
+        help="Keep stores to locals that nothing reads (docs/dead_store.md)"
+    )
+    parser.add_argument(
+        "--no-blockops",
+        action="store_true",
+        help="Call memset and memcpy for a constant size, no inline "
+             "LDIR (docs/blockops.md)"
+    )
+    parser.add_argument(
         "--no-embed-runtime",
         action="store_true",
         help="Don't embed runtime library (use EXTRN references instead)"
@@ -1245,7 +1266,11 @@ def main() -> int:
                                             or args.startup_lib),
                            foreign_asm_names=regcc.asm_text_names(mac_files),
                            register_locals=not args.no_register_locals,
-                           naked_funcs={n for n, _f, _l in sdcc_found.naked})
+                           naked_funcs={n for n, _f, _l in sdcc_found.naked},
+                           addr_cse=not args.no_addr_cse,
+                           chain_store=not args.no_chain_store,
+                           dead_store=not args.no_dead_store,
+                           blockops=not args.no_blockops)
         gen.direct_pointers = not args.no_direct_pointers
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
@@ -1254,6 +1279,10 @@ def main() -> int:
             print(f"uc80: warning: {msg}", file=sys.stderr)
         if not whole_program and not args.no_module_bss:
             gen.bss_block = _bss_block_name(input_paths[0])
+        # A vector handler or hand-written assembly can change a global
+        # behind the program: addrcse keeps no loaded value over it.
+        gen.vector_funcs = set(roots.vectors.values()) | (
+            {"<asm>"} if mac_files else set())
         code = gen.generate(merged_ast)
         printf_need = printf_hook.printf_needs(merged_ast, printf_features)
         code = printf_hook.patch_tables(code, printf_need)
@@ -1382,6 +1411,15 @@ def main() -> int:
             if gen._regcc:
                 print(f"  Register calling convention: {len(gen._regcc)} "
                       f"function(s): {', '.join(sorted(gen._regcc))}")
+            dse = getattr(gen, "dead_store_stats", None) or {}
+            if dse.get("stores") or dse.get("decls"):
+                print(f"  Dead locals: {dse.get('decls', 0)} removed, "
+                      f"{dse.get('stores', 0)} store(s) dropped")
+            acse = getattr(gen, "addr_cse_stats", None) or {}
+            if acse.get("n") or acse.get("chain"):
+                print(f"  Address CSE: "
+                      f"{acse.get('n', 0) - acse.get('pruned', 0)} pointer(s), "
+                      f"{acse.get('chain', 0)} chained store(s) split")
             if gen.call_graph_analyzer and gen.call_graph_analyzer.total_shared_storage > 0:
                 cga = gen.call_graph_analyzer
                 shared_count = len(cga.storage_offsets)

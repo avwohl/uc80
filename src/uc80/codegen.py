@@ -27,6 +27,9 @@ from . import absaddr
 from . import ptrabs
 from . import regcc
 from .reglocals_gen import RegLocalsMixin
+from .addrcse import AddrCseMixin
+from .deadstore import DeadStoreMixin
+from .blockops import BlockOpsMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE,
@@ -3685,7 +3688,8 @@ class _Src32:
         self.signed = signed
 
 
-class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
+class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
+                    DeadStoreMixin, BlockOpsMixin):
     """Z80 code generator."""
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
@@ -3705,13 +3709,21 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                  register_cc: bool = True,
                  foreign_asm_names: "set[str] | None" = None,
                  register_locals: bool = True,
-                 naked_funcs: "set[str] | None" = None):
+                 naked_funcs: "set[str] | None" = None,
+                 addr_cse: bool = True,
+                 chain_store: bool = True,
+                 dead_store: bool = True,
+                 blockops: bool = True):
         self.module_name = module_name
         # Name of the per-module BSS block (separate compilation), or None.
         self.bss_block: str | None = None
         # Accesses through a constant pointer made direct (ptrabs.py).
         self.direct_pointers = True
         self.direct_pointer_accesses = 0
+        self.enable_blockops = blockops
+        self.enable_addr_cse = addr_cse
+        self.enable_chain_store = chain_store
+        self.enable_dead_store = dead_store
         self.enable_register_locals = register_locals
         self._rl_debug = bool(os.environ.get("UC80_RL_DEBUG"))
         # Naked functions (SDCC __naked, [[uc80::naked]]): no frame code,
@@ -4419,6 +4431,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
         self._annotate_typeof(unit)
+        self.user_defined_funcs = {
+            declarator_ident(i.declarator) for i in unit.items or []
+            if isinstance(i, ast.FunctionDef)}
         # *(volatile T *)K: a name at address K, so the global-variable
         # code paths apply (LD A,(K), LD (K),A, LD HL,(K)).
         self.absolute.update(absaddr.rewrite(
@@ -4588,6 +4603,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         # generated (a forward call needs the callee's plan) and before the
         # shared storage is sized (a register parameter is stored on entry,
         # and that store needs a slot).
+        # Address CSE and chained constant stores (docs/addr_cse.md): an
+        # AST rewrite, so it runs before anything sizes a frame.
+        self.dead_store_stats = self._dse_run(unit)
+        self.addr_cse_stats = self._acse_run(unit)
         self._plan_register_cc(unit)
         self._rl_plan(unit, self.enable_register_locals)
 
@@ -7755,8 +7774,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             self._gen_address(init)
 
         # Now HL has source address, copy bytes to destination
-        # Use DE as destination pointer, BC for temp storage
-        self.ctx.emit_instr("push", "HL")  # Save source
+        const_dest = self.enable_blockops and (sym.uses_shared_storage or sym.is_global)
+        if not const_dest:
+            self.ctx.emit_instr("push", "HL")  # Save source
 
         # Get destination address
         if sym.uses_shared_storage:
@@ -7771,9 +7791,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 self.ctx.emit_instr("add", "HL,DE")
                 self.ctx.emit_instr("ex", "DE,HL")
 
-        self.ctx.emit_instr("pop", "HL")  # Restore source
-        self.ctx.emit_instr("ld", f"BC,{size}")
-        self.ctx.emit_instr("ldir")  # Copy BC bytes from HL to DE
+        if not const_dest:
+            self.ctx.emit_instr("pop", "HL")  # Restore source
+        self._bo_copy_hl_de(size)
 
     def _gen_compound_init_to_label(self, label: str, struct_type, values: list) -> None:
         """Emit per-field runtime stores into the DSEG location at
@@ -8206,6 +8226,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             # word rather than an address and then LDIR'd from it.
             self._gen_address(right)
 
+        # HL = source.  The destination goes to DE (a constant address is
+        # loaded straight into DE).
+        if self.enable_blockops:
+            self._bo_to_de(lambda: self._gen_address(expr.left))
+            self._bo_copy_hl_de(struct_size)
+            return
         self.ctx.emit_instr("push", "HL")  # Save source address
 
         # Get destination address
@@ -8483,6 +8509,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             return
         if sym.uses_shared_storage:
             base = sym.shared_offset + offset
+            if self.enable_blockops and size > 4:
+                self._bo_fill(f"??AUTO+{base}", size, 0)
+                return
             for i in range(size):
                 self.ctx.emit_instr("xor", "A")
                 self.ctx.emit_instr("ld", f"(??AUTO+{base + i}),A")
@@ -8566,9 +8595,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             self.gen_expr(expr)
 
         # HL has source address, copy bytes to destination using LDIR
-        self.ctx.emit_instr("push", "HL")  # Save source
-
-        # Get destination address
+        # Get destination address.  A constant address goes straight into
+        # DE (HL keeps the source); a frame address needs HL as scratch.
+        const_dest = self.enable_blockops and (dest_sym.uses_shared_storage or dest_sym.is_global)
+        if not const_dest:
+            self.ctx.emit_instr("push", "HL")  # Save source
         if dest_sym.uses_shared_storage:
             self.ctx.emit_instr("ld", f"DE,??AUTO+{dest_sym.shared_offset + dest_offset}")
         elif dest_sym.is_global:
@@ -8582,9 +8613,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 self.ctx.emit_instr("add", "HL,DE")
                 self.ctx.emit_instr("ex", "DE,HL")
 
-        self.ctx.emit_instr("pop", "HL")  # Restore source
-        self.ctx.emit_instr("ld", f"BC,{size}")
-        self.ctx.emit_instr("ldir")  # Copy BC bytes from HL to DE
+        if not const_dest:
+            self.ctx.emit_instr("pop", "HL")  # Restore source
+        self._bo_copy_hl_de(size)
 
     def _gen_struct_copy_from_addr_expr(self, dest_sym: 'Symbol', dest_offset: int,
                                           expr: ast.Expression, size: int) -> None:
@@ -8593,9 +8624,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         self._gen_address(expr)
 
         # HL has source address, copy bytes to destination using LDIR
-        self.ctx.emit_instr("push", "HL")  # Save source
-
-        # Get destination address
+        # Get destination address.  A constant address goes straight into
+        # DE (HL keeps the source); a frame address needs HL as scratch.
+        const_dest = self.enable_blockops and (dest_sym.uses_shared_storage or dest_sym.is_global)
+        if not const_dest:
+            self.ctx.emit_instr("push", "HL")  # Save source
         if dest_sym.uses_shared_storage:
             self.ctx.emit_instr("ld", f"DE,??AUTO+{dest_sym.shared_offset + dest_offset}")
         elif dest_sym.is_global:
@@ -8609,9 +8642,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 self.ctx.emit_instr("add", "HL,DE")
                 self.ctx.emit_instr("ex", "DE,HL")
 
-        self.ctx.emit_instr("pop", "HL")  # Restore source
-        self.ctx.emit_instr("ld", f"BC,{size}")
-        self.ctx.emit_instr("ldir")  # Copy BC bytes from HL to DE
+        if not const_dest:
+            self.ctx.emit_instr("pop", "HL")  # Restore source
+        self._bo_copy_hl_de(size)
 
     def _gen_flat_array_init(self, sym: 'Symbol', array_type: lt.ArrayType,
                              values: list, start_index: int, base_offset: int) -> int:
@@ -13110,6 +13143,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         self._gen_call(expr, want_a)
 
     def _gen_call(self, expr: ast.Call, want_a: bool) -> None:
+        discarded = expr is self._discard_expr
         # Handle GCC builtins
         if isinstance(expr.func, ast.Identifier):
             if expr.func.name.text in Z80_BUILTINS:
@@ -13445,6 +13479,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                     args=expr.args,
                     pos=expr.pos,
                 )
+
+        # memset/memcpy with a constant size, result unused: inline
+        # (docs/blockops.md)
+        if (discarded and isinstance(expr.func, ast.Identifier)
+                and self._bo_try(expr.func.name.text, expr.args or [])):
+            return
 
         # Get function parameter types if available
         param_types: list = []
@@ -22667,9 +22707,11 @@ def generate(unit: ast.TranslationUnit, module_name: str = "main",
              whole_program: bool = True,
              embed_runtime: bool = False,
              crlf_console: bool = True,
-             register_cc: bool = True) -> str:
+             register_cc: bool = True,
+             dead_store: bool = True) -> str:
     """Generate Z80 assembly for a translation unit."""
     gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                        enable_inlining, enable_const_propagation, whole_program, embed_runtime,
-                       crlf_console=crlf_console, register_cc=register_cc)
+                       crlf_console=crlf_console, register_cc=register_cc,
+                       dead_store=dead_store)
     return drop_unreferenced_externs(gen.generate(unit))

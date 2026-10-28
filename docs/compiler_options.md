@@ -34,6 +34,12 @@ In whole-program mode, a function that only direct calls reach takes its first t
 
 In the same mode, up to two scalar locals of a function live in BC or DE instead of memory. One pointer local lives in IY, and a field access through the pointer is `(IY+d)`. `--no-register-locals` keeps every local in memory. [register_locals.md](register_locals.md) lists the rules.
 
+The pass computes a repeated element address (`a[i]` read and written, or `a[i]` and `a[i + 1]`) one time. The pass keeps the address in a new pointer local. `--no-addr-cse` computes each address again. The statement `a[i] = b[j] = 1;` makes one constant store for each target. `--no-chain-store` keeps the chain. [addr_cse.md](addr_cse.md) lists the rules and the debug switches.
+
+The dead-local pass removes a local that no expression reads, with all its stores, and a store that a later store of the same list overwrites. A right side with an effect (a call, `++`, a volatile access) stays as a statement. `--no-dead-store` keeps every store. [dead_store.md](dead_store.md) lists the rules and the debug switches.
+
+The inline block-operation pass changes a call of `memset` or `memcpy` with a constant size (1 to 65535) into `LDIR` or `LDI` code, when the program does not use the result and no argument is volatile. `--no-blockops` keeps the library calls. [blockops.md](blockops.md) lists the rules and the switches.
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or

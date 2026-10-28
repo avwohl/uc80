@@ -78,8 +78,11 @@ def _mem(text):
 
 def test_pass_acts_and_sequences_stay(tmp_path):
     """Each function keeps its bugfix sequence and has fewer memory accesses."""
-    on = compile_mac(tmp_path, PROG)[0]
-    off = compile_mac(tmp_path, PROG, "--no-register-locals")[0]
+    # --no-addr-cse: the address pass makes fcount shorter and moves the
+    # gain out of the register pass (tests/test_addr_cse.py checks that pass)
+    on = compile_mac(tmp_path, PROG, "--no-addr-cse")[0]
+    off = compile_mac(tmp_path, PROG, "--no-addr-cse",
+                      "--no-register-locals")[0]
     for name in ("neg_loop", "fcount", "lits", "walk", "wide"):
         assert _mem(body_of(on, name)) < _mem(body_of(off, name)), name
     assert "sbc\tA,A" in body_of(on, "neg_loop")

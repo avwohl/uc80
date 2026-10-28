@@ -179,6 +179,10 @@ def _fill_effect(n: Node, env: Env, lenient: bool = False) -> None:
         wr = env.callee_writes(tgt) if tgt else ALL7
     if n.op == "exx":
         raise Bail("exx")
+    if n.op in ("ldi", "ldd"):
+        # The byte count in BC changes P/V only, and nothing reads P/V
+        # after the copy: the instruction does not need BC as an input.
+        rd &= ~(B | C)
     n.rd = rd
     n.wr = wr
 
@@ -1154,7 +1158,9 @@ def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
     intervals.sort()
     merged: list[list[int]] = []
     for iv in intervals:
-        if merged and iv[0] <= merged[-1][1] + 0:
+        # an interval that starts right after the last one joins it: one
+        # push and one pop for a run such as ``ldi`` ``ldi`` ``ldi``
+        if merged and iv[0] <= merged[-1][1] + 1:
             merged[-1][1] = max(merged[-1][1], iv[1])
         else:
             merged.append(list(iv))
@@ -1467,6 +1473,8 @@ def _tstates(nd: Node) -> int:
         return 8
     if op in ("ldir", "lddr"):
         return 21
+    if op in ("ldi", "ldd"):
+        return 16
     if op == "rst":
         return 11
     return 8
