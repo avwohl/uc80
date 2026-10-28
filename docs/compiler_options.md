@@ -141,6 +141,10 @@ LIB=$(uc80 --print-lib-dir)
 ul80 $LIB/crt0.rel module.rel main.rel $LIB/libc.lib $LIB/runtime.lib -o prog.com
 ```
 
+Each module keeps its zero-start data in one BSS block of its own, and the start-up code clears the block. `--no-module-bss` puts the data in the image (DSEG) as before. See [rom.md](rom.md).
+
+`--no-direct-pointers` keeps every access through a pointer that holds a constant address as an access through the pointer. The default turns the access into a direct access. See [rom_hardware.md](rom_hardware.md).
+
 Pass the **same `--printf`/`--scanf` set to every unit** of the program. Each
 unit that calls `printf` emits the dispatch table, because the compiler's table
 has to beat the 16-bit-int default in libc; L80 keeps the first definition of a
