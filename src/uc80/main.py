@@ -127,6 +127,30 @@ def _tail_insert_index(lines: list[str]) -> int:
     return len(lines)
 
 
+VEC_REF_LABEL = "__vec_ref"
+
+
+def _add_vector_labels(code: str, labels: dict, ref: bool) -> str:
+    """Define the vector labels ({handler label: [vector labels]}) at the
+    handler: PUBLIC lines and a label line in front of the label of the
+    function.  With ``ref`` the module also refers to ``__crt0_rom_vec``
+    (a word in CSEG: 2 bytes), which only crt0_rom_vec.rel defines."""
+    for handler, names in labels.items():
+        pat = re.compile(r"^(" + re.escape(handler) + r"::?(?:\s|$))",
+                         re.M)
+        add = "".join(f"\tPUBLIC\t{n}\n{n}:\n" for n in names)
+        code, n = pat.subn(lambda m: add + m.group(1), code, count=1)
+        if not n:
+            raise CodegenError(f"no label {handler} to bind to the vector")
+    if ref:
+        lines = code.split("\n")
+        at = _tail_insert_index(lines)
+        lines[at:at] = ["", f"\tEXTRN\t{rom_module.VEC_REF}", "\tCSEG",
+                        f"{VEC_REF_LABEL}:", f"\tDW\t{rom_module.VEC_REF}"]
+        code = "\n".join(lines)
+    return code
+
+
 def _filter_hand_written_asm(asm_text: str):
     """Prepare one hand-written assembly module for appending to the output.
 
@@ -319,7 +343,7 @@ class _BuildLibsAction(argparse.Action):
             # report "Unknown target: --build-libs".
             build_libs.main(["runtime", "libc"])
             # build_libs.py builds the libraries but not the startup module.
-            for stem in ("crt0", "crt0_rom"):
+            for stem in ("crt0", "crt0_rom", "crt0_rom_vec"):
                 crt0_mac, crt0_rel = target / f"{stem}.mac", target / f"{stem}.rel"
                 if crt0_mac.exists():
                     result = subprocess.run(
@@ -1229,12 +1253,42 @@ def main() -> int:
         why_rst = ("only --target=rom writes the vectors" if not rom else
                    "only the start-up code that uc80 embeds (whole-program "
                    "mode, no --startup-lib) sets the vectors")
+        # Vectors in a module without the start-up code of uc80 (separate
+        # compilation, or --no-embed-startup): the handler gets the label
+        # that its vector jumps to (rom.VEC_LABELS).  crt0_rom_vec.rel has
+        # the vectors.  A module of a separate compilation also refers to
+        # that file, so the link with crt0_rom.rel fails on an undefined
+        # symbol instead of making a ROM that never takes the interrupt.
+        alias_vec = rom and not embed_startup
+        via_vec_crt0 = (alias_vec and not whole_program
+                        and not args.no_embed_startup)
+        vec_names = {}                     # handler name -> [vector labels]
+        if alias_vec:
+            for _addr, _name in roots.vectors.items():
+                vec_names.setdefault(_name, []).append(
+                    rom_module.VEC_LABELS[_addr])
+            for _addr, (_name, _k) in roots.rst.items():
+                vec_names.setdefault(_name, []).append(
+                    rom_module.VEC_LABELS[_addr])
+        if via_vec_crt0 and roots.im2_on:
+            raise CodegenError(
+                roots.where.get(("im2", 0), "") + "IM 2 in separate "
+                "compilation (--no-whole-program) is not supported: the "
+                "vector table and the start-up code that loads I come from "
+                "the whole-program mode. Compile the program in whole-program "
+                "mode, or write the table in assembly and use "
+                "--no-embed-startup")
         if no_vec:
             for _addr, (_name, _k) in sorted(roots.rst.items()):
+                if via_vec_crt0:
+                    continue
                 print(f"uc80: warning: {roots.where.get(('rst', _addr), '')}"
                       f"the RST {_addr:02X}h vector is not "
                       f"set to '{_name}': {why_rst}; make your own start-up "
-                      f"code jump to {label_of(_name)}", file=sys.stderr)
+                      f"code jump to {label_of(_name)}"
+                      + (f" (the label {rom_module.VEC_LABELS[_addr]} is "
+                         f"there too)" if alias_vec else ""),
+                      file=sys.stderr)
             if roots.im2_on:
                 print("uc80: warning: " + roots.where.get(("im2", 0), "")
                       + "the IM 2 vector table is not written: " + ("only --target=rom writes the table "
@@ -1242,10 +1296,28 @@ def main() -> int:
                       "embeds writes the table ") + "and sets the I "
                       "register and IM 2", file=sys.stderr)
             for _addr, _name in sorted(roots.vectors.items()):
+                if via_vec_crt0:
+                    continue
                 print(f"uc80: warning: {roots.where.get(('vec', _addr), '')}"
                       f"the {_VECTORS[_addr]} vector is not "
                       f"set to '{_name}': {why_rst}; make your own start-up "
-                      f"code jump to {label_of(_name)}", file=sys.stderr)
+                      f"code jump to {label_of(_name)}"
+                      + (f" (the label {rom_module.VEC_LABELS[_addr]} is "
+                         f"there too)" if alias_vec else ""),
+                      file=sys.stderr)
+        if via_vec_crt0:
+            for _addr, _name in sorted(roots.vectors.items()):
+                print(f"uc80: note: {roots.where.get(('vec', _addr), '')}"
+                      f"the {_VECTORS[_addr]} vector jumps to "
+                      f"{rom_module.VEC_LABELS[_addr]}, the label of "
+                      f"'{source_name(_name)}'; link crt0_rom_vec.rel in "
+                      f"place of crt0_rom.rel", file=sys.stderr)
+            for _addr, (_name, _k) in sorted(roots.rst.items()):
+                print(f"uc80: note: {roots.where.get(('rst', _addr), '')}"
+                      f"the RST {_addr:02X}h vector jumps to "
+                      f"{rom_module.VEC_LABELS[_addr]}, the label of "
+                      f"'{source_name(_name)}'; link crt0_rom_vec.rel in "
+                      f"place of crt0_rom.rel", file=sys.stderr)
         for n in sorted(gen.asm_isrs):
             if not _defines_label(code, mac_files, label_of(n)):
                 raise CodegenError(
@@ -1711,6 +1783,13 @@ def main() -> int:
 
             if args.verbose:
                 print(f"  Appended {len(mac_files)} assembly file(s)")
+
+        if vec_names:
+            code = _add_vector_labels(
+                code, {label_of(n): v for n, v in vec_names.items()},
+                ref=via_vec_crt0)
+            if via_vec_crt0:
+                keep_labels.add(VEC_REF_LABEL)
 
         # Interrupt functions: do they reach code that uses the alternate
         # registers, or a routine with work areas at fixed addresses?

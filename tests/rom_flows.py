@@ -96,3 +96,51 @@ def symbols(paths):
         if len(parts) == 2:
             out[parts[1].upper()] = int(parts[0], 16)
     return out
+
+
+def build_separate(tmp_path, files, flow, rom_libs=None, crt0="vec",
+                   extra=(), rom_size=0x8000):
+    """Compile each C file of ``files`` ({name: text}) alone with
+    --no-whole-program, and link the modules with the start-up module
+    crt0_rom_vec (crt0="vec") or crt0_rom (crt0="plain").  Returns
+    (paths, [uc80 stderr of each file], the link result)."""
+    need_flow(flow)
+    errs, objs = [], []
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+        stem = name.rsplit(".", 1)[0]
+        if flow == "sdas":
+            r = run(uc80_cmd("--target=rom", "--asm-syntax=sdas",
+                             "--no-whole-program", "-I", INC, *extra, name,
+                             "-o", stem + ".s"), tmp_path)
+            run(["sdasz80", "-g", "-l", "-o", stem + ".s"], tmp_path)
+            objs.append(stem + ".rel")
+        else:
+            r = run(uc80_cmd("--target=rom", "--no-whole-program", "-I", INC,
+                             *extra, name, "-o", stem + ".mac"), tmp_path)
+            run(["um80", stem + ".mac", "-o", stem + ".rel"], tmp_path)
+            objs.append(stem + ".rel")
+        errs.append(r.stderr)
+    paths = (tmp_path / "t.bin", tmp_path / "t.sym")
+    if flow == "sdas":
+        stem = "crt0_rom_vec" if crt0 == "vec" else "crt0_rom"
+        crt0 = rom_libs / (stem + ".rel")
+        from uc80 import sdas
+        origin = sdas.code_origin_of(
+            (rom_libs / (stem + ".s")).read_text()) or 0x68
+        link = run(["sdldz80", *sndrom.sdas_link_flags(origin=origin), "-i",
+                    "-j", "t.ihx", str(crt0), *objs,
+                    "-l", str(rom_libs / "uc80_lc.lib"),
+                    "-l", str(rom_libs / "uc80_rt.lib")], tmp_path, ok=False)
+        if link.returncode == 0:
+            run(["sdobjcopy", "-I", "ihex", "-O", "binary", "t.ihx",
+                 "t.bin"], tmp_path)
+            sndrom.noi_to_sym(tmp_path / "t.noi", tmp_path / "t.sym")
+    else:
+        crt0 = LIB / ("crt0_rom_vec.rel" if crt0 == "vec" else "crt0_rom.rel")
+        link = run(["ul80", "--bin", "-p", "0", "-d", "F800", "--rom-data",
+                    "--rom-size", "%X" % rom_size, "--ram-size", "800",
+                    "--min-stack", "40", "-o", "t.bin", "-S", "t.sym",
+                    str(crt0), *objs, str(LIB / "libc_rom.lib"),
+                    str(LIB / "runtime.lib")], tmp_path, ok=False)
+    return paths, errs, link

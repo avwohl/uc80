@@ -28,16 +28,17 @@ Done:
 
 - Phase 3, naked functions: SDCC `__naked`, `[[uc80::naked]]` and `__attribute__((naked))`. The compiler writes the label and the asm text of the body, with no frame code and no `RET`. Only asm statements are allowed in the body. A naked function can be a vector target (`#pragma uc80 interrupt` or `nmi`): the asm saves the registers and ends with `RETI` or `RETN`. A naked function with a large structure result or a variable argument list is an error. A naked marker that differs between the prototype and the definition gives a warning, and a naked typedef is an error. Tested in cpmemu and in romrun, and through `--asm-syntax=sdas` with `sdasz80` (`tests/test_naked.py`, `tests/test_rom_interop.py`). See [rom_hardware.md](rom_hardware.md).
 - Phase 2, RST vectors and IM 2: `#pragma uc80 rst ADDR NAME [interrupt [critical]]` (software call or interrupt function at 08h to 30h), `#pragma uc80 im2 SLOT NAME [critical]` and `#pragma uc80 im2table ADDR` (an aligned table of 128 vectors, I and `IM 2` set by the start-up code, `EI` and `RETI` as default handler). The runner `bench/romrun` delivers an interrupt with a data bus byte (`add_irq_at(t, vec)`, `--irq-vec`). A program with no such pragma has the same image. The table address is 0100h to FE00h, a hex constant that starts with A to F gets a leading 0, `--asm-syntax=sdas` stops with "ROM overflow" (`--rom-size`) when the code starts at the end of the ROM or above, a pragma name binds to the function of its own file (a `static` function of the same name in two files is not ambiguous), and a pragma name that two files define with external linkage is an error, and the pragmas give a warning in a CP/M program. Tested with `ul80` and with `--asm-syntax=sdas` in `tests/test_rom_vectors.py`. See [rom_hardware.md](rom_hardware.md).
+- Phase 4, interrupt safety (stage A): the option `--isr-save-workareas` and the pragma `isr_save_workareas NAME` save and restore the work areas of the runtime that the call graph of a handler reaches (`isr_check.save_plan`, `wa_code`). The cost is in [rom_hardware.md](rom_hardware.md). Tests: `tests/test_isr_workareas.py`, with `ul80` and with sdas, with IM 2, NMI and INT, with random RAM and frequent interrupts.
+- The interrupt check follows a call through a function pointer: the call reaches every function whose address the program takes, and the compiler prints a note. Tests: `tests/test_isr_workareas.py`, `tests/test_rom_isr.py`.
+- The warning for C functions and runtime helpers with `EXX` or `EX AF,AF'` next to nullsound (`--with-nullsound`, and `--entry` in the ngdevkit style). Tests: `tests/test_nullsound_alt.py`.
+- A vector in separate compilation: `crt0_rom_vec.rel`, the labels `__int_handler`, `__nmi_handler` and `__rstNN_handler`, and the default modules in `libc_rom.lib`. A module with a vector refers to `__crt0_rom_vec`, so a link with `crt0_rom.rel` stops with an undefined symbol. IM 2 is an error in separate compilation. Tests: `tests/test_vectors_separate.py`, with `ul80` and with sdas.
 
 Not done (needs `codegen.py` or other work):
 
 - The optional per-module BSS block for separate compilation.
-- The interrupt check cannot see a call through a function pointer.
 - A pointer variable that holds a constant address is not changed to a direct access.
-- Phase 4 and the later phases. The diagnostic for a C function with `EXX` code next to nullsound is open.
+- Phase 4 and the later phases (the rest of Phase 4).
 - Phase 5: the optional `sdcccall0` attribute, initialised globals next to nullsound (no start-up code copies them), and the CP/M target as a goal for the sdas output.
-- An interrupt function does not save the fixed work areas of the runtime (Phase 4 option). The compiler prints a warning instead.
-- A vector in separate compilation (`--no-whole-program`): the compiler prints a warning, and your own start-up code must jump to the handler.
 
 Notes for the codegen work that follows:
 

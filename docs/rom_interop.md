@@ -225,10 +225,30 @@ Command 04h before command 02h would see undefined `DATA`, because no code clear
 
 This proves the build, the link, the register contract and the two call directions. It does not run nullsound music. The ADPCM, SSG and FM sections of nullsound are not tested, and the YM2610 model of romrun makes no sound.
 
+### Alternate registers next to nullsound
+
+The NMI handler of nullsound uses AF', BC', DE' and HL' at any time. C code that executes `EXX` or `EX AF,AF'` can change the state of nullsound. The float division of uc80 (`__fdiv`) and the functions of the math library do this.
+
+uc80 checks the call graph of the final assembly when one of these is true:
+
+- You give the option `--with-nullsound`.
+- You use `--asm-syntax=sdas --sdas-style=ngdevkit` with `--entry`. The build of this page does this.
+
+The roots of the check are the `--entry` functions, `main`, and the interrupt functions. For each root that reaches such code, the compiler prints a warning with the call chain. It prints one more warning for each function and each runtime helper that has the `EXX` or `EX AF,AF'` instruction:
+
+```
+uc80: warning: runtime helper '__fdiv_man' uses EXX or EX AF,AF' (the alternate
+registers); the NMI handler of nullsound uses them at any time, so the code can
+corrupt the state of nullsound (reached from entry function 'cmd_key_on':
+_cmd_key_on -> __fdiv -> __fdiv_man)
+```
+
+The compiler prints each function once. A call through a function pointer reaches every function whose address the program takes (see [rom_hardware.md](rom_hardware.md)). `tests/test_nullsound_alt.py` runs programs with float division and with `EXX` in C, in both flows.
+
 ## Limits and open work
 
 - The output is for ROMs. A CP/M program in sdas syntax links and runs (the tests do this), but the CP/M target is not a goal.
 - Another track changes the convention for calls in uc80. Check each shim after that change.
-- In the ngdevkit style, `uc80` warns when an `--entry` function reaches code with `EXX` or `EX AF,AF'` (the call graph of `isr_check`). The warning does not see code that only the linker adds, for example a library that you link later.
+- `uc80` warns about code with `EXX` or `EX AF,AF'` next to nullsound (see "Alternate registers next to nullsound" above). The warning does not see code that only the linker adds, for example a library that you link later.
 - A C module with initialised globals (uc80 warns) needs `-b INITIALIZER=...` and `-b INITIALIZED=...` and a copy loop that you write. nullsound has no such code.
 - Tests: `tests/test_sdas.py`, `tests/test_sdcc_compat.py` (the `__asm` block), `tests/test_rom_interop.py`. They skip when the SDCC tools are missing.

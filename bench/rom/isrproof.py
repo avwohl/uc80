@@ -8,6 +8,7 @@ See docs/rom.md ("Proof: interrupts and ports").
     python3 bench/rom/isrproof.py            # all three
     python3 bench/rom/isrproof.py nmi seq bank iy
     python3 bench/rom/isrproof.py --sdas     # uc80 --asm-syntax=sdas, sdldz80
+    python3 bench/rom/isrproof.py --save-workareas   # uc80 --isr-save-workareas
 
 nmi   The snd-cmdq kernel with a real NMI.  The NMI handler (#pragma uc80
       nmi) reads the command byte from port 0 and queues it; the main
@@ -46,6 +47,7 @@ from sndrom import (KERNELS, LAYOUTS, run, tools_missing,  # noqa: E402
 
 NEOGEO = LAYOUTS["neogeo"]
 SDAS_LIBS = None        # a directory: build with sdasz80 and sdldz80
+UC80_FLAGS = []         # more uc80 options (--save-workareas)
 
 
 def build_source(work: Path, c_name: str, text: str, layout="neogeo",
@@ -56,12 +58,13 @@ def build_source(work: Path, c_name: str, text: str, layout="neogeo",
     (work / c_name).write_text('#include "bench.h"\n' + text)
     (work / "z80io.mac").write_text((HERE / "z80io.mac").read_text())
     if SDAS_LIBS:
-        return sdas_compile_link(work, c_name, layout, SDAS_LIBS)
+        return sdas_compile_link(work, c_name, layout, SDAS_LIBS,
+                                 extra=UC80_FLAGS)
     lay = LAYOUTS[layout]
     lib = Path(run(["uc80", "--print-lib-dir"], work)[1].strip())
     steps = [
         ["uc80", "--target=rom", "-I", str(HERE), "-I", str(BENCH),
-         c_name, "z80io.mac", "-o", "k.mac"],
+         *UC80_FLAGS, c_name, "z80io.mac", "-o", "k.mac"],
         ["um80", "k.mac", "-o", "k.rel"],
         ["ul80", "--bin", "-p", "0", "-d", "%X" % lay["data"], "--rom-data",
          "--rom-size", "%X" % lay["rom_size"],
@@ -574,7 +577,9 @@ def main(argv=None):
     global SDAS_LIBS
     args = list(argv if argv is not None else sys.argv[1:])
     sdas = "--sdas" in args
-    args = [a for a in args if a != "--sdas"]
+    if "--save-workareas" in args:
+        UC80_FLAGS.append("--isr-save-workareas")
+    args = [a for a in args if a not in ("--sdas", "--save-workareas")]
     names = args or list(PROOFS)
     missing = sdas_tools_missing() if sdas else tools_missing()
     if missing:

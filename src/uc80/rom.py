@@ -108,6 +108,77 @@ def hex_const(value: int, width: int = 4) -> str:
 _BLOCK = re.compile(r"^;@(INT|NMI)_BEGIN\n.*?^;@\1_END\n", re.S | re.M)
 
 
+def _bind_vectors(text: str, int_handler, nmi_handler, rst) -> str:
+    """The text of crt0_rom.mac with the RST vectors and the INT and NMI
+    blocks bound (see startup_text)."""
+    for addr, label in sorted((rst or {}).items()):
+        pat = f"__vec_rst{addr:02x}:\n\tRET\n"
+        assert pat in text, pat
+        text = text.replace(pat, f"__vec_rst{addr:02x}:\n\tJP\t{label}\n")
+    use = {"INT": int_handler, "NMI": nmi_handler}
+    target = {"INT": int_handler if isinstance(int_handler, str)
+              else "__int_handler",
+              "NMI": nmi_handler if isinstance(nmi_handler, str)
+              else "__nmi_handler"}
+
+    def block(m):
+        body = m.group(0).splitlines()[1:-1]
+        user = [ln for ln in body if ln.startswith(";@USER")]
+        keep = ([ln[len(";@USER"):].replace(
+                     f"__{m.group(1).lower()}_handler", target[m.group(1)])
+                 for ln in user] if use[m.group(1)]
+                else [ln for ln in body if not ln.startswith(";@USER")])
+        return "\n".join(keep) + "\n"
+
+    return _BLOCK.sub(block, text)
+
+
+# The handler labels of a vector in separate compilation (--no-whole-program):
+# the module that has the handler defines the label, crt0_rom_vec.rel jumps
+# to it, and a default module of libc_rom.lib defines it for a vector that no
+# module binds.
+VEC_LABELS = {0x38: "__int_handler", 0x66: "__nmi_handler",
+              **{a: f"__rst{a:02x}_handler"
+                 for a in (0x08, 0x10, 0x18, 0x20, 0x28, 0x30)}}
+VEC_REF = "__crt0_rom_vec"      # defined by crt0_rom_vec.rel only
+
+
+def vec_startup_module(path: Path) -> str:
+    """The text of crt0_rom_vec.mac, made from crt0_rom.mac: every vector
+    jumps to its label of VEC_LABELS.  A program that links with it can
+    bind any vector in a separately compiled module."""
+    text = _bind_vectors(path.read_text(), True, True,
+                         {a: VEC_LABELS[a] for a in VEC_LABELS
+                          if a not in (0x38, 0x66)})
+    old_title = ("; crt0_rom.mac - C runtime start-up for a Z80 ROM "
+                 "(the --target=rom crt0)")
+    assert old_title in text
+    text = text.replace(
+        old_title,
+        "; crt0_rom_vec.mac - the start-up of crt0_rom.mac for a program in "
+        "separately\n"
+        "; compiled modules that bind interrupt vectors.  Made by "
+        "uc80.rom.vec_startup_module\n"
+        "; from crt0_rom.mac: do not edit.  Every vector jumps to a label "
+        "that a module\n"
+        "; of the program defines (__int_handler, __nmi_handler, "
+        "__rst08_handler to __rst30_handler).\n"
+        "; libc_rom.lib has a default module for each label.  Link this "
+        "file in place of\n"
+        "; crt0_rom.rel.  See docs/rom_hardware.md.", 1)
+    reset = "\tPUBLIC\t__vec_reset\n__vec_reset:\n"
+    assert reset in text
+    text = text.replace(
+        reset, f"\tPUBLIC\t__vec_reset\n\tPUBLIC\t{VEC_REF}\n"
+        f"__vec_reset:\n{VEC_REF}:\n", 1)
+    start = "\tPUBLIC\t__start\n"
+    assert start in text
+    text = text.replace(
+        start, "\tEXTRN\t" + ",".join(VEC_LABELS[a] for a in sorted(VEC_LABELS))
+        + "\n" + start, 1)
+    return text
+
+
 def startup_text(path: Path, int_handler, nmi_handler,
                  stack_top: str | None, start: str | None = None,
                  watchdog: bool = False, rst: dict | None = None,
@@ -126,32 +197,13 @@ def startup_text(path: Path, int_handler, nmi_handler,
     start-up code; the program code follows the table.  An unbound slot
     points at __im2_default (EI, RETI).  See docs/rom_hardware.md."""
     text = path.read_text()
-    for addr, label in sorted((rst or {}).items()):
-        pat = f"__vec_rst{addr:02x}:\n\tRET\n"
-        assert pat in text, pat
-        text = text.replace(pat, f"__vec_rst{addr:02x}:\n\tJP\t{label}\n")
+    text = _bind_vectors(text, int_handler, nmi_handler, rst)
     if im2:
         text = text.replace("\tIM\t1\n", "\tIM\t2\n")
         text = re.sub(r"^;@IM2", "", text, flags=re.M).replace(
             "__IM2_HI", hex_const(im2[1] >> 8, 2))
     if watchdog:
         text = re.sub(r"^;@WDT", "", text, flags=re.M)
-    use = {"INT": int_handler, "NMI": nmi_handler}
-    target = {"INT": int_handler if isinstance(int_handler, str)
-              else "__int_handler",
-              "NMI": nmi_handler if isinstance(nmi_handler, str)
-              else "__nmi_handler"}
-
-    def block(m):
-        body = m.group(0).splitlines()[1:-1]
-        user = [ln for ln in body if ln.startswith(";@USER")]
-        keep = ([ln[len(";@USER"):].replace(
-                     f"__{m.group(1).lower()}_handler", target[m.group(1)])
-                 for ln in user] if use[m.group(1)]
-                else [ln for ln in body if not ln.startswith(";@USER")])
-        return "\n".join(keep) + "\n"
-
-    text = _BLOCK.sub(block, text)
     if stack_top:
         text = text.replace("LD\tSP,__RAM_END", f"LD\tSP,{stack_top}")
     out = []

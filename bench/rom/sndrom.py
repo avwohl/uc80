@@ -146,7 +146,7 @@ def sdas_link_flags(style="sdcc", layout="neogeo", origin=0x68):
 
 
 def sdas_compile_link(work: Path, c_name: str, layout="dev", libs=None,
-                      style="sdcc"):
+                      style="sdcc", extra=()):
     """uc80 --asm-syntax=sdas, sdasz80, sdldz80 and sdobjcopy for c_name
     and z80io.mac, which are in `work`.  Like build(), returns a dict."""
     from uc80 import sdas  # noqa: E402 (the path is set by sdas_libs)
@@ -155,7 +155,7 @@ def sdas_compile_link(work: Path, c_name: str, layout="dev", libs=None,
     log = []
     rc, out = run(["uc80", "--target=rom", "--asm-syntax=sdas",
                    "--sdas-style", style, "-I", str(HERE), "-I", str(BENCH),
-                   c_name, "z80io.mac", "-o", "k.s"], work)
+                   *extra, c_name, "z80io.mac", "-o", "k.s"], work)
     log.append(out)
     if rc:
         return dict(ok=False, log="\n".join(log))

@@ -43,14 +43,28 @@ An interrupt function with `EI` at the start never keeps its locals in the share
 
 ### Alternate registers
 
-The prologue also saves the alternate registers (`EX AF,AF'`, `EXX`) when the handler can reach code that uses them. The compiler checks the call graph of the final assembly, with the library sources for routines that are not in the program. The float runtime of the compiler does not use the alternate registers today. Hand-written assembly does. The compiler prints a warning that names the call chain:
+The prologue also saves the alternate registers (`EX AF,AF'`, `EXX`) when the handler can reach code that uses them. The compiler checks the call graph of the final assembly, with the library sources for routines that are not in the program. The float division (`__fdiv`) and the functions of the math library use the alternate registers. Hand-written assembly can use them too. The compiler prints a warning that names the call chain:
 
 ```
 uc80: warning: interrupt function 'tick' reaches code that uses the alternate
 registers (tick -> _alt_user); the prologue saves and restores them
 ```
 
-The check cannot see a call through a function pointer.
+### Calls through a function pointer
+
+The check follows calls by name. A call through a function pointer (`hook()`) has no name. The compiler cannot tell which function the pointer holds.
+
+So it takes the safe view. Suppose an interrupt function, or a function that the interrupt function calls, calls through a pointer. Then every function whose address the program takes can run in the interrupt. The compiler prints a note:
+
+```
+uc80: note: interrupt function 'isr' calls through a function pointer
+(_isr -> __callhl); uc80 cannot tell the target, so it treats every function
+whose address is taken as reachable from the interrupt (div7, other)
+```
+
+All the checks of this page then apply to these functions: the alternate registers, the work areas of the runtime, and `--isr-safe`.
+
+A library routine that calls back (`qsort`, `bsearch`) has the same effect. A library routine that the interrupt function reaches can also take the address of a function itself. The compiler adds that function too. The note names at most eight functions. The interrupt functions are not in the list.
 
 ### Routines with fixed RAM
 
@@ -64,7 +78,50 @@ rt_arith32) at a fixed address (isr -> _divide -> __div32); main code that calls
 the same routine can be corrupted by the interrupt
 ```
 
-The warning is safe to ignore when the main program never uses the same routine. The simple cure is to avoid long division, 64-bit arithmetic and floating point in a handler.
+The warning is safe to ignore when the main program never uses the same routine. One cure is to avoid long division, 64-bit arithmetic and floating point in a handler. The other cure is to let the handler save the work areas.
+
+### Work areas that the handler saves
+
+The option `--isr-save-workareas` makes each interrupt function save and restore the work areas that its call graph can reach. One handler can ask for this alone:
+
+```
+#pragma uc80 isr_save_workareas NAME [NAME ...]
+```
+
+NAME is an interrupt function (`interrupt`, `nmi`, `im2`, or `rst ... interrupt`). The compiler stops with an error when NAME is not an interrupt function, and when NAME is a naked function. A naked function must save the areas in its own assembly text.
+
+The prologue of the handler copies each reached work area to the stack, after the register saves. The epilogue copies the area back, before the register restores. The main program then finds its temporary values as it left them.
+ 
+The compiler saves the whole COMMON block of each module that the handler reaches (the warning names the block, for example `rt_rem32`). An area of up to 6 bytes goes through the stack in words. A larger area goes with `LDIR`. The compiler prints a note with the cost.
+
+```
+uc80: note: interrupt function 'isr' saves and restores the work areas of
+rt_rem32, rt_tmp32 (12 bytes of RAM, 43 bytes of code, 530 T-states for each
+interrupt)
+```
+
+The RAM figure is also the extra stack that each interrupt uses. Add it to the `--min-stack` figure of `ul80`.
+
+The compiler does not save the blocks that hold state and not temporary values: `errno`, the heap, the table of `atexit` handlers, the signal table, the state of `strtok` and the file table. A handler that changes these changes them for good. For these blocks the warning stays.
+
+The option does not cover the shared automatic storage (`??AUTO`) of the functions in your program. Use `--isr-safe` for that. The option does not cover the registers: the prologue saves them as before.
+
+Measured cost for one interrupt, from `bench/romrun` with one NMI (the figure of the compiler is the same within 2 T-states). The handler does the work in the first column:
+
+```
+handler                  work areas saved                    RAM  code  T-states
+32-bit multiply          rt_tmp32                              4    16       106
+32-bit divide            rt_rem32, rt_tmp32                   12    43       530
+64-bit multiply          rt_acc64, rt_mul64                   32    54      1520
+64-bit divide            rt_acc64, rt_rem64                   32    54      1520
+float add                rt_fadd, rt_tmp32                    23    43       992
+float multiply           rt_fdata, rt_fmul, rt_tmp32          42    70      1878
+float divide             rt_fdata, rt_tmp32                   26    43      1118
+```
+
+The handlers of `bench/rom/isrproof.py` (the NMI command queue, the YM2610 timer, the bank select and the IY walk) reach no work area. The option adds no byte and no T-state to them (`isrproof.py --save-workareas` gives the same results).
+
+Take a handler and a main loop that both do 32-bit arithmetic. Without the option the result is wrong. With the option the result is right. `tests/test_isr_workareas.py` runs this with IM 2, NMI and `interrupt`, in both flows.
 
 ### Shared automatic storage
 
@@ -80,7 +137,7 @@ The option `--isr-safe` keeps the locals of all functions that an interrupt func
 
 ## RST vectors and IM 2
 
-The RST vectors 0008h to 0030h and the IM 2 vector table are new. Both need `--target=rom` with the start-up code that uc80 embeds (whole-program mode, no `--startup-lib`). With another start-up code, or with the CP/M target, the compiler prints a warning (for example "the RST 10h vector is not set"). Then your code must set the vector. The pragmas `rst`, `im2`, `im2table`, `vector`, `interrupt` and `nmi` have no effect in a CP/M program.
+The RST vectors 0008h to 0030h and the IM 2 vector table are new. Both need `--target=rom` with the start-up code that uc80 embeds (whole-program mode, no `--startup-lib`). With another start-up code, or with the CP/M target, the compiler prints a warning (for example "the RST 10h vector is not set"). Then your code must set the vector. A program in separately compiled modules can bind the RST, INT and NMI vectors (see "Vectors in separately compiled modules"). The pragmas `rst`, `im2`, `im2table`, `vector`, `interrupt` and `nmi` have no effect in a CP/M program.
 
 A pragma names a function of the file that holds the pragma. Suppose two input files each define a `static` function `h`. The compiler gives each one a private name (`h__s0`, `h__s1`) when it merges the files. A pragma in `a.c` that names `h` binds to the `h` of `a.c`.
 
@@ -159,6 +216,42 @@ Tests in `tests/test_rom_vectors.py`. Each test runs with `ul80` and with `--asm
 - The RST software call.
 - The RST interrupt function in IM 0.
 - IM 1 with no IM 2.
+
+## Vectors in separately compiled modules
+
+With `--no-whole-program` each C file becomes its own module. Your module then has no start-up code, so uc80 cannot write the vectors. Use `crt0_rom_vec.rel` in place of `crt0_rom.rel`:
+
+- `crt0_rom_vec.rel` has the vectors of `crt0_rom.rel`, but each vector (INT, NMI and RST 08h to 30h) jumps to a label: `__int_handler`, `__nmi_handler`, `__rst08_handler`, `__rst10_handler`, and so on to `__rst30_handler`.
+- A module that has a handler with `#pragma uc80 interrupt`, `nmi`, `rst` or `vector` defines the label of the vector at the start of the handler. The label is a public symbol. It costs no byte.
+- `libc_rom.lib` has a small default module for each label: `EI` and `RETI` for INT, `RETN` for NMI, and `RET` for RST. The linker takes the module only when no other module defines the label. A vector that no module binds keeps the default.
+- Each module that binds a vector also holds one word that refers to the symbol `__crt0_rom_vec`. Only `crt0_rom_vec.rel` defines the symbol. If you link `crt0_rom.rel` by mistake, the link stops with `Undefined symbol: __CRT0_ROM_VEC` (`ul80`) or `Undefined Global __crt0_rom_vec` (`sdldz80`). The ROM does not start with vectors that jump nowhere.
+
+The compiler prints a note for each vector it binds:
+
+```
+uc80: note: v.c:2: the INT (38h) vector jumps to __int_handler, the label of
+'tick'; link crt0_rom_vec.rel in place of crt0_rom.rel
+```
+
+Two modules can bind two different vectors. Two modules that bind the same vector give the linker message for a symbol with two definitions.
+
+```
+uc80 --target=rom --no-whole-program main.c -o main.mac
+uc80 --target=rom --no-whole-program handlers.c -o handlers.mac
+um80 main.mac -o main.rel
+um80 handlers.mac -o handlers.rel
+ul80 --bin -p 0 -d F800 --rom-data --rom-size 8000 --ram-size 800 --min-stack 40 \
+     -o prog.bin -S prog.sym crt0_rom_vec.rel main.rel handlers.rel \
+     libc_rom.lib runtime.lib
+```
+
+With `--asm-syntax=sdas` the command `uc80 --build-sdas-libs DIR` also writes `DIR/crt0_rom.rel` and `DIR/crt0_rom_vec.rel`. Link the start-up module first, and use the code origin in `DIR/crt0_rom_vec.s` (first line, `code-origin`) for `-b _CODE=`.
+
+Limits:
+
+- IM 2 does not work in separate compilation. The vector table and the code that loads I come from the whole-program mode. The compiler stops with an error. Write the table in assembly and use `--no-embed-startup`.
+- With `--no-embed-startup` (your own start-up code) the compiler still defines the labels `__int_handler` and so on at the handlers. It does not add the reference word. The compiler prints the "not set" warning, and your start-up code must jump to a label.
+- `crt0_rom_vec.rel` does not call `__watchdog_kick`.
 
 ## Port input and output
 

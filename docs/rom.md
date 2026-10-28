@@ -23,6 +23,8 @@ Run `uc80 --build-libs` once after a checkout. The command builds `libc_rom.lib`
 - `--target=rom`: build for a ROM. `--target=cpm` is the default.
 - `-ffreestanding`: the same as `--target=rom`.
 - `--isr-safe`: keep the locals of each function that an interrupt function reaches on the stack (see [rom_hardware.md](rom_hardware.md)).
+- `--isr-save-workareas`: each interrupt function saves and restores the work areas of the runtime that its call graph can reach (see [rom_hardware.md](rom_hardware.md)). The pragma `isr_save_workareas NAME` does this for one handler.
+- `--with-nullsound`: the program links with nullsound. The compiler warns for each function and runtime helper on a path that uses `EXX` or `EX AF,AF'` (see [rom_interop.md](rom_interop.md)).
 - `--stack-top EXPR`: the first value of SP, an assembler expression such as `0FF00H`. The default value is the symbol `__RAM_END`. The command `ul80` sets `__RAM_END` from `--ram-size` or `--ram-end`. Only the ROM target accepts `--stack-top`.
 
 With the ROM target the compiler:
@@ -164,11 +166,11 @@ This change also makes the CP/M images that use these modules smaller, because t
 
 ## Limits today
 
-- The compiler sets the vectors only in whole-program mode with the embedded start-up code. With `--no-whole-program` or `--startup-lib`, the compiler prints a warning and your own start-up code must jump to the interrupt function.
+- The compiler writes the vectors only in whole-program mode with the embedded start-up code. With `--no-whole-program`, link `crt0_rom_vec.rel` in place of `crt0_rom.rel` (see [rom_hardware.md](rom_hardware.md)). With `--startup-lib` or `--no-embed-startup`, the compiler prints a warning and your own start-up code must jump to the interrupt function.
 - A call of an interrupt function from C is an error. A handler cannot take arguments or return a value.
 - The heap and `sprintf` are not available.
 - The helpers of the runtime keep their temporaries at fixed RAM addresses. A routine that an interrupt handler and the main program both call can fail. The compiler prints a warning with the call chain when a handler reaches such a routine. Do not call long division, 64-bit arithmetic or float in a handler that the main program shares them with.
-- The float runtime of uc80 does not use the alternate registers. Assembly code can. The prologue of a handler saves the alternate registers when the handler reaches code that uses them.
+- The float division of uc80 and the math library use the alternate registers. Assembly code can too. The prologue of a handler saves the alternate registers when the handler reaches code that uses them.
 - Each C object that the program defines is one object of one module. A second C file does not get its own BSS block (the plan lists this as optional).
 
 ## Refused spellings
