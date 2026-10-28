@@ -119,9 +119,9 @@ class Checker:
     def pop(self):
         self.scopes.pop()
 
-    def declare(self, name, kind, ty):
+    def declare(self, name, kind, ty, constexpr=False):
         if name:
-            self.scopes[-1].names[name] = (kind, ty)
+            self.scopes[-1].names[name] = (kind, ty, constexpr)
 
     def lookup(self, name):
         for s in reversed(self.scopes):
@@ -193,6 +193,9 @@ class Checker:
         self.specs(decl.decl_specs)
         storage = ch.decl_storage_class(decl.decl_specs)
         base = ch.resolve_base_type(decl.decl_specs)
+        constexpr = any(isinstance(sp, ast.StorageClass)
+                        and sp.kw.text == "constexpr"
+                        for sp in decl.decl_specs or [])
         for d in decl.declarators or []:
             if isinstance(d, ast.InitDeclaratorWithInit):
                 inner, init = d.declarator, d.init
@@ -205,7 +208,7 @@ class Checker:
             if storage == "typedef":
                 self.declare(name, "typedef", full)
                 continue
-            self.declare(name, "var", full)
+            self.declare(name, "var", full, constexpr)
             if init is not None:
                 self.visit(init)
             self.check_vla(full, inner, storage)
@@ -521,6 +524,19 @@ class Checker:
 
     # ----- constants ------------------------------------------------------
 
+    def is_null_member_address(self, e):
+        """True for ((T *)constant)->m, .m and [constant] chains."""
+        while True:
+            if isinstance(e, (ast.Member, ast.ArrowMember)):
+                e = e.obj
+            elif isinstance(e, ast.Index):
+                if not self.is_constant(e.index):
+                    return False
+                e = e.array
+            else:
+                break
+        return isinstance(e, ast.Cast) and self.is_constant(e.expr)
+
     def is_constant(self, e):
         """True for an integer constant expression as far as the walk can
         tell: literals, enumerators, sizeof, casts and operators of
@@ -533,7 +549,8 @@ class Checker:
             return True
         if isinstance(e, ast.Identifier):
             ent = self.lookup(e.name.text)
-            return ent is None or ent[0] == "enum"
+            return ent is None or ent[0] == "enum" or (
+                ent[0] == "var" and len(ent) > 2 and ent[2])
         if isinstance(e, ast.Cast):
             return self.is_constant(e.expr)
         if isinstance(e, ast.TernaryOp):
@@ -544,6 +561,8 @@ class Checker:
         if isinstance(e, ast.SequenceExpr):
             return False
         if isinstance(e, ast.UnaryOp):
+            if e.op.text == "&" and self.is_null_member_address(e.operand):
+                return True     # the offsetof idiom &((T *)0)->m
             return (e.op.text not in ("*", "&", "++", "--")
                     and self.is_constant(e.operand))
         if isinstance(e, (ast.Call, ast.CallNoArgs)):

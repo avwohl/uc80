@@ -244,6 +244,32 @@ int main(void)
     assert run_program(tmp_path, {"p.c": src})[0] == "novla 10"
 
 
+def test_constexpr_and_offsetof_array_sizes_are_constants(tmp_path):
+    src = r'''
+#include <stdio.h>
+#include <stddef.h>
+struct S { int a, b, c; };
+constexpr int N = 3;
+int main(void)
+{
+    constexpr int M = N + 1;
+    int a[N], b[M * 2];
+    int c[offsetof(struct S, c)];
+    a[2] = 1; b[7] = 2; c[3] = 3;
+    printf("cx %d %d %d\n", a[2], b[7], c[3]);
+    return 0;
+}
+'''
+    assert run_program(tmp_path, {"p.c": src})[0] == "cx 1 2 3"
+
+
+def test_const_int_array_size_is_a_vla_error(tmp_path):
+    src = "int f(void)\n{\n    const int k = 3;\n    int a[k];\n    return a[0];\n}\n"
+    r = compile_c(tmp_path, {"k.c": src})
+    assert r.returncode == 1
+    assert errors_of(r)[0].startswith("uc80: error: k.c:4: variable length array")
+
+
 # ----- --no-whole-program ---------------------------------------------------
 
 TWO_A = r'''

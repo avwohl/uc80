@@ -297,6 +297,12 @@ of a file, then stops with exit status 1.
   `char test[argc]`. The file `tests/c-testsuite-z80/00207.c` has the same
   test with `char test[4]`.
 
+  An array that has a size from a plain `const int` is a VLA in C23, so
+  `const int k = 3; int a[k];` in a block is an error too. Older uc80
+  versions accepted this. Use `constexpr int k = 3;`, an `enum` constant
+  or `#define`. A `constexpr` object and `offsetof` are constants and are
+  correct as an array size.
+
 ## C99/C11/C24 FEATURES NOT IMPLEMENTED
 
 - [ ] `_Complex` / `_Imaginary` - parsed but no codegen
