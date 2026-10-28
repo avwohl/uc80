@@ -97,6 +97,27 @@ def _res(m):
             for i in range(8)]
 
 
+def _sdas_areas(rel):
+    out = {}
+    lines = rel.read_text().splitlines()
+    for i, ln in enumerate(lines):
+        if ln.startswith("A "):
+            f = ln.split()
+            out[f[1]] = int(f[3], 16)
+    return out
+
+
+def _build_old_area(tmp_path):
+    d = tmp_path / "old"
+    d.mkdir()
+    (d / "a.c").write_text((tmp_path / "a.c").read_text())
+    run(uc80_cmd("--target=rom", "--asm-syntax=sdas", "--no-whole-program",
+                 "--no-module-bss", "-I", str(REPO / "lib" / "include"),
+                 "a.c", "-o", "a.s"), d)
+    run(["sdasz80", "-g", "-l", "-o", "a.s"], d)
+    return _sdas_areas(d / "a.rel")
+
+
 @pytest.mark.parametrize("flow", FLOWS)
 def test_two_modules_each_have_a_cleared_bss_block(flow, tmp_path, libs):
     paths, errs, link = build_separate(
@@ -119,6 +140,14 @@ def test_two_modules_each_have_a_cleared_bss_block(flow, tmp_path, libs):
         other = re.findall(r"common\s+/(uc_b_[0-9a-f]{4})/",
                            (tmp_path / "b.mac").read_text())
         assert len(other) == 1 and other != blocks
+    else:
+        # zero data is in the RAM area _DATA (no bytes in the image); only
+        # the table is in _INITIALIZED, which the start-up code copies
+        areas = _sdas_areas(tmp_path / "a.rel")
+        assert areas["_INITIALIZED"] == 8, areas
+        assert areas["_DATA"] >= 100 + 2 + 2 + 6, areas
+        old = _build_old_area(tmp_path)
+        assert old["_INITIALIZED"] > areas["_INITIALIZED"] + 100, old
 
 
 @pytest.mark.parametrize("flow", FLOWS)
@@ -189,7 +218,18 @@ int main(void)
         subprocess.run(["ul80", str(LIB_DIR / "crt0.rel"), str(d / "b.rel"),
                         str(d / "a.rel"), str(LIB_DIR / "libc.lib"),
                         str(LIB_DIR / "runtime.lib"), "-o",
-                        str(d / "p.com")], check=True, capture_output=True)
+                        str(d / "p.com"), "-S", str(d / "p.sym")],
+                       check=True, capture_output=True)
+        if tag == "new":
+            # the range that crt0 clears holds both arrays
+            sy = {}
+            for ln in (d / "p.sym").read_text().splitlines():
+                f = ln.split()
+                if len(f) == 2:
+                    sy[f[1].lower()] = int(f[0], 16)
+            lo, hi = sy["__bss_start"], sy["__bss_end"]
+            assert lo <= sy["_ga"] < hi and lo <= sy["_gb"] < hi, sy
+            assert hi - lo >= 1200
         out = subprocess.run([str(CPMEMU), str(d / "p.com")],
                              capture_output=True, timeout=60)
         assert out.stdout.decode("latin-1").replace("\r", "") == \

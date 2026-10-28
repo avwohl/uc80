@@ -73,6 +73,7 @@ The per-object build is the one in [bench_harness.md](bench_harness.md#size-only
 The row holds the sum of the code bytes and the data bytes of all
 objects. Compare the sum of both: SDCC and llvm-z80 put strings and
 `const` tables in the code, uc80 puts them in the data. The status is
+The `data` field of uc80 does not count the BSS blocks (zero-start data of each module) from stage B on: that data is now in one COMMON block for each module, so `data` is smaller than in older result files for some programs (adventure, curses-demo, monop, trek, mojozork). Other compilers count zero-start data in their data field. The status is
 FITS or TOO-BIG for the whole-program link. A program with a large `bss`
 (adventure) does not fit because of the BSS.
 

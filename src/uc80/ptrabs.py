@@ -70,8 +70,21 @@ class _Var:
         self.addrs = set()              # constants it is given
         self.bad = False
         self.value_uses = 0
-        self.sites = 0
+        self.site_list = []             # (offset, size) of each access
         self.kept_assigns = 0
+
+    @property
+    def sites(self):
+        return len(self.site_list)
+
+    def sites_in_range(self):
+        """Every access is inside the address space (the same test as
+        PointerRewriter._scalar)."""
+        k = self.addr()
+        if k is None:
+            return False
+        return all(k + o >= 0 and k + o + n <= 0x10000
+                   for o, n in self.site_list)
 
     def addr(self):
         if self.bad:
@@ -373,7 +386,9 @@ class PointerRewriter:
                 var = self.vars.get(id(d))
             if init is not None and not (var is not None
                                          and var.init_addr is not None):
-                self.visit(init)
+                ni = self.visit(init)
+                if self.pass_no == 2 and ni is not init:
+                    d.init = ni
             if self.pass_no == 2 and var is not None and self._removable(var):
                 decl.declarators = [x for x in decl.declarators
                                     if x is not d]
@@ -509,7 +524,7 @@ class PointerRewriter:
         if p is not None:
             var, off, t, vol = p
             if vol and self._scalar_type(t):
-                var.sites += 1
+                var.site_list.append((off, _SIZES[t.name]))
             else:
                 var.value_uses += 1
             return True
@@ -552,7 +567,8 @@ class PointerRewriter:
     def _removable(self, var):
         """No read of the pointer is left after the rewrite."""
         return (var.static_file and self._qualifies(var)
-                and var.value_uses == 0 and var.sites > 0)
+                and var.value_uses == 0 and var.sites > 0
+                and var.sites_in_range())
 
 
 def rewrite(cg, unit, protected=()):

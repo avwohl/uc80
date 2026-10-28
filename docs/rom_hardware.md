@@ -336,7 +336,7 @@ The compiler gives each address a name with no storage, as for `__at`, and uses 
 A pointer variable qualifies when all of these are true:
 
 - The pointer points to an integer type or to a struct. The target (or the member that the code reaches) must be `volatile`. The pointer itself must not be `volatile`, and must not be a parameter.
-- The pointer has the type `T *const` and a constant initial value that is not 0. Or the pointer is local or `static`, and every `=` and the initial value give the same constant that is not 0. No `++`, `+=` or `&p` is in the program.
+- The pointer has the type `T *const` and a constant initial value that is not 0. Or the pointer is local or `static`, and every `=` and the initial value give the same constant that is not 0. No `++` or `+=` is in the program. A `&p` of a `const` pointer does not stop the change, because the pointer cannot change. The pointer then keeps its storage.
 - The name of the pointer is not in the text of an `asm` statement, and not in a `#pragma uc80 public` or `keep`.
 - A path in a struct has constant indexes and no bit-field. `p->a.b`, `p->arr[2]` and `p[1].reg` are all direct.
 
@@ -345,7 +345,9 @@ Only an access of a volatile integer object changes. Each access stays one acces
 Limits:
 
 - A non-const pointer holds its constant from the start. A read through the pointer before the first assignment (a read of address 0 in the C sense) reads the constant address.
-- The compiler does not resolve a struct or a typedef that you declare inside a function. The pointer stays a normal pointer.
+- A struct that you declare inside a function is found by its tag name, like any other struct. This limit is old. A local struct can have the same tag as a global struct with another layout. Then the compiler uses the global layout, with and without this pass.
+- An access that is outside the address space (`p[-3]` with `p` at 2, or a 16-bit access at FFFFh) is not changed. The pointer variable stays for such an access.
+- A compound write (`ch->w += 0x101`, `++`) to a 16-bit register writes the low byte first. The older code wrote the high byte first. After `--*p` the new code does not read the register again. The older code read the register twice. Both are inside the rules of C for a volatile access, but the access log is not equal to the older log in these cases.
 - A non-volatile target is not changed. Another C object can use the same memory, so the order of the accesses is not free.
 - The option `--no-direct-pointers` switches the pass off.
 
@@ -357,9 +359,9 @@ pointer in HL            421         88211
 direct access            393         79071      -28 bytes, -9140 T-states (-10.4%)
 ```
 
-The log of the 272 writes is equal in both builds. One busy-wait read of the status changes from `LD HL,(_ym) / LD A,(HL)` (16 + 7 T-states) to `LD A,(4000h)` (13 T-states). The access to `addr_b` and `data_b` loses the `INC HL` that added the member offset. The snd-* kernels and the programs of `isrproof.py` use port instructions (`z80_out`, `z80_in`) and no pointer variable. Their images and T-states do not change: `sndrom.py --layout neogeo` and `isrproof.py nmi seq bank iy` give the same bytes, T-states and port logs with and without `--no-direct-pointers`.
+The log of the 272 writes is equal in both builds. One busy-wait read of the status changes from `LD HL,(_ym) / LD A,(HL)` (16 + 7 T-states) to `LD A,(4000h)` (13 T-states). The access to `addr_b` and `data_b` loses the `INC HL` that added the member offset. The measured gain is on `mmio_ym.c`, a driver written to use the feature. The snd-* kernels and the programs of `isrproof.py` do not use the feature: they use port instructions (`z80_out`, `z80_in`) and no pointer variable. Their images and T-states do not change: `sndrom.py --layout neogeo` and `isrproof.py nmi seq bank iy` give the same bytes, T-states and port logs with and without `--no-direct-pointers`.
 
-Tests: `tests/test_direct_pointers.py`. The tests run in `bench/romrun`, with `ul80` and with sdas. A breakpoint on each read instruction gives a scripted value to the read. The log of the runner has each write. Together they show that every access happens in order.
+Tests: `tests/test_direct_pointers.py` and `tests/test_direct_pointers_init.py` (a local that starts from a register, an access outside the address space, and the option sets `-O0`, `--no-inlining`, `--no-register-locals` and `--isr-safe`). The tests run in `bench/romrun`, with `ul80` and with sdas. A breakpoint on each read instruction gives a scripted value to the read. The log of the runner has each write. Together they show that every access happens in order.
 
 ## SDCC spellings
 

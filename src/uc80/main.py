@@ -130,11 +130,17 @@ def _tail_insert_index(lines: list[str]) -> int:
 def _bss_block_name(path) -> str:
     """Name of the BSS block of a separately compiled module: the file stem
     and a hash of the full path, so two files `a.c` in two directories do
-    not share (overlay) one block."""
+    not share (overlay) one block.  The hash uses the path relative to the
+    working directory when the file is below it, so the same tree gives the
+    same object in any checkout."""
     import zlib
     p = Path(path).resolve()
+    try:
+        key = p.relative_to(Path.cwd().resolve())
+    except ValueError:
+        key = p
     stem = re.sub(r'[^A-Za-z0-9_]', '_', p.stem)[:12]
-    return f"uc_{stem}_{zlib.crc32(str(p).encode()) & 0xFFFF:04x}"
+    return f"uc_{stem}_{zlib.crc32(str(key).encode()) & 0xFFFF:04x}"
 
 
 VEC_REF_LABEL = "__vec_ref"
