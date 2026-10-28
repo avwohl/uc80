@@ -793,6 +793,34 @@ def _region_ok(nodes, succ, s: int, e: int) -> bool:
     return True
 
 
+def _sp_adjust_bytes(nodes, k: int):
+    """The byte count of the stack cleanup ``ld HL,n / add HL,SP / ld SP,HL``
+    whose ``ld SP,HL`` is nodes[k]; None when the text does not show n."""
+    ins = []
+    j = k - 1
+    while j >= 0 and len(ins) < 2:
+        nd = nodes[j]
+        if nd.kind in ("other", "marker"):
+            j -= 1
+            continue
+        if nd.kind != "ins":
+            return None
+        ins.append(nd)
+        j -= 1
+    if len(ins) < 2:
+        return None
+    add, ld = ins
+    if not (add.op == "add" and [o.upper() for o in add.ops] == ["HL", "SP"]
+            and ld.op == "ld" and len(ld.ops) == 2
+            and ld.ops[0].upper() == "HL"):
+        return None
+    m = _NUM.match(ld.ops[1].strip())
+    if not m:
+        return None
+    n = int(ld.ops[1])
+    return n if n >= 0 and n % 2 == 0 else None
+
+
 def _call_group(nodes, c: int) -> tuple[int, int]:
     """For the call at c, the index of the first argument push (or c) and
     of the last cleanup instruction (or c)."""
@@ -818,6 +846,7 @@ def _call_group(nodes, c: int) -> tuple[int, int]:
             continue
         break
     sp_adjust = False
+    sp_ld = None
     if pops == 0:
         k = c + 1
         last = None
@@ -829,6 +858,8 @@ def _call_group(nodes, c: int) -> tuple[int, int]:
                 continue
             if nd.kind != "ins":
                 break
+            if nd.flow != "next" or nd.op == "push":
+                break           # the next statement: not a cleanup of c
             cnt += 1
             if nd.op == "ld" and [o.upper() for o in nd.ops] == ["SP", "HL"]:
                 last = k
@@ -836,6 +867,7 @@ def _call_group(nodes, c: int) -> tuple[int, int]:
             k += 1
         if last is not None:
             sp_adjust = True
+            sp_ld = last
             e = last
             nxt = last + 1
             while nxt < n and nodes[nxt].kind in ("other", "marker"):
@@ -847,10 +879,14 @@ def _call_group(nodes, c: int) -> tuple[int, int]:
     s = c
     if pops > 0 or sp_adjust:
         need = int(pops) if pops > 0 else None
+        if sp_adjust:
+            # the call pops n bytes with ld SP,HL: n/2 pushes are its own
+            nb = _sp_adjust_bytes(nodes, sp_ld)
+            need = nb // 2 if nb is not None else -1
         depth = 0
         k = c - 1
         found = []
-        while k >= 0 and (need is None or len(found) < need):
+        while need != -1 and k >= 0 and (need is None or len(found) < need):
             nd = nodes[k]
             if nd.kind == "label":
                 break
@@ -862,9 +898,19 @@ def _call_group(nodes, c: int) -> tuple[int, int]:
                         found.append(k)
                     else:
                         depth -= 1
+                elif nd.op == "ld" and [o.upper() for o in nd.ops] == ["SP", "HL"]:
+                    # the cleanup of an inner call: its pushes are not ours
+                    nb = _sp_adjust_bytes(nodes, k)
+                    if nb is None:
+                        found = []
+                        need = -1
+                        break
+                    depth += nb // 2
                 elif nd.flow in ("jump", "branch", "return", "stop"):
                     break
             k -= 1
+        if sp_adjust and need not in (None, -1) and len(found) < need:
+            found = []          # the walk ended early: the group is unknown
         if found:
             s = min(found)
     return s, e
@@ -1839,6 +1885,9 @@ class _Summaries:
             if nd.kind == "ins":
                 if nd.flow != "call":
                     w |= nd.wr
+                elif not nd.target:
+                    # rst n: the vector target may write anything
+                    return self.FULL, set()
             succ, ext = _lenient_succ(nodes, i, labels, self.entries)
             if succ is None:
                 return self.FULL, set()
@@ -1999,7 +2048,9 @@ def function_writes(lines: list[str], env: Env, own_label: str) -> int:
         if nd.kind != "ins":
             continue
         if nd.flow == "call":
-            if nd.target and nd.target != own_label:
+            if not nd.target:
+                w |= ALL7           # rst n: the vector target is unknown
+            elif nd.target != own_label:
                 w |= env.callee_writes_est(nd.target)
         else:
             w |= nd.wr

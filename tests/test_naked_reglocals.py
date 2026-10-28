@@ -160,3 +160,84 @@ def test_naked_root_with_dead_code_and_inlining(tmp_path, flags):
     assert "_unused_naked:" in mac and "_tick:" in mac
     assert "_bump:" in mac
     assert run_mac(tmp_path, path).split() == ["39", "8", "25"]
+
+
+# ---- IY across a naked call -------------------------------------------------
+
+IY_PROG = r"""
+#include <stdio.h>
+struct N { int a; int b; int c; struct N *next; };
+struct N pool[3] = {{1, 2, 3, pool + 1}, {10, 20, 30, pool + 2}, {100, 200, 300, 0}};
+void trash(void) __naked { __asm
+    ld iy,#0x7777
+    ld bc,#0x1234
+    ld de,#0x4321
+    ret
+    __endasm; }
+int walk(struct N *p) {
+    int t = 0;
+    while (p) {
+        t += p->a + p->b;
+        p->c = t;
+        trash();
+        t += p->c + p->a;
+        p->b = t;
+        p = p->next;
+    }
+    return t;
+}
+int main(void) {
+    printf("%d\n", walk(pool));
+    printf("%d %d %d\n", pool[0].b, pool[1].b, pool[2].b);
+    return 0;
+}
+"""
+
+
+@needs_run
+def test_iy_pointer_survives_a_naked_call(tmp_path):
+    """A pointer local in IY is saved around a call of a naked function
+    that sets IY: the same output with the pass on and off."""
+    old = dict(os.environ)
+    try:
+        os.environ.pop("UC80_NO_IY", None)
+        mac_on, path = compile_mac(tmp_path, IY_PROG)
+        on = run_mac(tmp_path, path)
+        os.environ["UC80_NO_IY"] = "1"
+        mac_noiy, path = compile_mac(tmp_path, IY_PROG)
+        noiy = run_mac(tmp_path, path)
+    finally:
+        os.environ.clear()
+        os.environ.update(old)
+    mac_off, path = compile_mac(tmp_path, IY_PROG, "--no-register-locals")
+    off = run_mac(tmp_path, path)
+    assert on == noiy == off, (on, noiy, off)
+    # the pointer is really in IY, and the call has a push IY / pop IY wrap
+    text = body_of(mac_on, "walk")
+    assert "IY" in text and "(IY+" in text, text
+    i = text.index("call\t_trash")
+    assert "push\tIY" in text[:i] and "pop\tIY" in text[i:], text
+    assert "IY" not in body_of(mac_noiy, "walk")
+
+
+def test_naked_mismatch_warning_of_a_static_names_its_own_file(tmp_path):
+    """Both files have a static h; only a.c has a prototype that lacks
+    __naked.  The warning names a.c and line 1, and the C name h."""
+    import subprocess
+    import sys
+    (tmp_path / "a.c").write_text(
+        "static int h(void);\n"
+        "static int h(void) __naked { __asm\n ld hl,#1\n ret\n __endasm; }\n"
+        "int fa(void) { return h(); }\n")
+    (tmp_path / "b.c").write_text(
+        "static int h(void) __naked { __asm\n ld hl,#2\n ret\n __endasm; }\n"
+        "int fa(void);\nint main(void) { return h() + fa(); }\n")
+    r = subprocess.run([sys.executable, "-m", "uc80.main", "a.c", "b.c",
+                        "-o", "t.mac"], cwd=tmp_path, capture_output=True,
+                       text=True)
+    assert r.returncode == 0, r.stderr
+    warns = [ln for ln in r.stderr.splitlines() if "naked" in ln]
+    assert len(warns) == 1, r.stderr
+    assert warns[0].startswith("uc80: warning: a.c:1: 'h' is naked in its "
+                               "definition"), warns
+    assert "__s" not in warns[0]

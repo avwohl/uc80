@@ -34,7 +34,7 @@ from . import rom as rom_module
 from . import printf_hook
 from . import scan_hook
 from . import file_hook
-from .multi_unit import (uniquify_enumerators, uniquify_statics_map,
+from .multi_unit import (file_scope_names, uniquify_enumerators, uniquify_statics_map,
                          uniquify_types)
 
 from . import peep_local
@@ -401,12 +401,33 @@ _NAME_WORDS = {"rst": (1,), "im2": (1,), "vector": (1,),
                "interrupt": (0,), "nmi": (0,)}
 
 
-def resolve_pragma_names(pragmas: list, units: list, maps: list) -> list:
+def source_name(name: str) -> str:
+    """The C name of a name that the merge renamed (h__s0 -> h)."""
+    return re.sub(r"__s\d+$", "", name)
+
+
+def resolve_pragma_names(pragmas: list, units: list, maps: list,
+                         names: list = None) -> list:
     """Replace the function name of each pragma with the name that the
-    merge gave it in the file of the pragma (a renamed static)."""
+    merge gave it in the file of the pragma (a renamed static).  NAMES is
+    file_scope_names() of the units before the renaming: a vector pragma
+    that names a function which only another file has as a static is an
+    error, because that static is not visible in the file of the pragma."""
     out = []
     for (verb, words, fname, line), u in zip(pragmas, units):
         m = maps[u] if u < len(maps) else {}
+        if names and verb in _NAME_WORDS and u < len(names):
+            for i in _NAME_WORDS[verb]:
+                w = words[i] if i < len(words) else None
+                if not w or w in names[u][0]:
+                    continue
+                elsewhere = [j for j, (ev, st) in enumerate(names)
+                             if j != u and w in ev]
+                if elsewhere and all(w in names[j][1] for j in elsewhere):
+                    raise CodegenError(
+                        f"{fname}:{line}: #pragma uc80 {verb}: '{w}' is not "
+                        f"defined in this file; it is a static function of "
+                        f"another file, which this file cannot name")
         if m and (verb in ("keep", "public") or verb in _NAME_WORDS):
             idx = (range(len(words)) if verb in ("keep", "public")
                    else _NAME_WORDS[verb])
@@ -464,7 +485,7 @@ def _roots_from_options(entries: list, pragmas: list,
         if addr in roots.rst:
             raise CodegenError(
                 f"{where}: the RST {addr:02X}h vector is already set to "
-                f"{roots.rst[addr][0]}")
+                f"{source_name(roots.rst[addr][0])}")
         if kind is not None:
             if roots.isrs.get(name, kind) != kind:
                 raise CodegenError(
@@ -485,7 +506,7 @@ def _roots_from_options(entries: list, pragmas: list,
         if slot in roots.im2:
             raise CodegenError(
                 f"{where}: IM 2 slot {slot} is already set to "
-                f"{roots.im2[slot]}")
+                f"{source_name(roots.im2[slot])}")
         if roots.isrs.get(name, kind) != kind:
             raise CodegenError(
                 f"{where}: '{name}' is already an interrupt function of "
@@ -507,7 +528,7 @@ def _roots_from_options(entries: list, pragmas: list,
         if addr in roots.vectors and roots.vectors[addr] != name:
             raise CodegenError(
                 f"{where}: the {_VECTORS[addr]} vector is already set to "
-                f"{roots.vectors[addr]}")
+                f"{source_name(roots.vectors[addr])}")
         roots.isrs[name] = kind
         roots.vectors[addr] = name
         remember(("vec", addr), where)
@@ -575,7 +596,7 @@ def _roots_from_options(entries: list, pragmas: list,
             if addr in roots.vectors and roots.vectors[addr] != words[1]:
                 raise CodegenError(
                     f"{where}: the {_VECTORS[addr]} vector is already set "
-                    f"to {roots.vectors[addr]}")
+                    f"to {source_name(roots.vectors[addr])}")
             unambiguous(words[1], where)
             roots.vectors[addr] = words[1]
             remember(("vec", addr), where)
@@ -1044,6 +1065,7 @@ def main() -> int:
 
         # Merge ASTs into single TranslationUnit
         static_maps = [{} for _ in asts]
+        scope_names = None
         if len(asts) == 1:
             merged_ast = asts[0]
         else:
@@ -1051,6 +1073,7 @@ def main() -> int:
             # static (or global) of another file.
             uniquify_enumerators(asts)
             uniquify_types(asts)
+            scope_names = file_scope_names(asts)
             static_maps = uniquify_statics_map(asts)
             merged_ast = ast_module.TranslationUnit(items=[])
             for unit in asts:
@@ -1103,8 +1126,14 @@ def main() -> int:
         # through the map of that file.
         c_paths = [str(p) for p in input_paths if p.suffix.lower() != ".mac"]
         target_pragmas = resolve_pragma_names(
-            target_pragmas, pragma_units, static_maps)
+            target_pragmas, pragma_units, static_maps, scope_names)
         resolve_found_names(sdcc_found, c_paths, static_maps)
+        for e in args.entry:
+            if sum(e in m for m in static_maps) > 1:
+                raise CodegenError(
+                    f"--entry {e}: '{e}' is a static function or variable "
+                    f"in more than one file, so the name does not tell "
+                    f"which one is meant")
         roots = _roots_from_options(
             args.entry, target_pragmas, sdcc_found.isrs,
             _ambiguous_functions(asts, [str(p) for p in input_paths
@@ -1186,14 +1215,14 @@ def main() -> int:
         for n in sorted(gen.asm_isrs):
             if not _defines_label(code, mac_files, label_of(n)):
                 raise CodegenError(
-                    f"'{n}' is named as an interrupt function and declared "
+                    f"'{source_name(n)}' is named as an interrupt function and declared "
                     f"here, but no assembly file defines {label_of(n)}")
         for n in sorted(roots.keep):
             if (n not in gen.ctx.globals
                     and not _defines_label(code, mac_files, label_of(n))):
                 raise CodegenError(
-                    f"'{n}' is named by --entry or #pragma uc80 but the "
-                    f"program does not define it")
+                    f"'{source_name(n)}' is named by --entry or #pragma uc80 "
+                    f"but the program does not define it")
 
         if rom:
             problems = _rom_problems(gen, code)

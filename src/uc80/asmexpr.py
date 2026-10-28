@@ -78,6 +78,8 @@ def parse_m80_number(text: str):
     """(value, base) of a MACRO-80 number such as 0FFH, 101B, 17Q, 255."""
     s = text.lower()
     try:
+        if re.fullmatch(r"0x[0-9a-f]+", s):     # um80 reads C hex too
+            return int(s[2:], 16), 16
         if s.endswith("h") and re.fullmatch(r"[0-9a-f]+h", s):
             return int(s[:-1], 16), 16
         if s.endswith("b") and re.fullmatch(r"[01]+b", s):

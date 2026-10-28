@@ -21,6 +21,7 @@ references that reach the file-scope static.
 from __future__ import annotations
 
 import dataclasses
+import re
 
 from uc_core import ast
 
@@ -110,7 +111,28 @@ class _Renamer:
             elif dataclasses.is_dataclass(v) and not isinstance(v, ast.Token):
                 yield v
 
+    def asm_text(self, node) -> None:
+        """User assembly names a C object by its assembler symbol (``_h``
+        for ``h``): give a renamed static the new symbol there too.  The
+        template is still source text here, so ``\\n_h`` is a symbol after
+        a line break."""
+        pieces = []
+        for lit in node.template or ():
+            text = lit.value.text
+            for old, new in self.mapping.items():
+                text = re.sub(
+                    r"(?:(?<![\w@?$.])|(?<=\\[ntr]))_%s(?![\w@?$.])"
+                    % re.escape(old), "_" + new, text)
+            pieces.append(text)
+        for lit, text in zip(node.template or (), pieces):
+            if text != lit.value.text:
+                object.__setattr__(lit, "value", dataclasses.replace(
+                    lit.value, text=text))
+
     def walk(self, node) -> None:
+        if isinstance(node, ast.AsmDeclaration):
+            self.asm_text(node)
+            return
         if isinstance(node, ast.Identifier):
             name = node.name.text
             if name in self.mapping and not self.hidden(name):
@@ -175,6 +197,12 @@ class _Renamer:
         for item in fn.body.items or ():
             self.walk(item)
         self.scopes.pop()
+
+
+def file_scope_names(units) -> list[tuple[set, set]]:
+    """For each unit, (all file-scope names, names with internal linkage).
+    Call it before ``uniquify_statics_map`` renames anything."""
+    return [_file_scope_names(u) for u in units]
 
 
 def uniquify_statics(units) -> int:

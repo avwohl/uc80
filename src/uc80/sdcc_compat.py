@@ -418,16 +418,18 @@ def naked_mismatches(asts, paths, found: Found) -> list:
                     if tok is not None:
                         protos.append((tok.text, path, tok.line))
     out = []
+    # a static that the merge renamed (h__s0) is shown by its C name
+    shown = lambda name: re.sub(r"__s\d+$", "", name)
     for name, f, l in sorted(proto_marks):
         if name in defined and name not in naked_defs:
             df, dl = defined[name]
-            out.append(f"{f}:{l}: the prototype of '{name}' is naked, but "
+            out.append(f"{f}:{l}: the prototype of '{shown(name)}' is naked, but "
                        f"the definition at {df}:{dl} is not, so the function "
                        f"gets a normal frame code and RET. Write __naked "
                        f"on the definition")
     for name, f, l in protos:
         if name in naked_defs and (name, f, l) not in proto_marks:
-            out.append(f"{f}:{l}: '{name}' is naked in its definition, but "
+            out.append(f"{f}:{l}: '{shown(name)}' is naked in its definition, but "
                        f"this declaration is not; write __naked on every "
                        f"declaration of the function")
     return out

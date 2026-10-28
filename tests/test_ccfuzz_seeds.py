@@ -39,6 +39,7 @@ def _ccfuzz():
     (90258, "--no-ast-optimize"),
     (80548, "-O0"),
     (80548, ""),
+    (777109, "--no-shared-storage"),   # an IY wrap spanned an earlier call group
 ])
 def test_ccfuzz_seed_matches_the_host(tmp_path, seed, flags):
     mod = _ccfuzz()

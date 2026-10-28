@@ -176,7 +176,8 @@ Each repro is a complete file or file pair. The uc80 commands are
 `uc80 FILES -o x.mac`, and `um80` where it is said.
 
 1. **Whole-program mode shares or rejects file-scope statics of the same
-   name.** `a1.c`: `static const char *names[10];` and a function that
+   name.** (Fixed: the compiler now renames the statics of each file, see
+   `multi_unit.py`. The text below says how the old compiler behaved.) `a1.c`: `static const char *names[10];` and a function that
    uses it. `a2.c`: `static const char *names[30];` and `main`. Then
    `uc80 a1.c a2.c` stops with "conflicting types for 'names': array of
    30 element(s) redeclares an array of 10 element(s)". With

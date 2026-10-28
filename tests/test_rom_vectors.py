@@ -562,9 +562,27 @@ def test_im2_start_up_code_fits_below_the_table(flow, tmp_path, libs):
 
 # ---- names in more than one file ---------------------------------------------
 
-def _build_files(tmp_path, files):
+def _build_files(tmp_path, files, flow="um80", rom_libs=None):
+    """Build several C files in one program (um80/ul80 or the sdas flow)."""
+    if flow == "sdas" and not HAVE_SDAS:
+        pytest.skip("needs the SDCC sdas tools")
+    if flow == "um80" and not HAVE_UM80:
+        pytest.skip("needs um80 and ul80")
     for name, text in files.items():
         (tmp_path / name).write_text(text)
+    if flow == "sdas":
+        from uc80 import sdas
+        _run(uc80_cmd("--target=rom", "--asm-syntax=sdas", "-I", INC,
+                      "--rom-size", "8000", *files, "-o", "t.s"), tmp_path)
+        _run(["sdasz80", "-g", "-l", "-o", "t.s"], tmp_path)
+        origin = sdas.code_origin_of((tmp_path / "t.s").read_text()) or 0x68
+        _run(["sdldz80", *sndrom.sdas_link_flags(origin=origin), "-i", "-j",
+              "t.ihx", "t.rel", "-l", str(rom_libs / "uc80_lc.lib"),
+              "-l", str(rom_libs / "uc80_rt.lib")], tmp_path)
+        _run(["sdobjcopy", "-I", "ihex", "-O", "binary", "t.ihx", "t.bin"],
+             tmp_path)
+        sndrom.noi_to_sym(tmp_path / "t.noi", tmp_path / "t.sym")
+        return tmp_path / "t.bin", tmp_path / "t.sym"
     _run(uc80_cmd("--target=rom", *files, "-o", "t.mac"), tmp_path)
     _run(["um80", "t.mac", "-o", "t.rel"], tmp_path)
     _run(["ul80", "--bin", "-p", "0", "-d", "F800", "--rom-data",
@@ -595,11 +613,13 @@ int main(void)
 """
 
 
-@pytest.mark.skipif(not HAVE_UM80, reason="needs um80 and ul80")
-def test_two_static_handlers_of_one_name_each_bind_in_their_own_file(tmp_path):
+@pytest.mark.parametrize("flow", FLOWS)
+def test_two_static_handlers_of_one_name_each_bind_in_their_own_file(
+        flow, tmp_path, libs):
     """A pragma resolves in its own file: slot 1 is the h of a.c (h__s0),
     slot 2 is the h of b.c (h__s1).  The code runs: x and y both count."""
-    paths = _build_files(tmp_path, {"a.c": A_C % "im2", "b.c": B_C % "im2"})
+    paths = _build_files(tmp_path, {"a.c": A_C % "im2", "b.c": B_C % "im2"},
+                         flow, libs)
     m = machine(paths)
     for k in range(4):
         m.add_irq_at(4000 + 2000 * k, 0x02)      # slot 1: h of a.c
@@ -609,8 +629,9 @@ def test_two_static_handlers_of_one_name_each_bind_in_their_own_file(tmp_path):
     assert m.peek8("_x") == 4 and m.peek8("_y") == 8
 
 
-@pytest.mark.skipif(not HAVE_UM80, reason="needs um80 and ul80")
-def test_the_interrupt_pragma_binds_to_the_static_of_its_own_file(tmp_path):
+@pytest.mark.parametrize("flow", FLOWS)
+def test_the_interrupt_pragma_binds_to_the_static_of_its_own_file(
+        flow, tmp_path, libs):
     a = ("#pragma uc80 interrupt h\nvolatile unsigned char x;\n"
          "static void h(void) { x++; }\n")
     b = ("extern volatile unsigned char x;\nvolatile unsigned char y;\n"
@@ -618,7 +639,7 @@ def test_the_interrupt_pragma_binds_to_the_static_of_its_own_file(tmp_path):
          "int main(void)\n{\n    __asm__(\"\\tim 1\\n\\tei\");\n"
          "    while (x < 3)\n        ;\n    __asm__(\"\\tdi\");\n"
          "    return y;\n}\n")
-    paths = _build_files(tmp_path, {"a.c": a, "b.c": b})
+    paths = _build_files(tmp_path, {"a.c": a, "b.c": b}, flow, libs)
     m = machine(paths)
     for k in range(3):
         m.add_irq_at(4000 + 2000 * k, 0xFF)
@@ -722,3 +743,155 @@ def test_a_naked_im2_handler_has_no_prologue(flow, spelling, tmp_path, libs):
     res = m.run(max_tstates=300_000)
     assert res.reason == "halt", res
     assert m.peek8("_n") == 3
+
+
+# ---- rst n is a call to an unknown routine (register locals) ---------------------
+
+RST_CLOBBER = """
+volatile unsigned r;
+#pragma uc80 rst 10h soft
+void soft(void) __naked { __asm__("\\tld bc,0\\n\\tld de,0\\n\\tld iy,0\\n\\tret\\n"); }
+static void f(void) { __asm__("\\trst 10h"); }
+struct P { unsigned x; struct P *next; };
+static unsigned walk(struct P *p)
+{
+    unsigned t = 0;
+    while (p) { t += p->x; f(); p = p->next; }
+    return t;
+}
+int main(void)
+{
+    struct P c = {300, 0}, b = {20, &c}, a = {1, &b};
+    unsigned i, s = 0;
+    for (i = 0; i < 5; i++) { f(); s += i; }
+    r = s * 1000 + walk(&a);
+    return 0;
+}
+"""
+
+RST_CLOBBER_C = """
+volatile unsigned r;
+static void helper(void) __naked { __asm__("\\tld bc,0\\n\\tld de,0\\n\\tret\\n"); }
+#pragma uc80 rst 10h soft
+void soft(void) { helper(); }
+static void f(void) { __asm__("\\trst 10h"); }
+int main(void)
+{
+    unsigned i, s = 0;
+    for (i = 0; i < 5; i++) { f(); s += i; }
+    r = s;
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+@pytest.mark.parametrize("src,want", [(RST_CLOBBER, 10321), (RST_CLOBBER_C, 10)],
+                         ids=["naked", "c-handler"])
+def test_rst_in_asm_clobbers_like_a_call(flow, src, want, tmp_path, libs,
+                                         monkeypatch):
+    """rst n reaches a handler that may change BC, DE and IY: the register
+    locals of the callers are saved around the call of f."""
+    for iy in ("0", "1"):
+        monkeypatch.setenv("UC80_NO_IY", iy)
+        d = tmp_path / ("iy" + iy)
+        d.mkdir()
+        paths = build(d, src, flow, libs)
+        m = machine(paths)
+        res = m.run(max_tstates=400_000)
+        assert res.reason == "halt", res
+        assert m.peek16("_r") == want % 65536
+
+
+# ---- user assembly names a static of its own file ------------------------------
+
+ASM_A = """
+volatile unsigned char out_a, out_b;
+static unsigned char cnt;
+static void helper(void) { out_a = 11; }
+void nk_call(void) __naked { __asm__("\\tcall _helper\\n\\tret\\n"); }
+void bump(void) { __asm__("\\tld a,(_cnt)\\n\\tinc a\\n\\tld (_cnt),a\\n"); }
+int geta(void) { return cnt; }
+"""
+ASM_B = """
+extern volatile unsigned char out_a, out_b;
+static unsigned char cnt;
+static void helper(void) { out_b = 22; }
+void nk_call(void);
+void bump(void);
+int geta(void);
+void nk_b(void) { helper(); }
+volatile int r;
+int main(void)
+{
+    nk_call(); nk_b(); bump(); bump(); bump(); cnt = 40;
+    r = geta() * 100 + cnt;
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_asm_text_reaches_the_static_of_its_own_file(flow, tmp_path, libs):
+    """Two files each define static helper and static cnt.  The asm text
+    of a.c says _helper and _cnt: both mean the objects of a.c."""
+    paths = _build_files(tmp_path, {"a.c": ASM_A, "b.c": ASM_B}, flow, libs)
+    m = machine(paths)
+    res = m.run(max_tstates=400_000)
+    assert res.reason == "halt", res
+    assert m.peek8("_out_a") == 11 and m.peek8("_out_b") == 22
+    assert m.peek16("_r") == 340
+
+
+# ---- messages of the pragmas with several files --------------------------------
+
+def _compile_files(tmp_path, files, *flags):
+    for name, text in files.items():
+        (tmp_path / name).write_text(text)
+    return subprocess.run(uc80_cmd("--target=rom", *flags, *files, "-o",
+                                   "t.mac"), cwd=tmp_path,
+                          capture_output=True, text=True)
+
+
+def test_a_pragma_cannot_name_a_static_of_another_file(tmp_path):
+    r = _compile_files(tmp_path, {
+        "a.c": "#pragma uc80 im2 1 h\nint main(void) { return 0; }\n",
+        "c.c": "static void h(void) { }\nvoid c_call(void) { h(); }\n"})
+    assert r.returncode == 1
+    assert "a.c:1: #pragma uc80 im2: 'h' is not defined in this file" \
+        in r.stderr, r.stderr
+    assert "c_call" not in r.stderr
+
+
+def test_messages_show_the_c_name_of_a_renamed_static(tmp_path):
+    r = _compile_files(tmp_path, {
+        "a.c": "#pragma uc80 vector 38h h\nstatic void h(void) { }\n",
+        "b.c": "#pragma uc80 vector 38h h\nstatic void h(void) { }\n"
+               "int main(void) { return 0; }\n"})
+    assert r.returncode == 1
+    assert "the INT (38h) vector is already set to h" in r.stderr, r.stderr
+    assert "__s" not in r.stderr, r.stderr
+
+
+def test_entry_names_a_static_of_two_files_is_ambiguous(tmp_path):
+    r = _compile_files(tmp_path, {
+        "a.c": "static void h(void) { }\n",
+        "b.c": "static void h(void) { }\nint main(void) { return 0; }\n"},
+        "--entry", "h")
+    assert r.returncode == 1
+    assert "'h' is a static function or variable in more than one file" \
+        in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_asm_text_with_c_style_hex_builds_in_both_flows(flow, tmp_path, libs):
+    src = """
+volatile unsigned r;
+void setter(void) __naked { __asm__("\\tld hl,0x5A5A\\n\\tld (_r),hl\\n\\tret\\n"); }
+int main(void) { setter(); return 0; }
+"""
+    paths = build(tmp_path, src, flow, libs)
+    m = machine(paths)
+    res = m.run(max_tstates=100_000)
+    assert res.reason == "halt", res
+    assert m.peek16("_r") == 0x5A5A
