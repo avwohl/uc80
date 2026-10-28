@@ -241,6 +241,88 @@ def test_programs_match_host(tmp_path, flags):
     assert run_mac(tmp_path, mac) == EXPECT
 
 
+LOOPS = r"""#include <stdio.h>
+#include <string.h>
+typedef unsigned short U;
+struct s4 { unsigned char b[4]; };
+struct s3 { unsigned char b[3]; };
+struct s4 g4[4];
+struct s3 g3[4];
+unsigned char buf[32];
+
+static U sum_bytes(const unsigned char *p, U len)
+{
+    U s = 0, i;
+    for (i = 0; i < len; i++)
+        s = (U)(s * 31u + p[i]);
+    return s;
+}
+
+static U copy4(U n)
+{
+    U i;
+    for (i = 0; i < n; i++) {
+        unsigned char k = (unsigned char)(i & 3);
+        g4[k] = g4[(k + 1) & 3];
+        g4[k].b[i & 3] = (unsigned char)(g4[k].b[i & 3] + (unsigned char)i);
+    }
+    return sum_bytes(&g4[0].b[0], sizeof g4);
+}
+
+static U copy3(U n)
+{
+    U i;
+    for (i = 0; i < n; i++) {
+        unsigned char k = (unsigned char)(i & 3);
+        g3[k] = g3[(k + 2) & 3];
+        g3[k].b[i % 3] = (unsigned char)(g3[k].b[i % 3] + (unsigned char)i);
+    }
+    return sum_bytes(&g3[0].b[0], sizeof g3);
+}
+
+static U mcopy(U n, unsigned char *p, const unsigned char *q)
+{
+    U i, j, t = 0;
+    for (i = 0; i < n; i++) {
+        memcpy(p + (i & 7), q + (i & 3), 3);
+        memcpy(buf + (i & 15), p, 4);
+        memset(buf + 16 + (i & 7), (int)i, 2);
+        for (j = 0; j < 2; j++)
+            t += buf[(i + j) & 31];
+    }
+    return t + sum_bytes(buf, 32) + i + j;
+}
+
+int main(void)
+{
+    unsigned char a[16], b[16];
+    int i;
+    for (i = 0; i < 4; i++) { memset(&g4[i], i + 1, 4); memset(&g3[i], 9 - i, 3); }
+    for (i = 0; i < 16; i++) { a[i] = i * 5; b[i] = i * 7 + 1; }
+    printf("%u\n", copy4(100));
+    printf("%u\n", copy3(100));
+    printf("%u\n", mcopy(50, a, b));
+    return 0;
+}
+"""
+
+
+@needs_run
+@pytest.mark.parametrize("flags", MODES)
+def test_loops_with_register_locals_around_ldi(tmp_path, flags):
+    _, mac = compile_mac(tmp_path, LOOPS, *flags)
+    assert run_mac(tmp_path, mac) == '22210\n16861\n22758\n'
+
+
+def test_loop_variable_stays_in_bc_around_ldi(tmp_path):
+    mac, _ = compile_mac(tmp_path, LOOPS, "--no-inlining")
+    body = func(mac, "copy4")
+    assert "\tldi\n" in body
+    # the loop counter is in BC: no reload of the counter from memory
+    assert body.count("push\tBC") <= 2
+    assert "inc\tBC" in body
+
+
 SHAPES = r"""
 #include <string.h>
 char a[100], b[100];
