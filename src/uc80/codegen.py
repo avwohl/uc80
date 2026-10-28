@@ -865,6 +865,30 @@ def _is_resolved_type(t) -> bool:
     return isinstance(t, _CoreRT)
 
 
+def _legacy_pointee(pt):
+    """The legacy type of the object that a pointer points to.  A volatile
+    qualifier written on a typedef-name (`volatile uint16_t *q`, or
+    `typedef volatile uint16_t vreg; vreg *q`) is kept: the conversion of
+    a typedef-name drops it, and without it a store through q was not a
+    volatile access (the compound forms wrote the high byte first).  A
+    copy carries the qualifier: the typedef itself stays as it is."""
+    base = _to_legacy(pt)
+    vol = False
+    x = pt
+    seen = 0
+    while _is_resolved_type(x) and seen < 16:
+        vol = vol or bool(x.is_volatile)
+        if x.kind != "typedef" or _ACTIVE_TYPEDEFS is None:
+            break
+        x = _ACTIVE_TYPEDEFS.get(x.name)
+        seen += 1
+    if (vol and isinstance(base, lt.BasicType)
+            and not getattr(base, "is_volatile", False)):
+        base = copy.copy(base)
+        base.is_volatile = True
+    return base
+
+
 def _to_legacy(t, ctx=None):
     """Convert a ResolvedType (either uc80- or uc_core-class) to its
     ast_legacy equivalent.
@@ -914,7 +938,8 @@ def _to_legacy(t, ctx=None):
         return lt.BasicType(name=t.name or "int", is_signed=t.is_signed,
                             is_const=t.is_const, is_volatile=t.is_volatile)
     if k == "pointer":
-        return lt.PointerType(base_type=_to_legacy(t.pointee),
+        base = _legacy_pointee(t.pointee)
+        return lt.PointerType(base_type=base,
                               is_const=t.is_const, is_volatile=t.is_volatile)
     if k == "array":
         return lt.ArrayType(base_type=_to_legacy(t.element), size=t.size_expr)
@@ -4396,7 +4421,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         self._annotate_typeof(unit)
         # *(volatile T *)K: a name at address K, so the global-variable
         # code paths apply (LD A,(K), LD (K),A, LD HL,(K)).
-        self.absolute.update(absaddr.rewrite(unit, self._const_int_operand))
+        self.absolute.update(absaddr.rewrite(
+            unit, self._const_int_operand, self._type_size))
         if self.isr_funcs:
             self._check_isr_functions(unit)
         # Build call graph for optimizations

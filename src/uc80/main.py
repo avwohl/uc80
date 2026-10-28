@@ -1849,6 +1849,13 @@ def main() -> int:
                         or r.name in gen.naked:
                     continue
                 if not whole_program:
+                    if (r.name not in roots.save_wa
+                            and not r.fixed and not r.unknown):
+                        # the global option on a handler that reaches no
+                        # work area and no routine of another module:
+                        # nothing to save, and a makefile may pass the
+                        # option to every module
+                        continue
                     raise CodegenError(
                         f"interrupt function '{source_name(r.name)}': "
                         f"saving the work areas needs the whole program "

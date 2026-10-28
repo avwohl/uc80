@@ -527,13 +527,17 @@ def prove_iy(work: Path, period=3000, rounds=120, nmis=100, start=40000):
     info = build_source(work / "iy", "iyptr.c", IY_SRC)
     if not info["ok"]:
         return dict(ok=False, why="build failed\n" + info["log"])
-    mac_path = work / "iy" / "k.mac"        # none with --sdas
-    mac = mac_path.read_text() if mac_path.exists() else ""
+    # the text of the compiler: k.mac (um80 flow) or k.s (sdas flow)
+    text = ""
+    for nm in ("k.mac", "k.s"):
+        if (work / "iy" / nm).exists():
+            text = (work / "iy" / nm).read_text()
     uses = {}
-    for fn in ("walk_main", "walk_isr", "mark") if mac else ():
-        body = mac.split(f"\n_{fn}:")[1].split(f"@{fn}_ret")[0] \
-            if f"\n_{fn}:" in mac else ""
-        uses[fn] = "(IY+" in body
+    for fn in ("walk_main", "walk_isr", "mark"):
+        body = ""
+        if f"\n_{fn}:" in text:
+            body = text.split(f"\n_{fn}:")[1].split("\n; Function ")[0]
+        uses[fn] = "(iy+" in body.lower()
     m = Machine(ram=NEOGEO["ram"], banks=None, ram_fill="random", sp="poison",
                 track=True)
     m.load_rom(str(info["bin"]))

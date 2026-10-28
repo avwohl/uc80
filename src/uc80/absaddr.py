@@ -99,7 +99,7 @@ class AbsoluteRewriter:
             i = self.const_int(node.index)
             if found is not None and i is not None:
                 addr, base = found
-                addr = (addr + i * _SIZES[base.name]) & 0xFFFF
+                addr = (addr + i * self.type_size(base)) & 0xFFFF
                 return ast.Identifier(name=_tok(self._symbol(addr, base)),
                                       pos=node.pos)
         return None

@@ -281,7 +281,7 @@ class PointerRewriter:
         if k is None:
             return None
         a = k + off
-        if a < 0 or a + _SIZES[rt.name] > 0x10000:
+        if a < 0 or a + self._size(rt) > 0x10000:
             return None
         return a, rt
 
@@ -524,7 +524,7 @@ class PointerRewriter:
         if p is not None:
             var, off, t, vol = p
             if vol and self._scalar_type(t):
-                var.site_list.append((off, _SIZES[t.name]))
+                var.site_list.append((off, self._size(t)))
             else:
                 var.value_uses += 1
             return True

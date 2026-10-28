@@ -109,7 +109,7 @@ The compiler does not save the blocks that hold state and not temporary values: 
 Three more limits apply:
 
 - The data labels of the libc modules (`sin`, `sqrt`, `printf`, and others) are private to the library. The compiler cannot name them, so it does not save these blocks and the warning stays. The compiler embeds the runtime blocks (`rt_*`), and the option saves them.
-- The option needs the whole program. With `--no-whole-program` the option is an error, because a routine of another module is invisible.
+- The option needs the whole program. With `--no-whole-program` the option is an error for a handler that reaches a work area or calls a routine of another module (that routine is invisible), and for the pragma. A handler that reaches nothing gets no save code and no message, so a makefile can pass the option to every module.
 - A handler that calls a routine that the compilation does not define (`extern` in `--no-whole-program`) gets a warning: the compiler cannot see the work areas or the alternate registers of that routine.
 
 The option does not cover the shared automatic storage (`??AUTO`) of the functions in your program. Use `--isr-safe` for that. The option does not cover the registers: the prologue saves them as before.
@@ -347,7 +347,7 @@ Limits:
 - A non-const pointer holds its constant from the start. A read through the pointer before the first assignment (a read of address 0 in the C sense) reads the constant address.
 - A struct that you declare inside a function is found by its tag name, like any other struct. This limit is old. A local struct can have the same tag as a global struct with another layout. Then the compiler uses the global layout, with and without this pass.
 - An access that is outside the address space (`p[-3]` with `p` at 2, or a 16-bit access at FFFFh) is not changed. The pointer variable stays for such an access.
-- A compound write (`ch->w += 0x101`, `++`) to a 16-bit register writes the low byte first. The older code wrote the high byte first. After `--*p` the new code does not read the register again. The older code read the register twice. Both are inside the rules of C for a volatile access, but the access log is not equal to the older log in these cases.
+- A compound write (`ch->w += 0x101`, `++`) to a 16-bit register writes the low byte first. The older code wrote the high byte first. The rule is the same for a constant pointer and for any other pointer (a parameter, a global pointer), and for a plain store; SDCC writes the low byte first too. A pointer to `volatile T`, with T a typedef-name such as `uint16_t`, lost the qualifier in the compound path before this repair, so the high byte was written first there. After `--*p` the new code does not read the register again. The older code read the register twice. Both are inside the rules of C for a volatile access, but the access log is not equal to the older log in these cases.
 - A non-volatile target is not changed. Another C object can use the same memory, so the order of the accesses is not free.
 - The option `--no-direct-pointers` switches the pass off.
 
