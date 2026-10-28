@@ -9,6 +9,17 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-28: family H, part 2 (dead locals and overwritten stores) is done
+
+Part 2 of family H is in the code (branch `famh`, [dead_store.md](dead_store.md)). The pass is `src/uc80/deadstore.py`. It works on the AST of each function, before the address CSE pass. A local that no expression reads is removed with all its stores. A store that a later store of the same statement list overwrites is removed too. The rest of the right side stays as a statement when it has an effect (a call, `++`, a store, a volatile access). The pass repeats until nothing changes, so `count -= !flags[k]` goes first and then everything that only fed it. A global, a static, a volatile, a name under `&`, a parameter and a function with inline assembly, `setjmp` or a statement expression are never changed. `--no-dead-store` turns the pass off.
+
+Numbers: `bench/run.py` (uc80, size mode), 109 programs, against the tree with `--no-dead-store` (the tree of part 1). Status: no change. Image: 26 programs smaller, none bigger, total 775,324 to 774,814 bytes. T-states: 17 programs faster, 1 slower by 2 T-states (`embench-huffbench`, from a BSS that is 2 bytes smaller). Against SDCC 4.6.0 (`bench/report.py` method): size 0.9276 to 0.9216, whole image 0.8928 to 0.8879, T-states (speed mode) 0.5515 to 0.5466, without `sort-*` 0.6691 to 0.6624. uc80 is faster than SDCC on 62 of 78 programs (no change). Against the tree before part 1 (main, e28deae): size 0.9353, whole image 0.9000, T-states 0.5628, without `sort-*` 0.6844, 60 of 78.
+
+- Target of the section: `sieve` -46.13% T-states and -49 B (the dead `count`; the report estimated 48%). The ratio of its T-states to SDCC (speed mode) goes from 2.51 to 1.35.
+- Other programs: `fannkuch` -2.79% and -67 B, `dhrystone21` -0.55%, `embench-tarfind` -0.51% and -22 B, `whetstone` -0.26% and -43 B, `binary-trees` -54 B, `monop-size` -41 B, `coremark-unofficial` -34 B.
+- No change: `sieve+static` (its locals are `static`, and a store to a static stays), `queens`, `stanford-*`, `tak`, `snd-*`.
+- What is not done in family H: value CSE and inline LDIR for `memset` and `memcpy` with a constant size. The dead-store part has no flow graph: a store that is dead on some paths only stays.
+
 ## Status on 2026-10-27: family H, part 1 (address CSE and chained constant stores) is done
 
 Part 1 of family H is in the code (branch `famh`, [addr_cse.md](addr_cse.md)). The pass is `src/uc80/addrcse.py`. It works on the AST before the frames are sized. A repeated element address (`a[i]`, `a[i + 1]`, `p[i]`, `s.arr[i]`, `p->arr[i]`, `a[i][j]`) becomes one new pointer local. The register-locals pass can move the pointer to IY, BC or DE. A key can hold local variables, loads from named arrays and global scalars. A run of statements ends at an assignment to a variable of the key, a label, and (for a key with a load) a call, a store through a pointer, a store into the array of the load and a volatile access. A program with an interrupt function gets no key with a load. The statement `a[i] = b[j] = K` with a constant K that fits each target becomes one store for each target when a target is a byte. `--no-addr-cse` and `--no-chain-store` turn the parts off. The change of the register-locals pass for the names under `&` ([register_locals.md](register_locals.md)) comes with this part.
@@ -381,7 +392,7 @@ The `RegisterAllocator` class (`codegen.py:1010`) has bc and de descriptors with
 
 - Change (part 1 is done, see the status of 2026-10-27 at the top):
   - block-local CSE of pure address expressions. Invalidate on a write to the index variable or on a call. Done.
-  - a dead-store and dead-local pass (iterate, because removing `count -= !flags[k]` makes `!flags[k]` dead).
+  - a dead-store and dead-local pass (iterate, because removing `count -= !flags[k]` makes `!flags[k]` dead). Done, see the status of 2026-10-28.
   - inline `memset` and `memcpy` with a constant size as LDIR (`codegen.py:11064`, 11123-11130).
   - store a constant directly into each lvalue of a chain `a=b=K`. Done.
 - Test: pytest, `difftest.py`, bench towers, bubble, sieve.

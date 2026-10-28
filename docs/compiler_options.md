@@ -36,6 +36,8 @@ In the same mode, up to two scalar locals of a function live in BC or DE instead
 
 The pass computes a repeated element address (`a[i]` read and written, or `a[i]` and `a[i + 1]`) one time. The pass keeps the address in a new pointer local. `--no-addr-cse` computes each address again. The statement `a[i] = b[j] = 1;` makes one constant store for each target. `--no-chain-store` keeps the chain. [addr_cse.md](addr_cse.md) lists the rules and the debug switches.
 
+The dead-local pass removes a local that no expression reads, with all its stores, and a store that a later store of the same list overwrites. A right side with an effect (a call, `++`, a volatile access) stays as a statement. `--no-dead-store` keeps every store. [dead_store.md](dead_store.md) lists the rules and the debug switches.
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or
