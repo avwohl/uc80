@@ -6,6 +6,10 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Investigation: wrong ISR total with `--no-register-locals` (no compiler change)
+
+- A ROM program whose NMI handler sums a buffer that `main` fills gave isr_total 34336 at every NMI period with `--no-register-locals`. The cause is the test program, not the compiler or the library: the first NMI came at T-state 20000, while `main` was still in its fill loop (slower with every local in memory), so the handler summed a half-written buffer. With the first NMI later, or with a `ready` flag, every option set gives the host value. The program also uses `%` in `main`; the handler does not, so the work-area warning does not apply. New proof `isrproof.py memisr` (NMI function with `memset`, `memcpy`, struct copies and a helper call, against a Python model, a `ready` flag, and a count of nested entries) with tests for `ul80` (seven option sets: default, `--no-register-locals`, `--isr-safe`, `-O0`, `--no-inlining`, `--no-shared-storage`, `--no-register-cc`) and `--sdas`. Documented in [docs/rom.md](docs/rom.md): an NMI cannot be masked, so a short period nests the handler.
+
 ### Added
 
 - **RST vectors and IM 2 in the ROM target** ([docs/rom_hardware.md](docs/rom_hardware.md)). `#pragma uc80 rst ADDR NAME` binds a plain function (a software call target) to RST 08h to 30h, and `rst ADDR NAME interrupt [critical]` binds an interrupt function. `#pragma uc80 im2 SLOT NAME [critical]` and `#pragma uc80 im2table ADDR` select IM 2: the start-up code sets I and `IM 2`, and writes an aligned table of 128 vectors (an unbound slot points to a default `EI`, `RETI`). The compiler stops with an error for an address out of range, a vector or slot in use twice, and a misaligned table. A program with no such pragma has the same image as before. `bench/romrun` delivers an interrupt with a data bus byte (`add_irq_at(t, vec)`, `--irq-vec`), and no longer forces bit 0 of the IM 2 byte to 0. Tests: `tests/test_rom_vectors.py`, with `ul80` and with `--asm-syntax=sdas`.

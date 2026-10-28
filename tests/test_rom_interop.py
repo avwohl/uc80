@@ -84,6 +84,19 @@ def test_isr_proofs_with_sdas(sdas_isr_proofs, tmp_path):
                                            for b in range(2, 8)]
 
 
+@pytest.mark.parametrize("flags", [[], ["--no-register-locals"]])
+def test_nmi_function_with_memset_memcpy_with_sdas(
+        flags, sdas_isr_proofs, tmp_path):
+    saved = list(isrproof.UC80_FLAGS)
+    isrproof.UC80_FLAGS[:] = flags
+    try:
+        r = isrproof.prove_memisr(tmp_path)
+    finally:
+        isrproof.UC80_FLAGS[:] = saved
+    assert r["ok"], r
+    assert r["isr_total"] == 52504 and r["nested"] == 0
+
+
 ASM_PROGRAM = r"""
 #include <z80.h>
 unsigned char r;

@@ -573,8 +573,149 @@ def prove_iy(work: Path, period=3000, rounds=120, nmis=100, start=40000):
                 stack=m.stack_depth(top=0x10000))
 
 
+MEMISR_SRC = r"""
+#include "snd.h"
+#include <z80.h>
+#include <string.h>
+typedef unsigned short U; typedef unsigned char B;
+struct r3 { B a,b,c; }; struct r7 { B v[7]; };
+static struct r3 ia[4], ib[4];
+static struct r7 ja[3], jb[3];
+static const struct r7 jc[3] = {{{1,2,3,4,5,6,7}},{{9,8,7,6,5,4,3}},{{0}}};
+static B ibuf[64], jbuf[64];
+static const B kbuf[24] = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24};
+static volatile U isr_total, isr_n, nested;
+static volatile B ready, busy;
+static U sumb(const B *p, int n) { U s = 0; int i; for (i = 0; i < n; i++) s = (U)(s*31 + p[i] + 1); return s; }
+static U sumi(const B *p, int n) { U s = 0; int i; for (i = 0; i < n; i++) s = (U)(s*31 + p[i] + 1); return s; }
+#pragma uc80 nmi nmi_isr
+void nmi_isr(void)
+{
+    int k;
+    if (!ready || isr_n >= 60) return;
+    if (busy) nested++;
+    busy = 1;
+    k = isr_n & 3;
+    memset(ibuf, (B)isr_n, 5);
+    memcpy(ibuf+8, kbuf, 20);
+    memset(ibuf+30, 3, 4);
+    memcpy(ibuf+40, ibuf, 3);
+    ia[k] = ib[(k+1)&3]; ib[k].a = (B)isr_n; ja[k&1] = jc[1]; ja[2].v[k] = (B)k;
+    isr_total = (U)(isr_total + sumi(ibuf,64) + sumi((B*)ia,12) + sumi((B*)ja,21));
+    isr_n++;
+    busy = 0;
+}
+static U mainwork(void)
+{
+    U a = 1, b = 2, c = 3, t = 0; int i, j; B *p = jbuf;
+    for (i = 0; i < 40; i++) {
+        memset(p, (B)(i+a), 4);
+        memcpy(p+8, jbuf+32, 4);
+        memset(p+16, 0x5A, 9);
+        memcpy(p+32, p+48, 7);
+        for (j = 0; j < 3; j++) { a = (U)(a*3 + p[j] + j); b ^= a; c = (U)(c + b); }
+        jb[i%3] = jb[(i+1)%3]; jb[i%3].v[0] = (B)i;
+        t = (U)(t + a + b + c + sumb(jbuf,64) + sumb((B*)jb,21));
+    }
+    return t;
+}
+int main(void)
+{
+    U total = 0; int r;
+    for (r = 0; r < 64; r++) { jbuf[r] = (B)(r*5+1); ibuf[r] = (B)r; }
+    for (r = 0; r < 7; r++) jb[r%3].v[r] = (B)(r+9);
+    ready = 1;
+    for (r = 0; r < 10; r++) total = (U)(total + mainwork());
+    while (isr_n < 60) ;
+    out(0x10,(B)total); out(0x11,(B)(total>>8));
+    out(0x12,(B)isr_total); out(0x13,(B)(isr_total>>8));
+    out(0x14,(B)isr_n); out(0x15,(B)(isr_n>>8));
+    out(0x16,(B)nested);
+    out(PORT_END,0); return 0;
+}
+"""
+
+
+def _sum31(buf):
+    s = 0
+    for x in buf:
+        s = (s * 31 + x + 1) & 0xFFFF
+    return s
+
+
+def _model_memisr(nmis=60, rounds=10):
+    """Python model of MEMISR_SRC: (main total, isr total)."""
+    kbuf = list(range(1, 25)) + [0] * 40
+    jc1 = [9, 8, 7, 6, 5, 4, 3]
+    ibuf = list(range(64))
+    ia = [[0, 0, 0] for _ in range(4)]
+    ib = [[0, 0, 0] for _ in range(4)]
+    ja = [[0] * 7 for _ in range(3)]
+    tot = 0
+    for n in range(nmis):
+        k = n & 3
+        ibuf[0:5] = [n & 255] * 5
+        ibuf[8:28] = kbuf[0:20]
+        ibuf[30:34] = [3] * 4
+        ibuf[40:43] = ibuf[0:3]
+        ia[k] = list(ib[(k + 1) & 3])
+        ib[k][0] = n & 255
+        ja[k & 1] = list(jc1)
+        ja[2][k] = k
+        flat = lambda rows: [x for r in rows for x in r]   # noqa: E731
+        tot = (tot + _sum31(ibuf) + _sum31(flat(ia)) + _sum31(flat(ja))) & 0xFFFF
+    jbuf = [(r * 5 + 1) & 255 for r in range(64)]
+    jb = [[0] * 7 for _ in range(3)]
+    for r in range(7):
+        jb[r % 3][r] = r + 9
+    total = 0
+    for _ in range(rounds):
+        a, b, c, t = 1, 2, 3, 0
+        for i in range(40):
+            jbuf[0:4] = [(i + a) & 255] * 4
+            jbuf[8:12] = jbuf[32:36]
+            jbuf[16:25] = [0x5A] * 9
+            jbuf[32:39] = jbuf[48:55]
+            for j in range(3):
+                a = (a * 3 + jbuf[j] + j) & 0xFFFF
+                b ^= a
+                c = (c + b) & 0xFFFF
+            jb[i % 3] = list(jb[(i + 1) % 3])
+            jb[i % 3][0] = i & 255
+            t = (t + a + b + c + _sum31(jbuf) + _sum31([x for r in jb for x in r])) & 0xFFFF
+        total = (total + t) & 0xFFFF
+    return total, tot
+
+
+def prove_memisr(work: Path, period=120011):
+    """memset, memcpy, struct copies and a helper call in an NMI function
+    while main does the same on other buffers.  The handler ignores the
+    NMIs that arrive before main has initialised the buffers (ready) and
+    counts a nested entry (a period shorter than the handler)."""
+    info = build_source(work / "memisr", "memisr.c", MEMISR_SRC)
+    if not info["ok"]:
+        return dict(ok=False, why="build failed\n" + info["log"])
+    m = Machine(ram=NEOGEO["ram"], banks=None, ram_fill="random", sp="poison",
+                track=True)
+    m.load_rom(str(info["bin"]))
+    m.load_symbols(str(info["sym"]))
+    m.magic_ports.add(0xFF)
+    m.add_nmi_every(period, start=20000, count=2000)
+    res = m.run(max_tstates=400_000_000)
+    got = {p & 0xFF: v for (_t, k, p, v) in m.port_log if k == "OUT"}
+    word = lambda lo: got.get(lo, 0) | (got.get(lo + 1, 0) << 8)   # noqa: E731
+    exp_main, exp_isr = _model_memisr()
+    ok = (res.reason.startswith("port:") and word(0x14) == 60
+          and got.get(0x16) == 0
+          and word(0x10) == exp_main and word(0x12) == exp_isr
+          and m.rom_writes == [])
+    return dict(ok=ok, nmis=word(0x14), nested=got.get(0x16),
+                main_total=word(0x10), exp_main=exp_main,
+                isr_total=word(0x12), exp_isr=exp_isr, reason=res.reason)
+
+
 PROOFS = {"nmi": prove_nmi, "seq": prove_seq, "bank": prove_bank,
-          "iy": prove_iy}
+          "iy": prove_iy, "memisr": prove_memisr}
 
 
 def main(argv=None):
