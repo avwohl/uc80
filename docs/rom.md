@@ -107,7 +107,10 @@ In whole-program mode the compiler removes each function that no code calls, and
 - `--entry NAME` (repeatable) is the same as `#pragma uc80 keep NAME`. The option also has a second use: a ROM program may have no `main`. The start-up code then calls the first `--entry` function in place of `main`. A ROM program with no `main` and no `--entry` is an error.
 - A kept function has the same storage rules as a function whose address the code takes. No other function shares the local storage of the kept function, because hardware can enter the function at any time.
 - A function in a `vector` pragma is kept. The vector becomes `JP _NAME`. The compiler gives an error when a `vector` pragma and an assembly `__int_handler` (or `__nmi_handler`) both set the same vector.
-- The compiler gives an error in three cases: an unknown pragma verb, a vector address that is not 08h to 30h (a multiple of 8), 38h or 66h, and a name that the program does not define.
+- The compiler gives an error in three cases:
+  - an unknown pragma verb
+  - a vector address that is not 08h to 30h (a multiple of 8), 38h or 66h
+  - a name that the program does not define
 
 A C function in a `vector` pragma has no interrupt prologue and no `RETI`. It ends with `RET`. The compiler prints a warning for each such `vector` pragma. Use a `vector` target only for code that handles this itself. For a real interrupt function, use `#pragma uc80 interrupt NAME` or `#pragma uc80 nmi NAME`: these set the vector for you and print no warning.
 
@@ -170,7 +173,7 @@ This change also makes the CP/M images that use these modules smaller, because t
 - A call of an interrupt function from C is an error. A handler cannot take arguments or return a value.
 - The heap and `sprintf` are not available.
 - The helpers of the runtime keep their temporaries at fixed RAM addresses. A routine that an interrupt handler and the main program both call can fail. The compiler prints a warning with the call chain when a handler reaches such a routine. Do not call long division, 64-bit arithmetic or float in a handler that the main program shares them with.
-- The float division of uc80 and the math library use the alternate registers. Assembly code can too. The prologue of a handler saves the alternate registers when the handler reaches code that uses them.
+- The float division of uc80 (`__fdiv`) uses the alternate registers. Assembly code can too. The prologue of a handler saves the alternate registers when the handler reaches code that uses them.
 - Each C object that the program defines is one object of one module. A second C file does not get its own BSS block (the plan lists this as optional).
 
 ## Refused spellings

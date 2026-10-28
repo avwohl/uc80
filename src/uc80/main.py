@@ -1817,15 +1817,23 @@ def main() -> int:
                 if not (args.isr_save_workareas or r.name in roots.save_wa) \
                         or r.name in gen.naked:
                     continue
-                plan, _skipped = isr_check.save_plan(graph, r)
+                if not whole_program:
+                    raise CodegenError(
+                        f"interrupt function '{source_name(r.name)}': "
+                        f"saving the work areas needs the whole program "
+                        f"(the labels of the runtime work areas are private "
+                        f"to the library, and a routine of another module "
+                        f"is invisible); drop --no-whole-program, or save "
+                        f"the areas in a naked handler")
+                plan, _skipped, saved = isr_check.save_plan(graph, r)
                 if plan:
                     wa_plan[r.name] = plan
-                    wa_saved[r.name] = {b for b, _l, _n in plan}
+                    wa_saved[r.name] = saved
                     nbytes, tstates = isr_check.wa_cost(plan)
                     print(f"uc80: note: interrupt function "
                           f"'{source_name(r.name)}' saves and restores the "
                           f"work areas of "
-                          f"{', '.join(b for b, _l, _n in plan)} "
+                          f"{', '.join(sorted(saved))} "
                           f"({sum(n for _b, _l, n in plan)} bytes of RAM, "
                           f"{nbytes} bytes of code, {tstates} T-states for "
                           f"each interrupt)", file=sys.stderr)

@@ -118,9 +118,10 @@ def test_the_work_areas_survive_with_the_option(
 
 
 @pytest.mark.parametrize("flow", FLOWS)
-def test_only_the_reached_areas_are_saved(flow, tmp_path, libs):
-    """A handler that only multiplies reaches no division area: the save
-    code covers __tmp32 (inline multiply) and nothing else."""
+def test_a_handler_that_reaches_no_work_area_gets_no_save(
+        flow, tmp_path, libs):
+    """A handler that only counts reaches no work area: the option adds
+    no save code and prints no note."""
     src = """
 #include <stdint.h>
 volatile uint32_t a = 70000, b = 3, r;
@@ -145,9 +146,10 @@ def test_a_state_block_is_warned_not_saved(tmp_path):
     r = compile_text(tmp_path, """
 #include <stdlib.h>
 volatile long r;
+volatile unsigned long u = 5;
 volatile char buf[8] = "123";
 #pragma uc80 interrupt isr
-void isr(void) { r = strtol((const char *) buf, 0, 10); }
+void isr(void) { r = strtol((const char *) buf, 0, 10); u = u * 3 / 7; }
 int main(void) { return 0; }
 """, "--isr-save-workareas")
     assert r.returncode == 0, r.stderr
@@ -324,3 +326,225 @@ def test_isr_safe_covers_a_function_reached_through_a_pointer(
             assert "'work' is called from an interrupt function" in err
     assert results[True] == sum(range(300)) & 0xFFFF
     assert results[False] != results[True]
+
+
+# ---- 64-bit and floating-point work areas ----------------------------------
+# The embedded runtime lays the work areas out in its own order, not in the
+# order of the lib files: the save covers the labels as the program text
+# places them.
+
+U64 = r"""
+#include <stdint.h>
+volatile uint64_t out;
+volatile uint64_t iu;
+volatile uint16_t isr_n;
+%s
+void isr(void)
+{
+    uint64_t q = iu + 0x123456789ULL;
+    iu = q * 3 + q / ((isr_n & 7) + 3) + q %% 11;
+    isr_n++;
+}
+int main(void)
+{
+    uint64_t s = 0;
+    __asm__("\tei");
+    for (uint16_t i = 1; i < 60; i++) {
+        volatile uint64_t x = 0x100000001ULL * i;
+        s += x * 5 + x / (i + 3) + x %% 7;
+    }
+    __asm__("\tdi");
+    out = s;
+    return 0;
+}
+"""
+
+FLOAT = r"""
+#include <stdint.h>
+volatile float out;
+volatile float fv = 1.5f;
+volatile uint16_t isr_n;
+%s
+void isr(void)
+{
+    float v = fv * 1.25f / (float) ((isr_n & 7) + 1) + 0.5f;
+    fv = v - (float) isr_n;
+    isr_n++;
+}
+int main(void)
+{
+    float s = 0.0f;
+    __asm__("\tei");
+    for (uint16_t i = 1; i < 60; i++) {
+        volatile float x = 3.25f * (float) i;
+        s += x * 1.5f / (float) (i + 3) + x - 0.25f;
+    }
+    __asm__("\tdi");
+    out = s;
+    return 0;
+}
+"""
+
+FLOAT_SIN = r"""
+#include <stdint.h>
+#include <math.h>
+volatile double out;
+volatile double fv = 0.5;
+volatile uint16_t isr_n;
+%s
+void isr(void) { fv = sqrt(fv + 2.0) * sin(fv); isr_n++; }
+int main(void)
+{
+    double s = 0.0;
+    __asm__("\tei");
+    for (uint16_t i = 1; i < 12; i++)
+        s += sqrt((double) i) + sin((double) i);
+    __asm__("\tdi");
+    out = s;
+    return 0;
+}
+"""
+
+
+def run_wide(paths, kind, size, every):
+    m = machine(paths)
+    _p, source, vec = KINDS[kind]
+    if source == "nmi":
+        m.add_nmi_every(every, start=7000)
+        m.run(max_tstates=30_000_000)
+    else:
+        m.add_irq_every(every, start=7000, vec=vec)
+        assert m.run(max_tstates=60_000_000).reason == "halt"
+    return m, bytes(m.peek("_out", size))
+
+
+def baseline(paths, size):
+    m = machine(paths)
+    assert m.run(max_tstates=60_000_000).reason == "halt"
+    return bytes(m.peek("_out", size))
+
+
+WIDE = {"u64": (U64, 8, 400001), "float": (FLOAT, 4, 40001)}
+
+
+@pytest.mark.parametrize("what", sorted(WIDE))
+@pytest.mark.parametrize("kind", ["int", "nmi"])
+@pytest.mark.parametrize("flow", FLOWS)
+def test_wide_math_survives_with_the_option(what, kind, flow, tmp_path, libs):
+    """A main loop and a handler both do 64-bit or float math: the
+    result with the option equals the result without interrupts, and the
+    result without the option is wrong."""
+    src, size, every = WIDE[what]
+    d0 = tmp_path / "base"
+    d0.mkdir()
+    # the same program with an unused handler (no interrupt arrives)
+    pb, _e = build_flow(d0, {"t.c": src % KINDS[kind][0]}, flow, libs)
+    want = baseline(pb, size)
+    d1 = tmp_path / "opt"
+    d1.mkdir()
+    pa, err = build_flow(d1, {"t.c": src % KINDS[kind][0]}, flow, libs,
+                         extra=("--isr-save-workareas",))
+    assert "saves and restores the work areas" in err
+    m, got = run_wide(pa, kind, size, every)
+    assert m.peek16("_isr_n") > 5
+    assert got == want
+    assert m.rom_writes == []
+    d2 = tmp_path / "plain"
+    d2.mkdir()
+    pc, _e = build_flow(d2, {"t.c": src % KINDS[kind][0]}, flow, libs)
+    m, bad = run_wide(pc, kind, size, every)
+    assert bad != want
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_the_float_save_names_no_label_of_another_module(
+        flow, tmp_path, libs):
+    """No second copy of the float data: the program links without a
+    message about a duplicate symbol (sdas) and without rt_fdata."""
+    paths, err = build_flow(tmp_path, {"t.c": FLOAT % KINDS["int"][0]},
+                            flow, libs, extra=("--isr-save-workareas",))
+    assert (tmp_path / "t.bin").exists()
+    if flow == "um80":
+        assert "defined in" not in err
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_a_libc_work_area_is_warned_not_saved(flow, tmp_path, libs):
+    """The data labels of libc modules (sin, sqrt: _vm_pool, _sq_x) are
+    private to the library: the save cannot name them.  The warning stays,
+    and the program still links (no undefined label, no second copy)."""
+    paths, err = build_flow(tmp_path, {"t.c": FLOAT_SIN % KINDS["int"][0]},
+                            flow, libs, extra=("--isr-save-workareas",))
+    assert (tmp_path / "t.bin").exists()
+    assert "(work area of lc_vm)" in err
+    assert "saves and restores the work areas of rt_" in err
+    assert "lc_vm" not in err.split("saves and restores")[1].split("\n")[0]
+
+
+def test_the_option_is_an_error_without_the_whole_program(tmp_path):
+    r = compile_text(tmp_path, """
+#include <stdint.h>
+volatile uint64_t v;
+#pragma uc80 interrupt isr
+void isr(void) { v = v * 3 + v / 7; }
+""", "--isr-save-workareas", "--no-whole-program")
+    assert r.returncode == 1
+    assert "needs the whole program" in r.stderr
+
+
+# ---- what the analysis cannot see, and what it says about it ---------------
+
+def test_a_call_to_another_module_is_warned(tmp_path):
+    """A handler that calls a routine of another module: the compiler
+    cannot see the work areas of the routine, and says so."""
+    r = compile_text(tmp_path, """
+extern void helper(void);
+#pragma uc80 nmi isr
+void isr(void) { helper(); }
+""", "--no-whole-program")
+    assert r.returncode == 0, r.stderr
+    assert "calls '_helper'" in r.stderr
+    assert "which this compilation does not define" in r.stderr
+
+
+def test_a_call_inside_the_program_gives_no_such_warning(tmp_path):
+    r = compile_text(tmp_path, """
+static void helper(void) { }
+#pragma uc80 nmi isr
+void isr(void) { helper(); }
+int main(void) { return 0; }
+""")
+    assert "does not define" not in r.stderr
+
+
+def test_the_pointer_note_through_qsort(tmp_path):
+    """qsort calls the comparison through a trampoline in RAM: a call
+    through a pointer, and the comparison function is reached."""
+    r = compile_text(tmp_path, """
+#include <stdlib.h>
+volatile int a[4] = {3, 1, 2, 0};
+static int cmp(const void *x, const void *y)
+{ return *(const int *) x - *(const int *) y; }
+#pragma uc80 nmi isr
+void isr(void) { qsort((void *) a, 4, sizeof(int), cmp); }
+int main(void) { return 0; }
+""")
+    assert "calls through a function pointer (_isr -> _qsort)" in r.stderr
+    assert "cmp" in r.stderr.split("function pointer")[1].split("\n")[0]
+
+
+def test_the_pointer_note_lists_reached_functions_not_tables(tmp_path):
+    """The list of the note has the library functions that the handler
+    reaches (sin goes through the math VM), and no data table."""
+    r = compile_text(tmp_path, """
+#include <math.h>
+volatile double v;
+static const unsigned char tbl[4] = {1, 2, 3, 4};
+volatile unsigned char t;
+#pragma uc80 nmi isr
+void isr(void) { v = sin(v); t = tbl[t & 3]; }
+int main(void) { return 0; }
+""")
+    note = [l for l in r.stderr.splitlines() if "function pointer" in l][0]
+    assert "()" not in note
+    assert "tbl" not in note

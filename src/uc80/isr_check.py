@@ -48,6 +48,8 @@ class Region:
     indirect: bool = False         # calls through a function pointer
     addr_refs: set = field(default_factory=set)   # symbols named, not jumped to
     refs: set = field(default_factory=set)
+    calls: set = field(default_factory=set)       # CALL, JP, JR, RST targets
+    has_code: bool = False
     falls_through: bool = True
     next_label: str | None = None
 
@@ -65,6 +67,12 @@ class Graph:
     # the functions whose address is taken (when the label has a region)
     taken: set = field(default_factory=set)      # of the program (unit 0)
     unit_taken: dict = field(default_factory=dict)   # unit -> DW symbols
+    # the zeroed data (COMMON) of the program text in the order of the text:
+    # [(label, size)].  A label that shares its address with the label
+    # before has size 0.  Whole-program builds embed the work areas here,
+    # in a layout that differs from the lib files.
+    layout0: list = field(default_factory=list)
+    equ0: set = field(default_factory=set)         # EQU labels of unit 0
 
 
 def _eval_size(text: str, equs: dict):
@@ -151,18 +159,25 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
         meq = re.match(r"^EQU\s+(.*)$", body, re.I)
         if label is not None and meq:
             equs[label.upper()] = meq.group(1).strip()
+            if unit == 0:
+                graph.equ0.add(label)
         if label is not None and seg == "COMMON":
             # a work area of a library module (named COMMON block)
             if common:
                 graph.fixed[label] = common
-                pending.append(label)
+            pending.append(label)
         if seg == "COMMON":
             md = re.match(r"^(?:DS|DEFS)\s+(.*)$", body, re.I)
-            if md and common:
+            if md:
                 size = _eval_size(md.group(1), equs)
-                for lab in pending:
-                    graph.fixed_size[lab] = size
-                    graph.blocks.setdefault(common, []).append((lab, size))
+                if unit == 0:
+                    for i, lab in enumerate(pending):
+                        graph.layout0.append((lab, size if i == 0 else 0))
+                elif common:
+                    for lab in pending:
+                        graph.fixed_size[lab] = size
+                        graph.blocks.setdefault(common, []).append(
+                            (lab, size))
                 pending = []
             continue
         mdw = re.match(r"^(?:DW|DEFW|DD)\s+(.*)$", body, re.I)
@@ -184,6 +199,8 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
             continue
         if _DIRECTIVE.match(body):
             continue
+        if not re.match(r"^(DB|DW|DD|DEFB|DEFW)\b", body, re.I):
+            cur.has_code = True
         if _ALT.match(body):
             cur.uses_alt = True
         operands = body.split(None, 1)[1] if " " in body or "\t" in body \
@@ -191,6 +208,10 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
         for sym in _SYM.findall(operands):
             cur.refs.add(sym)
         op = up.split()[0] if up else ""
+        if op in _BRANCH and op not in ("RET", "RETI", "RETN"):
+            tgt = operands.split(",")[-1].strip()
+            if _SYM.fullmatch(tgt):
+                cur.calls.add(tgt)
         if op not in _BRANCH:
             cur.addr_refs.update(_SYM.findall(operands))
             if unit == 0:
@@ -201,6 +222,12 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
             cur.indirect = True
         prev_op = op
         cur.falls_through = not _TERMINAL.match(body)
+    # a call to a data label is a call through a trampoline in RAM (qsort
+    # writes JP compar there): an indirect call
+    data0 = {l for l, _s in graph.layout0} if unit == 0 else set()
+    for r in labels_here:
+        if any(c in graph.fixed or c in data0 for c in r.calls):
+            r.indirect = True
     for r in labels_here:
         if r.label in publics or not r.label.startswith(("@", "?")):
             if is_lib:
@@ -245,10 +272,12 @@ def taken_regions(g: Graph, extra=()) -> list:
 
 
 def _is_function(g: Graph, label: str) -> bool:
-    return label in g.regions and not label.startswith(("@", "?"))
+    r = g.regions.get(label)
+    return (r is not None and r.has_code
+            and not label.startswith(("@", "?")))
 
 
-def _reach(g: Graph, start: str, taken=()):
+def _reach(g: Graph, start: str, taken=(), with_taken=False):
     """BFS from ``start``: {label: parent label}.  A region that calls
     through a pointer (JP (HL) of ``__callhl``) reaches every label in
     ``taken``, and every function whose address a reached library routine
@@ -282,7 +311,7 @@ def _reach(g: Graph, start: str, taken=()):
                     parent[s] = cur
                     queue.append(s)
         if not indirect or seen_taken == taken:
-            return parent
+            return (parent, taken) if with_taken else parent
         taken = seen_taken
 
 
@@ -307,6 +336,9 @@ class IsrReport:
     indirect_chain: list | None = None       # path to a call through a pointer
     taken: list = field(default_factory=list)  # labels reached through it
     alt_users: dict = field(default_factory=dict)  # label -> chain
+    # labels that reached code calls or jumps to and that no text defines
+    # (a routine of another module): label -> chain
+    unknown: dict = field(default_factory=dict)
 
 
 # The blocks that hold state, not temporaries: an interrupt function that
@@ -320,19 +352,53 @@ STATE_BLOCKS = frozenset({
 
 
 def save_plan(g: Graph, rep: "IsrReport") -> tuple:
-    """([(block, first label, bytes)], [block, ...]): the work areas of
-    ``rep`` that the save code covers, and the reached blocks that it
-    cannot (state, or a size that the file does not give)."""
-    plan, skipped = [], []
+    """([(blocks, first label, bytes)], [block, ...], {block, ...}): the
+    areas that the save code copies, the reached blocks that it cannot
+    cover (state, or no size known), and the blocks it covers.
+
+    The addresses come from the program text (``layout0``), where the
+    whole-program build embeds the work areas: the order of the labels
+    there differs from the lib files.  Labels that follow each other in
+    the text join into one area.  A label that the program text does not
+    define is never named (a lib module that is not embedded would be
+    linked a second time)."""
+    index = {lab: i for i, (lab, _sz) in enumerate(g.layout0)}
+    chosen = {}                       # layout index -> block
+    skipped = []
     for block in sorted(rep.fixed):
-        labels = g.blocks.get(block)
-        sizes = [sz for _l, sz in labels or []]
-        if (block in STATE_BLOCKS or not labels or None in sizes
+        labels = [l for l, _s in g.blocks.get(block) or []]
+        here = [l for l in labels if l in index]
+        # a label that the reached code names counts even when the block
+        # list of the lib file lacks it
+        here += [l for l in rep.fixed[block][0]
+                 if l in index and l not in here]
+        sizes = [g.layout0[index[l]][1] for l in here]
+        if (block in STATE_BLOCKS or not here or None in sizes
                 or sum(sizes) == 0):
             skipped.append(block)
             continue
-        plan.append((block, labels[0][0], sum(sizes)))
-    return plan, skipped
+        for l in here:
+            chosen[index[l]] = block
+    plan, saved = [], set()
+    run = None                       # [first index, last index, blocks]
+    def flush():
+        if run is None:
+            return
+        lo, hi, blocks = run
+        size = sum(g.layout0[i][1] for i in range(lo, hi + 1))
+        first = g.layout0[lo][0]
+        if size:
+            plan.append((", ".join(sorted(blocks)), first, size))
+            saved.update(blocks)
+    for i in sorted(chosen):
+        if run is not None and i == run[1] + 1:
+            run[1] = i
+            run[2].add(chosen[i])
+        else:
+            flush()
+            run = [i, i, {chosen[i]}]
+    flush()
+    return plan, skipped, saved
 
 
 def analyze(code: str, isrs: dict, lib_dir: Path | None,
@@ -347,14 +413,26 @@ def analyze(code: str, isrs: dict, lib_dir: Path | None,
     reports = []
     for name, label in sorted(isrs.items()):
         rep = IsrReport(name, label)
-        parent = _reach(g, label, taken)
+        parent, reached_taken = _reach(g, label, taken, with_taken=True)
         order = sorted(parent, key=lambda x: (len(_chain(g, parent, x)), x))
         for lab in order:
             r = g.regions.get(lab)
             if r is not None and r.indirect:
                 rep.indirect_chain = _chain(g, parent, lab)
-                rep.taken = taken
+                rep.taken = sorted(
+                    t for t in reached_taken if t in parent)
                 break
+        for lab in order:
+            r = g.regions.get(lab)
+            if r is None:
+                continue
+            for sym in sorted(r.calls):
+                if (sym not in g.regions and sym not in g.equ0
+                        and sym not in g.fixed and sym not in g.fixed_size
+                        and not sym.startswith(("@", "?", "$"))
+                        and not re.fullmatch(r"[0-9][0-9A-Fa-f]*[hH]?", sym)
+                        and sym not in rep.unknown):
+                    rep.unknown[sym] = _chain(g, parent, lab) + [sym]
         for lab in order:
             r = g.regions.get(lab)
             if r is not None and r.uses_alt:
@@ -379,6 +457,12 @@ def format_notes(reports: list) -> list:
     """Note lines: the handlers that call through a function pointer."""
     out = []
     for rep in reports:
+        if rep.indirect_chain and not rep.taken:
+            out.append(
+                f"interrupt function '{rep.name}' calls through a function "
+                f"pointer ({' -> '.join(rep.indirect_chain)}); the program "
+                f"takes the address of no function that uc80 can see")
+            continue
         if rep.indirect_chain:
             names = ", ".join(t.lstrip("_") or t for t in rep.taken[:8])
             more = (f" and {len(rep.taken) - 8} more"
@@ -398,6 +482,13 @@ def format_reports(reports: list, saved=None) -> list:
     warning for those."""
     out = []
     for rep in reports:
+        for sym, chain in sorted(rep.unknown.items()):
+            out.append(
+                f"interrupt function '{rep.name}' calls '{sym}' "
+                f"({' -> '.join(chain[:-1])}), which this compilation does "
+                f"not define; uc80 cannot see which work areas or alternate "
+                f"registers the routine uses, and the save of the work "
+                f"areas does not cover them")
         if rep.alt_chain:
             out.append(
                 f"interrupt function '{rep.name}' reaches code that uses "

@@ -322,7 +322,6 @@ Range for core work: 38 to 55 days. Linker numbers rest on a working prototype. 
 - COMMON blocks with initial bytes under `--rom-data`.
 - Reuse of the cpmemu Z80 core for the harness.
 - uc386 test impact of uc_core changes.
-- Per-ISR cycle cost of saving runtime temporaries.
 - Area names in the ngdevkit C build of the reporter.
 - The nullsound register contract.
 - YM2610 busy flag, Z80-side watchdog, ADPCM bus.

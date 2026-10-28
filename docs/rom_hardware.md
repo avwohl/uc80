@@ -43,7 +43,7 @@ An interrupt function with `EI` at the start never keeps its locals in the share
 
 ### Alternate registers
 
-The prologue also saves the alternate registers (`EX AF,AF'`, `EXX`) when the handler can reach code that uses them. The compiler checks the call graph of the final assembly, with the library sources for routines that are not in the program. The float division (`__fdiv`) and the functions of the math library use the alternate registers. Hand-written assembly can use them too. The compiler prints a warning that names the call chain:
+The prologue also saves the alternate registers (`EX AF,AF'`, `EXX`) when the handler can reach code that uses them. The compiler checks the call graph of the final assembly, with the library sources for routines that are not in the program. The float division (`__fdiv`) uses the alternate registers. Hand-written assembly can use them too. The compiler prints a warning that names the call chain:
 
 ```
 uc80: warning: interrupt function 'tick' reaches code that uses the alternate
@@ -92,36 +92,44 @@ NAME is an interrupt function (`interrupt`, `nmi`, `im2`, or `rst ... interrupt`
 
 The prologue of the handler copies each reached work area to the stack, after the register saves. The epilogue copies the area back, before the register restores. The main program then finds its temporary values as it left them.
  
-The compiler saves the whole COMMON block of each module that the handler reaches (the warning names the block, for example `rt_rem32`). An area of up to 6 bytes goes through the stack in words. A larger area goes with `LDIR`. The compiler prints a note with the cost.
+The compiler saves the work areas as the program text places them. The whole-program build puts the data of the runtime in one block of the program. The order there is not the order of the library files. The compiler takes the address and the size of each label from the program text.
+
+Labels that follow each other join into one area. The warning names the block of the library file, for example `rt_rem32`. An area of up to 6 bytes goes through the stack in words. A larger area goes with `LDIR`. The compiler prints a note with the cost.
 
 ```
 uc80: note: interrupt function 'isr' saves and restores the work areas of
-rt_rem32, rt_tmp32 (12 bytes of RAM, 43 bytes of code, 530 T-states for each
+rt_rem32, rt_tmp32 (12 bytes of RAM, 27 bytes of code, 592 T-states for each
 interrupt)
 ```
 
-The RAM figure is also the extra stack that each interrupt uses. Add it to the `--min-stack` figure of `ul80`.
+The RAM figure is also the extra stack that each interrupt uses. Add it to the `--min-stack` figure of `ul80`. A handler that starts with `EI` (the `interrupt` form) can get a nested interrupt during the save. The nested interrupt saves its own copy, and the stack figure of the note does not count this copy. Use `critical` or an NMI when the stack is small.
 
 The compiler does not save the blocks that hold state and not temporary values: `errno`, the heap, the table of `atexit` handlers, the signal table, the state of `strtok` and the file table. A handler that changes these changes them for good. For these blocks the warning stays.
 
+Three more limits apply:
+
+- The data labels of the libc modules (`sin`, `sqrt`, `printf`, and others) are private to the library. The compiler cannot name them, so it does not save these blocks and the warning stays. The compiler embeds the runtime blocks (`rt_*`), and the option saves them.
+- The option needs the whole program. With `--no-whole-program` the option is an error, because a routine of another module is invisible.
+- A handler that calls a routine that the compilation does not define (`extern` in `--no-whole-program`) gets a warning: the compiler cannot see the work areas or the alternate registers of that routine.
+
 The option does not cover the shared automatic storage (`??AUTO`) of the functions in your program. Use `--isr-safe` for that. The option does not cover the registers: the prologue saves them as before.
 
-Measured cost for one interrupt, from `bench/romrun` with one NMI (the figure of the compiler is the same within 2 T-states). The handler does the work in the first column:
+Measured cost for one interrupt, from `bench/romrun` with one NMI (the figure of the compiler is the same). The handler does the work in the first column:
 
 ```
 handler                  work areas saved                    RAM  code  T-states
 32-bit multiply          rt_tmp32                              4    16       106
-32-bit divide            rt_rem32, rt_tmp32                   12    43       530
-64-bit multiply          rt_acc64, rt_mul64                   32    54      1520
-64-bit divide            rt_acc64, rt_rem64                   32    54      1520
-float add                rt_fadd, rt_tmp32                    23    43       992
-float multiply           rt_fdata, rt_fmul, rt_tmp32          42    70      1878
-float divide             rt_fdata, rt_tmp32                   26    43      1118
+32-bit divide            rt_rem32, rt_tmp32                   12    27       592
+64-bit multiply          rt_acc64, rt_mul64                   32    27      1432
+64-bit divide            rt_acc64, rt_rem64                   32    27      1432
+float add                rt_fadd, rt_tmp32                    23    27      1054
+float multiply           rt_fdata, rt_fmul, rt_tmp32          34    27      1516
+float divide             rt_fdata, rt_tmp32                   18    27       844
 ```
 
 The handlers of `bench/rom/isrproof.py` (the NMI command queue, the YM2610 timer, the bank select and the IY walk) reach no work area. The option adds no byte and no T-state to them (`isrproof.py --save-workareas` gives the same results).
 
-Take a handler and a main loop that both do 32-bit arithmetic. Without the option the result is wrong. With the option the result is right. `tests/test_isr_workareas.py` runs this with IM 2, NMI and `interrupt`, in both flows.
+Take a handler and a main loop that both do 32-bit arithmetic. Without the option the result is wrong. With the option the result is right. `tests/test_isr_workareas.py` runs this with IM 2, NMI and `interrupt`, and also with 64-bit and float math, in both flows.
 
 ### Shared automatic storage
 
@@ -233,7 +241,7 @@ uc80: note: v.c:2: the INT (38h) vector jumps to __int_handler, the label of
 'tick'; link crt0_rom_vec.rel in place of crt0_rom.rel
 ```
 
-Two modules can bind two different vectors. Two modules that bind the same vector give the linker message for a symbol with two definitions.
+Two modules can bind two different vectors. Two modules that bind the same vector give a link error with `sdldz80`. `ul80` only prints a warning for the second definition (`defined in H and in H2`) and drops the second handler. Pass `--fatal-mult-def` to `ul80` to make this an error.
 
 ```
 uc80 --target=rom --no-whole-program main.c -o main.mac
@@ -379,6 +387,7 @@ Rules:
 - Register locals (BC, DE, IY) never change a naked function: no prologue is made, and the body is your text. A call to a naked function is a call like any other. The callee may change A, BC, DE, HL and IY. So a C caller saves a local in BC, DE or IY around the call. A function that calls a naked function is never IY-clean. You can change these registers in a naked function. You must keep IX and the stack. See [register_locals.md](register_locals.md).
 - The asm text of a file can name a `static` function or variable of the same file (`_helper`, `_cnt`). Suppose two files define a `static` with the same name. Then the compiler writes the private name of the file in the asm text (`_helper__s0`). The rule holds for `asm(...)` in a naked function, in a normal function and at file scope.
 - An asm text can use `0x5A5A` as a hex number. Both flows accept the number.
+- The interrupt check reads `JP (HL)` after `EX DE,HL` as a switch jump, not as a call through a pointer. Hand-written assembly that jumps to a computed address in this way is not an indirect call for the check. Use `CALL __callhl` or put another instruction between the two.
 - The interrupt check treats the body as opaque text. It follows each `_name` in the asm text as a call. So a C function that a naked handler calls counts as reached by the interrupt: `--isr-safe` and the shared-storage warning apply to the function. The compiler saves no registers for a naked handler, so the note about the alternate registers does not apply.
 
 A naked function as an interrupt function (`#pragma uc80 interrupt NAME [critical]`, `#pragma uc80 nmi NAME`, `__interrupt`): the vector jump goes to the label. The compiler writes no `EI`, no register saves and no `RETI` or `RETN`.
