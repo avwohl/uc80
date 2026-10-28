@@ -24,6 +24,7 @@ from uc_core.volatility import VolatileInfo, declared_names
 from uc_core.volatility import children as _children
 from .volatile_fence import VOL_BEGIN, VOL_END
 from . import absaddr
+from . import ptrabs
 from . import regcc
 from .reglocals_gen import RegLocalsMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
@@ -3681,6 +3682,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                  register_locals: bool = True,
                  naked_funcs: "set[str] | None" = None):
         self.module_name = module_name
+        # Name of the per-module BSS block (separate compilation), or None.
+        self.bss_block: str | None = None
+        # Accesses through a constant pointer made direct (ptrabs.py).
+        self.direct_pointers = True
+        self.direct_pointer_accesses = 0
         self.enable_register_locals = register_locals
         self._rl_debug = bool(os.environ.get("UC80_RL_DEBUG"))
         # Naked functions (SDCC __naked, [[uc80::naked]]): no frame code,
@@ -4518,6 +4524,24 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                                                           node=decl)
                         self.ctx.globals[nm] = Symbol(name=nm, sym_type=var_type, is_global=True)
 
+        # A pointer variable that holds one constant address: its accesses
+        # become accesses of a name at that address (ptrabs.py).
+        if self.direct_pointers:
+            new_decls, new_syms, n_changed = ptrabs.rewrite(
+                self, unit, set(self.public_names) | set(self.keep_names)
+                | set(self.foreign_asm_names))
+            if new_syms:
+                self.absolute.update(new_syms)
+                for decl in new_decls:
+                    for nm, full, _init, _fn in iter_var_decls(decl):
+                        self.ctx.globals[nm] = Symbol(
+                            name=nm, sym_type=_to_legacy(full),
+                            is_global=True)
+            if n_changed:
+                self.direct_pointer_accesses = n_changed
+                self._vol = VolatileInfo(unit)
+                self._vol_names = self._vol.file_names
+
         # Disambiguate globals whose case-folded names collide.  The MACRO-80
         # assembler we target is case-insensitive, so e.g. `int sprite` and
         # `const int SPRITE` both resolve to `_SPRITE` and the assembler
@@ -4850,14 +4874,18 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         #
         # Whole-program output is one module, so the blank COMMON block is
         # its alone: crt0 zeroes the region and the bytes stay out of the
-        # .com image.  Separate compilation cannot use it.  L80 overlays
-        # every module's blank COMMON at the same address -- that is what a
-        # common block is for -- so two units' uninitialized globals, and
-        # two units' ??AUTO regions, would land on top of each other and
-        # corrupt each other with nothing said.  There the storage goes in
-        # DSEG, which the linker gives each module its own space for.  It
-        # costs those bytes in the image, where they are already zero, so
-        # crt0 has nothing to do for them.
+        # .com image.  Separate compilation cannot use the BLANK block.  L80
+        # overlays every module's blank COMMON at the same address -- that
+        # is what a common block is for -- so two units' uninitialized
+        # globals, and two units' ??AUTO regions, would land on top of each
+        # other and corrupt each other with nothing said.  A separately
+        # compiled module therefore has ONE NAMED COMMON block of its own
+        # (`COMMON /uc_<stem>_<hash>/`, name made by main.py): the linker
+        # gives each name its own space after the blank block, and
+        # __BSS_START .. __BSS_END span all of them, so crt0 clears them
+        # and they stay out of the image.  Without a block name (callers
+        # that use the generator directly) the storage stays in DSEG, as
+        # before: the bytes cost image space and need no clearing.
         has_bss = uninit_globals or uninit_statics or (
             self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0)
 
@@ -4866,6 +4894,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             if self.whole_program:
                 self.ctx.emit(f"{BSS_BANNER_PREFIX} (zeroed by crt0)")
                 self.ctx.emit("\tcommon\t//")
+            elif self.bss_block:
+                self.ctx.emit(f"{BSS_BANNER_PREFIX} (zeroed by crt0, "
+                              f"block of this module)")
+                self.ctx.emit(f"\tcommon\t/{self.bss_block}/")
             else:
                 self.ctx.emit(f"{BSS_BANNER_PREFIX} -- DSEG, not COMMON, because")
                 self.ctx.emit("; the linker overlays every module's blank COMMON"

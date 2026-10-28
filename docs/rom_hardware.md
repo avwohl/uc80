@@ -314,7 +314,52 @@ The compiler also treats a volatile integer object at a constant address like th
 REG8 |= 4;           /* LD A,(F900h) / OR 4 / LD (F900h),A */
 ```
 
-The same holds for `((volatile T *) K)[i]` with a constant `i`. Only integer types change. A pointer variable that holds the address (`volatile unsigned char *const p = (...) 0xF900`) is a normal pointer.
+The same holds for `((volatile T *) K)[i]` with a constant `i`. Only integer types change. A pointer variable that holds the address has the same result (see the next section).
+
+## Pointers to hardware
+
+A pointer variable that holds one constant address gives direct accesses. The code below shows the usual way to write a memory-mapped chip in C:
+
+```
+static volatile uint8_t *const ym = (volatile uint8_t *)0x4000;
+static struct chip *const ch = (struct chip *)0x4100;   /* volatile members */
+static volatile uint8_t *kick;                           /* set once */
+void setup(void) { kick = (volatile uint8_t *)0x4020; }
+
+ym[1] = x;           /* LD (4001h),A                  */
+ch->data = y;        /* LD (4101h),A  (address + the offset of the member) */
+*kick = z;           /* LD (4020h),A                  */
+```
+
+The compiler gives each address a name with no storage, as for `__at`, and uses `LD A,(nn)`, `LD (nn),A` and the 16-bit forms. The load of the pointer into HL goes away. The pass is in `src/uc80/ptrabs.py`.
+
+A pointer variable qualifies when all of these are true:
+
+- The pointer points to an integer type or to a struct. The target (or the member that the code reaches) must be `volatile`. The pointer itself must not be `volatile`, and must not be a parameter.
+- The pointer has the type `T *const` and a constant initial value that is not 0. Or the pointer is local or `static`, and every `=` and the initial value give the same constant that is not 0. No `++`, `+=` or `&p` is in the program.
+- The name of the pointer is not in the text of an `asm` statement, and not in a `#pragma uc80 public` or `keep`.
+- A path in a struct has constant indexes and no bit-field. `p->a.b`, `p->arr[2]` and `p[1].reg` are all direct.
+
+Only an access of a volatile integer object changes. Each access stays one access with the same width, in the same order. A pointer that does not qualify stays a normal pointer. A use that the compiler cannot change (the pointer passed to a function, `p + i` with a variable `i`) keeps the pointer variable. When no use stays, the variable and its assignments go away. A `const` pointer with external linkage keeps its definition, because another file can use the pointer.
+
+Limits:
+
+- A non-const pointer holds its constant from the start. A read through the pointer before the first assignment (a read of address 0 in the C sense) reads the constant address.
+- The compiler does not resolve a struct or a typedef that you declare inside a function. The pointer stays a normal pointer.
+- A non-volatile target is not changed. Another C object can use the same memory, so the order of the accesses is not free.
+- The option `--no-direct-pointers` switches the pass off.
+
+Measured with `bench/rom/mmio.py` (`mmio_ym.c`). The program writes a YM2610 register table through a struct pointer, with a busy wait on the status bit. It makes 272 writes, and the chip is at 4000h:
+
+```
+                     image bytes   T-states
+pointer in HL            421         88211
+direct access            393         79071      -28 bytes, -9140 T-states (-10.4%)
+```
+
+The log of the 272 writes is equal in both builds. One busy-wait read of the status changes from `LD HL,(_ym) / LD A,(HL)` (16 + 7 T-states) to `LD A,(4000h)` (13 T-states). The access to `addr_b` and `data_b` loses the `INC HL` that added the member offset. The snd-* kernels and the programs of `isrproof.py` use port instructions (`z80_out`, `z80_in`) and no pointer variable. Their images and T-states do not change: `sndrom.py --layout neogeo` and `isrproof.py nmi seq bank iy` give the same bytes, T-states and port logs with and without `--no-direct-pointers`.
+
+Tests: `tests/test_direct_pointers.py`. The tests run in `bench/romrun`, with `ul80` and with sdas. A breakpoint on each read instruction gives a scripted value to the read. The log of the runner has each write. Together they show that every access happens in order.
 
 ## SDCC spellings
 

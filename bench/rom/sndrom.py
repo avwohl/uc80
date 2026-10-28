@@ -101,6 +101,9 @@ class SndPorts:
             crc16_ccitt_false(bytes(self.log)))
 
 
+UC80_FLAGS = []         # more uc80 options (--uc80-flag)
+
+
 def tools_missing():
     return [t for t in ("uc80", "um80", "ul80") if not shutil.which(t)]
 
@@ -197,7 +200,8 @@ def build_sdas(kernel, work: Path, layout="dev", libs=None, style="sdcc"):
     text = (src_dir / c_name).read_text()
     (work / c_name).write_text('#include "bench.h"\n' + text)
     shutil.copy(HERE / "z80io.mac", work / "z80io.mac")
-    return sdas_compile_link(work, c_name, layout, libs, style)
+    return sdas_compile_link(work, c_name, layout, libs, style,
+                             extra=UC80_FLAGS)
 
 
 def build(kernel, work: Path, layout="dev", min_stack=0x100):
@@ -212,7 +216,7 @@ def build(kernel, work: Path, layout="dev", min_stack=0x100):
     lib = Path(run(["uc80", "--print-lib-dir"], work)[1].strip())
     steps = [
         ["uc80", "--target=rom", "-I", str(HERE), "-I", str(BENCH),
-         c_name, "z80io.mac", "-o", "k.mac"],
+         *UC80_FLAGS, c_name, "z80io.mac", "-o", "k.mac"],
         ["um80", "k.mac", "-o", "k.rel"],
         ["ul80", "--bin", "-p", "0", "-d", "%X" % lay["data"], "--rom-data",
          "--rom-size", "%X" % lay["rom_size"],
@@ -272,7 +276,11 @@ def main(argv=None):
                     help="build with sdasz80 and sdldz80 (docs/rom_interop.md)")
     ap.add_argument("--sdas-style", default="sdcc",
                     choices=["sdcc", "ngdevkit"])
+    ap.add_argument("--uc80-flag", action="append", default=[],
+                    metavar="FLAG", help="one more uc80 option (repeatable, "
+                    "for example --no-direct-pointers)")
     args = ap.parse_args(argv)
+    UC80_FLAGS.extend(args.uc80_flag)
     missing = sdas_tools_missing() if args.sdas else tools_missing()
     if missing:
         print("missing tools: " + " ".join(missing), file=sys.stderr)

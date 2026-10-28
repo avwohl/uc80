@@ -579,6 +579,10 @@ def main(argv=None):
     sdas = "--sdas" in args
     if "--save-workareas" in args:
         UC80_FLAGS.append("--isr-save-workareas")
+    while "--uc80-flag" in args:
+        i = args.index("--uc80-flag")
+        UC80_FLAGS.append(args[i + 1])
+        del args[i:i + 2]
     args = [a for a in args if a not in ("--sdas", "--save-workareas")]
     names = args or list(PROOFS)
     missing = sdas_tools_missing() if sdas else tools_missing()

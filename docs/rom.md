@@ -174,7 +174,26 @@ This change also makes the CP/M images that use these modules smaller, because t
 - The heap and `sprintf` are not available.
 - The helpers of the runtime keep their temporaries at fixed RAM addresses. A routine that an interrupt handler and the main program both call can fail. The compiler prints a warning with the call chain when a handler reaches such a routine. Do not call long division, 64-bit arithmetic or float in a handler that the main program shares them with.
 - The float division of uc80 (`__fdiv`) uses the alternate registers. Assembly code can too. The prologue of a handler saves the alternate registers when the handler reaches code that uses them.
-- Each C object that the program defines is one object of one module. A second C file does not get its own BSS block (the plan lists this as optional).
+- With `--no-whole-program` each module has one BSS block of its own (see "Separate compilation: the BSS block of each module").
+
+## Separate compilation: the BSS block of each module
+
+With `--no-whole-program` the compiler makes one object file for each C file. Each module puts all its zero-start data in one named COMMON block, `COMMON /uc_<stem>_<hash>/`. The name has the file stem and a hash of the full path. Two files with the same name in two directories do not share a block. The data in the block is:
+
+- the globals and the static variables that have no initial value,
+- the shared storage of the local variables of the module (`??AUTO`).
+
+The linker gives each block name its own space. `__BSS_START` to `__BSS_END` cover all the blocks, so the start-up code clears them, and the ROM image has no copy of the zero bytes. Data with a non-zero initial value stays in DSEG and the start-up code copies the data to RAM. The CP/M start-up code clears the same range, and the `.com` file is smaller for the same reason. The sdas flow puts each block in the BSS area. The blank COMMON block stays reserved for the whole-program build, because the linker puts the blank block of each module at one address.
+
+Before this change, a separately compiled module had its zero-start data in DSEG. That kept the modules apart, but the bytes were in the image. In a ROM the start-up code copied the bytes from ROM to RAM. Measured with two modules of `tests/test_module_bss.py` (190 bytes of zero-start data, 8 bytes of initial data, ROM target, `ul80`):
+
+```
+                     ROM image bytes   RAM data   RAM bss   copied at start
+before (DSEG)             705             198         0          198
+now (named COMMON)        515               8       190            8
+```
+
+The option `--no-module-bss` selects the old placement. Tests: `tests/test_module_bss.py`. The tests use the `ul80` flow and the sdas flow with random RAM at the start. A CP/M program in `cpmemu` checks the size of the `.com` file.
 
 ## Refused spellings
 

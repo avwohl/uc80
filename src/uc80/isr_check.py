@@ -163,7 +163,9 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
                 graph.equ0.add(label)
         if label is not None and seg == "COMMON":
             # a work area of a library module (named COMMON block)
-            if common:
+            # (the BSS block of a separately compiled uc80 module, named
+            # uc_<stem>_<hash>, holds the program's own variables: not one)
+            if common and not (unit == 0 and common.startswith("uc_")):
                 graph.fixed[label] = common
             pending.append(label)
         if seg == "COMMON":

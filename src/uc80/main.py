@@ -127,6 +127,16 @@ def _tail_insert_index(lines: list[str]) -> int:
     return len(lines)
 
 
+def _bss_block_name(path) -> str:
+    """Name of the BSS block of a separately compiled module: the file stem
+    and a hash of the full path, so two files `a.c` in two directories do
+    not share (overlay) one block."""
+    import zlib
+    p = Path(path).resolve()
+    stem = re.sub(r'[^A-Za-z0-9_]', '_', p.stem)[:12]
+    return f"uc_{stem}_{zlib.crc32(str(p).encode()) & 0xFFFF:04x}"
+
+
 VEC_REF_LABEL = "__vec_ref"
 
 
@@ -786,6 +796,18 @@ def main() -> int:
         help="Keep every local in memory (docs/register_locals.md)"
     )
     parser.add_argument(
+        "--no-module-bss",
+        action="store_true",
+        help="With --no-whole-program, put the zero-start data of the module "
+             "in DSEG (in the image) and not in a BSS block of its own"
+    )
+    parser.add_argument(
+        "--no-direct-pointers",
+        action="store_true",
+        help="Keep every access through a pointer that holds a constant "
+             "address as an access through the pointer (docs/rom_hardware.md)"
+    )
+    parser.add_argument(
         "--no-embed-runtime",
         action="store_true",
         help="Don't embed runtime library (use EXTRN references instead)"
@@ -1218,11 +1240,14 @@ def main() -> int:
                            foreign_asm_names=regcc.asm_text_names(mac_files),
                            register_locals=not args.no_register_locals,
                            naked_funcs={n for n, _f, _l in sdcc_found.naked})
+        gen.direct_pointers = not args.no_direct_pointers
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
                 asts, [str(p) for p in input_paths
                        if p.suffix.lower() != ".mac"], sdcc_found):
             print(f"uc80: warning: {msg}", file=sys.stderr)
+        if not whole_program and not args.no_module_bss:
+            gen.bss_block = _bss_block_name(input_paths[0])
         code = gen.generate(merged_ast)
         printf_need = printf_hook.printf_needs(merged_ast, printf_features)
         code = printf_hook.patch_tables(code, printf_need)
