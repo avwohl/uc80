@@ -260,9 +260,46 @@ Beyond ANSI C:
 - `static_assert`
 - `_Generic`
 
+## Errors that the compiler gives
+
+The compiler checks each C file after the parse, before it makes code
+(`src/uc80/semcheck.py`). Each message starts with `file:line:` of the
+source line, also for a line in a header. The compiler reports all errors
+of a file, then stops with exit status 1.
+
+- **Undeclared name.** C23 has no implicit declarations. A name that no
+  scope declares is an error, in every function, also in a function that
+  no code calls. Example: `u.c:9: 'd6' undeclared (first use in function
+  'main')`.
+- **Call of an undeclared function.** `foo(3)` without a declaration of
+  `foo` is an error. The option `--allow-implicit-functions` changes the
+  error to a warning (the call then goes to an external function with the
+  name). No program of the test suite or of `bench/` needs the option.
+  The compiler knows each name that starts with `__builtin_`.
+- **Change of a const object** (C23 6.5.16, 6.5.2.4, 6.5.3.1). The
+  operators `=`, `op=`, `++` and `--` need a modifiable lvalue. These are
+  errors:
+  - a const variable or parameter, also through a typedef
+  - a `T *const` pointer (`*p--` changes `p`)
+  - a const member, or a member of a const structure
+  - an object that a pointer to const points to
+  - an element of a const array
+  - the assignment of a structure that has a const member (6.3.2.1)
+
+  A pointer to const that you move (`const int *p; p++`) is correct. The
+  compiler cannot see the const of a type that a cast names through a
+  typedef-name. It gives no error for that case.
+- **Variable length array.** `short v[k + 2];` in a block is an error.
+  uc80 does not implement VLAs: a silent version gave a stack slot with
+  no size, and the slot could overlap other temporaries. Use an array with
+  a constant size, or `malloc`. A parameter such as `int a[n]` is a
+  pointer and is correct. The c-testsuite test 00207 declares
+  `char test[argc]`. The file `tests/c-testsuite-z80/00207.c` has the same
+  test with `char test[4]`.
+
 ## C99/C11/C24 FEATURES NOT IMPLEMENTED
 
 - [ ] `_Complex` / `_Imaginary` - parsed but no codegen
-- [ ] VLA (Variable Length Arrays) - parsed but no codegen
+- [ ] VLA (variable length arrays) - not implemented. C23 makes VLAs optional. uc80 defines `__STDC_NO_VLA__` as 1, and a block-scope array with a size that is not a constant is an error (see "Errors that the compiler gives")
 - [ ] `<threads.h>` - threading (not applicable to Z80/CP-M single-tasking)
 - [ ] `<stdatomic.h>` - atomics (Z80 is single-core; DI/EI stubs exist)

@@ -125,6 +125,11 @@ The design notes for this feature are in [configurable_int_sizes.md](configurabl
 `--target=rom` (or `-ffreestanding`) builds a Z80 ROM image with no CP/M. The option
 `--stack-top EXPR` sets the first value of SP. See [rom.md](rom.md).
 
+### Declarations
+
+`--allow-implicit-functions` changes the error for a call of an undeclared
+function to a warning. See [ANSI_C_COMPLIANCE.md](ANSI_C_COMPLIANCE.md).
+
 ### Separate Compilation
 
 When compiling files separately for separate linking, use `--no-whole-program`:
@@ -134,7 +139,11 @@ uc80 --no-whole-program module.c -o module.mac
 ```
 
 Link those with `crt0.rel` first — the compiler only embeds crt0 in
-whole-program mode:
+whole-program mode. A module that defines `main` gives a warning that says
+this. If you link without `crt0.rel`, the program starts in the first
+function of the first module. Then the program can print no output.
+`--no-embed-startup` silences the warning when you supply the start-up
+code:
 
 ```bash
 LIB=$(uc80 --print-lib-dir)

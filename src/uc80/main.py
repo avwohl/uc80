@@ -27,6 +27,7 @@ from .asm_dce import (ASM_BEGIN_FILE_MARKER, ASM_END_MARKER,
 from . import volatile_fence
 from . import regcc
 from . import sdcc_compat
+from . import semcheck, srcmap
 from . import sdas
 from . import isr_check
 from .z80_intrinsics import BARRIER_BEGIN, BARRIER_END
@@ -841,6 +842,13 @@ def main() -> int:
         help="Disable AST-level expression optimization"
     )
     parser.add_argument(
+        "--allow-implicit-functions",
+        action="store_true",
+        help="A call of a function that no declaration names is a warning "
+             "and not an error (C23 has no implicit declarations; "
+             "docs/ANSI_C_COMPLIANCE.md)"
+    )
+    parser.add_argument(
         "--no-embed-startup",
         action="store_true",
         help="Don't embed startup code (crt0) in whole-program mode"
@@ -1106,6 +1114,7 @@ def main() -> int:
                         pp.macros[define] = Macro(define, body="1")
 
                 source = pp.preprocess(source, str(input_path))
+                srcmap.register(str(input_path), pp.line_map)
 
                 target_pragmas.extend(pp.target_pragmas)
                 pragma_units.extend([len(asts)] * len(pp.target_pragmas))
@@ -1140,6 +1149,15 @@ def main() -> int:
                 strict_unsupported=True,
                 unsupported_message=UNSUPPORTED_MESSAGE)
             sdcc_compat.rewrite_sfr(ast, sdcc_found.sfrs, str(input_path))
+            sem_errors, sem_warnings = semcheck.check(
+                ast, str(input_path),
+                allow_implicit_functions=args.allow_implicit_functions)
+            for msg in sem_warnings:
+                print(f"uc80: {msg}", file=sys.stderr)
+            if sem_errors:
+                for msg in sem_errors:
+                    print(f"uc80: error: {msg}", file=sys.stderr)
+                return 1
             asts.append(ast)
 
             if args.verbose:
@@ -2042,6 +2060,16 @@ def main() -> int:
                           "variables start with undefined values (set them "
                           "in a command, or see docs/rom_interop.md)",
                           file=sys.stderr)
+        if (not whole_program and not rom and not args.no_embed_startup
+                and _defines_label(code, mac_files, "_main")):
+            print("uc80: warning: --no-whole-program puts no start-up code "
+                  "in this module, which defines main(): link crt0.rel "
+                  "first (ul80 $(uc80 --print-lib-dir)/crt0.rel "
+                  "this.rel ... libc.lib runtime.lib); without crt0.rel "
+                  "the program starts in the first function of the first "
+                  "module and prints nothing.  --no-embed-startup says "
+                  "that you supply the start-up code and silences this "
+                  "warning", file=sys.stderr)
         output_path.write_text(code)
 
         if args.verbose and args.asm_syntax == "sdas":
