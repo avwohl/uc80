@@ -6,6 +6,11 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Family I step 1 (branch `fami`): library speed
+
+- **Decimal conversion is no longer quadratic.** `_prt_div16` (the 16-bit divide by 10 of `printf`, `%d`, `%u`) divided by repeated subtraction (up to 6553 steps for a digit of 65535). It now uses 16 shift and trial-subtract steps. `_div32_10` (`%ld`, `%lu`) kept the 32-bit value in memory; it now keeps the value in `DE:HL` for 32 steps. The register contract of both routines is the same. The `sprintf` benchmark falls from 33.3M to 7.4M T-states in the timed region.
+- **`putchar` and `__conout` take a short path for a character that is not LF.** `putchar` reads the argument without popping the return address. `__conout` tests for LF first and only the LF path reads and writes the state byte for the CR rule. All console output still goes through `__conout` (the test of the choke point is unchanged). Tests: `tests/test_lib_decimal.py` (every 16-bit value with `%u` and `%d`, 32-bit and 64-bit edge values, the CR LF rules with and without `--no-crlf`).
+
 ### Investigation: wrong ISR total with `--no-register-locals` (no compiler change)
 
 - A ROM program whose NMI handler sums a buffer that `main` fills gave isr_total 34336 at every NMI period with `--no-register-locals`. The cause is the test program, not the compiler or the library: the first NMI came at T-state 20000, while `main` was still in its fill loop (slower with every local in memory), so the handler summed a half-written buffer. With the first NMI later, or with a `ready` flag, every option set gives the host value. The program also uses `%` in `main`; the handler does not, so the work-area warning does not apply. New proof `isrproof.py memisr` (NMI function with `memset`, `memcpy`, struct copies and a helper call, against a Python model, a `ready` flag, and a count of nested entries) with tests for `ul80` (seven option sets: default, `--no-register-locals`, `--isr-safe`, `-O0`, `--no-inlining`, `--no-shared-storage`, `--no-register-cc`) and `--sdas`. Documented in [docs/rom.md](docs/rom.md): an NMI cannot be masked, so a short period nests the handler.

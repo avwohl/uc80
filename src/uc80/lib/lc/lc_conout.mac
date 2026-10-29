@@ -52,11 +52,21 @@ __conout:
 	PUSH	DE
 	PUSH	HL
 	LD	A,E
+	CP	0AH		; LF?
+	JR	Z,__conout_lf
+	LD	(__conout_last),A	; remember this one (fast path: not LF)
+__conout_put:
+	LD	C,CONOUT
+	CALL	BDOS
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+__conout_lf:
 	LD	HL,__conout_last
 	LD	C,(HL)		; C = previous character written
-	LD	(HL),A		; remember this one
-	CP	0AH		; LF?
-	JR	NZ,__conout_put
+	LD	(HL),A		; remember this one (LF)
 	LD	A,(___crlf_mode)
 	OR	A
 	JR	Z,__conout_put	; translation disabled - pass LF through
@@ -67,13 +77,7 @@ __conout:
 	LD	C,CONOUT
 	CALL	BDOS
 	LD	E,0AH
-__conout_put:
-	LD	C,CONOUT
-	CALL	BDOS
-	POP	HL
-	POP	DE
-	POP	BC
-	RET
+	JR	__conout_put
 
 	DSEG
 

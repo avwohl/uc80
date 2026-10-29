@@ -711,30 +711,21 @@ _prt_dec_out:
 ; ============================================================
 	PUBLIC	_prt_div16
 _prt_div16:
+	; 16 iterations of shift and trial subtract (about 600 T for any HL).
 	PUSH	BC
-	LD	BC,0
-	LD	DE,0
+	LD	B,16
+	XOR	A		; A = running remainder
 _prt_div16_lp:
-	LD	A,H
-	OR	A
-	JR	NZ,_prt_div16_sub
-	LD	A,L
+	ADD	HL,HL		; shift next dividend bit into A
+	RLA
 	CP	10
-	JR	C,_prt_div16_dn
-_prt_div16_sub:
-	LD	A,L
+	JR	C,_prt_div16_nc
 	SUB	10
-	LD	L,A
-	LD	A,H
-	SBC	A,0
-	LD	H,A
-	INC	BC
-	JR	_prt_div16_lp
-_prt_div16_dn:
-	LD	E,L
+	INC	L		; quotient bit (bit 0 of HL is free after ADD HL,HL)
+_prt_div16_nc:
+	DJNZ	_prt_div16_lp
+	LD	E,A
 	LD	D,0
-	LD	H,B
-	LD	L,C
 	POP	BC
 	RET
 

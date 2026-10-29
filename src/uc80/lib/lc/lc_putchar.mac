@@ -19,19 +19,15 @@ PRTSTR	EQU	9
 ; ============================================================
 	PUBLIC	_putchar
 _putchar:
-	; Minimal implementation - doesn't touch IX
-	; Stack at entry: [ret_addr][arg]
-	POP	HL		; Get return address
-	POP	DE		; Get argument (char in E)
-	PUSH	DE		; Restore arg for caller cleanup
-	PUSH	HL		; Restore return address
+	; Minimal implementation - doesn't touch IX.  __conout preserves
+	; BC, DE and HL, so DE still holds the character on return.
+	LD	HL,2
+	ADD	HL,SP		; Points to arg (after ret addr)
+	LD	E,(HL)		; character in E
 
 	CALL	__conout
 
-	; Return value - get arg again
-	LD	HL,2
-	ADD	HL,SP		; Points to arg (after ret addr)
-	LD	L,(HL)
+	LD	L,E		; return value is the character
 	LD	H,0
 	RET
 
