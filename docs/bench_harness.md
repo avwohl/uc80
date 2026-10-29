@@ -256,7 +256,7 @@ The status of a size-only row is one of these:
 | Status | Meaning |
 |---|---|
 | FITS | The program links, and `0100h + image + bss + 512` is not above `E400h`. |
-| TOO-BIG | The program links and is larger, or the linker stops and its message says that the program is too large (`compilers.TOO_BIG_RE`). A program that runs also gets TOO-BIG when its .com is more than 65,280 bytes: ticks cannot load that file (it prints "Incorrect length" and no output), and the program does not fit the 64 KB address space of a CP/M machine. |
+| TOO-BIG | The program links and is larger, or the linker stops and its message says that the program is too large (`compilers.TOO_BIG_RE`). A program that runs also gets TOO-BIG when its .com is more than 65,280 bytes: ticks cannot load that file (it prints "Incorrect length" and no output), and the program does not fit the 64 KB address space of a CP/M machine. This rule applies to the check build and to the time build. The row of a TOO-BIG program holds `com`, `bss` and `image`. When `ul80` wrapped the symbols, `image` is the size of the image in the .com file. |
 | BUILD-FAIL(objects) | A compiler or assembler stopped in the per-object build. |
 | BUILD-FAIL(link) | The link stopped, and the message does not say that the program is too large. The row keeps the per-object sizes. |
 | BUILD-TIMEOUT(objects), BUILD-TIMEOUT(link) | A tool stopped at its time limit. |

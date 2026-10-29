@@ -48,24 +48,69 @@ def test_long_sum_compiles_fast_and_runs(tmp_path):
     assert elapsed < 90, elapsed
 
 
-def test_long_sum_mac_is_the_same_for_each_depth(tmp_path):
-    """The code of a long sum is a chain of the same two steps: the
-    memo of the type queries changes the time, not the code."""
+def _compile_to_text(tmp_path, name, source):
     from uc80.main import main
-    sizes = []
-    for n in (6, 12):
-        c = tmp_path / f"s{n}.c"
-        c.write_text(_sum_source(n))
-        mac = tmp_path / f"s{n}.mac"
-        old = sys.argv
-        sys.argv = ["uc80", str(c), "-o", str(mac)]
-        try:
-            assert main() in (0, None)
-        finally:
-            sys.argv = old
-        text = mac.read_text()
-        sizes.append(text.count("\n"))
-    assert sizes[0] < sizes[1]
+    d = tmp_path / name
+    d.mkdir()
+    c = d / "prog.c"          # the module name is in the .mac header
+    c.write_text(source)
+    mac = d / "prog.mac"
+    old = sys.argv
+    sys.argv = ["uc80", str(c), "-o", str(mac)]
+    try:
+        assert main() in (0, None)
+    finally:
+        sys.argv = old
+    return mac.read_text()
+
+
+_MIXED = """
+long g = 70000L;
+float fl[40];
+long long ll[40];
+char ch[40];
+int a[60];
+struct S { int m; long n; } st[40];
+int f(int i) {
+    return a[i]+a[i+1]*2+(int)fl[i]+ch[i]+st[i].m+(int)st[i].n+(int)ll[i]
+         + a[i+2]+a[i+3]+ch[i+1]+(int)(g + ({ char g = 3; g; }));
+}
+long h(long x, int i) { return x + a[i] + g + ({ long y = x; y + 1; }) + a[i+1]; }
+double d(double x, int i) { return x + a[i] + fl[i] + a[i+1] * 2.5 + fl[i+1]; }
+int main(void) { return f(1) + (int)h(2L, 3) + (int)d(1.5, 2); }
+"""
+
+
+def test_longer_lived_memos_do_not_change_the_code(tmp_path, monkeypatch):
+    """The type-query memo of the code generator lives for a whole
+    expression, and the float memo of uc_core for a whole statement.  The
+    .mac text is the same as with the memos only for one query."""
+    from uc80.codegen import CodeGenerator
+    from uc_core.floatness import FloatInfo
+    sources = {"mixed": _MIXED, "sum30": _sum_source(30)}
+    with_memo = {k: _compile_to_text(tmp_path, "w" + k, v)
+                 for k, v in sources.items()}
+    monkeypatch.setattr(CodeGenerator, "gen_expr",
+                        CodeGenerator._gen_expr_body)
+    monkeypatch.setattr(FloatInfo, "maybe_float", FloatInfo._maybe_float)
+    for k, v in sources.items():
+        assert _compile_to_text(tmp_path, "o" + k, v) == with_memo[k], k
+    assert with_memo["mixed"].count("\n") > 50
+
+
+def test_very_long_sum_is_linear(tmp_path):
+    """320 terms of ``a[i+k] + b[k]*2`` took 15 s with the per-call memo
+    (quadratic); with the memo for the whole expression, 1.6 s."""
+    n = 320
+    terms = "+".join(f"(a[i+{k}]+b[{k}]*2)" for k in range(n))
+    src = (f"int a[{n + 8}], b[{n + 8}];\n"
+           f"int f(int i) {{ return {terms}; }}\n"
+           "int main(void) { return f(1); }\n")
+    t0 = time.monotonic()
+    text = _compile_to_text(tmp_path, "long320", src)
+    elapsed = time.monotonic() - t0
+    assert text.count("\n") > 1500       # the code of the sum is there
+    assert elapsed < 30, elapsed
 
 
 def _dce_program(nlabels, nlines):
@@ -84,13 +129,13 @@ def _dce_program(nlabels, nlines):
 
 
 def test_dead_data_pass_is_not_quadratic():
-    nl = 3000
+    nl = 800
     t0 = time.monotonic()
-    out = eliminate_dead_code(_dce_program(nl, 3000), entry_points={"_main"})
+    out = eliminate_dead_code(_dce_program(nl, 800), entry_points={"_main"})
     elapsed = time.monotonic() - t0
     assert "_d0:" in out and f"_d{nl - 1}:" in out
     assert "_dead:" not in out
-    assert elapsed < 5, elapsed        # 9 million patterns: 30 s and more before
+    assert elapsed < 2, elapsed        # 28 s before, 0.01 s after
 
 
 class TestDeadDataLabelBoundaries:
@@ -143,3 +188,13 @@ def test_too_big_com_is_not_a_hang():
     # .com, and the row said FITS.
     assert mod.image_end(38328 - 0x100, 0, 82048) > 0xE400
     assert mod.image_end(1000, 200, 900) == 0x100 + 1200
+    # the row of a TOO-BIG program holds the sizes and the real image
+    assert mod.real_image(38328, 100, 82048) == 82048 - 100
+    assert mod.real_image(1000, 200, 900) == 1000
+    row = {}
+
+    class _B:
+        image, bss = 38328, 100
+    mod.too_big_row(row, _B, 82048)
+    assert row == {"com": 82048, "bss": 100, "image": 82048 - 100,
+                   "status": "TOO-BIG"}

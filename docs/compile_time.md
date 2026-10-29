@@ -18,21 +18,24 @@ The outermost call deletes the table when it returns. The scope and the
 tree do not change during that call, so the results are the same as
 without the table.
 
-Times for `int f(int i) { return a[i]+a[i+1]+...; }` on one machine, in
-seconds:
+Times for `int f(int i) { return (a[i]+b[0]*2)+(a[i+1]+b[1]*2)+...; }`
+on one machine, in seconds:
 
 ```
-terms   before   after
-20      0.8      0.4
-40      5        0.6
-80      62       1.1
-160     -        2.9
-320     -        15
+terms   time
+80      0.4
+160     0.7
+320     1.6
+640     4.4
 ```
 
-The growth that remains is quadratic with a small factor. The rule check
-`maybe_float` in `uc_core/ast_optimizer.py` walks a whole subtree at each
-level of the tree, and the code generator asks once for each level.
+The memo of the code generator lives for the whole `gen_expr` call of one
+expression. The code generator clears the memo at a declaration or a statement
+inside a statement expression. Such a declaration can change which
+name an identifier means. The float memo of `uc_core`
+(`FloatInfo.maybe_float`) lives for one statement. Each statement
+clears the float memo. The time now grows a little faster than
+linear (the lists of the tree walks), not with the square of the size.
 
 ## Dead code and dead data
 

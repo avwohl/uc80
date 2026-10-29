@@ -7191,6 +7191,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         """Generate code for a local declaration; the code of a volatile
         object's initializer, or of one that reads a volatile object, is
         a volatile region (volatile_fence.py)."""
+        if self._expr_memo is not None:
+            self._expr_memo.clear()
         with self._vol_region(decl):
             self._gen_local_decl(decl)
 
@@ -9249,6 +9251,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
 
     def gen_statement(self, stmt) -> None:
         """Generate code for a statement (auto-AST kinds)."""
+        if self._expr_memo is not None:
+            # A statement inside a statement expression can declare names.
+            self._expr_memo.clear()
         if isinstance(stmt, (ast.ReturnStmt, ast.ReturnStmtValue)):
             self.gen_return(stmt)
         elif isinstance(stmt, ast.ExpressionStmt):
@@ -9924,7 +9929,20 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             self._discard_expr = saved
 
     def gen_expr(self, expr, force_long: bool = False) -> None:
-        """Generate code for an expression. Result in HL (16-bit) or DEHL (32-bit)."""
+        """Generate code for an expression. Result in HL (16-bit) or DEHL (32-bit).
+
+        The outermost call keeps the type-query memo (_scoped_memo) alive
+        for the whole expression, so the per-level queries of a long sum
+        are answered from the table (linear, not quadratic)."""
+        if self._expr_memo is not None:
+            return self._gen_expr_body(expr, force_long)
+        self._expr_memo = {}
+        try:
+            return self._gen_expr_body(expr, force_long)
+        finally:
+            self._expr_memo = None
+
+    def _gen_expr_body(self, expr, force_long: bool = False) -> None:
         if isinstance(expr, _SavedAddrValue):
             self._gen_saved_addr_value(expr)
             return
@@ -10106,6 +10124,15 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
 
     def gen_stmt_expr(self, expr: ast.StmtExpr) -> None:
         self._stmt_expr_seen = True
+        if self._expr_memo is not None:
+            self._expr_memo.clear()
+        try:
+            self._gen_stmt_expr_body(expr)
+        finally:
+            if self._expr_memo is not None:
+                self._expr_memo.clear()
+
+    def _gen_stmt_expr_body(self, expr: ast.StmtExpr) -> None:
         """Generate code for statement expression ({ ... })."""
         # Statement expressions are like compound statements - use gen_compound_stmt
         # for the body, and extract the value of the last expression
