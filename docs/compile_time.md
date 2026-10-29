@@ -23,11 +23,11 @@ seconds:
 
 ```
 terms   before   after
-20      0.8      0.3
-40      5        1
-80      62       2
-160     -        5
-320     -        17
+20      0.8      0.4
+40      5        0.6
+80      62       1.1
+160     -        2.9
+320     -        15
 ```
 
 The growth that remains is quadratic with a small factor. The rule check

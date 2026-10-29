@@ -32,7 +32,7 @@ Result against SDCC 4.6.0 (96 programs for size and 78 for T-states that are OK 
 What is left:
 
 - Freestanding and ROM target (6.3, phase 3): nothing built. [rom_target.md](rom_target.md) has the plan: about 32 engineer-days for a minimum version. The answer to issue #1 about the Neo Geo sound driver stays "not today".
-- One program fails on uc80: `empire-trefonas` (the image of 69,888 bytes is more than 64 KB). Two size-only programs, `battlestar-size` and `rogue36-size`, stop with BUILD-TIMEOUT at the whole-program link (bug C8, the dead-code pass).
+- One program does not fit on uc80: `empire-trefonas` (the .com of 69,376 bytes is more than 64 KB; the row is TOO-BIG, it was HANG because `z88dk-ticks` cannot load the file). Two size-only programs, `battlestar-size` and `rogue36-size`, did stop with BUILD-TIMEOUT at the whole-program build (bug C8, the dead-data pass of `asm_dce.py`). They build now in 37 s and 82 s, and both are TOO-BIG.
 - Games tier gaps: mojozork runs only as a size-only row (no scripted Zork I run), and Rogue 3.6 is size-only. Larn, TSCP and the Scott Adams games are not in, because of their licenses. We did not run `battlestar-size`, `rogue36-size` and `mojozork-size` again for sdcc, sdcc-4.4 and zsdcc, because each build takes more than an hour. These rows come from the earlier run with the same tools and sources.
 - Open compiler bugs from 6.5. A recheck on 2026-10-24 with the single-file repros: C1 and C6 compile now. C3, C10 and C15 still give no diagnostic, and C13 still gives "internal error: unexpected token". C2, C4, C5, C7, C9 and C14 are not rechecked.
 - cpmemu T-states (6.2) are not needed for the numbers. We used `z88dk-ticks`.
@@ -537,7 +537,7 @@ The repro files are in the survey's scratch directories. Each bug needs a regres
 | C5 | Whole-program mode accepts two definitions of `main`, and the last one wins | three files a.c, b.c, c.c |
 | C6 | Internal error on a local array sized with a pointer type | `void f(void){ int u[sizeof (char *)]; u[0]=0; }` |
 | C7 | `"ab\\\n"` loses the backslash and emits a raw newline into `db` | Rogue 5.4 rip.c |
-| C8 | Assembly dead-code pass is far too slow on large programs (over 15-20 minutes on Rogue and battlestar). `--no-asm-dce` takes 22 s | Rogue 3.6 whole-program build |
+| C8 | Assembly dead-code pass is far too slow on large programs (over 15-20 minutes on Rogue and battlestar). `--no-asm-dce` takes 22 s. Fixed in bug-fix round 3, stage B: 37 s and 82 s for the whole build | Rogue 3.6 whole-program build |
 | C9 | Inlining makes Rogue 25 % bigger (134.5 KB against 108 KB) | Rogue 3.6 |
 | C10 | No warning when an integer constant does not fit in `int` | `int e_levels[] = { 40920, 327680 };` |
 | C11 | `ldiv` is wrong in whole-program mode (quot=-1), right with `--no-whole-program` | `res = ldiv(314159265UL, 10000L)` |

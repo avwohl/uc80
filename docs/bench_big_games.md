@@ -122,8 +122,13 @@ at 58,112 bytes less 512 bytes of stack):
   whole-program mode (`ul80` of the `--no-whole-program` objects with
   `libc.lib` and `runtime.lib`) ends at 179,805 bytes.
 - Rogue 3.6 does not fit. llvm-z80 gives 98,789 bytes in objects alone.
-  The uc80 whole-program link timed out. The manual link of the uc80
-  objects ends at 114,221 bytes (about 2x the TPA), trek at 73,474 bytes.
+  The uc80 whole-program build now ends with a 82,048-byte .com (TOO-BIG):
+  82 s for the compiler, 7 s for um80, 1 s for ul80. `ul80` does not stop
+  for an image past 64 KB. It wraps the symbols to 16 bits (`__BSS_START`
+  reads 96B8h) and prints warnings, so the harness takes the size of the
+  .com file. Before the repair of the dead-data pass the compiler did not
+  finish in 1800 s. The manual link of the uc80 objects ends at
+  114,221 bytes (about 2x the TPA), trek at 73,474 bytes.
 
 Compilers that fail, with the cause:
 
@@ -214,7 +219,9 @@ Each repro is a complete file or file pair. The uc80 commands are
    violation. SDCC rejects it ("too many parameters"). Rogue
    `daemon.c` calls `(*dev->d_func)(dev->d_arg)` in this way.
 6. **Whole-program compile time.** battlestar (25 files, 120 KB of
-   data) and Rogue (29 files) do not finish in 1800 s (known, bug C8).
+   data) and Rogue (29 files) did not finish in 1800 s (bug C8, the
+   dead-data pass). They take 37 s and 82 s now. See
+   [compile_time.md](compile_time.md).
 
 
 ## mojozork run row
