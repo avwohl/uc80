@@ -60,7 +60,8 @@ The register-locals pass treats `LDIR` and `LDI` as instructions that change BC,
 
 - A call with a pointer that holds a constant address of a volatile object (`static volatile uint8_t *const p = (volatile uint8_t *)0x4000;`) stays a call. A cast to `void *` that drops the qualifier (`memset((void *)0x4300, 0, 8)`) is a cast that the program wrote, and the call becomes inline code.
 - A structure copy to a volatile target uses `LDI` or `LDIR`. Both copy from the low address to the high address. A 16-bit member gets the low byte first, as the rule for volatile stores needs.
-- `--isr-save-workareas`: an inline copy in an interrupt function reaches no work area of the runtime. The plan of the compiler has one routine less to save, and the plan never grows.
+- `--isr-save-workareas`: an inline copy in an interrupt function reaches no work area of the runtime. The runtime `memcpy` and `memset` have no work area, so the plan is the same as with `--no-blockops`, and the plan never grows. The handler has no call of `_memcpy` or `_memset`.
+- `memset` stores the first byte and then runs `LDIR`. `LDIR` reads each byte before it writes the byte. A fill of a device register therefore writes the first byte correctly. The other bytes get the values that the device returns on a read. The library routine and the inline code have this limit. Use a loop of volatile stores for such memory. A fill of RAM is correct.
 - The body of a naked function is assembly text only. It has no call of `memset` or `memcpy`, and the pass does not change it.
 - `--no-whole-program`: each module makes its own inline code, and the result is the same as in the whole program.
 - `tests/test_famh_rom_integration.py` runs these cases in the ROM runner, in the um80 flow and in the sdas flow.

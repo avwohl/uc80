@@ -44,7 +44,7 @@ A run is a list of consecutive statements of one block. All the accesses of a ru
 - The statement holds a label (a `goto` target, `case` or `default`). The exception is a `switch` that is wholly inside the statement with its own `case` labels.
 - The key has a memory leaf, and the statement has one of these: a call, a store through a pointer, a store into the named object of the leaf, or a volatile access.
 
-A leaf that is a local variable can only change by an assignment in the function. A call, a store through a pointer or an interrupt cannot change such a variable, so they end no run. A memory leaf can change in all these ways. A function that the program marks as an interrupt function (`#pragma uc80 interrupt`) turns memory leaves off for the whole program.
+A leaf that is a local variable can only change by an assignment in the function. A call, a store through a pointer or an interrupt cannot change such a variable, so they end no run. A memory leaf can change in all these ways. A function that the program marks as an interrupt function (`#pragma uc80 interrupt`, `nmi`, `im2` or `rst N interrupt`) turns memory leaves off for the whole program. In a separate compilation, a module that has no handler cannot know about a handler in another module, and memory leaves stay on in that module.
 
 A handler that `#pragma uc80 vector` binds, and a program with hand-written assembly files, do the same. A naked function and a function with inline assembly are not changed. A function with a variable length array is not supported by the compiler, so the pass does not treat this case in a special way.
 

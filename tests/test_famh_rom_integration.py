@@ -510,3 +510,45 @@ def test_separate_results_are_equal_with_and_without_the_passes(
         assert m.run(max_tstates=2_000_000).reason == "halt"
         res.append([(a, v) for (_t, a, v, _pc) in m.rom_writes])
     assert res[0] == res[1] and len(res[0]) == 10
+
+
+# ---- repair pass: chained volatile stores, memset through a cast -------------
+
+CHAIN = """
+#include <stdint.h>
+#include <string.h>
+struct V { volatile uint8_t c[8]; };
+static volatile uint8_t *const vm = (volatile uint8_t *)0x4100;
+static volatile uint8_t *const port = (volatile uint8_t *)0x4000;
+static struct V *const vr = (struct V *)0x4200;
+static uint8_t *const ram = (uint8_t *)0xFA00;
+int main(void)
+{
+    int i;
+    for (i = 0; i < 3; i++) {
+        vm[i] = vm[i + 1] = 5;
+        *port = vr->c[i] = (uint8_t)(7 + i);
+    }
+    memset((void *)0xFA10, 0xEE, 12);
+    memset(ram + 40, 0x33, 9);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+def test_chained_volatile_stores_keep_their_order_and_memset_fills_ram(
+        flow, tmp_path, libs):
+    (w, mem, text, _e), _old = same(tmp_path, CHAIN, flow, libs)
+    # the right store of a chain comes first, as the C rule for = needs
+    got = [x for x in w if x[0] < 0x4300]
+    exp = []
+    for i in range(3):
+        exp += [(0x4100 + i + 1, 5), (0x4100 + i, 5),
+                (0x4200 + i, 7 + i), (0x4000, 7 + i)]
+    assert sorted(got) == sorted(exp)
+    assert mem[0x10:0x1C] == bytes([0xEE] * 12)
+    assert mem[40:49] == bytes([0x33] * 9)
+    if text:
+        main = text.split("\n_main:")[1]
+        assert "call\t_memset" not in main      # the casts made it inline

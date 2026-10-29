@@ -4599,14 +4599,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         if self.absolute:
             self._emit_absolute_symbols(unit)
 
-        # Convention selection.  It has to run before the first call is
-        # generated (a forward call needs the callee's plan) and before the
-        # shared storage is sized (a register parameter is stored on entry,
-        # and that store needs a slot).
         # Address CSE and chained constant stores (docs/addr_cse.md): an
         # AST rewrite, so it runs before anything sizes a frame.
         self.dead_store_stats = self._dse_run(unit)
         self.addr_cse_stats = self._acse_run(unit)
+        # Convention selection.  It has to run before the first call is
+        # generated (a forward call needs the callee's plan) and before the
+        # shared storage is sized (a register parameter is stored on entry,
+        # and that store needs a slot).
         self._plan_register_cc(unit)
         self._rl_plan(unit, self.enable_register_locals)
 
