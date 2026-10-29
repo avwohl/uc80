@@ -13604,7 +13604,12 @@ _pa_nf:
 	LD	(_pa_nfd),A
 	JR	_pa_expo
 _pa_prec:
+	LD	A,(_printf_prec+1)
+	OR	A
+	LD	A,255		; a precision above 255 digits is 255
+	JR	NZ,_pa_pc
 	LD	A,(_printf_prec)
+_pa_pc:
 	LD	(_pa_nfd),A
 	CP	6
 	JR	NC,_pa_expo	; 6 digits or more: nothing to round
@@ -13736,17 +13741,14 @@ _pa_emit:
 	JR	Z,_pa_e1
 	INC	HL
 _pa_e1:
-	LD	A,(_printf_width)
-	LD	E,A
-	LD	D,0
-	EX	DE,HL
+	EX	DE,HL		; DE = the length
+	LD	HL,(_printf_width)
 	OR	A
 	SBC	HL,DE
-	LD	A,0
-	JR	C,_pa_e2
-	LD	A,L
+	JR	NC,_pa_e2
+	LD	HL,0
 _pa_e2:
-	LD	(_pa_pad),A
+	LD	(_pa_pad),HL
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_pa_left
@@ -13768,9 +13770,8 @@ _pa_left:
 	CALL	_pa_text
 	LD	E,' '
 _pa_padout:
-	LD	A,(_pa_pad)
-	LD	B,A
-	JP	_printf_padn
+	LD	HL,(_pa_pad)
+	JP	_printf_padw
 
 _pa_signout:
 	LD	A,(_pa_sign)
@@ -13909,7 +13910,7 @@ _pa_xn:		DS	1
 _pa_nfd:	DS	1
 _pa_dot:	DS	1
 _pa_len:	DS	2
-_pa_pad:	DS	1
+_pa_pad:	DS	2
 _pa_kind:	DS	1
 
 
@@ -14072,24 +14073,24 @@ __printf_handle_c32:
 
 ; Print the character E in a field of _printf_width characters.
 _phc_out:
-	LD	A,(_printf_width)
-	OR	A
+	LD	HL,(_printf_width)
+	LD	A,H
+	OR	L
 	JR	Z,_phc_plain
-	DEC	A
-	LD	B,A		; padding = width - 1
+	DEC	HL		; padding = width - 1
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_phc_left
 	PUSH	DE
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_printf_padw
 	POP	DE
 _phc_plain:
 	JP	_printf_putc
 _phc_left:
 	CALL	_printf_putc
 	LD	E,' '
-	JP	_printf_padn
+	JP	_printf_padw
 
 
 	CSEG
@@ -14249,7 +14250,7 @@ _printf_format:
 	; Initialize format state: clear the whole _printf_state block
 	PUSH	BC
 	LD	DE,_printf_state
-	LD	B,11		; length of the _printf_state block
+	LD	B,13		; length of the _printf_state block
 	XOR	A
 _printf_clr:
 	LD	(DE),A
@@ -14271,8 +14272,10 @@ _printf_fmt2:
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	NZ,_printf_0dig
+	LD	A,(_printf_width+1)
+	LD	E,A
 	LD	A,(_printf_width)
-	OR	A
+	OR	E
 	JR	NZ,_printf_0dig
 	; Set zero-padding flag
 	LD	A,1
@@ -14427,8 +14430,8 @@ _printf_star:
 	SBC	HL,DE
 	EX	DE,HL
 _printf_star_w:
-	CALL	_printf_clamp8
-	LD	(_printf_width),A
+	CALL	_printf_clamp15
+	LD	(_printf_width),DE
 	POP	HL
 	JR	_printf_skip
 _printf_star_p:
@@ -14439,61 +14442,62 @@ _printf_star_p:
 	POP	HL
 	JR	_printf_skip
 _printf_star_pp:
-	CALL	_printf_clamp8
-	LD	(_printf_prec),A
+	CALL	_printf_clamp15
+	LD	(_printf_prec),DE
 	POP	HL
 	JR	_printf_skip
 
-; A = DE limited to 255
-_printf_clamp8:
-	LD	A,D
-	OR	A
-	LD	A,E
+; DE = DE limited to 32767 (a width or precision is at most that)
+_printf_clamp15:
+	BIT	7,D
 	RET	Z
-	LD	A,255
+	LD	DE,32767
+	RET
+
+; HL = HL * 10 + E (D is 0), limited to 32767.  Preserves BC and DE.
+_printf_x10add:
+	PUSH	BC
+	LD	B,H
+	LD	C,L
+	ADD	HL,HL
+	JR	C,_printf_x10sat
+	ADD	HL,HL
+	JR	C,_printf_x10sat
+	ADD	HL,BC
+	JR	C,_printf_x10sat
+	ADD	HL,HL
+	JR	C,_printf_x10sat
+	ADD	HL,DE
+	JR	C,_printf_x10sat
+	BIT	7,H
+	JR	Z,_printf_x10ok
+_printf_x10sat:
+	LD	HL,32767
+_printf_x10ok:
+	POP	BC
 	RET
 
 _printf_isdig:
-	; Parse digit into width or precision
+	; Parse a digit into the width or the precision, both 16-bit
 	SUB	'0'
 	PUSH	BC
-	LD	B,A		; B = new digit
+	PUSH	HL
+	LD	E,A
+	LD	D,0
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	NZ,_printf_precdig
-	; Width digit
-	LD	A,(_printf_width)
-	CP	26		; 26 * 10 > 255: stay at 255 (no wrap-around)
-	JR	NC,_printf_wsat
-	LD	C,A
-	ADD	A,A		; *2
-	ADD	A,A		; *4
-	ADD	A,C		; *5
-	ADD	A,A		; *10
-	ADD	A,B		; + digit
-	JR	NC,_printf_wstore
-_printf_wsat:
-	LD	A,255
-_printf_wstore:
-	LD	(_printf_width),A
+	LD	HL,(_printf_width)
+	CALL	_printf_x10add
+	LD	(_printf_width),HL
+	POP	HL
 	POP	BC
 	JR	_printf_skip
 _printf_precdig:
-	; Precision digit
-	LD	A,(_printf_prec)
-	CP	26		; stay at 255 (no wrap-around)
-	JR	NC,_printf_psat
-	LD	C,A
-	ADD	A,A
-	ADD	A,A
-	ADD	A,C
-	ADD	A,A
-	ADD	A,B
-	JR	NC,_printf_pstore
-_printf_psat:
-	LD	A,255
-_printf_pstore:
-	LD	(_printf_prec),A
+	LD	HL,(_printf_prec)
+	CALL	_printf_x10add
+	LD	(_printf_prec),HL
+	POP	HL
 	POP	BC
 	; Fall through to _printf_skip
 
@@ -14618,62 +14622,62 @@ _pn_nosign:
 _pn_sgn:
 	LD	A,B
 	LD	(_pn_sign),A
-	; B = digit count, C = extra leading zeros from the precision
+	; _pn_n = digit count, _pn_zeros = extra leading zeros (16-bit)
 	LD	A,(_printf_dcnt)
-	LD	B,A
-	LD	C,0
+	LD	(_pn_n),A
+	LD	HL,0
+	LD	(_pn_zeros),HL
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	Z,_pn_cnt
 	XOR	A		; a precision cancels the '0' flag
 	LD	(_printf_zero),A
-	LD	A,(_printf_prec)
-	OR	A
+	LD	HL,(_printf_prec)
+	LD	A,H
+	OR	L
 	JR	NZ,_pn_pz
-	LD	A,B		; precision 0 and value 0: no digits at all
+	LD	A,(_pn_n)	; precision 0 and value 0: no digits at all
 	DEC	A
 	JR	NZ,_pn_cnt
 	LD	HL,(_printf_dstart)
 	LD	A,(HL)
 	CP	'0'
 	JR	NZ,_pn_cnt
-	LD	B,0
+	XOR	A
+	LD	(_pn_n),A
 	JR	_pn_cnt
 _pn_pz:
-	SUB	B
+	LD	A,(_pn_n)
+	LD	E,A
+	LD	D,0
+	OR	A
+	SBC	HL,DE		; zeros = precision - digits, when positive
 	JR	C,_pn_cnt
-	LD	C,A
+	LD	(_pn_zeros),HL
 _pn_cnt:
-	LD	A,B
-	LD	(_pn_n),A
-	LD	A,C
-	LD	(_pn_zeros),A
-	ADD	A,B		; B = characters before any padding
-	JR	NC,_pn_t1
-	LD	A,255		; the width is at most 255: saturate, never wrap
-_pn_t1:
-	LD	B,A
+	; DE = characters before any padding: digits, zeros, sign, 0x
+	LD	HL,(_pn_zeros)
+	LD	A,(_pn_n)
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
 	LD	A,(_pn_sign)
 	OR	A
 	JR	Z,_pn_ns
-	LD	A,B
-	INC	A
-	JR	Z,_pn_ns	; already 255
-	LD	B,A
+	INC	HL
 _pn_ns:
 	LD	A,(_printf_pfxlen)
-	ADD	A,B
-	JR	NC,_pn_t2
-	LD	A,255
-_pn_t2:
-	LD	B,A
-	LD	A,(_printf_width)
-	SUB	B
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	EX	DE,HL
+	LD	HL,(_printf_width)
+	OR	A
+	SBC	HL,DE
 	JR	NC,_pn_pad
-	XOR	A
+	LD	HL,0
 _pn_pad:
-	LD	(_pn_padn),A
-	LD	B,A
+	LD	(_pn_padn),HL
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_pn_body
@@ -14681,20 +14685,19 @@ _pn_pad:
 	OR	A
 	JR	NZ,_pn_zp
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_pn_padout
 	JR	_pn_body
 _pn_zp:
 	CALL	_pn_sp
 	LD	E,'0'
-	CALL	_printf_padn
+	CALL	_pn_padout
 	JR	_pn_dig
 _pn_body:
 	CALL	_pn_sp
 _pn_dig:
-	LD	A,(_pn_zeros)
-	LD	B,A
+	LD	HL,(_pn_zeros)
 	LD	E,'0'
-	CALL	_printf_padn
+	CALL	_printf_padw
 	LD	A,(_pn_n)
 	OR	A
 	JR	Z,_pn_tail
@@ -14709,13 +14712,16 @@ _pn_tail:
 	LD	A,(_printf_left)
 	OR	A
 	JR	Z,_pn_done
-	LD	A,(_pn_padn)
-	LD	B,A
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_pn_padout
 _pn_done:
 	POP	BC
 	RET
+
+; the padding of the conversion: _pn_padn copies of the character E
+_pn_padout:
+	LD	HL,(_pn_padn)
+	JP	_printf_padw
 
 ; sign character and 0x prefix
 _pn_sp:
@@ -14737,6 +14743,20 @@ _pn_sp1:
 	LD	E,'X'
 _pn_sp2:
 	JP	_printf_putc
+
+; Output the character E, HL times (HL may be 0).  Clobbers AF, HL.
+	PUBLIC	_printf_padw
+_printf_padw:
+	LD	A,H
+	OR	L
+	RET	Z
+_printf_padw1:
+	CALL	_printf_putc
+	DEC	HL
+	LD	A,H
+	OR	L
+	JR	NZ,_printf_padw1
+	RET
 
 ; Output the character E, B times (B may be 0).  Clobbers AF, B.
 _printf_padn:
@@ -14845,14 +14865,14 @@ _printf_dstart:	DS	2
 _printf_dcnt:	DB	0
 _pn_sign:	DB	0
 _pn_n:		DB	0
-_pn_zeros:	DB	0
-_pn_padn:	DB	0
-; Per-conversion state, cleared at every '%' (keep it contiguous, 11 bytes)
+_pn_zeros:	DW	0
+_pn_padn:	DW	0
+; Per-conversion state, cleared at every '%' (keep it contiguous, 13 bytes)
 _printf_state:
-_printf_width:	DB	0
+_printf_width:	DW	0	; 16-bit, at most 32767
 _printf_zero:	DB	0
 _printf_upper:	DB	0
-_printf_prec:	DB	0
+_printf_prec:	DW	0	; 16-bit, at most 32767
 _printf_hasprec:	DB	0
 _printf_alt:	DB	0	; '#' flag - alt form for o/x/X
 _printf_left:	DB	0	; '-' flag
@@ -15351,8 +15371,9 @@ _pllo_sh:
 	JR	_pllo_set
 _pllo_z:
 	; value 0 with '#': "%#.0llo" still prints "0"
-	LD	A,(_printf_prec)
-	OR	A
+	LD	A,(_printf_prec+1)
+	LD	HL,_printf_prec
+	OR	(HL)
 	JR	NZ,_pllo_set
 	INC	A
 	LD	(_printf_prec),A
@@ -15601,8 +15622,9 @@ _plo_cvt:
 	JR	_plo_set
 _plo_set_z:
 	; value 0 with '#': "%#.0o" still prints "0"
-	LD	A,(_printf_prec)
-	OR	A
+	LD	A,(_printf_prec+1)
+	LD	HL,_printf_prec
+	OR	(HL)
 	JR	NZ,_plo_set
 	INC	A
 	LD	(_printf_prec),A
@@ -15806,8 +15828,9 @@ _pho_cvt:
 	JR	_pho_set
 _pho_set_z:
 	; value 0 with '#': "%#.0o" still prints "0"
-	LD	A,(_printf_prec)
-	OR	A
+	LD	A,(_printf_prec+1)
+	LD	HL,_printf_prec
+	OR	(HL)
 	JR	NZ,_pho_set
 	INC	A
 	LD	(_printf_prec),A
@@ -15847,68 +15870,75 @@ __printf_handle_s:
 	INC	HL
 	LD	D,(HL)		; DE = string pointer
 
-	XOR	A
-	LD	(_phs_pad),A
-	LD	A,(_printf_width)
-	OR	A
+	LD	HL,0
+	LD	(_phs_pad),HL
+	LD	HL,(_printf_width)
+	LD	A,H
+	OR	L
 	JR	Z,_phs_print	; no field width: nothing to count
 
 	; Count the characters that will be printed, but never more than
-	; the width: B = min(width, precision if any).
-	LD	B,A
+	; the width: BC = min(width, precision if any).
+	LD	B,H
+	LD	C,L
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	Z,_phs_cnt
-	LD	A,(_printf_prec)
-	CP	B
-	JR	NC,_phs_cnt
-	LD	B,A
+	LD	HL,(_printf_prec)
+	OR	A
+	SBC	HL,BC
+	JR	NC,_phs_cnt	; precision >= width: the limit is the width
+	LD	BC,(_printf_prec)
 _phs_cnt:
 	LD	H,D
 	LD	L,E
-	LD	C,0
+	PUSH	BC		; the limit
 _phs_c1:
-	LD	A,C
-	CP	B
-	JR	NC,_phs_cd
+	LD	A,B
+	OR	C
+	JR	Z,_phs_cd
 	LD	A,(HL)
 	OR	A
 	JR	Z,_phs_cd
 	INC	HL
-	INC	C
+	DEC	BC
 	JR	_phs_c1
 _phs_cd:
-	LD	A,(_printf_width)
-	SUB	C		; padding = width - printed characters
-	LD	(_phs_pad),A
-	LD	B,A
+	POP	HL
+	OR	A
+	SBC	HL,BC		; HL = the characters that will be printed
+	LD	B,H
+	LD	C,L
+	LD	HL,(_printf_width)
+	OR	A
+	SBC	HL,BC		; padding = width - printed characters
+	LD	(_phs_pad),HL
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_phs_print
 	PUSH	DE
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_printf_padw
 	POP	DE
 
 _phs_print:
-	; Load precision limit into B
+	; Load precision limit into BC
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	Z,_phs_nop
-	LD	A,(_printf_prec)
-	LD	B,A
+	LD	BC,(_printf_prec)
 	JR	_phs_loop
 _phs_nop:
-	LD	B,0
+	LD	BC,0
 
 _phs_loop:
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	Z,_phs_nolim
 	LD	A,B
-	OR	A
+	OR	C
 	JR	Z,_phs_done
-	DEC	B
+	DEC	BC
 _phs_nolim:
 	LD	A,(DE)
 	OR	A
@@ -15926,10 +15956,9 @@ _phs_done:
 	LD	A,(_printf_left)
 	OR	A
 	JR	Z,_phs_ret
-	LD	A,(_phs_pad)
-	LD	B,A
+	LD	HL,(_phs_pad)
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_printf_padw
 _phs_ret:
 	POP	BC
 	INC	C
@@ -15938,7 +15967,7 @@ _phs_ret:
 	JP	_printf_loop
 
 	COMMON	/lc_printf_s/
-_phs_pad:	DS	1
+_phs_pad:	DS	2
 
 
 	CSEG
@@ -16683,6 +16712,10 @@ _pf_prec6:
 	OR	A
 	LD	A,6
 	RET	Z
+	LD	A,(_printf_prec+1)
+	OR	A
+	LD	A,255		; a precision above 255 digits is 255
+	RET	NZ
 	LD	A,(_printf_prec)
 	RET
 
@@ -16921,17 +16954,14 @@ _pe_len:
 	INC	HL
 _pe_ns:
 	; the padding = width - length, or 0
-	LD	A,(_printf_width)
-	LD	E,A
-	LD	D,0
-	EX	DE,HL
+	EX	DE,HL		; DE = the length
+	LD	HL,(_printf_width)
 	OR	A
 	SBC	HL,DE
-	LD	A,0
-	JR	C,_pe_p
-	LD	A,L
+	JR	NC,_pe_p
+	LD	HL,0
 _pe_p:
-	LD	(_pf_pad),A
+	LD	(_pf_pad),HL
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_pe_left
@@ -16952,9 +16982,8 @@ _pe_left:
 	CALL	_pf_body
 	LD	E,' '
 _pf_padout:
-	LD	A,(_pf_pad)
-	LD	B,A
-	JP	_printf_padn
+	LD	HL,(_pf_pad)
+	JP	_printf_padw
 _pf_signout:
 	LD	A,(_pf_sign)
 	OR	A
@@ -17075,7 +17104,7 @@ _pf_dot:	DS	1
 _pf_x:		DS	1	; the decimal exponent, as a signed byte
 _pf_f0:		DS	1	; index of the first digit that is not 0
 _pf_gp:		DS	1	; %g: the number of significant digits
-_pf_pad:	DS	1
+_pf_pad:	DS	2
 _pf_dstart:	DS	1
 _pf_dlen:	DS	1
 _pf_dg:		DS	DIGITS+2

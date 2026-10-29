@@ -116,7 +116,7 @@ int main(void)
         "[    3.1416] 12", "[3.1       ] 12"]
 
 
-def test_field_width_and_precision_saturate_at_255(tmp_path):
+def test_field_width_is_not_limited_to_255(tmp_path):
     out = build_and_run(tmp_path, r"""
 #include <stdio.h>
 int main(void)
@@ -130,7 +130,7 @@ int main(void)
 """)
     first, second = out.split("\n")[:2]
     assert re.fullmatch(r"\[ {254}1\] 257", first)
-    assert re.fullmatch(r"\[ {254}1\] 257", second)    # 1000 is limited to 255
+    assert re.fullmatch(r"\[ {999}1\] 1002", second)   # 1000 is not limited
 
 
 def hex_float(x, digits=None, upper=False):

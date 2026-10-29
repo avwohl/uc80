@@ -28,7 +28,7 @@
 
 	EXTRN	_printf_loop
 	EXTRN	_printf_putc
-	EXTRN	_printf_padn
+	EXTRN	_printf_padw
 	EXTRN	_printf_upper
 	EXTRN	_printf_hasprec
 	EXTRN	_printf_prec
@@ -392,6 +392,10 @@ _pf_prec6:
 	OR	A
 	LD	A,6
 	RET	Z
+	LD	A,(_printf_prec+1)
+	OR	A
+	LD	A,255		; a precision above 255 digits is 255
+	RET	NZ
 	LD	A,(_printf_prec)
 	RET
 
@@ -630,17 +634,14 @@ _pe_len:
 	INC	HL
 _pe_ns:
 	; the padding = width - length, or 0
-	LD	A,(_printf_width)
-	LD	E,A
-	LD	D,0
-	EX	DE,HL
+	EX	DE,HL		; DE = the length
+	LD	HL,(_printf_width)
 	OR	A
 	SBC	HL,DE
-	LD	A,0
-	JR	C,_pe_p
-	LD	A,L
+	JR	NC,_pe_p
+	LD	HL,0
 _pe_p:
-	LD	(_pf_pad),A
+	LD	(_pf_pad),HL
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_pe_left
@@ -661,9 +662,8 @@ _pe_left:
 	CALL	_pf_body
 	LD	E,' '
 _pf_padout:
-	LD	A,(_pf_pad)
-	LD	B,A
-	JP	_printf_padn
+	LD	HL,(_pf_pad)
+	JP	_printf_padw
 _pf_signout:
 	LD	A,(_pf_sign)
 	OR	A
@@ -784,7 +784,7 @@ _pf_dot:	DS	1
 _pf_x:		DS	1	; the decimal exponent, as a signed byte
 _pf_f0:		DS	1	; index of the first digit that is not 0
 _pf_gp:		DS	1	; %g: the number of significant digits
-_pf_pad:	DS	1
+_pf_pad:	DS	2
 _pf_dstart:	DS	1
 _pf_dlen:	DS	1
 _pf_dg:		DS	DIGITS+2

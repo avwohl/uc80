@@ -59,8 +59,9 @@ _pho_cvt:
 	JR	_pho_set
 _pho_set_z:
 	; value 0 with '#': "%#.0o" still prints "0"
-	LD	A,(_printf_prec)
-	OR	A
+	LD	A,(_printf_prec+1)
+	LD	HL,_printf_prec
+	OR	(HL)
 	JR	NZ,_pho_set
 	INC	A
 	LD	(_printf_prec),A
