@@ -80,3 +80,30 @@ def test_neogeo_driver_example(tmp_path):
     assert 0x020B in ins                                   # bank select, B=2
     assert (0x04, 0x10) in outs                            # YM reg 10h
     assert m.peek8("_ticks") >= 1                          # timer IRQ ran
+
+
+@pytest.fixture
+def uc80_flags():
+    saved = list(isrproof.UC80_FLAGS)
+    yield isrproof.UC80_FLAGS
+    isrproof.UC80_FLAGS[:] = saved
+
+
+@pytest.mark.parametrize("flags", [
+    [], ["--no-register-locals"], ["--no-register-locals", "--isr-safe"],
+    ["-O0"], ["--no-inlining"], ["--no-shared-storage"],
+    ["--no-register-cc"]])
+def test_nmi_function_with_memset_memcpy_and_struct_copies(
+        flags, uc80_flags, tmp_path):
+    """An NMI function that calls memset, memcpy, a helper and copies
+    structs, while main does the same on other buffers.  The totals of main
+    and of the handler equal a Python model, the handler never nests, and
+    the NMIs before the data is ready are ignored.  (A handler that sums a
+    buffer while main still fills the buffer gives a wrong total at every
+    period: that is a race of the program, not a compiler error.)"""
+    uc80_flags[:] = flags
+    r = isrproof.prove_memisr(tmp_path)
+    assert r["ok"], r
+    assert r["nmis"] == 60 and r["nested"] == 0
+    assert r["main_total"] == r["exp_main"] == 9807
+    assert r["isr_total"] == r["exp_isr"] == 52504
