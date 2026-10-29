@@ -173,20 +173,84 @@ def test_discarded_comma_does_not_save_the_old_value(tmp_path):
     assert "push\tHL" in func(off, "f")
 
 
-def test_pair_rules_fire_on_the_ymreg_kernel(tmp_path):
-    """frame_update keeps the table pointer in BC: the load through a copy
-    of BC becomes ld A,(BC), and the copy-and-reload of out() goes."""
-    from pathlib import Path
-    bench = Path(__file__).resolve().parent.parent / "bench" / "programs"
-    src = (bench / "snd-ymreg" / "ymreg.c").read_text()
-    (tmp_path / "snd").mkdir()
-    (tmp_path / "snd" / "snd.h").write_text((bench / "snd" / "snd.h").read_text())
-    on, _ = compile_mac(tmp_path, src, "-I", str(tmp_path / "snd"))
-    off, _ = compile_mac(tmp_path, src, "--no-peep-pairs", "-I",
-                         str(tmp_path / "snd"))
-    assert re.search(r"ld\s+A,\(BC\)", on, re.I)
-    assert not re.search(r"ld\s+A,\(BC\)", off, re.I)
-    assert len(on) < len(off)
+def _peep(lines, exit_live=0, **kw):
+    """Run the pair rules on the text of a function body."""
+    from uc80 import reglocals as rl
+    env = rl.Env(exit_live=exit_live, **kw)
+    nodes = rl.parse(["\t" + ln for ln in lines], env)
+    out = rl.peephole(nodes, [], env)
+    return [ln.strip().replace("\t", " ") for ln in rl.render(out)]
+
+
+def test_rule_a_load_and_store_through_a_pair():
+    assert _peep(["ld H,B", "ld L,C", "ld A,(HL)", "ret"]) == [
+        "ld A,(BC)", "ret"]
+    assert _peep(["ld L,E", "ld H,D", "ld (HL),A", "ret"]) == [
+        "ld (DE),A", "ret"]
+    # HL is a result: the rule must not fire
+    got = _peep(["ld H,B", "ld L,C", "ld A,(HL)", "ret"],
+                exit_live=0x30)
+    assert got[0] == "ld H,B" and len(got) == 4
+
+
+def test_rule_b_a_copy_that_changes_nothing_is_deleted():
+    lines = ["ld B,H", "ld C,L", "ld (HL),A", "ld A,E", "ld H,B", "ld L,C",
+             "inc HL", "ld (HL),A", "ret"]
+    got = _peep(lines, exit_live=0x30)
+    # rule C then turns ld A,E / inc HL / ld (HL),A into ld (HL),E
+    assert got == ["ld B,H", "ld C,L", "ld (HL),A", "inc HL", "ld (HL),E",
+                   "ret"]
+    # a write of HL between the copies keeps the second copy
+    lines = ["ld B,H", "ld C,L", "ld HL,5", "ld H,B", "ld L,C", "ret"]
+    assert len(_peep(lines, exit_live=0x30)) == len(lines)
+    # a write of BC between the copies keeps the second copy
+    lines = ["ld B,H", "ld C,L", "inc BC", "ld H,B", "ld L,C", "ret"]
+    assert len(_peep(lines, exit_live=0x30)) == len(lines)
+    # a call between the copies keeps the second copy
+    lines = ["ld B,H", "ld C,L", "call _f", "ld H,B", "ld L,C", "ret"]
+    assert len(_peep(lines, exit_live=0x30)) == len(lines)
+
+
+def test_rule_c_store_from_the_register():
+    got = _peep(["ld A,E", "inc HL", "ld (HL),A", "ret"])
+    assert got == ["inc HL", "ld (HL),E", "ret"]
+    # A is read afterwards: keep the load
+    got = _peep(["ld A,E", "ld (HL),A", "ld B,A", "ret"])
+    assert got[0] == "ld A,E"
+    # the register changes between the load and the store
+    got = _peep(["ld A,E", "inc E", "ld (HL),A", "ret"])
+    assert got[0] == "ld A,E"
+
+
+def test_rule_d_shift_of_a_pair_needs_dead_flags_and_hl():
+    seq = ["ld H,D", "ld L,E", "add HL,HL", "ld D,H", "ld E,L"]
+    assert _peep(seq + ["xor A", "ret"]) == ["sla E", "rl D", "xor A", "ret"]
+    # the carry is read afterwards
+    got = _peep(seq + ["jr c,$+3", "ret"])
+    assert "add HL,HL" in got
+    # HL is read afterwards
+    got = _peep(seq + ["xor A", "ld A,(HL)", "ret"])
+    assert "add HL,HL" in got
+
+
+def test_the_prologue_move_is_not_a_known_copy():
+    """A frame function copies HL into BC before the frame code writes HL:
+    the copy at the entry stands far from the body (docs/peephole_pairs.md)."""
+    from uc80 import reglocals as rl
+    env = rl.Env(exit_live=0x30)
+    nodes = rl.parse(["\tld\tH,B", "\tld\tL,C", "\tret"], env)
+    nodes[0].pro = nodes[1].pro = True
+    pre = [rl.make_ins("ld", "B", "H", env=env), rl.make_ins("ld", "C", "L", env=env)]
+    for p in pre:
+        p.pro = True
+    out, changed = rl.drop_known_copies(pre + nodes[2:])
+    assert not changed
+    pre2 = [rl.make_ins("ld", "B", "H", env=env), rl.make_ins("ld", "C", "L", env=env)]
+    for p in pre2:
+        p.pro = True
+    body = [rl.make_ins("ld", "H", "B", env=env), rl.make_ins("ld", "L", "C", env=env)]
+    out, changed = rl.drop_known_copies(pre2 + body)
+    assert not changed and len(out) == 4
 
 
 def test_a_volatile_read_keeps_its_count(tmp_path):

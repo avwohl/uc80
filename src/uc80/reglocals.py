@@ -104,7 +104,7 @@ class Node:
 
     __slots__ = ("kind", "text", "op", "ops", "label", "rd", "wr", "flow",
                  "target", "size", "cond", "vr", "vw", "cpm", "xr", "w",
-                 "pro", "wrap", "tight")
+                 "pro", "wrap", "tight", "fold", "noret")
 
     def __init__(self, kind: str, text: str = ""):
         self.kind = kind          # ins label other data marker
@@ -126,6 +126,8 @@ class Node:
         self.pro = False          # belongs to the prologue
         self.tight = False        # liveness treats the swap as a permutation
         self.wrap = 0
+        self.fold = None          # (ld HL,slot node, (HL) node) of a folded pair
+        self.noret = False        # a call that never returns
 
 
 @dataclass
@@ -181,6 +183,8 @@ def _fill_effect(n: Node, env: Env, lenient: bool = False) -> None:
         tgt = eff.target
         rd = env.callee_reads(tgt) if tgt else ALL7
         wr = env.callee_writes(tgt) if tgt else ALL7
+        # exit, abort, a _Noreturn function: nothing runs after the call
+        n.noret = bool(tgt and env.slot_fold and env.noreturn(tgt))
     if n.op == "exx":
         raise Bail("exx")
     if n.op in ("ldi", "ldd"):
@@ -267,6 +271,8 @@ def parse(lines: list[str], env: Env) -> list[Node]:
             nodes.append(nd)
             continue
         _fill_effect(nd, env)
+        if nd.op == "push" and "HJUNK" in line and nd.ops == ["HL"]:
+            nd.rd &= ~H      # the push of a char argument: H is junk
         nodes.append(nd)
     if len(nodes) > MAX_NODES:
         raise Bail("function too long")
@@ -278,7 +284,112 @@ def _retext(n: Node) -> None:
 
 
 def render(nodes: list[Node]) -> list[str]:
-    return [n.text for n in nodes if n.kind != "marker" and not n.pro]
+    out: list[str] = []
+    for n in nodes:
+        if n.kind == "marker" or n.pro:
+            continue
+        if n.fold:      # a folded pair that stayed in memory: both lines
+            out.extend(f.text for f in n.fold)
+        else:
+            out.append(n.text)
+    return out
+
+
+_HL_MEM = re.compile(r"^\(HL\)$", re.IGNORECASE)
+_FOLD_ALU = ("add", "adc", "sub", "sbc", "and", "or", "xor", "cp")
+_FOLD_NOREG = ("inc", "dec", "bit", "set", "res", "rlc", "rrc", "rl", "rr",
+               "sla", "sra", "srl", "sll")
+
+
+def _foldable(n1: Node, n2: Node) -> bool:
+    """n1 is ``ld HL,??AUTO+k`` and n2 one byte operation on ``(HL)`` that
+    needs no register of BC and DE (the folded form is then never
+    renamed)."""
+    if not (n1.kind == "ins" and n1.op == "ld" and len(n1.ops) == 2
+            and n1.ops[0].upper() == "HL" and _AUTO_IMM.match(n1.ops[1])):
+        return False
+    if not (n2.kind == "ins" and n2.flow == "next" and not n2.pro
+            and not n1.pro):
+        return False
+    ops = [o for o in n2.ops]
+    mem = [k for k, o in enumerate(ops) if _HL_MEM.match(o)]
+    if len(mem) != 1:
+        return False
+    k = mem[0]
+    if n2.op in _FOLD_NOREG:
+        return k == len(ops) - 1 and (n2.op not in ("bit", "set", "res")
+                                      or (len(ops) == 2 and k == 1))
+    if n2.op in _FOLD_ALU:
+        return k == len(ops) - 1
+    if n2.op == "ld" and len(ops) == 2:
+        if k == 1:
+            return ops[0].upper() == "A"
+        return ops[1].upper() == "A" or bool(_IMM_OPERAND.match(ops[1]))
+    return False
+
+
+_IMM_OPERAND = re.compile(r"^[-+]?(\d+|[0-9][0-9A-Fa-f]*[hH]|0[xX][0-9A-Fa-f]+)$")
+
+
+def strip_after_noreturn(nodes: list[Node]) -> list[Node]:
+    """Delete the instructions that follow a call that never returns, up to
+    the next label.  Nothing reaches them (the cleanup ``pop DE`` or the
+    stack adjustment after ``call _exit``).  Left in the text, such an
+    instruction would count as a clobber of a local that is live at the
+    label after it."""
+    # a ``jr $+5`` can land on an instruction without a label: no deletion
+    if any(nd.kind == "ins" and (nd.target or "").startswith("$")
+           for nd in nodes):
+        return nodes
+    out: list[Node] = []
+    dead = False
+    for nd in nodes:
+        if nd.kind == "ins" and dead:
+            continue
+        if nd.kind in ("label", "data"):
+            dead = False
+        out.append(nd)
+        if nd.kind == "ins" and nd.flow == "call" and nd.noret:
+            dead = True
+    return out
+
+
+def fold_slot_ops(nodes: list[Node], env: Env) -> list[Node]:
+    """``ld HL,??AUTO+k`` followed by one byte operation on ``(HL)`` (inc,
+    dec, an ALU operation, bit, set, res, a shift, a store of A or of an
+    immediate, a load into A) becomes one node with the operand
+    ``(??AUTO+k)``, when HL is dead after the operation (the push of a char
+    argument, tagged HJUNK by the code generator, does not read H).  The
+    rewrite then
+    treats the node like a direct access to the slot.  A node that stays in
+    memory prints as the two original lines.  The new node reads what the
+    operation reads (A), and writes HL as the pair did."""
+    if not env.slot_fold:
+        return nodes
+    succ = build_cfg(nodes)
+    live = liveness(nodes, succ, env.exit_live)
+    out: list[Node] = []
+    i = 0
+    n = len(nodes)
+    while i < n:
+        if i + 1 < n and _foldable(nodes[i], nodes[i + 1]) and not (
+                live_out_of(succ, live, i + 1) & (H | L)):
+            n1, n2 = nodes[i], nodes[i + 1]
+            slot = "(??AUTO" + (_AUTO_IMM.match(n1.ops[1]).group(0)[6:] or "+0") + ")"
+            f = Node("ins", n2.text)
+            f.op = n2.op
+            f.ops = [slot if _HL_MEM.match(o) else o for o in n2.ops]
+            f.flow = "next"
+            f.size = n1.size + n2.size
+            f.rd = (n2.rd & ~(H | L)) | n1.rd
+            f.wr = n1.wr | n2.wr | H | L
+            f.fold = (n1, n2)
+            out.append(f)
+            i += 2
+            continue
+        out.append(nodes[i])
+        i += 1
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -340,7 +451,9 @@ def build_cfg(nodes: list[Node]) -> list[list[int]]:
             succ.append([nxt])
             continue
         f = nd.flow
-        if f in ("next", "call"):
+        if f == "call" and nd.noret:
+            succ.append([])          # the callee never returns
+        elif f in ("next", "call"):
             succ.append([nxt])
         elif f in ("jump", "branch"):
             tgt = nd.target or ""
@@ -1555,6 +1668,8 @@ def _is8(o: str) -> bool:
 
 
 def _tstates(nd: Node) -> int:
+    if nd.fold:
+        return _tstates(nd.fold[0]) + _tstates(nd.fold[1])
     op = nd.op
     ops = [o.upper().replace(" ", "") for o in nd.ops]
     n = len(ops)
@@ -1825,6 +1940,8 @@ def copy_node(nd: Node) -> Node:
     n.flow, n.target, n.size, n.cond = nd.flow, nd.target, nd.size, nd.cond
     n.vr, n.vw, n.cpm, n.xr = nd.vr, nd.vw, nd.cpm, nd.xr
     n.pro = nd.pro
+    n.fold = nd.fold
+    n.noret = nd.noret
     return n
 
 
@@ -1849,6 +1966,8 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
         return None
     try:
         nodes = parse(lines, env)
+        nodes = strip_after_noreturn(nodes)
+        nodes = fold_slot_ops(nodes, env)
         succ = build_cfg(nodes)
     except Bail as ex:
         _dbg("bail", ex)

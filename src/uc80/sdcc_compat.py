@@ -50,6 +50,7 @@ class Found:
     asm_blocks: int = 0                           # __asm blocks, all files
     naked: list = field(default_factory=list)     # (name, file, line)
     naked_protos: list = field(default_factory=list)  # (name, file, line)
+    noreturn: set = field(default_factory=set)    # names marked noreturn
 
 
 _TOKEN = re.compile(
@@ -435,8 +436,95 @@ def naked_mismatches(asts, paths, found: Found) -> list:
     return out
 
 
+_C_WORDS = frozenset((
+    "void", "char", "short", "int", "long", "float", "double", "signed",
+    "unsigned", "_Bool", "bool", "static", "extern", "inline", "const",
+    "volatile", "register", "struct", "union", "enum", "sizeof", "typeof",
+    "__attribute__", "__attribute", "_Noreturn"))
+_NORETURN_WORD = re.compile(r"^(?:__)?noreturn(?:__)?$")
+
+
+def _noreturn_pass(source: str, found: Found) -> None:
+    """Record the names of the functions that ``[[noreturn]]`` or
+    ``__attribute__((noreturn))`` marks, in a declaration or a definition
+    at file scope.  The source does not change.  A declaration that the scan
+    does not understand (a typedef, a function pointer) records nothing: a
+    name that is missing only costs speed, a wrong name would make the
+    register-locals pass think that a call never returns."""
+    if "noreturn" not in source:
+        return
+    # a preprocessor line (``#define NR __attribute__((noreturn))``) is not
+    # a declaration: blank it, with its continuation lines
+    source = re.sub(r"(?m)^[ \t]*#(?:[^\n\\]|\\.|\\\n)*$", " ", source)
+    toks = [(m.lastgroup, m.group()) for m in _TOKEN.finditer(source)
+            if m.lastgroup not in ("ws", "cmt")]
+    n = len(toks)
+    depth = 0
+    start = 0
+    k = 0
+
+    def scan_decl(a, b):
+        """tokens a..b-1 are one declaration up to its ';' or '{'."""
+        marked = False
+        words = []              # the tokens that are not an attribute
+        j = a
+        while j < b:
+            t = toks[j][1]
+            if t == "[[":
+                e = j + 1
+                while e < b and toks[e][1] != "]]":
+                    if _NORETURN_WORD.match(toks[e][1]) and (
+                            toks[e - 1][1] in ("[[", ",")):
+                        marked = True
+                    e += 1
+                j = e + 1
+                continue
+            if t in ("__attribute__", "__attribute") and j + 2 < b \
+                    and toks[j + 1][1] == "(" and toks[j + 2][1] == "(":
+                e, d = j + 1, 0
+                while e < b:
+                    if toks[e][1] == "(":
+                        d += 1
+                    elif toks[e][1] == ")":
+                        d -= 1
+                        if d == 0:
+                            break
+                    elif _NORETURN_WORD.match(toks[e][1]) and toks[e][0] == "id":
+                        marked = True
+                    e += 1
+                j = e + 1
+                continue
+            words.append(toks[j])
+            j += 1
+        if not marked or any(w[1] == "typedef" for w in words):
+            return
+        for i, w in enumerate(words):
+            if w[1] == "(":
+                nxt = words[i + 1][1] if i + 1 < len(words) else ""
+                if (i > 0 and words[i - 1][0] == "id" and nxt not in ("*", "^")
+                        and words[i - 1][1] not in _C_WORDS):
+                    found.noreturn.add(words[i - 1][1])
+                return
+
+    while k < n:
+        t = toks[k][1]
+        if t == "{":
+            if depth == 0:
+                scan_decl(start, k)
+            depth += 1
+        elif t == "}":
+            depth -= 1
+            if depth == 0:
+                start = k + 1
+        elif t == ";" and depth == 0:
+            scan_decl(start, k)
+            start = k + 1
+        k += 1
+
+
 def prepass(source: str, filename: str, found: Found) -> str:
     """Rewrite ``source`` and add what it declares to ``found``."""
+    _noreturn_pass(source, found)
     source = _asm_blocks(source, filename, found)
     source = _asm_substatements(source)
     source = _attribute_naked(source)

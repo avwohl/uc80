@@ -6,6 +6,12 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Family I step 1 (branch `fami`): slot folding and calls that do not return
+
+- **Slot folding in the register-locals pass** ([docs/register_locals.md](docs/register_locals.md)). `ld HL,??AUTO+k` followed by `inc (HL)`, `dec (HL)`, an ALU operation, `bit`, `set`, `res`, a shift or a byte load or store through `(HL)` is one access of the slot when HL is dead afterwards. A byte local that the code reaches in this way can now live in a register (the log no longer says "address of a slot"). The push of a char argument carries the comment `; HJUNK`: the callee never reads the high byte, so H is not live. T-states of the timed region: snd-cmdq 9,710,812 to 9,352,016, snd-ymreg 16,340,991 to 15,507,547.
+- **Calls that do not return end the flow graph of the pass.** `exit`, `abort`, `_Exit`, `quick_exit`, `_assert_fail`, and a function with `_Noreturn`, `[[noreturn]]` or `__attribute__((noreturn))` (found by a text scan, `sdcc_compat._noreturn_pass`). stdlib.h and assert.h mark `exit`, `abort` and `_assert_fail` `_Noreturn`. No local is live after the call, the error path `printf(...); exit(1);` needs no wrap, and the cleanup after the call is deleted. davidly-tm 137,785,507 to 106,905,507 T-states.
+- `--no-slot-fold` switches both changes off. Tests: `tests/test_regl_slotops.py`, `tests/test_regl_noreturn.py`.
+
 ### Family I step 1 (branch `fami`): comma and pair peepholes
 
 - **A discarded comma computes no value for the right operand** (`for (...; i++, t++)`). The right operand `t++` of a comma that nothing uses had a copy of the old value (push HL, `inc HL`, pop HL). The copy is gone, and a pointer that had the copy can now stay in IY or BC. `--no-discard-comma` switches the change off.

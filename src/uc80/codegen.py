@@ -3727,6 +3727,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         self.enable_discard_comma = True
         self.enable_peep_pairs = True
         self.enable_slot_fold = True
+        # names that [[noreturn]] or __attribute__((noreturn)) mark (found
+        # by the text scan of sdcc_compat)
+        self.noreturn_extra: set = set()
         self.enable_chain_store = chain_store
         self.enable_dead_store = dead_store
         self.enable_register_locals = register_locals
@@ -13750,7 +13753,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
                             self.ctx.emit_instr("push", "HL")
                             stack_size += 4
                         elif self._gen_byte_arg(expr, arg, param_type):
-                            self.ctx.emit_instr("push", "HL")
+                            # H is not a value of the program: the callee
+                            # never reads the high byte.  The tag lets the
+                            # register-locals pass see that H is dead.
+                            self.ctx.lines.append("\tpush\tHL\t; HJUNK")
                             stack_size += 2
                         else:
                             self.gen_expr(arg)

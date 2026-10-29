@@ -1294,6 +1294,7 @@ def main() -> int:
         gen.enable_discard_comma = not args.no_discard_comma
         gen.enable_peep_pairs = not args.no_peep_pairs
         gen.enable_slot_fold = not args.no_slot_fold
+        gen.noreturn_extra = set(sdcc_found.noreturn)
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
                 asts, [str(p) for p in input_paths

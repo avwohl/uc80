@@ -9,6 +9,13 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-28: family I, step 1 (the sound-driver bundle) is in the code (branch `fami`)
+
+Family I is the set of changes that the analysis of the 13 programs above SDCC speed named (the programs where uc80 is slower than SDCC in speed mode, among them the two Neo Geo sound kernels `snd-ymreg` and `snd-cmdq`). Step 1 has four parts. Part 1.0 is the library: `_prt_div16` and `_div32_10` use 16 and 32 shift and subtract steps, and `putchar` and `__conout` have a short path for a character that is not LF. Part 1.1 is the discarded comma and the pair peephole rules ([peephole_pairs.md](peephole_pairs.md)). Part 1.2 is slot folding, and part 1.3 is the flow graph that knows calls that do not return ([register_locals.md](register_locals.md)).
+
+- Not done in step 1: the BSS clear in `crt0.mac` keeps `LDIR`. A push fill needs `DI` and a read of IFF2 with `LD A,I`, which has a known error on early Z80 chips. An unrolled fill saves only 2.7k T-states of 162k in `bsd-ppt` and adds bytes to every program.
+- Not done in step 1 (steps 2 and later): byte-granular allocation of byte locals (three or four of them in B, C, D and E), the load CSE of `t->reg`, loop-invariant code motion, the unsigned compare of a counted loop index, and the narrowing of 32-bit index arithmetic.
+
 ## Status on 2026-10-28: family H is integrated with the ROM work (branch `integrate8`)
 
 The three passes of family H (address CSE and chained constant stores, dead locals and overwritten stores, inline block operations) and the register-locals change for names under `&` are merged with `main` (register locals, naked functions, RST and IM 2 vectors, ROM wave 4). The merge needed no change of a pass. `tests/test_famh_rom_integration.py` runs the interactions in the ROM runner, in the um80 flow and in the sdas flow: the ROM pass for constant-address pointers (`ptrabs.py`) runs first, and the three passes keep every volatile access, every store through a constant-address volatile pointer, the low-byte-first order of 16-bit volatile stores (also for a structure copy to a volatile target), the work areas of an interrupt function (`--isr-save-workareas`), naked functions, and separate compilation with a BSS block for each module.
