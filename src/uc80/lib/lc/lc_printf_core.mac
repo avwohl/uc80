@@ -711,8 +711,8 @@ _prt_dec_out:
 ; ============================================================
 	PUBLIC	_prt_div16
 _prt_div16:
-	; HL < 10: no work.  H = 0: 8 steps on L.  Otherwise 16 steps of
-	; shift and trial subtract (about 700 T for any HL).
+	; HL < 10: no work.  H = 0: 8 steps (the byte moves to H first).
+	; Otherwise 16 steps of shift and trial subtract (about 700 T).
 	LD	A,H
 	OR	A
 	JR	NZ,_prt_div16_w
@@ -725,24 +725,14 @@ _prt_div16:
 	RET
 _prt_div16_b:
 	PUSH	BC
+	LD	H,L
+	LD	L,0
 	LD	B,8
-	XOR	A		; A = running remainder
-_prt_div16_bl:
-	SLA	L		; shift the next dividend bit into A
-	RLA
-	CP	10
-	JR	C,_prt_div16_bn
-	SUB	10
-	INC	L		; quotient bit (bit 0 of L is free after SLA)
-_prt_div16_bn:
-	DJNZ	_prt_div16_bl
-	LD	E,A
-	LD	D,0
-	POP	BC
-	RET
+	JR	_prt_div16_go
 _prt_div16_w:
 	PUSH	BC
 	LD	B,16
+_prt_div16_go:
 	XOR	A		; A = running remainder
 _prt_div16_lp:
 	ADD	HL,HL		; shift next dividend bit into A
