@@ -51,6 +51,9 @@ class Found:
     naked: list = field(default_factory=list)     # (name, file, line)
     naked_protos: list = field(default_factory=list)  # (name, file, line)
     noreturn: set = field(default_factory=set)    # names marked noreturn
+    # the same names with the file; resolve_found_names maps them to labels
+    noreturn_at: list = field(default_factory=list)
+    noreturn_labels: set = field(default_factory=set)
 
 
 _TOKEN = re.compile(
@@ -444,7 +447,7 @@ _C_WORDS = frozenset((
 _NORETURN_WORD = re.compile(r"^(?:__)?noreturn(?:__)?$")
 
 
-def _noreturn_pass(source: str, found: Found) -> None:
+def _noreturn_pass(source: str, found: Found, filename: str = "") -> None:
     """Record the names of the functions that ``[[noreturn]]`` or
     ``__attribute__((noreturn))`` marks, in a declaration or a definition
     at file scope.  The source does not change.  A declaration that the scan
@@ -498,12 +501,23 @@ def _noreturn_pass(source: str, found: Found) -> None:
             j += 1
         if not marked or any(w[1] == "typedef" for w in words):
             return
+        # ``void g(void), f(void) __attribute__((noreturn));`` marks one
+        # declarator and the scan cannot tell which: record nothing
+        pd = 0
+        for w in words:
+            if w[1] in ("(", "["):
+                pd += 1
+            elif w[1] in (")", "]"):
+                pd -= 1
+            elif w[1] == "," and pd == 0:
+                return
         for i, w in enumerate(words):
             if w[1] == "(":
                 nxt = words[i + 1][1] if i + 1 < len(words) else ""
                 if (i > 0 and words[i - 1][0] == "id" and nxt not in ("*", "^")
                         and words[i - 1][1] not in _C_WORDS):
                     found.noreturn.add(words[i - 1][1])
+                    found.noreturn_at.append((words[i - 1][1], filename))
                 return
 
     while k < n:
@@ -524,7 +538,7 @@ def _noreturn_pass(source: str, found: Found) -> None:
 
 def prepass(source: str, filename: str, found: Found) -> str:
     """Rewrite ``source`` and add what it declares to ``found``."""
-    _noreturn_pass(source, found)
+    _noreturn_pass(source, found, filename)
     source = _asm_blocks(source, filename, found)
     source = _asm_substatements(source)
     source = _attribute_naked(source)

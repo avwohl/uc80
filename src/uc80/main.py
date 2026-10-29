@@ -492,6 +492,9 @@ def resolve_found_names(found, paths: list, maps: list) -> None:
     found.naked[:] = [(mapped(n, f), f, l) for n, f, l in found.naked]
     found.naked_protos[:] = [(mapped(n, f), f, l)
                              for n, f, l in found.naked_protos]
+    # a static noreturn function is renamed by the merge: the label of an
+    # extern function of the same name in another file is not noreturn
+    found.noreturn_labels = {mapped(n, f) for n, f in found.noreturn_at}
 
 
 def _roots_from_options(entries: list, pragmas: list,
@@ -1294,7 +1297,7 @@ def main() -> int:
         gen.enable_discard_comma = not args.no_discard_comma
         gen.enable_peep_pairs = not args.no_peep_pairs
         gen.enable_slot_fold = not args.no_slot_fold
-        gen.noreturn_extra = set(sdcc_found.noreturn)
+        gen.noreturn_extra = set(sdcc_found.noreturn_labels)
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
                 asts, [str(p) for p in input_paths

@@ -187,3 +187,34 @@ def test_a_define_does_not_mark_the_next_declaration():
     sc._noreturn_pass("#define NR __attribute__((noreturn)) \\\n  extra\n"
                       "int g(void);\nNR void h(void);\n", found)
     assert found.noreturn == set()
+
+
+# ---- a static noreturn function and an extern function of the same name
+
+STATIC_A = '#include <stdio.h>\n#include <stdlib.h>\n#include <stdint.h>\n[[noreturn]] static void die(void){ printf("die\\n"); exit(7); }\nuint16_t useit(uint16_t n){ if (n==9999) die(); return n+1; }\n'
+STATIC_A_ATTR = '#include <stdio.h>\n#include <stdlib.h>\n#include <stdint.h>\nstatic void die(void) __attribute__((noreturn)); static void die(void){ printf("die\\n"); exit(7); }\nuint16_t useit(uint16_t n){ if (n==9999) die(); return n+1; }\n'
+EXTERN_B = '#include <stdio.h>\n#include <stdint.h>\nuint16_t useit(uint16_t n);\nstatic uint8_t cnt;\nvoid die(void){ uint16_t k; uint8_t j; for(k=0;k<10;k++) for(j=0;j<3;j++) cnt+=k+j; }\nuint16_t scan(uint16_t n){\n  uint16_t i, a=1, b=2, c=3;\n  for(i=0;i<n;i++){\n    a+=i; b^=a; c+=b;\n    if ((c&0xff)==0x33) die();\n    if (a>3000) { a=0; die();}\n  }\n  return a+b+c+cnt;\n}\nint main(void){ printf("%u\\n", scan(500)); printf("%u\\n", useit(5)); return 0; }\n'
+
+
+@needs_run
+@pytest.mark.parametrize("first", [STATIC_A, STATIC_A_ATTR],
+                         ids=["bracket", "attribute"])
+@pytest.mark.parametrize("flags", VARIANTS)
+def test_a_static_noreturn_function_does_not_mark_an_extern_one(
+        tmp_path, first, flags):
+    """File A has a static noreturn die(); file B an extern die() that
+    returns and is called in a loop with locals in BC and DE.  The merge
+    renames the static function, so only that label never returns."""
+    b = tmp_path / "other.c"
+    b.write_text(EXTERN_B)
+    out = build_run(tmp_path, first, *flags, files=[b])
+    assert out.split() == ["48055", "6"]
+
+
+def test_a_declaration_with_two_declarators_marks_nothing():
+    from uc80 import sdcc_compat as sc
+    found = sc.Found()
+    sc._noreturn_pass(
+        "void g(void), f(void) __attribute__((noreturn));\n"
+        "void h(int a, int b) __attribute__((noreturn));\n", found)
+    assert found.noreturn == {"h"}
