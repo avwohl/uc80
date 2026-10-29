@@ -836,6 +836,24 @@ def main() -> int:
              "returning (docs/register_locals.md)"
     )
     parser.add_argument(
+        "--no-licm",
+        action="store_true",
+        help="Compute a loop-invariant integer expression in every pass of "
+             "the loop (docs/licm.md)"
+    )
+    parser.add_argument(
+        "--no-range-cmp",
+        action="store_true",
+        help="Use the signed 16-bit compare for a counter that is never "
+             "negative (docs/range_compare.md)"
+    )
+    parser.add_argument(
+        "--no-narrow-index",
+        action="store_true",
+        help="Compute a 32-bit array index in 32 bits although only the low "
+             "16 bits reach the address (docs/narrow_index.md)"
+    )
+    parser.add_argument(
         "--no-addr-cse",
         action="store_true",
         help="Compute every array element address again (docs/addr_cse.md)"
@@ -1297,6 +1315,9 @@ def main() -> int:
         gen.enable_discard_comma = not args.no_discard_comma
         gen.enable_peep_pairs = not args.no_peep_pairs
         gen.enable_slot_fold = not args.no_slot_fold
+        gen.enable_licm = not args.no_licm
+        gen.enable_range_cmp = not args.no_range_cmp
+        gen.enable_narrow_index = not args.no_narrow_index
         gen.noreturn_extra = set(sdcc_found.noreturn_labels)
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
@@ -1441,6 +1462,10 @@ def main() -> int:
             if dse.get("stores") or dse.get("decls"):
                 print(f"  Dead locals: {dse.get('decls', 0)} removed, "
                       f"{dse.get('stores', 0)} store(s) dropped")
+            licm = getattr(gen, "licm_stats", None) or {}
+            if licm.get("n"):
+                print(f"  Loop-invariant code motion: {licm['n']} "
+                      f"expression(s) moved out of a loop")
             acse = getattr(gen, "addr_cse_stats", None) or {}
             if acse.get("n") or acse.get("chain"):
                 print(f"  Address CSE: "

@@ -28,6 +28,9 @@ from . import ptrabs
 from . import regcc
 from .reglocals_gen import RegLocalsMixin
 from .addrcse import AddrCseMixin
+from .licm import LicmMixin
+from .ranges import RangeMixin
+from .narrow import NarrowMixin
 from .deadstore import DeadStoreMixin
 from .blockops import BlockOpsMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
@@ -3688,7 +3691,7 @@ class _Src32:
         self.signed = signed
 
 
-class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
+class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin, RangeMixin, NarrowMixin,
                     DeadStoreMixin, BlockOpsMixin):
     """Z80 code generator."""
 
@@ -3727,6 +3730,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         self.enable_discard_comma = True
         self.enable_peep_pairs = True
         self.enable_slot_fold = True
+        # Family I step 2 switches (docs/licm.md, docs/range_compare.md).
+        self.enable_licm = True
+        self.enable_range_cmp = True
+        self.enable_narrow_index = True
         # names that [[noreturn]] or __attribute__((noreturn)) mark (found
         # by the text scan of sdcc_compat)
         self.noreturn_extra: set = set()
@@ -4611,6 +4618,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         # AST rewrite, so it runs before anything sizes a frame.
         self.dead_store_stats = self._dse_run(unit)
         self.addr_cse_stats = self._acse_run(unit)
+        # Index narrowing (docs/narrow_index.md) goes first: a 16-bit
+        # expression is cheaper to move out of a loop.
+        self.narrow_stats = self._narrow_run(unit)
+        # Loop-invariant code motion (docs/licm.md).
+        self.licm_stats = self._licm_run(unit)
         # Convention selection.  It has to run before the first call is
         # generated (a forward call needs the callee's plan) and before the
         # shared storage is sized (a register parameter is stored on entry,
@@ -6686,6 +6698,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         self.ctx.regs.reset()
         type_scope = self._type_scope_snapshot()
         self._register_body_types(func.body)
+        self._nonneg_names = self._range_facts(func)
         self._current_sret_size = self._struct_return_size(return_type)
 
         # --no-shared-storage has to reach here too: can_use_shared_storage
@@ -20322,7 +20335,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         0x7000 < 0x9000)."""
         return (self._is_promoted_unsigned(left)
                 or self._is_promoted_unsigned(right)
-                or self._is_ptr_expr(left) or self._is_ptr_expr(right))
+                or self._is_ptr_expr(left) or self._is_ptr_expr(right)
+                or self._both_nonneg(left, right))
 
     def _cmp_const(self, expr) -> int | None:
         """The value of a constant comparison operand (an integer
