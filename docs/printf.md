@@ -122,10 +122,11 @@ about `%*d`, because `*` works.
 
 These limits are deliberate.
 
-- A field width or a precision above 255 is 255. `printf("%1000d", 1)` prints a
-  field of 255 characters.
-- `%#.Ng` with a precision `N` above about 250 prints a few zeros less than C
-  requires. The number of digits after the point is one byte.
+- A field width or a precision is a 16-bit number and has a limit of 32767.
+  `printf("%1000d", 1)` prints a field of 1000 characters. A precision of a
+  float conversion (`%f`, `%e`, `%g`, `%a`) above 255 is 255, because the
+  number of digits after the point is one byte. So `%#.Ng` with a precision
+  `N` above about 250 prints a few zeros less than C requires.
 - The `hh` modifier does not narrow the argument when `int` has 32 bits
   (`--int 32`). `%n` stores a 16-bit value.
 - `%jd`, `%ju`, `%jx` (`intmax_t`) are not supported. Cast the argument to

@@ -54,12 +54,10 @@ IEEE result for an infinity or a NaN operand.
   move bits work with subnormal numbers: `frexp`, `ldexp`, `scalbn`,
   `ilogb`, `logb`, `modf`, `nextafter`, `fmod`, `remainder`, `fpclassify`.
   `sqrt`, `cbrt`, `hypot` and `atan2` scale a subnormal argument. `exp` and
-  `pow` round a subnormal result.
+  `pow` round a subnormal result. A floating constant of the source keeps its
+  subnormal bits ([types and conversions](types_and_conversions.md)).
 - The math functions do not set `errno` and do not raise a floating-point
   exception.
-- A conversion between `long long` and `float` uses only the low 32 bits of
-  the integer. The code generator causes this limit. `llround` and `llrint`
-  build the 64-bit value from the bits, so they do not have this limit.
 - `lround` and `lrint` return `LONG_MAX` or `LONG_MIN` for an argument
   outside the range of a `long`.
 - The functions use static storage. They are not reentrant.

@@ -47,3 +47,20 @@ def test_ccfuzz_seed_matches_the_host(tmp_path, seed, flags):
                                  exact=True, keep=None, keep_work=False)
     _seed, status, note = mod.one(seed, opts)
     assert status == "PASS", (status, note)
+
+
+@needs_host_cc
+@pytest.mark.parametrize("seed,flags", [
+    (1138, "--isr-safe"),
+    (21810, ""),
+    (22164, ""),    # cast types in the CSE key of uc_core
+    (22287, ""),
+])
+def test_ccfuzz_seed_with_the_variant_of_the_seed(tmp_path, seed, flags):
+    """The seeds that an earlier sweep listed as WRONG, built with the flags
+    that the seed picks for itself (the same way the sweep builds them)."""
+    mod = _ccfuzz()
+    opts = types.SimpleNamespace(work=str(tmp_path), ll=False, flags=flags,
+                                 exact=False, keep=None, keep_work=False)
+    _seed, status, note = mod.one(seed, opts)
+    assert status == "PASS", (status, note)
