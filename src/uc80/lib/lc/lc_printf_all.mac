@@ -34,11 +34,14 @@
 	EXTRN	__printf_handle_a
 	EXTRN	__printf_handle_au
 	EXTRN	__printf_handle_skip
+	EXTRN	__printf_handle_star
 
 	CSEG
 
 	PUBLIC	__printf_format_table
 __printf_format_table:
+	DB	'*'
+	DW	__printf_handle_star	; a '*' width or precision
 	DB	'd'
 	DW	__printf_handle_d
 	DB	'i'

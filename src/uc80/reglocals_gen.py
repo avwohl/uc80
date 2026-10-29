@@ -12,6 +12,7 @@ import dataclasses
 import re
 
 from uc_core import ast
+from uc_core import _dcfast
 from uc_core.volatility import children as _children
 
 from . import iyptr, reglocals
@@ -44,7 +45,7 @@ def address_taken_names(body) -> set:
                     if isinstance(x, ast.Identifier):
                         out.add(x.name.text)
                     elif taint_all:
-                        if (dataclasses.is_dataclass(x)
+                        if (_dcfast.is_dataclass(x)
                                 and not isinstance(x, type)):
                             sub.extend(_children(x))
                     elif isinstance(x, ast.Member):
@@ -54,9 +55,9 @@ def address_taken_names(body) -> set:
                     elif (isinstance(x, ast.UnaryOp)
                           and getattr(x.op, "text", x.op) == "*"):
                         pass
-                    elif dataclasses.is_dataclass(x) and not isinstance(x, type):
-                        sub.extend(_children(x))
-        if dataclasses.is_dataclass(node) and not isinstance(node, type):
+                    elif _dcfast.is_dataclass(x) and not isinstance(x, type):
+                       sub.extend(_children(x))
+        if _dcfast.is_dataclass(node) and not isinstance(node, type):
             stack.extend(_children(node))
     return out
 

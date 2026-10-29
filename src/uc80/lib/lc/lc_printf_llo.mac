@@ -102,8 +102,9 @@ _pllo_sh:
 	JR	_pllo_set
 _pllo_z:
 	; value 0 with '#': "%#.0llo" still prints "0"
-	LD	A,(_printf_prec)
-	OR	A
+	LD	A,(_printf_prec+1)
+	LD	HL,_printf_prec
+	OR	(HL)
 	JR	NZ,_pllo_set
 	INC	A
 	LD	(_printf_prec),A

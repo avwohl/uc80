@@ -18,6 +18,8 @@ IEEE 754 single-precision (32-bit) floating point is fully functional.
 - `__itof` / `__ltof` - Signed 32-bit int to float (rounds to nearest even)
 - `__uitof` - Unsigned 32-bit int to float
 - `__ftoi` - Float to signed int (truncate toward zero)
+- `__lltof` / `__ulltof` - Signed and unsigned 64-bit int (in `__acc64`) to float (rounds to nearest even; lib/rt/rt_lltof.mac)
+- `__ftoll` / `__ftoull` - Float to signed and unsigned 64-bit int in `__acc64`, truncated, with the nearest limit for a value that does not fit (lib/rt/rt_ftoll.mac). `__ftoull` also converts to a 32-bit unsigned long.
 
 ### Internal Helpers
 - `__funpack` - Extract sign, exponent, mantissa from IEEE 754

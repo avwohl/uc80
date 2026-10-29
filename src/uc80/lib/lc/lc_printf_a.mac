@@ -18,7 +18,7 @@
 
 	EXTRN	_printf_loop
 	EXTRN	_printf_putc
-	EXTRN	_printf_padn
+	EXTRN	_printf_padw
 	EXTRN	_printf_upper
 	EXTRN	_printf_hasprec
 	EXTRN	_printf_prec
@@ -217,7 +217,12 @@ _pa_nf:
 	LD	(_pa_nfd),A
 	JR	_pa_expo
 _pa_prec:
+	LD	A,(_printf_prec+1)
+	OR	A
+	LD	A,255		; a precision above 255 digits is 255
+	JR	NZ,_pa_pc
 	LD	A,(_printf_prec)
+_pa_pc:
 	LD	(_pa_nfd),A
 	CP	6
 	JR	NC,_pa_expo	; 6 digits or more: nothing to round
@@ -349,17 +354,14 @@ _pa_emit:
 	JR	Z,_pa_e1
 	INC	HL
 _pa_e1:
-	LD	A,(_printf_width)
-	LD	E,A
-	LD	D,0
-	EX	DE,HL
+	EX	DE,HL		; DE = the length
+	LD	HL,(_printf_width)
 	OR	A
 	SBC	HL,DE
-	LD	A,0
-	JR	C,_pa_e2
-	LD	A,L
+	JR	NC,_pa_e2
+	LD	HL,0
 _pa_e2:
-	LD	(_pa_pad),A
+	LD	(_pa_pad),HL
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_pa_left
@@ -381,9 +383,8 @@ _pa_left:
 	CALL	_pa_text
 	LD	E,' '
 _pa_padout:
-	LD	A,(_pa_pad)
-	LD	B,A
-	JP	_printf_padn
+	LD	HL,(_pa_pad)
+	JP	_printf_padw
 
 _pa_signout:
 	LD	A,(_pa_sign)
@@ -522,7 +523,7 @@ _pa_xn:		DS	1
 _pa_nfd:	DS	1
 _pa_dot:	DS	1
 _pa_len:	DS	2
-_pa_pad:	DS	1
+_pa_pad:	DS	2
 _pa_kind:	DS	1
 
 	END

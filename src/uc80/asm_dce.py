@@ -41,6 +41,12 @@ def is_asm_end(line: str) -> bool:
     return line.strip() == ASM_END_MARKER
 
 
+# A label inside a line of code: not part of a longer name and not after
+# "?" or "@" (a prefix belongs to the label).  Equal to the former
+# per-label test (?<![a-zA-Z0-9_?@])LABEL(?![a-zA-Z0-9_]) for every label.
+_TOKEN_RE = re.compile(r'(?<![A-Za-z0-9_?@])[@?]*[A-Za-z0-9_]+')
+
+
 @dataclass
 class AsmBlock:
     """A block of assembly code starting at a label."""
@@ -399,12 +405,9 @@ class AssemblyDCE:
                     code_part = code_part[:code_part.index(';')]
 
                 # Look for references to data labels
-                for data_label in self.data_blocks:
-                    # Match label (not part of another label)
-                    # Use explicit boundary check since \b doesn't work with ?@ prefixes
-                    pattern = rf'(?<![a-zA-Z0-9_?@]){re.escape(data_label)}(?![a-zA-Z0-9_])'
-                    if re.search(pattern, code_part):
-                        referenced.add(data_label)
+                referenced.update(
+                    t for t in _TOKEN_RE.findall(code_part)
+                    if t in self.data_blocks)
 
         # Preserve PUBLIC data labels only in non-explicit mode
         # (when explicit entry points are given, we're in whole-program mode
@@ -417,31 +420,22 @@ class AssemblyDCE:
         # Objects the user asked to keep (#pragma uc80 keep / public)
         referenced |= self.keep_labels & set(self.data_blocks)
 
-        # Iteratively find data referenced from other data (fixpoint)
-        changed = True
-        while changed:
-            changed = False
-            for data_label in list(referenced):
-                if data_label not in self.data_blocks:
+        # Data referenced from other data (worklist: each block is
+        # scanned once, so the cost is linear in the size of the data).
+        work = [l for l in referenced if l in self.data_blocks]
+        while work:
+            data_block = self.data_blocks[work.pop()]
+            for line in data_block.lines:
+                # Skip comments
+                if line.strip().startswith(';'):
                     continue
-                data_block = self.data_blocks[data_label]
-                for line in data_block.lines:
-                    # Skip comments
-                    stripped = line.strip()
-                    if stripped.startswith(';'):
-                        continue
-                    code_part = line
-                    if ';' in code_part:
-                        code_part = code_part[:code_part.index(';')]
-
-                    # Check for references to other data labels
-                    for other_label in self.data_blocks:
-                        if other_label in referenced:
-                            continue
-                        pattern = rf'(?<![a-zA-Z0-9_?@]){re.escape(other_label)}(?![a-zA-Z0-9_])'
-                        if re.search(pattern, code_part):
-                            referenced.add(other_label)
-                            changed = True
+                code_part = line
+                if ';' in code_part:
+                    code_part = code_part[:code_part.index(';')]
+                for tok in _TOKEN_RE.findall(code_part):
+                    if tok in self.data_blocks and tok not in referenced:
+                        referenced.add(tok)
+                        work.append(tok)
 
         return referenced
 

@@ -5,7 +5,7 @@
 	EXTRN	_printf_loop
 	EXTRN	_printf_width
 	EXTRN	_printf_left
-	EXTRN	_printf_padn
+	EXTRN	_printf_padw
 
 	CSEG
 
@@ -49,23 +49,23 @@ __printf_handle_c32:
 
 ; Print the character E in a field of _printf_width characters.
 _phc_out:
-	LD	A,(_printf_width)
-	OR	A
+	LD	HL,(_printf_width)
+	LD	A,H
+	OR	L
 	JR	Z,_phc_plain
-	DEC	A
-	LD	B,A		; padding = width - 1
+	DEC	HL		; padding = width - 1
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_phc_left
 	PUSH	DE
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_printf_padw
 	POP	DE
 _phc_plain:
 	JP	_printf_putc
 _phc_left:
 	CALL	_printf_putc
 	LD	E,' '
-	JP	_printf_padn
+	JP	_printf_padw
 
 	END

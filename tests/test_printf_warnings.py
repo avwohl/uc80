@@ -23,24 +23,17 @@ DECL = 'int printf(const char*,...);'
 
 class TestStarWidthAndPrecision:
     """`%*d` and `%.*f` take the field size from an int argument.  The
-    runtime parser does not implement them: it echoes the specification and
-    never consumes that argument, so the conversion and every one after it
-    in the call reads the wrong one.  Nothing said so -- the compile-time
-    scan skipped the star without recording it."""
+    runtime parser implements them (it reads the int and, under --int 32,
+    knows that the int has 4 bytes), so the compiler does not warn."""
 
-    def test_star_width_warns(self):
+    def test_star_width_does_not_warn(self):
         w = warnings_for(DECL + 'int main(void){ printf("%*d", 5, 7); return 0; }')
-        assert len(w) == 1, w
-        assert "'%*d'" in w[0] and "not consumed" in w[0]
+        assert w == [], w
 
-    def test_star_precision_warns(self):
+    def test_star_precision_does_not_warn(self):
         w = warnings_for(DECL + 'int main(void){ printf("%.*f", 2, 1.5); return 0; }',
                          printf_features={"all"})
-        assert any("'%*f'" in x for x in w), w
-
-    def test_the_warning_names_the_consequence(self):
-        w = warnings_for(DECL + 'int main(void){ printf("%*d", 5, 7); return 0; }')
-        assert "later conversion" in w[0] and "wrong argument" in w[0]
+        assert w == [], w
 
     def test_a_plain_width_is_not_warned_about(self):
         w = warnings_for(DECL + 'int main(void){ printf("%5d", 7); return 0; }')

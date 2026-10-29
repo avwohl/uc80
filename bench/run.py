@@ -252,6 +252,36 @@ def build_defines(prog: dict, kind: str) -> list[str]:
     return prog.get(f"{kind}_defines", []) + variant
 
 
+def fits_address_space(com_size: int) -> bool:
+    """Can a .com of this size load at 0100h in 64 KB?"""
+    return 0x100 + com_size <= 0x10000
+
+
+def image_end(image, bss, com_size: int) -> int:
+    """First address after the image and its BSS, from the build.
+
+    ul80 wraps the symbols of an image past 64 KB to 16 bits and only
+    warns, so image + bss alone can look small; the size of the .com
+    file does not wrap.
+    """
+    return 0x100 + max((image or 0) + (bss or 0), com_size)
+
+
+def real_image(image, bss, com_size: int) -> int:
+    """Image size for a row: ``image`` from the build, or, when ul80
+    wrapped the symbols of an image past 64 KB (``image_end`` is larger
+    than image + bss), the size of the image that the .com file holds."""
+    return max((image or 0) + (bss or 0), com_size) - (bss or 0)
+
+
+def too_big_row(row: dict, b, size: int) -> None:
+    """A program whose .com does not fit 64 KB: status TOO-BIG, with
+    the sizes of the build in the row (the reason)."""
+    row["com"], row["bss"] = size, b.bss
+    row["image"] = real_image(b.image, b.bss, size)
+    row["status"] = "TOO-BIG"
+
+
 def bench_one(prog, comp, mode, repos, version) -> dict:
     with cell_lock(WORK / prog["name"] / comp.name / mode):
         if prog.get("kind") == "size-only":
@@ -298,9 +328,10 @@ def _size_only_one(prog, comp, mode, repos, version) -> dict:
         (wd / "build.log").write_text(b.log)
         row["command"] = b.command
         if b.ok:
-            row["com"], row["image"], row["bss"] = (b.com.stat().st_size,
-                                                    b.image, b.bss)
-            end = 0x100 + (b.image or 0) + (b.bss or 0)
+            row["com"] = b.com.stat().st_size
+            row["image"] = real_image(b.image, b.bss, row["com"])
+            row["bss"] = b.bss
+            end = image_end(b.image, b.bss, row["com"])
             row["status"] = ("FITS" if end + TPA_STACK <= TPA_LIMIT
                              else "TOO-BIG")
         else:
@@ -346,6 +377,12 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
         size = b.com.stat().st_size
         if kind == "check":
             row["check_com"] = size
+            if not fits_address_space(size):
+                # The .com does not fit the 64 KB address space of a CP/M
+                # machine (ticks stops with "Incorrect length" and prints
+                # nothing): the program is too big, it does not hang.
+                too_big_row(row, b, size)
+                return row
             out, total = run_ticks(b.com, stdin=stdin, timeout=limit,
                                    expect=golden)
             (work / "output.txt").write_text(out)
@@ -354,6 +391,9 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
                 return row
             CHECKED[key] = size
             continue
+        if not fits_address_space(size):
+            too_big_row(row, b, size)       # a build with other defines
+            return row
         row["com"], row["image"], row["bss"] = size, b.image, b.bss
         t0 = time.monotonic()
         out, total = run_ticks(b.com, stdin=stdin, timeout=limit,

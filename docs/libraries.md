@@ -149,23 +149,24 @@ The test `tests/test_libc_link_size.py` checks the image size of
 These limits are deliberate. The linked documents give the details.
 
 - **Subnormal numbers.** The float runtime treats a subnormal operand as
-  zero and flushes a subnormal result to zero. Functions that only move
+  zero and flushes a subnormal result to zero. A floating constant in the
+  source keeps its subnormal bits. Functions that only move
   bits (`frexp`, `ldexp`, `ilogb`, `nextafter`, `strtod`) work with
   subnormal numbers ([math library](libm.md)).
 - **`errno`.** Only `strtol`, `strtoul`, `strtoll`, `strtoull`, `strtod`,
   `strtof` and `strtold` set `errno`. The math functions do not set `errno`
   and raise no floating-point exception.
 - **`long long` and `float`.** A conversion between `long long` and a float
-  uses the low 32 bits of the integer. This is a limit of the code
-  generator, not of the library. `llround` and `llrint` are not affected.
+  uses the runtime routines `__lltof`, `__ulltof`, `__ftoll` and `__ftoull`
+  and is exact to the nearest float ([types and conversions](types_and_conversions.md)).
 - **`scanf`.** A `FILE` keeps one pushed-back character. The float
   conversion collects 126 characters. The console gives CR for the Enter
   key and Ctrl-Z for the end of the input ([scanf](scanf.md)).
 - **`printf` of floats.** The output is exact: the same text as the host
   `printf` for the same float value. The float conversions use integer
   arithmetic and about 214 bytes of RAM ([printf](printf.md)).
-- **`printf` field width and precision.** A width or a precision above 255 is
-  255. `%jd` (`intmax_t`) is not supported. `%hhd` narrows the argument for
+- **`printf` field width and precision.** A width or a precision is at most
+  32767; a float precision above 255 is 255. `%jd` (`intmax_t`) is not supported. `%hhd` narrows the argument for
   the 16-bit `int` only. `%s` with a null pointer reads address 0. `%p`
   prints `0x` and the hex address (`0x0` for a null pointer).
 - **Program exit.** `main` returning and `exit()` run the `atexit` functions

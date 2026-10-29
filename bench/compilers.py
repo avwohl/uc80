@@ -210,8 +210,12 @@ class Uc80(Compiler):
         cc = (["uc80"] + [str(s) for s in sources]
               + [f"-I{i}" for i in includes] + [f"-D{d}" for d in defines]
               + extra + ["-o", "prog.mac"])
+        # --no-whole-program puts no start-up code in the module: link
+        # crt0.rel first, or the program starts in its first function.
+        crt0 = ([str(lib / "crt0.rel")] if "--no-whole-program" in extra
+                else [])
         steps = [cc, ["um80", "prog.mac", "-o", "prog.rel"],
-                 ["ul80", "prog.rel", str(lib / "libc.lib"),
+                 ["ul80", *crt0, "prog.rel", str(lib / "libc.lib"),
                   str(lib / "runtime.lib"), "-o", "prog.com",
                   "-S", "prog.sym"]]
         log = []

@@ -145,13 +145,14 @@ class TestIntegerFlags:
 
 
 class TestHugeFields:
-    def test_width_and_precision_over_255_stay_at_255(self, tmp_path):
-        """Digits used to wrap modulo 256 (%300d printed a 44 column field)."""
+    def test_width_and_precision_over_255(self, tmp_path):
+        """Digits used to wrap modulo 256 (%300d printed a 44 column field),
+        then to stop at 255."""
         src = ('#include <stdio.h>\nint main(void){ int a = printf("%300d", 1);'
                ' int b = printf("|%.300d", 1); int c = printf("|%-1000s|", "a");'
                ' printf("\\n%d %d %d\\n", a, b, c); return 0; }\n')
         out = build_and_run(tmp_path, src).split("\n")
-        assert out[1] == "255 256 257", out[1]
+        assert out[1] == "300 301 1002", out[1]
 
 
 class TestStringAndChar:
@@ -210,9 +211,10 @@ class TestFeatureDetection:
 
 
 class TestFieldCapNoWrap:
-    """Width and precision stop at 255.  The padding count used to wrap
-    when digits + precision zeros + sign + 0x prefix reached 256: a sign
-    with precision 255 and a width made 255 extra blanks."""
+    """The padding count used to wrap when digits + precision zeros + sign
+    + 0x prefix reached 256: a sign with precision 255 and a width made
+    255 extra blanks.  Widths above 255 work (a host compiler gave the
+    lengths below)."""
 
     def test_sign_and_prefix_with_large_precision(self, tmp_path):
         src = ('#include <stdio.h>\n'
@@ -225,9 +227,9 @@ class TestFieldCapNoWrap:
         out = build_and_run(tmp_path, src)
         lines = out.splitlines()
         assert len(lines) == 4
-        # sign + 255 digits = 256 characters: wider than the field cap
-        assert lines[0].endswith("|258") and len(lines[0]) == 258 + 4
-        assert lines[1].endswith("|258") and len(lines[1]) == 258 + 4
-        assert lines[2].endswith("|258")
+        # sign + 255 digits = 256 characters, in a field of 300
+        assert lines[0].endswith("|302") and len(lines[0]) == 302 + 4
+        assert lines[1].endswith("|402") and len(lines[1]) == 402 + 4
+        assert lines[2].endswith("|302")
         # sign + 254 digits = 255: exactly the width, no padding
         assert lines[3].endswith("|257") and len(lines[3]) == 257 + 4

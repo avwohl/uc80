@@ -7,7 +7,7 @@
 	EXTRN	_printf_prec
 	EXTRN	_printf_width
 	EXTRN	_printf_left
-	EXTRN	_printf_padn
+	EXTRN	_printf_padw
 
 	CSEG
 
@@ -24,68 +24,75 @@ __printf_handle_s:
 	INC	HL
 	LD	D,(HL)		; DE = string pointer
 
-	XOR	A
-	LD	(_phs_pad),A
-	LD	A,(_printf_width)
-	OR	A
+	LD	HL,0
+	LD	(_phs_pad),HL
+	LD	HL,(_printf_width)
+	LD	A,H
+	OR	L
 	JR	Z,_phs_print	; no field width: nothing to count
 
 	; Count the characters that will be printed, but never more than
-	; the width: B = min(width, precision if any).
-	LD	B,A
+	; the width: BC = min(width, precision if any).
+	LD	B,H
+	LD	C,L
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	Z,_phs_cnt
-	LD	A,(_printf_prec)
-	CP	B
-	JR	NC,_phs_cnt
-	LD	B,A
+	LD	HL,(_printf_prec)
+	OR	A
+	SBC	HL,BC
+	JR	NC,_phs_cnt	; precision >= width: the limit is the width
+	LD	BC,(_printf_prec)
 _phs_cnt:
 	LD	H,D
 	LD	L,E
-	LD	C,0
+	PUSH	BC		; the limit
 _phs_c1:
-	LD	A,C
-	CP	B
-	JR	NC,_phs_cd
+	LD	A,B
+	OR	C
+	JR	Z,_phs_cd
 	LD	A,(HL)
 	OR	A
 	JR	Z,_phs_cd
 	INC	HL
-	INC	C
+	DEC	BC
 	JR	_phs_c1
 _phs_cd:
-	LD	A,(_printf_width)
-	SUB	C		; padding = width - printed characters
-	LD	(_phs_pad),A
-	LD	B,A
+	POP	HL
+	OR	A
+	SBC	HL,BC		; HL = the characters that will be printed
+	LD	B,H
+	LD	C,L
+	LD	HL,(_printf_width)
+	OR	A
+	SBC	HL,BC		; padding = width - printed characters
+	LD	(_phs_pad),HL
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_phs_print
 	PUSH	DE
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_printf_padw
 	POP	DE
 
 _phs_print:
-	; Load precision limit into B
+	; Load precision limit into BC
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	Z,_phs_nop
-	LD	A,(_printf_prec)
-	LD	B,A
+	LD	BC,(_printf_prec)
 	JR	_phs_loop
 _phs_nop:
-	LD	B,0
+	LD	BC,0
 
 _phs_loop:
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	Z,_phs_nolim
 	LD	A,B
-	OR	A
+	OR	C
 	JR	Z,_phs_done
-	DEC	B
+	DEC	BC
 _phs_nolim:
 	LD	A,(DE)
 	OR	A
@@ -103,10 +110,9 @@ _phs_done:
 	LD	A,(_printf_left)
 	OR	A
 	JR	Z,_phs_ret
-	LD	A,(_phs_pad)
-	LD	B,A
+	LD	HL,(_phs_pad)
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_printf_padw
 _phs_ret:
 	POP	BC
 	INC	C
@@ -115,6 +121,6 @@ _phs_ret:
 	JP	_printf_loop
 
 	COMMON	/lc_printf_s/
-_phs_pad:	DS	1
+_phs_pad:	DS	2
 
 	END

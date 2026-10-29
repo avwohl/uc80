@@ -157,7 +157,7 @@ _printf_format:
 	; Initialize format state: clear the whole _printf_state block
 	PUSH	BC
 	LD	DE,_printf_state
-	LD	B,11		; length of the _printf_state block
+	LD	B,13		; length of the _printf_state block
 	XOR	A
 _printf_clr:
 	LD	(DE),A
@@ -179,8 +179,10 @@ _printf_fmt2:
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	NZ,_printf_0dig
+	LD	A,(_printf_width+1)
+	LD	E,A
 	LD	A,(_printf_width)
-	OR	A
+	OR	E
 	JR	NZ,_printf_0dig
 	; Set zero-padding flag
 	LD	A,1
@@ -220,8 +222,6 @@ _printf_setf:
 	LD	(DE),A
 	JR	_printf_skip
 _printf_not_alt:
-	CP	'*'
-	JR	Z,_printf_star
 	; Check for digits (1-9)
 	CP	'1'
 	JR	C,_printf_nodig
@@ -310,98 +310,50 @@ _printf_unk_go:
 	INC	DE
 	JR	_printf_unk_lp
 
-; '*' width or precision: the value is the next int vararg.
-_printf_star:
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	IX
-	POP	DE
+; HL = HL * 10 + E (D is 0), limited to 32767.  Preserves BC and DE.
+_printf_x10add:
+	PUSH	BC
+	LD	B,H
+	LD	C,L
+	ADD	HL,HL
+	JR	C,_printf_x10sat
+	ADD	HL,HL
+	JR	C,_printf_x10sat
+	ADD	HL,BC
+	JR	C,_printf_x10sat
+	ADD	HL,HL
+	JR	C,_printf_x10sat
 	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = the int
-	INC	C
-	INC	C
-	LD	A,(_printf_hasprec)
-	OR	A
-	JR	NZ,_printf_star_p
-	BIT	7,D
-	JR	Z,_printf_star_w
-	LD	A,1		; negative width: '-' flag and the magnitude
-	LD	(_printf_left),A
-	LD	HL,0
-	OR	A
-	SBC	HL,DE
-	EX	DE,HL
-_printf_star_w:
-	CALL	_printf_clamp8
-	LD	(_printf_width),A
-	POP	HL
-	JR	_printf_skip
-_printf_star_p:
-	BIT	7,D
-	JR	Z,_printf_star_pp
-	XOR	A		; negative precision: as if none was given
-	LD	(_printf_hasprec),A
-	POP	HL
-	JR	_printf_skip
-_printf_star_pp:
-	CALL	_printf_clamp8
-	LD	(_printf_prec),A
-	POP	HL
-	JR	_printf_skip
-
-; A = DE limited to 255
-_printf_clamp8:
-	LD	A,D
-	OR	A
-	LD	A,E
-	RET	Z
-	LD	A,255
+	JR	C,_printf_x10sat
+	BIT	7,H
+	JR	Z,_printf_x10ok
+_printf_x10sat:
+	LD	HL,32767
+_printf_x10ok:
+	POP	BC
 	RET
 
 _printf_isdig:
-	; Parse digit into width or precision
+	; Parse a digit into the width or the precision, both 16-bit
 	SUB	'0'
 	PUSH	BC
-	LD	B,A		; B = new digit
+	PUSH	HL
+	LD	E,A
+	LD	D,0
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	NZ,_printf_precdig
-	; Width digit
-	LD	A,(_printf_width)
-	CP	26		; 26 * 10 > 255: stay at 255 (no wrap-around)
-	JR	NC,_printf_wsat
-	LD	C,A
-	ADD	A,A		; *2
-	ADD	A,A		; *4
-	ADD	A,C		; *5
-	ADD	A,A		; *10
-	ADD	A,B		; + digit
-	JR	NC,_printf_wstore
-_printf_wsat:
-	LD	A,255
-_printf_wstore:
-	LD	(_printf_width),A
+	LD	HL,(_printf_width)
+	CALL	_printf_x10add
+	LD	(_printf_width),HL
+	POP	HL
 	POP	BC
 	JR	_printf_skip
 _printf_precdig:
-	; Precision digit
-	LD	A,(_printf_prec)
-	CP	26		; stay at 255 (no wrap-around)
-	JR	NC,_printf_psat
-	LD	C,A
-	ADD	A,A
-	ADD	A,A
-	ADD	A,C
-	ADD	A,A
-	ADD	A,B
-	JR	NC,_printf_pstore
-_printf_psat:
-	LD	A,255
-_printf_pstore:
-	LD	(_printf_prec),A
+	LD	HL,(_printf_prec)
+	CALL	_printf_x10add
+	LD	(_printf_prec),HL
+	POP	HL
 	POP	BC
 	; Fall through to _printf_skip
 
@@ -526,62 +478,62 @@ _pn_nosign:
 _pn_sgn:
 	LD	A,B
 	LD	(_pn_sign),A
-	; B = digit count, C = extra leading zeros from the precision
+	; _pn_n = digit count, _pn_zeros = extra leading zeros (16-bit)
 	LD	A,(_printf_dcnt)
-	LD	B,A
-	LD	C,0
+	LD	(_pn_n),A
+	LD	HL,0
+	LD	(_pn_zeros),HL
 	LD	A,(_printf_hasprec)
 	OR	A
 	JR	Z,_pn_cnt
 	XOR	A		; a precision cancels the '0' flag
 	LD	(_printf_zero),A
-	LD	A,(_printf_prec)
-	OR	A
+	LD	HL,(_printf_prec)
+	LD	A,H
+	OR	L
 	JR	NZ,_pn_pz
-	LD	A,B		; precision 0 and value 0: no digits at all
+	LD	A,(_pn_n)	; precision 0 and value 0: no digits at all
 	DEC	A
 	JR	NZ,_pn_cnt
 	LD	HL,(_printf_dstart)
 	LD	A,(HL)
 	CP	'0'
 	JR	NZ,_pn_cnt
-	LD	B,0
+	XOR	A
+	LD	(_pn_n),A
 	JR	_pn_cnt
 _pn_pz:
-	SUB	B
+	LD	A,(_pn_n)
+	LD	E,A
+	LD	D,0
+	OR	A
+	SBC	HL,DE		; zeros = precision - digits, when positive
 	JR	C,_pn_cnt
-	LD	C,A
+	LD	(_pn_zeros),HL
 _pn_cnt:
-	LD	A,B
-	LD	(_pn_n),A
-	LD	A,C
-	LD	(_pn_zeros),A
-	ADD	A,B		; B = characters before any padding
-	JR	NC,_pn_t1
-	LD	A,255		; the width is at most 255: saturate, never wrap
-_pn_t1:
-	LD	B,A
+	; DE = characters before any padding: digits, zeros, sign, 0x
+	LD	HL,(_pn_zeros)
+	LD	A,(_pn_n)
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
 	LD	A,(_pn_sign)
 	OR	A
 	JR	Z,_pn_ns
-	LD	A,B
-	INC	A
-	JR	Z,_pn_ns	; already 255
-	LD	B,A
+	INC	HL
 _pn_ns:
 	LD	A,(_printf_pfxlen)
-	ADD	A,B
-	JR	NC,_pn_t2
-	LD	A,255
-_pn_t2:
-	LD	B,A
-	LD	A,(_printf_width)
-	SUB	B
+	LD	E,A
+	LD	D,0
+	ADD	HL,DE
+	EX	DE,HL
+	LD	HL,(_printf_width)
+	OR	A
+	SBC	HL,DE
 	JR	NC,_pn_pad
-	XOR	A
+	LD	HL,0
 _pn_pad:
-	LD	(_pn_padn),A
-	LD	B,A
+	LD	(_pn_padn),HL
 	LD	A,(_printf_left)
 	OR	A
 	JR	NZ,_pn_body
@@ -589,20 +541,19 @@ _pn_pad:
 	OR	A
 	JR	NZ,_pn_zp
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_pn_padout
 	JR	_pn_body
 _pn_zp:
 	CALL	_pn_sp
 	LD	E,'0'
-	CALL	_printf_padn
+	CALL	_pn_padout
 	JR	_pn_dig
 _pn_body:
 	CALL	_pn_sp
 _pn_dig:
-	LD	A,(_pn_zeros)
-	LD	B,A
+	LD	HL,(_pn_zeros)
 	LD	E,'0'
-	CALL	_printf_padn
+	CALL	_printf_padw
 	LD	A,(_pn_n)
 	OR	A
 	JR	Z,_pn_tail
@@ -617,13 +568,16 @@ _pn_tail:
 	LD	A,(_printf_left)
 	OR	A
 	JR	Z,_pn_done
-	LD	A,(_pn_padn)
-	LD	B,A
 	LD	E,' '
-	CALL	_printf_padn
+	CALL	_pn_padout
 _pn_done:
 	POP	BC
 	RET
+
+; the padding of the conversion: _pn_padn copies of the character E
+_pn_padout:
+	LD	HL,(_pn_padn)
+	JP	_printf_padw
 
 ; sign character and 0x prefix
 _pn_sp:
@@ -645,6 +599,20 @@ _pn_sp1:
 	LD	E,'X'
 _pn_sp2:
 	JP	_printf_putc
+
+; Output the character E, HL times (HL may be 0).  Clobbers AF, HL.
+	PUBLIC	_printf_padw
+_printf_padw:
+	LD	A,H
+	OR	L
+	RET	Z
+_printf_padw1:
+	CALL	_printf_putc
+	DEC	HL
+	LD	A,H
+	OR	L
+	JR	NZ,_printf_padw1
+	RET
 
 ; Output the character E, B times (B may be 0).  Clobbers AF, B.
 _printf_padn:
@@ -753,14 +721,14 @@ _printf_dstart:	DS	2
 _printf_dcnt:	DB	0
 _pn_sign:	DB	0
 _pn_n:		DB	0
-_pn_zeros:	DB	0
-_pn_padn:	DB	0
-; Per-conversion state, cleared at every '%' (keep it contiguous, 11 bytes)
+_pn_zeros:	DW	0
+_pn_padn:	DW	0
+; Per-conversion state, cleared at every '%' (keep it contiguous, 13 bytes)
 _printf_state:
-_printf_width:	DB	0
+_printf_width:	DW	0	; 16-bit, at most 32767
 _printf_zero:	DB	0
 _printf_upper:	DB	0
-_printf_prec:	DB	0
+_printf_prec:	DW	0	; 16-bit, at most 32767
 _printf_hasprec:	DB	0
 _printf_alt:	DB	0	; '#' flag - alt form for o/x/X
 _printf_left:	DB	0	; '-' flag

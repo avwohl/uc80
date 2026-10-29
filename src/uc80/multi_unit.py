@@ -24,6 +24,7 @@ import dataclasses
 import re
 
 from uc_core import ast
+from uc_core import _dcfast
 
 
 def _declarator_holder(decl):
@@ -100,15 +101,15 @@ class _Renamer:
             self.scopes[-1].add(name)
 
     def children(self, node):
-        for f in dataclasses.fields(node):
+        for f in _dcfast.fields(node):
             if f.name == "pos":
                 continue
             v = getattr(node, f.name, None)
             if isinstance(v, (list, tuple)):
                 for x in v:
-                    if dataclasses.is_dataclass(x) and not isinstance(x, ast.Token):
+                    if _dcfast.is_dataclass(x) and not isinstance(x, ast.Token):
                         yield x
-            elif dataclasses.is_dataclass(v) and not isinstance(v, ast.Token):
+            elif _dcfast.is_dataclass(v) and not isinstance(v, ast.Token):
                 yield v
 
     def asm_text(self, node) -> None:
@@ -243,15 +244,15 @@ def uniquify_statics_map(units) -> list[dict[str, str]]:
 # ---------------------------------------------------------------- types
 
 def _children(node):
-    for f in dataclasses.fields(node):
+    for f in _dcfast.fields(node):
         if f.name == "pos":
             continue
         v = getattr(node, f.name, None)
         if isinstance(v, (list, tuple)):
             for x in v:
-                if dataclasses.is_dataclass(x):
+                if _dcfast.is_dataclass(x):
                     yield x
-        elif dataclasses.is_dataclass(v):
+        elif _dcfast.is_dataclass(v):
             yield v
 
 
@@ -276,14 +277,14 @@ def _shape(node, refs: set) -> tuple:
         if node.name is not None:
             refs.add(("tag", node.name.text))
     out = [type(node).__name__]
-    for f in dataclasses.fields(node):
+    for f in _dcfast.fields(node):
         if f.name == "pos":
             continue
         v = getattr(node, f.name, None)
         if isinstance(v, (list, tuple)):
-            out.append(tuple(_shape(x, refs) if dataclasses.is_dataclass(x)
+            out.append(tuple(_shape(x, refs) if _dcfast.is_dataclass(x)
                              else repr(x) for x in v))
-        elif dataclasses.is_dataclass(v):
+        elif _dcfast.is_dataclass(v):
             out.append(_shape(v, refs))
         else:
             out.append(repr(v))
