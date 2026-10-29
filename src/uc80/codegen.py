@@ -929,8 +929,7 @@ def _to_legacy(t, ctx=None):
         if isinstance(t, lt.EnumType):
             wide = _wide_enum_type(t.name)
             if wide is not None:
-                return lt.BasicType(name=wide.name, is_signed=wide.is_signed,
-                                    is_const=t.is_const)
+                return _enum_basic(wide, t.is_const, False)
         if (isinstance(t, lt.BasicType) and t.name
                 and t.name not in _builtin_names
                 and reg is not None and t.name in reg):
@@ -967,8 +966,7 @@ def _to_legacy(t, ctx=None):
     if k == "enum":
         wide = _wide_enum_type(t.name)
         if wide is not None:
-            return lt.BasicType(name=wide.name, is_signed=wide.is_signed,
-                                is_const=t.is_const, is_volatile=t.is_volatile)
+            return _enum_basic(wide, t.is_const, t.is_volatile)
         return lt.EnumType(name=t.name, is_const=t.is_const)
     if k == "typedef":
         # Resolve via the active codegen's typedef registry (set when a
@@ -988,6 +986,16 @@ _ACTIVE_TYPEDEFS = None
 # Set by ``CodeGenerator.__init__`` to its ctx.enum_types: the integer type
 # of each enumeration that is wider than int (see _register_enum_entries).
 _ACTIVE_ENUM_TYPES = None
+
+def _enum_basic(wide, is_const, is_volatile):
+    """The integer type of an enumeration object as a BasicType.  The mark
+    ``from_enum`` keeps the fact that the type was an enumeration: a
+    bit-field of an enumeration type is unsigned."""
+    bt = lt.BasicType(name=wide.name, is_signed=wide.is_signed,
+                      is_const=is_const, is_volatile=is_volatile)
+    bt.from_enum = True
+    return bt
+
 
 def _wide_enum_type(tag):
     """The integer type of the enumeration ``tag`` when its values do not
@@ -5202,7 +5210,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
                 type_size = self._type_size(mtype)
                 max_bits = type_size * 8
                 # Enum bitfields are unsigned (matches GCC; C leaves it impl-defined)
+                # (_to_legacy turns the enumeration into int when an
+                # enumeration object has 4 bytes, so ask the member type.)
                 bf_signed = (not isinstance(mtype, lt.EnumType)
+                             and not getattr(member.member_type,
+                                             "from_enum", False)
                              and not (_is_resolved_type(member.member_type)
                                       and member.member_type.kind == "enum")
                              and self._is_signed_type(mtype))
@@ -14339,6 +14351,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         true_is_long = self._is_long_expr(expr.true_expr) or self._is_float_expr(expr.true_expr)
         false_is_long = self._is_long_expr(expr.false_expr) or self._is_float_expr(expr.false_expr)
         need_long = true_is_long or false_is_long
+        # With a 4-byte int, two unsigned short branches have the type int
+        # (the integer promotions): the consumer reads DEHL.
+        if not need_long and self._is_long_expr(expr):
+            need_long = True
 
         self._gen_cond_false_jump(expr.condition, else_label)
 
@@ -14539,8 +14555,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
             self.ctx.runtime_used.add("__acc64")
             src_is_signed = (self._is_signed_type(source_type)
                              if source_type is not None else target_signed)
-            if source_size <= 2:
-                # From 16-bit or smaller: HL -> DEHL -> __acc64
+            if source_size <= 2 or not source_is_long:
+                # From 16-bit or smaller: HL -> DEHL -> __acc64.  The value
+                # of a comparison has the type int, 4 bytes with --int 32,
+                # but its code leaves HL only (not a long expression).
                 self._extend_hl_to_dehl(src_is_signed)
             # Now we have DEHL, extend to __acc64
             if src_is_signed:

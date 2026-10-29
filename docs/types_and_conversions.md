@@ -36,6 +36,10 @@ With `--int 32` an object of enumeration type has 4 bytes, and the code
 loads and stores it as an `int`. An enumeration constant above 65535 is a
 32-bit value.
 
+With `--int 32` the operands `unsigned short` and `short` of a `?:`
+operator promote to `int`, so the value of the operator has 4 bytes. The
+code leaves both branches in DEHL, with the high word zero or the sign.
+
 ## Tags in blocks
 
 The tag of a `struct`, `union` or `enum` that a block declares belongs to

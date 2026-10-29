@@ -24,7 +24,9 @@ program never has undefined behaviour: arithmetic is done in unsigned long
 and cut to the type of the result, and an expression with a side effect
 (a call that writes a global) is only ever a whole statement, with
 arguments that have no side effects, so the order of evaluation does not
-change the result.  The checksum of every result is printed.
+change the result.  The checksum of every result is printed.  With
+`--flags=--int=32` the program types `I16` as `short` for uc80 too, because
+an `int` then has 4 bytes.
 
 Statuses: PASS, WRONG (output differs; the status is REG-WRONG when the
 same program is right with --no-register-cc, which names the convention),
@@ -36,6 +38,7 @@ from __future__ import annotations
 import argparse
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -907,6 +910,13 @@ def one(seed, opts):
         shutil.rmtree(work)
     work.mkdir(parents=True)
     text = make_program_ll(seed) if opts.ll else make_program(seed)
+    if re.search(r"--int[= ]32\b", opts.flags):
+        # The program models int as 16 bits (I16 is int on uc80, short on
+        # the host).  With --int 32 an int has 4 bytes, so I16 is short.
+        text = text.replace("typedef int I16; typedef unsigned int U16;",
+                            "typedef short I16; typedef unsigned short U16;")
+        text = text.replace("typedef int I16; typedef long L32;",
+                            "typedef short I16; typedef long L32;")
     src = work / "prog.c"
     src.write_text(text)
     rc, out = sh(["cc", "-O1", "-w", "-fsigned-char", "-DHOST", "prog.c",
