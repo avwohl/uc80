@@ -41,6 +41,8 @@ The effect on the bench programs (T-states of the timed region, change against t
 - snd-ymreg: 16,949,631 to 16,340,991.
 - snd-cmdq: 9,904,552 to 9,710,812.
 
+Slot folding and the HJUNK mark ([register_locals.md](register_locals.md)) add to these figures. The final values of the family are in the CHANGELOG.
+
 ## Tests
 
 `tests/test_peep_pairs.py` runs programs with pointers to structs, pointers to the same array, shifts that use the carry, and comma expressions. Each program runs with the default options, with each switch off, with `--no-register-locals` and with `-O0`. All outputs must be equal.
