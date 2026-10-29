@@ -211,7 +211,9 @@ class RegLocalsMixin:
         if any(_SETJMP.search(ln) for ln in region if ln.startswith("\tcall")):
             return
         env = dataclasses.replace(self._rl_env(),
-                                  exit_live=self._rl_exit_live())
+                                  exit_live=self._rl_exit_live(),
+                                  peep_pairs=self.enable_peep_pairs,
+                                  slot_fold=self.enable_slot_fold)
         res = reglocals.allocate(region, self._rl_vars, env,
                                  frame_mode, self._rl_wrap_id)
         base_lines = res.lines if res is not None else list(region)

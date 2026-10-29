@@ -814,6 +814,25 @@ def main() -> int:
              "address as an access through the pointer (docs/rom_hardware.md)"
     )
     parser.add_argument(
+        "--no-discard-comma",
+        action="store_true",
+        help="Compute the right operand of a discarded comma expression "
+             "for its value (docs/peephole_pairs.md)"
+    )
+    parser.add_argument(
+        "--no-peep-pairs",
+        action="store_true",
+        help="Keep the register-pair copies that the pair peephole rules "
+             "remove (docs/peephole_pairs.md)"
+    )
+    parser.add_argument(
+        "--no-slot-fold",
+        action="store_true",
+        help="Keep a local in memory when the code reaches the local with "
+             "LD HL,slot and an operand (HL) and treat every call as "
+             "returning (docs/register_locals.md)"
+    )
+    parser.add_argument(
         "--no-addr-cse",
         action="store_true",
         help="Compute every array element address again (docs/addr_cse.md)"
@@ -1272,6 +1291,9 @@ def main() -> int:
                            dead_store=not args.no_dead_store,
                            blockops=not args.no_blockops)
         gen.direct_pointers = not args.no_direct_pointers
+        gen.enable_discard_comma = not args.no_discard_comma
+        gen.enable_peep_pairs = not args.no_peep_pairs
+        gen.enable_slot_fold = not args.no_slot_fold
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
                 asts, [str(p) for p in input_paths

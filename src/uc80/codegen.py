@@ -3722,6 +3722,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         self.direct_pointer_accesses = 0
         self.enable_blockops = blockops
         self.enable_addr_cse = addr_cse
+        # Family I step 1 switches (docs/peephole_pairs.md,
+        # docs/register_locals.md); main.py sets them from the options.
+        self.enable_discard_comma = True
+        self.enable_peep_pairs = True
+        self.enable_slot_fold = True
         self.enable_chain_store = chain_store
         self.enable_dead_store = dead_store
         self.enable_register_locals = register_locals
@@ -10097,7 +10102,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
             # ``BinaryOp(",", left, right)`` here. Evaluate left for its
             # side effects, then right for its value.
             self.gen_expr_discard(expr.left)
-            self.gen_expr(expr.right, force_long)
+            if expr is self._discard_expr and self.enable_discard_comma:
+                self.gen_expr_discard(expr.right)
+            else:
+                self.gen_expr(expr.right, force_long)
 
     def gen_stmt_expr(self, expr: ast.StmtExpr) -> None:
         self._stmt_expr_seen = True
@@ -10382,7 +10390,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         # ((ap += N), (ap - N)) in stdarg.h.
         if op == ",":
             self.gen_expr_discard(expr.left)
-            self.gen_expr(expr.right)
+            if expr is self._discard_expr and self.enable_discard_comma:
+                self.gen_expr_discard(expr.right)
+            else:
+                self.gen_expr(expr.right)
             return
 
         # Check if this is a complex operation

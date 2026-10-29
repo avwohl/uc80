@@ -6,6 +6,11 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Family I step 1 (branch `fami`): comma and pair peepholes
+
+- **A discarded comma computes no value for the right operand** (`for (...; i++, t++)`). The right operand `t++` of a comma that nothing uses had a copy of the old value (push HL, `inc HL`, pop HL). The copy is gone, and a pointer that had the copy can now stay in IY or BC. `--no-discard-comma` switches the change off.
+- **Pair peephole rules in the register-locals pass** ([docs/peephole_pairs.md](docs/peephole_pairs.md)): `ld H,B / ld L,C / ld A,(HL)` becomes `ld A,(BC)` (and the DE and store forms), a copy of BC to HL that HL already holds is deleted, `ld A,r / ... / ld (HL),A` becomes `ld (HL),r`, and `ld H,D / ld L,E / add HL,HL / ld D,H / ld E,L` becomes `sla E / rl D` when HL and the flags are dead. The rule for `inc BC` through HL takes up to four steps. `--no-peep-pairs` switches the rules off. T-states of the timed region: snd-ymreg 16,949,631 to 16,340,991 and snd-cmdq 9,904,552 to 9,710,812. Tests: `tests/test_peep_pairs.py`.
+
 ### Family I step 1 (branch `fami`): library speed
 
 - **Decimal conversion is no longer quadratic.** `_prt_div16` (the 16-bit divide by 10 of `printf`, `%d`, `%u`) divided by repeated subtraction (up to 6553 steps for a digit of 65535). It now uses 16 shift and trial-subtract steps. `_div32_10` (`%ld`, `%lu`) kept the 32-bit value in memory; it now keeps the value in `DE:HL` for 32 steps. The register contract of both routines is the same. The `sprintf` benchmark falls from 33.3M to 7.4M T-states in the timed region.
