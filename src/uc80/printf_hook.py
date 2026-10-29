@@ -10,6 +10,8 @@ it:
 
     %td, %lf             an entry that skips the length modifier
     %n                   lc_printf_n
+    %*d, %.*s ...        lc_printf_star (the '*' entry; an int argument of 4
+                         bytes for --int 32)
     %a, %A               lc_printf_a
     %llo, %llX           lc_printf_llo, lc_printf_llxu
     %hhd %hhu %hhx ...   a glue routine in front of the handler that calls
@@ -62,7 +64,7 @@ _SPEC = re.compile(
 
 # A format that is not a literal could need any part.  %a is large (about
 # 600 bytes), so only --printf all (or a literal) links it.
-ALL = frozenset({"hh", "t", "lf", "n", "llo", "llX"})
+ALL = frozenset({"hh", "t", "lf", "n", "llo", "llX", "star"})
 ALL_EXPLICIT = ALL | {"a"}
 
 # the 16-bit handlers that "hh" narrows: handler -> signed or unsigned
@@ -82,6 +84,8 @@ def _literal_text(arg):
 def needs_of_format(text):
     """The set of optional parts that one format string needs."""
     need = set()
+    if re.search(r"%[-+ #0]*(?:\d+|\*)?\.?\*", text):
+        need.add("star")
     for length, conv in _SPEC.findall(text):
         if length == "hh" and conv in "diuoxX":
             need.add("hh")
@@ -152,8 +156,10 @@ def _table_span(code, label):
     return m.end(), end
 
 
-def patch_tables(code, need):
+def patch_tables(code, need, int_size=2):
     """Return CODE with the dispatch table entries for the parts in NEED.
+
+    INT_SIZE is the size of an int (4 for --int 32).
 
     A unit without a table (under --no-whole-program, a unit that does not
     define main) is returned unchanged."""
@@ -196,6 +202,11 @@ def patch_tables(code, need):
     if "t" in need or "lf" in need:
         if add:
             extrn.append("__printf_handle_skip")
+    if "star" in need and "*" not in base_chars:
+        handler = ("__printf_handle_star32" if int_size == 4
+                   else "__printf_handle_star")
+        add += f"\tdb\t'*'\n\tdw\t{handler}\n"
+        extrn.append(handler)
     if "n" in need and "n" not in base_chars:
         add += "\tdb\t'n'\n\tdw\t__printf_handle_n\n"
         extrn.append("__printf_handle_n")
@@ -232,15 +243,12 @@ _WARNED = re.compile(r"printf conversion '(%[^']+)'")
 
 
 def filter_warnings(warnings, need):
-    """Drop the warnings about conversions that the parts in NEED handle, and
-    the warning that %* is not implemented (the core implements it)."""
+    """Drop the warnings about conversions that the parts in NEED handle."""
     out = []
     for w in warnings:
         m = _WARNED.search(w)
         if m:
             text = m.group(1)
-            if "takes its width or precision from an argument" in w:
-                continue
             if ((text == "%n" and "n" in need)
                     or (re.fullmatch(r"%t[diuoxX]", text) and "t" in need)
                     or (re.fullmatch(r"%l[fFeEgGaA]", text) and "lf" in need)

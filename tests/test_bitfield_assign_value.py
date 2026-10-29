@@ -47,11 +47,27 @@ def test_a_narrow_64_bit_bit_field_is_refused_with_its_line(tmp_path):
     r = _compile(tmp_path, "struct B { int a;\n  unsigned long long i:40; } bf;\n"
                            "int main(void) { return bf.i; }\n")
     assert r.returncode == 1
-    assert "line 2: bit-field 'i' of a 64-bit integer type" in r.stderr
+    assert f"{tmp_path / 'd.c'}:2: bit-field 'i' of a 64-bit integer type" in r.stderr
 
 
 def test_the_address_of_a_bit_field_is_a_diagnostic_not_a_crash(tmp_path):
     r = _compile(tmp_path, "struct B { int a:3; } bf;\n"
                            "int main(void) { int *p = &bf.a; return *p; }\n")
     assert r.returncode == 1
-    assert "line 2: cannot take address of bit-field" in r.stderr
+    assert f"{tmp_path / 'd.c'}:2: cannot take address of bit-field 'a'" in r.stderr
+
+
+def test_the_diagnostics_name_the_real_line_after_an_include(tmp_path):
+    """An #include adds lines to the preprocessed text; the diagnostic
+    still names the line of the source file."""
+    (tmp_path / "inc.h").write_text("int hdr1;\nint hdr2;\nint hdr3;\n")
+    r = _compile(tmp_path, '#include "inc.h"\n'
+                           "struct B { int a;\n  unsigned long long i:40; } bf;\n"
+                           "int main(void) { return bf.i; }\n")
+    assert r.returncode == 1
+    assert f"{tmp_path / 'd.c'}:3: bit-field 'i'" in r.stderr
+    r = _compile(tmp_path, '#include "inc.h"\n'
+                           "struct B { int a:3; } bf;\n\n"
+                           "int main(void) { int *p = &bf.a; return *p; }\n")
+    assert r.returncode == 1
+    assert f"{tmp_path / 'd.c'}:4: cannot take address of bit-field 'a'" in r.stderr

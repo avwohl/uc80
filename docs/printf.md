@@ -115,8 +115,7 @@ the other units need.
 
 The compiler (`codegen.py`) does not know these entries, so its warning
 `has no handler in this libc` would be wrong for them. `main.py` removes that
-warning for each conversion that the hook handles. It also removes the warning
-about `%*d`, because `*` works.
+warning for each conversion that the hook handles.
 
 ## Limits
 
@@ -127,6 +126,12 @@ These limits are deliberate.
   float conversion (`%f`, `%e`, `%g`, `%a`) above 255 is 255, because the
   number of digits after the point is one byte. So `%#.Ng` with a precision
   `N` above about 250 prints a few zeros less than C requires.
+- A `*` width or precision reads an `int` argument. The code is in the module
+  `lc_printf_star`. The printf hook adds a `*` entry to the dispatch table when
+  a format has a `*`. A program without `*` does not link the code. With
+  `--int 32` the entry is for an `int` of 4 bytes. The runtime uses 32767 for
+  a value above 32767. It uses a left-justified field of 32767 for a value
+  below -32768.
 - The `hh` modifier does not narrow the argument when `int` has 32 bits
   (`--int 32`). `%n` stores a 16-bit value.
 - `%jd`, `%ju`, `%jx` (`intmax_t`) are not supported. Cast the argument to

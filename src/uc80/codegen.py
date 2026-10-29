@@ -27,6 +27,7 @@ from .volatile_fence import VOL_BEGIN, VOL_END
 from . import absaddr
 from . import ptrabs
 from . import regcc
+from . import srcmap
 from .reglocals_gen import RegLocalsMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
@@ -3666,6 +3667,42 @@ def _node_line(node):
     return getattr(pos, "start_line", None)
 
 
+def _node_file_line(node):
+    """``file:line`` of the real source for an AST node, or None.
+
+    A node has no file; its tokens do.  The first token (by line and
+    column) that belongs to a file with a registered line map gives the
+    file and the line before include splicing.  None when no token of
+    the node has a map (a unit parsed without ``main``)."""
+    if node is None:
+        return None
+    best = None
+    seen = 0
+    stack = [node]
+    while stack and seen < 4000:
+        n = stack.pop()
+        seen += 1
+        if isinstance(n, (str, int, float, bool, bytes)) or n is None:
+            continue
+        if isinstance(n, (list, tuple)):
+            stack.extend(n)
+            continue
+        if hasattr(n, "file_id") and hasattr(n, "line") and hasattr(n, "text"):
+            key = (n.line, getattr(n, "column", 0))
+            if (n.file_id in srcmap._MAPS and n.line
+                    and (best is None or key < best[0])):
+                best = (key, n)
+            continue
+        d = getattr(n, "__dict__", None)
+        if d is None:
+            d = {f: getattr(n, f, None)
+                 for f in getattr(n, "__dataclass_fields__", ())}
+        for k, v in d.items():
+            if k != "pos":
+                stack.append(v)
+    return srcmap.locate(best[1]) if best else None
+
+
 class CodegenError(Exception):
     """A user-facing code-generation diagnostic — not an internal error.
 
@@ -3681,16 +3718,18 @@ class CodegenError(Exception):
     Pass the AST node the diagnostic is about as ``node`` and its line is
     picked up automatically.  Two caveats on that line number, both
     shared with every other uc80 diagnostic: it counts lines of the
-    *preprocessed* translation unit (the preprocessor does not preserve
-    line numbering), and no file name is available because a multi-file
-    build merges every input into one ``TranslationUnit`` before codegen
-    runs.
+    *preprocessed* translation unit.  When the tokens of the node belong
+    to an input file of ``main``, the message shows ``file:line`` of the
+    real source instead (through ``srcmap``), also after an ``#include``.
     """
 
     def __init__(self, message: str, node=None):
         self.message = message
         self.line = _node_line(node)
-        if self.line is not None:
+        where = _node_file_line(node)
+        if where is not None:
+            super().__init__(f"{where}: {message}")
+        elif self.line is not None:
             super().__init__(f"line {self.line}: {message}")
         else:
             super().__init__(message)
@@ -5573,17 +5612,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         seen = set()
         for length, spec in self._printf_specs_used:
             if length == '*':
-                text = '%*' + spec
-                if text in seen:
-                    continue
-                seen.add(text)
-                self.warnings.append(
-                    f"printf conversion '{text}' takes its width or precision "
-                    f"from an argument, which this libc does not implement; "
-                    f"the specification is echoed verbatim at run time, the "
-                    f"int argument is not consumed, and every later "
-                    f"conversion in that call reads the wrong argument")
-                continue
+                continue          # a '*' width or precision is implemented
             if length in self._PRINTF_IGNORED_LENGTHS:
                 handled, exists = spec in base, spec in all_base
             elif length == 'l':
@@ -5977,11 +6006,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 i += 1
                 if used is not None:
                     if star:
-                        # Recorded so the diagnostic can see it.  The
-                        # runtime parser does not implement '*': it does
-                        # not read the int argument, so the conversion and
-                        # every one after it in the call takes the wrong
-                        # argument, silently.
+                        # Recorded; the printf hook adds the '*' entry.
                         used.append(('*', spec))
                     used.append((length, spec))
                 if spec in 'dDiuUoOxXcCsSpn':
@@ -12152,6 +12177,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
     def gen_compound_assignment(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate code for compound assignment (+=, -=, etc.)."""
         # If LHS has side effects (function calls, inc/dec), evaluate address once
+        if self._bitfield_object_has_side_effects(expr.left):
+            self._gen_bitfield_rmw_once(expr, expr.left, op)
+            return
         if self._expr_has_side_effects(expr.left):
             self._gen_compound_assignment_safe(expr, op)
             return
@@ -12306,6 +12334,59 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 and expr is not self._discard_expr):
             # The value is the char as stored (C 6.5.16p3).
             self._emit_char_to_hl(self._is_signed_type(target_type))
+
+    def _bitfield_object_has_side_effects(self, lv) -> bool:
+        """True for ``E.f`` or ``E->f`` naming a bit-field when E has a side
+        effect (``a[i++].f``, ``pf()->f``)."""
+        return (isinstance(lv, (ast.Member, ast.ArrowMember))
+                and self._get_bitfield_info(lv) is not None
+                and self._expr_has_side_effects(lv.obj))
+
+    def _gen_bitfield_rmw_once(self, expr, lv, op: str) -> None:
+        """``E.f op= v``, ``++E.f`` and ``E.f++`` for a bit-field f when E has
+        side effects.  The bit-field code reads and writes through the
+        lvalue, which would evaluate E up to three times.  E is evaluated
+        once instead: its address goes into a static pointer, and the
+        operation runs on ``__bfpN->f``.  The old value of the static pointer
+        is kept on the stack, so a call from the right side (or an interrupt)
+        that reaches this same code finds the pointer it needs."""
+        obj_t = _to_legacy(self._get_expr_type(lv.obj))
+        if isinstance(lv, ast.ArrowMember):
+            ptr_expr = lv.obj
+            if isinstance(obj_t, lt.ArrayType):
+                obj_t = lt.PointerType(base_type=obj_t.base_type)
+            ptr_t = obj_t
+        else:
+            ptr_expr = ast.UnaryOp(op="&", operand=lv.obj, pos=lv.pos)
+            ptr_t = lt.PointerType(base_type=obj_t)
+        func_name = self.ctx.current_function or "global"
+        label = f"__{func_name}_S{self.ctx.static_counter}"
+        self.ctx.static_counter += 1
+        name = f"__bfp{self.ctx.static_counter}"
+        self.ctx.locals[name] = Symbol(name=label, sym_type=ptr_t,
+                                       is_global=True, is_static=True)
+        self.ctx.static_locals[label] = (ptr_t, None, None)
+        syn = ast.ArrowMember(obj=make_identifier(name), member=lv.member,
+                              pos=lv.pos)
+        if isinstance(expr, ast.BinaryOp):
+            new = ast.BinaryOp(op=expr.op, left=syn, right=expr.right,
+                               pos=expr.pos)
+        elif isinstance(expr, ast.PostfixOp):
+            new = ast.PostfixOp(op=expr.op, operand=syn, pos=expr.pos)
+        else:
+            new = ast.UnaryOp(op=expr.op, operand=syn, pos=expr.pos)
+        discard = expr is self._discard_expr
+        if discard:
+            self._discard_expr = new
+        e = self.ctx.emit_instr
+        e("ld", f"HL,({label})")
+        e("push", "HL")
+        self.gen_expr(ptr_expr)
+        e("ld", f"({label}),HL")
+        self.gen_expr(new)
+        e("ex", "(SP),HL")
+        e("ld", f"({label}),HL")
+        e("pop", "HL")
 
     def _gen_compound_assignment_safe(self, expr: ast.BinaryOp, op: str) -> None:
         """Generate compound assignment where LHS has side effects.
@@ -12604,7 +12685,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             if isinstance(expr.operand, (ast.Member, ast.ArrowMember)):
                 bf = self._get_bitfield_info(expr.operand)
                 if bf is not None and not (bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8):
-                    raise CodegenError("cannot take address of bit-field", expr)
+                    raise CodegenError(
+                        "cannot take address of bit-field '"
+                        f"{getattr(expr.operand.member, 'text', expr.operand.member)}'",
+                        expr)
                     self.ctx.emit_instr("ld", "HL,0")
                     return
             self._gen_address(expr.operand)
@@ -12820,6 +12904,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         """Generate code for increment/decrement."""
         op_text = expr.op.text if hasattr(expr.op, "text") else expr.op
         is_inc = op_text == "++"
+        if self._bitfield_object_has_side_effects(expr.operand):
+            self._gen_bitfield_rmw_once(expr, expr.operand, op_text)
+            return
         if expr is self._discard_expr and not expr.is_prefix:
             # The value is not used, so x++ is ++x: no copy of the old
             # value.  (gen_unary_op sets is_prefix again on every visit.)

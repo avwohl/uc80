@@ -1274,7 +1274,9 @@ def main() -> int:
             gen.bss_block = _bss_block_name(input_paths[0])
         code = gen.generate(merged_ast)
         printf_need = printf_hook.printf_needs(merged_ast, printf_features)
-        code = printf_hook.patch_tables(code, printf_need)
+        code = printf_hook.patch_tables(
+            code, printf_need,
+            (args.int_bits // 8) if args.int_bits else Z80_CPM.int_size)
         gen.warnings = printf_hook.filter_warnings(gen.warnings, printf_need)
         scanf_need = scan_hook.scanf_needs(merged_ast, scanf_features)
         if scanf_need:

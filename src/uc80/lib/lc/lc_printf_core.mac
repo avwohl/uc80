@@ -222,8 +222,6 @@ _printf_setf:
 	LD	(DE),A
 	JR	_printf_skip
 _printf_not_alt:
-	CP	'*'
-	JR	Z,_printf_star
 	; Check for digits (1-9)
 	CP	'1'
 	JR	C,_printf_nodig
@@ -311,55 +309,6 @@ _printf_unk_go:
 	POP	DE
 	INC	DE
 	JR	_printf_unk_lp
-
-; '*' width or precision: the value is the next int vararg.
-_printf_star:
-	PUSH	HL
-	LD	H,0
-	LD	L,C
-	PUSH	IX
-	POP	DE
-	ADD	HL,DE
-	LD	E,(HL)
-	INC	HL
-	LD	D,(HL)		; DE = the int
-	INC	C
-	INC	C
-	LD	A,(_printf_hasprec)
-	OR	A
-	JR	NZ,_printf_star_p
-	BIT	7,D
-	JR	Z,_printf_star_w
-	LD	A,1		; negative width: '-' flag and the magnitude
-	LD	(_printf_left),A
-	LD	HL,0
-	OR	A
-	SBC	HL,DE
-	EX	DE,HL
-_printf_star_w:
-	CALL	_printf_clamp15
-	LD	(_printf_width),DE
-	POP	HL
-	JR	_printf_skip
-_printf_star_p:
-	BIT	7,D
-	JR	Z,_printf_star_pp
-	XOR	A		; negative precision: as if none was given
-	LD	(_printf_hasprec),A
-	POP	HL
-	JR	_printf_skip
-_printf_star_pp:
-	CALL	_printf_clamp15
-	LD	(_printf_prec),DE
-	POP	HL
-	JR	_printf_skip
-
-; DE = DE limited to 32767 (a width or precision is at most that)
-_printf_clamp15:
-	BIT	7,D
-	RET	Z
-	LD	DE,32767
-	RET
 
 ; HL = HL * 10 + E (D is 0), limited to 32767.  Preserves BC and DE.
 _printf_x10add:

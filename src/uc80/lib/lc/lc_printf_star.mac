@@ -1,0 +1,114 @@
+; lc_printf_star.mac - printf: a '*' width or precision
+;
+; The value is the next int argument.  The dispatch table entry of '*' is
+; __printf_handle_star (an int has 2 bytes) or __printf_handle_star32 (--int 32:
+; an int has 4 bytes).  The printf hook of uc80 (printf_hook.py) adds the
+; entry to the table of a program that has a '*' in a format string, so the
+; code is not in the program otherwise.
+;
+; Entry (as for a conversion): HL = the format position after the '*',
+; C = the offset of the next argument from IX.  Exit: back to the core at the
+; character after the '*'.  A negative width is the '-' flag with the
+; magnitude; a negative precision is no precision; a size is at most 32767.
+	.Z80
+
+	EXTRN	_printf_skip
+	EXTRN	_printf_hasprec
+	EXTRN	_printf_left
+	EXTRN	_printf_width
+	EXTRN	_printf_prec
+
+	CSEG
+
+	PUBLIC	__printf_handle_star
+	PUBLIC	__printf_handle_star32
+
+__printf_handle_star:
+	DEC	HL		; back on the '*'; _printf_skip steps past it
+	PUSH	HL
+	CALL	_star_rd	; DE = the int
+	JR	_star_have
+
+__printf_handle_star32:
+	DEC	HL
+	PUSH	HL
+	CALL	_star_rd	; the low word
+	PUSH	DE
+	CALL	_star_rd	; DE = the high word
+	POP	HL		; HL = the low word
+	LD	A,D
+	OR	E
+	JR	Z,_star_hz
+	LD	A,D
+	AND	E
+	INC	A
+	JR	Z,_star_hneg
+	BIT	7,D		; far from zero: the largest size of that sign
+	LD	DE,32767
+	JR	Z,_star_have
+	LD	DE,8000H
+	JR	_star_have
+_star_hz:			; 0 to 65535
+	EX	DE,HL
+	BIT	7,D
+	JR	Z,_star_have
+	LD	DE,32767
+	JR	_star_have
+_star_hneg:			; -65536 to -1
+	EX	DE,HL
+	BIT	7,D
+	JR	NZ,_star_have
+	LD	DE,8000H
+
+_star_have:
+	LD	A,(_printf_hasprec)
+	OR	A
+	JR	NZ,_star_p
+	BIT	7,D
+	JR	Z,_star_w
+	LD	A,1		; negative width: '-' flag and the magnitude
+	LD	(_printf_left),A
+	LD	HL,0
+	OR	A
+	SBC	HL,DE
+	EX	DE,HL
+_star_w:
+	CALL	_star_clamp
+	LD	(_printf_width),DE
+	POP	HL
+	JP	_printf_skip
+_star_p:
+	BIT	7,D
+	JR	Z,_star_pp
+	XOR	A		; negative precision: as if none was given
+	LD	(_printf_hasprec),A
+	POP	HL
+	JP	_printf_skip
+_star_pp:
+	CALL	_star_clamp
+	LD	(_printf_prec),DE
+	POP	HL
+	JP	_printf_skip
+
+; DE = the 2 bytes at IX+C; C = C + 2
+_star_rd:
+	LD	H,0
+	LD	L,C
+	PUSH	IX
+	POP	DE
+	ADD	HL,DE
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	INC	C
+	INC	C
+	RET
+
+; DE = DE limited to 32767
+_star_clamp:
+	BIT	7,D
+	RET	Z
+	LD	DE,32767
+	RET
+
+	END

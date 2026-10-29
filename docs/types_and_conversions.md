@@ -46,6 +46,27 @@ no declaration in an outer block keeps its name. The code is in `uc_core`
 (`_rename_block_scope_tags`), so `uc386` has it too. A message that names
 such a tag shows the hidden name.
 
+## Enumeration constants in blocks
+
+An enumeration constant that a block declares belongs to that block
+(C23 6.2.1). `enum { X = 77 };` in a block does not change a file-scope `X`
+before, after or outside the block. The front-end pass that renames tags
+(`_rename_block_scope_tags`) also does this work. It gives each constant of a
+block-scope enumeration a hidden name (`X__c...`). It renames each use of the
+name in the rest of the block.
+
+These names stay:
+
+- A name after `.` or `->` is a member.
+- In a `struct` or `union` body, a name is a use only after `[`, `:`, `(` or
+  an arithmetic operator.
+
+A declaration of a variable after a basic type keyword (`int X;`) in a block
+hides a constant `X`. The variable gets its own name for the rest of the
+block. The pass does not see a variable that hides a constant and has a typedef
+name or a pointer type (`T X;`, `int *X;`). It does not rename a function parameter that
+has the name of a constant.
+
 ## Bit-fields
 
 The value of an assignment to a bit-field is the value that the field holds
@@ -55,10 +76,23 @@ and for `++` and `--`. A postfix `++` gives the old value of the field. The
 result is correct for a field in a 4-byte unit (with `--int 32`, or a
 `long` field) and for a field in a 1-byte or 2-byte unit.
 
+A compound assignment, `++` or `--` on a bit-field evaluates the object
+expression once. So `a[i++].y++`, `++a[i++].y`, `a[i++].y += 2` and
+`pf()->x += 9` change `i` once and call `pf` once.
+
+The bit-field code
+takes the address of the object more than once. So the compiler keeps the
+pointer to the object in a static word (`__<function>_S<n>`, 2 bytes of BSS)
+for the length of the operation. The old value of the word is on the stack
+during the operation. A call in the right operand, or an interrupt, can
+therefore use the same code. Only an object expression with a side effect takes this path.
+
 A bit-field of a 64-bit type that has a width under 64 bits (`unsigned long
 long i : 40`) is not supported. The compiler gives an error with the line of
 the width. Use a 32-bit type or a mask. The address of a bit-field is an
-error too.
+error too (`cannot take address of bit-field 'a'`). The message of a compiler
+error shows the file and the line of the real source (`file.c:3:`), also after
+an `#include`.
 
 ## Floating constants
 
