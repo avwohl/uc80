@@ -922,6 +922,11 @@ def _to_legacy(t, ctx=None):
             "long", "unsigned long", "long long", "unsigned long long",
             "float", "double", "long double",
         }
+        if isinstance(t, lt.EnumType):
+            wide = _wide_enum_type(t.name)
+            if wide is not None:
+                return lt.BasicType(name=wide.name, is_signed=wide.is_signed,
+                                    is_const=t.is_const)
         if (isinstance(t, lt.BasicType) and t.name
                 and t.name not in _builtin_names
                 and reg is not None and t.name in reg):
@@ -956,6 +961,10 @@ def _to_legacy(t, ctx=None):
                              members=members, is_packed=False,
                              is_const=t.is_const, is_volatile=t.is_volatile)
     if k == "enum":
+        wide = _wide_enum_type(t.name)
+        if wide is not None:
+            return lt.BasicType(name=wide.name, is_signed=wide.is_signed,
+                                is_const=t.is_const, is_volatile=t.is_volatile)
         return lt.EnumType(name=t.name, is_const=t.is_const)
     if k == "typedef":
         # Resolve via the active codegen's typedef registry (set when a
@@ -971,6 +980,18 @@ def _to_legacy(t, ctx=None):
 # Set by ``CodeGenerator.__init__`` to its ctx.typedefs dict; consulted
 # by the module-level ``_to_legacy`` to resolve uc_core typedef nodes.
 _ACTIVE_TYPEDEFS = None
+
+# Set by ``CodeGenerator.__init__`` to its ctx.enum_types: the integer type
+# of each enumeration that is wider than int (see _register_enum_entries).
+_ACTIVE_ENUM_TYPES = None
+
+def _wide_enum_type(tag):
+    """The integer type of the enumeration ``tag`` when its values do not
+    all fit an int, else None."""
+    if tag and _ACTIVE_ENUM_TYPES:
+        return _ACTIVE_ENUM_TYPES.get(tag)
+    return None
+
 
 # Set by ``CodeGenerator.__init__``: maps the operand of a ``typeof`` to
 # its ResolvedType (None when the operand's type is not known).
@@ -1116,7 +1137,13 @@ def iter_var_decls(declaration):
         yield name, full, init, full.kind == "function"
 
 
-def float_to_ieee754(f: float) -> int:
+def _enum_tag(spec):
+    """The tag of an EnumDef/EnumAnon spec, or None."""
+    nm = getattr(spec, "name", None)
+    return nm.text if nm is not None and hasattr(nm, "text") else nm
+
+
+def float_to_ieee754(f: float, keep_subnormal: bool = False) -> int:
     """Convert a Python float to IEEE 754 single-precision (32-bit) integer representation.
 
     uc80's runtime ``__fmul`` / ``__fdiv`` flush denormal results to
@@ -1125,6 +1152,12 @@ def float_to_ieee754(f: float) -> int:
     denormal bits that the runtime would never produce — comparing
     a static-init denormal against the runtime's zero would abort
     (torture pr23941). Sign of zero is preserved.
+
+    ``keep_subnormal`` is for a value that the source wrote down as a
+    floating constant, not one that arithmetic made: ``1e-40f`` is
+    the subnormal number 0x000116C2, and moving, printing or comparing
+    its bits must see that number.  Only the runtime arithmetic
+    flushes (docs/libm.md).
     """
     try:
         packed = struct.pack('>f', f)  # Big-endian single precision
@@ -1136,7 +1169,8 @@ def float_to_ieee754(f: float) -> int:
         return 0xFF800000 if f < 0 else 0x7F800000
     val = struct.unpack('>I', packed)[0]
     # Denormal: exp == 0 and mantissa != 0. Flush to signed zero.
-    if (val & 0x7F800000) == 0 and (val & 0x007FFFFF) != 0:
+    if (not keep_subnormal and (val & 0x7F800000) == 0
+            and (val & 0x007FFFFF) != 0):
         return val & 0x80000000
     return val
 
@@ -1759,6 +1793,10 @@ class CallGraphAnalyzer:
                 return self.struct_sizes[t.name]
             return 4
         if t.kind == "enum":
+            wide = _wide_enum_type(t.name)
+            if wide is not None:
+                return self._var_size_r(ResolvedType(
+                    kind="basic", name=wide.name, is_signed=wide.is_signed))
             return self.type_config.int_size
         if t.kind == "function":
             return self.type_config.ptr_size  # function-pointer decay
@@ -3516,6 +3554,11 @@ class CodeGenContext:
 
     # Enum constants: name -> integer value
     enum_constants: dict[str, int] = field(default_factory=dict)
+    # An enumeration whose values do not all fit an int has an integer type
+    # chosen to hold them (C23 6.7.3.3p?): tag -> BasicType, and the type of
+    # each of its constants (the enumerated type).  Absent: int.
+    enum_types: dict[str, "lt.BasicType"] = field(default_factory=dict)
+    enum_const_types: dict[str, "lt.BasicType"] = field(default_factory=dict)
 
     # Static local variables: label -> (type, init_value, resolved_addr)
     static_locals: dict[str, tuple] = field(default_factory=dict)
@@ -3800,8 +3843,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         # Wire module-level ``_to_legacy`` to consult this codegen's
         # typedef registry. (Single-threaded codegen, so a module-level
         # pointer is fine; reset in finally/exit if we ever grow re-entry.)
-        global _ACTIVE_TYPEDEFS, _TYPEOF_HOOK
+        global _ACTIVE_TYPEDEFS, _TYPEOF_HOOK, _ACTIVE_ENUM_TYPES
         _ACTIVE_TYPEDEFS = self.ctx.typedefs
+        _ACTIVE_ENUM_TYPES = self.ctx.enum_types
         _TYPEOF_HOOK = self._typeof_operand_type
         self.enable_shared_storage = enable_shared_storage
         self.enable_dead_elimination = enable_dead_elimination
@@ -5068,6 +5112,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 max_bits = type_size * 8
                 # Enum bitfields are unsigned (matches GCC; C leaves it impl-defined)
                 bf_signed = (not isinstance(mtype, lt.EnumType)
+                             and not (_is_resolved_type(member.member_type)
+                                      and member.member_type.kind == "enum")
                              and self._is_signed_type(mtype))
 
                 if bf_width == 0:
@@ -5224,12 +5270,59 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             return self._eval_enum_expr(expr.expr)
         return None
 
+    def _enum_underlying_type(self, values) -> "lt.BasicType | None":
+        """The integer type that holds every value of an enumeration, when
+        an int does not (C23 6.7.3.3: the enumerated type is compatible with
+        an integer type that can represent all its members, and the choice
+        is implementation-defined).  uc80 takes the first of unsigned int,
+        long, unsigned long, long long and unsigned long long that holds
+        the lowest and the highest value -- the signed one first only for a
+        negative lowest value, as GCC does.  None: int holds them all."""
+        if not values:
+            return None
+        lo, hi = min(values), max(values)
+        tc = self.type_config
+        ibits = tc.int_size * 8
+        if -(1 << (ibits - 1)) <= lo and hi < (1 << (ibits - 1)):
+            return None
+        for size, name in ((tc.int_size, "int"), (tc.long_size, "long"),
+                           (tc.long_long_size, "long long")):
+            bits = size * 8
+            if -(1 << (bits - 1)) <= lo and hi < (1 << (bits - 1)):
+                return lt.BasicType(name=name, is_signed=True)
+            if lo >= 0 and hi < (1 << bits):
+                return lt.BasicType(name=name, is_signed=False)
+        raise CodegenError(
+            f"the enumeration values {lo}..{hi} do not fit any integer type")
+
+    def _register_enum_entries(self, tag, entries) -> None:
+        """Record the constants (name, value) of one enumeration, and its
+        integer type when its values are wider than int."""
+        for name, value in entries:
+            self.ctx.enum_constants[name] = value
+            self.ctx.enum_const_types.pop(name, None)
+        wide = self._enum_underlying_type([v for _n, v in entries])
+        if tag:
+            if wide is not None:
+                self.ctx.enum_types[tag] = wide
+            elif self.type_config.int_size == 4:
+                # An object of enumeration type is 4 bytes, so it is stored
+                # and loaded as an int (DEHL), not as a 16-bit value.
+                self.ctx.enum_types[tag] = lt.BasicType(name="int",
+                                                        is_signed=True)
+            else:
+                self.ctx.enum_types.pop(tag, None)
+        if wide is not None:
+            for name, _v in entries:
+                self.ctx.enum_const_types[name] = wide
+
     def _register_enum_type_values(self, enum_type: lt.EnumType) -> None:
         """Register enum constants from an inline EnumType."""
         if not enum_type.values:
             return
 
         next_value = 0
+        entries = []
         for enum_val in enum_type.values:
             # Auto-AST splits `EnumValue(name)` and
             # `EnumValueWithInit(name, value)` — only the latter has a value.
@@ -5244,8 +5337,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             nm = enum_val.name
             if hasattr(nm, "text"):
                 nm = nm.text
-            self.ctx.enum_constants[nm] = next_value
+            entries.append((nm, next_value))
             next_value += 1
+        self._register_enum_entries(getattr(enum_type, "name", None), entries)
 
     def _register_decl_spec_enums(self, specs) -> None:
         """Register every enum constant reachable through a decl_specs list.
@@ -5268,17 +5362,19 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         _to_legacy() drops an EnumType's values, so the resolved-type
         route registers nothing at all.
         """
-        def reg_values(values):
+        def reg_values(values, tag=None):
             # Auto-AST splits enum values: bare `x` is EnumValue(name),
             # `y = N` is EnumValueWithInit(name, value).
             next_value = 0
+            entries = []
             for v in values or []:
                 if isinstance(v, ast.EnumValueWithInit):
                     evaluated = self._eval_enum_expr(v.value)
                     if evaluated is not None:
                         next_value = evaluated
-                self.ctx.enum_constants[v.name.text] = next_value
+                entries.append((v.name.text, next_value))
                 next_value += 1
+            self._register_enum_entries(tag, entries)
 
         def walk(specs):
             """Every EnumDef/EnumAnon reachable through a decl_specs list,
@@ -5289,7 +5385,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             """
             for sp in specs or []:
                 if isinstance(sp, (ast.EnumDef, ast.EnumAnon)):
-                    reg_values(sp.values)
+                    reg_values(sp.values, _enum_tag(sp))
                 elif isinstance(sp, (ast.StructDef, ast.StructAnon)):
                     for mem in (getattr(sp, "members", None) or []):
                         walk(getattr(mem, "decl_specs", None))
@@ -6176,7 +6272,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
     # rather than the silent infinity the packer produces.
     _MAX_FLOAT32 = 3.4028235677973366e38
 
-    def _float_bits(self, value: float, node=None) -> int:
+    def _float_bits(self, value: float, node=None,
+                    keep_subnormal: bool = False) -> int:
         """IEEE-754 binary32 bits for ``value``, warning if it does not fit."""
         if (value == value and abs(value) != float("inf")
                 and abs(value) > self._MAX_FLOAT32):
@@ -6184,7 +6281,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                    f"float can represent; it becomes an infinity"
             if text not in self.warnings:
                 self.warnings.append(text)
-        return float_to_ieee754(value)
+        return float_to_ieee754(value, keep_subnormal)
 
     def _register_body_types(self, body) -> None:
         """Register the struct, union and enum tags a function body defines.
@@ -6209,7 +6306,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
     def _type_scope_snapshot(self) -> tuple:
         """Everything a function body may add to the type namespace."""
         return (dict(self.ctx.structs), dict(self.ctx.struct_sizes),
-                dict(self.ctx.typedefs), dict(self.ctx.enum_constants))
+                dict(self.ctx.typedefs), dict(self.ctx.enum_constants),
+                dict(self.ctx.enum_const_types))
 
     def _type_scope_restore(self, snap: tuple) -> None:
         """A tag or typedef declared inside a function is not visible in the
@@ -6220,6 +6318,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         (self.ctx.structs, self.ctx.struct_sizes,
          self.ctx.typedefs, self.ctx.enum_constants) = (
             dict(snap[0]), dict(snap[1]), dict(snap[2]), dict(snap[3]))
+        self.ctx.enum_const_types.clear()
+        self.ctx.enum_const_types.update(snap[4])
 
     def _struct_return_size(self, ret_type) -> "int | None":
         """Size of an aggregate returned through the hidden destination
@@ -7219,19 +7319,21 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         # The auto-AST stores inline enums as EnumAnon/EnumDef nodes
         # nested in decl_specs (or in StructMember.decl_specs); none
         # produce a resolved lt.EnumType field on the member.
-        def _reg_enum_values(values):
+        def _reg_enum_values(values, tag=None):
             next_value = 0
+            entries = []
             for v in values or []:
                 if isinstance(v, ast.EnumValueWithInit):
                     evaluated = self._eval_enum_expr(v.value)
                     if evaluated is not None:
                         next_value = evaluated
-                self.ctx.enum_constants[v.name.text] = next_value
+                entries.append((v.name.text, next_value))
                 next_value += 1
+            self._register_enum_entries(tag, entries)
         def _walk_specs_for_enums(specs):
             for sp in specs or []:
                 if isinstance(sp, (ast.EnumDef, ast.EnumAnon)):
-                    _reg_enum_values(sp.values)
+                    _reg_enum_values(sp.values, _enum_tag(sp))
                 elif isinstance(sp, (ast.StructDef, ast.StructAnon)):
                     for mem in (getattr(sp, "members", None) or []):
                         _walk_specs_for_enums(getattr(mem, "decl_specs", None))
@@ -9983,7 +10085,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 val = float(text)
             except ValueError:
                 val = float.fromhex(text)
-            ieee_val = self._float_bits(val, expr)
+            ieee_val = self._float_bits(val, expr, keep_subnormal=True)
             low = ieee_val & 0xFFFF
             high = (ieee_val >> 16) & 0xFFFF
             self.ctx.emit_instr("ld", f"HL,{low}")
@@ -10274,6 +10376,29 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             # No match found - generate 0 (shouldn't happen in valid code)
             self.ctx.emit_instr("ld", "HL,0")
 
+    def _gen_wide_enum_constant(self, val: int, wide, force_long: bool) -> None:
+        """Load a constant of an enumeration wider than int (HL, DEHL, or
+        DEHL with __acc64 for 64 bits), as an integer literal of that type
+        would be."""
+        size = self._type_size(wide)
+        e = self.ctx.emit_instr
+        if size == 8:
+            self.ctx.runtime_used.add("__acc64")
+            v = val & 0xFFFFFFFFFFFFFFFF
+            for i in range(4):
+                e("ld", f"HL,{(v >> (16 * i)) & 0xFFFF}")
+                e("ld", "(__acc64),HL" if i == 0 else f"(__acc64+{2 * i}),HL")
+            e("ld", f"DE,{(v >> 16) & 0xFFFF}")
+            e("ld", f"HL,{v & 0xFFFF}")
+        elif size == 4 or self.type_config.int_size == 4 or force_long:
+            v = val & ((1 << (size * 8)) - 1)
+            if size < 4 and wide.is_signed and val < 0:
+                v = val & 0xFFFFFFFF
+            e("ld", f"HL,{v & 0xFFFF}")
+            e("ld", f"DE,{(v >> 16) & 0xFFFF}")
+        else:
+            e("ld", f"HL,{val & 0xFFFF}")
+
     def gen_identifier(self, expr: ast.Identifier, force_long: bool = False) -> None:
         """Generate code to load an identifier's value into HL (or DEHL for 32-bit)."""
         # Handle __func__ (C99 predefined identifier)
@@ -10286,13 +10411,19 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         # Check for enum constant first
         if expr.name.text in self.ctx.enum_constants:
             val = self.ctx.enum_constants[expr.name.text]
-            self.ctx.emit_instr("ld", f"HL,{val}")
-            if force_long:
-                # Sign-extend negative enum values to 32-bit
-                if val < 0:
-                    self.ctx.emit_instr("ld", "DE,65535")
-                else:
-                    self.ctx.emit_instr("ld", "DE,0")
+            wide = self.ctx.enum_const_types.get(expr.name.text)
+            if wide is not None:
+                self._gen_wide_enum_constant(val, wide, force_long)
+                return
+            if force_long or self.type_config.int_size == 4:
+                # An int of 4 bytes lives in DEHL, and so does a 16-bit
+                # int that is widened: the high word is the sign extension
+                # of the value (or its upper bits, for 70000).
+                v = val & 0xFFFFFFFF
+                self.ctx.emit_instr("ld", f"HL,{v & 0xFFFF}")
+                self.ctx.emit_instr("ld", f"DE,{v >> 16}")
+                return
+            self.ctx.emit_instr("ld", f"HL,{val & 0xFFFF if val < 0 else val}")
             return
 
         sym = self.ctx.lookup(expr.name.text)
@@ -15538,6 +15669,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             # --int=32 the call site pushes only HL (16 bits) for an enum
             # arg, so variadic printf reads garbage from the next slot.
             if expr.name.text in self.ctx.enum_constants:
+                wide = self.ctx.enum_const_types.get(expr.name.text)
+                if wide is not None:
+                    return wide
                 return lt.BasicType(name="int", is_signed=True)
             sym = self.ctx.lookup(expr.name.text)
             if sym:
@@ -21681,7 +21815,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             else:
                 self._emit_int_value(iv, elem_size)
         elif isinstance(init, ast.FloatLiteral):
-            self._emit_float_value(float_value(init))
+            self._emit_float_value(float_value(init), exact=True)
         elif isinstance(init, ast.CharLiteral):
             val = self._decode_char_literal(init)
             text = init.value.text if hasattr(init.value, "text") else ""
@@ -21725,7 +21859,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 else:
                     self._emit_int_value(-v, elem_size)
             elif isinstance(init.operand, ast.FloatLiteral):
-                self._emit_float_value(-float_value(init.operand))
+                self._emit_float_value(-float_value(init.operand), exact=True)
             else:
                 # Complex expression - reserve space (runtime init would be needed)
                 self.ctx.emit_instr("ds", str(elem_size))
@@ -22544,16 +22678,17 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             if size > 2:
                 self.ctx.emit_instr("ds", str(size - 2))
 
-    def _emit_float_value(self, value: float) -> None:
+    def _emit_float_value(self, value: float, exact: bool = False) -> None:
         """Emit a 32-bit IEEE-754 float value.
 
         uc80's runtime flushes denormals to zero, so static initialisers
         computed by Python (which keeps gradual-underflow bits) must do
         the same — otherwise a static-init value will never compare
         equal to the runtime computation that produced zero (torture
-        pr23941).
+        pr23941).  EXACT is true for a floating constant written in the
+        source (or its negation): that value keeps its subnormal bits.
         """
-        ieee_val = self._float_bits(value)
+        ieee_val = self._float_bits(value, keep_subnormal=exact)
         low = ieee_val & 0xFFFF
         high = (ieee_val >> 16) & 0xFFFF
         self.ctx.emit_instr("dw", str(low))
