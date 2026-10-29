@@ -114,9 +114,11 @@ at 58,112 bytes less 512 bytes of stack):
   of the reason; the code alone (34,000 to 39,500 bytes) leaves less than
   the array needs.
 - battlestar does not fit. Its room data is 120 KB. Every compiler that
-  linked it reports TOO-BIG. uc80 in whole-program mode did not finish in
-  the 1800 s limit of the harness (BUILD-TIMEOUT(link), the known
-  whole-program compile time). A manual link of the uc80 objects without
+  linked it reports TOO-BIG, and uc80 in whole-program mode does too: the
+  linked image is 81,885 bytes. The uc80 build takes 37 s for the compiler,
+  7 s for um80 and 1 s for ul80. Before the repair of the dead-data pass of
+  `asm_dce.py` the compiler did not finish in the 1800 s limit of the harness
+  (BUILD-TIMEOUT(link)). A manual link of the uc80 objects without
   whole-program mode (`ul80` of the `--no-whole-program` objects with
   `libc.lib` and `runtime.lib`) ends at 179,805 bytes.
 - Rogue 3.6 does not fit. llvm-z80 gives 98,789 bytes in objects alone.

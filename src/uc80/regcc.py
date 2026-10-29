@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from uc_core import ast
+from uc_core import _dcfast
 from uc_core.volatility import children as _children
 
 try:  # the register effects of one instruction
@@ -122,7 +123,7 @@ def scan_program(unit, name_of) -> ProgramScan:
         seen: set[int] = set()
         while stack:
             node = stack.pop()
-            if not dataclasses.is_dataclass(node) or isinstance(node, type):
+            if not _dcfast.is_dataclass(node) or isinstance(node, type):
                 continue
             if id(node) in seen:
                 continue

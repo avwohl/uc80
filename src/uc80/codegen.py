@@ -20,6 +20,7 @@ from .asm_dce import (ASM_BEGIN_MARKER, ASM_BEGIN_FILE_MARKER,
                       ASM_END_MARKER, ROM_DATA_MARKER, is_asm_begin,
                       is_asm_end)
 from uc_core import ast
+from uc_core import _dcfast
 from uc_core.volatility import VolatileInfo, declared_names
 from uc_core.volatility import children as _children
 from .volatile_fence import VOL_BEGIN, VOL_END
@@ -413,7 +414,7 @@ def _ast_has_side_effects(node) -> bool:
     Conservative: any call, ++/--, assignment or statement expression
     counts.  Walks dataclass fields, so it needs no list of node kinds.
     """
-    from dataclasses import fields as _dc_fields, is_dataclass
+    from uc_core._dcfast import fields as _dc_fields, is_dataclass
     if node is None:
         return False
     if isinstance(node, (list, tuple)):
@@ -438,7 +439,7 @@ def _ast_writes_names(node, names) -> bool:
     Used by the inliner: substituting the caller's argument for a
     parameter that the body modifies would modify the caller's variable.
     """
-    from dataclasses import fields as _dc_fields, is_dataclass
+    from uc_core._dcfast import fields as _dc_fields, is_dataclass
     if node is None:
         return False
     if isinstance(node, (list, tuple)):
@@ -785,7 +786,7 @@ def _fold_float_const_builtins(root) -> None:
     constant folder, the static-initializer emitter and gen_expr all see an
     ordinary literal and need no case of their own.
     """
-    from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+    from uc_core._dcfast import fields as _dc_fields, is_dataclass as _dc_is
 
     def folded(node):
         if not isinstance(node, (ast.Call, ast.CallNoArgs)):
@@ -1354,7 +1355,7 @@ def iter_body_declarations(body):
     not, so the walk deliberately descends into initializers too: a GNU
     statement expression can declare its own locals.
     """
-    from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+    from uc_core._dcfast import fields as _dc_fields, is_dataclass as _dc_is
 
     out = []
     seen = set()
@@ -1385,7 +1386,7 @@ def _iter_calls(body):
     Order only has to be deterministic -- the slots do not overlap -- so
     the natural field order of the walk is fine.
     """
-    from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+    from uc_core._dcfast import fields as _dc_fields, is_dataclass as _dc_is
 
     out = []
     seen = set()
@@ -2459,7 +2460,7 @@ class CallGraphAnalyzer:
         may not run (right of && and ||, arms of ?:, sizeof) counts twice."""
         if isinstance(node, (list, tuple)):
             return sum(self._plain_uses(x, name, always) for x in node)
-        if not dataclasses.is_dataclass(node) or isinstance(node, type):
+        if not _dcfast.is_dataclass(node) or isinstance(node, type):
             return 0
         if isinstance(node, ast.Identifier):
             if node.name.text != name:
@@ -2475,7 +2476,7 @@ class CallGraphAnalyzer:
         if isinstance(node, (ast.SizeofExpr, ast.SizeofType)):
             return self._plain_uses(getattr(node, "operand", None), name, False)
         return sum(self._plain_uses(getattr(node, f.name, None), name, always)
-                   for f in dataclasses.fields(node) if f.name != "pos")
+                   for f in _dcfast.fields(node) if f.name != "pos")
 
     def _inline_strip_typedef(self, t, keep16=False):
         """``t`` with file-scope typedef names resolved to their type.
@@ -2499,7 +2500,7 @@ class CallGraphAnalyzer:
         """Declared type of every variable declared under ``node`` (a
         parameter list, a body, or the file scope).  A name declared twice
         with different types is recorded as None (unknown)."""
-        from dataclasses import fields as _dc_fields, is_dataclass
+        from uc_core._dcfast import fields as _dc_fields, is_dataclass
         if isinstance(node, (list, tuple)):
             for x in node:
                 self._inline_collect_types(x, out)
@@ -3684,9 +3685,46 @@ class _Src32:
         self.size = size
         self.signed = signed
 
+def _scoped_memo(fn):
+    """Memoize an expression-inspecting method for one outermost call.
+
+    The type queries below recurse into both operands and call each
+    other, so a left-deep ``a+b+c+...`` re-derived the type of every
+    subtree many times over (exponential-looking compile times for long
+    sums).  Inside one outermost call nothing changes the scope or the
+    tree, so a result per (method, node) is exact; the table is dropped
+    when the outermost call returns.
+    """
+    name = fn.__name__
+
+    def wrapper(self, expr):
+        table = self._expr_memo
+        owner = table is None
+        if owner:
+            table = self._expr_memo = {}
+        key = (name, id(expr))
+        try:
+            hit = table.get(key, _MEMO_MISS)
+            if hit is not _MEMO_MISS:
+                return hit[0]
+            result = fn(self, expr)
+            table[key] = (result, expr)   # keeps expr alive: id stays valid
+            return result
+        finally:
+            if owner:
+                self._expr_memo = None
+    wrapper.__name__ = name
+    wrapper.__doc__ = fn.__doc__
+    return wrapper
+
+_MEMO_MISS = object()
+
+
 
 class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
     """Z80 code generator."""
+
+    _expr_memo = None   # see _scoped_memo
 
     def __init__(self, module_name: str = "main", enable_shared_storage: bool = True,
                  enable_dead_elimination: bool = True, enable_inlining: bool = True,
@@ -4003,7 +4041,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         str / int values so legacy code paths matching ``isinstance(d, str)``
         / ``isinstance(d, int)`` work uniformly."""
         try:
-            from dataclasses import fields as _dc_fields, is_dataclass
+            from uc_core._dcfast import fields as _dc_fields, is_dataclass
         except Exception:
             return
         seen = set()
@@ -4066,7 +4104,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         """
         seen = set()
         try:
-            from dataclasses import fields as _dc_fields, is_dataclass
+            from uc_core._dcfast import fields as _dc_fields, is_dataclass
         except Exception:
             return
 
@@ -4192,7 +4230,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             if isinstance(init, list) and len(init) >= 1:
                 # Adjacent string literals arrive as a list.
                 init = init[0]
-            if not dataclasses.is_dataclass(init):
+            if not _dcfast.is_dataclass(init):
                 return
             walk(init)
             try:
@@ -4217,7 +4255,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 for x in n:
                     walk(x)
                 return
-            if not dataclasses.is_dataclass(n):
+            if not _dcfast.is_dataclass(n):
                 return
             if isinstance(n, (ast.TypeofExpr, ast.TypeofUnqualExpr)):
                 walk(n.operand)
@@ -5692,7 +5730,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         # the compile-time check reads the same scan.  Walking the
         # dataclass fields reaches every form, including ones the AST
         # grows later.
-        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+        from uc_core._dcfast import fields as _dc_fields, is_dataclass as _dc_is
 
         literal_formats_only = True
         seen: set[int] = set()
@@ -5852,7 +5890,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         the program.  Returns True if the calls were rewritten.
         """
         import dataclasses
-        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+        from uc_core._dcfast import fields as _dc_fields, is_dataclass as _dc_is
 
         # Names recorded before dead-function removal.
         if getattr(self, '_defined_function_names', set()) & {'printf', 'puts', 'cputs'}:
@@ -6357,7 +6395,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 return False
 
         def collect(node, into, seen):
-            if not dataclasses.is_dataclass(node) or isinstance(node, type):
+            if not _dcfast.is_dataclass(node) or isinstance(node, type):
                 return
             if id(node) in seen:
                 return
@@ -6387,7 +6425,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                 for x in node:
                     visit(x, False, locs, fchar)
                 return
-            if not dataclasses.is_dataclass(node) or isinstance(node, type):
+            if not _dcfast.is_dataclass(node) or isinstance(node, type):
                 return
 
             def lval_char(e):
@@ -15398,6 +15436,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                                        is_variadic=tt.is_variadic)
         return tt
 
+    @_scoped_memo
     def _get_expr_type(self, expr) -> "ResolvedType | None":
         """Try to infer the type of an expression (returns ResolvedType)."""
         if isinstance(expr, _SavedAddrValue):
@@ -15725,6 +15764,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             return target
         return None
 
+    @_scoped_memo
     def _arith_operand_type(self, expr):
         """Type of ``expr`` as an operand of arithmetic, before promotion.
 
@@ -17103,7 +17143,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         ++, -- or a compound assignment; a function with inline asm has
         none.  Whether each assigned value is a byte is decided when the
         variable is used (_holder_kind)."""
-        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+        from uc_core._dcfast import fields as _dc_fields, is_dataclass as _dc_is
         counts: dict[str, int] = {}
         writes: dict[str, list] = {}
         bad: set[str] = set()
@@ -17215,7 +17255,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         """Every name in ``expr`` means the same thing here as where the
         value is assigned: a local declared once and already in scope, or
         a name that no local of the function shares."""
-        from dataclasses import fields as _dc_fields, is_dataclass as _dc_is
+        from uc_core._dcfast import fields as _dc_fields, is_dataclass as _dc_is
         seen: set[int] = set()
         stack = [expr]
         while stack:
@@ -19584,6 +19624,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             return t.name in ("float", "double", "long double")
         return False
 
+    @_scoped_memo
     def _is_float_expr(self, expr: ast.Expression) -> bool:
         """Check if an expression has floating-point type."""
         if isinstance(expr, ast.FloatLiteral):
@@ -19630,6 +19671,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         expr_type = self._get_expr_type(expr)
         return self._is_complex_type(expr_type)
 
+    @_scoped_memo
     def _is_pointer_arith(self, expr) -> bool:
         """True for ``ptr + int``, ``int + ptr``, ``ptr - int`` and
         ``ptr - ptr``: the result is a pointer or a ptrdiff (16 bits), even
@@ -19640,6 +19682,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         return (isinstance(self._get_expr_type(expr.left), ptr)
                 or isinstance(self._get_expr_type(expr.right), ptr))
 
+    @_scoped_memo
     def _is_long_long_expr(self, expr) -> bool:
         """Check if an expression has 64-bit type (long long)."""
         if isinstance(expr, ast.SequenceExpr):
@@ -19723,6 +19766,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
         low 32 bits of a 64-bit value): no extension of HL is needed."""
         return self._is_long_expr(expr) or self._is_long_long_expr(expr)
 
+    @_scoped_memo
     def _is_long_expr(self, expr) -> bool:
         """Check if an expression has 32-bit type (long but not long long)."""
         if self._is_long_long_expr(expr):

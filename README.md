@@ -68,6 +68,7 @@ z88dk output. uc80 passes all 220 c-testsuite tests. Numbers are in
 - [Volatile objects](https://github.com/avwohl/uc80/blob/main/docs/volatile.md) - every volatile access happens as written, and how each pass keeps that
 - [Binary size and test results](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md) - speed and size against 8 compilers, and external test suite pass rates
 - [C standard compliance](https://github.com/avwohl/uc80/blob/main/docs/ANSI_C_COMPLIANCE.md) - implemented and missing C features
+- [Compile time](https://github.com/avwohl/uc80/blob/main/docs/compile_time.md) - why long expressions and large programs compiled slowly, and the repairs
 - [Build a Z80 ROM](https://github.com/avwohl/uc80/blob/main/docs/rom.md) - `--target=rom`, crt0, vectors, `ul80` ROM link, `libc_rom.lib`, limits
 - [Interrupt functions and hardware access](https://github.com/avwohl/uc80/blob/main/docs/rom_hardware.md) - `#pragma uc80 interrupt`, `<z80.h>` port I/O, critical sections, `__at`, SDCC `__interrupt` and `__sfr`
 - [Neo Geo sound driver example](https://github.com/avwohl/uc80/blob/main/docs/neogeo_driver.md) - NMI command, timer IRQ, YM busy wait and bank select in one C file

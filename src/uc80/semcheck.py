@@ -27,6 +27,7 @@ from __future__ import annotations
 import dataclasses
 
 from uc_core import ast
+from uc_core import _dcfast
 from uc_core import ast_legacy as lt
 from uc_core import codegen_helpers as ch
 from uc_core.codegen_helpers import ResolvedType
@@ -40,11 +41,11 @@ _SPECIAL_NAMES = frozenset(("__func__", "__FUNCTION__",
 
 
 def _is_node(x) -> bool:
-    return dataclasses.is_dataclass(x) and not isinstance(x, type)
+    return _dcfast.is_dataclass(x) and not isinstance(x, type)
 
 
 def _children(node):
-    for f in dataclasses.fields(node):
+    for f in _dcfast.fields(node):
         if f.name == "pos":
             continue
         v = getattr(node, f.name, None)
@@ -607,7 +608,7 @@ def _first_token(node):
         v = getattr(node, name, None)
         if v is not None and hasattr(v, "line") and hasattr(v, "file_id"):
             return v
-    for f in dataclasses.fields(node):
+    for f in _dcfast.fields(node):
         if f.name == "pos":
             continue
         v = getattr(node, f.name, None)
