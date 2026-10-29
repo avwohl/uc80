@@ -1,0 +1,162 @@
+; rt_lltof.mac - __lltof, __ulltof
+; 64-bit integer to float, rounded to nearest, a tie to even.
+
+	.Z80
+
+	EXTRN	__acc64
+	EXTRN	__fpack
+
+	CSEG
+; ============================================================
+; __lltof:  DEHL = float(__acc64), a signed 64-bit integer
+; __ulltof: DEHL = float(__acc64), an unsigned 64-bit integer
+;
+; The magnitude is copied to a work area and shifted left until bit 63
+; is set (N shifts).  The top 24 bits are then the mantissa; the next bit
+; is the guard bit and the bits under it are the sticky bits.  The
+; exponent is 127 + 63 - N, plus 1 when the rounding carries out of the
+; 24 bits.  __acc64 is not changed.
+; ============================================================
+	PUBLIC	__lltof
+__lltof:
+	PUSH	BC
+	LD	A,(__acc64+7)
+	AND	80H
+	LD	(__ll2f_sgn),A
+	LD	HL,__acc64
+	LD	DE,__ll2f_w
+	LD	BC,8
+	LDIR
+	LD	A,(__ll2f_sgn)
+	OR	A
+	JP	Z,__ll2f_norm
+	; negate the work area
+	LD	HL,0
+	LD	BC,(__ll2f_w)
+	OR	A
+	SBC	HL,BC
+	LD	(__ll2f_w),HL
+	LD	HL,0
+	LD	BC,(__ll2f_w+2)
+	SBC	HL,BC
+	LD	(__ll2f_w+2),HL
+	LD	HL,0
+	LD	BC,(__ll2f_w+4)
+	SBC	HL,BC
+	LD	(__ll2f_w+4),HL
+	LD	HL,0
+	LD	BC,(__ll2f_w+6)
+	SBC	HL,BC
+	LD	(__ll2f_w+6),HL
+	JP	__ll2f_norm
+
+	PUBLIC	__ulltof
+__ulltof:
+	PUSH	BC
+	XOR	A
+	LD	(__ll2f_sgn),A
+	LD	HL,__acc64
+	LD	DE,__ll2f_w
+	LD	BC,8
+	LDIR
+	JP	__ll2f_norm
+
+	PUBLIC	__ll2f_norm
+__ll2f_norm:
+	LD	B,0		; B = the number of left shifts
+__ll2f_bytes:
+	LD	A,(__ll2f_w+7)
+	OR	A
+	JR	NZ,__ll2f_bits
+	LD	HL,__ll2f_w+6	; shift a whole byte: bytes 6..0 move up
+	LD	DE,__ll2f_w+7
+	PUSH	BC
+	LD	BC,7
+	LDDR
+	POP	BC
+	XOR	A
+	LD	(__ll2f_w),A
+	LD	A,B
+	ADD	A,8
+	LD	B,A
+	CP	64
+	JR	C,__ll2f_bytes
+	LD	DE,0		; the value is 0
+	LD	HL,0
+	POP	BC
+	RET
+
+__ll2f_bits:
+	BIT	7,A
+	JR	NZ,__ll2f_rnd
+	LD	HL,__ll2f_w
+	SLA	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	INC	HL
+	RL	(HL)
+	INC	B
+	LD	A,(__ll2f_w+7)
+	JR	__ll2f_bits
+
+__ll2f_rnd:
+	LD	A,(__ll2f_w+7)
+	LD	E,A
+	LD	A,(__ll2f_w+6)
+	LD	H,A
+	LD	A,(__ll2f_w+5)
+	LD	L,A
+	LD	C,0		; C = 1 when the rounding carries out of 24 bits
+	LD	A,(__ll2f_w+4)
+	ADD	A,A		; carry = the guard bit, Z = no sticky bit in this byte
+	JR	NC,__ll2f_pack
+	JR	NZ,__ll2f_up
+	LD	A,(__ll2f_w+3)
+	LD	D,A
+	LD	A,(__ll2f_w+2)
+	OR	D
+	LD	D,A
+	LD	A,(__ll2f_w+1)
+	OR	D
+	LD	D,A
+	LD	A,(__ll2f_w)
+	OR	D
+	JR	NZ,__ll2f_up
+	BIT	0,L		; a tie: round to even
+	JR	Z,__ll2f_pack
+__ll2f_up:
+	INC	HL
+	LD	A,H
+	OR	L
+	JR	NZ,__ll2f_pack
+	INC	E
+	JR	NZ,__ll2f_pack
+	LD	E,80H		; 2^24: the mantissa is 2^23 again, the exponent 1 more
+	LD	C,1
+__ll2f_pack:
+	LD	A,190		; 127 + 63
+	SUB	B
+	ADD	A,C
+	LD	C,A
+	LD	B,0
+	LD	D,0
+	LD	A,(__ll2f_sgn)
+	CALL	__fpack
+	POP	BC
+	RET
+
+	COMMON	/rt_lltof/
+__ll2f_w:	DS	8
+__ll2f_sgn:	DS	1
+
+	END
