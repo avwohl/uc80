@@ -5094,6 +5094,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                         storage_unit_size = 0
                     continue
 
+                if type_size == 8 and 0 < bf_width < 64:
+                    raise CodegenError(
+                        f"bit-field '{member.name or '<unnamed>'}' of a "
+                        f"64-bit integer type narrower than 64 bits is "
+                        f"not supported; use a 32-bit type or a mask",
+                        member.bit_width)
                 # Clamp width to type size
                 if bf_width > max_bits:
                     bf_width = max_bits
@@ -12421,7 +12427,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             if isinstance(expr.operand, (ast.Member, ast.ArrowMember)):
                 bf = self._get_bitfield_info(expr.operand)
                 if bf is not None and not (bf.bit_offset == 0 and bf.bit_width == bf.storage_size * 8):
-                    self._error("cannot take address of bitfield", expr)
+                    raise CodegenError("cannot take address of bit-field", expr)
                     self.ctx.emit_instr("ld", "HL,0")
                     return
             self._gen_address(expr.operand)
@@ -12875,10 +12881,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
                     if keep_old:
                         # Postfix: save old value first
                         self.gen_member(expr.operand)
+                        if bf.storage_size == 4:
+                            self.ctx.emit_instr("push", "DE")
                         self.ctx.emit_instr("push", "HL")
                     self.gen_assignment(assign)
                     if keep_old:
                         self.ctx.emit_instr("pop", "HL")
+                        if bf.storage_size == 4:
+                            self.ctx.emit_instr("pop", "DE")
                     return
 
             # Struct member, array index, or pointer dereference: s.x++, t[x]++, (*p)++
@@ -14996,11 +15006,33 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin):
             self._gen_bitfield_write_16(expr, bf)
         elif bf.storage_size == 4:
             self._gen_bitfield_write_32(expr, bf)
+            # The value is the field as stored (DEHL), as for the
+            # narrower units below.
+            if expr is not self._discard_expr:
+                self._emit_truncate_dehl(bf.bit_width, bf.is_signed)
             return
         # The value of the assignment is the field's new value (C
         # 6.5.16p3), so ``(s.f = 9)`` for a 3-bit unsigned field is 1.
         if expr is not self._discard_expr:
             self._emit_truncate_hl(bf.bit_width, bf.is_signed)
+
+    def _emit_truncate_dehl(self, width: int, is_signed: bool) -> None:
+        """Reduce DEHL to its low ``width`` bits, sign- or zero-extended."""
+        if width >= 32:
+            return
+        e = self.ctx.emit_instr
+        for reg, lo in (("L", 0), ("H", 8), ("E", 16), ("D", 24)):
+            m = ((1 << width) - 1) >> lo & 0xFF
+            if m == 0xFF:
+                continue
+            if m == 0:
+                e("ld", f"{reg},0")
+                continue
+            e("ld", f"A,{reg}")
+            e("and", str(m))
+            e("ld", f"{reg},A")
+        if is_signed:
+            self._emit_bitfield_sign_extend_dehl(width)
 
     def _emit_truncate_hl(self, width: int, is_signed: bool) -> None:
         """Reduce HL to its low ``width`` bits, sign- or zero-extended."""
