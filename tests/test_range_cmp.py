@@ -210,10 +210,111 @@ static int jumped(int n)
     return s;
 }
 
+/* ranges from expressions: the sieve shape */
+static int sieve(void)
+{
+    int i, k, prime, count = 0;
+    static char flags[300];
+    for (i = 0; i <= 200; i++) flags[i] = 1;
+    for (i = 0; i <= 90; i++)
+        if (flags[i]) {
+            prime = i + i + 3;
+            for (k = i + prime; k <= 200; k += prime)
+                flags[k] = 0;
+            count++;
+        }
+    return count;
+}
+
+static int exprs(int u)
+{
+    int a, b, c, s = 0;
+    a = u & 7;
+    b = a * 3 + 1;
+    c = (b << 2) | 1;
+    if (a < 5) s += 1;
+    if (b > 3) s += 10;
+    if (c >= 5) s += 100;
+    if (c <= 29) s += 1000;
+    return s;
+}
+
+static int negexpr(int u)
+{
+    int a, b, s = 0;
+    a = u & 3;
+    b = a - 2;
+    if (b < 0) s += 1;
+    if (b < -1) s += 10;
+    if (b > 0) s += 100;
+    return s;
+}
+
+/* the counter is only in range inside its loop */
+static int outside(int w)
+{
+    int y, x, s = 0;
+    for (y = 0; y < 5; y++)
+        for (x = 0; x < 7; x++)
+            if (x < y) s++;
+    y = w - 40;
+    x = w - 50;
+    if (y < 0) s += 100;
+    if (x < 3) s += 1000;
+    return s;
+}
+
+static int loopstep(int n)
+{
+    int x, s = 0, st = n & 3;
+    for (x = 2; x < 100; x += st + 1)
+        if (x > 50) s++;
+    return s;
+}
+
+static int loopnonconst(int n)
+{
+    int x, s = 0;
+    for (x = n; x < 5; x++)
+        if (x < 0) s++;
+    return s;
+}
+
+static int loopbody(int n)
+{
+    int x, s = 0, once = 0;
+    for (x = 0; x < 9; x++) {
+        if (x == 4 && !once) { once = 1; x = n; }
+        if (x < 7) s++;
+    }
+    return s;
+}
+
+static int looplate(int n)
+{
+    int x, s = 0;
+    for (x = 0; x < 6; x++) {
+        if (x < 3) s++;
+        if (x == n) x = x + 0;
+    }
+    return s;
+}
+
+static int lowtop(void)
+{
+    int x, s = 0;
+    for (x = 32760; x < 32767; x++)
+        if (x > 32764) s++;
+    return s;
+}
+
 int main(void)
 {
     int i;
     for (i = 0; i < 10; i++) arr[i] = i + 1;
+    printf("%d %d %d\n", sieve(), exprs(11), negexpr(7));
+    printf("%d %d %d\n", outside(45), loopstep(2), loopnonconst(-3));
+    printf("%d %d %d\n", loopbody(-9), looplate(2), lowtop());
     printf("%d\n", plain());
     printf("%d %d %d\n", top1(), top2(), step2());
     printf("%d %d %d\n", negconst(), fromcall(), addrtaken());
@@ -249,7 +350,7 @@ def facts(tmp_path, source, *flags):
     assert r.returncode == 0, r.stderr
     out = {}
     for ln in r.stderr.splitlines():
-        if ln.startswith("range: "):
+        if ln.startswith("range: ") and not ln.startswith("range: loop "):
             name, _, rest = ln[7:].partition(": ")
             out[name] = eval(rest)
     return out
@@ -270,6 +371,38 @@ def test_counters_are_in_the_set(tmp_path):
                       ("twovars", "i"), ("twovars", "j"), ("andcond", "x"),
                       ("resets", "y"), ("resets", "x")):
         assert var in f[name], (name, var)
+
+
+def test_expression_ranges(tmp_path):
+    f = facts(tmp_path, SRC)
+    for var in ("i", "k", "prime"):
+        assert var in f["sieve"], var
+    for var in ("a", "b", "c"):
+        assert var in f["exprs"], var
+    assert "a" in f["negexpr"] and "b" not in f["negexpr"]
+
+
+def loop_facts(tmp_path, source):
+    c_file = tmp_path / "l.c"
+    c_file.write_text(source)
+    env = dict(os.environ, UC80_RANGE_DEBUG="1")
+    r = subprocess.run(
+        [sys.executable, "-m", "uc80.main", str(c_file), "--no-inlining",
+         "-o", str(tmp_path / "l.mac")],
+        capture_output=True, text=True, cwd=str(REPO), env=env)
+    assert r.returncode == 0, r.stderr
+    return [ln[12:] for ln in r.stderr.splitlines()
+            if ln.startswith("range: loop ")]
+
+
+def test_loop_ranges(tmp_path):
+    got = loop_facts(tmp_path, SRC)
+    # outside: y and x are counters in their loops, assigned elsewhere
+    assert "y (0, 5)" in got and "x (0, 7)" in got
+    assert "x (32760, 32767)" in got
+    # loopnonconst (init from the parameter), loopbody (a store in the
+    # body) have no loop range for x: nothing about x there but the above
+    assert got.count("x (0, 7)") == 1
 
 
 def test_other_variables_are_not(tmp_path):

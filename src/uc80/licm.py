@@ -60,6 +60,26 @@ def _op(n) -> str:
     return getattr(n.op, "text", n.op)
 
 
+def may_jump(n) -> bool:
+    """A statement that holds a break, continue, goto or return."""
+    stack = [n]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, list):
+            stack.extend(x)
+            continue
+        if not _is_node(x):
+            continue
+        if isinstance(x, (ast.BreakStmt, ast.ContinueStmt, ast.GotoStmt,
+                          ast.ReturnStmt, ast.ReturnStmtValue)):
+            return True
+        for f in _fields(x):
+            v = getattr(x, f, None)
+            if v is not None and not isinstance(v, (str, int)):
+                stack.append(v)
+    return False
+
+
 def _min_cost() -> int:
     try:
         return int(os.environ.get("UC80_LICM_MINCOST", 40))
@@ -76,7 +96,7 @@ class _Var:
 
 class _Cand:
     """One expression to move and every place that holds an equal one."""
-    __slots__ = ("expr", "type", "places", "cost")
+    __slots__ = ("expr", "type", "places", "cost", "uncond")
 
 
 class _Fn:
@@ -179,7 +199,7 @@ class _Fn:
                     n.init, ast.Declaration):
                 self.declare(n.init)
             wrapper_items = None
-            if cont is not None:
+            if cont is not None and not self.runs_once(n):
                 try:
                     wrapper_items = self.hoist(n)
                 except RecursionError:
@@ -192,6 +212,16 @@ class _Fn:
                     setattr(cont, slot, wrapper)
             self.stmt(n.body, n, "body")
         self.scoped(body)
+
+    def runs_once(self, loop) -> bool:
+        """A loop whose condition is a constant that is false: the body
+        runs at most one time (``do { ... } while (0)``, the shape of a
+        macro).  Moving a part out of the loop gains nothing."""
+        c = getattr(loop, "condition", None)
+        if c is None:
+            return False
+        k = self.const_of(c)
+        return k is not None and k == 0
 
     # -- analysis of one loop -------------------------------------------
 
@@ -244,6 +274,7 @@ class _Fn:
         self.declared = declared
         found: dict = {}
         order: list = []
+        cond = [0]       # > 0: the part may be skipped in a pass of the loop
 
         def see(e, cont, slot, in_decl_ok=True):
             """Walk an expression; collect maximal movable parts."""
@@ -270,13 +301,29 @@ class _Fn:
                             c.type = g._get_expr_type(e)
                             c.places = []
                             c.cost = cost
+                            c.uncond = False
                             found[key] = c
                             order.append(key)
                         c.places.append((cont, slot))
+                        if cond[0] == 0:
+                            c.uncond = True
                         return
             walk(e)
 
         def walk(e):
+            if isinstance(e, ast.BinaryOp) and _op(e) in ("&&", "||"):
+                see(e.left, e, "left")
+                cond[0] += 1
+                see(e.right, e, "right")
+                cond[0] -= 1
+                return
+            if isinstance(e, ast.TernaryOp):
+                see(e.condition, e, "condition")
+                cond[0] += 1
+                see(e.true_expr, e, "true_expr")
+                see(e.false_expr, e, "false_expr")
+                cond[0] -= 1
+                return
             for f in _fields(e):
                 v = getattr(e, f, None)
                 if v is None or isinstance(v, (str, int)):
@@ -290,8 +337,15 @@ class _Fn:
 
         def stmts(n):
             if isinstance(n, list):
+                # an item after a statement that may jump away is skipped
+                # in some passes
+                extra = 0
                 for x in n:
                     stmts(x)
+                    if not extra and may_jump(x):
+                        extra = 1
+                        cond[0] += 1
+                cond[0] -= extra
                 return
             if not _is_node(n):
                 return
@@ -328,13 +382,18 @@ class _Fn:
                 see(n.value, n, "value")
                 return
             # other statements: expression fields are values, statement
-            # fields are walked as statements
+            # fields are walked as statements; a branch of an if and the
+            # body of a switch run in some passes only
             for f in _fields(n):
                 v = getattr(n, f, None)
                 if v is None or isinstance(v, (str, int)):
                     continue
-                if f in ("body", "then_branch", "else_branch", "stmt",
-                         "items"):
+                if f in ("then_branch", "else_branch") or (
+                        f == "body" and isinstance(n, ast.SwitchStmt)):
+                    cond[0] += 1
+                    stmts(v)
+                    cond[0] -= 1
+                elif f in ("body", "stmt", "items"):
                     stmts(v)
                 elif isinstance(v, (list, tuple)):
                     see(v, None, None)
@@ -355,6 +414,7 @@ class _Fn:
         else:
             stmts(loop.body)
             see(loop.condition, loop, "condition")
+        order = [k for k in order if found[k].uncond]
         if not order:
             return None
         items = []
@@ -384,7 +444,8 @@ class _Fn:
             self.vars[name] = _Var(name, True, c.type)
             if self.debug:
                 print(f"licm: {cg.function_name(self.func)}: {name} "
-                      f"uses={len(c.places)} cost={c.cost}", file=sys.stderr)
+                      f"uses={len(c.places)} cost={c.cost} key={key}",
+                      file=sys.stderr)
         return items
 
     # -- what may move --------------------------------------------------

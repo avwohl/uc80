@@ -9,6 +9,21 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-29: family I, step 2 (loop optimisation) is in the code (branch `fami`)
+
+Step 2 has three parts. Each part has a switch. Part 2.1 moves an invariant integer expression out of a loop ([licm.md](licm.md), `--no-licm`). Part 2.2 finds counters in 0 to 32767 and uses the unsigned compare for them ([range_compare.md](range_compare.md), `--no-range-cmp`). Part 2.3 computes a 32-bit array index in 16 bits ([narrow_index.md](narrow_index.md), `--no-narrow-index`).
+
+Differences from the plan:
+
+- Part 2.3 is the module `src/uc80/narrow.py`, not a rule in `ast_opt.py`. The AST optimizer does not know the types of variables.
+- Part 2.2 is more than a set of names. The pass finds a range for each tracked local from the ranges of its stores (so `k = i + prime` in the sieve is in range), and a counted `for` statement gives its counter a range inside the loop although the function stores to the counter elsewhere (so `y` and `x` in `tc_wr` are in range). The plan had only the set of names with constant stores.
+- Part 2.1 moves an expression only when the loop evaluates the expression in each pass. The first version of the pass (every invariant expression of cost 40 or more) made `umchess` 11% slower and `embench-nettle-sha256` 503 bytes bigger. The slow part was an expression in a rare branch. The big part was the `ROUND` macro, a `do { ... } while (0)` loop that runs once.
+
+Numbers: `bench/run.py -c uc80`, 112 rows, no status change. No program is slower. Image: `micro` and its 9 groups have 7 bytes more (one new local), 3 programs have 2 to 12 bytes more BSS, and the sum of all images falls by 1,584 bytes. Against SDCC 4.6.0 (`bench/report.py` method): size 0.9157 to 0.9128, whole image 0.8831 to 0.8805, T-states (speed mode) 0.5304 to 0.5274, without `sort-*` 0.6406 to 0.6366. uc80 is faster than SDCC on 66 of 78 programs (65 before). The ratio of the T-states of uc80 to SDCC (speed mode, whole run), step 1 to step 2: `worm` 1.255 to 0.907, `mille` 1.210 to 0.887, `canfield` 1.206 to 0.883, `coremark-unofficial` 1.182 to 0.892, `davidly-sieve` 1.259 to 1.195, `davidly-ttt` 1.575 to 1.523. The programs `bsd-ppt`, `bsd-bcd`, `queens`, `snd-ymreg`, `snd-cmdq`, `sprintf` and `davidly-tm` do not change. The geometric mean of the 13 programs falls from 1.098 to 0.992. The model of the analysis (hand edits) predicted 0.899 for all steps of the family, with the loop steps worth 0.93 for the loop-invariant part. The programs of the curses family fall by 20% to 27% (`curses-demo`, `robots`, `snake`, `invaders`, `worm`, `mille`, `canfield`).
+
+- Still above SDCC (step 2 did not aim at these): `bsd-ppt` 1.597 and `bsd-bcd` 1.390 (console path), `davidly-ttt` 1.523 (byte compares and the minimax body), `davidly-sieve` 1.195 (the loop counters of `main` stay in memory), `queens` 1.134, `snd-cmdq` 1.033 and `snd-ymreg` 1.012.
+- Not done in step 2: byte-granular allocation of byte locals (three or four of them in B, C, D and E), the load CSE of `t->reg`, and the BSS clear with a push fill. A range for a counter that is not a 16-bit `int` (the byte path has its own compare) and a range that crosses a function call are not in the pass.
+
 ## Status on 2026-10-28: family I, step 1 (the sound-driver bundle) is in the code (branch `fami`)
 
 Family I is the set of changes that the analysis of the 13 programs above SDCC speed named (the programs where uc80 is slower than SDCC in speed mode, among them the two Neo Geo sound kernels `snd-ymreg` and `snd-cmdq`). Step 1 has four parts. Part 1.0 is the library: `_prt_div16` and `_div32_10` use 16 and 32 shift and subtract steps, and `putchar` and `__conout` have a short path for a character that is not LF. Part 1.1 is the discarded comma and the pair peephole rules ([peephole_pairs.md](peephole_pairs.md)). Part 1.2 is slot folding, and part 1.3 is the flow graph that knows calls that do not return ([register_locals.md](register_locals.md)).

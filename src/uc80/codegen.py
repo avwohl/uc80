@@ -6698,7 +6698,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.regs.reset()
         type_scope = self._type_scope_snapshot()
         self._register_body_types(func.body)
-        self._nonneg_names = self._range_facts(func)
+        self._range_facts(func)
         self._current_sret_size = self._struct_return_size(return_type)
 
         # --no-shared-storage has to reach here too: can_use_shared_storage
@@ -9536,6 +9536,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self.ctx.break_labels.append(end_label)
         self.ctx.continue_labels.append(update_label)
+        # The counter of the loop has a known range inside the loop
+        # (docs/range_compare.md).
+        saved_ranges = self._range_scoped
+        loop_ranges = self._range_loop_facts(stmt)
+        if loop_ranges:
+            self._range_scoped = {**saved_ranges, **loop_ranges}
 
         # Init: auto-AST wraps a bare for-init expression as
         # ExpressionStmt(expr=...). gen_statement handles that uniformly.
@@ -9568,6 +9574,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.emit_instr("jp", start_label)
         self.ctx.emit_label(end_label)
 
+        self._range_scoped = saved_ranges
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
 

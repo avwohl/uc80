@@ -124,6 +124,7 @@ static int jumps(int n)
 {
     int y = 3, x, s = 0;
     for (x = 0; x < 20; x++) {
+        s += y * 12 - 30;
         if (x == n)
             break;
         if (x & 1)
@@ -156,12 +157,39 @@ static int inner_switch(void)
 {
     int y = 4, x, s = 0;
     for (x = 0; x < 8; x++) {
+        s += y * 12 - x;
         switch (x & 3) {
         case 0: s += y * 12; break;
         case 1: s += y * 12 + 1; break;
         default: s += x; break;
         }
     }
+    return s;
+}
+
+/* the product is evaluated in some passes only: it stays in place */
+static int rare(int n)
+{
+    int y = n, x, s = 0;
+    for (x = 0; x < 9; x++) {
+        if (x == 7)
+            s += y * 40;
+        s += (x > 100 && y * 20 > 5) ? y * 24 : 1;
+        switch (x) {
+        case 3: s += y * 36; break;
+        default: break;
+        }
+    }
+    return s;
+}
+
+/* a macro like do { ... } while (0) runs once: nothing gains */
+#define STEP(a, b) do { s += (a) * 40 + (b) * 24; } while (0)
+static int once(int n)
+{
+    int y = n, z = n + 1, s = 0;
+    STEP(y, z);
+    STEP(z, y);
     return s;
 }
 
@@ -288,6 +316,7 @@ int main(void)
     printf("%d %d %d\n", zero_trip(0), zero_trip(3), jumps(7));
     printf("%d %d %d\n", jumps(30), duff(6), inner_switch());
     printf("%d %d %d\n", rec(3, 1), three_deep(), shadow());
+    printf("%d %d %d\n", rare(3), rare(5), once(4));
     printf("%d %d\n", whiles(3), (int)(wide(123456L, 3) % 10007));
     printf("%d %d\n", small_types(200, -3), shifts(37, 3));
     printf("%d %d %d\n", negs(9), two_equal(7), idx32(5));
@@ -349,9 +378,10 @@ def test_pass_stays_out_where_a_value_can_change(tmp_path):
     # ychanges, yupdate: y is assigned in the loop; addr_taken: &y;
     # vol_local: volatile; globals: a global; divides: a division (a
     # division can trap and costs the same in every pass);
-    # duff: case labels of a switch outside the loop
+    # duff: case labels of a switch outside the loop; rare: each product
+    # is evaluated in some passes only (an if, a && or ?: branch, a case)
     for name in ("ychanges", "yupdate", "addr_taken", "vol_local",
-                 "globals", "divides", "duff"):
+                 "globals", "divides", "duff", "rare", "once"):
         assert name not in fns, name
 
 
