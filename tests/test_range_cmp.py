@@ -444,3 +444,67 @@ int main(void) { return f(); }
     on, _ = compile_mac(tmp_path, src, "--no-inlining")
     off, _ = compile_mac(tmp_path, src, "--no-inlining", "--no-range-cmp")
     assert len(on.splitlines()) < len(off.splitlines())
+
+
+# Repairs: the range of a loop counter must not reach the init clause, and
+# the address-taken and volatile sets must hold in a function where the
+# function-wide analysis stops (label, asm, case label in a loop).
+REPAIR = {
+    "i01": r"""
+#include <stdio.h>
+int main(void){ int i=-7, f=0, s=0, g=0, k;
+  for (f = (i < 5), i = 0; i < 4; i++) s++;
+  i = -7;
+  for (g = (i < 2) + (i >= 0) * 10, i = 1; i < 4; i++) s++;
+  i = -7;
+  for (k = i < 5 ? 100 : 200, i = 3; i < 6; i++) s++;
+  printf("%d %d %d %d %d\n", f, g, k, s, i);
+  return 0; }
+""",
+    "i02": r"""
+#include <stdio.h>
+int main(void){ int i, s = 0, n = 0; int *p = &i;
+  for (i = 0; i < 5; i++) { n++; if (i == 2) *p = -3; if (i < 0) s += 100; s++; if (n > 30) break; }
+  if (s > 1000) goto out;
+  s += 7;
+out:
+  printf("%d %d %d\n", s, n, i);
+  return 0; }
+""",
+    "i05": r"""
+#include <stdio.h>
+int main(void){ int i, s = 0, n = 0, j = 0, c = 3; int *p = &i;
+  switch (c) { case 3: while (j < 6) { s++; j++;
+    case 2: s++; j++; case 1: s += 2; j++; } }
+  for (i = 0; i < 5; i++) { n++; if (i == 2) *p = -3; if (i < 0) s += 100; s++; if (n > 30) break; }
+  printf("%d %d %d\n", s, n, i);
+  return 0; }
+""",
+    "i06": r"""
+#include <stdio.h>
+int main(void){ int i, s = 0, n = 0; int *p = &i;
+  for (i = 0; i < 5; i++) { n++; if (i == 2) *p = -3; if (i < 0) s += 100; s++; if (n > 30) break; }
+  __asm__ volatile("nop");
+  printf("%d %d %d\n", s, n, i);
+  return 0; }
+""",
+}
+
+BASELINE = ("--no-licm", "--no-range-cmp", "--no-narrow-index")
+
+
+@needs_run
+@pytest.mark.parametrize("flags", MODES)
+@pytest.mark.parametrize("name", sorted(REPAIR))
+def test_repair_programs_match_host(tmp_path, name, flags):
+    src = REPAIR[name]
+    c_file = tmp_path / "h.c"
+    c_file.write_text(src)
+    r = subprocess.run(["cc", "-w", "-o", str(tmp_path / "h"), str(c_file)],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        pytest.skip("no host compiler")
+    want = subprocess.run([str(tmp_path / "h")], capture_output=True,
+                          text=True).stdout
+    _, mac = compile_mac(tmp_path, src, *flags)
+    assert run_mac(tmp_path, mac) == want

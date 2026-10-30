@@ -9540,8 +9540,6 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # (docs/range_compare.md).
         saved_ranges = self._range_scoped
         loop_ranges = self._range_loop_facts(stmt)
-        if loop_ranges:
-            self._range_scoped = {**saved_ranges, **loop_ranges}
 
         # Init: auto-AST wraps a bare for-init expression as
         # ExpressionStmt(expr=...). gen_statement handles that uniformly.
@@ -9555,6 +9553,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 with self._vol_region(stmt.init):
                     self.gen_expr_discard(stmt.init)
 
+        # The range holds after the init clause has stored the counter, not
+        # inside the init clause (which can read the old value).
+        if loop_ranges:
+            self._range_scoped = {**saved_ranges, **loop_ranges}
         self.ctx.emit_label(start_label)
 
         # Condition

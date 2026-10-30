@@ -107,6 +107,7 @@ class RangeMixin:
     _range_env: dict = {}
     _range_scoped: dict = {}
     _range_taken: frozenset = frozenset()
+    _range_aborted: bool = True
     _range_vol = frozenset()
     _range_analysing = False
 
@@ -242,10 +243,19 @@ class RangeMixin:
         self._range_vol = frozenset()
         if not self.enable_range_cmp:
             return
+        self._range_aborted = True
+        try:
+            from .reglocals_gen import address_taken_names
+            self._range_taken = frozenset(address_taken_names(func.body))
+            self._range_vol = self._vol.names_for(func)
+        except Exception:
+            return
         try:
             self._range_analysing = True
             try:
+                self._range_early = False
                 self._range_facts_1(func)
+                self._range_aborted = self._range_early
             finally:
                 self._range_analysing = False
         except Exception as ex:
@@ -347,9 +357,11 @@ class RangeMixin:
                 continue
             if isinstance(x, (ast.LabelStmt, ast.AsmDeclaration,
                               ast.StmtExpr)):
+                self._range_early = True
                 return
             if (isinstance(x, (ast.CaseStmt, ast.DefaultStmt)) and sw == 0
                     and ld > 0):
+                self._range_early = True
                 return
             if isinstance(x, ast.Declaration):
                 self._range_decl(x, decl_ok, bad, vals)
@@ -504,7 +516,7 @@ class RangeMixin:
     def _range_loop_facts(self, n) -> dict:
         """Ranges that hold for the variable of a counted ``for`` statement
         inside the statement (see the module comment).  {} when none."""
-        if not self.enable_range_cmp:
+        if not self.enable_range_cmp or self._range_aborted:
             return {}
         try:
             return self._range_loop_facts_1(n)

@@ -45,6 +45,10 @@ T-states of the whole run, change against the commit before:
 
 The other bench programs have no 32-bit index, so the pass does not change them.
 
+## Order of evaluation
+
+C does not set the order of the two operands of `+`. When an index has two calls, such as `nxt() + nxt() * 3`, the narrowed code can call them in a different order than the 32-bit code. Both orders are legal. Use `--no-narrow-index` if a program depends on one order.
+
 ## Tests
 
 `tests/test_narrow_index.py` runs programs in eight option sets. The output must equal the output of the host compiler for the indexes that stay inside the arrays. A second program has indexes that wrap (the address is the base plus the index modulo 65536), and the text of the expected output comes from the arithmetic in the comments. The programs cover these cases:

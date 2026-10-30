@@ -6,6 +6,10 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Family I step 2 repair
+
+- The range of a loop counter no longer applies to the init clause of the `for` statement (`for (f = (i < 5), i = 0; ...)` compared with the new range). The address-taken and volatile sets are now computed before the function-wide analysis, so a function with a label, inline assembly or a `case` label in a loop no longer gives a loop counter a range when a pointer changes the counter. In such a function the loop ranges are off. `bench/ccfuzz.py` runs `--no-licm --no-range-cmp --no-narrow-index` as a variant. Tests: `tests/test_range_cmp.py` (four new programs). Note in docs/narrow_index.md on the order of unsequenced calls in an index.
+
 ### Family I step 2 (branch `fami`): loop optimisation, gates and numbers
 
 - Gates of the final tree: `pytest -n 6` 2891 passed; `run_ctests.py` 219 of 220 (only 00129); `bench/difftest.py --count 800` with seeds 1 and 2, no UC80-WRONG and no MODEL-DIFF (547 and 529 PASS, the other results are SDCC failures); `bench/ccfuzz.py` 2000 PASS, `--ll` 1000 PASS, and 400 PASS each (plain and `--ll`) with `-O0`, `--no-register-locals` and `--no-licm --no-range-cmp --no-narrow-index`; the gen3 family (75 programs, 8 option sets) no RLDIFF, and the same 34 informational host differences as the commit before; `bench/rom/isrproof.py` nmi, seq, bank, iy and memisr OK with `ul80` and with `--sdas`.

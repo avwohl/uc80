@@ -23,6 +23,10 @@ A local variable has a range when all of these are true:
 - The code never takes its address.
 - The function has no label, no inline assembly and no statement expression.
 
+A function with a label, inline assembly, a statement expression or a `case` label inside a loop has no ranges at all. This includes the ranges of loop counters. The analysis of the address-taken and volatile names runs first, so an exit of the analysis never hides these names.
+
+The range of a loop counter starts after the init clause. The init clause can read the old value of the counter, so the compiler does not use the range there.
+
 Each store to the variable adds to its range:
 
 - A store `v = e` or an initializer adds the range of `e`.
