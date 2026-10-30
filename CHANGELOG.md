@@ -6,6 +6,17 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Bug round 5 (branch `bugfix5`, with `uc_core` branch `bugfix5`)
+
+This round repairs the four open items of the integrate11 repair. Each repair has tests that run code.
+
+- **uc_core, an enumerator in its own initializer.** The scope of an enumerator starts after its enumerator-definition (C23 6.2.1). `enum { A = 5 }; { enum { A = A * 2 }; }` now gives 10 inside the block and 5 outside. `_rename_block_scope_tags` keeps the new name in a pending entry. The entry joins the scope at the next comma or at the closing brace of the enumeration. A comma inside parentheses (`h(1, K)`) does not end the initializer. The expected failure `test_block_enumerator_in_its_own_initializer` is a normal test now.
+- **uc_core, a block typedef in an enumerator initializer.** `typedef int T; { typedef char T; enum { T3 = sizeof (T) }; }` now gives 1. `_rename_block_scope_typedefs` knows the enumeration body. It skips a name only where the name is an enumerator definition. It renames the names in an initializer. The expected failure `test_block_typedef_in_an_enumerator_initializer` is a normal test now.
+- **`memset` to a constant base with a variable offset is a device fill.** `memset((unsigned char *)0x4F00 + (unsigned char)(c*3), c, c+1)` used `LDIR` and read the device. The offset can now be any expression of integer type, for a base that is a constant address, in `+`, `-` and `[]`. The fill uses stores only in the inline path, in the call path (`__memset_dev`) and with `--no-blockops`.
+- **`memset` through a `void *` cast of a volatile pointer is a device fill.** `memset((void *)(dev + i*16 + j), v, n)` with `volatile unsigned char *dev` used `LDIR`. The compiler now looks at the operand of a cast to `void *`. A RAM fill (`ram + i`) keeps `LDIR`. The tests in `tests/test_memset_device.py` run on `romrun` with a write log, in the um80 flow and in the sdas flow.
+- **`sizeof` of an incomplete type is an error.** `enum E { A = sizeof (struct Undefined) };` compiled and gave 0. The message is now `file:line: invalid application of 'sizeof' to an incomplete type (struct 'Undefined')`. The check is in `semcheck.py`. It covers a structure or union with no definition in scope, an array of unknown size (`sizeof (int[])`), an array of an incomplete structure and `void`. It works in an enumerator, in an array bound and in any other expression. `sizeof (*p)` with a pointer to an incomplete structure is an error too. A structure that the program completes before the `sizeof` is complete.
+- **uc386 test counts.** The counts 515 passed, 7 skipped and 498 passed, 1 skipped are not a regression. Plain `pytest` in `~/src/uc386` also runs `addons/` (17 tests, 6 skipped because `awk.bin` and `doom.bin` do not exist). `pytest tests` runs `tests/` only (498 passed, 1 skipped). Both numbers are the same with the old and the new `uc_core`. No change was necessary.
+
 ### Repair of integrate11 (verifier findings)
 
 A check of the merged tree found real problems. Most are older than the merge (they are in `main` 619b110 and in `bugfix4` alone). Each fix has a program that runs, in `tests/test_integrate11_repair.py` (compared with the host compiler). The bench rows are the same as before the repair: 0 rows differ in a column other than `version` and `command`, so `bench/results/results.csv` and `docs/benchmarks_speed.md` are not regenerated.
@@ -19,11 +30,11 @@ A check of the merged tree found real problems. Most are older than the merge (t
 
 Not changed, with the reason:
 
-- **uc_core, enumerator in its own initializer.** `enum { A = 5 }; { enum { A = A * 2 }; }` gives `A__c490c_3 undeclared`. In `uc_core/frontend.py`, `_rename_block_scope_tags` sets `cur["#" + t.text] = new` when it sees the enumerator name. The name must apply only after the initializer. Keep the new name in a pending list, and move the pending names to the scope at the next `COMMA` or at the `RBRACE` of the enumeration body. The test `test_block_enumerator_in_its_own_initializer` is an expected failure.
-- **uc_core, `sizeof (T)` of a block typedef in an enumerator.** `typedef int T; { typedef char T; enum { T3 = sizeof (T) }; }` gives the size of the outer `T`. In `_rename_block_scope_typedefs`, the branch `elif top == "tag" and nxt not in (K.IDENT, K.STAR): pass` skips the name `T` before `)` inside the enumeration body. Push `"enum"` (not `"tag"`) for `enum`, skip only a name that follows `{` or `,`, and rename the other names. The test `test_block_typedef_in_an_enumerator_initializer` is an expected failure.
-- **`sizeof` of an incomplete structure in an enumerator** gives 0 and no error. The file-scope pre-pass registers enumerators before the program defines all structures, so an error there could reject a correct program. The case is in `docs/ANSI_C_COMPLIANCE.md`.
+- **uc_core, enumerator in its own initializer.** Fixed in bug round 5 (see above).
+- **uc_core, `sizeof (T)` of a block typedef in an enumerator.** Fixed in bug round 5 (see above).
+- **`sizeof` of an incomplete structure in an enumerator.** Fixed in bug round 5: this is an error now (see above).
 - **`static char c = "xyz"[1];`** stays an error, as in ISO C (not a constant expression). GCC and Clang accept it as an extension.
-- **`memset` with a constant base and a variable offset** is not a device fill. `docs/blockops.md` says so now.
+- **`memset` with a constant base and a variable offset.** Fixed in bug round 5: this is a device fill now (see above).
 - **Float printer cost.** The 51 bytes and 42 T-states of the precision fix stay. A counter loop of one byte would save the sector crossing of `empire-trefonas` and `v7-wump`. A later change can do this.
 - **The default ISR save in a CP/M program** also saves `lc_printf_s` when `main` uses `printf`. The calls through `__vm_run` pull in each function that has its address taken. The save is safe. It costs RAM and T-states only.
 - **Test hazard.** `tests/conftest.py` rebuilds `libc.lib` and `runtime.lib` in place at the start of a pytest session. Do not run a fuzzer in the same worktree at the same time.

@@ -332,9 +332,11 @@ code for them. Do not depend on the code.
 - A `goto` to a label that does not exist.
 - A member name that the structure does not have (`s.nosuch`).
 - `return;` in a function that returns `int`.
-- `sizeof` of an incomplete structure.
-  Example: `enum { A = sizeof (struct Undefined) };` gives the value 0.
 - Two declarations of one name in one block.
+
+`sizeof` of an incomplete type is an error with file and line:
+`enum { A = sizeof (struct Undefined) };`, `sizeof (int[])`, `sizeof (void)`
+and `sizeof (*p)` with a pointer to a structure that has no definition.
 
 A typedef name that a block declares again with a different type in an
 inner block (`typedef short W;` and, in an inner block, `typedef long W;`)
