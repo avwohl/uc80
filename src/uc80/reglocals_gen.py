@@ -249,6 +249,7 @@ class RegLocalsMixin:
         env = dataclasses.replace(self._rl_env(),
                                   exit_live=self._rl_exit_live(),
                                   peep_pairs=self.enable_peep_pairs,
+                                  pair_cmp=self.enable_pair_cmp,
                                   slot_fold=self.enable_slot_fold)
         res = reglocals.allocate(region, self._rl_vars, env,
                                  frame_mode, self._rl_wrap_id)

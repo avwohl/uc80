@@ -146,6 +146,7 @@ class Env:
     # family I step 1 (docs/peephole_pairs.md, docs/register_locals.md)
     peep_pairs: bool = True     # the rules of pair_rules, R3 for k > 1
     slot_fold: bool = True      # fold ld HL,slot + (HL) operand; noreturn
+    pair_cmp: bool = True       # docs/pair_compare.md
     noreturn: Callable[[str], bool] = lambda name: False
 
 
@@ -1547,6 +1548,146 @@ def _flags_dead(nodes, j: int) -> bool:
 _FLAGS = frozenset(("fc", "fz", "fs", "fp", "fh", "fn"))
 
 
+def _try_pair_add(nodes, i, env):
+    """Rule (e) of _try_pair_rules: ``push R / ld R,K / add HL,R / pop R``
+    where HL holds a copy of R from an earlier ``ld H,Rh / ld L,Rl`` with
+    nothing that writes HL or R in between.  K has no register."""
+    R = nodes[i].ops[0].upper()
+    if R not in PAIR_MASK or i + 3 >= len(nodes):
+        return None
+    n0, n1, n2, n3 = nodes[i:i + 4]
+    if not all(_plain(x) and not x.pro for x in (n0, n1, n2, n3)):
+        return None
+    if not (n1.op == "ld" and len(n1.ops) == 2 and n1.ops[0].upper() == R
+            and n2.op == "add" and [o.upper() for o in n2.ops] == ["HL", R]
+            and n3.op == "pop" and [o.upper() for o in n3.ops] == [R]):
+        return None
+    k = n1.ops[1]
+    if not _no_reg_token(k, ("H", "L", "HL", "BC", "DE", "SP", "IX", "IY",
+                             "A", "B", "C", "D", "E", "AF")) or k.startswith("("):
+        return None
+    pm = PAIR_MASK[R] | H | L
+    j = i - 1
+    steps = 0
+    while j >= 1 and steps < 14:
+        nj = nodes[j]
+        if nj.kind == "marker":
+            j -= 1
+            continue
+        if nj.kind != "ins" or nj.pro or nj.fold:
+            return None
+        steps += 1
+        if _pair_copy(nodes, j - 1) == ("HL", R) and not (
+                nodes[j - 1].kind != "ins" or nodes[j].kind != "ins"):
+            break
+        if nj.flow not in ("next", "branch") or nj.wr & pm:
+            return None
+        if _is_swap(nj) or nj.op in ("push", "pop") or _is_sp_use(nj):
+            return None
+        j -= 1
+    else:
+        return None
+    return 4, [make_ins("ld", "HL", k, env=env),
+               make_ins("add", "HL", R, vr=n2.vr | PAIR_MASK[R], env=env)]
+
+
+_ALU1 = ("sub", "cp", "and", "or", "xor")
+_ALU2 = ("add", "adc", "sbc")
+
+
+def _sub_hl_byte(nd, hi, lo, vmask, env):
+    """``nd`` with its 8-bit reads of H and L replaced by ``hi`` and
+    ``lo``.  None when it reads H or L in any other way; ``nd`` itself
+    when it does not read them."""
+    if not nd.rd & (H | L):
+        return nd
+    ops = [o.upper() for o in nd.ops]
+
+    def sub(o):
+        return hi if o == "H" else lo if o == "L" else None
+
+    new = None
+    if nd.op == "ld" and len(ops) == 2 and ops[0] == "A" and ops[1] in ("H", "L"):
+        new = ["A", sub(ops[1])]
+    elif nd.op in _ALU1 and len(ops) == 1 and ops[0] in ("H", "L"):
+        new = [sub(ops[0])]
+    elif nd.op in _ALU2 and len(ops) == 2 and ops[0] == "A" and ops[1] in ("H", "L"):
+        new = ["A", sub(ops[1])]
+    if new is None:
+        return None
+    src = new[-1]
+    return make_ins(nd.op, *new, vr=vmask & BYTE_BIT[src.lower()], env=env)
+
+
+def _try_pair_direct(nodes, succ, live, i, R, env):
+    """Rule (f) of _try_pair_rules."""
+    hi, lo = _PAIRS3[R]
+    vmask = nodes[i].vr | nodes[i + 1].vr
+    out: list = []
+    j = i + 2
+    while j < len(nodes) and j < i + 12:
+        nj = nodes[j]
+        if not _plain(nj) or nj.pro:
+            return None
+        if nj.wr & (H | L | PAIR_MASK[R]):
+            return None
+        sj = _sub_hl_byte(nj, hi, lo, vmask, env)
+        if sj is None:
+            return None
+        out.append(sj)
+        if not (live_out_of(succ, live, j) & (H | L)):
+            return j - i + 1, out
+        j += 1
+    return None
+
+
+def _hl_equals(nodes, i, R):
+    """HL holds a copy of the pair R at node i: an ``ld H,Rh / ld L,Rl``
+    before it with no write of HL or R between and no label."""
+    pm = PAIR_MASK[R] | H | L
+    j = i - 1
+    steps = 0
+    while j >= 1 and steps < 14:
+        nj = nodes[j]
+        if nj.kind == "marker":
+            j -= 1
+            continue
+        if nj.kind != "ins" or nj.pro or nj.fold:
+            return False
+        steps += 1
+        if (_pair_copy(nodes, j - 1) == ("HL", R)
+                and nodes[j - 1].kind == "ins"):
+            return True
+        if nj.flow not in ("next", "branch") or nj.wr & pm:
+            return False
+        if _is_swap(nj) or nj.op in ("push", "pop") or _is_sp_use(nj):
+            return False
+        j -= 1
+    return False
+
+
+def _try_pair_add2(nodes, succ, live, i, env):
+    """Rule (e2) of _try_pair_rules: ``ld rr,K / add HL,rr`` where HL holds
+    a copy of the other pair R and rr is dead afterwards: ``ld HL,K / add
+    HL,R``.  K has no register."""
+    n0, n1 = nodes[i], nodes[i + 1]
+    rr = n0.ops[0].upper()
+    if not (_plain(n0) and _plain(n1) and not n0.pro and not n1.pro
+            and n1.op == "add" and [o.upper() for o in n1.ops] == ["HL", rr]):
+        return None
+    k = n0.ops[1]
+    if not _no_reg_token(k, ("H", "L", "HL", "BC", "DE", "SP", "IX", "IY",
+                             "A", "B", "C", "D", "E", "AF")) or k.startswith("("):
+        return None
+    R = "DE" if rr == "BC" else "BC"
+    if live_out_of(succ, live, i + 1) & PAIR_MASK[rr]:
+        return None
+    if not _hl_equals(nodes, i, R):
+        return None
+    return 2, [make_ins("ld", "HL", k, env=env),
+               make_ins("add", "HL", R, vr=PAIR_MASK[R], env=env)]
+
+
 def _try_pair_rules(nodes, succ, live, env, i):
     """Rules that need no register local (docs/peephole_pairs.md)."""
     nd0 = nodes[i]
@@ -1567,6 +1708,24 @@ def _try_pair_rules(nodes, succ, live, env, i):
             if d == "(HL)" and s_ == "A":
                 mk = nodes[i].vr | nodes[i + 1].vr
                 return 3, [make_ins("ld", f"({src})", "A", vr=mk, env=env)]
+    # ---- (e) ld H,R / ld L,R / ... / push R / ld R,K / add HL,R / pop R
+    #          ->  ld HL,K / add HL,R      (HL = R still; docs/pair_compare.md)
+    if env.pair_cmp and nd0.op == "push" and len(nd0.ops) == 1:
+        r_ = _try_pair_add(nodes, i, env)
+        if r_ is not None:
+            return r_
+    # ---- (e2) ld rr,K / add HL,rr  ->  ld HL,K / add HL,R   (rr dead, HL = R)
+    if (env.pair_cmp and nd0.op == "ld" and len(nd0.ops) == 2
+            and nd0.ops[0].upper() in ("BC", "DE") and i + 1 < len(nodes)):
+        r_ = _try_pair_add2(nodes, succ, live, i, env)
+        if r_ is not None:
+            return r_
+    # ---- (f) ld H,R / ld L,R / <ops that read H and L as bytes> with HL
+    #          dead afterwards: read R directly (docs/pair_compare.md)
+    if env.pair_cmp and pc and pc[0] == "HL" and pc[1] in ("BC", "DE"):
+        r_ = _try_pair_direct(nodes, succ, live, i, pc[1], env)
+        if r_ is not None:
+            return r_
     # ---- (c) ld A,r / g.. / ld (HL),A -> g.. / ld (HL),r   (A dead)
     r = _ld_rr(nd0)
     if r and r[0] == "A" and r[1] != "A" and _plain(nd0):
@@ -2365,6 +2524,131 @@ _TAG_ANY = re.compile(r"\s*;\s*RL(\d+)\s*$")
 
 def strip_tags(code: str) -> str:
     return re.sub(r"[ \t]*; RL\d+[ \t]*(?=\n|$)", "", code)
+
+
+_FN_MARK = re.compile(r"^; Function (\S+)")
+
+
+def drop_dead_copies(code: str) -> str:
+    """Delete ``ld B,r`` and ``ld C,r`` of a compiled function when nothing
+    reads the byte before it is written again or the function returns.
+    A function of this compiler returns no value in B or C, and a call of
+    one of its functions or a library function reads no register in B or
+    C (the stack convention, or A, HL, E and DE for the register
+    convention).  The rt helpers are looked up in their table.  The text
+    is the final program (uc80 --no-param-reg keeps these copies)."""
+    if _effect is None or "; Function " not in code:
+        return code
+    lines = code.split("\n")
+    # line ranges of the compiled functions: from the marker to the first
+    # RET after the @name_ret label
+    ranges: list[tuple[int, int]] = []
+    names: set[str] = set()
+    i = 0
+    while i < len(lines):
+        m = _FN_MARK.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        nm = m.group(1)
+        j = i + 1
+        end = None
+        seen_ret_label = False
+        while j < len(lines) and not lines[j].startswith("; Function "):
+            if lines[j].startswith(f"@{nm}_ret:"):
+                seen_ret_label = True
+            if seen_ret_label and lines[j].strip().lower() in (
+                    "ret", "reti", "retn"):
+                end = j
+                break
+            j += 1
+        if end is not None:
+            ranges.append((i, end))
+            names.add("_" + nm)
+        i = (end if end is not None else j) + 1
+    if not ranges:
+        return code
+    helpers = _helper_table()
+
+    def reads_of(t: Optional[str]) -> int:
+        if not t:
+            return ALL7
+        if t in names:
+            return D | E | H | L | A
+        if t == "__callhl":
+            return H | L
+        if t.startswith("__"):
+            h = helpers.get(t.lower())
+            return h[0] if h else ALL7
+        return ALL7
+
+    env = Env(reads_of, lambda t: ALL7)
+    nodes = parse_lenient(lines, env)
+    labels = {nd.label: k for k, nd in enumerate(nodes) if nd.kind == "label"}
+    entries: set = set()
+
+    def live_after(k: int, bit: int, lo: int, hi: int) -> bool:
+        """The byte ``bit`` written by node k may still be read."""
+        seen: set = set()
+        stack = [k + 1]
+        steps = 0
+        while stack:
+            j = stack.pop()
+            if j in seen:
+                continue
+            seen.add(j)
+            steps += 1
+            if steps > 300 or j > hi or j < lo:
+                return True
+            nd = nodes[j]
+            if nd.kind in ("label", "other", "marker"):
+                stack.append(j + 1)
+                continue
+            if nd.kind != "ins":
+                return True
+            succ, ext = _lenient_succ(nodes, j, labels, entries)
+            if succ is None:
+                return True
+            if nd.flow == "call":
+                if not nd.target:
+                    return True
+                if nd.rd & bit:
+                    return True
+                continue            # the callee destroys the byte
+            if nd.flow in ("jump", "branch") and ext is not None:
+                if reads_of(ext) & bit:
+                    return True
+            if nd.rd & bit:
+                return True
+            if nd.flow == "next" and nd.wr & bit:
+                continue            # written again
+            if nd.flow == "return":
+                if nd.cond:
+                    stack.extend(succ)
+                continue
+            if nd.flow == "stop":
+                return True
+            stack.extend(succ)
+        return False
+
+    drop: set = set()
+    for lo, hi in ranges:
+        for k in range(lo, hi):
+            nd = nodes[k]
+            if nd.kind != "ins" or nd.flow != "next" or nd.op != "ld":
+                continue
+            if len(nd.ops) != 2 or nd.ops[0].upper() not in ("B", "C"):
+                continue
+            if nd.ops[1].upper() not in ("A", "B", "C", "D", "E", "H", "L"):
+                continue
+            if ";" in nd.text and "RL" in nd.text:
+                continue
+            bit = B if nd.ops[0].upper() == "B" else C
+            if not live_after(k, bit, lo, hi):
+                drop.add(k)
+    if not drop:
+        return code
+    return "\n".join(ln for k, ln in enumerate(lines) if k not in drop)
 
 
 def prune(code: str) -> str:

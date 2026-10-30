@@ -39,6 +39,7 @@ from .multi_unit import (file_scope_names, uniquify_enumerators, uniquify_static
                          uniquify_types)
 
 from . import peep_local
+from . import looprot
 from . import iyptr, reglocals
 
 # Import peephole optimizer from upeepz80 library
@@ -855,6 +856,54 @@ def main() -> int:
              "is not used (docs/void_putchar.md)"
     )
     parser.add_argument(
+        "--no-char-ret-mask",
+        action="store_true",
+        help="Do not count f(x) & 255-or-less as a byte use of a char "
+             "function (docs/char_return_mask.md)"
+    )
+    parser.add_argument(
+        "--no-param-reg",
+        action="store_true",
+        help="Keep a byte parameter that a function uses after a label in "
+             "a memory slot (docs/param_reg.md)"
+    )
+    parser.add_argument(
+        "--no-loop-rotate",
+        action="store_true",
+        help="Keep the test of a for or while loop at the top only "
+             "(docs/loop_rotation.md)"
+    )
+    parser.add_argument(
+        "--no-frame-drop",
+        action="store_true",
+        help="Keep the stack frame of a function whose slots the register "
+             "locals emptied (docs/frame_drop.md)"
+    )
+    parser.add_argument(
+        "--no-dead-test",
+        action="store_true",
+        help="Keep an if with an empty body and a condition without side "
+             "effects (docs/dead_test.md)"
+    )
+    parser.add_argument(
+        "--no-pair-cmp",
+        action="store_true",
+        help="Copy a register pair to HL for a compare or an index "
+             "(docs/pair_compare.md)"
+    )
+    parser.add_argument(
+        "--no-fill-idiom",
+        action="store_true",
+        help="Keep a loop that stores a constant in a byte array as a loop "
+             "(docs/fill_idiom.md)"
+    )
+    parser.add_argument(
+        "--no-shl-inline",
+        action="store_true",
+        help="Call the runtime routine for 1 << n with a variable n "
+             "(docs/shl_inline.md)"
+    )
+    parser.add_argument(
         "--no-rt-shortcuts",
         action="store_true",
         help="Embed the runtime routines without their early exits "
@@ -1268,6 +1317,7 @@ def main() -> int:
         if not args.no_ast_optimize:
             opt_level = 3
             ast_opt = Uc80ASTOptimizer(opt_level, type_config=type_config)
+            ast_opt.dead_test = not args.no_dead_test
             merged_ast = ast_opt.optimize(merged_ast)
             if args.verbose and ast_opt.stats:
                 print(f"  AST optimizations:")
@@ -1355,6 +1405,12 @@ def main() -> int:
         gen.enable_range_cmp = not args.no_range_cmp
         gen.enable_narrow_index = not args.no_narrow_index
         gen.enable_void_putchar = not args.no_void_putchar
+        gen.enable_char_ret_mask = not args.no_char_ret_mask
+        gen.enable_param_reg = not args.no_param_reg
+        gen.enable_frame_drop = not args.no_frame_drop
+        gen.enable_pair_cmp = not args.no_pair_cmp
+        gen.enable_fill_idiom = not args.no_fill_idiom
+        gen.enable_shl_inline = not args.no_shl_inline
         gen.sdas_output = args.asm_syntax == "sdas"
         gen.noreturn_extra = set(sdcc_found.noreturn_labels)
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
@@ -2092,6 +2148,7 @@ def main() -> int:
             if args.verbose:
                 print(f"  Peephole optimization...")
 
+            peep_local.RET_CC = not args.no_param_reg
             peephole = _Peephole(PeepholeOptimizer())
             # Not peephole.optimize(code): inline asm is an optimization
             # barrier and its bytes are never rewritten.
@@ -2109,6 +2166,8 @@ def main() -> int:
         # The register-locals wraps that protect nothing (the peephole
         # pass has run: the callees are final).
         code = reglocals.prune(code)
+        if not args.no_param_reg:
+            code = reglocals.drop_dead_copies(code)
         code = iyptr.prune_iy(code)
 
         # The volatile markers and fence labels are for the passes above only.
@@ -2116,6 +2175,8 @@ def main() -> int:
         if BARRIER_BEGIN in code:
             code = "\n".join(ln for ln in code.split("\n")
                              if ln.strip() not in (BARRIER_BEGIN, BARRIER_END))
+        if not args.no_loop_rotate and not args.no_optimize:
+            code = looprot.rotate(code)
 
         # Drop EXTRNs nothing uses: ul80 links the library module for each
         # one.  Done last, so appended .mac files count as uses and names

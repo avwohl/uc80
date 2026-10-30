@@ -35,6 +35,7 @@ from .ranges import RangeMixin
 from .narrow import NarrowMixin
 from .deadstore import DeadStoreMixin
 from .blockops import BlockOpsMixin
+from .fillidiom import FillIdiomMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE,
@@ -3870,7 +3871,7 @@ _MEMO_MISS = object()
 
 
 class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin, RangeMixin, NarrowMixin,
-                    DeadStoreMixin, BlockOpsMixin):
+                    DeadStoreMixin, BlockOpsMixin, FillIdiomMixin):
     """Z80 code generator."""
 
     _expr_memo = None   # see _scoped_memo
@@ -3916,6 +3917,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_narrow_index = True
         # Family J switches (docs/void_putchar.md).
         self.enable_void_putchar = True
+        self.enable_char_ret_mask = True
+        self.enable_param_reg = True
+        self.enable_frame_drop = True
+        self.enable_pair_cmp = True
+        self.enable_fill_idiom = True
+        self.enable_shl_inline = True
         self.sdas_output = False
         # names that [[noreturn]] or __attribute__((noreturn)) mark (found
         # by the text scan of sdcc_compat)
@@ -6739,6 +6746,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 collect(item, gchars, set())
         cmp_ops = {"==", "!=", "<", ">", "<=", ">="}
 
+        def byte_lit(e) -> bool:
+            """An integer literal from 0 to 255."""
+            return (isinstance(e, ast.IntLiteral)
+                    and 0 <= int_value(e) <= 255)
+
         def visit(node, a_ctx, locs, fchar):
             if node is None or isinstance(node, (str, int, float, bytes)):
                 return
@@ -6799,6 +6811,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 elif op == "=":
                     visit(node.left, False, locs, fchar)
                     visit(node.right, lval_char(node.left), locs, fchar)
+                elif (self.enable_char_ret_mask and op in ("&", "|", "^")
+                      and (byte_lit(node.left) or byte_lit(node.right))):
+                    # f(x) & 0x80: only the low byte of f(x) reaches the
+                    # result.  For | and ^ the high byte of the result is
+                    # the high byte of f(x), so the context decides.
+                    ctx = True if op == "&" else a_ctx
+                    visit(node.left, ctx, locs, fchar)
+                    visit(node.right, ctx, locs, fchar)
                 else:
                     visit(node.left, False, locs, fchar)
                     visit(node.right, False, locs, fchar)
@@ -7215,6 +7235,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 regcc.push_pop_slots(
                     self.ctx.lines, fwd_start,
                     [k[1] for k in fwd_slots if k[0] == "a"])
+                if self.enable_param_reg:
+                    inc = set()
+                    for loc in plan.loc:
+                        inc |= {"A": {"a"}, "E": {"e"}, "HL": {"h", "l"},
+                                "DE": {"d", "e"}}.get(loc, set())
+                    kept = regcc.keep_params_in_regs(
+                        self.ctx.lines, fwd_start, fwd_slots, fwd_init, inc)
+                    if kept:
+                        self._rl_vars = [v for v in self._rl_vars
+                                         if v.name not in kept]
         self._rl_finish(name, fwd_start, rl_entry_idx, not use_shared_storage)
 
         # The prologue reserved locals_size before a line of the body was
@@ -7231,6 +7261,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             raise CodegenError(
                 f"internal error: {name} reserved {locals_size} bytes of "
                 f"automatic storage but its body used {handed_out}")
+
+        # A frame whose slots the register locals emptied: no instruction
+        # names IX any more, so the pushes and the reservation of the slots
+        # and the frame pointer itself can go (docs/frame_drop.md).
+        if (self.enable_frame_drop and frame_size > 0
+                and not use_shared_storage and not self._stmt_expr_seen
+                and self._drop_dead_frame(frame_start, frame_size, pushed)):
+            frame_size = 0
 
         if (isr_kind is None and name != "main" and self.register_cc
                 and frame_size == 0 and not self._stmt_expr_seen):
@@ -7380,6 +7418,43 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
     _IX_USE = re.compile(r"(?<![A-Za-z0-9_@$.?])ix(?![A-Za-z0-9_@$.?])",
                          re.IGNORECASE)
+
+    _PUSH_SLOT = re.compile(r"^\tpush\t(AF|HL|DE)\s*(?:;.*)?$", re.I)
+
+    def _drop_dead_frame(self, frame_start: int, frame_size: int,
+                         pushed: int) -> bool:
+        """The frame has slots, but no line of the body names IX: remove
+        the pushes of the register parameters and the reservation of the
+        other slots.  The frame pointer lines stay for _frame_is_unused,
+        which then removes them and the epilogue.  Returns True when the
+        slots are gone."""
+        lines = self.ctx.lines
+        base = frame_start + 3
+        for ln in lines[base:]:
+            if self._IX_USE.search(ln) or "setjmp" in ln.lower():
+                return False
+        n_push = pushed // 2
+        if len(lines) < base + n_push:
+            return False
+        for k in range(n_push):
+            if not self._PUSH_SLOT.match(lines[base + k]):
+                return False
+        rest = frame_size - pushed
+        res_at = None
+        if rest > 0:
+            want = f"\tld\tHL,-{rest}"
+            for k in range(base + n_push, min(len(lines) - 2, base + n_push + 40)):
+                if (lines[k].split(";", 1)[0].rstrip() == want
+                        and lines[k + 1].split(";", 1)[0].strip() == "add\tHL,SP"
+                        and lines[k + 2].split(";", 1)[0].strip() == "ld\tSP,HL"):
+                    res_at = k
+                    break
+            if res_at is None:
+                return False
+        if res_at is not None:
+            del lines[res_at:res_at + 3]
+        del lines[base:base + n_push]
+        return True
 
     def _frame_is_unused(self, frame_start: int, frame_size: int) -> bool:
         """True when the function just generated never reads IX.
@@ -9914,6 +9989,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
     def gen_for(self, stmt: ast.ForStmt) -> None:
         """Generate code for for loop."""
+        if self._fill_try(stmt):
+            return
         start_label = self.ctx.new_label("FOR")
         update_label = self.ctx.new_label("FORUPD")
         end_label = self.ctx.new_label("ENDFOR")
@@ -10952,6 +11029,32 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         scaled = ptr_elem_size > 1 and not ptr_sub
         right_is_ptr = isinstance(self._get_expr_type(expr.right),
                                   (lt.PointerType, lt.ArrayType))
+        if (op == "<<" and self.enable_shl_inline and not scaled
+                and isinstance(expr.left, ast.IntLiteral)
+                and int_value(expr.left) == 1
+                and not any(int_flags(expr.left)[:2])
+                and self.type_config.int_size == 2
+                and not self._is_long_expr(expr.right)):
+            # 1 << n with a variable n: HL = 1, shifted n times in place
+            # (docs/shl_inline.md).  __shl16 gives 0 for n >= 16.
+            self.gen_expr(expr.right)
+            done = self.ctx.new_label("SHL")
+            loop = self.ctx.new_label("SHL")
+            e = self.ctx.emit_instr
+            e("ld", "A,L")
+            e("ld", "HL,1")
+            e("or", "A")
+            e("jr", f"Z,{done}")
+            e("cp", "16")
+            e("jr", f"C,{loop}")
+            e("ld", "L,H")
+            e("jr", done)
+            self.ctx.emit_label(loop)
+            e("add", "HL,HL")
+            e("dec", "A")
+            e("jr", f"NZ,{loop}")
+            self.ctx.emit_label(done)
+            return
         if not scaled and self._is_simple_operand(expr.right):
             # The right operand needs no DE and no stack: left in HL,
             # then either right straight into DE, or left moved to DE

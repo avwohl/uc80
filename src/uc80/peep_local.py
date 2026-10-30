@@ -16,11 +16,17 @@ except rule 3, which keeps the labels where they are.
    ``jp X``: the callee returns to the caller's caller.  Nothing is left
    to clean up, because a cleanup would stand between the two.  setjmp is
    excluded: it saves the return address.
+4. ``jr cc,L`` or ``jp cc,L`` where the label L stands directly before a
+   ``ret`` becomes ``ret cc``: the jump would only run the return.  A
+   one-byte instruction, and 1 T-state less when the jump is taken and
+   2 less when it is not (uc80 --no-param-reg turns the rule off).
 """
 
 from __future__ import annotations
 
 import re
+
+RET_CC = True
 
 _REG8 = ("a", "b", "c", "d", "e", "h", "l")
 _PAIR = {"bc": ("b", "c"), "de": ("d", "e"), "hl": ("h", "l"),
@@ -120,11 +126,33 @@ def _next_ins(lines: list[str], i: int):
     return j if j < len(lines) else None
 
 
+def _label_before_ret(lines: list[str]) -> set[str]:
+    """The labels that stand directly before a ``ret`` (other labels and
+    comments may lie between)."""
+    found: set[str] = set()
+    pending: list[str] = []
+    for ln in lines:
+        if _is_comment(ln):
+            continue
+        if ln[0] not in " \t":
+            text = ln.split(";", 1)[0].strip()
+            if text.endswith(":") and " " not in text and "\t" not in text:
+                pending.append(text[:-1])
+                continue
+            pending = []
+            continue
+        if _split(ln) == ("ret", []):
+            found.update(pending)
+        pending = []
+    return found
+
+
 def _pass(lines: list[str]) -> tuple[list[str], bool]:
     out = list(lines)
     changed = False
     drop: set[int] = set()
     n = len(out)
+    ret_labels = _label_before_ret(out) if RET_CC else set()
     for i in range(n):
         if i in drop:
             continue
@@ -160,6 +188,16 @@ def _pass(lines: list[str]) -> tuple[list[str], bool]:
                 drop.add(j)
                 changed = True
                 continue
+        # Rule 4.
+        if (ret_labels and ins[0] in ("jr", "jp") and len(ins[1]) == 2
+                and ins[1][1] in ret_labels
+                and ins[1][0].lower() in (("z", "nz", "c", "nc")
+                                          if ins[0] == "jr" else
+                                          ("z", "nz", "c", "nc", "po", "pe",
+                                           "p", "m"))):
+            out[i] = f"\tret\t{ins[1][0]}"
+            changed = True
+            continue
         # Rule 3.
         if ins[0] == "call" and len(ins[1]) == 1:
             target = ins[1][0]

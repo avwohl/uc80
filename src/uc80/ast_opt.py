@@ -37,6 +37,48 @@ _FOLD_OPS = frozenset(("+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
 class Uc80ASTOptimizer(ASTOptimizer):
     """See the module docstring."""
 
+    # uc80 --no-dead-test turns the removal of an empty ``if`` off
+    dead_test = True
+
+    # ---- an if with nothing to do (docs/dead_test.md)
+
+    def _is_empty_stmt(self, stmt) -> bool:
+        """No code: ``;``, or a block of such statements."""
+        if isinstance(stmt, ast.EmptyStmt):
+            return True
+        return (isinstance(stmt, ast.CompoundStmt)
+                and all(self._is_empty_stmt(i) for i in stmt.items or []))
+
+    def _dead_if(self, stmt) -> bool:
+        """``if (c) ;`` where c has no side effect and reads no volatile
+        object.  A call, an assignment, ``++`` and a volatile access make
+        the test a statement of its own."""
+        if isinstance(stmt, ast.IfStmt):
+            pass
+        elif isinstance(stmt, ast.IfStmtElse):
+            if not self._is_empty_stmt(stmt.else_branch):
+                return False
+        else:
+            return False
+        return (self._is_empty_stmt(stmt.then_branch)
+                and not self._expr_is_impure(stmt.condition))
+
+    def _optimize_stmt(self, stmt) -> None:
+        super()._optimize_stmt(stmt)
+        if not self.dead_test:
+            return
+        if isinstance(stmt, ast.CompoundStmt):
+            keep = [i for i in stmt.items or [] if not self._dead_if(i)]
+            if len(keep) != len(stmt.items or []):
+                stmt.items = keep
+                self._stat("dead_test")
+                self._changed = True
+        elif (isinstance(stmt, (ast.ForStmt, ast.WhileStmt, ast.DoWhileStmt))
+              and self._dead_if(stmt.body)):
+            stmt.body = ast.EmptyStmt(pos=stmt.pos)
+            self._stat("dead_test")
+            self._changed = True
+
     # ---- identities that would lose the type of an operand
 
     def _simplify_identity(self, expr):
