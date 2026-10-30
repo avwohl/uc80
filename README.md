@@ -55,7 +55,7 @@ and `crt0.rel`; see [docs/compiler_options.md](https://github.com/avwohl/uc80/bl
 
 uc80 produces the smallest known binaries for Z80/CP/M among current compilers.
 On the Fujitsu compiler-test-suite, uc80 output is less than half the size of
-z88dk output. uc80 passes all 220 c-testsuite tests. Numbers are in
+z88dk output. uc80 passes 219 of the 220 c-testsuite tests. Numbers are in
 [docs/benchmarks.md](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md).
 
 ## Documentation

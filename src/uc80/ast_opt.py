@@ -47,6 +47,12 @@ class Uc80ASTOptimizer(ASTOptimizer):
         for e in (expr.left, expr.right):
             if isinstance(e, ast.IntLiteral) and any(int_flags(e)[:3]):
                 return None
+        op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if op == "%" and not isinstance(expr.left, ast.IntLiteral):
+            # ``x % 1`` is a 0 of the type of x promoted, not an int 0:
+            # ``1 ? s : (l % 1)`` is a long and ``u /= (...)`` divides
+            # by a long.  Left to the code generator.
+            return None
         return super()._simplify_identity(expr)
 
     def _simplify_zero(self, expr):

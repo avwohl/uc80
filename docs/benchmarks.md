@@ -12,21 +12,21 @@ The size ratio compares with the size mode of the other compiler. The T-state ra
 
 | Other compiler | Programs (size) | Size ratio | Programs (T-states) | T-state ratio | T-state ratio without sort-* |
 |---|---|---|---|---|---|
-| sdcc 4.6.0 | 96 | 0.94 | 78 | 0.56 | 0.68 |
-| sdcc 4.4.0 | 92 | 0.91 | 75 | 0.55 | 0.67 |
-| z88dk zsdcc | 91 | 0.95 | 74 | 0.69 | 0.81 |
-| z88dk sccz80 | 83 | 0.89 | 57 | 0.48 | 0.57 |
-| hitech 3.09 | 69 | 0.46 | 58 | 0.43 | 0.57 |
-| dcc 3.6.0 | 55 | 0.79 | 43 | 0.45 | 0.54 |
-| llvm-z80 | 98 | 0.92 | 79 | 0.69 | 0.86 |
-| z88dk 80cc (nightly) | 65 | 0.84 | 51 | 0.75 | 1.06 |
+| sdcc 4.6.0 | 96 | 0.92 | 78 | 0.55 | 0.66 |
+| sdcc 4.4.0 | 92 | 0.89 | 75 | 0.53 | 0.66 |
+| z88dk zsdcc | 91 | 0.93 | 74 | 0.67 | 0.79 |
+| z88dk sccz80 | 83 | 0.88 | 57 | 0.47 | 0.55 |
+| hitech 3.09 | 69 | 0.45 | 58 | 0.42 | 0.55 |
+| dcc 3.6.0 | 55 | 0.77 | 43 | 0.43 | 0.52 |
+| llvm-z80 | 98 | 0.90 | 79 | 0.67 | 0.83 |
+| z88dk 80cc (nightly) | 65 | 0.83 | 51 | 0.73 | 1.03 |
 
 The T-state ratio uses only programs where both counts are TIMER-region counts. The games have no TIMER labels, so the games are in the size ratio but not in the T-state ratio. The games have their own numbers below.
 
 What the data supports:
 
 - **Size.** On the mean, uc80 makes programs that are about as big as those of SDCC, zsdcc, sccz80 and llvm-z80 (ratios 0.89 to 0.95). The programs of uc80 are smaller than those of dcc (0.79), z88dk 80cc (0.84) and HI-TECH C (0.46). Against SDCC 4.6.0, uc80 is smaller on 66 of 96 programs and bigger on 30. The mean size ratio against SDCC 4.6.0 was 1.53 before the library work. Three changes made the ratio 0.99 (measured again on the tree before the register calling convention: 0.987): the `printf` to `puts` rewrite, the split of the float printer and the split of libc into one module for each public function. The register calling convention (family F, steps 1 and 2) and the integration with the C library rewrite made the ratio 0.96. Register locals (family G: two locals in BC and DE, one pointer in IY) made the ratio 0.93. See the "Unreleased" part of the [CHANGELOG](../CHANGELOG.md) and [codegen_gap.md](codegen_gap.md). The claim "smallest known binaries for Z80/CP/M" is not true and this page does not make the claim.
-- **Speed.** uc80 is faster than SDCC 4.6.0 (speed mode) on 60 of 78 programs. The mean ratio is 0.56. Much of the gain comes from the library: `qsort()` of SDCC is up to 5000 times slower than the one of uc80 on sorted input. The 32-bit programs `pi`, `pi_ldiv` and `davidly-tpi` are also 4 to 5 times faster on uc80 than on SDCC. Without the eight `sort-*` programs the mean ratio is 0.68. The speed families D and E of [codegen_gap.md](codegen_gap.md) made the `snd-*` kernels and `davidly-ttt` faster, and they moved the mean from 0.629 to 0.623. The register calling convention (family F, steps 1 and 2: parameters in registers, byte results in A, tail calls, push and pop for parameters across a call) moved the mean to 0.585 on the tree that has the library work (0.606 on the same tree without the register calling convention). Register locals (family G, steps 1 and 2) moved the mean to 0.563: step 1 gave 0.565 and the pointer in IY gave the rest (see [register_locals.md](register_locals.md)). uc80 is slower than SDCC on small integer loops and on code with many small functions (for example `sieve`, `queens`, `tak`, `stanford-perm`, `stanford-towers`, `davidly-ttt`).
+- **Speed.** uc80 is faster than SDCC 4.6.0 (speed mode) on 63 of 78 programs. The mean ratio is 0.55. Much of the gain comes from the library: `qsort()` of SDCC is up to 5000 times slower than the one of uc80 on sorted input. The 32-bit programs `pi`, `pi_ldiv` and `davidly-tpi` are also 4 to 5 times faster on uc80 than on SDCC. Without the eight `sort-*` programs the mean ratio is 0.66. The speed families D and E of [codegen_gap.md](codegen_gap.md) made the `snd-*` kernels and `davidly-ttt` faster, and they moved the mean from 0.629 to 0.623. The register calling convention (family F, steps 1 and 2: parameters in registers, byte results in A, tail calls, push and pop for parameters across a call) moved the mean to 0.585 on the tree that has the library work (0.606 on the same tree without the register calling convention). Register locals (family G, steps 1 and 2) moved the mean to 0.563: step 1 gave 0.565 and the pointer in IY gave the rest (see [register_locals.md](register_locals.md)). uc80 is slower than SDCC on small integer loops and on code with many small functions (for example `sieve`, `queens`, `tak`, `stanford-perm`, `stanford-towers`, `davidly-ttt`).
 - **llvm-z80 and z88dk 80cc are the closest rivals on speed.** Without the `sort-*` programs the mean ratio against llvm-z80 is 0.86 (uc80 wins on 45 programs and loses on 26). z88dk 80cc is the only compiler that is faster than uc80 on the mean without `sort-*`: the ratio is 1.06 (uc80 wins on 23 of 43 programs). With the `sort-*` programs the ratio is 0.75.
 - **Games (tier 3).** 25 game programs run with scripted input. uc80 runs 24 of them, sdcc 18, sdcc-4.4 17, zsdcc 17, sccz80 16, llvm-z80 19, 80cc 14, dcc 12 and HI-TECH C 11. The numbers below are the geometric mean of uc80 divided by the other compiler over the games that run on both. The T-state counts are whole-run counts (the games have no TIMER labels), compared with the speed mode of the other compiler. The table is from before the register calling convention (steps 1 and 2) and before the library rewrite in C. It is not recomputed: the games method is not in the repository. The register calling convention made uc80 programs a little smaller and faster, so the ratios are a little too high.
 
@@ -66,8 +66,8 @@ Tested against multiple external test suites:
 
 | Suite | Pass Rate | Notes |
 |-------|-----------|-------|
-| [c-testsuite](https://github.com/c-testsuite/c-testsuite) | 220/220 | full pass |
-| c-testsuite `--int=32` | 219/220 | 00200 (long-long shift) overflows 64K TPA |
+| [c-testsuite](https://github.com/c-testsuite/c-testsuite) | 219/220 | 00129 (typedef name used as a member name) does not compile |
+| c-testsuite `--int=32` | 218/220 | 00129 and 00200 (long-long shift overflows the 64K TPA) |
 | c-testsuite `--int=32 --long=64` | 218/220 | same as above + marginal timeout |
 | [Fujitsu compiler-test-suite](https://github.com/fujitsu/compiler-test-suite) 0003 | 371/374 | |
 | Fujitsu 0010 | 58/75 | 9 int16, 1 float, 2 timeout |

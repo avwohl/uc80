@@ -8,7 +8,7 @@ UC80 targets C24 (ISO/IEC 9899:2024). Core language is complete.
 Standard library is substantially implemented. Main gaps are `_Complex`
 codegen and multibyte/wide character functions.
 
-Test suite results: 218/220 c-testsuite, 488/523 SDCC.
+Test suite results: 219/220 c-testsuite, 488/523 SDCC.
 
 ---
 
@@ -302,6 +302,13 @@ of a file, then stops with exit status 1.
   versions accepted this. Use `constexpr int k = 3;`, an `enum` constant
   or `#define`. A `constexpr` object and `offsetof` are constants and are
   correct as an array size.
+
+- **Initializer that is not constant.** An object with static storage
+  (a file-scope object or a `static` local) needs a constant initializer.
+  `const int e = 3; static int q = e;` is an error: the compiler gave 0
+  or garbage before. The message names the variable. Use an enumerator,
+  a `constexpr` object or a macro. An address (`&x`, an array name, a
+  function name), `sizeof` and `offsetof` are constants and are correct.
 
 ## C99/C11/C24 FEATURES NOT IMPLEMENTED
 

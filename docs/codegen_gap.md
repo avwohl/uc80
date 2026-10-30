@@ -9,6 +9,20 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-29: bug-fix round 3 (branch `integrate9`)
+
+The branch `bugfix3` is in the tree of `integrate8`. It has the semcheck errors, the single evaluation of bit-field updates, block-scope tags and enumerators, enumeration types, the 16-bit printf width, and the `long long` and float conversions. A repair pass fixed the problems that the checks found. The [CHANGELOG](../CHANGELOG.md) lists them.
+
+The passes of family H work with all these changes. The bench programs and the c-testsuite compile and run. The generated code of the bench programs is the same before and after the repair.
+
+Numbers from `bench/run.py -c uc80` on 111 programs:
+
+- Against SDCC 4.6.0: size 0.9151, whole image 0.8826, T-states (speed mode) 0.5456, and 0.6611 without `sort-*`.
+- uc80 is faster than SDCC on 63 of 78 programs.
+- `integrate8` had 0.9162, 0.8837, 0.5456, 0.6611 and 63 of 78 on 109 programs.
+- `battlestar-size`, `rogue36-size` and `empire-trefonas` now end as TOO-BIG.
+- The c-testsuite has 219 of 220 passes (00129 fails), and 218 of 220 with `--int 32`.
+
 ## Status on 2026-10-28: family H is integrated with the ROM work (branch `integrate8`)
 
 The three passes of family H (address CSE and chained constant stores, dead locals and overwritten stores, inline block operations) and the register-locals change for names under `&` are merged with `main` (register locals, naked functions, RST and IM 2 vectors, ROM wave 4). The merge needed no change of a pass. `tests/test_famh_rom_integration.py` runs the interactions in the ROM runner, in the um80 flow and in the sdas flow: the ROM pass for constant-address pointers (`ptrabs.py`) runs first, and the three passes keep every volatile access, every store through a constant-address volatile pointer, the low-byte-first order of 16-bit volatile stores (also for a structure copy to a volatile target), the work areas of an interrupt function (`--isr-save-workareas`), naked functions, and separate compilation with a BSS block for each module.

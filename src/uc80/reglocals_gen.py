@@ -56,7 +56,7 @@ def address_taken_names(body) -> set:
                           and getattr(x.op, "text", x.op) == "*"):
                         pass
                     elif _dcfast.is_dataclass(x) and not isinstance(x, type):
-                       sub.extend(_children(x))
+                        sub.extend(_children(x))
         if _dcfast.is_dataclass(node) and not isinstance(node, type):
             stack.extend(_children(node))
     return out

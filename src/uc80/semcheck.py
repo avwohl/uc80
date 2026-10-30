@@ -212,6 +212,13 @@ class Checker:
             self.declare(name, "var", full, constexpr)
             if init is not None:
                 self.visit(init)
+                if len(self.scopes) < 2 or storage == "static" or constexpr:
+                    bad = self.nonconstant_variable(init)
+                    if bad is not None:
+                        self.error(bad, "initializer element is not "
+                                   "constant: '%s' is a variable (use an "
+                                   "enumerator, a constexpr object or a "
+                                   "macro)" % bad.name.text)
             self.check_vla(full, inner, storage)
 
     def check_vla(self, full, declarator, storage):
@@ -537,6 +544,41 @@ class Checker:
             else:
                 break
         return isinstance(e, ast.Cast) and self.is_constant(e.expr)
+
+    def nonconstant_variable(self, e):
+        """The Identifier of a variable that the initializer ``e`` of a
+        static-storage object reads as a value (6.7.10p5: the initializer
+        has to be a constant expression), or None.  The walk is
+        conservative: it looks only through operators, casts and braces,
+        so an address, a sizeof, a call or a member never counts."""
+        if isinstance(e, list):
+            for x in e:
+                r = self.nonconstant_variable(x)
+                if r is not None:
+                    return r
+            return None
+        if isinstance(e, ast.Identifier):
+            ent = self.lookup(e.name.text)
+            if ent is None or ent[0] != "var" or (len(ent) > 2 and ent[2]):
+                return None
+            t = ent[1]
+            if t is None or t.kind in ("array", "function"):
+                return None
+            return e
+        if isinstance(e, ast.Cast):
+            return self.nonconstant_variable(e.expr)
+        if isinstance(e, ast.TernaryOp):
+            return self.nonconstant_variable(
+                [e.condition, e.true_expr, e.false_expr])
+        if isinstance(e, ast.BinaryOp):
+            return self.nonconstant_variable([e.left, e.right])
+        if isinstance(e, ast.UnaryOp) and e.op.text in ("-", "+", "~", "!"):
+            return self.nonconstant_variable(e.operand)
+        if isinstance(e, ast.InitializerList):
+            return self.nonconstant_variable(list(e.values or []))
+        if isinstance(e, ast.DesignatedInit):
+            return self.nonconstant_variable(e.value)
+        return None
 
     def is_constant(self, e):
         """True for an integer constant expression as far as the walk can
