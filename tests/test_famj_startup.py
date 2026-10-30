@@ -336,3 +336,58 @@ def test_div32_shortcut_text_and_option(tmp_path):
     assert "rt-shortcut" not in off
     for mac in (tmp_path / "t.mac", tmp_path / "o.mac"):
         assert run_raw(tmp_path, mac).decode().strip() == "ok"
+
+
+# ---- locals that live across putchar statements ---------------------------
+
+LIVE_SRC = r"""
+#include <stdio.h>
+
+static int walk(int n, int step)
+{
+    int i, s = 0;
+    unsigned t = 1;
+    for (i = 0; i < n; i += step) {
+        putchar('a' + (i % 26));
+        s += i;
+        putchar('0' + (s % 10));
+        t = (t * 3 + (unsigned)(s & 7)) & 0x7FFF;
+        if ((t & 3) == 0)
+            putchar('\n');
+    }
+    return s + (int)t;
+}
+
+static void digits(unsigned v, int width)
+{
+    char buf[8];
+    int n = 0;
+    do { buf[n++] = (char)('0' + v % 10); v /= 10; } while (v && n < 8);
+    while (width-- > n)
+        putchar(' ');
+    while (n > 0)
+        putchar(buf[--n]);
+}
+
+int main(void)
+{
+    int r = walk(40, 3);
+    putchar('\n');
+    digits((unsigned)r, 8);
+    putchar('\n');
+    digits(12345u, 3);
+    putchar('\n');
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flags", [
+    (), ("--no-void-putchar",), ("-O0",), ("--no-register-locals",),
+    ("--no-loop-rotate", "--no-pair-cmp"),
+], ids=lambda f: " ".join(f) or "default")
+def test_locals_survive_putchar_statements(tmp_path, flags):
+    expect = host_expect(tmp_path, LIVE_SRC)
+    mac = compile_c(tmp_path, LIVE_SRC, *flags)
+    out = run_raw(tmp_path, mac).decode("latin-1").replace("\r", "")
+    assert out == expect
