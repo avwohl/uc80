@@ -33,7 +33,7 @@
 ; branch (stream id < 3) through __conout, so fwrite/fputc to a real
 ; FILE * stay byte-for-byte raw in both "w" and "wb" mode.
 ;
-; Entry:  E = character to write
+; Entry:  E = character to write (__putchar_v: see below)
 ; Exit:   BC, DE, HL preserved; AF destroyed (same as a bare BDOS call,
 ;         which preserves nothing) - so `CALL __conout' is a drop-in
 ;         replacement for `LD C,CONOUT / CALL BDOS'.
@@ -51,17 +51,25 @@ __conout:
 	PUSH	BC
 	PUSH	DE
 	PUSH	HL
+	CALL	__putchar_v
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
+
+; __putchar_v - the same output as __conout, for a caller that keeps no
+; register: E = character, every register is destroyed.  The compiler
+; calls it for a putchar whose value is not used (docs/void_putchar.md).
+; BDOS returns to the caller of this routine.
+	PUBLIC	__putchar_v
+__putchar_v:
 	LD	A,E
 	CP	0AH		; LF?
 	JR	Z,__conout_lf
 	LD	(__conout_last),A	; remember this one (fast path: not LF)
 __conout_put:
 	LD	C,CONOUT
-	CALL	BDOS
-	POP	HL
-	POP	DE
-	POP	BC
-	RET
+	JP	BDOS
 
 __conout_lf:
 	LD	HL,__conout_last

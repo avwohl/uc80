@@ -849,6 +849,24 @@ def main() -> int:
              "negative (docs/range_compare.md)"
     )
     parser.add_argument(
+        "--no-void-putchar",
+        action="store_true",
+        help="Call the stack-convention putchar for a putchar whose value "
+             "is not used (docs/void_putchar.md)"
+    )
+    parser.add_argument(
+        "--no-rt-shortcuts",
+        action="store_true",
+        help="Embed the runtime routines without their early exits "
+             "(docs/runtime_shortcuts.md)"
+    )
+    parser.add_argument(
+        "--no-fast-bss-clear",
+        action="store_true",
+        help="Embed the old start-up code that clears the BSS with one "
+             "LDIR (docs/startup_fast.md)"
+    )
+    parser.add_argument(
         "--no-narrow-index",
         action="store_true",
         help="Compute a 32-bit array index in 32 bits although only the low "
@@ -1336,6 +1354,8 @@ def main() -> int:
         gen.enable_licm = not args.no_licm
         gen.enable_range_cmp = not args.no_range_cmp
         gen.enable_narrow_index = not args.no_narrow_index
+        gen.enable_void_putchar = not args.no_void_putchar
+        gen.sdas_output = args.asm_syntax == "sdas"
         gen.noreturn_extra = set(sdcc_found.noreturn_labels)
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
@@ -1511,7 +1531,8 @@ def main() -> int:
                 startup_path = lib_file("crt0_rom.mac")
             else:
                 # Default: crt0.mac from the package's library directory
-                startup_path = lib_file("crt0.mac")
+                startup_path = lib_file(
+                    "crt0_slow.mac" if args.no_fast_bss_clear else "crt0.mac")
 
             if startup_path.exists():
                 startup_content = startup_path.read_text()
@@ -1626,7 +1647,8 @@ def main() -> int:
                 runtime_lib = RuntimeLibrary()
                 runtime_lib.load_file(Path(args.runtime_lib))
             else:
-                runtime_lib = load_runtime_library()
+                runtime_lib = load_runtime_library(
+                    shortcuts=not args.no_rt_shortcuts)
 
             # Get required functions from codegen AND from EXTRN references
             needed = set(gen.ctx.runtime_used)
@@ -1694,7 +1716,7 @@ def main() -> int:
 
                 if funcs:
                     # Add CP/M BDOS constants if any I/O functions are used
-                    io_funcs = {'_printf', '_putchar', '_getchar', '_puts', '_gets'}
+                    io_funcs = {'_printf', '_putchar', '__putchar_v', '_getchar', '_puts', '_gets'}
                     needs_bdos = any(f.name in io_funcs for f in funcs)
 
                     runtime_code.append("\n\tcseg\n; Embedded runtime library functions")
@@ -1826,7 +1848,7 @@ def main() -> int:
                         lib_code = [f"\n; Embedded from {lib_path}"]
 
                         # Add CP/M BDOS constants if any I/O functions are used
-                        io_funcs = {'_printf', '_putchar', '_getchar', '_puts', '_gets'}
+                        io_funcs = {'_printf', '_putchar', '__putchar_v', '_getchar', '_puts', '_gets'}
                         needs_bdos = any(f.name in io_funcs for f in funcs)
                         # Check if BDOS is already defined in the code
                         bdos_defined = any('BDOS' in line and 'EQU' in line.upper() for line in lines)

@@ -3914,6 +3914,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_licm = True
         self.enable_range_cmp = True
         self.enable_narrow_index = True
+        # Family J switches (docs/void_putchar.md).
+        self.enable_void_putchar = True
+        self.sdas_output = False
         # names that [[noreturn]] or __attribute__((noreturn)) mark (found
         # by the text scan of sdcc_compat)
         self.noreturn_extra: set = set()
@@ -10322,6 +10325,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         The result registers are undefined afterwards.  A char
         assignment or prefix ++/-- then skips re-extending its value.
         """
+        # (void) f(): the cast discards the value too
+        if self.enable_void_putchar:
+            while isinstance(expr, ast.Cast):
+                _t = _to_legacy(expr.target_type)
+                if not (isinstance(_t, lt.BasicType) and _t.name == "void"):
+                    break
+                expr = expr.expr
         saved = self._discard_expr
         self._discard_expr = expr
         try:
@@ -13482,6 +13492,40 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 # Prefix: result is the new value
                 self.ctx.emit_instr("ex", "DE,HL")
 
+    def _putchar_v_try(self, expr) -> bool:
+        """``putchar(c);`` as a statement: ``ld E,c`` and ``call
+        __putchar_v`` (lc_conout.mac) in place of the push, the call of
+        _putchar and the pop.  The library routine clobbers every register
+        and returns nothing.  Only for the libc putchar of a CP/M program:
+        not when the program defines putchar, not for a ROM or an sdas
+        text, which have a console of their own."""
+        if (not self.enable_void_putchar or self.rom_data
+                or self.sdas_output
+                or not isinstance(expr.func, ast.Identifier)
+                or expr.func.name.text != "putchar"
+                or len(expr.args or []) != 1):
+            return False
+        sym = self.ctx.lookup("putchar")
+        if (sym is not None and (not sym.is_global
+                                 or "putchar" in self._defined_function_names)):
+            return False
+        arg = expr.args[0]
+        t = _to_legacy(self._get_expr_type(arg))
+        if (not isinstance(t, (lt.BasicType, lt.EnumType))
+                or self._is_float_type(t) or self._is_long_long_type(t)
+                or self._is_bool_type(t)):
+            return False
+        e = self.ctx.emit_instr
+        k = self._const_int_operand(arg)
+        if k is not None:
+            e("ld", f"E,{k & 255}")
+        else:
+            self._gen_expr_a(arg)
+            e("ld", "E,A")
+        self.ctx.implicit_externs.add("__putchar_v")
+        e("call", "__putchar_v")
+        return True
+
     def _defined_here(self, func) -> bool:
         """``func`` (a call's callee expression) names a function with a
         body in this program, so uc80 compiled it: it reads a char
@@ -14013,6 +14057,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # (docs/blockops.md)
         if (discarded and isinstance(expr.func, ast.Identifier)
                 and self._bo_try(expr.func.name.text, expr.args or [])):
+            return
+
+        # putchar(c) with the result unused: the console entry that takes
+        # the char in E (docs/void_putchar.md)
+        if discarded and self._putchar_v_try(expr):
             return
 
         # Get function parameter types if available

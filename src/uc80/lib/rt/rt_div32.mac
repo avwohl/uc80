@@ -16,6 +16,10 @@
 ; Division by zero: quotient 0FFFFFFFFH, remainder = dividend.
 ; Preserves BC, IX, IY.  __tmp32 is not changed.
 ;
+; A dividend below 65536 with a divisor of 65536 or more returns at once
+; (lines tagged rt-shortcut; uc80 --no-rt-shortcuts drops them from the
+; embedded copy).
+;
 ; Divisor < 65536: long division one dividend byte at a time
 ; (__dv8n for an 8-bit divisor, __dv8w for a 16-bit one), with a
 ; 16-bit running remainder; leading bytes below the divisor cost
@@ -93,6 +97,18 @@ __div32_zero:
 	POP	BC
 	RET
 __div32_big:
+	LD	DE,(__div32_dvd+2)	;@rt-shortcut dividend < 65536 and
+	LD	A,D			;@rt-shortcut divisor >= 65536:
+	OR	E			;@rt-shortcut quotient 0,
+	JR	NZ,__div32_big2		;@rt-shortcut remainder = dividend
+	LD	HL,(__div32_dvd)	;@rt-shortcut
+	LD	(__rem32),HL		;@rt-shortcut
+	LD	(__rem32+2),DE		;@rt-shortcut DE = 0
+	LD	H,D			;@rt-shortcut
+	LD	L,E			;@rt-shortcut
+	POP	BC			;@rt-shortcut
+	RET				;@rt-shortcut
+__div32_big2:				;@rt-shortcut
 	PUSH	IY
 	LD	IY,__tmp32
 	LD	A,H

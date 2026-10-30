@@ -709,6 +709,17 @@ class _Translator:
         return txt if op in _NO_HASH else "#" + txt
 
     def instruction(self, op, operands):
+        # sdas cannot subtract two external symbols.  The CP/M start-up
+        # code (lib/crt0.mac) loads the BSS size minus one that way; here
+        # the same value is computed at run time.
+        if (op.lower() == "ld" and operands and re.fullmatch(
+                r"\s*BC\s*,\s*__bss_end\s*-\s*__bss_start\s*-\s*1\s*",
+                operands, re.I)):
+            for o, a in (("ld", "HL,__bss_end"), ("ld", "DE,__bss_start"),
+                         ("or", "A"), ("sbc", "HL,DE"), ("dec", "HL"),
+                         ("ld", "B,H"), ("ld", "C,L")):
+                self.instruction(o, a)
+            return
         ops = _split_args(operands) if operands else []
         cs = [self.classify(o) for o in ops]
         text = "\t" + op
