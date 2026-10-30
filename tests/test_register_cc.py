@@ -136,7 +136,8 @@ class TestShape:
     def test_stack_frame_stores_parameters_by_push(self, tmp_path):
         mac, _ = compile_mac(tmp_path, """
             int f(int n) { if (n < 2) return 1; return n * f(n - 1); }
-            int main(void) { return f(5); }""", "--no-inlining")
+            int main(void) { return f(5); }""", "--no-inlining",
+            "--no-frame-drop")
         body = ops(mac, "f")
         assert body[:4] == ["push IX", "ld IX,0", "add IX,SP", "push HL"]
 

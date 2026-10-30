@@ -2535,7 +2535,8 @@ def drop_dead_copies(code: str) -> str:
     A function of this compiler returns no value in B or C, and a call of
     one of its functions or a library function reads no register in B or
     C (the stack convention, or A, HL, E and DE for the register
-    convention).  The rt helpers are looked up in their table.  The text
+    convention).  The rt helpers are looked up in their table.  A call
+    does not end the value: the callee may leave the byte alone.  The text
     is the final program (uc80 --no-param-reg keeps these copies)."""
     if _effect is None or "; Function " not in code:
         return code
@@ -2614,7 +2615,10 @@ def drop_dead_copies(code: str) -> str:
                     return True
                 if nd.rd & bit:
                     return True
-                continue            # the callee destroys the byte
+                # a callee may leave the byte alone (prune removed the wrap
+                # because it does): the value flows on
+                stack.extend(succ)
+                continue
             if nd.flow in ("jump", "branch") and ext is not None:
                 if reads_of(ext) & bit:
                     return True
