@@ -85,18 +85,19 @@ def run_math(paths, kind):
 
 @pytest.mark.parametrize("kind", sorted(KINDS))
 @pytest.mark.parametrize("flow", FLOWS)
-def test_the_work_areas_are_corrupted_without_the_option(
+def test_the_work_areas_are_corrupted_with_the_opt_out(
         kind, flow, tmp_path, libs):
-    """The result of the main loop is wrong, and the compiler warned."""
+    """--no-isr-save-workareas: the result of the main loop is wrong, and
+    the compiler warned."""
     paths, err = build_flow(tmp_path, {"t.c": MATH % KINDS[kind][0]}, flow,
-                            libs)
+                            libs, extra=("--no-isr-save-workareas",))
     assert "work area of rt_rem32" in err and "work area of rt_tmp32" in err
     m, got = run_math(paths, kind)
     assert m.peek16("_isr_n") > 20          # many interrupts
     assert got != expected_sum()
 
 
-@pytest.mark.parametrize("how", ["option", "pragma"])
+@pytest.mark.parametrize("how", ["default", "option", "pragma"])
 @pytest.mark.parametrize("kind", sorted(KINDS))
 @pytest.mark.parametrize("flow", FLOWS)
 def test_the_work_areas_survive_with_the_option(
@@ -105,7 +106,7 @@ def test_the_work_areas_survive_with_the_option(
     extra = ()
     if how == "option":
         extra = ("--isr-save-workareas",)
-    else:
+    elif how == "pragma":
         pragma += "\n#pragma uc80 isr_save_workareas isr"
     paths, err = build_flow(tmp_path, {"t.c": MATH % pragma}, flow, libs,
                             extra=extra)
@@ -200,8 +201,8 @@ def test_the_cost_of_the_save(flow, tmp_path, libs):
     """The bytes the compiler reports are the bytes that the image gains."""
     import re
     sizes = []
-    for extra in ((), ("--isr-save-workareas",)):
-        d = tmp_path / ("a" if not extra else "b")
+    for extra in (("--no-isr-save-workareas",), ("--isr-save-workareas",)):
+        d = tmp_path / ("a" if "--no-isr-save-workareas" in extra else "b")
         d.mkdir()
         paths, err = build_flow(d, {"t.c": MATH % KINDS["int"][0]}, flow,
                                 libs, extra=extra)
@@ -251,7 +252,8 @@ def test_a_handler_that_calls_a_pointer_reaches_every_taken_function(
     call, and the work areas of step are reported (and corrupt the main
     loop) although no direct call leads to step."""
     paths, err = build_flow(
-        tmp_path, {"t.c": POINTER % "#pragma uc80 interrupt isr"}, flow, libs)
+        tmp_path, {"t.c": POINTER % "#pragma uc80 interrupt isr"}, flow, libs,
+        extra=("--no-isr-save-workareas",))
     assert "uc80: note: interrupt function 'isr' calls through a function " \
            "pointer" in err
     assert "step" in err                         # the reached function
@@ -451,7 +453,8 @@ def test_wide_math_survives_with_the_option(what, kind, flow, tmp_path, libs):
     assert m.rom_writes == []
     d2 = tmp_path / "plain"
     d2.mkdir()
-    pc, _e = build_flow(d2, {"t.c": src % KINDS[kind][0]}, flow, libs)
+    pc, _e = build_flow(d2, {"t.c": src % KINDS[kind][0]}, flow, libs,
+                        extra=("--no-isr-save-workareas",))
     m, bad = run_wide(pc, kind, size, every)
     assert bad != want
 
@@ -500,9 +503,9 @@ def test_the_libc_work_areas_are_saved(kind, flow, tmp_path, libs):
     bad_dir = tmp_path / "bad"
     bad_dir.mkdir()
     paths, err = build_flow(bad_dir, {"t.c": FLOAT_SIN % KINDS[kind][0]},
-                            flow, libs)
+                            flow, libs, extra=("--no-isr-save-workareas",))
     assert "(work area of lc_vm)" in err
-    assert "--isr-save-workareas" in err
+    assert "--no-isr-save-workareas" in err
     m, bad = run_sin(paths, kind)
     assert m.peek16("_isr_n") >= 3
     assert bad != want
@@ -610,3 +613,54 @@ int main(void) { return 0; }
     note = [l for l in r.stderr.splitlines() if "function pointer" in l][0]
     assert "()" not in note
     assert "tbl" not in note
+
+
+# ---- the default, the opt-out, libm through a pointer, the split build ------
+
+LIBM_ISR = """
+#include <math.h>
+volatile double r;
+volatile double (*volatile fp)(double) = cos;
+#pragma uc80 nmi isr
+void isr(void) { r = %s; }
+int main(void) { return (int) r; }
+"""
+
+
+def test_a_handler_that_reaches_libm_saves_the_work_areas_by_default(tmp_path):
+    r = compile_text(tmp_path, LIBM_ISR % "sin(2.5) + sqrt(7.0)")
+    assert r.returncode == 0, r.stderr
+    assert "saves and restores the work areas of" in r.stderr
+    assert "lc_vm" in r.stderr and "lc_sqrt" in r.stderr
+    assert "reaches" not in r.stderr             # no work-area warning
+
+
+def test_the_opt_out_keeps_the_warning(tmp_path):
+    r = compile_text(tmp_path, LIBM_ISR % "sin(2.5) + sqrt(7.0)",
+                     "--no-isr-save-workareas")
+    assert r.returncode == 0, r.stderr
+    assert "saves and restores" not in r.stderr
+    assert "work area of lc_vm" in r.stderr
+    assert "--no-isr-save-workareas" in r.stderr
+
+
+def test_a_library_function_called_through_a_pointer_is_saved(tmp_path):
+    """The handler calls cos only through the pointer fp, whose value is
+    the address of the library routine."""
+    r = compile_text(tmp_path, LIBM_ISR % "fp(2.5)")
+    assert r.returncode == 0, r.stderr
+    assert "calls through a function pointer" in r.stderr
+    assert "saves and restores the work areas of" in r.stderr
+    assert "lc_vm" in r.stderr
+
+
+def test_a_split_build_warns_and_the_hint_names_the_whole_program(tmp_path):
+    r = compile_text(tmp_path, LIBM_ISR % "sin(2.5)", "--no-whole-program")
+    assert r.returncode == 0, r.stderr
+    assert "work area of lc_vm" in r.stderr
+    assert "needs the whole program" in r.stderr
+    assert "--isr-save-workareas makes the handler" not in r.stderr
+    r = compile_text(tmp_path, LIBM_ISR % "sin(2.5)", "--no-whole-program",
+                     "--isr-save-workareas")
+    assert r.returncode == 1
+    assert "needs the whole program" in r.stderr

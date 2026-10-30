@@ -30,6 +30,8 @@ iy    Pointer locals in IY and registers in BC and DE under a real NMI.
       functions must use (IY+d).
 memisr  memset, memcpy and struct copies in an NMI function while main does
       the same on other buffers.
+libmfp  the libm case where the handler calls sin only through a pointer
+      to the library routine (double (*volatile fp)(double) = sin).
 libm  main computes sin, cos and sqrt in a loop while an NMI function (with
       #pragma uc80 isr_save_workareas) also calls sin and sqrt.  The float
       interpreter lc_vm and lc_sqrt keep their work areas at fixed addresses,
@@ -733,6 +735,15 @@ typedef unsigned short U;
 static volatile B ready;
 static volatile U isr_n;
 static volatile long isr_val;
+#ifdef FP
+/* the handler reaches sin only through a pointer to the library routine */
+double (*volatile fp)(double) = sin;
+#define ISR_EXPR ((long) (fp(2.5) * 100000.0))
+#define REF_EXPR ((long) (sin(2.5) * 100000.0))
+#else
+#define ISR_EXPR ((long) (sin(2.5) * 100000.0 + sqrt(7.0) * 1000.0))
+#define REF_EXPR ISR_EXPR
+#endif
 #ifndef REF
 SAVE_PRAGMA
 #pragma uc80 nmi nmi_isr
@@ -740,7 +751,7 @@ void nmi_isr(void)
 {
     if (!ready || isr_n >= 12)
         return;
-    isr_val = (long) (sin(2.5) * 100000.0 + sqrt(7.0) * 1000.0);
+    isr_val = ISR_EXPR;
     isr_n++;
 }
 #endif
@@ -763,7 +774,7 @@ int main(void)
         y += 1.7;
     }
 #ifdef REF
-    isr_val = (long) (sin(2.5) * 100000.0 + sqrt(7.0) * 1000.0);
+    isr_val = REF_EXPR;
     isr_n = 12;
 #else
     while (isr_n < 12)
@@ -778,10 +789,16 @@ int main(void)
 
 
 def _run_libm(work: Path, tag: str, defs: str, save: bool, nmis: bool):
+    if not save:
+        UC80_FLAGS.append("--no-isr-save-workareas")
     src = defs + LIBM_SRC.replace(
         "SAVE_PRAGMA", "#pragma uc80 isr_save_workareas nmi_isr"
         if save else "")
-    info = build_source(work / tag, tag + ".c", src)
+    try:
+        info = build_source(work / tag, tag + ".c", src)
+    finally:
+        if not save:
+            UC80_FLAGS.remove("--no-isr-save-workareas")
     if not info["ok"]:
         return None, info
     m = Machine(ram=NEOGEO["ram"], banks=None, ram_fill="random", sp="poison",
@@ -798,22 +815,24 @@ def _run_libm(work: Path, tag: str, defs: str, save: bool, nmis: bool):
     return (res, outs, m), info
 
 
-def prove_libm(work: Path):
+def prove_libm(work: Path, fp: bool = False):
     """main computes sin, sqrt and cos in a loop while an NMI function also
     calls sin and sqrt (the float interpreter lc_vm and lc_sqrt keep their
     work areas at fixed addresses).  The handler saves the work areas
     (#pragma uc80 isr_save_workareas).  The output of main must equal the
     output of a run without interrupts.  The same program without the pragma
     must differ: the proof has teeth."""
-    ref, info = _run_libm(work, "libmref", "#define REF 1\n", False, False)
+    d = "#define FP 1\n" if fp else ""
+    ref, info = _run_libm(work, "libmref" + d[:0] + ("fp" if fp else ""),
+                          d + "#define REF 1\n", False, False)
     if ref is None:
         return dict(ok=False, why="build failed\n" + info["log"])
     _res, ref_outs, _m = ref
-    got, info = _run_libm(work, "libmsave", "", True, True)
+    got, info = _run_libm(work, "libmsave" + ("fp" if fp else ""), d, True, True)
     if got is None:
         return dict(ok=False, why="build failed\n" + info["log"])
     res, outs, m = got
-    bad, info = _run_libm(work, "libmbad", "", False, True)
+    bad, info = _run_libm(work, "libmbad" + ("fp" if fp else ""), d, False, True)
     if bad is None:
         return dict(ok=False, why="build failed\n" + info["log"])
     bad_outs = bad[1]
@@ -822,7 +841,7 @@ def prove_libm(work: Path):
     main_bad = [x for x in bad_outs if x[0] == 0x10]
     accepted = len([a for a in m.accepted if a[0] == "nmi"])
     # --save-workareas makes the control build save too: no control then
-    control_saves = "--isr-save-workareas" in UC80_FLAGS
+    control_saves = False
     ok = (res.reason.startswith("port:") and len(main_ref) == 160
           and main_got == main_ref and outs[-5:] == ref_outs[-5:]
           and accepted >= 12 and (control_saves or main_bad != main_ref)
@@ -836,7 +855,8 @@ def prove_libm(work: Path):
 
 PROOFS = {"nmi": prove_nmi, "seq": prove_seq, "bank": prove_bank,
           "iy": prove_iy, "memisr": prove_memisr,
-          "libm": prove_libm}
+          "libm": prove_libm,
+          "libmfp": lambda work: prove_libm(work, fp=True)}
 
 
 def main(argv=None):

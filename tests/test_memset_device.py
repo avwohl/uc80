@@ -46,12 +46,30 @@ CASES = [
     ("const_var_n", "memset((void *) 0x4A00, 0x21, n);",
      [(0x4A00, 33, 0x21)]),
     ("result_used", "r = memset(vp, 7, 9);", [(0x4800, 9, 7)]),
+    ("const_plus", "memset((unsigned char *) 0x4B00 + 2, 0x41, 9);",
+     [(0x4B02, 9, 0x41)]),
+    ("const_plus_macro_style", "memset((void *) (REG_BASE + 0x10), 0x42, 8);",
+     [(0x4C10, 8, 0x42)]),
+    ("const_minus", "memset((unsigned char *) 0x4B20 - 4, 0x43, 7);",
+     [(0x4B1C, 7, 0x43)]),
+    ("const_int_plus_ptr", "memset(3 + (unsigned char *) 0x4B30, 0x44, 7);",
+     [(0x4B33, 7, 0x44)]),
+    ("const_member_addr", "memset(&((struct dev *) 0x4D00)->buf[2], 0x45, 9);",
+     [(0x4D04, 9, 0x45)]),
+    ("const_array_member", "memset(((struct dev *) 0x4D40)->buf, 0x46, 10);",
+     [(0x4D42, 10, 0x46)]),
+    ("const_element_addr", "memset(&((unsigned char *) 0x4D80)[5], 0x47, 8);",
+     [(0x4D85, 8, 0x47)]),
+    ("const_plus_var_n", "memset((unsigned char *) 0x4E00 + 1, 0x48, n);",
+     [(0x4E01, 33, 0x48)]),
 ]
 
 
 def source(stmt):
     return f"""
 #include <string.h>
+#define REG_BASE 0x4C00
+struct dev {{ unsigned char ctl, st, buf[16]; }};
 volatile unsigned char *vp = (volatile unsigned char *) 0x4800;
 volatile unsigned char *vq = (volatile unsigned char *) 0x4900;
 volatile void *r;
@@ -154,3 +172,15 @@ int main(void) { sum = work(7, 11); return 0; }
         exp += [(0x4D00 + k, (7 + i) & 255) for k in range(20 + i)]
         exp += [(0x4C00 + k, (11 + i) & 255) for k in range(300)]
     assert [(a, v) for (_t, a, v, _pc) in m.rom_writes] == exp
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+@pytest.mark.parametrize("name,stmt,want", CASES[:11:5],
+                         ids=[c[0] for c in CASES[:11:5]])
+def test_no_blockops_still_fills_a_device_with_stores(
+        name, stmt, want, flow, tmp_path, libs):
+    """--no-blockops keeps the library calls for RAM, but a fill of device
+    memory must not read the destination: the call goes to __memset_dev."""
+    got, _d = run_case(tmp_path, stmt, flow, libs, extra=("--no-blockops",))
+    exp = [(a + i, v) for (a, n, v) in want for i in range(n)]
+    assert got == exp

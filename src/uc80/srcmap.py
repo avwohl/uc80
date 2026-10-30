@@ -15,6 +15,7 @@ import os
 from uc_core.c23_parser import FILE_TABLE
 
 _MAPS: dict[int, list] = {}
+_LAST: list = [None]          # file id of the file registered last
 _BREAKS: dict[int, dict] = {}
 
 
@@ -23,6 +24,7 @@ def register(path: str, line_map, line_breaks=None) -> None:
     ``line_breaks`` is ``Preprocessor.line_breaks``: the columns of an
     output line where a later source line begins (a continued line)."""
     fid = FILE_TABLE.intern(path)
+    _LAST[0] = fid
     _MAPS[fid] = list(line_map or [])
     _BREAKS[fid] = dict(line_breaks or {})
 
@@ -59,3 +61,18 @@ def locate(token, default_path: str = "<input>") -> str:
         return f"{_show(f)}:{l}"
     name = FILE_TABLE.name(fid) if fid else None
     return f"{_show(name or default_path)}:{line}"
+
+
+def locate_end() -> "str | None":
+    """file:line of the last line of the input file registered last (an
+    error at the end of the input has no token to name)."""
+    m = _MAPS.get(_LAST[0])
+    if not m:
+        return None
+    f, l = m[-1]
+    try:
+        with open(f, errors="replace") as fh:
+            l = max(1, min(l, len(fh.read().splitlines())))
+    except OSError:
+        pass
+    return f"{_show(f)}:{l}"

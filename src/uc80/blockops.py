@@ -118,25 +118,90 @@ class BlockOpsMixin:
         if isinstance(t, (lt.PointerType, lt.ArrayType)) and getattr(
                 base, "is_volatile", False):
             return True
-        inner = node
-        while isinstance(inner, ast.Cast):
-            inner = inner.expr
-        if isinstance(inner, ast.Identifier):
-            return False
+        return self._bo_is_const_addr(node)
+
+    def _bo_int_const(self, node) -> bool:
+        """An integer constant expression (no pointer in it)."""
         try:
-            if self._eval_const_expr(inner) is None:
+            if self._eval_const_expr(node) is None:
                 return False
-            it = self._to_legacy_type(self._get_expr_type(inner))
+            it = self._to_legacy_type(self._get_expr_type(node))
         except Exception:
             return False
         return not isinstance(it, (lt.PointerType, lt.ArrayType))
+
+    def _bo_is_const_addr(self, node) -> bool:
+        """The value of ``node`` is a constant address: an integer constant
+        or a cast of one, such an address plus or minus an integer
+        constant (``(unsigned char *) REG_BASE + 2``), the address of a
+        member or element of an object at such an address
+        (``&((struct dev *) 0x4B00)->ctl``), or an array member or element
+        there (``((struct dev *) 0x4B00)->buf``)."""
+        if not _is_node(node):
+            return False
+        if isinstance(node, ast.Cast):
+            return self._bo_is_const_addr(node.expr)
+        if isinstance(node, ast.Identifier):
+            return False
+        if self._bo_int_const(node):
+            return True
+        if isinstance(node, ast.BinaryOp):
+            op = node.op.text if hasattr(node.op, "text") else str(node.op)
+            if op in ("+", "-"):
+                if self._bo_is_const_addr(node.left) \
+                        and self._bo_int_const(node.right):
+                    return True
+                if op == "+" and self._bo_is_const_addr(node.right) \
+                        and self._bo_int_const(node.left):
+                    return True
+            return False
+        if isinstance(node, ast.UnaryOp):
+            op = node.op.text if hasattr(node.op, "text") else str(node.op)
+            if op == "&":
+                return self._bo_const_lvalue(node.operand)
+            return False
+        if isinstance(node, (ast.Member, ast.ArrowMember, ast.Index)):
+            # an array member or element decays to its address
+            try:
+                t = self._to_legacy_type(self._get_expr_type(node))
+            except Exception:
+                return False
+            return (isinstance(t, lt.ArrayType)
+                    and self._bo_const_lvalue(node))
+        return False
+
+    def _bo_const_lvalue(self, node) -> bool:
+        """``node`` is an lvalue at a constant address."""
+        if not _is_node(node):
+            return False
+        if isinstance(node, ast.Cast):
+            return False
+        if isinstance(node, ast.UnaryOp):
+            op = node.op.text if hasattr(node.op, "text") else str(node.op)
+            return op == "*" and self._bo_is_const_addr(node.operand)
+        if isinstance(node, ast.ArrowMember):
+            return self._bo_is_const_addr(node.obj)
+        if isinstance(node, ast.Member):
+            return self._bo_const_lvalue(node.obj)
+        if isinstance(node, ast.Index):
+            if not self._bo_int_const(node.index):
+                return False
+            try:
+                t = self._to_legacy_type(self._get_expr_type(node.array))
+            except Exception:
+                return False
+            if isinstance(t, lt.ArrayType):
+                return self._bo_const_lvalue(node.array)
+            return self._bo_is_const_addr(node.array)
+        return False
 
     def _bo_dev_call(self, expr):
         """``memset (dest, v, n)`` with a device destination, not inline:
         the call goes to ``__memset_dev``, which only stores.  Returns the
         new call, or ``expr`` when nothing changes."""
-        if (not self.enable_blockops or os.environ.get("UC80_NO_BLOCKOPS")
-                or not isinstance(expr.func, ast.Identifier)
+        # no test of --no-blockops here: a fill that reads a device is a
+        # wrong result, not a matter of code size
+        if (not isinstance(expr.func, ast.Identifier)
                 or expr.func.name.text != "memset"
                 or len(expr.args or []) != 3
                 or "memset" in getattr(self, "user_defined_funcs", ())

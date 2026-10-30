@@ -950,8 +950,19 @@ def main() -> int:
         help="Every interrupt function saves and restores the fixed work "
              "areas of the runtime that its call graph can reach "
              "(__tmp32, __div32_dvd, __acc64 and so on), so main code that "
-             "uses the same routines is not corrupted. One handler: "
+             "uses the same routines is not corrupted. This is the default "
+             "for a whole-program build (a handler that reaches no work "
+             "area pays nothing); the option also makes a split build an "
+             "error. One handler: "
              "#pragma uc80 isr_save_workareas NAME. See docs/rom_hardware.md"
+    )
+    parser.add_argument(
+        "--no-isr-save-workareas", action="store_true",
+        help="An interrupt function saves no work areas of the runtime "
+             "(the compiler prints a warning for each area that the "
+             "handler reaches). Saves RAM and T-states per interrupt when "
+             "main code never uses the same routines. "
+             "See docs/rom_hardware.md"
     )
     parser.add_argument(
         "--with-nullsound", action="store_true",
@@ -1913,8 +1924,13 @@ def main() -> int:
                         f"#pragma uc80 isr_save_workareas {source_name(r.name)}: "
                         f"a naked function saves nothing; save the work "
                         f"areas in its assembly text")
-                if not (args.isr_save_workareas or r.name in roots.save_wa) \
-                        or r.name in gen.naked:
+                explicit = args.isr_save_workareas or r.name in roots.save_wa
+                if r.name in gen.naked:
+                    continue
+                if not explicit and (args.no_isr_save_workareas
+                                     or not whole_program or not r.fixed):
+                    # default: save what the handler reaches, in a
+                    # whole-program build (a split build keeps the warning)
                     continue
                 if not whole_program:
                     if (r.name not in roots.save_wa
@@ -1927,10 +1943,10 @@ def main() -> int:
                     raise CodegenError(
                         f"interrupt function '{source_name(r.name)}': "
                         f"saving the work areas needs the whole program "
-                        f"(the labels of the runtime work areas are private "
-                        f"to the library, and a routine of another module "
-                        f"is invisible); drop --no-whole-program, or save "
-                        f"the areas in a naked handler")
+                        f"(uc80 must see every routine that the handler "
+                        f"reaches, in every module, to know the work areas "
+                        f"to save); drop --no-whole-program, or save the "
+                        f"areas in a naked handler")
                 plan, _skipped, saved = isr_check.save_plan(graph, r)
                 if plan:
                     wa_plan[r.name] = plan
@@ -1947,7 +1963,9 @@ def main() -> int:
                 code, {r.name for r in reports if r.alt_chain}, wa_plan)
             for msg in isr_check.format_notes(reports):
                 print(f"uc80: note: {msg}", file=sys.stderr)
-            for msg in isr_check.format_reports(reports, wa_saved):
+            for msg in isr_check.format_reports(
+                    reports, wa_saved, whole_program,
+                    args.no_isr_save_workareas):
                 print(f"uc80: warning: {msg}", file=sys.stderr)
 
         # C code linked next to nullsound (docs/rom_interop.md): its NMI
@@ -2160,6 +2178,16 @@ def main() -> int:
                 msg = re.sub(r"at line \d+, column",
                              lambda _m: f"at {srcmap.locate(tok)}, column",
                              msg, count=1)
+            except Exception:
+                pass
+        if msg.startswith("unexpected end of input"):
+            # no token: name the end of the input file
+            try:
+                where = srcmap.locate_end()
+                if where:
+                    msg = msg.replace("unexpected end of input",
+                                      f"unexpected end of input at {where}",
+                                      1)
             except Exception:
                 pass
         print(f"uc80: internal error: {msg}", file=sys.stderr)

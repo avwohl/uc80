@@ -286,6 +286,13 @@ def taken_regions(g: Graph, extra=()) -> list:
 
 def _is_function(g: Graph, label: str) -> bool:
     r = g.regions.get(label)
+    # a label that has no code of its own (an alias such as _cos before
+    # _cosf) stands for the code that it falls into
+    seen = set()
+    while (r is not None and not r.has_code and r.falls_through
+           and r.next_label and r.label not in seen):
+        seen.add(r.label)
+        r = g.regions.get(r.next_label)
     return (r is not None and r.has_code
             and not label.startswith(("@", "?")))
 
@@ -509,7 +516,8 @@ def format_notes(reports: list) -> list:
     return out
 
 
-def format_reports(reports: list, saved=None) -> list:
+def format_reports(reports: list, saved=None, whole_program=True,
+                   opt_out=False) -> list:
     """Warning lines for the reports.  ``saved`` maps an interrupt
     function name to the set of blocks that its prologue saves: no
     warning for those."""
@@ -537,8 +545,12 @@ def format_reports(reports: list, saved=None) -> list:
                 f"({' -> '.join(chain)}); main code that calls the same "
                 f"routine can be corrupted by the interrupt"
                 + ("" if block in STATE_BLOCKS else
-                   "; --isr-save-workareas makes the handler save and "
-                   "restore the area")
+                   ("; the handler saves no work area because of "
+                    "--no-isr-save-workareas" if opt_out else
+                    "; the save of the work areas needs the whole program "
+                    "(drop --no-whole-program)" if not whole_program else
+                    "; --isr-save-workareas makes the handler save and "
+                    "restore the area"))
                 + ("; the block holds state, and no save can revert it"
                    if block in STATE_BLOCKS else ""))
     return out
