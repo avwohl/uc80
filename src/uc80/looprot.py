@@ -35,7 +35,9 @@ It rotates a loop when
   jump except to such a label, no return, no restart, no DJNZ and no
   comment;
 - the back jump ``jr``/``jp`` to the head stands directly before the exit
-  label.
+  label.  When the exit is a conditional return (``ret nc``, made by the
+  peephole pass from a jump to a ``ret``), the back jump is followed by
+  labels and the ``ret``.
 
 A test that holds a call is copied as it is.  A test that is a short
 ``&&`` chain is rotated at its first jump only: the copy ends at the first
@@ -58,6 +60,8 @@ _LABEL = re.compile(r"^(@?[A-Za-z_?$.][A-Za-z0-9_@?$.]*):")
 _JCC = re.compile(
     r"^\t(jr|jp)\s+(nz|z|nc|c|po|pe|p|m),\s*(\S+?)\s*(?:;.*)?$", re.I)
 _JMP = re.compile(r"^\t(jr|jp)\s+(@\S+?)\s*(?:;.*)?$", re.I)
+_RETCC = re.compile(r"^\tret\s+(nz|z|nc|c|po|pe|p|m)\s*(?:;.*)?$", re.I)
+_RET = re.compile(r"^\tret\s*(?:;.*)?$", re.I)
 _END = re.compile(r"^@END(?:FOR|WHILE)\d+$")
 _CMP_NV = re.compile(r"^@CMP_NV\d+$")
 _BAD_OP = re.compile(r"^\t(ret|reti|retn|rst|djnz|halt)\b", re.I)
@@ -167,6 +171,9 @@ def rotate(code: str) -> str:
                 break
             if not _is_instruction(ln):
                 break               # a comment, a blank line, a directive
+            if _RETCC.match(ln):
+                test_end = j        # the exit is a conditional return
+                break
             if (_BAD_OP.match(ln) or _JP_INDIRECT.match(ln)
                     or _CALL_COND.match(ln)):
                 break
@@ -191,18 +198,40 @@ def rotate(code: str) -> str:
         # every jump to a @CMP_NV label stays inside the copied test
         if not pending_nv <= set(local):
             continue
-        jm = _JCC.match(lines[test_end])
-        exit_label = jm.group(3)
-        ex = label_at.get(exit_label)
-        if ex is None or ex <= test_end:
-            continue
-        # the back jump: the last line before the exit label
-        k = ex - 1
-        while k > test_end and not lines[k].strip():
-            k -= 1
-        bm = _JMP.match(lines[k])
-        if not bm or bm.group(2) != head or k in out:
-            continue
+        rc = _RETCC.match(lines[test_end])
+        if rc:
+            cond = rc.group(1)
+            # the back jump is followed by labels and the RET of the exit
+            k = None
+            for x in range(test_end + 1, n):
+                bm = _JMP.match(lines[x])
+                if not bm or bm.group(2) != head:
+                    continue
+                y = x + 1
+                while y < n and (not lines[y].strip()
+                                 or lines[y].lstrip().startswith(";")
+                                 or (lines[y][0] not in " \t"
+                                     and _LABEL.match(lines[y]))):
+                    y += 1
+                if y < n and _RET.match(lines[y]):
+                    k = x
+                    break
+            if k is None or k in out:
+                continue
+        else:
+            jm = _JCC.match(lines[test_end])
+            cond = jm.group(2)
+            exit_label = jm.group(3)
+            ex = label_at.get(exit_label)
+            if ex is None or ex <= test_end:
+                continue
+            # the back jump: the last line before the exit label
+            k = ex - 1
+            while k > test_end and not lines[k].strip():
+                k -= 1
+            bm = _JMP.match(lines[k])
+            if not bm or bm.group(2) != head or k in out:
+                continue
         if any(idx in out or idx in after for idx in (test_end, k)):
             continue
         if any(_HEAD.match(lines[x]) for x in range(test_end + 1, k)):
@@ -220,7 +249,7 @@ def rotate(code: str) -> str:
                 ln = re.sub(re.escape(a) + r"(?![A-Za-z0-9_@?$.])", b, ln)
             copy.append(ln)
         copy = _trim_junction(lines, k, copy)
-        copy.append(f"\tjp\t{_INV[jm.group(2).lower()]},{body_label}")
+        copy.append(f"\tjp\t{_INV[cond.lower()]},{body_label}")
         out[k] = "\n".join(copy)
         after[test_end] = body_label + ":"
     if not out:

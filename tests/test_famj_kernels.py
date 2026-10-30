@@ -605,8 +605,31 @@ static int shifted(unsigned v)
     return s;
 }
 
+static int sink_g;
+
+/* the exit of the loop is the end of the function: a conditional RET */
+static void tail_loop(int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        sink_g += i;
+}
+
+static void tail_while(unsigned v)
+{
+    while (v) {
+        sink_g ^= (int)v;
+        v >>= 1;
+    }
+}
+
 int main(void)
 {
+    tail_loop(7);
+    tail_loop(0);
+    tail_while(0x2C5u);
+    tail_while(0);
+    printf("%d\n", sink_g);
     printf("%d %d\n", nested(4, 5), nested(0, 3));
     printf("%d %d\n", with_break_continue(9), with_break_continue(30));
     printf("%d %d\n", zero_trip(0), zero_trip(4));
@@ -641,6 +664,10 @@ def test_loop_rotation_shape(tmp_path):
                     name="o").read_text()
     assert re.search(r"^@RB\d+:", on, re.M)
     assert not re.search(r"^@RB\d+:", off, re.M)
+    # a loop that ends the function is rotated too (the exit is ret cc)
+    seg = on[on.index("\n_tail_loop:"):]
+    seg = seg[:seg.index("@tail_loop_ret:")]
+    assert "@RB" in seg and "\tret\t" in seg
 
 
 # ---- 2g: the fill idiom ------------------------------------------------------

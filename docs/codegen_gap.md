@@ -9,6 +9,31 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-30: family J, step J1 is in the code (branch `famj`)
+
+The branch `famj` starts from `main` 619b110. Step J1 has the low-risk causes of the analysis of the 13 programs that ran slower than SDCC. The analysis is in [family_j.md](family_j.md), with a page for each of the eleven changes. The [CHANGELOG](../CHANGELOG.md) has the numbers and the gates.
+
+What the analysis predicted by hand edits, and what the compiler gives (total T-states of uc80 over SDCC 4.6.0 speed mode):
+
+- Geometric mean of the 13 programs: 1.196 before, 0.967 predicted, 0.964 measured. 10 of 13 are below 1, as predicted.
+- `bsd-ppt` 1.598 to 0.974 (predicted 0.979). `sieve` 1.475 to 0.967 (0.885). `bsd-bcd` 1.390 to 0.941 (0.939). `empty` 1.218 to 0.776 (0.862). `davidly-sieve` 1.195 to 0.842 (0.873). `tak` 1.055 to 0.881 (0.880). `stanford-quick` 1.041 to 0.868 (0.868). `snd-cmdq` 1.033 to 0.955 (0.962). `sieve+static` 1.013 to 0.860 (0.890). `snd-ymreg` 1.012 to 0.969 (0.959).
+- `sieve` is 0.967, not 0.885. The hand edit of `main` used four more changes: a direct update of the pair, a rotation that the compiler does not do for the first loop, and two hand-made register choices. The loop of the compiler is 1.22M T-states in the timed region. SDCC needs 1.28M.
+- Above SDCC: `davidly-ttt` 1.493, `queens` 1.099, `stanford-puzzle` 1.069. These are the causes C1 and C3 of the analysis. They need the loop-invariant loads (step 3) and the byte-granular register allocation (step 4).
+
+Differences from the plan:
+
+- The start-up code has three files. `crt0_small.mac` (a BSS of less than 256 bytes) is shorter than the old code. `crt0.mac` has the push fill. The plan had one file with both paths. One file cost 56 bytes in each program.
+- The rule for the compare of a pair (`_try_pair_direct`) is more general than the plan. It replaces each read of H and L as a byte after a copy of a pair, and not only the 16-bit compare. It also handles the signed compare with the `xor 128` form.
+- Loop rotation has two limits that the prototype did not have: a size limit for the copied test, and a stricter limit for a loop that holds another loop. Without them the size mean was 1.8% worse for a gain of 1.1% in T-states. The rotation is also the reason that `bsd-ppt`, `sieve` and `snd-ymreg` are below SDCC (1.022, 1.030 and 0.983 without it).
+- `__putchar_v` has to be declared to the register-locals pass as a routine that reads E. The analysis did not say this. A first version made every curses program 4% to 9% slower, because the pass treated an unknown `__` routine as a reader of all registers.
+- The dead-frame pass (`_drop_dead_frame`) is in `codegen.py` and not in `reglocals.py`. The dead copy pass is in `reglocals.py` (`drop_dead_copies`) and runs after `prune`.
+
+Numbers from `bench/run.py -c uc80` on 111 programs, against SDCC 4.6.0:
+
+- Size (bytes minus the empty program) 0.9505, whole image 0.9061, T-states (speed mode) 0.5039, and 0.6051 without `sort-*`. uc80 is faster than SDCC on 74 of 78 programs.
+- `main` 619b110 had 0.9117, 0.8794, 0.5275, 0.6367 and 66 of 78.
+- The size means are worse. The empty program is 17 bytes smaller, so the bytes column grows for each program. Loop rotation, the push fill and the runtime shortcut add bytes. 87 of 104 programs are bigger (89 bytes in the median).
+
 ## Status on 2026-10-30: family I and bug round 3 in one tree (branch `integrate10`)
 
 The merge of the branch `fami` (family I, steps 1 and 2) into the tree of `main` 4702a63 (the result of `integrate9`) gives the branch `integrate10`. The text conflicts were only in the CHANGELOG, the generated benchmark files and this file. We read the auto-merged code of `codegen.py`, `main.py`, `reglocals_gen.py`, `lc_printf_core.mac` and `libc.mac`. Programs that run checked the interactions (`tests/test_integrate10_interactions.py` and a printf test against the host). No family I pass needed a change. The [CHANGELOG](../CHANGELOG.md) has the details.
