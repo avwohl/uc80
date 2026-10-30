@@ -88,6 +88,29 @@ def plan_file(path: Path):
     return block, g.layout0[0][0], sum(sizes)
 
 
+def new_text(path: Path, plan) -> str:
+    """The text of the module at ``path`` with its helpers for ``plan``
+    (a result of plan_file, or None for no helpers)."""
+    base = strip_helpers(path.read_text())
+    if not plan:
+        return base
+    end = re.search(r"^[ \t]*END\b.*$", base, re.M | re.I)
+    if end is None:
+        return base
+    return base[:end.start()] + helper_text(*plan) + "\n" + base[end.start():]
+
+
+def update_file(path) -> None:
+    """Write the helpers into one module.  The generators of the library
+    modules (gen_vm_modules.py, gen_c_modules.py) call this after they write
+    a module.  The caller knows that the block name of the module is its
+    own."""
+    path = Path(path)
+    new = new_text(path, plan_file(path))
+    if new != path.read_text():
+        path.write_text(new)
+
+
 def main(argv) -> int:
     check = "--check" in argv
     files = [p for d in DIRS for p in sorted((HERE / d).glob("*.mac"))]
@@ -98,17 +121,8 @@ def main(argv) -> int:
             count[pl[0]] = count.get(pl[0], 0) + 1
     stale = []
     for path, pl in plans.items():
-        old = path.read_text()
-        base = strip_helpers(old)
-        if pl and count[pl[0]] == 1:
-            end = re.search(r"^[ \t]*END\b.*$", base, re.M | re.I)
-            if end is None:
-                continue
-            new = (base[:end.start()] + helper_text(*pl) + "\n"
-                   + base[end.start():])
-        else:
-            new = base
-        if new != old:
+        new = new_text(path, pl if pl and count[pl[0]] == 1 else None)
+        if new != path.read_text():
             stale.append(path.name)
             if not check:
                 path.write_text(new)

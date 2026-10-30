@@ -270,7 +270,22 @@ int main(void)
 @pytest.mark.parametrize("flow", FLOWS)
 def test_block_operations_keep_volatile_and_mmio_writes(
         flow, tmp_path, libs):
-    (w, _mem, text, _e), _old = same(tmp_path, VOL, flow, libs)
+    # The fills of device memory (memset to a volatile pointee or to a
+    # constant address) store every byte, so the build with the pass off
+    # (the library memset: the first byte, then LDIR) differs by design.
+    # Everything else in the log is equal.
+    new = trace(tmp_path, "new", VOL, flow, libs)
+    old = trace(tmp_path, "old", VOL, flow, libs, extra=OFF)
+    w, text = new[0], new[2]
+    fills = [(0x4020 + i, 0x55) for i in range(8)] + \
+        [(0x4210 + i, 0) for i in range(8)] + \
+        [(0x4300 + i, 0xEE) for i in range(8)]
+    in_fill = lambda x: (0x4020 <= x[0] < 0x4028 or 0x4210 <= x[0] < 0x4218
+                         or 0x4300 <= x[0] < 0x4308)
+    assert [x for x in w if in_fill(x)] == fills
+    assert [x for x in w if not in_fill(x)] == [
+        x for x in old[0] if not in_fill(x)]
+    assert new[1] == old[1], "RAM differs"
     # *regs = img: 16-bit members, low byte first, ascending
     assert w[:8] == [(0x4100, 2), (0x4101, 1), (0x4102, 4), (0x4103, 3),
                      (0x4104, 5), (0x4105, 6), (0x4106, 7), (0x4107, 8)]
@@ -283,7 +298,7 @@ def test_block_operations_keep_volatile_and_mmio_writes(
     if text:
         main = text.split("\n_main:")[1]
         assert main.count("call\t_memcpy") >= 2     # mmio and vp
-        assert main.count("call\t_memset") >= 2
+        assert "call\t_memset" not in main      # stores only
 
 
 @pytest.mark.parametrize("flow", FLOWS)

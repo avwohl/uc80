@@ -91,6 +91,14 @@ TOKEN = re.compile(r"""
 """, re.X | re.S)
 
 
+
+def add_wa_helpers(path):
+    """The module has a work area: write the ISR save helpers (docs/rom_hardware.md)."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import gen_wa_helpers
+    gen_wa_helpers.update_file(path)
+
+
 def lex(text):
     pos, out = 0, []
     while pos < len(text):
@@ -809,6 +817,7 @@ def generate(name):
                 .replace(";;NLOW", str(len(LOW)))
                 .replace(";;STACK", str(STACK_BYTES)))
         open(os.path.join(OUT, name + ".mac"), "w").write(text)
+        add_wa_helpers(os.path.join(OUT, name + ".mac"))
         print("  %s.mac" % name)
         return
     src_path = os.path.join(SRC, name + ".vc")
@@ -845,6 +854,7 @@ def generate(name):
         head += "\tEXTRN\t%s\n" % e
     open(os.path.join(OUT, name + ".mac"), "w").write(
         head + "\n".join(pub) + "\n\n" + "\n".join(body) + "\n\tEND\n")
+    add_wa_helpers(os.path.join(OUT, name + ".mac"))
     print("  %s.mac" % name)
 
 

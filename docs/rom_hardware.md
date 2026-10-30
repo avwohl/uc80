@@ -96,9 +96,9 @@ The compiler saves the work areas as the program text places them. The whole-pro
 
 Labels that follow each other join into one area. The warning names the block of the library file, for example `rt_rem32`.
 
-The link can add a library module that the program text does not hold. Examples are `lc_vm`, `lc_sqrt` and an `rt_*` module that only a library routine needs. The labels of the work area of such a module are private. Each such module exports two public routines instead. The routine `__wasv_BLOCK` pushes the area onto the stack. The routine `__wars_BLOCK` copies the area back and removes the copy from the stack. The prologue of the handler runs `CALL __wasv_lc_vm`, and the epilogue runs `CALL __wars_lc_vm`.
+The link can add a library module that the program text does not hold. The modules `lc_vm` and `lc_sqrt`, and an `rt_*` module that only a library routine needs, belong to this group. The labels of the work area of such a module are private. The module exports two public routines for the save. The routine `__wasv_BLOCK` pushes the area onto the stack. The routine `__wars_BLOCK` copies the area back and removes the copy from the stack.
 
-The routines use IY for the return address. The register saves of the prologue come first, so IY is free. The script `src/uc80/lib/gen_wa_helpers.py` writes the routines into the library modules, and its option `--check` finds a module that is out of date. The script `build_libs.py` leaves the routines out of the joined files `libc.mac` and `runtime.mac`. A program with no such handler links none of the routines.
+The prologue of the handler runs `CALL __wasv_lc_vm`, and the epilogue runs `CALL __wars_lc_vm`. The routines use IY for the return address. The register saves of the prologue come first, so IY is free. The script `src/uc80/lib/gen_wa_helpers.py` writes the routines into the library modules, and its option `--check` finds a module that is out of date. The script `build_libs.py` leaves the routines out of the joined files `libc.mac` and `runtime.mac`. A program with no such handler links none of the routines.
 
 An area of up to 6 bytes goes through the stack in words. A larger area goes with `LDIR`. The compiler prints a note with the cost.
 

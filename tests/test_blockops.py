@@ -353,9 +353,11 @@ def calls_of(body):
 def test_inline_and_calls_in_one_function(tmp_path):
     mac, _ = compile_mac(tmp_path, SHAPES, "--no-inlining")
     body = func(mac, "ptr")
-    # kept: variable size, memmove, volatile, size 0, two used results
-    assert calls_of(body) == ["_memset", "_memcpy", "_memmove", "_memset",
+    # kept: variable size, memmove, size 0, two used results.  The fill of
+    # the volatile array is a store loop, not a call (docs/blockops.md).
+    assert calls_of(body) == ["_memset", "_memcpy", "_memmove",
                               "_memcpy", "_memset", "_memcpy"]
+    assert "djnz" in body
     assert body.count("ldir") == 3
     assert body.count("\tldi\n") == 2
 
