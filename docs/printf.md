@@ -123,9 +123,13 @@ These limits are deliberate.
 
 - A field width or a precision is a 16-bit number and has a limit of 32767.
   `printf("%1000d", 1)` prints a field of 1000 characters. A precision of a
-  float conversion (`%f`, `%e`, `%g`, `%a`) above 255 is 255, because the
-  number of digits after the point is one byte. So `%#.Ng` with a precision
-  `N` above about 250 prints a few zeros less than C requires.
+  float conversion (`%f`, `%e`, `%g`, `%a`) above 255 is correct too: the
+  engine makes at most 255 digits, and the rest of the precision is zeros.
+  The exact decimal form of a float has at most 189 digits after the point,
+  so every digit after the 255th is 0 and the rounding does not change.
+  `%.300f` of `1.5f` prints `1.5` and 299 zeros, as glibc does. The test
+  `tests/test_printf_big_precision.py` compares 18 such conversions with the
+  exact text from Python.
 - A `*` width or precision reads an `int` argument. The code is in the module
   `lc_printf_star`. The printf hook adds a `*` entry to the dispatch table when
   a format has a `*`. A program without `*` does not link the code. With

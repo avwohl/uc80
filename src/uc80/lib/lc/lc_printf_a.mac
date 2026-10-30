@@ -57,6 +57,8 @@ __printf_handle_a:
 	JP	_printf_loop
 
 _pa_main:
+	LD	HL,0
+	LD	(_pa_zpad),HL	; zeros after the digits, for a precision over 255
 	; ---- the sign character ----
 	LD	A,(_pa_val+3)
 	LD	B,'-'
@@ -217,11 +219,17 @@ _pa_nf:
 	LD	(_pa_nfd),A
 	JR	_pa_expo
 _pa_prec:
-	LD	A,(_printf_prec+1)
+	; A precision over 255: 255 digits, and the rest is zeros (_pa_zpad).
+	; The digits after the 6th are 0 anyway.
+	LD	HL,(_printf_prec)
+	LD	A,H
 	OR	A
-	LD	A,255		; a precision above 255 digits is 255
-	JR	NZ,_pa_pc
-	LD	A,(_printf_prec)
+	LD	A,L
+	JR	Z,_pa_pc
+	LD	DE,-255
+	ADD	HL,DE
+	LD	(_pa_zpad),HL
+	LD	A,255
 _pa_pc:
 	LD	(_pa_nfd),A
 	CP	6
@@ -344,6 +352,8 @@ _pa_nd0:
 	ADD	HL,DE
 	LD	DE,5		; 0x, the first digit, p and the sign of the exponent
 	ADD	HL,DE
+	LD	DE,(_pa_zpad)
+	ADD	HL,DE
 	LD	(_pa_len),HL
 
 	; ---- print the sign, the text and the padding ----
@@ -465,6 +475,9 @@ _pa_r2a:
 	POP	BC
 	DJNZ	_pa_r2
 _pa_r3:
+	LD	HL,(_pa_zpad)
+	LD	E,'0'
+	CALL	_printf_padw
 	LD	E,'p'
 	LD	A,(_printf_upper)
 	OR	A
@@ -521,6 +534,7 @@ _pa_xd:		DS	3
 _pa_xptr:	DS	2
 _pa_xn:		DS	1
 _pa_nfd:	DS	1
+_pa_zpad:	DS	2	; more digits after them, all 0 (a precision over 255)
 _pa_dot:	DS	1
 _pa_len:	DS	2
 _pa_pad:	DS	2
@@ -532,12 +546,12 @@ _pa_kind:	DS	1
 	PUBLIC	__wars_lc_printf_a
 __wasv_lc_printf_a:
 	POP	IY
-	LD	HL,-33
+	LD	HL,-35
 	ADD	HL,SP
 	LD	SP,HL
 	EX	DE,HL
 	LD	HL,_pa_val
-	LD	BC,33
+	LD	BC,35
 	LDIR
 	JP	(IY)
 __wars_lc_printf_a:
@@ -545,7 +559,7 @@ __wars_lc_printf_a:
 	LD	HL,0
 	ADD	HL,SP
 	LD	DE,_pa_val
-	LD	BC,33
+	LD	BC,35
 	LDIR
 	LD	SP,HL
 	JP	(IY)
