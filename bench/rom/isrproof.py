@@ -28,6 +28,16 @@ iy    Pointer locals in IY and registers in BC and DE under a real NMI.
       walk_isr () on another list (the interrupt function must save IY).
       The three sums must equal a Python model, and each of the three
       functions must use (IY+d).
+memisr  memset, memcpy and struct copies in an NMI function while main does
+      the same on other buffers.
+libm  main computes sin, cos and sqrt in a loop while an NMI function (with
+      #pragma uc80 isr_save_workareas) also calls sin and sqrt.  The float
+      interpreter lc_vm and lc_sqrt keep their work areas at fixed addresses,
+      and the handler saves them through the library routines __wasv_lc_vm
+      and the like.  The output of main must equal the output of a run
+      without interrupts, and the same program without the pragma must
+      differ (the proof has teeth).  Interrupts start after main has set
+      its ready flag.
 """
 
 import random
@@ -811,13 +821,16 @@ def prove_libm(work: Path):
     main_got = [x for x in outs if x[0] == 0x10]
     main_bad = [x for x in bad_outs if x[0] == 0x10]
     accepted = len([a for a in m.accepted if a[0] == "nmi"])
+    # --save-workareas makes the control build save too: no control then
+    control_saves = "--isr-save-workareas" in UC80_FLAGS
     ok = (res.reason.startswith("port:") and len(main_ref) == 160
           and main_got == main_ref and outs[-5:] == ref_outs[-5:]
-          and accepted >= 12 and main_bad != main_ref
+          and accepted >= 12 and (control_saves or main_bad != main_ref)
           and m.rom_writes == [])
     return dict(ok=ok, nmis=accepted, values=len(main_got) // 4,
                 reason=res.reason, same_as_no_interrupts=main_got == main_ref,
-                without_save_differs=main_bad != main_ref,
+                without_save_differs=main_bad != main_ref
+                or ("n/a (the option is on)" if control_saves else False),
                 stack=m.stack_depth(top=0x10000))
 
 
