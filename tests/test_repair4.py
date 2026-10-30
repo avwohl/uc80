@@ -99,7 +99,7 @@ int main(void) {
     { typedef short L; { typedef char L; printf("%d\n", (int) sizeof(L)); }
       printf("%d\n", (int) sizeof(L)); }
     printf("%d\n", (int) sizeof(L));
-    { T v = 100000L; printf("%d\n", v == 100000L); }
+    { T v = 100000L; printf("%d\n", v == (T) 100000L); }
     return 0;
 }
 ''', flags)
