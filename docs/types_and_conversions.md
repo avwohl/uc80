@@ -50,6 +50,14 @@ enumeration (see `uc_core` `_strip_enum_fixed_types`). Then:
   that the file does not declare as a type gives an error. `T` can be a
   typedef name (`enum e : uint8_t`).
 - A bit-field of the type has the signedness of `T`.
+- `typeof (A)` of a constant has the type `T`. `enum e : char` keeps plain
+  `char` as its type, so `_Generic (A, char: 1, signed char: 2)` gives 1.
+- An inlined call of a function that returns or takes the enumeration
+  converts as a call does (`enum e : unsigned char f (int x) { return x; }`
+  gives `f (300) == 44`): the inliner leaves such a function alone.
+- An error has the file and line of the enumeration (also after `#line`).
+  A pointer or array after the colon (`enum e : int *`) is an error. An
+  enumerator that occurs twice in one enumeration is an error.
 - `_Generic` and pointer conversions see `T`, because the enumerated type is
   compatible with `T`.
 - Two files that give the same tag different types get separate tags

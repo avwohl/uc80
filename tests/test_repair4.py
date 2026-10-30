@@ -161,3 +161,21 @@ def test_an_error_at_the_end_of_the_input_names_the_file_and_line(tmp_path):
     r = compile_c(tmp_path, "int main(void){\n  int x = 1;\n  x +\n")
     assert r.returncode == 1
     assert "unexpected end of input at e.c:3" in r.stderr
+
+
+def test_a_global_named_like_a_library_function_is_no_libm_call(tmp_path):
+    """The program's own data label _log replaces the library routine: a
+    handler that uses the array log reaches no work area of the math
+    library, so it saves nothing and pays nothing."""
+    (tmp_path / "t.c").write_text("""#include <stdint.h>
+volatile uint8_t n;
+volatile uint8_t log[8];
+#pragma uc80 interrupt isr
+void isr(void) { log[n & 7] = n; n++; }
+int main(void) { return 0; }
+""")
+    r = subprocess.run([sys.executable, "-m", "uc80.main", "--target=rom",
+                        "t.c", "-o", "t.mac"], capture_output=True,
+                       text=True, cwd=str(tmp_path))
+    assert r.returncode == 0, r.stderr
+    assert r.stderr == ""

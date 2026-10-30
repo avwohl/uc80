@@ -65,6 +65,7 @@ class Graph:
     fixed_size: dict = field(default_factory=dict)
     # symbols that an instruction or a DW names without a jump or a call:
     # the functions whose address is taken (when the label has a region)
+    data0: set = field(default_factory=set)      # data labels of the program
     taken: set = field(default_factory=set)      # of the program (unit 0)
     unit_taken: dict = field(default_factory=dict)   # unit -> DW symbols
     # the zeroed data (COMMON) of the program text in the order of the text:
@@ -166,6 +167,8 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
             equs[label.upper()] = meq.group(1).strip()
             if unit == 0:
                 graph.equ0.add(label)
+        if label is not None and seg == "COMMON" and unit == 0:
+            graph.data0.add(label)
         if label is not None and seg == "COMMON":
             # a work area of a library module (named COMMON block)
             # (the BSS block of a separately compiled uc80 module, named
@@ -193,9 +196,14 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
             (graph.taken if unit == 0 else graph.unit_taken.setdefault(
                 unit, set())).update(_SYM.findall(mdw.group(1)))
         if seg != "CSEG":
+            if label is not None and unit == 0:
+                # a data label of the program: it replaces a library
+                # routine of the same name (a global named log, sin ...)
+                graph.data0.add(label)
             continue
         if label is not None:
-            if only_missing and label in graph.regions:
+            if only_missing and (label in graph.regions
+                                 or label in graph.data0):
                 cur = None
                 continue
             cur = Region(label=label, unit=unit)
