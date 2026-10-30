@@ -176,11 +176,11 @@ def host_expect(tmp_path, src):
     c_file = tmp_path / "host.c"
     c_file.write_text(src)
     r = subprocess.run(["cc", "-w", "-o", str(exe), str(c_file)],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
         pytest.skip("no host compiler")
     return subprocess.run([str(exe)], capture_output=True,
-                          text=True).stdout
+                          text=True, timeout=120).stdout
 
 
 def narrowed(tmp_path, source, *flags):
@@ -190,7 +190,7 @@ def narrowed(tmp_path, source, *flags):
     r = subprocess.run(
         [sys.executable, "-m", "uc80.main", str(c_file), *flags, "-o",
          str(tmp_path / "d.mac")],
-        capture_output=True, text=True, cwd=str(REPO), env=env)
+        capture_output=True, text=True, cwd=str(REPO), env=env, timeout=120)
     assert r.returncode == 0, r.stderr
     return [ln[8:].split(":")[0] for ln in r.stderr.splitlines()
             if ln.startswith("narrow: ") and "narrowed" in ln]

@@ -333,11 +333,11 @@ def host_expect(tmp_path):
     c_file = tmp_path / "host.c"
     c_file.write_text(SRC)
     r = subprocess.run(["cc", "-w", "-o", str(exe), str(c_file)],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, timeout=120)
     if r.returncode != 0:
         pytest.skip("no host compiler")
     return subprocess.run([str(exe)], capture_output=True,
-                          text=True).stdout
+                          text=True, timeout=120).stdout
 
 
 def licm_log(tmp_path, source, *flags):
@@ -348,7 +348,7 @@ def licm_log(tmp_path, source, *flags):
     r = subprocess.run(
         [sys.executable, "-m", "uc80.main", str(c_file), *flags, "-o",
          str(tmp_path / "d.mac")],
-        capture_output=True, text=True, cwd=str(REPO), env=env)
+        capture_output=True, text=True, cwd=str(REPO), env=env, timeout=120)
     assert r.returncode == 0, r.stderr
     return [ln[6:] for ln in r.stderr.splitlines() if ln.startswith("licm: ")]
 
@@ -440,7 +440,7 @@ int main(void) { int y = 3, x; for (x = 0; x < 4; x++) out += y * 40 + x;
     r = subprocess.run(
         [sys.executable, "-m", "uc80.main", str(c_file), "--target", "rom",
          "-o", str(tmp_path / "i.mac")],
-        capture_output=True, text=True, cwd=str(REPO), env=env)
+        capture_output=True, text=True, cwd=str(REPO), env=env, timeout=120)
     assert r.returncode == 0, r.stderr
     fns = {ln[6:].split(":")[0] for ln in r.stderr.splitlines()
            if ln.startswith("licm: ")}

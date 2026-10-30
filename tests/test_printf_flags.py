@@ -45,13 +45,13 @@ def build_and_run(tmp_path, source, *extra_args):
     mac, rel, com = (tmp_path / ("prog" + e) for e in (".mac", ".rel", ".com"))
     r = subprocess.run([sys.executable, "-m", "uc80.main", str(c_file),
                         "-o", str(mac), *extra_args],
-                       capture_output=True, text=True, cwd=str(REPO))
+                       capture_output=True, text=True, cwd=str(REPO), timeout=120)
     assert r.returncode == 0, r.stderr
     subprocess.run(["um80", str(mac), "-o", str(rel)],
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, timeout=120)
     subprocess.run(["ul80", str(rel), str(LIB_DIR / "libc.lib"),
                     str(LIB_DIR / "runtime.lib"), "-o", str(com)],
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, timeout=120)
     env = dict(os.environ, PYTHONHASHSEED="0")
     run = subprocess.run([str(CPMEMU), str(com)], capture_output=True,
                          text=True, timeout=120, env=env)
@@ -63,9 +63,9 @@ def host_run(tmp_path, source):
     c_file.write_text(source)
     exe = tmp_path / "host"
     subprocess.run([HOST_CC, "-w", "-o", str(exe), str(c_file)],
-                   check=True, capture_output=True, text=True)
+                   check=True, capture_output=True, text=True, timeout=120)
     return subprocess.run([str(exe)], capture_output=True, text=True,
-                          check=True).stdout
+                          check=True, timeout=120).stdout
 
 
 def program(cases):

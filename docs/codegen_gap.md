@@ -9,6 +9,16 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-30: family I is integrated with bug round 3 (branch `integrate10`)
+
+The branch `fami` (family I, steps 1 and 2) is merged into `integrate9`. The text conflicts were only in the CHANGELOG, the generated benchmark files and this file. The auto-merged code of `codegen.py`, `main.py`, `reglocals_gen.py`, `lc_printf_core.mac` and `libc.mac` was read, and the interactions were checked with programs that run (`tests/test_integrate10_interactions.py` and a printf test against the host). No pass needed a change. See the [CHANGELOG](../CHANGELOG.md).
+
+Numbers from `bench/run.py -c uc80` on 111 programs, against SDCC 4.6.0:
+
+- Merged tree: size 0.9117, whole image 0.8794, T-states (speed mode) 0.5275, 0.6367 without `sort-*`. uc80 is faster than SDCC on 66 of 78 programs.
+- `main` 4702a63: 0.9151, 0.8826, 0.5456, 0.6611, 63 of 78.
+- `fami`: 0.9128, 0.8805, 0.5274, 0.6366, 66 of 78.
+
 ## Status on 2026-10-29: bug-fix round 3 (branch `integrate9`)
 
 The branch `bugfix3` is in the tree of `integrate8`. It has the semcheck errors, the single evaluation of bit-field updates, block-scope tags and enumerators, enumeration types, the 16-bit printf width, and the `long long` and float conversions. A repair pass fixed the problems that the checks found. The [CHANGELOG](../CHANGELOG.md) lists them.
