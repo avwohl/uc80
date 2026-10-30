@@ -602,7 +602,7 @@ Each cell is **code / code plus data**, in bytes, summed over the objects of the
 
 ## Compiler versions
 
-- **uc80**: uc80 0.6.0 (d1d7d1b), um80 0.3.52
+- **uc80**: uc80 0.6.0 (9810f31), um80 0.3.52
 - **sdcc**: SDCC : mcs51/z80/z180/r2k/r2ka/r3ka/r4k/r5k/r6k/sm83/tlcs90/ez80/z80n/r800/ds390/pic16/pic14/TININative/ds400/hc08/s08/stm8/pdk13/pdk14/pdk15/mos6502/mos65c02/f8/f8l TD- 4.6.0 #16555 (Mac OS X ppc)
 - **sdcc-4.4**: SDCC : z80 TD- 4.4.0 #14620 (Mac OS X ppc)
 - **z88dk-zsdcc**: z88dk 2.4, zsdcc 4.5.0 #15242

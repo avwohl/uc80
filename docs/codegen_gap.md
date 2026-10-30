@@ -11,7 +11,7 @@ Evidence rules:
 
 ## Status on 2026-10-30: bug-fix round 4 (branch `bugfix4`)
 
-This round fixes the ISR save of the math library work areas, `memset` to device memory, enumerations with a fixed underlying type, a block typedef that redeclares a typedef name, `#line` and continued lines in the diagnostics, and a `printf` precision above 255. The [CHANGELOG](../CHANGELOG.md) lists them. The code of the bench programs does not change. The binaries of the programs that link the float printer grow by 51 bytes (the `%.300f` fix), and the geometric means against SDCC 4.6.0 move in the fourth digit.
+This round fixes the ISR save of the math library work areas, `memset` to device memory, enumerations with a fixed underlying type, a block typedef that redeclares a typedef name, `#line` and continued lines in the diagnostics, and a `printf` precision above 255. The [CHANGELOG](../CHANGELOG.md) lists them. The code of the bench programs does not change, except one array bound in `rogue36-size` (see the CHANGELOG). The binaries of the programs that link the float printer grow by 51 bytes (the `%.300f` fix), and the geometric means against SDCC 4.6.0 move in the fourth digit.
 
 Numbers from `bench/run.py -c uc80` on 112 programs (the rows of 8 programs differ from the rows of round 3: 7 programs link the float printer, and `adventure-size` has one byte less in the data of the `save` module, see the CHANGELOG):
 
