@@ -582,6 +582,8 @@ qs_swg1:
 	RET
 
 	COMMON	/lc_qsort/
+	PUBLIC	__wa_lc_qsort	;!
+__wa_lc_qsort:	;!
 ; qsort working storage.  qsort saves these QS_NV bytes on its stack on
 ; entry and restores them on exit (see "Reentrancy" above).
 QS_VARS:
@@ -602,30 +604,5 @@ QS_BASE:	DS	2	; first element of the array
 QS_LAST:	DS	2	; last element of the array
 QS_END:
 QS_NV	EQU	QS_END-QS_VARS
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_qsort
-	PUBLIC	__wars_lc_qsort
-__wasv_lc_qsort:
-	POP	IY
-	LD	HL,-32
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,QS_VARS
-	LD	BC,32
-	LDIR
-	JP	(IY)
-__wars_lc_qsort:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,QS_VARS
-	LD	BC,32
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

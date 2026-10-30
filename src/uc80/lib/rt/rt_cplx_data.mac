@@ -4,6 +4,8 @@
 	.Z80
 
 	COMMON	/rt_cplx_data/
+	PUBLIC	__wa_rt_cplx_data	;!
+__wa_rt_cplx_data:	;!
 	PUBLIC	__cplx_l
 __cplx_l:
 	DS	8
@@ -19,30 +21,5 @@ __cplx_tmp:
 	PUBLIC	__cplx_work
 __cplx_work:
 	DS	8
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_rt_cplx_data
-	PUBLIC	__wars_rt_cplx_data
-__wasv_rt_cplx_data:
-	POP	IY
-	LD	HL,-40
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,__cplx_l
-	LD	BC,40
-	LDIR
-	JP	(IY)
-__wars_rt_cplx_data:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,__cplx_l
-	LD	BC,40
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

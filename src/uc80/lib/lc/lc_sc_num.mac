@@ -89,32 +89,9 @@ _scd_bad:
 	RET
 
 	COMMON	/lc_sc_num/
+	PUBLIC	__wa_lc_sc_num	;!
+__wa_lc_sc_num:	;!
 _scm_m:
 	DS	1
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_sc_num
-	PUBLIC	__wars_lc_sc_num
-__wasv_lc_sc_num:
-	POP	IY
-	LD	HL,-1
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,_scm_m
-	LD	BC,1
-	LDIR
-	JP	(IY)
-__wars_lc_sc_num:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,_scm_m
-	LD	BC,1
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

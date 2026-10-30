@@ -798,6 +798,8 @@ _pf_sinf:	DB	'inf'
 _pf_snan:	DB	'nan'
 
 	COMMON	/lc_prt_float/	; BSS: every variable is set before it is read
+	PUBLIC	__wa_lc_prt_float	;!
+__wa_lc_prt_float:	;!
 
 _pf_val:	DS	4	; the float to print
 _pf_m:		DS	3	; its mantissa
@@ -817,30 +819,5 @@ _pf_pad:	DS	2
 _pf_dstart:	DS	1
 _pf_dlen:	DS	1
 _pf_dg:		DS	DIGITS+2
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_prt_float
-	PUBLIC	__wars_lc_prt_float
-__wasv_lc_prt_float:
-	POP	IY
-	LD	HL,-217
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,_pf_val
-	LD	BC,217
-	LDIR
-	JP	(IY)
-__wars_lc_prt_float:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,_pf_val
-	LD	BC,217
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

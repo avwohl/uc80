@@ -548,6 +548,8 @@ _vm_gk:
 	DW	00000H,04000H	; 2.0
 
 	COMMON	/lc_vm/
+	PUBLIC	__wa_lc_vm	;!
+__wa_lc_vm:	;!
 _vm_pool:
 	DS	2
 _vm_x:
@@ -556,30 +558,5 @@ _vm_cnt:
 	DS	1
 _vm_stk:
 	DS	256
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_vm
-	PUBLIC	__wars_lc_vm
-__wasv_lc_vm:
-	POP	IY
-	LD	HL,-263
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,_vm_pool
-	LD	BC,263
-	LDIR
-	JP	(IY)
-__wars_lc_vm:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,_vm_pool
-	LD	BC,263
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

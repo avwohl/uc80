@@ -4,33 +4,10 @@
 	.Z80
 
 	COMMON	/rt_divrem/
+	PUBLIC	__wa_rt_divrem	;!
+__wa_rt_divrem:	;!
 	PUBLIC	__divrem
 __divrem:
 	DS	2
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_rt_divrem
-	PUBLIC	__wars_rt_divrem
-__wasv_rt_divrem:
-	POP	IY
-	LD	HL,-2
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,__divrem
-	LD	BC,2
-	LDIR
-	JP	(IY)
-__wars_rt_divrem:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,__divrem
-	LD	BC,2
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

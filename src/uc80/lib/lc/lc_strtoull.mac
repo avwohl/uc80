@@ -51,33 +51,10 @@ _strtoull:
 
 ; Static storage that starts as zero
 	COMMON	/lc_strtoull/
+	PUBLIC	__wa_lc_strtoull	;!
+__wa_lc_strtoull:	;!
 ; Shared automatic storage
 ??AUTO_strtoull:
 	ds	8
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_strtoull
-	PUBLIC	__wars_lc_strtoull
-__wasv_lc_strtoull:
-	POP	IY
-	LD	HL,-8
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,??AUTO_strtoull
-	LD	BC,8
-	LDIR
-	JP	(IY)
-__wars_lc_strtoull:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,??AUTO_strtoull
-	LD	BC,8
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

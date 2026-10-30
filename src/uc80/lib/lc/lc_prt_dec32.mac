@@ -131,32 +131,9 @@ _div32_10_nosub:
 	RET
 
 	COMMON	/lc_prt_dec32/
+	PUBLIC	__wa_lc_prt_dec32	;!
+__wa_lc_prt_dec32:	;!
 	PUBLIC	_prt32_val
 _prt32_val:	DS	4
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_prt_dec32
-	PUBLIC	__wars_lc_prt_dec32
-__wasv_lc_prt_dec32:
-	POP	IY
-	LD	HL,-4
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,_prt32_val
-	LD	BC,4
-	LDIR
-	JP	(IY)
-__wars_lc_prt_dec32:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,_prt32_val
-	LD	BC,4
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

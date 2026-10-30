@@ -439,33 +439,10 @@ _cbrtl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_cbrt/
+	PUBLIC	__wa_lc_cbrt	;!
+__wa_lc_cbrt:	;!
 ; Shared automatic storage
 ??AUTO_cbrt:
 	ds	56
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_cbrt
-	PUBLIC	__wars_lc_cbrt
-__wasv_lc_cbrt:
-	POP	IY
-	LD	HL,-56
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,??AUTO_cbrt
-	LD	BC,56
-	LDIR
-	JP	(IY)
-__wars_lc_cbrt:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,??AUTO_cbrt
-	LD	BC,56
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

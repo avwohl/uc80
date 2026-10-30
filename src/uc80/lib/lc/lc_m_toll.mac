@@ -225,33 +225,10 @@ __m_toll:
 
 ; Static storage that starts as zero
 	COMMON	/lc_m_toll/
+	PUBLIC	__wa_lc_m_toll	;!
+__wa_lc_m_toll:	;!
 ; Shared automatic storage
 ??AUTO_m_toll:
 	ds	14
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_m_toll
-	PUBLIC	__wars_lc_m_toll
-__wasv_lc_m_toll:
-	POP	IY
-	LD	HL,-14
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,??AUTO_m_toll
-	LD	BC,14
-	LDIR
-	JP	(IY)
-__wars_lc_m_toll:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,??AUTO_m_toll
-	LD	BC,14
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

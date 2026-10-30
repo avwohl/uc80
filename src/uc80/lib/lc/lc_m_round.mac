@@ -398,33 +398,10 @@ __m_round:
 
 ; Static storage that starts as zero
 	COMMON	/lc_m_round/
+	PUBLIC	__wa_lc_m_round	;!
+__wa_lc_m_round:	;!
 ; Shared automatic storage
 ??AUTO_m_round:
 	ds	28
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_m_round
-	PUBLIC	__wars_lc_m_round
-__wasv_lc_m_round:
-	POP	IY
-	LD	HL,-28
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,??AUTO_m_round
-	LD	BC,28
-	LDIR
-	JP	(IY)
-__wars_lc_m_round:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,??AUTO_m_round
-	LD	BC,28
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

@@ -627,6 +627,8 @@ _scn_fc:
 	DB	'feEgGaAF'
 
 	COMMON	/lc_scan_core/
+	PUBLIC	__wa_lc_scan_core	;!
+__wa_lc_scan_core:	;!
 _scn_in:
 	DS	2
 	PUBLIC	__scn_ap
@@ -665,30 +667,5 @@ _scn_any:
 	DS	1
 _scn_lit:
 	DS	1
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_scan_core
-	PUBLIC	__wars_lc_scan_core
-__wasv_lc_scan_core:
-	POP	IY
-	LD	HL,-31
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,_scn_in
-	LD	BC,31
-	LDIR
-	JP	(IY)
-__wars_lc_scan_core:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,_scn_in
-	LD	BC,31
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

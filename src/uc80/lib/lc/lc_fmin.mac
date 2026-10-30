@@ -167,33 +167,10 @@ _fminl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_fmin/
+	PUBLIC	__wa_lc_fmin	;!
+__wa_lc_fmin:	;!
 ; Shared automatic storage
 ??AUTO_fmin:
 	ds	8
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_fmin
-	PUBLIC	__wars_lc_fmin
-__wasv_lc_fmin:
-	POP	IY
-	LD	HL,-8
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,??AUTO_fmin
-	LD	BC,8
-	LDIR
-	JP	(IY)
-__wars_lc_fmin:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,??AUTO_fmin
-	LD	BC,8
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

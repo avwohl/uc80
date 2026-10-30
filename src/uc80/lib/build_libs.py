@@ -161,13 +161,10 @@ def concat_modules(src_dir, output_path, header_comment):
     seen_equs = set()
     for path in mac_files:
         name = os.path.basename(path)
-        # The work-area save helpers (gen_wa_helpers.py) belong to the
-        # library only: an embedded module needs no helper, because the
-        # program text names its work areas.
-        text = re.sub(r"; ---- BEGIN work-area save helpers.*?"
-                      r"; ---- END work-area save helpers ----\n\n", "",
-                      module_text(path), flags=re.S)
-        lines = text.splitlines()
+        # The label of a work area (a line that ends in ;!) and the modules
+        # of the save routines (CONCAT-SKIP) come from gen_wa_helpers.py:
+        # the library holds them, the joined file does not.
+        lines = module_text(path).splitlines()
 
         # CSEG first: the banner must not land in the data segment of the
         # module before (runtime.py would read it as part of that data).

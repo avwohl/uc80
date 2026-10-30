@@ -327,33 +327,10 @@ _fmodl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_fmod/
+	PUBLIC	__wa_lc_fmod	;!
+__wa_lc_fmod:	;!
 ; Shared automatic storage
 ??AUTO_fmod:
 	ds	24
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_fmod
-	PUBLIC	__wars_lc_fmod
-__wasv_lc_fmod:
-	POP	IY
-	LD	HL,-24
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,??AUTO_fmod
-	LD	BC,24
-	LDIR
-	JP	(IY)
-__wars_lc_fmod:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,??AUTO_fmod
-	LD	BC,24
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

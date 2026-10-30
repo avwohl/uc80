@@ -325,6 +325,8 @@ _fa_u5:
 	RET
 
 	COMMON	/rt_fadd/
+	PUBLIC	__wa_rt_fadd	;!
+__wa_rt_fadd:	;!
 __fa1:
 	DS	6
 __fa2:
@@ -335,30 +337,5 @@ __fa_e:
 	DS	2
 __fa_s:
 	DS	1
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_rt_fadd
-	PUBLIC	__wars_rt_fadd
-__wasv_rt_fadd:
-	POP	IY
-	LD	HL,-19
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,__fa1
-	LD	BC,19
-	LDIR
-	JP	(IY)
-__wars_rt_fadd:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,__fa1
-	LD	BC,19
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

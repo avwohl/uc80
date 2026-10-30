@@ -251,6 +251,8 @@ _mph_tp:
 	DB	0FEH,051H,063H,0ABH,0DEH,0BBH,0C5H,061H,0B7H,024H
 
 	COMMON	/lc_m_phred/
+	PUBLIC	__wa_lc_m_phred	;!
+__wa_lc_m_phred:	;!
 _mph_m:
 	DS	3
 _mph_w:
@@ -265,30 +267,5 @@ _mph_c:
 	DS	1
 _mph_df:
 	DS	4
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_m_phred
-	PUBLIC	__wars_lc_m_phred
-__wasv_lc_m_phred:
-	POP	IY
-	LD	HL,-37
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,_mph_m
-	LD	BC,37
-	LDIR
-	JP	(IY)
-__wars_lc_m_phred:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,_mph_m
-	LD	BC,37
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

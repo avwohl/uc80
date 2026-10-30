@@ -162,32 +162,9 @@ __f2ll_ovfn:
 	JR	__f2ll_ovfs
 
 	COMMON	/rt_ftoll/
+	PUBLIC	__wa_rt_ftoll	;!
+__wa_rt_ftoll:	;!
 __f2ll_u:	DS	1
 __f2ll_sgn:	DS	1
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_rt_ftoll
-	PUBLIC	__wars_rt_ftoll
-__wasv_rt_ftoll:
-	POP	IY
-	LD	HL,-2
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,__f2ll_u
-	LD	BC,2
-	LDIR
-	JP	(IY)
-__wars_rt_ftoll:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,__f2ll_u
-	LD	BC,2
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

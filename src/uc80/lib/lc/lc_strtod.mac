@@ -2251,6 +2251,8 @@ _strtod:
 
 ; Static storage that starts as zero
 	COMMON	/lc_strtod/
+	PUBLIC	__wa_lc_strtod	;!
+__wa_lc_strtod:	;!
 _sd_a:
 	ds	78
 _sd_b:
@@ -2266,30 +2268,5 @@ _sd_lz:
 ; Shared automatic storage
 ??AUTO_strtod:
 	ds	103
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_strtod
-	PUBLIC	__wars_lc_strtod
-__wasv_lc_strtod:
-	POP	IY
-	LD	HL,-267
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,_sd_a
-	LD	BC,267
-	LDIR
-	JP	(IY)
-__wars_lc_strtod:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,_sd_a
-	LD	BC,267
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

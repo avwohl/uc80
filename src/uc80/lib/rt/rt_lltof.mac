@@ -156,32 +156,9 @@ __ll2f_pack:
 	RET
 
 	COMMON	/rt_lltof/
+	PUBLIC	__wa_rt_lltof	;!
+__wa_rt_lltof:	;!
 __ll2f_w:	DS	8
 __ll2f_sgn:	DS	1
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_rt_lltof
-	PUBLIC	__wars_rt_lltof
-__wasv_rt_lltof:
-	POP	IY
-	LD	HL,-9
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,__ll2f_w
-	LD	BC,9
-	LDIR
-	JP	(IY)
-__wars_rt_lltof:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,__ll2f_w
-	LD	BC,9
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END

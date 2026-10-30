@@ -67,32 +67,9 @@ _ldiv:
 
 
 	COMMON	/lc_ldiv/
+	PUBLIC	__wa_lc_ldiv	;!
+__wa_lc_ldiv:	;!
 
 _ldiv_result:	DS	8	; ldiv_t: quot (4), rem (4)
-
-; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
-	CSEG
-	PUBLIC	__wasv_lc_ldiv
-	PUBLIC	__wars_lc_ldiv
-__wasv_lc_ldiv:
-	POP	IY
-	LD	HL,-8
-	ADD	HL,SP
-	LD	SP,HL
-	EX	DE,HL
-	LD	HL,_ldiv_result
-	LD	BC,8
-	LDIR
-	JP	(IY)
-__wars_lc_ldiv:
-	POP	IY
-	LD	HL,0
-	ADD	HL,SP
-	LD	DE,_ldiv_result
-	LD	BC,8
-	LDIR
-	LD	SP,HL
-	JP	(IY)
-; ---- END work-area save helpers ----
 
 	END
