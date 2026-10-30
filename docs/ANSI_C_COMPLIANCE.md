@@ -107,7 +107,8 @@ Test suite results: 220/220 c-testsuite, 488/523 SDCC.
 - [x] `<inttypes.h>` - PRId/PRIu/PRIx format macros
 - [x] `<iso646.h>` - alternative operator spellings
 - [x] `<limits.h>` - type limits for Z80 (8/16/16/32-bit)
-- [x] `<stdalign.h>` - alignas/alignof (alignof always 1 on Z80)
+- [x] `<stdalign.h>` - alignas/alignof (alignof always 1 on Z80). The
+  keywords `_Alignof` and `alignof` need no include and give 1.
 - [x] `<stdarg.h>` - va_list, va_start, va_arg, va_end, va_copy
 - [x] `<stdbool.h>` - bool, true, false
 - [x] `<stddef.h>` - NULL, size_t, ptrdiff_t, offsetof
@@ -310,6 +311,16 @@ of a file, then stops with exit status 1.
   a `constexpr` object or a macro. An address (`&x`, an array name, a
   function name), `sizeof` and `offsetof` are constants and are correct.
 
+- **Duplicate label, duplicate case value.** Two labels with one name in
+  one function are an error (`duplicate label 'L'`). Two `case` values that
+  are equal after the constant evaluation are an error too
+  (`duplicate case value 1`). A function with `__label__` declarations is
+  not checked for labels.
+- **Enumerator that is not an integer constant.** `enum { A = 1 / 0 };`,
+  `enum { A = 1.5 };` and `enum { B = g };` (`g` is a variable) are errors.
+  A division by zero in an operand that C does not evaluate (`0 && (1 / 0)`,
+  `1 ? 2 : (3 / 0)`) is correct.
+
 ## Errors that the compiler does not give
 
 These invalid programs compile without an error. The compiler writes
@@ -322,6 +333,7 @@ code for them. Do not depend on the code.
 - A member name that the structure does not have (`s.nosuch`).
 - `return;` in a function that returns `int`.
 - `sizeof` of an incomplete structure.
+  Example: `enum { A = sizeof (struct Undefined) };` gives the value 0.
 - Two declarations of one name in one block.
 
 A typedef name that a block declares again with a different type in an

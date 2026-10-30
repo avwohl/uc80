@@ -21,6 +21,10 @@ Numbers from `bench/run.py -c uc80` on 111 programs, against SDCC 4.6.0:
 - `main` 4702a63: 0.9151, 0.8826, 0.5456, 0.6611, 63 of 78.
 - `fami`: 0.9128, 0.8805, 0.5274, 0.6366, 66 of 78.
 
+## Status on 2026-10-30: repair of integrate11
+
+A repair pass fixed `--int 32` arithmetic of `char` and `short` operands that are `int` expressions, comparisons of `unsigned short` with signed operands, and the integer constant evaluator (casts, `/`, `%`, unsigned conversions, operands that C does not evaluate). It added `_Alignof`, and errors for bad enumerators, duplicate labels and duplicate `case` values. The bench rows did not change. The [CHANGELOG](../CHANGELOG.md) lists two open `uc_core` changes (an enumerator in its own initializer, a block typedef in an enumerator).
+
 ## Status on 2026-10-30: bug round 4 in the family I tree (branch `integrate11`)
 
 The merge of `bugfix4` into `main` 619b110 gives the branch `integrate11`. The [CHANGELOG](../CHANGELOG.md) lists the checks and the gates.
