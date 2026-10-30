@@ -493,6 +493,9 @@ def resolve_found_names(found, paths: list, maps: list) -> None:
     found.naked[:] = [(mapped(n, f), f, l) for n, f, l in found.naked]
     found.naked_protos[:] = [(mapped(n, f), f, l)
                              for n, f, l in found.naked_protos]
+    # a static noreturn function is renamed by the merge: the label of an
+    # extern function of the same name in another file is not noreturn
+    found.noreturn_labels = {mapped(n, f) for n, f in found.noreturn_at}
 
 
 def _roots_from_options(entries: list, pragmas: list,
@@ -813,6 +816,43 @@ def main() -> int:
         action="store_true",
         help="Keep every access through a pointer that holds a constant "
              "address as an access through the pointer (docs/rom_hardware.md)"
+    )
+    parser.add_argument(
+        "--no-discard-comma",
+        action="store_true",
+        help="Compute the right operand of a discarded comma expression "
+             "for its value (docs/peephole_pairs.md)"
+    )
+    parser.add_argument(
+        "--no-peep-pairs",
+        action="store_true",
+        help="Keep the register-pair copies that the pair peephole rules "
+             "remove (docs/peephole_pairs.md)"
+    )
+    parser.add_argument(
+        "--no-slot-fold",
+        action="store_true",
+        help="Keep a local in memory when the code reaches the local with "
+             "LD HL,slot and an operand (HL) and treat every call as "
+             "returning (docs/register_locals.md)"
+    )
+    parser.add_argument(
+        "--no-licm",
+        action="store_true",
+        help="Compute a loop-invariant integer expression in every pass of "
+             "the loop (docs/licm.md)"
+    )
+    parser.add_argument(
+        "--no-range-cmp",
+        action="store_true",
+        help="Use the signed 16-bit compare for a counter that is never "
+             "negative (docs/range_compare.md)"
+    )
+    parser.add_argument(
+        "--no-narrow-index",
+        action="store_true",
+        help="Compute a 32-bit array index in 32 bits although only the low "
+             "16 bits reach the address (docs/narrow_index.md)"
     )
     parser.add_argument(
         "--no-addr-cse",
@@ -1290,6 +1330,13 @@ def main() -> int:
                            dead_store=not args.no_dead_store,
                            blockops=not args.no_blockops)
         gen.direct_pointers = not args.no_direct_pointers
+        gen.enable_discard_comma = not args.no_discard_comma
+        gen.enable_peep_pairs = not args.no_peep_pairs
+        gen.enable_slot_fold = not args.no_slot_fold
+        gen.enable_licm = not args.no_licm
+        gen.enable_range_cmp = not args.no_range_cmp
+        gen.enable_narrow_index = not args.no_narrow_index
+        gen.noreturn_extra = set(sdcc_found.noreturn_labels)
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
                 asts, [str(p) for p in input_paths
@@ -1435,6 +1482,10 @@ def main() -> int:
             if dse.get("stores") or dse.get("decls"):
                 print(f"  Dead locals: {dse.get('decls', 0)} removed, "
                       f"{dse.get('stores', 0)} store(s) dropped")
+            licm = getattr(gen, "licm_stats", None) or {}
+            if licm.get("n"):
+                print(f"  Loop-invariant code motion: {licm['n']} "
+                      f"expression(s) moved out of a loop")
             acse = getattr(gen, "addr_cse_stats", None) or {}
             if acse.get("n") or acse.get("chain"):
                 print(f"  Address CSE: "

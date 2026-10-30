@@ -62,6 +62,32 @@ def address_taken_names(body) -> set:
     return out
 
 
+def noreturn_names(unit) -> set:
+    """Names of the functions that a declaration or a definition marks
+    ``_Noreturn`` (``exit`` and ``abort`` in stdlib.h, and a user function).
+    The names that ``[[noreturn]]`` and ``__attribute__((noreturn))`` give
+    come from the text scan of sdcc_compat (the frontend drops those)."""
+    from .sdcc_compat import _fn_name_token
+    out = set()
+
+    def marked(specs):
+        return any(getattr(getattr(sp, "kw", None), "text", "") == "_Noreturn"
+                   for sp in specs or ())
+
+    for item in unit.items:
+        if isinstance(item, ast.FunctionDef):
+            if marked(item.decl_specs):
+                tok = _fn_name_token(item.declarator)
+                if tok is not None:
+                    out.add(tok.text)
+        elif isinstance(item, ast.Declaration) and marked(item.decl_specs):
+            for d in item.declarators or ():
+                tok = _fn_name_token(getattr(d, "declarator", None))
+                if tok is not None:
+                    out.add(tok.text)
+    return out
+
+
 class RegLocalsMixin:
     """State and hooks for ``reglocals`` (see gen_function)."""
 
@@ -69,6 +95,8 @@ class RegLocalsMixin:
     _rl_fn_ok = False
     _rl_vars: list = []
     _rl_skip: set = frozenset()
+    _rl_noret: set = frozenset()
+    _rl_noret_labels = None
 
     # -- program level -----------------------------------------------------
 
@@ -80,6 +108,9 @@ class RegLocalsMixin:
         self._rl_iy_clean: set = set()
         self._rl_iy_on = not __import__("os").environ.get("UC80_NO_IY")
         self._rl_reads_cache = None
+        self._rl_noret_labels = None
+        self._rl_noret = (noreturn_names(unit) | set(self.noreturn_extra)
+                          if self.enable_slot_fold else set())
         scan = getattr(self, "_regcc_scan", None)
         if (not enabled or not reglocals.enabled() or scan is None
                 or not self.register_cc or not self.whole_program
@@ -158,7 +189,11 @@ class RegLocalsMixin:
                 return reglocals.helper_writes(t)
             return reglocals.ALL7
 
-        return reglocals.Env(callee_reads, callee_writes, callee_est)
+        if self._rl_noret_labels is None:
+            self._rl_noret_labels = {self._rl_label(nm) for nm in self._rl_noret}
+        noret = self._rl_noret_labels
+        return reglocals.Env(callee_reads, callee_writes, callee_est,
+                             noreturn=lambda t: t in noret)
 
     # -- function level ------------------------------------------------------
 
@@ -212,7 +247,9 @@ class RegLocalsMixin:
         if any(_SETJMP.search(ln) for ln in region if ln.startswith("\tcall")):
             return
         env = dataclasses.replace(self._rl_env(),
-                                  exit_live=self._rl_exit_live())
+                                  exit_live=self._rl_exit_live(),
+                                  peep_pairs=self.enable_peep_pairs,
+                                  slot_fold=self.enable_slot_fold)
         res = reglocals.allocate(region, self._rl_vars, env,
                                  frame_mode, self._rl_wrap_id)
         base_lines = res.lines if res is not None else list(region)

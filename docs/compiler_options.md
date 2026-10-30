@@ -40,6 +40,10 @@ The dead-local pass removes a local that no expression reads, with all its store
 
 The inline block-operation pass changes a call of `memset` or `memcpy` with a constant size (1 to 65535) into `LDIR` or `LDI` code, when the program does not use the result and no argument is volatile. `--no-blockops` keeps the library calls. [blockops.md](blockops.md) lists the rules and the switches.
 
+Three switches belong to family I step 1. `--no-discard-comma` computes the right operand of a comma expression for its value, also when no code uses the value. `--no-peep-pairs` keeps the copies between BC, DE and HL that the pair rules remove. [peephole_pairs.md](peephole_pairs.md) lists the rules. `--no-slot-fold` keeps a local in memory when the code reaches the local with `ld HL,slot` and an operation on `(HL)`, and treats each call as a call that returns. [register_locals.md](register_locals.md) describes both changes.
+
+Three switches belong to family I step 2. `--no-licm` computes a loop-invariant integer expression in each pass of the loop ([licm.md](licm.md)). `--no-range-cmp` uses the signed 16-bit compare for a counter that is never negative ([range_compare.md](range_compare.md)). `--no-narrow-index` computes a 32-bit array index in 32 bits, although only the low 16 bits reach the address ([narrow_index.md](narrow_index.md)).
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or

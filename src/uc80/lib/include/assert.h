@@ -10,7 +10,7 @@
 #else
 
 /* Assertions enabled */
-void _assert_fail(const char *file, int line);
+_Noreturn void _assert_fail(const char *file, int line);
 
 #define assert(expr) \
     ((expr) ? (void)0 : _assert_fail(__FILE__, __LINE__))

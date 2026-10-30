@@ -885,11 +885,13 @@ def run_com(com: Path, timeout=60):
 
 LL_VARIANTS = [[], ["--no-inlining"], ["--no-inlining"], ["-O0"],
                ["--no-inlining", "--no-shared-storage"],
-               ["--no-inlining", "--isr-safe"]]
+               ["--no-inlining", "--isr-safe"],
+               ["--no-licm", "--no-range-cmp", "--no-narrow-index"]]
 VARIANTS = [[], [], ["--no-inlining"], ["--no-shared-storage"],
             ["--no-inlining"], ["-O0"], ["--no-const-propagation"],
             ["--no-inlining", "--no-shared-storage"], ["--isr-safe"],
-            ["--no-inlining", "-O0"], ["--no-ast-optimize"]]
+            ["--no-inlining", "-O0"], ["--no-ast-optimize"],
+            ["--no-licm", "--no-range-cmp", "--no-narrow-index"]]
 
 
 def uc80_build(src: Path, work: Path, flags):

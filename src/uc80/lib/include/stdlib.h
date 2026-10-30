@@ -20,8 +20,8 @@ typedef unsigned short size_t;
 #endif
 
 /* Program termination */
-void exit(int status);
-void abort(void);
+_Noreturn void exit(int status);
+_Noreturn void abort(void);
 int atexit(void (*func)(void));
 /* C99, C11: _Exit and quick_exit run no atexit function and flush no file */
 _Noreturn void _Exit(int status);

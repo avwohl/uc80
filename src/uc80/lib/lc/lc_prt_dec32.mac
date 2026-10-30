@@ -79,51 +79,30 @@ _prt32_raw:
 ; Returns remainder in A, quotient stored back in _prt32_val
 	PUBLIC	_div32_10
 _div32_10:
+	; Value in DE:HL (DE = high word), A = running remainder.  The 32 bit
+	; value stays in registers; only the start and end touch _prt32_val.
 	PUSH	BC
 	PUSH	DE
 	PUSH	HL
 
-	LD	DE,0		; DE = running remainder
+	LD	HL,(_prt32_val)
+	LD	DE,(_prt32_val+2)
 	LD	B,32
-
+	XOR	A
 _div32_10_loop:
-	EX	DE,HL
 	ADD	HL,HL
-	EX	DE,HL
-
-	LD	HL,(_prt32_val)
-	ADD	HL,HL
-	LD	(_prt32_val),HL
-	LD	HL,(_prt32_val+2)
-	ADC	HL,HL
-	LD	(_prt32_val+2),HL
-	JR	NC,_div32_10_nc1
-	INC	DE
-_div32_10_nc1:
-
-	LD	A,D
-	OR	A
-	JR	NZ,_div32_10_sub
-	LD	A,E
+	RL	E
+	RL	D
+	RLA			; remainder is at most 18, so A cannot overflow
 	CP	10
-	JR	C,_div32_10_nosub
-
-_div32_10_sub:
-	LD	A,E
+	JR	C,_div32_10_ns
 	SUB	10
-	LD	E,A
-	LD	A,D
-	SBC	A,0
-	LD	D,A
-
-	LD	HL,(_prt32_val)
-	INC	HL
-	LD	(_prt32_val),HL
-
-_div32_10_nosub:
+	INC	L		; quotient bit (bit 0 of HL is free after ADD HL,HL)
+_div32_10_ns:
 	DJNZ	_div32_10_loop
 
-	LD	A,E
+	LD	(_prt32_val),HL
+	LD	(_prt32_val+2),DE
 
 	POP	HL
 	POP	DE

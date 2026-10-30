@@ -30,6 +30,9 @@ from . import regcc
 from . import srcmap
 from .reglocals_gen import RegLocalsMixin
 from .addrcse import AddrCseMixin
+from .licm import LicmMixin
+from .ranges import RangeMixin
+from .narrow import NarrowMixin
 from .deadstore import DeadStoreMixin
 from .blockops import BlockOpsMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
@@ -3866,7 +3869,7 @@ _MEMO_MISS = object()
 
 
 
-class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
+class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin, RangeMixin, NarrowMixin,
                     DeadStoreMixin, BlockOpsMixin):
     """Z80 code generator."""
 
@@ -3902,6 +3905,18 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         self.direct_pointer_accesses = 0
         self.enable_blockops = blockops
         self.enable_addr_cse = addr_cse
+        # Family I step 1 switches (docs/peephole_pairs.md,
+        # docs/register_locals.md); main.py sets them from the options.
+        self.enable_discard_comma = True
+        self.enable_peep_pairs = True
+        self.enable_slot_fold = True
+        # Family I step 2 switches (docs/licm.md, docs/range_compare.md).
+        self.enable_licm = True
+        self.enable_range_cmp = True
+        self.enable_narrow_index = True
+        # names that [[noreturn]] or __attribute__((noreturn)) mark (found
+        # by the text scan of sdcc_compat)
+        self.noreturn_extra: set = set()
         self.enable_chain_store = chain_store
         self.enable_dead_store = dead_store
         self.enable_register_locals = register_locals
@@ -4808,6 +4823,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         # AST rewrite, so it runs before anything sizes a frame.
         self.dead_store_stats = self._dse_run(unit)
         self.addr_cse_stats = self._acse_run(unit)
+        # Index narrowing (docs/narrow_index.md) goes first: a 16-bit
+        # expression is cheaper to move out of a loop.
+        self.narrow_stats = self._narrow_run(unit)
+        # Loop-invariant code motion (docs/licm.md).
+        self.licm_stats = self._licm_run(unit)
         # Convention selection.  It has to run before the first call is
         # generated (a forward call needs the callee's plan) and before the
         # shared storage is sized (a register parameter is stored on entry,
@@ -6993,6 +7013,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         self.ctx.regs.reset()
         type_scope = self._type_scope_snapshot()
         self._register_body_types(func.body)
+        self._range_facts(func)
         self._current_sret_size = self._struct_return_size(return_type)
 
         # --no-shared-storage has to reach here too: can_use_shared_storage
@@ -9893,6 +9914,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
 
         self.ctx.break_labels.append(end_label)
         self.ctx.continue_labels.append(update_label)
+        # The counter of the loop has a known range inside the loop
+        # (docs/range_compare.md).
+        saved_ranges = self._range_scoped
+        loop_ranges = self._range_loop_facts(stmt)
 
         # Init: auto-AST wraps a bare for-init expression as
         # ExpressionStmt(expr=...). gen_statement handles that uniformly.
@@ -9906,6 +9931,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
                 with self._vol_region(stmt.init):
                     self.gen_expr_discard(stmt.init)
 
+        # The range holds after the init clause has stored the counter, not
+        # inside the init clause (which can read the old value).
+        if loop_ranges:
+            self._range_scoped = {**saved_ranges, **loop_ranges}
         self.ctx.emit_label(start_label)
 
         # Condition
@@ -9925,6 +9954,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         self.ctx.emit_instr("jp", start_label)
         self.ctx.emit_label(end_label)
 
+        self._range_scoped = saved_ranges
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
 
@@ -10488,7 +10518,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
             # ``BinaryOp(",", left, right)`` here. Evaluate left for its
             # side effects, then right for its value.
             self.gen_expr_discard(expr.left)
-            self.gen_expr(expr.right, force_long)
+            if expr is self._discard_expr and self.enable_discard_comma:
+                self.gen_expr_discard(expr.right)
+            else:
+                self.gen_expr(expr.right, force_long)
 
     def gen_stmt_expr(self, expr: ast.StmtExpr) -> None:
         self._stmt_expr_seen = True
@@ -10811,7 +10844,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         # ((ap += N), (ap - N)) in stdarg.h.
         if op == ",":
             self.gen_expr_discard(expr.left)
-            self.gen_expr(expr.right)
+            if expr is self._discard_expr and self.enable_discard_comma:
+                self.gen_expr_discard(expr.right)
+            else:
+                self.gen_expr(expr.right)
             return
 
         # Check if this is a complex operation
@@ -14220,7 +14256,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
                             self.ctx.emit_instr("push", "HL")
                             stack_size += 4
                         elif self._gen_byte_arg(expr, arg, param_type):
-                            self.ctx.emit_instr("push", "HL")
+                            # H is not a value of the program: the callee
+                            # never reads the high byte.  The tag lets the
+                            # register-locals pass see that H is dead.
+                            self.ctx.lines.append("\tpush\tHL\t; HJUNK")
                             stack_size += 2
                         else:
                             self.gen_expr(arg)
@@ -20853,7 +20892,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         0x7000 < 0x9000)."""
         return (self._is_promoted_unsigned(left)
                 or self._is_promoted_unsigned(right)
-                or self._is_ptr_expr(left) or self._is_ptr_expr(right))
+                or self._is_ptr_expr(left) or self._is_ptr_expr(right)
+                or self._both_nonneg(left, right))
 
     def _cmp_const(self, expr) -> int | None:
         """The value of a constant comparison operand (an integer

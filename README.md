@@ -67,6 +67,10 @@ z88dk output. uc80 passes 219 of the 220 c-testsuite tests. Numbers are in
 - [Address CSE](https://github.com/avwohl/uc80/blob/main/docs/addr_cse.md) - the compiler computes a repeated array element address once, `a = b = K` stores K to each target, `--no-addr-cse`, `--no-chain-store`
 - [Dead locals](https://github.com/avwohl/uc80/blob/main/docs/dead_store.md) - the compiler removes a local that nothing reads, and a store that a later store overwrites, `--no-dead-store`
 - [Inline block operations](https://github.com/avwohl/uc80/blob/main/docs/blockops.md) - `memset` and `memcpy` with a constant size become `LDIR` or `LDI` code, `--no-blockops`
+- [Pair peephole rules](https://github.com/avwohl/uc80/blob/main/docs/peephole_pairs.md) - a discarded comma computes no value, copies between BC, DE and HL go away, `--no-discard-comma`, `--no-peep-pairs`
+- [Loop-invariant code motion](https://github.com/avwohl/uc80/blob/main/docs/licm.md) - an integer expression that a loop does not change is computed before the loop, `--no-licm`
+- [Value ranges](https://github.com/avwohl/uc80/blob/main/docs/range_compare.md) - a counter in 0 to 32767 uses the short unsigned compare, `--no-range-cmp`
+- [Index narrowing](https://github.com/avwohl/uc80/blob/main/docs/narrow_index.md) - a 32-bit array index is computed in 16 bits, `--no-narrow-index`
 - [Inline assembly](https://github.com/avwohl/uc80/blob/main/docs/inline_assembly.md) - `asm("...")` rules and limits
 - [Volatile objects](https://github.com/avwohl/uc80/blob/main/docs/volatile.md) - every volatile access happens as written, and how each pass keeps that
 - [Binary size and test results](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md) - speed and size against 8 compilers, and external test suite pass rates

@@ -115,18 +115,42 @@ The pass tries each of the three heaviest pointers in IY. For each pointer, it r
 - `UC80_IY_ONLY=f,g` allows IY only in the functions `f` and `g`. Use this switch to find the function of a wrong answer.
 - `UC80_RL_DEBUG=1` prints the cost of each IY candidate and the cost without IY.
 
+## Slot folding
+
+The code generator reaches a byte local in shared storage in two steps: `ld HL,??AUTO+k`, then one operation on `(HL)`. The operation has one of these forms: `inc`, `dec`, an ALU operation (`add A`, `adc A`, `sub`, `sbc A`, `and`, `or`, `xor`, `cp`), `bit`, `set`, `res`, a shift, `ld A,(HL)`, `ld (HL),A` or `ld (HL),n`. Before family I the pass kept such a local in memory ("address of a slot" in the debug log).
+
+Now the pass joins the two instructions into one node when HL is dead after the operation. The node has the operand `(??AUTO+k)`, as if the code generator had made a direct access to the slot. The rewrite then turns the node into the same operation on the register (`inc C`, `cp D`). A joined node of a local that stays in memory prints as the two original lines. The cost model counts the node as one access. The weight is the loop depth, and the cost is the T-states of both instructions.
+
+The push of a char argument (`ld L,A / push HL`) does not read H. The code generator marks that push with the comment `; HJUNK`. The liveness analysis then does not count the read of H. Without the mark, the junk byte in H keeps HL live. The join then does not happen.
+
+`--no-slot-fold` switches off the join. The option also switches off the handling of calls that do not return.
+
+## Calls that do not return
+
+A call to a function that never returns has no successor in the flow graph. The list holds `exit`, `abort`, `_Exit`, `quick_exit` and `_assert_fail`. The headers stdlib.h and assert.h mark them `_Noreturn`. The list holds each program function that has `_Noreturn`, `[[noreturn]]` or `__attribute__((noreturn))` too.
+
+The frontend drops the last two spellings. So `sdcc_compat._noreturn_pass` scans the source text and records the names. The scan blanks each preprocessor line and ignores a typedef and a function pointer. A name that the scan misses only costs speed. A wrong name makes the pass treat a call that returns as a call that does not return. So the scan does not guess.
+
+The scan records the file of each name. The merge renames a static function, so the pass maps the name through the rename table of its file. A static `die` that never returns does not mark an extern `die` of another file. A declaration with more than one declarator (`void g(void), f(void) __attribute__((noreturn));`) records no name.
+
+No local is live after such a call. An error path such as `printf("..."); exit(1);` then needs no push and pop of BC and DE.
+
+The pass also deletes the instructions between the call and the next label (the cleanup of the arguments), because no instruction reaches them. A function that has a `jr $+n` jump keeps these instructions, because the jump can land on one of them. `setjmp` is not on the list, and `longjmp` is not on the list.
+
+The `chkmem` function of the `davidly-tm` benchmark shows the effect. The error path kept the loop counter and the pointer out of the registers. T-states: 137,785,507 to 106,905,507.
+
 ## Tuning
 
 The cost model has a few constants in `reglocals.py` and `iyptr.py`. An environment variable overrides each constant. The variables are for experiments.
 
 The measurement uses 32 programs of the size run. The set has the four `snd-*` kernels, `sieve`, `queens`, `tak`, five `stanford-*` programs, `davidly-ttt`, `dhrystone21`, `coremark-unofficial`, `micro`, `lz4`, `crc`, `fannkuch`, `binary-trees`, `fasta` and others. The total image of the default build is 156,553 bytes.
 
-Each row changes one constant and keeps the others. The columns show the change of the total image, the number of programs with a smaller or bigger image, the number of programs with more or fewer T-states, and the change of the geometric mean of the T-states. A positive change is worse.
+Each row changes one constant and keeps the others. The columns show these values. First, the change of the total image. Second, the number of programs with a smaller or bigger image. Third, the number of programs with more or fewer T-states. Fourth, the change of the geometric mean of the T-states. A positive change is worse.
 
 
 The first five rows give the value of each part of the pass. The rename of scratch values is the largest (1.7% of the T-states). The IY pass gives 0.8%. A second local in BC or DE gives 0.24%. The prune of the wraps gives 0.04% (BC and DE) and 0.09% (IY).
 
-The other rows show that the constants of step 1 are near the best value. A smaller weight of one loop level (4) and a weight of a byte of 12 give a smaller image, but they make some programs slower. An IY margin of 0 does the same. The defaults stay.
+The other rows show that the constants of step 1 are near the best value. A smaller weight of one loop level (4) and a weight of a byte of 12 give a smaller image. They also make some programs slower. An IY margin of 0 does the same. The defaults stay.
 
 One change is better in every column: the lightest candidate goes from 2 to 1. Six programs get smaller, six get faster, and no program gets worse. The value 0 gives the same result. The new default is 1.
 
@@ -144,7 +168,7 @@ One change is better in every column: the lightest candidate goes from 2 to 1. S
 
 ## Tests
 
-`tests/test_register_locals.py` checks the shape of the code and the answers of the answer programs, with and without the pass, in both storage modes. Two programs are regression tests for ccfuzz seeds 40548 (parameter 1 in DE) and 40278 (the high word of a long result in DE). `bench/ccfuzz.py` and `bench/difftest.py` run random programs.
+`tests/test_regl_slotops.py` and `tests/test_regl_noreturn.py` run the programs of the two sections above with the options on and off. `tests/test_register_locals.py` checks the shape of the code and the answers of the answer programs, with and without the pass, in both storage modes. Two programs are regression tests for ccfuzz seeds 40548 (parameter 1 in DE) and 40278 (the high word of a long result in DE). `bench/ccfuzz.py` and `bench/difftest.py` run random programs.
 
 ## Known limits
 

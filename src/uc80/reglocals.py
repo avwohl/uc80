@@ -104,7 +104,7 @@ class Node:
 
     __slots__ = ("kind", "text", "op", "ops", "label", "rd", "wr", "flow",
                  "target", "size", "cond", "vr", "vw", "cpm", "xr", "w",
-                 "pro", "wrap", "tight")
+                 "pro", "wrap", "tight", "fold", "noret")
 
     def __init__(self, kind: str, text: str = ""):
         self.kind = kind          # ins label other data marker
@@ -126,6 +126,8 @@ class Node:
         self.pro = False          # belongs to the prologue
         self.tight = False        # liveness treats the swap as a permutation
         self.wrap = 0
+        self.fold = None          # (ld HL,slot node, (HL) node) of a folded pair
+        self.noret = False        # a call that never returns
 
 
 @dataclass
@@ -141,6 +143,10 @@ class Env:
     callee_writes_est: Callable[[str], int] = lambda name: ALL7
     # the bytes the function leaves live at its return (a result)
     exit_live: int = RET_LIVE
+    # family I step 1 (docs/peephole_pairs.md, docs/register_locals.md)
+    peep_pairs: bool = True     # the rules of pair_rules, R3 for k > 1
+    slot_fold: bool = True      # fold ld HL,slot + (HL) operand; noreturn
+    noreturn: Callable[[str], bool] = lambda name: False
 
 
 _NUM = re.compile(r"^[-+]?\d+$")
@@ -177,6 +183,8 @@ def _fill_effect(n: Node, env: Env, lenient: bool = False) -> None:
         tgt = eff.target
         rd = env.callee_reads(tgt) if tgt else ALL7
         wr = env.callee_writes(tgt) if tgt else ALL7
+        # exit, abort, a _Noreturn function: nothing runs after the call
+        n.noret = bool(tgt and env.slot_fold and env.noreturn(tgt))
     if n.op == "exx":
         raise Bail("exx")
     if n.op in ("ldi", "ldd"):
@@ -263,6 +271,8 @@ def parse(lines: list[str], env: Env) -> list[Node]:
             nodes.append(nd)
             continue
         _fill_effect(nd, env)
+        if nd.op == "push" and "HJUNK" in line and nd.ops == ["HL"]:
+            nd.rd &= ~H      # the push of a char argument: H is junk
         nodes.append(nd)
     if len(nodes) > MAX_NODES:
         raise Bail("function too long")
@@ -274,7 +284,112 @@ def _retext(n: Node) -> None:
 
 
 def render(nodes: list[Node]) -> list[str]:
-    return [n.text for n in nodes if n.kind != "marker" and not n.pro]
+    out: list[str] = []
+    for n in nodes:
+        if n.kind == "marker" or n.pro:
+            continue
+        if n.fold:      # a folded pair that stayed in memory: both lines
+            out.extend(f.text for f in n.fold)
+        else:
+            out.append(n.text)
+    return out
+
+
+_HL_MEM = re.compile(r"^\(HL\)$", re.IGNORECASE)
+_FOLD_ALU = ("add", "adc", "sub", "sbc", "and", "or", "xor", "cp")
+_FOLD_NOREG = ("inc", "dec", "bit", "set", "res", "rlc", "rrc", "rl", "rr",
+               "sla", "sra", "srl", "sll")
+
+
+def _foldable(n1: Node, n2: Node) -> bool:
+    """n1 is ``ld HL,??AUTO+k`` and n2 one byte operation on ``(HL)`` that
+    needs no register of BC and DE (the folded form is then never
+    renamed)."""
+    if not (n1.kind == "ins" and n1.op == "ld" and len(n1.ops) == 2
+            and n1.ops[0].upper() == "HL" and _AUTO_IMM.match(n1.ops[1])):
+        return False
+    if not (n2.kind == "ins" and n2.flow == "next" and not n2.pro
+            and not n1.pro):
+        return False
+    ops = [o for o in n2.ops]
+    mem = [k for k, o in enumerate(ops) if _HL_MEM.match(o)]
+    if len(mem) != 1:
+        return False
+    k = mem[0]
+    if n2.op in _FOLD_NOREG:
+        return k == len(ops) - 1 and (n2.op not in ("bit", "set", "res")
+                                      or (len(ops) == 2 and k == 1))
+    if n2.op in _FOLD_ALU:
+        return k == len(ops) - 1
+    if n2.op == "ld" and len(ops) == 2:
+        if k == 1:
+            return ops[0].upper() == "A"
+        return ops[1].upper() == "A" or bool(_IMM_OPERAND.match(ops[1]))
+    return False
+
+
+_IMM_OPERAND = re.compile(r"^[-+]?(\d+|[0-9][0-9A-Fa-f]*[hH]|0[xX][0-9A-Fa-f]+)$")
+
+
+def strip_after_noreturn(nodes: list[Node]) -> list[Node]:
+    """Delete the instructions that follow a call that never returns, up to
+    the next label.  Nothing reaches them (the cleanup ``pop DE`` or the
+    stack adjustment after ``call _exit``).  Left in the text, such an
+    instruction would count as a clobber of a local that is live at the
+    label after it."""
+    # a ``jr $+5`` can land on an instruction without a label: no deletion
+    if any(nd.kind == "ins" and (nd.target or "").startswith("$")
+           for nd in nodes):
+        return nodes
+    out: list[Node] = []
+    dead = False
+    for nd in nodes:
+        if nd.kind == "ins" and dead:
+            continue
+        if nd.kind in ("label", "data"):
+            dead = False
+        out.append(nd)
+        if nd.kind == "ins" and nd.flow == "call" and nd.noret:
+            dead = True
+    return out
+
+
+def fold_slot_ops(nodes: list[Node], env: Env) -> list[Node]:
+    """``ld HL,??AUTO+k`` followed by one byte operation on ``(HL)`` (inc,
+    dec, an ALU operation, bit, set, res, a shift, a store of A or of an
+    immediate, a load into A) becomes one node with the operand
+    ``(??AUTO+k)``, when HL is dead after the operation (the push of a char
+    argument, tagged HJUNK by the code generator, does not read H).  The
+    rewrite then
+    treats the node like a direct access to the slot.  A node that stays in
+    memory prints as the two original lines.  The new node reads what the
+    operation reads (A), and writes HL as the pair did."""
+    if not env.slot_fold:
+        return nodes
+    succ = build_cfg(nodes)
+    live = liveness(nodes, succ, env.exit_live)
+    out: list[Node] = []
+    i = 0
+    n = len(nodes)
+    while i < n:
+        if i + 1 < n and _foldable(nodes[i], nodes[i + 1]) and not (
+                live_out_of(succ, live, i + 1) & (H | L)):
+            n1, n2 = nodes[i], nodes[i + 1]
+            slot = "(??AUTO" + (_AUTO_IMM.match(n1.ops[1]).group(0)[6:] or "+0") + ")"
+            f = Node("ins", n2.text)
+            f.op = n2.op
+            f.ops = [slot if _HL_MEM.match(o) else o for o in n2.ops]
+            f.flow = "next"
+            f.size = n1.size + n2.size
+            f.rd = (n2.rd & ~(H | L)) | n1.rd
+            f.wr = n1.wr | n2.wr | H | L
+            f.fold = (n1, n2)
+            out.append(f)
+            i += 2
+            continue
+        out.append(nodes[i])
+        i += 1
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +451,9 @@ def build_cfg(nodes: list[Node]) -> list[list[int]]:
             succ.append([nxt])
             continue
         f = nd.flow
-        if f in ("next", "call"):
+        if f == "call" and nd.noret:
+            succ.append([])          # the callee never returns
+        elif f in ("next", "call"):
             succ.append([nxt])
         elif f in ("jump", "branch"):
             tgt = nd.target or ""
@@ -1231,14 +1348,18 @@ def peephole(nodes: list[Node], config: list[Var], env: Env) -> list[Node]:
     pair.  Each rule needs the register that the old code used as a
     scratch to be dead afterwards."""
     for _ in range(3):
+        changed = False
+        if env.peep_pairs:
+            nodes, changed = drop_known_copies(nodes)
         succ = build_cfg(nodes)
         live = liveness(nodes, succ, env.exit_live)
         out: list[Node] = []
         i = 0
         n = len(nodes)
-        changed = False
         while i < n:
             r = _try_rules(nodes, succ, live, config, env, i)
+            if r is None and env.peep_pairs:
+                r = _try_pair_rules(nodes, succ, live, env, i)
             if r is None:
                 out.append(nodes[i])
                 i += 1
@@ -1270,18 +1391,26 @@ def _try_rules(nodes, succ, live, config, env, i):
         R = v.reg
         rhi, rlo = HI_NAME[R], LO_NAME[R]
         mask = PAIR_MASK[R]
-        # ---- R3: inc / dec of the local through HL
+        # ---- R3: inc / dec of the local through HL (k of them with
+        # peep_pairs: ld H,B / ld L,C / inc HL x k / ld B,H / ld C,L)
         w = _window(nodes, i, 5)
         if w:
-            c0, c1, c2, c3, c4 = w
-            p0, p1 = _ld_rr(c0), _ld_rr(c1)
-            if (p0 and p1 and {p0, p1} == {("H", rhi), ("L", rlo)}
-                    and _plain(c2) and c2.op in ("inc", "dec")
-                    and [o.upper() for o in c2.ops] == ["HL"]):
-                q3, q4 = _ld_rr(c3), _ld_rr(c4)
-                if (q3 and q4 and {q3, q4} == {(rhi, "H"), (rlo, "L")}
-                        and not (live_out_of(succ, live, i + 4) & (H | L))):
-                    return 5, [make_ins(c2.op, R, vr=mask, vw=mask, env=env)]
+            p0, p1 = _ld_rr(w[0]), _ld_rr(w[1])
+            if p0 and p1 and {p0, p1} == {("H", rhi), ("L", rlo)}:
+                kmax = 4 if env.peep_pairs else 1
+                k = 0
+                while (k < kmax and i + 2 + k < len(nodes)
+                       and _plain(nodes[i + 2 + k])
+                       and nodes[i + 2 + k].op in ("inc", "dec")
+                       and [o.upper() for o in nodes[i + 2 + k].ops] == ["HL"]):
+                    k += 1
+                if k and i + 4 + k <= len(nodes):
+                    q3, q4 = _ld_rr(nodes[i + 2 + k]), _ld_rr(nodes[i + 3 + k])
+                    if (q3 and q4 and {q3, q4} == {(rhi, "H"), (rlo, "L")}
+                            and not (live_out_of(succ, live, i + 3 + k) & (H | L))):
+                        return 4 + k, [make_ins(nodes[i + 2 + j].op, R,
+                                                vr=mask, vw=mask, env=env)
+                                       for j in range(k)]
         # ---- R1, R2: the local as the operand of an add or a subtract
         w = _window(nodes, i, 4)
         if w:
@@ -1326,6 +1455,162 @@ def _try_rules(nodes, succ, live, config, env, i):
                             and [o.upper() for o in c2.ops] == ["HL", rr]
                             and not (live_out_of(succ, live, i + 2) & PAIR_MASK[rr])):
                         return 3, [make_ins(c2.op, "HL", R, vr=mask, env=env)]
+    return None
+
+
+_PAIRS3 = {"BC": ("B", "C"), "DE": ("D", "E"), "HL": ("H", "L")}
+_PAIR3_MASK = {"BC": B | C, "DE": D | E, "HL": H | L}
+
+
+def _pair_copy(nodes, i):
+    """(dst, src) pair names when nodes i and i+1 copy one pair to another
+    through two ``ld r,r'`` (in either order), else None."""
+    if i + 1 >= len(nodes):
+        return None
+    if nodes[i].pro or nodes[i + 1].pro:
+        return None     # prologue moves stand before the frame code
+    a, b = _ld_rr(nodes[i]), _ld_rr(nodes[i + 1])
+    if not a or not b:
+        return None
+    for dst, (dh, dl) in _PAIRS3.items():
+        for src, (sh, sl) in _PAIRS3.items():
+            if dst != src and {a, b} == {(dh, sh), (dl, sl)}:
+                return dst, src
+    return None
+
+
+def drop_known_copies(nodes: list[Node]):
+    """Delete ``ld H,B / ld L,C`` when HL already equals BC (an earlier copy
+    in the same straight-line run, and none of the six bytes written
+    since).  Returns (nodes, changed).  No liveness is needed: the copy
+    changes no register."""
+    eq: list[tuple[str, str]] = []
+    out: list[Node] = []
+    i = 0
+    changed = False
+    n = len(nodes)
+    while i < n:
+        nd = nodes[i]
+        if nd.kind == "marker":
+            out.append(nd)
+            i += 1
+            continue
+        if nd.kind != "ins" or nd.flow != "next" or nd.pro:
+            eq = []
+            out.append(nd)
+            i += 1
+            continue
+        pc = _pair_copy(nodes, i)
+        if pc:
+            dst, src = pc
+            if any({dst, src} == {a, b} for a, b in eq):
+                i += 2
+                changed = True
+                continue
+            # the copy writes dst: forget what held dst, then record it
+            m = _PAIR3_MASK[dst]
+            eq = [(a, b) for a, b in eq if not (_PAIR3_MASK[a] | _PAIR3_MASK[b]) & m]
+            eq.append((dst, src))
+            out.extend(nodes[i:i + 2])
+            i += 2
+            continue
+        w = nd.wr
+        if _is_swap(nd):
+            w |= D | E | H | L
+        if w:
+            eq = [(a, b) for a, b in eq if not (_PAIR3_MASK[a] | _PAIR3_MASK[b]) & w]
+        out.append(nd)
+        i += 1
+    return out, changed
+
+
+def _flags_dead(nodes, j: int) -> bool:
+    """True when no instruction after node j reads a flag before every flag
+    is written again.  A branch, a call, a return or a label stops the
+    scan with False."""
+    pending = set(_FLAGS)
+    for k in range(j + 1, min(len(nodes), j + 16)):
+        nd = nodes[k]
+        if nd.kind == "marker":
+            continue
+        if nd.kind != "ins" or nd.flow != "next":
+            return False
+        eff = _effect(nd.op, ",".join(nd.ops))
+        if eff.reads & pending:
+            return False
+        pending -= eff.writes
+        if not pending:
+            return True
+    return False
+
+
+_FLAGS = frozenset(("fc", "fz", "fs", "fp", "fh", "fn"))
+
+
+def _try_pair_rules(nodes, succ, live, env, i):
+    """Rules that need no register local (docs/peephole_pairs.md)."""
+    nd0 = nodes[i]
+    if nd0.kind != "ins" or nd0.pro:
+        return None
+    # ---- (a) ld H,B / ld L,C / ld A,(HL)  ->  ld A,(BC)   (HL dead)
+    #          ld H,B / ld L,C / ld (HL),A  ->  ld (BC),A   (HL dead)
+    pc = _pair_copy(nodes, i)
+    if pc and pc[0] == "HL" and pc[1] in ("BC", "DE") and i + 2 < len(nodes):
+        c2 = nodes[i + 2]
+        src = pc[1]
+        if (_plain(c2) and not c2.pro and c2.op == "ld" and len(c2.ops) == 2
+                and not (live_out_of(succ, live, i + 2) & (H | L))):
+            d, s_ = c2.ops[0].upper(), c2.ops[1].upper()
+            if d == "A" and s_ == "(HL)":
+                mk = nodes[i].vr | nodes[i + 1].vr
+                return 3, [make_ins("ld", "A", f"({src})", vr=mk, env=env)]
+            if d == "(HL)" and s_ == "A":
+                mk = nodes[i].vr | nodes[i + 1].vr
+                return 3, [make_ins("ld", f"({src})", "A", vr=mk, env=env)]
+    # ---- (c) ld A,r / g.. / ld (HL),A -> g.. / ld (HL),r   (A dead)
+    r = _ld_rr(nd0)
+    if r and r[0] == "A" and r[1] != "A" and _plain(nd0):
+        for k in range(0, 4):
+            j = i + 1 + k
+            if j >= len(nodes):
+                break
+            nj = nodes[j]
+            if not _plain(nj) or nj.pro:
+                break
+            if (nj.op == "ld" and len(nj.ops) == 2 and nj.ops[1].upper() == "A"
+                    and re.fullmatch(r"\((HL|(IX|IY)[+-][^)]*)\)", nj.ops[0].upper())
+                    and not (live_out_of(succ, live, j) & A)):
+                mid = nodes[i + 1:j]
+                regs = BYTE_BIT[r[1].lower()]
+                if any(m.wr & (A | regs) or m.rd & A
+                       or m.op in ("ldir", "lddr", "ldi", "ldd") for m in mid):
+                    break
+                st = make_ins("ld", nj.ops[0], r[1], vr=nd0.vr, vw=nj.vw,
+                              env=env)
+                return k + 2, mid + [st]
+            if nj.wr & A or nj.rd & A or nj.op in ("ldir", "lddr", "ldi", "ldd"):
+                break
+    # ---- (d) ld H,D / ld L,E / add HL,HL xk / ld D,H / ld E,L -> sla E / rl D
+    if pc and pc[0] == "HL" and pc[1] in ("BC", "DE"):
+        k = 0
+        while (i + 2 + k < len(nodes) and _plain(nodes[i + 2 + k])
+               and not nodes[i + 2 + k].pro
+               and nodes[i + 2 + k].op == "add"
+               and [o.upper() for o in nodes[i + 2 + k].ops] == ["HL", "HL"]):
+            k += 1
+        e = i + 2 + k
+        if k and _pair_copy(nodes, e) == (pc[1], "HL"):
+            if (not (live_out_of(succ, live, e + 1) & (H | L))
+                    and _flags_dead(nodes, e + 1)):
+                hi, lo = _PAIRS3[pc[1]]
+                mk = _PAIR3_MASK[pc[1]]
+                vm = nodes[i].vr | nodes[i + 1].vr
+                vw = nodes[e].vw | nodes[e + 1].vw
+                new = []
+                for _ in range(k):
+                    new.append(make_ins("sla", lo, vr=vm & (C | E), vw=vw & (C | E), env=env))
+                    new.append(make_ins("rl", hi, vr=vm & (B | D), vw=vw & (B | D), env=env))
+                return 4 + k, new
     return None
 
 
@@ -1383,6 +1668,8 @@ def _is8(o: str) -> bool:
 
 
 def _tstates(nd: Node) -> int:
+    if nd.fold:
+        return _tstates(nd.fold[0]) + _tstates(nd.fold[1])
     op = nd.op
     ops = [o.upper().replace(" ", "") for o in nd.ops]
     n = len(ops)
@@ -1653,6 +1940,8 @@ def copy_node(nd: Node) -> Node:
     n.flow, n.target, n.size, n.cond = nd.flow, nd.target, nd.size, nd.cond
     n.vr, n.vw, n.cpm, n.xr = nd.vr, nd.vw, nd.cpm, nd.xr
     n.pro = nd.pro
+    n.fold = nd.fold
+    n.noret = nd.noret
     return n
 
 
@@ -1677,6 +1966,8 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
         return None
     try:
         nodes = parse(lines, env)
+        nodes = strip_after_noreturn(nodes)
+        nodes = fold_slot_ops(nodes, env)
         succ = build_cfg(nodes)
     except Bail as ex:
         _dbg("bail", ex)
