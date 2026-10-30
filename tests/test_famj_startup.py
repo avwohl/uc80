@@ -121,7 +121,7 @@ def poisoned_startup(tmp_path, crt0_name, ei):
 BSS_SIZES = [1, 2, 200, 250, 251, 252, 253, 300, 4095, 4097, 20000]
 
 
-@pytest.mark.parametrize("crt0", ["crt0.mac", "crt0_slow.mac"])
+@pytest.mark.parametrize("crt0", ["crt0.mac", "crt0_small.mac", "crt0_slow.mac"])
 @pytest.mark.parametrize("ei", [True, False])
 @pytest.mark.parametrize("n", BSS_SIZES)
 def test_bss_clear(tmp_path, crt0, ei, n):
@@ -133,13 +133,16 @@ def test_bss_clear(tmp_path, crt0, ei, n):
     assert out.strip() == f"bad=0 iff={1 if ei else 0} big={big}", out
 
 
-def test_fast_bss_clear_option_selects_old_text(tmp_path):
-    src = "int a[4]; int main(void) { return a[0]; }\n"
-    new = compile_c(tmp_path, src).read_text()
-    old = compile_c(tmp_path, src, "--no-fast-bss-clear", name="o").read_text()
-    assert "__bss_big:" in new
-    assert "__bss_big" not in old
-    assert "LDIR" in old.upper()
+def test_startup_variant_follows_the_bss_size(tmp_path):
+    small = "int a[4]; int main(void) { return a[0]; }\n"
+    big = "int a[400]; int main(void) { return a[0]; }\n"
+    t_small = compile_c(tmp_path, small).read_text()
+    t_big = compile_c(tmp_path, big, name="b").read_text()
+    t_old = compile_c(tmp_path, big, "--no-fast-bss-clear",
+                      name="o").read_text()
+    assert "__bss_big" not in t_small and "LDIR" in t_small.upper()
+    assert "__bss_big:" in t_big
+    assert "__bss_big" not in t_old and "LDIR" in t_old.upper()
 
 
 def test_bss_clear_normal_startup_runs(tmp_path):

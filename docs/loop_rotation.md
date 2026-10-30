@@ -24,7 +24,7 @@ Each pass saves 9 T-states. The loop grows by the size of the test minus 2 bytes
 The pass runs on the text of the program after the peephole pass. A loop is rotated when:
 
 - the head label is `@FORn` or `@WHILEn`.
-- the test up to the first conditional jump to `@ENDFORn` or `@ENDWHILEn` has at most 12 instructions.
+- the test up to the first conditional jump to `@ENDFORn` or `@ENDWHILEn` has at most 12 instructions and at most 14 bytes. A loop that holds another loop needs a test of at most 9 bytes. The copy costs bytes, and the outer loops of a big program run few passes.
 - the test holds no label except the `@CMP_NVn` labels of a signed compare, no return, no `rst`, no `djnz`, no jump to another place, and no comment.
 - the back jump to the head stands directly before the exit label.
 

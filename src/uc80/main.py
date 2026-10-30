@@ -201,6 +201,34 @@ def _filter_hand_written_asm(asm_text: str):
     return lines, publics, defined_labels
 
 
+# The program has this many bytes of BSS of its own or more: the start-up
+# code clears the BSS with the push fill (docs/startup_fast.md).
+BIG_BSS = 512
+
+
+def _common_bytes(code: str) -> int:
+    """The bytes that the generated text reserves in the COMMON segment (the
+    BSS of the program, without the library modules)."""
+    total = 0
+    in_common = False
+    for ln in code.split("\n"):
+        w = ln.split(";", 1)[0].split()
+        if not w:
+            continue
+        if ln[0] in " \t":
+            op = w[0].lower()
+            if op == "common":
+                in_common = True
+            elif op in ("cseg", "dseg", "aseg"):
+                in_common = False
+            elif in_common and op in ("ds", "defs") and len(w) > 1:
+                try:
+                    total += int(w[1], 0)
+                except ValueError:
+                    pass
+    return total
+
+
 class _Peephole:
     """upeepz80, then the few rules of peep_local (``stats`` is
     upeepz80's)."""
@@ -1587,8 +1615,15 @@ def main() -> int:
                 startup_path = lib_file("crt0_rom.mac")
             else:
                 # Default: crt0.mac from the package's library directory
-                startup_path = lib_file(
-                    "crt0_slow.mac" if args.no_fast_bss_clear else "crt0.mac")
+                # crt0.mac has the push fill for a large BSS.  Its extra
+                # code pays only when the program has a big BSS of its own.
+                if args.no_fast_bss_clear:
+                    startup_name = "crt0_slow.mac"
+                elif _common_bytes(code) >= BIG_BSS:
+                    startup_name = "crt0.mac"
+                else:
+                    startup_name = "crt0_small.mac"
+                startup_path = lib_file(startup_name)
 
             if startup_path.exists():
                 startup_content = startup_path.read_text()

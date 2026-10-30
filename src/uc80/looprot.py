@@ -45,7 +45,13 @@ jump in the top test.
 
 from __future__ import annotations
 
+import os
 import re
+
+try:  # the size of one instruction
+    from upeepz80.z80 import effect as _effect
+except Exception:  # pragma: no cover
+    _effect = None
 
 _HEAD = re.compile(r"^(@(?:FOR|WHILE)\d+):\s*(;.*)?$")
 _LABEL = re.compile(r"^(@?[A-Za-z_?$.][A-Za-z0-9_@?$.]*):")
@@ -60,6 +66,23 @@ _JP_INDIRECT = re.compile(r"^\tjp\s+\(", re.I)
 _INV = {"nc": "c", "c": "nc", "nz": "z", "z": "nz", "p": "m", "m": "p",
         "po": "pe", "pe": "po"}
 MAX_TEST = 12
+# the copy of the test may have this many bytes (UC80_ROT_BYTES: for tests)
+MAX_BYTES = int(os.environ.get("UC80_ROT_BYTES", 14))
+# rotate only a loop that holds no other loop (UC80_ROT_INNER=0: all loops)
+OUTER_BYTES = int(os.environ.get("UC80_ROT_OUTER", 9))
+INNERMOST = os.environ.get("UC80_ROT_INNER", "1") != "0"
+
+
+def _bytes(line: str) -> int:
+    """The size of an instruction line in bytes (4 when unknown)."""
+    if _effect is None:
+        return 4
+    parts = line.split(";", 1)[0].split(None, 1)
+    try:
+        size = _effect(parts[0].lower(), parts[1] if len(parts) > 1 else "").size
+    except Exception:
+        return 4
+    return size or 4
 
 
 def _is_instruction(line: str) -> bool:
@@ -162,6 +185,9 @@ def rotate(code: str) -> str:
             j += 1
         if test_end is None or ninstr == 0:
             continue
+        if sum(_bytes(x) for x in lines[i + 1:test_end]
+               if _is_instruction(x)) > MAX_BYTES:
+            continue
         # every jump to a @CMP_NV label stays inside the copied test
         if not pending_nv <= set(local):
             continue
@@ -179,6 +205,11 @@ def rotate(code: str) -> str:
             continue
         if any(idx in out or idx in after for idx in (test_end, k)):
             continue
+        if any(_HEAD.match(lines[x]) for x in range(test_end + 1, k)):
+            # a loop inside: only a short test pays
+            if INNERMOST and sum(_bytes(x) for x in lines[i + 1:test_end]
+                                 if _is_instruction(x)) > OUTER_BYTES:
+                continue
         body_label = f"@RB{count}"
         count += 1
         rename = {lab: lab + "r" for lab in local}
