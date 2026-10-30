@@ -2637,9 +2637,16 @@ def drop_dead_copies(code: str) -> str:
 
     drop: set = set()
     for lo, hi in ranges:
+        in_asm = False
         for k in range(lo, hi):
+            text = lines[k]
+            if "__UC80_ASM_BEGIN__" in text:
+                in_asm = True
+            elif "__UC80_ASM_END__" in text:
+                in_asm = False
             nd = nodes[k]
-            if nd.kind != "ins" or nd.flow != "next" or nd.op != "ld":
+            if in_asm or nd.kind != "ins" or nd.flow != "next" \
+                    or nd.op != "ld":
                 continue
             if len(nd.ops) != 2 or nd.ops[0].upper() not in ("B", "C"):
                 continue
