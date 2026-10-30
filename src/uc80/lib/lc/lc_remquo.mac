@@ -526,6 +526,8 @@ _remquol:
 
 ; Static storage that starts as zero
 	COMMON	/lc_remquo/
+	PUBLIC	__wa_lc_remquo	;!
+__wa_lc_remquo:	;!
 ; Shared automatic storage
 ??AUTO_remquo:
 	ds	38

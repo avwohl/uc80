@@ -4,6 +4,8 @@
 	.Z80
 
 	COMMON	/rt_cplx_data/
+	PUBLIC	__wa_rt_cplx_data	;!
+__wa_rt_cplx_data:	;!
 	PUBLIC	__cplx_l
 __cplx_l:
 	DS	8

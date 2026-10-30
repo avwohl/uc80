@@ -122,6 +122,8 @@ _div64_10_nosub:
 
 	PUBLIC	_prt64_val
 	COMMON	/lc_prt_dec64/
+	PUBLIC	__wa_lc_prt_dec64	;!
+__wa_lc_prt_dec64:	;!
 _prt64_val:	DS	8
 
 	END

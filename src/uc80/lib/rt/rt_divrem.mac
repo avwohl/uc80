@@ -4,6 +4,8 @@
 	.Z80
 
 	COMMON	/rt_divrem/
+	PUBLIC	__wa_rt_divrem	;!
+__wa_rt_divrem:	;!
 	PUBLIC	__divrem
 __divrem:
 	DS	2

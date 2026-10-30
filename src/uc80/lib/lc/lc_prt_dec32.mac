@@ -110,6 +110,8 @@ _div32_10_ns:
 	RET
 
 	COMMON	/lc_prt_dec32/
+	PUBLIC	__wa_lc_prt_dec32	;!
+__wa_lc_prt_dec32:	;!
 	PUBLIC	_prt32_val
 _prt32_val:	DS	4
 

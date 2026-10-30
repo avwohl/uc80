@@ -162,6 +162,8 @@ __f2ll_ovfn:
 	JR	__f2ll_ovfs
 
 	COMMON	/rt_ftoll/
+	PUBLIC	__wa_rt_ftoll	;!
+__wa_rt_ftoll:	;!
 __f2ll_u:	DS	1
 __f2ll_sgn:	DS	1
 

@@ -65,6 +65,7 @@ class Graph:
     fixed_size: dict = field(default_factory=dict)
     # symbols that an instruction or a DW names without a jump or a call:
     # the functions whose address is taken (when the label has a region)
+    data0: set = field(default_factory=set)      # data labels of the program
     taken: set = field(default_factory=set)      # of the program (unit 0)
     unit_taken: dict = field(default_factory=dict)   # unit -> DW symbols
     # the zeroed data (COMMON) of the program text in the order of the text:
@@ -73,6 +74,9 @@ class Graph:
     # in a layout that differs from the lib files.
     layout0: list = field(default_factory=list)
     equ0: set = field(default_factory=set)         # EQU labels of unit 0
+    # block -> bytes: the library modules that export the save helpers
+    # __wasv_<block> and __wars_<block> (lib/gen_wa_helpers.py)
+    helpers: dict = field(default_factory=dict)
 
 
 def _eval_size(text: str, equs: dict):
@@ -141,6 +145,8 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
                 body = body[m2.start(2):]
         body = body.strip()
         up = body.upper()
+        if label is not None and unit and label.startswith("__wasv_"):
+            graph.helpers[label[7:]] = None      # the size comes at the end
         if up.startswith("COMMON"):
             nm = re.search(r"/([^/]*)/", body)
             seg, common = "COMMON", (nm.group(1) if nm else "")
@@ -161,6 +167,8 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
             equs[label.upper()] = meq.group(1).strip()
             if unit == 0:
                 graph.equ0.add(label)
+        if label is not None and seg == "COMMON" and unit == 0:
+            graph.data0.add(label)
         if label is not None and seg == "COMMON":
             # a work area of a library module (named COMMON block)
             # (the BSS block of a separately compiled uc80 module, named
@@ -176,10 +184,11 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
                     for i, lab in enumerate(pending):
                         graph.layout0.append((lab, size if i == 0 else 0))
                 elif common:
-                    for lab in pending:
+                    for i, lab in enumerate(pending):
+                        # labels that share an address: the first has the size
                         graph.fixed_size[lab] = size
                         graph.blocks.setdefault(common, []).append(
-                            (lab, size))
+                            (lab, size if i == 0 else 0))
                 pending = []
             continue
         mdw = re.match(r"^(?:DW|DEFW|DD)\s+(.*)$", body, re.I)
@@ -187,9 +196,14 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
             (graph.taken if unit == 0 else graph.unit_taken.setdefault(
                 unit, set())).update(_SYM.findall(mdw.group(1)))
         if seg != "CSEG":
+            if label is not None and unit == 0:
+                # a data label of the program: it replaces a library
+                # routine of the same name (a global named log, sin ...)
+                graph.data0.add(label)
             continue
         if label is not None:
-            if only_missing and label in graph.regions:
+            if only_missing and (label in graph.regions
+                                 or label in graph.data0):
                 cur = None
                 continue
             cur = Region(label=label, unit=unit)
@@ -224,6 +238,11 @@ def _parse_unit(text: str, unit: int, graph: Graph, is_lib: bool,
             cur.indirect = True
         prev_op = op
         cur.falls_through = not _TERMINAL.match(body)
+    for blk in list(graph.helpers):
+        if graph.helpers[blk] is None:
+            sizes = [sz for _l, sz in graph.blocks.get(blk, [])]
+            graph.helpers[blk] = (sum(sizes) if sizes and None not in sizes
+                                  else 0)
     # a call to a data label is a call through a trampoline in RAM (qsort
     # writes JP compar there): an indirect call
     data0 = {l for l, _s in graph.layout0} if unit == 0 else set()
@@ -275,6 +294,13 @@ def taken_regions(g: Graph, extra=()) -> list:
 
 def _is_function(g: Graph, label: str) -> bool:
     r = g.regions.get(label)
+    # a label that has no code of its own (an alias such as _cos before
+    # _cosf) stands for the code that it falls into
+    seen = set()
+    while (r is not None and not r.has_code and r.falls_through
+           and r.next_label and r.label not in seen):
+        seen.add(r.label)
+        r = g.regions.get(r.next_label)
     return (r is not None and r.has_code
             and not label.startswith(("@", "?")))
 
@@ -353,6 +379,11 @@ STATE_BLOCKS = frozenset({
 })
 
 
+# A plan entry whose label starts with HELPER saves a library work area
+# through the routines __wasv_<block> (save) and __wars_<block> (restore).
+HELPER = "call:"
+
+
 def save_plan(g: Graph, rep: "IsrReport") -> tuple:
     """([(blocks, first label, bytes)], [block, ...], {block, ...}): the
     areas that the save code copies, the reached blocks that it cannot
@@ -367,6 +398,7 @@ def save_plan(g: Graph, rep: "IsrReport") -> tuple:
     index = {lab: i for i, (lab, _sz) in enumerate(g.layout0)}
     chosen = {}                       # layout index -> block
     skipped = []
+    calls = []
     for block in sorted(rep.fixed):
         labels = [l for l, _s in g.blocks.get(block) or []]
         here = [l for l in labels if l in index]
@@ -375,8 +407,19 @@ def save_plan(g: Graph, rep: "IsrReport") -> tuple:
         here += [l for l in rep.fixed[block][0]
                  if l in index and l not in here]
         sizes = [g.layout0[index[l]][1] for l in here]
-        if (block in STATE_BLOCKS or not here or None in sizes
-                or sum(sizes) == 0):
+        if block in STATE_BLOCKS:
+            skipped.append(block)
+            continue
+        if not here:
+            # a library module that the link adds: its labels are private,
+            # its save helpers are public
+            size = g.helpers.get(block)
+            if size:
+                calls.append((block, HELPER + block, size))
+            else:
+                skipped.append(block)
+            continue
+        if None in sizes or sum(sizes) == 0:
             skipped.append(block)
             continue
         for l in here:
@@ -400,6 +443,9 @@ def save_plan(g: Graph, rep: "IsrReport") -> tuple:
             flush()
             run = [i, i, {chosen[i]}]
     flush()
+    for block, label, size in calls:
+        plan.append((block, label, size))
+        saved.add(block)
     return plan, skipped, saved
 
 
@@ -478,7 +524,8 @@ def format_notes(reports: list) -> list:
     return out
 
 
-def format_reports(reports: list, saved=None) -> list:
+def format_reports(reports: list, saved=None, whole_program=True,
+                   opt_out=False) -> list:
     """Warning lines for the reports.  ``saved`` maps an interrupt
     function name to the set of blocks that its prologue saves: no
     warning for those."""
@@ -504,7 +551,16 @@ def format_reports(reports: list, saved=None) -> list:
                 f"interrupt function '{rep.name}' reaches {names} "
                 f"(work area of {block}) at a fixed address "
                 f"({' -> '.join(chain)}); main code that calls the same "
-                f"routine can be corrupted by the interrupt")
+                f"routine can be corrupted by the interrupt"
+                + ("" if block in STATE_BLOCKS else
+                   ("; the handler saves no work area because of "
+                    "--no-isr-save-workareas" if opt_out else
+                    "; the save of the work areas needs the whole program "
+                    "(drop --no-whole-program)" if not whole_program else
+                    "; --isr-save-workareas makes the handler save and "
+                    "restore the area"))
+                + ("; the block holds state, and no save can revert it"
+                   if block in STATE_BLOCKS else ""))
     return out
 
 
@@ -541,8 +597,11 @@ def wa_code(plan: list) -> tuple:
     An area of up to WA_WORD_LIMIT bytes is copied word by word through
     the stack; a larger one is copied to the stack with LDIR."""
     save, restore = [], []
-    for _block, label, size in plan:
-        if size <= WA_WORD_LIMIT:
+    for block, label, size in plan:
+        if label.startswith(HELPER):
+            s = [f"\tcall\t__wasv_{block}"]
+            r = [f"\tcall\t__wars_{block}"]
+        elif size <= WA_WORD_LIMIT:
             s, r = _wa_word_area(label, size)
         else:
             s = [f"\tld\tHL,-{size}", "\tadd\tHL,SP", "\tld\tSP,HL",
@@ -579,6 +638,12 @@ def resolve_alt_markers(code: str, need_alt: set, wa: dict | None = None) -> str
             plan = wa.get(s[len(ISR_WA_SAVE):].strip())
             if plan:
                 for _b, lab, _n in plan:
+                    if lab.startswith(HELPER):
+                        for h in ("__wasv_" + _b, "__wars_" + _b):
+                            if h.upper() not in declared:
+                                declared.add(h.upper())
+                                out.append(f"\tEXTRN\t{h}")
+                        continue
                     if lab.upper() not in declared and not re.search(
                             r"^" + re.escape(lab) + r"::?", code,
                             re.I | re.M):
@@ -597,8 +662,14 @@ def resolve_alt_markers(code: str, need_alt: set, wa: dict | None = None) -> str
 def wa_cost(plan: list) -> tuple:
     """(bytes, T-states) that the save and the restore of ``plan`` add."""
     nbytes = tstates = 0
-    for _b, _l, size in plan:
-        if size <= WA_WORD_LIMIT:
+    for _b, label, size in plan:
+        if label.startswith(HELPER):
+            # CALL + the helper (POP IY ... JP (IY)), save and restore
+            nbytes += 6
+            tstates += (17 + 14 + 10 + 11 + 6 + 4 + 10 + 10 + 21 * size - 5
+                        + 8) + (17 + 14 + 10 + 11 + 10 + 10 + 21 * size - 5
+                                + 6 + 8)
+        elif size <= WA_WORD_LIMIT:
             words, odd = divmod(size, 2)
             nbytes += words * 8 + odd * 8        # LD,PUSH ... POP,LD
             tstates += words * 53 + odd * (13 + 11 + 10 + 13)

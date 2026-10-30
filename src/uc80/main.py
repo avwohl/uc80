@@ -990,8 +990,19 @@ def main() -> int:
         help="Every interrupt function saves and restores the fixed work "
              "areas of the runtime that its call graph can reach "
              "(__tmp32, __div32_dvd, __acc64 and so on), so main code that "
-             "uses the same routines is not corrupted. One handler: "
+             "uses the same routines is not corrupted. This is the default "
+             "for a whole-program build (a handler that reaches no work "
+             "area pays nothing); the option also makes a split build an "
+             "error. One handler: "
              "#pragma uc80 isr_save_workareas NAME. See docs/rom_hardware.md"
+    )
+    parser.add_argument(
+        "--no-isr-save-workareas", action="store_true",
+        help="An interrupt function saves no work areas of the runtime "
+             "(the compiler prints a warning for each area that the "
+             "handler reaches). Saves RAM and T-states per interrupt when "
+             "main code never uses the same routines. "
+             "See docs/rom_hardware.md"
     )
     parser.add_argument(
         "--with-nullsound", action="store_true",
@@ -1175,7 +1186,8 @@ def main() -> int:
                         pp.macros[define] = Macro(define, body="1")
 
                 source = pp.preprocess(source, str(input_path))
-                srcmap.register(str(input_path), pp.line_map)
+                srcmap.register(str(input_path), pp.line_map,
+                                getattr(pp, "line_breaks", None))
 
                 target_pragmas.extend(pp.target_pragmas)
                 pragma_units.extend([len(asts)] * len(pp.target_pragmas))
@@ -1233,6 +1245,8 @@ def main() -> int:
         scope_names = None
         if len(asts) == 1:
             merged_ast = asts[0]
+            enum_fixed = dict(getattr(asts[0], "_enum_fixed_types", None)
+                              or {})
         else:
             # A static of one file must stay apart from a same-named
             # static (or global) of another file.
@@ -1241,8 +1255,12 @@ def main() -> int:
             scope_names = file_scope_names(asts)
             static_maps = uniquify_statics_map(asts)
             merged_ast = ast_module.TranslationUnit(items=[])
+            enum_fixed = {}
             for unit in asts:
                 merged_ast.items.extend(unit.items)
+                for tag, texts in (getattr(unit, "_enum_fixed_types", None)
+                                   or {}).items():
+                    enum_fixed.setdefault(tag, []).extend(texts)
             if args.verbose:
                 print(f"Merged {len(asts)} files into {len(merged_ast.items)} declarations")
 
@@ -1251,10 +1269,13 @@ def main() -> int:
             opt_level = 3
             ast_opt = Uc80ASTOptimizer(opt_level, type_config=type_config)
             merged_ast = ast_opt.optimize(merged_ast)
+            merged_ast._enum_fixed_types = enum_fixed
             if args.verbose and ast_opt.stats:
                 print(f"  AST optimizations:")
                 for name, count in sorted(ast_opt.stats.items()):
                     print(f"    {name}: {count}")
+
+        merged_ast._enum_fixed_types = enum_fixed
 
         # Determine module name from first input file
         module_name = input_paths[0].stem
@@ -1954,8 +1975,13 @@ def main() -> int:
                         f"#pragma uc80 isr_save_workareas {source_name(r.name)}: "
                         f"a naked function saves nothing; save the work "
                         f"areas in its assembly text")
-                if not (args.isr_save_workareas or r.name in roots.save_wa) \
-                        or r.name in gen.naked:
+                explicit = args.isr_save_workareas or r.name in roots.save_wa
+                if r.name in gen.naked:
+                    continue
+                if not explicit and (args.no_isr_save_workareas
+                                     or not whole_program or not r.fixed):
+                    # default: save what the handler reaches, in a
+                    # whole-program build (a split build keeps the warning)
                     continue
                 if not whole_program:
                     if (r.name not in roots.save_wa
@@ -1968,10 +1994,10 @@ def main() -> int:
                     raise CodegenError(
                         f"interrupt function '{source_name(r.name)}': "
                         f"saving the work areas needs the whole program "
-                        f"(the labels of the runtime work areas are private "
-                        f"to the library, and a routine of another module "
-                        f"is invisible); drop --no-whole-program, or save "
-                        f"the areas in a naked handler")
+                        f"(uc80 must see every routine that the handler "
+                        f"reaches, in every module, to know the work areas "
+                        f"to save); drop --no-whole-program, or save the "
+                        f"areas in a naked handler")
                 plan, _skipped, saved = isr_check.save_plan(graph, r)
                 if plan:
                     wa_plan[r.name] = plan
@@ -1988,7 +2014,9 @@ def main() -> int:
                 code, {r.name for r in reports if r.alt_chain}, wa_plan)
             for msg in isr_check.format_notes(reports):
                 print(f"uc80: note: {msg}", file=sys.stderr)
-            for msg in isr_check.format_reports(reports, wa_saved):
+            for msg in isr_check.format_reports(
+                    reports, wa_saved, whole_program,
+                    args.no_isr_save_workareas):
                 print(f"uc80: warning: {msg}", file=sys.stderr)
 
         # C code linked next to nullsound (docs/rom_interop.md): its NMI
@@ -2192,7 +2220,28 @@ def main() -> int:
         return 1
 
     except Exception as e:
-        print(f"uc80: internal error: {e}", file=sys.stderr)
+        msg = str(e)
+        tok = getattr(e, "token", None)
+        if tok is not None:
+            # a parse error names the line of the preprocessed text: say
+            # the file and line of the source instead (srcmap)
+            try:
+                msg = re.sub(r"at line \d+, column",
+                             lambda _m: f"at {srcmap.locate(tok)}, column",
+                             msg, count=1)
+            except Exception:
+                pass
+        if msg.startswith("unexpected end of input"):
+            # no token: name the end of the input file
+            try:
+                where = srcmap.locate_end()
+                if where:
+                    msg = msg.replace("unexpected end of input",
+                                      f"unexpected end of input at {where}",
+                                      1)
+            except Exception:
+                pass
+        print(f"uc80: internal error: {msg}", file=sys.stderr)
         if args.verbose:
             import traceback
             traceback.print_exc()

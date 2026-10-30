@@ -320,6 +320,8 @@ __fdiv_man:
 	RET
 
 	COMMON	/rt_fdiv/
+	PUBLIC	__wa_rt_fdiv	;!
+__wa_rt_fdiv:	;!
 __fdiv_rem:
 	DS	4
 

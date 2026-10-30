@@ -73,6 +73,8 @@ _snp_drop:
 	RET
 
 	COMMON	/lc_snprintf/
+	PUBLIC	__wa_lc_snprintf	;!
+__wa_lc_snprintf:	;!
 
 _snprintf_out:	DS	2
 _snprintf_max:	DS	2

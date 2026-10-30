@@ -281,6 +281,8 @@ __m_2prod:
 
 ; Static storage that starts as zero
 	COMMON	/lc_m_2prod/
+	PUBLIC	__wa_lc_m_2prod	;!
+__wa_lc_m_2prod:	;!
 ; Shared automatic storage
 ??AUTO_m_2prod:
 	ds	28

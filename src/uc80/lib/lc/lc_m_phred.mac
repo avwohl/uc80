@@ -251,6 +251,8 @@ _mph_tp:
 	DB	0FEH,051H,063H,0ABH,0DEH,0BBH,0C5H,061H,0B7H,024H
 
 	COMMON	/lc_m_phred/
+	PUBLIC	__wa_lc_m_phred	;!
+__wa_lc_m_phred:	;!
 _mph_m:
 	DS	3
 _mph_w:

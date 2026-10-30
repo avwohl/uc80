@@ -89,6 +89,8 @@ _scd_bad:
 	RET
 
 	COMMON	/lc_sc_num/
+	PUBLIC	__wa_lc_sc_num	;!
+__wa_lc_sc_num:	;!
 _scm_m:
 	DS	1
 

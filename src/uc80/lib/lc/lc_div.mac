@@ -49,6 +49,8 @@ _div:
 
 
 	COMMON	/lc_div/
+	PUBLIC	__wa_lc_div	;!
+__wa_lc_div:	;!
 
 
 ; div/ldiv result storage

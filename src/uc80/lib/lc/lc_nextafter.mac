@@ -255,6 +255,8 @@ _nexttowardl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_nextafter/
+	PUBLIC	__wa_lc_nextafter	;!
+__wa_lc_nextafter:	;!
 ; Shared automatic storage
 ??AUTO_nextafter:
 	ds	16

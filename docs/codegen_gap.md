@@ -21,6 +21,16 @@ Numbers from `bench/run.py -c uc80` on 111 programs, against SDCC 4.6.0:
 - `main` 4702a63: 0.9151, 0.8826, 0.5456, 0.6611, 63 of 78.
 - `fami`: 0.9128, 0.8805, 0.5274, 0.6366, 66 of 78.
 
+## Status on 2026-10-30: bug-fix round 4 (branch `bugfix4`)
+
+This round fixes the ISR save of the math library work areas, `memset` to device memory, enumerations with a fixed underlying type, a block typedef that redeclares a typedef name, `#line` and continued lines in the diagnostics, and a `printf` precision above 255. The [CHANGELOG](../CHANGELOG.md) lists them. The code of the bench programs does not change, except one array bound in `rogue36-size` (see the CHANGELOG). The binaries of the programs that link the float printer grow by 51 bytes (the `%.300f` fix), and the geometric means against SDCC 4.6.0 move in the fourth digit.
+
+Numbers from `bench/run.py -c uc80` on 112 programs (the rows of 8 programs differ from the rows of round 3: 7 programs link the float printer, and `adventure-size` has one byte less in the data of the `save` module, see the CHANGELOG):
+
+- Against SDCC 4.6.0: size 0.9152 (round 3: 0.9151), whole image 0.8827 (0.8826), T-states (speed mode) 0.5456 (0.5456), and 0.6611 without `sort-*` (0.6611).
+- uc80 is faster than SDCC on 63 of 78 programs (the same).
+- The c-testsuite has 220 of 220 passes, and 219 of 220 with `--int 32` (only 00200 fails).
+
 ## Status on 2026-10-29: bug-fix round 3 (branch `integrate9`)
 
 The branch `bugfix3` is in the tree of `integrate8`. It has the semcheck errors, the single evaluation of bit-field updates, block-scope tags and enumerators, enumeration types, the 16-bit printf width, and the `long long` and float conversions. A repair pass fixed the problems that the checks found. The [CHANGELOG](../CHANGELOG.md) lists them.

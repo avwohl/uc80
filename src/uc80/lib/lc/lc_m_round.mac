@@ -398,6 +398,8 @@ __m_round:
 
 ; Static storage that starts as zero
 	COMMON	/lc_m_round/
+	PUBLIC	__wa_lc_m_round	;!
+__wa_lc_m_round:	;!
 ; Shared automatic storage
 ??AUTO_m_round:
 	ds	28

@@ -203,6 +203,8 @@ _sct_ee:
 	RET
 
 	COMMON	/lc_scan_text/
+	PUBLIC	__wa_lc_scan_text	;!
+__wa_lc_scan_text:	;!
 _sct_conv:
 	DS	1
 _sct_eoff:

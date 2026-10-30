@@ -353,9 +353,11 @@ def calls_of(body):
 def test_inline_and_calls_in_one_function(tmp_path):
     mac, _ = compile_mac(tmp_path, SHAPES, "--no-inlining")
     body = func(mac, "ptr")
-    # kept: variable size, memmove, volatile, size 0, two used results
-    assert calls_of(body) == ["_memset", "_memcpy", "_memmove", "_memset",
+    # kept: variable size, memmove, size 0, two used results.  The fill of
+    # the volatile array is a store loop, not a call (docs/blockops.md).
+    assert calls_of(body) == ["_memset", "_memcpy", "_memmove",
                               "_memcpy", "_memset", "_memcpy"]
+    assert "djnz" in body
     assert body.count("ldir") == 3
     assert body.count("\tldi\n") == 2
 
@@ -363,7 +365,11 @@ def test_inline_and_calls_in_one_function(tmp_path):
 def test_switch_turns_the_pass_off(tmp_path):
     mac, _ = compile_mac(tmp_path, SHAPES, "--no-inlining", "--no-blockops")
     calls = calls_of(func(mac, "ptr"))
-    assert calls.count("_memset") == 5 and calls.count("_memcpy") == 5
+    # the fill of the volatile array still goes to the device fill: a fill
+    # that reads a device is a wrong result (docs/blockops.md)
+    assert calls.count("_memset") == 4 and calls.count("_memcpy") == 5
+    assert "__memset_dev" in func(mac, "ptr") or any(
+        "memset_dev" in c for c in calls)
 
 
 def test_small_sizes_store_directly(tmp_path):

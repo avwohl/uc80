@@ -121,7 +121,7 @@ python3 bench/run.py && python3 bench/report.py
 
 | Program | uc80 | sdcc | sdcc-4.4 | z88dk-zsdcc | z88dk-sccz80 | hitech | dcc | llvm-z80 | z88dk-80cc |
 |---|---|---|---|---|---|---|---|---|---|
-| bsd-arithmetic | 8,953 / 1,858,157† | **WRONG** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 15,456 / 9,107,157† | 11,935 / 3,146,703† | **WRONG** | **BUILD-FAIL(check)** |
+| bsd-arithmetic | 9,004 / 1,858,417† | **WRONG** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 15,456 / 9,107,157† | 11,935 / 3,146,703† | **WRONG** | **BUILD-FAIL(check)** |
 | bsd-bcd | 1,745 / 1,642,130† | 6,960 / 1,418,149† | 7,072 / 1,463,511† | 6,778 / 3,088,782† | 6,021 / 3,676,772† | 11,218 / 15,630,647† | 2,306 / 3,187,067† | 7,389 / 1,203,124† | 6,364 / 3,060,886† |
 | bsd-caesar | 9,579 / 15,118,885† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **HANG** |
 | bsd-fish | 5,951 / 3,433,485† | 9,595 / 4,476,128† | 9,882 / 4,611,449† | 9,304 / 7,119,273† | 9,019 / 7,547,827† | 13,955 / 22,913,133† | **BUILD-FAIL(check)** | 10,001 / 4,018,867† | 9,205 / 6,711,436† |
@@ -133,7 +133,7 @@ python3 bench/run.py && python3 bench/report.py
 | canfield | 21,515 / 556,247,393† | 28,991 / 633,739,175† | **WRONG** | **WRONG** | 25,912 / 3,085,032,290† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 30,928 / 607,417,915† | **HANG** |
 | curses-demo | 6,099 / 73,207,265† | 9,783 / 88,391,961† | 9,987 / 125,342,934† | 9,828 / 113,667,835† | 9,330 / 396,178,531† | 14,793 / 324,199,575† | 12,795 / 200,011,783† | 10,981 / 82,875,834† | 9,845 / 172,562,274† |
 | empire-trefonas | **TOO-BIG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** |
-| fuzix-startrek | 22,612 / 36,119,448† | 21,498 / 68,320,842† | 22,112 / 71,853,602† | 21,696 / 71,760,420† | 22,615 / 75,670,564† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 22,775 / 67,763,924† | 24,161 / 65,688,239† |
+| fuzix-startrek | 22,663 / 36,119,490† | 21,498 / 68,320,842† | 22,112 / 71,853,602† | 21,696 / 71,760,420† | 22,615 / 75,670,564† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 22,775 / 67,763,924† | 24,161 / 65,688,239† |
 | game-guess | 5,393 / 586,519† | 7,082 / 1,241,021† | 7,154 / 1,325,804† | 6,693 / 1,627,664† | 6,122 / 1,738,262† | 10,956 / 4,709,246† | 6,922 / 919,569† | 7,209 / 1,179,400† | 6,472 / 1,364,837† |
 | hamurabi | 7,650 / 2,395,136† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 10,797 / 3,686,303† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** |
 | invaders | 11,810 / 661,854,794† | 16,849 / 791,000,270† | 17,657 / 1,069,411,529† | **WRONG** | 15,578 / 3,177,218,768† | **BUILD-FAIL(check)** | 20,712 / 1,739,053,753† | 19,270 / 745,336,589† | **WRONG** |
@@ -143,8 +143,8 @@ python3 bench/run.py && python3 bench/report.py
 | umchess | 7,884 / 1,647,955,728† | **BUILD-FAIL(check)** | **WRONG** | **WRONG** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 13,453 / 1,811,249,323† | 12,571 / 2,456,451,811† |
 | v7-arithmetic | 5,071 / 1,788,281† | 8,032 / 3,339,903† | 8,200 / 3,541,565† | 7,470 / 3,538,777† | 7,205 / 3,966,410† | 11,702 / 8,100,073† | **BUILD-FAIL(check)** | 8,464 / 3,433,081† | **BUILD-FAIL(check)** |
 | v7-backgammon | 11,640 / 139,382,396† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 15,257 / 214,782,372† | 15,243 / 334,851,151† | **BUILD-FAIL(check)** | 15,181 / 267,993,767† | **BUILD-FAIL(check)** | **WRONG** |
-| v7-fish | 9,467 / 3,608,283† | 10,039 / 4,429,272† | 10,275 / 4,567,054† | 9,878 / 7,052,986† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 12,899 / 5,187,610† | 10,920 / 4,077,863† | 10,242 / 7,315,947† |
-| v7-wump | 10,160 / 4,324,952† | 10,522 / 6,269,110† | 10,669 / 6,480,019† | 10,179 / 8,259,162† | 10,056 / 9,253,577† | 16,080 / 23,625,386† | 11,120 / 7,296,848† | 10,958 / 6,252,563† | 10,467 / 7,962,448† |
+| v7-fish | 9,518 / 3,608,325† | 10,039 / 4,429,272† | 10,275 / 4,567,054† | 9,878 / 7,052,986† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 12,899 / 5,187,610† | 10,920 / 4,077,863† | 10,242 / 7,315,947† |
+| v7-wump | 10,211 / 4,324,994† | 10,522 / 6,269,110† | 10,669 / 6,480,019† | 10,179 / 8,259,162† | 10,056 / 9,253,577† | 16,080 / 23,625,386† | 11,120 / 7,296,848† | 10,958 / 6,252,563† | 10,467 / 7,962,448† |
 | worm | 9,269 / 441,322,468† | 11,886 / 486,999,109† | 12,007 / 746,778,519† | 11,673 / 662,505,457† | 11,078 / 2,514,524,610† | 16,814 / 2,039,577,670† | 15,578 / 1,210,833,517† | 13,545 / 492,371,289† | 11,930 / 1,077,563,510† |
 
 ## Speed mode
@@ -250,7 +250,7 @@ uc80 has no speed mode, so its column repeats the size mode result.
 
 | Program | uc80 | sdcc | sdcc-4.4 | z88dk-zsdcc | z88dk-sccz80 | hitech | dcc | llvm-z80 | z88dk-80cc |
 |---|---|---|---|---|---|---|---|---|---|
-| bsd-arithmetic | 8,953 / 1,858,157† | **WRONG** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 15,555 / 9,107,829† | 12,325 / 3,064,405† | **WRONG** | **BUILD-FAIL(check)** |
+| bsd-arithmetic | 9,004 / 1,858,417† | **WRONG** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 15,555 / 9,107,829† | 12,325 / 3,064,405† | **WRONG** | **BUILD-FAIL(check)** |
 | bsd-bcd | 1,745 / 1,642,130† | 6,876 / 1,181,237† | 7,010 / 1,194,920† | 6,812 / 2,996,266† | 6,284 / 3,603,638† | 11,312 / 15,626,393† | 2,336 / 3,069,482† | 8,054 / 1,179,320† | 6,377 / 3,060,886† |
 | bsd-caesar | 9,579 / 15,118,885† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **HANG** |
 | bsd-fish | 5,951 / 3,433,485† | 9,447 / 4,454,371† | 9,662 / 4,543,524† | 9,286 / 6,982,555† | 9,421 / 7,397,102† | 14,101 / 22,913,047† | **BUILD-FAIL(check)** | 11,940 / 3,971,165† | 9,218 / 6,711,436† |
@@ -262,7 +262,7 @@ uc80 has no speed mode, so its column repeats the size mode result.
 | canfield | 21,515 / 556,247,393† | 29,086 / 630,207,360† | **WRONG** | **WRONG** | 27,022 / 2,808,041,853† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 33,005 / 605,670,738† | **HANG** |
 | curses-demo | 6,099 / 73,207,265† | 9,778 / 87,359,518† | 10,028 / 176,836,355† | 9,997 / 91,266,236† | 9,784 / 361,026,137† | 14,934 / 324,172,664† | 13,518 / 166,970,447† | 11,173 / 82,666,356† | 9,858 / 172,562,274† |
 | empire-trefonas | **TOO-BIG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** |
-| fuzix-startrek | 22,612 / 36,119,448† | 21,702 / 68,142,085† | 22,237 / 71,684,497† | 21,934 / 71,568,054† | 23,462 / 75,474,976† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 23,977 / 67,295,616† | 24,174 / 65,688,239† |
+| fuzix-startrek | 22,663 / 36,119,490† | 21,702 / 68,142,085† | 22,237 / 71,684,497† | 21,934 / 71,568,054† | 23,462 / 75,474,976† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 23,977 / 67,295,616† | 24,174 / 65,688,239† |
 | game-guess | 5,393 / 586,519† | 6,986 / 1,226,339† | 7,068 / 1,311,186† | 6,725 / 1,624,445† | 6,391 / 1,712,804† | 11,040 / 4,709,837† | 7,083 / 891,398† | 7,331 / 1,176,123† | 6,485 / 1,364,837† |
 | hamurabi | 7,650 / 2,395,136† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 11,262 / 3,660,541† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** |
 | invaders | 11,810 / 661,854,794† | 17,247 / 773,906,068† | 17,886 / 1,445,225,238† | **WRONG** | 16,200 / 2,891,203,480† | **BUILD-FAIL(check)** | 22,134 / 1,453,195,085† | 20,603 / 739,364,800† | **WRONG** |
@@ -272,8 +272,8 @@ uc80 has no speed mode, so its column repeats the size mode result.
 | umchess | 7,884 / 1,647,955,728† | **WRONG** | **WRONG** | **WRONG** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 11,991 / 1,848,638,398† | 12,584 / 2,456,451,811† |
 | v7-arithmetic | 5,071 / 1,788,281† | 8,249 / 3,370,660† | 8,368 / 3,568,661† | 7,513 / 3,528,731† | 7,597 / 3,915,605† | 11,793 / 8,102,201† | **BUILD-FAIL(check)** | 8,619 / 3,429,711† | **BUILD-FAIL(check)** |
 | v7-backgammon | 11,640 / 139,382,396† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 15,349 / 213,226,965† | 15,910 / 298,250,565† | **BUILD-FAIL(check)** | 15,890 / 243,159,163† | **BUILD-FAIL(check)** | **WRONG** |
-| v7-fish | 9,467 / 3,608,283† | 10,033 / 4,422,445† | 10,276 / 4,560,616† | 9,962 / 7,042,556† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 13,486 / 4,872,336† | 11,750 / 4,073,175† | 10,255 / 7,315,947† |
-| v7-wump | 10,160 / 4,324,952† | 10,498 / 6,311,849† | 10,608 / 6,473,499† | 10,239 / 8,219,309† | 10,459 / 9,010,928† | 16,206 / 23,623,563† | 11,461 / 7,025,547† | 12,003 / 6,156,050† | 10,480 / 7,962,448† |
+| v7-fish | 9,518 / 3,608,325† | 10,033 / 4,422,445† | 10,276 / 4,560,616† | 9,962 / 7,042,556† | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 13,486 / 4,872,336† | 11,750 / 4,073,175† | 10,255 / 7,315,947† |
+| v7-wump | 10,211 / 4,324,994† | 10,498 / 6,311,849† | 10,608 / 6,473,499† | 10,239 / 8,219,309† | 10,459 / 9,010,928† | 16,206 / 23,623,563† | 11,461 / 7,025,547† | 12,003 / 6,156,050† | 10,480 / 7,962,448† |
 | worm | 9,269 / 441,322,468† | 11,808 / 486,558,651† | 11,986 / 1,111,745,640† | 11,864 / 511,672,497† | 11,647 / 2,289,485,796† | 16,965 / 2,039,552,180† | 16,517 / 1,011,871,052† | 13,889 / 490,833,158† | 11,943 / 1,077,563,510† |
 
 ## uc80 against the other compilers
@@ -288,8 +288,8 @@ Bytes as in the tables (minus the empty program of each compiler), and the whole
 |---|---|---|---|---|---|
 | sdcc (size) | 96 | 0.91 | 67 | 29 | 0.88 |
 | sdcc-4.4 (size) | 92 | 0.89 | 67 | 25 | 0.86 |
-| z88dk-zsdcc (size) | 91 | 0.92 | 62 | 29 | 0.35 |
-| z88dk-sccz80 (size) | 83 | 0.87 | 57 | 26 | 0.36 |
+| z88dk-zsdcc (size) | 91 | 0.92 | 61 | 30 | 0.35 |
+| z88dk-sccz80 (size) | 83 | 0.87 | 56 | 27 | 0.36 |
 | hitech (size) | 69 | 0.45 | 59 | 10 | 0.32 |
 | dcc (size) | 55 | 0.77 | 45 | 10 | 0.63 |
 | llvm-z80 (size) | 98 | 0.90 | 67 | 31 | 0.87 |
@@ -359,7 +359,7 @@ Only programs where both counts are TIMER-region counts.
 | fannkuch+static-inline | 542 | 1,005 | 0.54 | 40,235,660 | 68,347,132 | 0.59 |
 | fasta | 4,524 | 5,758 | 0.79 | 206,548,900 | 414,952,783 | 0.50 |
 | fasta+static | 4,572 | 5,816 | 0.79 | 206,961,865 | 414,930,720 | 0.50 |
-| fuzix-startrek | 22,612 | 21,498 | 1.05 | 36,119,448 | 68,320,842 | - |
+| fuzix-startrek | 22,663 | 21,498 | 1.05 | 36,119,490 | 68,320,842 | - |
 | game-guess | 5,393 | 7,082 | 0.76 | 586,519 | 1,241,021 | - |
 | invaders | 11,810 | 16,849 | 0.70 | 661,854,794 | 791,000,270 | - |
 | lz4 | 7,339 | 8,917 | 0.82 | 9,693,945 | 13,855,497 | 0.70 |
@@ -412,8 +412,8 @@ Only programs where both counts are TIMER-region counts.
 | stanford-tree | 2,277 | 1,853 | 1.23 | 634,413,390 | 861,115,932 | 0.74 |
 | tak | 869 | 653 | 1.33 | 37,798,310 | 35,915,064 | 1.05 |
 | v7-arithmetic | 5,071 | 8,032 | 0.63 | 1,788,281 | 3,339,903 | - |
-| v7-fish | 9,467 | 10,039 | 0.94 | 3,608,283 | 4,429,272 | - |
-| v7-wump | 10,160 | 10,522 | 0.97 | 4,324,952 | 6,269,110 | - |
+| v7-fish | 9,518 | 10,039 | 0.95 | 3,608,325 | 4,429,272 | - |
+| v7-wump | 10,211 | 10,522 | 0.97 | 4,324,994 | 6,269,110 | - |
 | whetstone | 9,992 | 10,268 | 0.97 | 786,617,621 | 1,850,544,206 | 0.43 |
 | whetstone+static | 10,036 | 11,428 | 0.88 | 788,631,381 | 1,852,582,010 | 0.43 |
 | worm | 9,269 | 11,886 | 0.78 | 441,322,468 | 486,999,109 | - |
@@ -435,7 +435,7 @@ These programs are built only. They are not run, and they have no golden file. E
 |---|---|---|---|---|---|---|---|---|---|
 | curses-demo-size | FITS (10,288) | FITS (13,977) | FITS (14,181) | FITS (19,058) | FITS (18,564) | FITS (23,205) | FITS (13,274) | FITS (15,231) | FITS (19,125) |
 | monop-size | FITS (40,057) | FITS (42,636) | FITS (43,369) | FITS (44,566) | FITS (46,222) | **BUILD-FAIL(link)** | **BUILD-FAIL(objects)** | FITS (46,044) | FITS (48,064) |
-| trek-size | TOO-BIG (68,142) | TOO-BIG | TOO-BIG | TOO-BIG (63,192) | TOO-BIG (70,517) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
+| trek-size | TOO-BIG (68,195) | TOO-BIG | TOO-BIG | TOO-BIG (63,192) | TOO-BIG (70,517) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | adventure-size | TOO-BIG (101,786) | TOO-BIG | TOO-BIG | TOO-BIG (110,287) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | battlestar-size | TOO-BIG (146,944) | TOO-BIG | TOO-BIG | TOO-BIG | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | rogue36-size | TOO-BIG (81,152) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
@@ -463,7 +463,7 @@ Each cell is **code / code plus data**, in bytes, summed over the objects of the
 |---|---|---|---|---|---|---|---|---|---|
 | curses-demo-size | FITS (10,288) | FITS (13,972) | FITS (14,222) | FITS (19,227) | FITS (19,018) | FITS (23,346) | FITS (13,998) | FITS (15,422) | FITS (19,138) |
 | monop-size | FITS (40,057) | FITS (42,561) | FITS (43,167) | FITS (45,081) | FITS (48,015) | **BUILD-FAIL(link)** | **BUILD-FAIL(objects)** | FITS (46,678) | FITS (48,077) |
-| trek-size | TOO-BIG (68,142) | TOO-BIG | TOO-BIG | TOO-BIG (65,468) | TOO-BIG (73,809) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
+| trek-size | TOO-BIG (68,195) | TOO-BIG | TOO-BIG | TOO-BIG (65,468) | TOO-BIG (73,809) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | adventure-size | TOO-BIG (101,786) | TOO-BIG | TOO-BIG | TOO-BIG (110,659) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | battlestar-size | TOO-BIG (146,944) | TOO-BIG | TOO-BIG | TOO-BIG | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | rogue36-size | TOO-BIG (81,152) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
@@ -602,7 +602,7 @@ Each cell is **code / code plus data**, in bytes, summed over the objects of the
 
 ## Compiler versions
 
-- **uc80**: uc80 0.6.0 (41f8b0a), um80 0.3.52
+- **uc80**: uc80 0.6.0 (619b110+dirty), um80 0.3.52
 - **sdcc**: SDCC : mcs51/z80/z180/r2k/r2ka/r3ka/r4k/r5k/r6k/sm83/tlcs90/ez80/z80n/r800/ds390/pic16/pic14/TININative/ds400/hc08/s08/stm8/pdk13/pdk14/pdk15/mos6502/mos65c02/f8/f8l TD- 4.6.0 #16555 (Mac OS X ppc)
 - **sdcc-4.4**: SDCC : z80 TD- 4.4.0 #14620 (Mac OS X ppc)
 - **z88dk-zsdcc**: z88dk 2.4, zsdcc 4.5.0 #15242

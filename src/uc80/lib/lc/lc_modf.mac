@@ -204,6 +204,8 @@ _modfl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_modf/
+	PUBLIC	__wa_lc_modf	;!
+__wa_lc_modf:	;!
 ; Shared automatic storage
 ??AUTO_modf:
 	ds	12

@@ -100,6 +100,8 @@ _ilogbl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_ilogb/
+	PUBLIC	__wa_lc_ilogb	;!
+__wa_lc_ilogb:	;!
 ; Shared automatic storage
 ??AUTO_ilogb:
 	ds	6

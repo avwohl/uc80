@@ -615,7 +615,7 @@ static void divide(void) { q = a / 7; }
 #pragma uc80 interrupt isr
 void isr(void) { divide(); }
 int main(void) { return 0; }
-""")
+""", "--no-isr-save-workareas")
         assert r.returncode == 0, r.stderr
         assert "interrupt function 'isr' reaches" in r.stderr
         assert "__div32_dvd" in r.stderr

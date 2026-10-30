@@ -161,6 +161,9 @@ def concat_modules(src_dir, output_path, header_comment):
     seen_equs = set()
     for path in mac_files:
         name = os.path.basename(path)
+        # The label of a work area (a line that ends in ;!) and the modules
+        # of the save routines (CONCAT-SKIP) come from gen_wa_helpers.py:
+        # the library holds them, the joined file does not.
         lines = module_text(path).splitlines()
 
         # CSEG first: the banner must not land in the data segment of the

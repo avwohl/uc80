@@ -49,6 +49,8 @@ _remainderl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_remainder/
+	PUBLIC	__wa_lc_remainder	;!
+__wa_lc_remainder:	;!
 ; Shared automatic storage
 ??AUTO_remainder:
 	ds	2

@@ -373,6 +373,8 @@ __fmul_expinc:
 ; __mul16_32 (DEHL = BC * DE) lives in rt_mul.mac.
 
 	COMMON	/rt_fmul/
+	PUBLIC	__wa_rt_fmul	;!
+__wa_rt_fmul:	;!
 ; Temporary storage for partial products in float multiplication
 ; (private to __fmul)
 __fmul_hh:

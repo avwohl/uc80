@@ -548,6 +548,8 @@ _vm_gk:
 	DW	00000H,04000H	; 2.0
 
 	COMMON	/lc_vm/
+	PUBLIC	__wa_lc_vm	;!
+__wa_lc_vm:	;!
 _vm_pool:
 	DS	2
 _vm_x:

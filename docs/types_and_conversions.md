@@ -29,8 +29,45 @@ the values.
 
 The front end gives a hidden tag (`__anon_enum_...`) to an anonymous
 enumeration that has an explicit value. A variable of its type then has the
-size that the values need. The parser does not accept an enumeration with a
-fixed underlying type (`enum e : T`).
+size that the values need.
+
+### A fixed underlying type
+
+C23 6.7.3.3 lets a program name the type: `enum e : unsigned char { A, B };`.
+The forward declaration `enum e : short;` is also accepted, and an anonymous
+`enum : long { Z };`. The grammar of the parser has no such form. The front
+end takes the `: T` out of the text and keeps the type of each such
+enumeration (see `uc_core` `_strip_enum_fixed_types`). Then:
+
+- The enumeration and its constants have the type `T`. `sizeof(enum e)` and
+  `sizeof(A)` give `sizeof(T)`. An object of the type wraps as `T` wraps:
+  `enum e x = 255; x++;` gives 0 for `unsigned char`.
+- The first declaration gives the type. So `sizeof(enum e)` and a member of
+  the type work after `enum e : T;` and before the body.
+- A constant that does not fit `T` gives an error. The error names the
+  constant, the value and the range. Two declarations with different types
+  give an error. A type that is not an integer type gives an error. A name
+  that the file does not declare as a type gives an error. `T` can be a
+  typedef name (`enum e : uint8_t`).
+- A bit-field of the type has the signedness of `T`.
+- `typeof (A)` of a constant has the type `T`. `enum e : char` keeps plain
+  `char` as its type, so `_Generic (A, char: 1, signed char: 2)` gives 1.
+- An inlined call of a function that returns or takes the enumeration
+  converts as a call does (`enum e : unsigned char f (int x) { return x; }`
+  gives `f (300) == 44`): the inliner leaves such a function alone.
+- An error has the file and line of the enumeration (also after `#line`).
+  A pointer or array after the colon (`enum e : int *`) is an error. An
+  enumerator that occurs twice in one enumeration is an error.
+- `_Generic` and pointer conversions see `T`, because the enumerated type is
+  compatible with `T`.
+- Two files that give the same tag different types get separate tags
+  (as for any tag, `multi_unit.py`).
+- The constants of a 64-bit enumeration (`enum e : long long` and the
+  enumerations that need 64 bits) load all 8 bytes. Before, the load wrote
+  nothing, and a store used the value that the accumulator held.
+
+`tests/test_enum_fixed_type.py` runs these cases, with 16-bit `int` and with
+`--int=32`.
 
 With `--int 32` an object of enumeration type has 4 bytes, and the code
 loads and stores it as an `int`. An enumeration constant above 65535 is a

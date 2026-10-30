@@ -48,6 +48,8 @@ _strtol:
 
 ; Static storage that starts as zero
 	COMMON	/lc_strtol/
+	PUBLIC	__wa_lc_strtol	;!
+__wa_lc_strtol:	;!
 ; Shared automatic storage
 ??AUTO_strtol:
 	ds	4

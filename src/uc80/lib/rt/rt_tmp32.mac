@@ -5,6 +5,8 @@
 	.Z80
 
 	COMMON	/rt_tmp32/
+	PUBLIC	__wa_rt_tmp32	;!
+__wa_rt_tmp32:	;!
 	PUBLIC	__tmp32
 __tmp32:
 	DS	4

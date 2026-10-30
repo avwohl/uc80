@@ -11,6 +11,8 @@
 
 ; 64-bit accumulator and temporary storage
 	COMMON	/rt_acc64/
+	PUBLIC	__wa_rt_acc64	;!
+__wa_rt_acc64:	;!
 	PUBLIC	__acc64
 __acc64:	DS	8	; 64-bit accumulator
 	PUBLIC	__tmp64

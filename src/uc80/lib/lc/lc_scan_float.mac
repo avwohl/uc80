@@ -1474,6 +1474,8 @@ ___sc_float_S0:
 
 ; Static storage that starts as zero
 	COMMON	/lc_scan_float/
+	PUBLIC	__wa_lc_scan_float	;!
+__wa_lc_scan_float:	;!
 ; Shared automatic storage
 ??AUTO_scan_float:
 	ds	182

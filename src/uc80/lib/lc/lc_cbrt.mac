@@ -439,6 +439,8 @@ _cbrtl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_cbrt/
+	PUBLIC	__wa_lc_cbrt	;!
+__wa_lc_cbrt:	;!
 ; Shared automatic storage
 ??AUTO_cbrt:
 	ds	56

@@ -167,6 +167,8 @@ _fminl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_fmin/
+	PUBLIC	__wa_lc_fmin	;!
+__wa_lc_fmin:	;!
 ; Shared automatic storage
 ??AUTO_fmin:
 	ds	8

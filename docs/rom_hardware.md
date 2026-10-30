@@ -78,11 +78,11 @@ rt_arith32) at a fixed address (isr -> _divide -> __div32); main code that calls
 the same routine can be corrupted by the interrupt
 ```
 
-The warning is safe to ignore when the main program never uses the same routine. One cure is to avoid long division, 64-bit arithmetic and floating point in a handler. The other cure is to let the handler save the work areas.
+A whole-program build saves the areas that the handler reaches, so the warning appears only with `--no-isr-save-workareas` or with `--no-whole-program`. The warning ends with the reason. The warning is safe to ignore when the main program never uses the same routine. One cure is to avoid long division, 64-bit arithmetic and floating point in a handler. The other cure is to let the handler save the work areas (see below).
 
 ### Work areas that the handler saves
 
-The option `--isr-save-workareas` makes each interrupt function save and restore the work areas that its call graph can reach. One handler can ask for this alone:
+In a whole-program build, each interrupt function saves and restores the work areas that its call graph can reach. This is the default. A handler that reaches no work area gets no save code and pays nothing. The option `--no-isr-save-workareas` turns the save off for all handlers (it saves RAM and T-states when the main program never uses the same routines). The option `--isr-save-workareas` asks for the save also in a split build, where it is an error (see the limits below). One handler can ask for the save alone:
 
 ```
 #pragma uc80 isr_save_workareas NAME [NAME ...]
@@ -94,7 +94,15 @@ The prologue of the handler copies each reached work area to the stack, after th
  
 The compiler saves the work areas as the program text places them. The whole-program build puts the data of the runtime in one block of the program. The order there is not the order of the library files. The compiler takes the address and the size of each label from the program text.
 
-Labels that follow each other join into one area. The warning names the block of the library file, for example `rt_rem32`. An area of up to 6 bytes goes through the stack in words. A larger area goes with `LDIR`. The compiler prints a note with the cost.
+Labels that follow each other join into one area. The warning names the block of the library file, for example `rt_rem32`.
+
+The link can add a library module that the program text does not hold. The modules `lc_vm` and `lc_sqrt`, and an `rt_*` module that only a library routine needs, belong to this group. The labels of the work area of such a module are private. The module exports one public label for the start of the area (`__wa_BLOCK`). A module of its own (`lc_wa_BLOCK.mac` or `rt_wa_BLOCK.mac`) holds two public routines. The routine `__wasv_BLOCK` pushes the area onto the stack. The routine `__wars_BLOCK` copies the area back and removes the copy from the stack.
+
+The prologue of the handler runs `CALL __wasv_lc_vm`, and the epilogue runs `CALL __wars_lc_vm`. The routines use IY for the return address. The register saves of the prologue come first, so IY is free.
+
+The routines are modules of their own, so a program links them only when a handler needs them. The module of the area has no extra byte of code. The script `src/uc80/lib/gen_wa_helpers.py` writes the label and the modules, and its option `--check` finds a file that is out of date. The script `build_libs.py` leaves the label and the modules out of the joined files `libc.mac` and `runtime.mac`.
+
+An area of up to 6 bytes goes through the stack in words. A larger area goes with `LDIR`. The compiler prints a note with the cost.
 
 ```
 uc80: note: interrupt function 'isr' saves and restores the work areas of
@@ -108,8 +116,9 @@ The compiler does not save the blocks that hold state and not temporary values: 
 
 Three more limits apply:
 
-- The data labels of the libc modules (`sin`, `sqrt`, `printf`, and others) are private to the library. The compiler cannot name them, so it does not save these blocks and the warning stays. The compiler embeds the runtime blocks (`rt_*`), and the option saves them.
-- The option needs the whole program. With `--no-whole-program` the option is an error for a handler that reaches a work area or calls a routine of another module (that routine is invisible), and for the pragma. A handler that reaches nothing gets no save code and no message, so a makefile can pass the option to every module.
+- The math library has a high cost. A handler that reaches `sin`, `cos`, `sqrt` or another function of the library saves the float interpreter `lc_vm` (263 bytes: the stack of 64 floats and its registers) and `lc_sqrt`, with the float work areas. A handler with `sin` and `sqrt` saves 322 bytes of RAM. Each interrupt then needs about 14000 T-states for the save. A handler that runs often should not call the math library. The program `bench/rom/isrproof.py libm` runs a main loop with `sin`, `cos` and `sqrt` while a handler also calls `sin` and `sqrt`, in both flows. The results of the loop equal the results of a run without interrupts. The same program without the pragma gives other results.
+- The save needs the whole program: the compiler must see every routine that the handler reaches, in every module. With `--no-whole-program` the default is off and the warning stays (its hint says that the save needs the whole program). The option `--isr-save-workareas` is an error there when the handler reaches a work area. It is also an error when the handler calls a routine of another module (that routine is invisible). The pragma has the same rule. A handler that reaches nothing gets no save code and no message, so a makefile can pass the option to every module.
+- A call through a function pointer reaches every function whose address the program takes. This includes a library routine: with `double (*volatile fp)(double) = cos;` a handler that calls `fp (2.5)` saves the work areas of `cos` (`bench/rom/isrproof.py libmfp` proves this in both flows).
 - A handler that calls a routine that the compilation does not define (`extern` in `--no-whole-program`) gets a warning: the compiler cannot see the work areas or the alternate registers of that routine.
 
 The option does not cover the shared automatic storage (`??AUTO`) of the functions in your program. Use `--isr-safe` for that. The option does not cover the registers: the prologue saves them as before.

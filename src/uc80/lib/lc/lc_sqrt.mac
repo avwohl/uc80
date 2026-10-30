@@ -205,6 +205,8 @@ _sq_nan:
 	RET
 
 	COMMON	/lc_sqrt/
+	PUBLIC	__wa_lc_sqrt	;!
+__wa_lc_sqrt:	;!
 _sq_x:
 	DS	6
 

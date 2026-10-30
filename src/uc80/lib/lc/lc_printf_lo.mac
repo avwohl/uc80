@@ -126,6 +126,8 @@ _plo_set:
 	JP	_printf_loop
 
 	COMMON	/lc_printf_lo/
+	PUBLIC	__wa_lc_printf_lo	;!
+__wa_lc_printf_lo:	;!
 _plo_val:	DS	4
 
 	END

@@ -627,6 +627,8 @@ _scn_fc:
 	DB	'feEgGaAF'
 
 	COMMON	/lc_scan_core/
+	PUBLIC	__wa_lc_scan_core	;!
+__wa_lc_scan_core:	;!
 _scn_in:
 	DS	2
 	PUBLIC	__scn_ap

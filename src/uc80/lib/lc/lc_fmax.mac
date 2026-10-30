@@ -167,6 +167,8 @@ _fmaxl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_fmax/
+	PUBLIC	__wa_lc_fmax	;!
+__wa_lc_fmax:	;!
 ; Shared automatic storage
 ??AUTO_fmax:
 	ds	8

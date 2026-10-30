@@ -266,6 +266,8 @@ _sti_pe:
 	RET
 
 	COMMON	/lc_strtoint/
+	PUBLIC	__wa_lc_strtoint	;!
+__wa_lc_strtoint:	;!
 _sti_nb:
 	DS	1
 _sti_fl:

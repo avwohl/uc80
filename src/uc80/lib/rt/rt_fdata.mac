@@ -4,6 +4,8 @@
 	.Z80
 
 	COMMON	/rt_fdata/
+	PUBLIC	__wa_rt_fdata	;!
+__wa_rt_fdata:	;!
 	PUBLIC	__fop1
 __fop1:
 	DS	4

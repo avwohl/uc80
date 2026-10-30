@@ -582,6 +582,8 @@ qs_swg1:
 	RET
 
 	COMMON	/lc_qsort/
+	PUBLIC	__wa_lc_qsort	;!
+__wa_lc_qsort:	;!
 ; qsort working storage.  qsort saves these QS_NV bytes on its stack on
 ; entry and restores them on exit (see "Reentrancy" above).
 QS_VARS:

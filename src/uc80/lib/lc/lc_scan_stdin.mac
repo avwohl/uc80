@@ -86,6 +86,8 @@ __scan_stdin:
 
 ; Static storage that starts as zero
 	COMMON	/lc_scan_stdin/
+	PUBLIC	__wa_lc_scan_stdin	;!
+__wa_lc_scan_stdin:	;!
 _ssi_back:
 	ds	2
 ; Shared automatic storage

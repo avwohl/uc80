@@ -7,6 +7,8 @@
 	EXTRN	__tmp64
 
 	COMMON	/rt_mul64/
+	PUBLIC	__wa_rt_mul64	;!
+__wa_rt_mul64:	;!
 __mul64_mcd:	DS	8	; Multiplicand
 __mul64_mpr:	DS	8	; Multiplier
 	CSEG

@@ -225,6 +225,8 @@ __m_toll:
 
 ; Static storage that starts as zero
 	COMMON	/lc_m_toll/
+	PUBLIC	__wa_lc_m_toll	;!
+__wa_lc_m_toll:	;!
 ; Shared automatic storage
 ??AUTO_m_toll:
 	ds	14

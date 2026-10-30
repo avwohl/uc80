@@ -121,6 +121,8 @@ _logbl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_logb/
+	PUBLIC	__wa_lc_logb	;!
+__wa_lc_logb:	;!
 ; Shared automatic storage
 ??AUTO_logb:
 	ds	6

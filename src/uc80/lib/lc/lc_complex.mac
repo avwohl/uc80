@@ -836,6 +836,8 @@ __cdiv:
 	RET
 
 	COMMON	/lc_complex/
+	PUBLIC	__wa_lc_complex	;!
+__wa_lc_complex:	;!
 
 ; Complex number work areas
 _cplx_z:	DS	8	; Input complex

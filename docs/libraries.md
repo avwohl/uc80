@@ -166,7 +166,7 @@ These limits are deliberate. The linked documents give the details.
   `printf` for the same float value. The float conversions use integer
   arithmetic and about 214 bytes of RAM ([printf](printf.md)).
 - **`printf` field width and precision.** A width or a precision is at most
-  32767; a float precision above 255 is 255. `%jd` (`intmax_t`) is not supported. `%hhd` narrows the argument for
+  32767; a float precision above 255 prints the digits and then zeros (the text is the same as glibc). `%jd` (`intmax_t`) is not supported. `%hhd` narrows the argument for
   the 16-bit `int` only. `%s` with a null pointer reads address 0. `%p`
   prints `0x` and the hex address (`0x0` for a null pointer).
 - **Program exit.** `main` returning and `exit()` run the `atexit` functions

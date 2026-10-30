@@ -45,6 +45,9 @@ void *memmove(void *dest, const void *src, size_t n);
  * stack offset of n stays where the asm libc expects it (libc only reads the
  * low byte of c anyway). */
 void *memset(void *s, unsigned char c, size_t n);
+/* memset by stores only, for device memory: the compiler calls it when the
+ * destination is volatile or a constant address (docs/blockops.md) */
+void *__memset_dev(void *s, unsigned char c, size_t n);
 int memcmp(const void *s1, const void *s2, size_t n);
 void *memchr(const void *s, unsigned char c, size_t n);
 

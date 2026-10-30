@@ -121,6 +121,8 @@ _phs_ret:
 	JP	_printf_loop
 
 	COMMON	/lc_printf_s/
+	PUBLIC	__wa_lc_printf_s	;!
+__wa_lc_printf_s:	;!
 _phs_pad:	DS	2
 
 	END

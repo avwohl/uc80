@@ -134,6 +134,8 @@ _fdiml:
 
 ; Static storage that starts as zero
 	COMMON	/lc_fdim/
+	PUBLIC	__wa_lc_fdim	;!
+__wa_lc_fdim:	;!
 ; Shared automatic storage
 ??AUTO_fdim:
 	ds	8

@@ -214,7 +214,11 @@ class Checker:
                 self.visit(init)
                 if len(self.scopes) < 2 or storage == "static" or constexpr:
                     bad = self.nonconstant_variable(init)
-                    if bad is not None:
+                    if isinstance(bad, ast.Index):
+                        self.error(bad, "initializer element is not "
+                                   "constant: an element of a string "
+                                   "literal is not a constant expression")
+                    elif bad is not None:
                         self.error(bad, "initializer element is not "
                                    "constant: '%s' is a variable (use an "
                                    "enumerator, a constexpr object or a "
@@ -565,6 +569,11 @@ class Checker:
             if t is None or t.kind in ("array", "function"):
                 return None
             return e
+        if isinstance(e, ast.Index) and (
+                isinstance(e.array, ast.StringLiteral)
+                or (isinstance(e.array, list) and e.array
+                    and isinstance(e.array[0], ast.StringLiteral))):
+            return e           # "xy"[0] is no constant expression
         if isinstance(e, ast.Cast):
             return self.nonconstant_variable(e.expr)
         if isinstance(e, ast.TernaryOp):

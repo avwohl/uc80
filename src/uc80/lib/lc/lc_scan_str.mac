@@ -104,6 +104,8 @@ __scan_str:
 
 ; Static storage that starts as zero
 	COMMON	/lc_scan_str/
+	PUBLIC	__wa_lc_scan_str	;!
+__wa_lc_scan_str:	;!
 ; Shared automatic storage
 ??AUTO_scan_str:
 	ds	10

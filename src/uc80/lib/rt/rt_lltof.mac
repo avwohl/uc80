@@ -156,6 +156,8 @@ __ll2f_pack:
 	RET
 
 	COMMON	/rt_lltof/
+	PUBLIC	__wa_rt_lltof	;!
+__wa_rt_lltof:	;!
 __ll2f_w:	DS	8
 __ll2f_sgn:	DS	1
 

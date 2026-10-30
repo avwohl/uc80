@@ -4,6 +4,8 @@
 	.Z80
 
 	COMMON	/rt_rem32/
+	PUBLIC	__wa_rt_rem32	;!
+__wa_rt_rem32:	;!
 	PUBLIC	__div32_dvd
 __div32_dvd:
 	DS	4

@@ -1529,6 +1529,7 @@ class CallGraphAnalyzer:
     func_storage: dict[str, int] = field(default_factory=dict)  # func -> total local storage bytes
     can_be_active_together: dict[str, set[str]] = field(default_factory=dict)  # func -> concurrent funcs
     address_taken: set[str] = field(default_factory=set)  # functions whose address is taken
+    enum_fixed_tags: set[str] = field(default_factory=set)  # enum tags with a fixed underlying type
     func_signatures: dict[str, tuple] = field(default_factory=dict)  # func -> (ret_type, param_types)
     indirect_call_sigs: dict[str, set[tuple]] = field(default_factory=dict)  # func -> indirect call sigs
     storage_offsets: dict[str, int] = field(default_factory=dict)  # func -> base offset in shared storage
@@ -2438,6 +2439,15 @@ class CallGraphAnalyzer:
         for pt in fn_type.param_types:
             if self._is_long_long_type_node(pt):
                 return False
+        # An enumeration with a fixed underlying type narrows the value of
+        # an argument and of the result (``enum u8 f (int x) { return x; }``
+        # gives f (300) == 44): the call keeps its conversions
+        if self.enum_fixed_tags:
+            for t in [fn_type.return_type, *fn_type.param_types]:
+                t = self._inline_strip_typedef(t)
+                if (t is not None and t.kind == "enum"
+                        and getattr(t, "name", None) in self.enum_fixed_tags):
+                    return False
         # Don't inline struct-returning functions. The by-value semantics
         # of ``struct T f()`` requires a temporary buffer; inlining
         # ``*q = f()`` whose body is ``return *p`` would collapse to a
@@ -3624,6 +3634,10 @@ class CodeGenContext:
     # each of its constants (the enumerated type).  Absent: int.
     enum_types: dict[str, "lt.BasicType"] = field(default_factory=dict)
     enum_negative: set = field(default_factory=set)
+    # C23 6.7.3.3: an enumeration with a fixed underlying type
+    # (``enum e : unsigned char``): tag -> BasicType.  Its objects and its
+    # constants have that type.
+    enum_fixed: dict[str, "lt.BasicType"] = field(default_factory=dict)
     constexpr_values: dict = field(default_factory=dict)
     enum_const_types: dict[str, "lt.BasicType"] = field(default_factory=dict)
 
@@ -4360,6 +4374,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         def declare_decl(decl, table):
             try:
+                # the enumeration constants: typeof (A) of a constant of an
+                # enumeration with a fixed type is that type
+                if self.ctx.enum_fixed or self._enum_fixed_pending:
+                    self._register_decl_spec_enums(decl.decl_specs)
+            except Exception:
+                pass
+            try:
                 # A struct defined here, so typeof(s.m) and auto x = s.m
                 # find the member (undone when the pass ends).
                 self._register_inline_types(
@@ -4642,10 +4663,25 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                                                 self.isr_funcs.items()
                                                 if k == "int"},
                                  isr_safe=self.isr_safe,
-                                 naked=set(self.naked))
+                                 naked=set(self.naked),
+                                 enum_fixed_tags=set(self.__dict__.get(
+                                     "_enum_fixed_tag_set", ())))
 
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
+        enum_fixed_table = getattr(unit, "_enum_fixed_types", None) or {}
+        self._enum_fixed_tag_set = set(enum_fixed_table)
+        # (the enumerations with a fixed type: typeof of a constant)
+        self._enum_fixed_pending = {
+            k: list(v) for k, v in enum_fixed_table.items()}
+        if enum_fixed_table:
+            # an AST node for each tag, for the line of a diagnostic
+            nodes = self.__dict__.setdefault("_enum_nodes", {})
+            for item in unit.items or []:
+                for sp in (getattr(item, "decl_specs", None) or []):
+                    if isinstance(sp, (ast.EnumDef, ast.EnumAnon)):
+                        if _enum_tag(sp):
+                            nodes.setdefault(_enum_tag(sp), sp)
         self._annotate_typeof(unit)
         self.user_defined_funcs = {
             declarator_ident(i.declarator) for i in unit.items or []
@@ -4726,10 +4762,19 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # the bare str / int that the legacy aggregate-init code expects.
         self._normalize_designators(unit)
 
+        # ``enum e : T`` (the front end took the ``: T`` out of the text and
+        # kept the type): the type of such an enumeration is known from its
+        # first declaration, also for ``enum e : T;`` and ``sizeof(enum e)``.
+        self._enum_fixed_pending = {
+            k: list(v) for k, v in enum_fixed_table.items()}
+        self._flush_fixed_enums()
+
         # Pre-pass: register every file-scope struct/enum definition AND
         # every file-scope typedef so later references can look up types
         # by name. Mirrors the local-decl path in gen_local_decl.
         for decl in unit.items:
+            if self._enum_fixed_pending:
+                self._flush_fixed_enums()
             if isinstance(decl, ast.Declaration):
                 # Enum constants first: an array bound may be spelled with
                 # one, and the composite below has to be able to fold it.
@@ -4751,6 +4796,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                                 self.ctx.typedefs[nm] = full
                 except Exception:
                     pass
+
+        if self._enum_fixed_pending:
+            self._flush_fixed_enums()
+            tag, texts = next(iter(self._enum_fixed_pending.items()))
+            raise CodegenError(
+                f"enum {tag}: '{texts[0]}' is not a type name that this "
+                f"file declares, so it cannot be the underlying type "
+                f"(C23 6.7.3.3)")
 
         # Designator indexes spelled with an enumerator or constexpr object.
         self._normalize_designators(unit)
@@ -5393,6 +5446,20 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self.ctx.anon_members[decl.name] = anon_list
 
     def _eval_enum_expr(self, expr: ast.Expression) -> int | None:
+        """The value of an enumerator initializer: the small evaluator
+        below, then the general constant evaluator (sizeof, offsetof,
+        comparisons, the conditional operator, ...)."""
+        v = self._eval_enum_expr_basic(expr)
+        if v is None:
+            try:
+                v = self._eval_const_expr(expr)
+            except Exception:
+                v = None
+            if not isinstance(v, int) or isinstance(v, bool):
+                return None
+        return v
+
+    def _eval_enum_expr_basic(self, expr: ast.Expression) -> int | None:
         """Evaluate a constant expression for enum values, supporting references
         to previously defined enum constants and basic arithmetic."""
         if isinstance(expr, ast.IntLiteral):
@@ -5465,12 +5532,110 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         raise CodegenError(
             f"the enumeration values {lo}..{hi} do not fit any integer type")
 
+    def _enum_node(self, tag):
+        """An AST node of an enumeration with this tag (for a line number),
+        or None."""
+        return self.__dict__.get("_enum_nodes", {}).get(tag)
+
+    def _fixed_enum_basic(self, tag, texts):
+        """The integer type of the enumeration ``tag`` that was declared
+        ``enum tag : TEXT``, or None while a typedef name in TEXT is not yet
+        known.  Declarations that disagree are an error."""
+        from uc_core import frontend
+        found = []
+        for text in texts:
+            if any(c in text for c in "*[(&"):
+                raise CodegenError(
+                    f"enum {tag}: the underlying type '{text}' is not an "
+                    f"integer type (C23 6.7.3.3)", self._enum_node(tag))
+            known = set(self.ctx.typedefs)
+            try:
+                unit = frontend.parse(f"{text} __uc80_fixed;", "<enum>",
+                                      seed_typedefs=known)
+            except Exception:
+                return None                # a typedef name not known yet
+            specs = unit.items[0].decl_specs
+            t = _to_legacy(resolve_base_type(specs))
+            if not (isinstance(t, lt.BasicType) and t.name in (
+                    "char", "short", "int", "long", "long long", "bool",
+                    "_Bool", "unsigned char", "unsigned short",
+                    "unsigned int", "unsigned long", "unsigned long long")):
+                if isinstance(t, lt.BasicType) and t.name not in (
+                        "void", "float", "double", "long double"):
+                    return None            # a typedef name not known yet
+                raise CodegenError(
+                    f"enum {tag}: the underlying type '{text}' is not an "
+                    f"integer type (C23 6.7.3.3)", self._enum_node(tag))
+            found.append((text, t))
+        base_text, base = found[0]
+        for text, t in found[1:]:
+            if (self._type_size(t), self._is_signed_type(t)) != (
+                    self._type_size(base), self._is_signed_type(base)):
+                raise CodegenError(
+                    f"enum {tag} is declared with the underlying types "
+                    f"'{base_text}' and '{text}' (C23 6.7.3.3: they must "
+                    f"be compatible)", self._enum_node(tag))
+        # plain char stays plain char (a type of its own for _Generic)
+        return lt.BasicType(name=base.name,
+                            is_signed=(None if base.name == "char"
+                                       and base.is_signed is None
+                                       else self._is_signed_type(base)))
+
+    def _flush_fixed_enums(self) -> None:
+        """Resolve the pending ``enum tag : type`` declarations whose type
+        can be named now, and make the type of each enumeration known."""
+        pending = self.__dict__.get("_enum_fixed_pending")
+        if not pending:
+            return
+        for tag in list(pending):
+            t = self._fixed_enum_basic(tag, pending[tag])
+            if t is not None:
+                del pending[tag]
+                self.ctx.enum_fixed[tag] = t
+                self.ctx.enum_types[tag] = t
+                if self._is_signed_type(t):
+                    self.ctx.enum_negative.add(tag)
+                else:
+                    self.ctx.enum_negative.discard(tag)
+
+    def _check_fixed_enum_values(self, tag, fixed, entries) -> None:
+        size = self._type_size(fixed)
+        if fixed.name in ("bool", "_Bool"):
+            lo, hi = 0, 1
+        elif self._is_signed_type(fixed):
+            lo, hi = -(1 << (size * 8 - 1)), (1 << (size * 8 - 1)) - 1
+        else:
+            lo, hi = 0, (1 << (size * 8)) - 1
+        for name, value in entries:
+            if not lo <= value <= hi:
+                raise CodegenError(
+                    f"enumerator '{name}' of 'enum {tag}' has the value "
+                    f"{value}, which does not fit the underlying type "
+                    f"{'unsigned ' if not self._is_signed_type(fixed) and fixed.name not in ('bool', '_Bool') else ''}"
+                    f"{'signed ' if fixed.is_signed and fixed.name == 'char' else ''}"
+                    f"{fixed.name} ({lo}..{hi}; C23 6.7.3.3)",
+                    self._enum_node(tag))
+
     def _register_enum_entries(self, tag, entries) -> None:
         """Record the constants (name, value) of one enumeration, and its
         integer type when its values are wider than int."""
+        seen_names = set()
         for name, value in entries:
+            if name in seen_names:
+                raise CodegenError(
+                    f"redeclaration of enumerator '{name}'"
+                    + (f" in 'enum {tag}'" if tag else ""),
+                    self._enum_node(tag) if tag else None)
+            seen_names.add(name)
             self.ctx.enum_constants[name] = value
             self.ctx.enum_const_types.pop(name, None)
+        self._flush_fixed_enums()
+        fixed = self.ctx.enum_fixed.get(tag) if tag else None
+        if fixed is not None:
+            self._check_fixed_enum_values(tag, fixed, entries)
+            for name, _v in entries:
+                self.ctx.enum_const_types[name] = fixed
+            return
         wide = self._enum_underlying_type([v for _n, v in entries])
         if tag:
             if any(v < 0 for _n, v in entries):
@@ -5564,9 +5729,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         _to_legacy() drops an EnumType's values, so the resolved-type
         route registers nothing at all.
         """
-        def reg_values(values, tag=None):
+        def reg_values(values, tag=None, node=None):
             # Auto-AST splits enum values: bare `x` is EnumValue(name),
             # `y = N` is EnumValueWithInit(name, value).
+            if node is not None and tag:
+                self.__dict__.setdefault("_enum_nodes", {}).setdefault(
+                    tag, node)
             next_value = 0
             entries = []
             for v in values or []:
@@ -5588,7 +5756,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             """
             for sp in specs or []:
                 if isinstance(sp, (ast.EnumDef, ast.EnumAnon)):
-                    reg_values(sp.values, _enum_tag(sp))
+                    reg_values(sp.values, _enum_tag(sp), sp)
                 elif isinstance(sp, (ast.StructDef, ast.StructAnon)):
                     for mem in (getattr(sp, "members", None) or []):
                         walk(getattr(mem, "decl_specs", None))
@@ -11586,9 +11754,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         if self._is_long_long_expr(expr):
             # Already 64-bit - generate and store
-            if isinstance(expr, ast.IntLiteral):
-                # Large literal - emit directly
-                val = int_value(expr) & 0xFFFFFFFFFFFFFFFF
+            if (isinstance(expr, ast.IntLiteral)
+                    or (isinstance(expr, ast.Identifier)
+                        and expr.name.text in self.ctx.enum_constants)):
+                # Large literal, or an enumeration constant of a 64-bit
+                # enumeration (the name has no storage): emit directly
+                val = (int_value(expr) if isinstance(expr, ast.IntLiteral)
+                       else self.ctx.enum_constants[expr.name.text]
+                       ) & 0xFFFFFFFFFFFFFFFF
                 self.ctx.emit_instr("ld", f"HL,{val & 0xFFFF}")
                 self.ctx.emit_instr("ld", f"({target}),HL")
                 self.ctx.emit_instr("ld", f"HL,{(val >> 16) & 0xFFFF}")
@@ -14014,6 +14187,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if (discarded and isinstance(expr.func, ast.Identifier)
                 and self._bo_try(expr.func.name.text, expr.args or [])):
             return
+
+        # memset to volatile memory or a constant address, not inline: the
+        # call goes to the routine that only stores (docs/blockops.md)
+        expr = self._bo_dev_call(expr)
 
         # Get function parameter types if available
         param_types: list = []
@@ -23312,6 +23489,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return self._type_size(tt)
         elif isinstance(expr, ast.SizeofExpr):
             return self._sizeof_operand_size(expr.operand)
+        elif isinstance(expr, ast.TernaryOp):
+            c = self._eval_const_expr(expr.condition)
+            if c is None:
+                return None
+            return self._eval_const_expr(expr.true_expr if c
+                                         else expr.false_expr)
         return None  # Not a constant expression
 
     def _sizeof_operand_size(self, operand) -> int | None:

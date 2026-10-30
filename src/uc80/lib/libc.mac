@@ -12304,6 +12304,47 @@ _memset_done:
 
 	CSEG
 ; ============================================================
+; lc_memset_dev.mac
+; ============================================================
+; lc_memset_dev.mac - memset for device memory
+
+	CSEG
+
+; ============================================================
+; void *__memset_dev(void *s, int c, size_t n)
+; Fill n bytes of s with c by stores only.  memset copies the first byte
+; with LDIR, and LDIR reads each destination byte before it writes the
+; next one; a device returns something else on a read.  The compiler
+; calls this routine when the destination is volatile memory or a
+; constant address (docs/blockops.md).  Returns: s
+; ============================================================
+	PUBLIC	___memset_dev
+___memset_dev:
+	POP	AF		; return address
+	POP	HL		; HL = s
+	POP	DE		; E = fill byte
+	POP	BC		; BC = n
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	PUSH	AF
+	LD	A,B
+	OR	C
+	RET	Z		; HL = s
+	PUSH	HL		; return value
+_msd_loop:
+	LD	(HL),E
+	INC	HL
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,_msd_loop
+	POP	HL
+	RET
+
+
+	CSEG
+; ============================================================
 ; lc_modf.mac
 ; ============================================================
 ; lc_modf.mac - GENERATED from csrc/lc_modf.c by gen_c_modules.py
@@ -13448,6 +13489,8 @@ __printf_handle_a:
 	JP	_printf_loop
 
 _pa_main:
+	LD	HL,0
+	LD	(_pa_zpad),HL	; zeros after the digits, for a precision over 255
 	; ---- the sign character ----
 	LD	A,(_pa_val+3)
 	LD	B,'-'
@@ -13608,11 +13651,17 @@ _pa_nf:
 	LD	(_pa_nfd),A
 	JR	_pa_expo
 _pa_prec:
-	LD	A,(_printf_prec+1)
+	; A precision over 255: 255 digits, and the rest is zeros (_pa_zpad).
+	; The digits after the 6th are 0 anyway.
+	LD	HL,(_printf_prec)
+	LD	A,H
 	OR	A
-	LD	A,255		; a precision above 255 digits is 255
-	JR	NZ,_pa_pc
-	LD	A,(_printf_prec)
+	LD	A,L
+	JR	Z,_pa_pc
+	LD	DE,-255
+	ADD	HL,DE
+	LD	(_pa_zpad),HL
+	LD	A,255
 _pa_pc:
 	LD	(_pa_nfd),A
 	CP	6
@@ -13735,6 +13784,8 @@ _pa_nd0:
 	ADD	HL,DE
 	LD	DE,5		; 0x, the first digit, p and the sign of the exponent
 	ADD	HL,DE
+	LD	DE,(_pa_zpad)
+	ADD	HL,DE
 	LD	(_pa_len),HL
 
 	; ---- print the sign, the text and the padding ----
@@ -13856,6 +13907,9 @@ _pa_r2a:
 	POP	BC
 	DJNZ	_pa_r2
 _pa_r3:
+	LD	HL,(_pa_zpad)
+	LD	E,'0'
+	CALL	_printf_padw
 	LD	E,'p'
 	LD	A,(_printf_upper)
 	OR	A
@@ -13912,6 +13966,7 @@ _pa_xd:		DS	3
 _pa_xptr:	DS	2
 _pa_xn:		DS	1
 _pa_nfd:	DS	1
+_pa_zpad:	DS	2	; more digits after them, all 0 (a precision over 255)
 _pa_dot:	DS	1
 _pa_len:	DS	2
 _pa_pad:	DS	2
@@ -16476,6 +16531,8 @@ _printf_fl:
 ; _pf_main: print the float in _pf_val.
 ; ============================================================
 _pf_main:
+	LD	HL,0
+	LD	(_pf_zpad),HL	; zeros after the digits, for a precision over 255
 	; ---- the sign character: '-', '+', ' ' or none ----
 	LD	A,(_pf_val+3)
 	LD	B,'-'
@@ -16668,11 +16725,18 @@ _pg_fix:
 	DEC	D
 _pg_f0:
 	OR	A
-	SBC	HL,DE
+	SBC	HL,DE		; HL = P-1-X digits after the point
 	LD	A,H
 	OR	A
 	LD	A,L
 	JR	Z,_pg_f1
+	; over 255: the engine makes 255, the rest are zeros (the # flag)
+	LD	DE,-255
+	ADD	HL,DE
+	EX	DE,HL
+	LD	HL,(_pf_zpad)
+	ADD	HL,DE
+	LD	(_pf_zpad),HL
 	LD	A,255
 _pg_f1:
 	LD	B,A
@@ -16680,6 +16744,8 @@ _pg_fx:
 	LD	A,(_printf_alt)
 	OR	A
 	JR	NZ,_pg_fk
+	LD	HL,0
+	LD	(_pf_zpad),HL	; no # flag: the trailing zeros go
 	LD	DE,POINT
 	CALL	_pf_strip
 _pg_fk:
@@ -16704,6 +16770,8 @@ _pg_exp:
 	LD	A,(_printf_alt)
 	OR	A
 	JR	NZ,_pge_k
+	LD	HL,0
+	LD	(_pf_zpad),HL	; no # flag: the trailing zeros go
 	LD	A,(_pf_f0)
 	INC	A
 	LD	E,A
@@ -16768,11 +16836,21 @@ _pf_prec6:
 	OR	A
 	LD	A,6
 	RET	Z
-	LD	A,(_printf_prec+1)
+	; A precision over 255: the engine makes 255 digits.  The exact
+	; decimal form of a float has at most 189 digits after the point, so
+	; every digit after the 255th is 0, and rounding does not change.  The
+	; rest of the precision is printed as zeros (_pf_zpad).
+	LD	HL,(_printf_prec)
+	LD	A,H
 	OR	A
-	LD	A,255		; a precision above 255 digits is 255
-	RET	NZ
-	LD	A,(_printf_prec)
+	JR	NZ,_pp_big
+	LD	A,L
+	RET
+_pp_big:
+	LD	DE,-255
+	ADD	HL,DE
+	LD	(_pf_zpad),HL
+	LD	A,255
 	RET
 
 ; ---- helper: _pf_dot = 1 when _pf_nf is not 0 or the # flag is set ----
@@ -16998,6 +17076,8 @@ _pf_emit:
 	LD	A,(_pf_nf)
 	LD	E,A
 	ADD	HL,DE
+	LD	DE,(_pf_zpad)
+	ADD	HL,DE
 	LD	A,(_pf_kind)
 	OR	A
 	JR	Z,_pe_len
@@ -17077,6 +17157,9 @@ _pb_fr:
 	INC	HL
 	DJNZ	_pb_fr
 _pb_ex:
+	LD	HL,(_pf_zpad)
+	LD	E,'0'
+	CALL	_printf_padw
 	LD	A,(_pf_kind)
 	OR	A
 	RET	Z
@@ -17156,6 +17239,7 @@ _pf_kind:	DS	1	; 0 digits, 1 digits and exponent, 2 inf or nan
 _pf_ifirst:	DS	1
 _pf_ilast:	DS	1
 _pf_nf:		DS	1	; digits after the point
+_pf_zpad:	DS	2	; more digits after them, all 0 (a precision over 255)
 _pf_dot:	DS	1
 _pf_x:		DS	1	; the decimal exponent, as a signed byte
 _pf_f0:		DS	1	; index of the first digit that is not 0

@@ -93,6 +93,8 @@ def test_sret_buf_module_holds_nothing_else():
     publics = [line.split("PUBLIC", 1)[1].strip()
                for line in (RT_DIR / "rt_sret.mac").read_text().splitlines()
                if "PUBLIC" in line]
+    # the label of the area for the ISR save (gen_wa_helpers.py) is the block's
+    publics = [p for p in publics if not p.startswith("__wa_")]
     assert publics == ["__sret_buf"], publics
 
 

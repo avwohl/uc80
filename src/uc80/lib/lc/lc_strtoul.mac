@@ -48,6 +48,8 @@ _strtoul:
 
 ; Static storage that starts as zero
 	COMMON	/lc_strtoul/
+	PUBLIC	__wa_lc_strtoul	;!
+__wa_lc_strtoul:	;!
 ; Shared automatic storage
 ??AUTO_strtoul:
 	ds	4

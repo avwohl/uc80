@@ -67,6 +67,8 @@ _ldiv:
 
 
 	COMMON	/lc_ldiv/
+	PUBLIC	__wa_lc_ldiv	;!
+__wa_lc_ldiv:	;!
 
 _ldiv_result:	DS	8	; ldiv_t: quot (4), rem (4)
 

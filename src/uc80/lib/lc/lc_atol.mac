@@ -160,6 +160,8 @@ _atol_ret:
 
 
 	COMMON	/lc_atol/
+	PUBLIC	__wa_lc_atol	;!
+__wa_lc_atol:	;!
 
 
 ; atol working storage

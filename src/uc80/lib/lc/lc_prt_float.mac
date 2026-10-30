@@ -100,6 +100,8 @@ _printf_fl:
 ; _pf_main: print the float in _pf_val.
 ; ============================================================
 _pf_main:
+	LD	HL,0
+	LD	(_pf_zpad),HL	; zeros after the digits, for a precision over 255
 	; ---- the sign character: '-', '+', ' ' or none ----
 	LD	A,(_pf_val+3)
 	LD	B,'-'
@@ -292,11 +294,18 @@ _pg_fix:
 	DEC	D
 _pg_f0:
 	OR	A
-	SBC	HL,DE
+	SBC	HL,DE		; HL = P-1-X digits after the point
 	LD	A,H
 	OR	A
 	LD	A,L
 	JR	Z,_pg_f1
+	; over 255: the engine makes 255, the rest are zeros (the # flag)
+	LD	DE,-255
+	ADD	HL,DE
+	EX	DE,HL
+	LD	HL,(_pf_zpad)
+	ADD	HL,DE
+	LD	(_pf_zpad),HL
 	LD	A,255
 _pg_f1:
 	LD	B,A
@@ -304,6 +313,8 @@ _pg_fx:
 	LD	A,(_printf_alt)
 	OR	A
 	JR	NZ,_pg_fk
+	LD	HL,0
+	LD	(_pf_zpad),HL	; no # flag: the trailing zeros go
 	LD	DE,POINT
 	CALL	_pf_strip
 _pg_fk:
@@ -328,6 +339,8 @@ _pg_exp:
 	LD	A,(_printf_alt)
 	OR	A
 	JR	NZ,_pge_k
+	LD	HL,0
+	LD	(_pf_zpad),HL	; no # flag: the trailing zeros go
 	LD	A,(_pf_f0)
 	INC	A
 	LD	E,A
@@ -392,11 +405,21 @@ _pf_prec6:
 	OR	A
 	LD	A,6
 	RET	Z
-	LD	A,(_printf_prec+1)
+	; A precision over 255: the engine makes 255 digits.  The exact
+	; decimal form of a float has at most 189 digits after the point, so
+	; every digit after the 255th is 0, and rounding does not change.  The
+	; rest of the precision is printed as zeros (_pf_zpad).
+	LD	HL,(_printf_prec)
+	LD	A,H
 	OR	A
-	LD	A,255		; a precision above 255 digits is 255
-	RET	NZ
-	LD	A,(_printf_prec)
+	JR	NZ,_pp_big
+	LD	A,L
+	RET
+_pp_big:
+	LD	DE,-255
+	ADD	HL,DE
+	LD	(_pf_zpad),HL
+	LD	A,255
 	RET
 
 ; ---- helper: _pf_dot = 1 when _pf_nf is not 0 or the # flag is set ----
@@ -622,6 +645,8 @@ _pf_emit:
 	LD	A,(_pf_nf)
 	LD	E,A
 	ADD	HL,DE
+	LD	DE,(_pf_zpad)
+	ADD	HL,DE
 	LD	A,(_pf_kind)
 	OR	A
 	JR	Z,_pe_len
@@ -701,6 +726,9 @@ _pb_fr:
 	INC	HL
 	DJNZ	_pb_fr
 _pb_ex:
+	LD	HL,(_pf_zpad)
+	LD	E,'0'
+	CALL	_printf_padw
 	LD	A,(_pf_kind)
 	OR	A
 	RET	Z
@@ -770,6 +798,8 @@ _pf_sinf:	DB	'inf'
 _pf_snan:	DB	'nan'
 
 	COMMON	/lc_prt_float/	; BSS: every variable is set before it is read
+	PUBLIC	__wa_lc_prt_float	;!
+__wa_lc_prt_float:	;!
 
 _pf_val:	DS	4	; the float to print
 _pf_m:		DS	3	; its mantissa
@@ -780,6 +810,7 @@ _pf_kind:	DS	1	; 0 digits, 1 digits and exponent, 2 inf or nan
 _pf_ifirst:	DS	1
 _pf_ilast:	DS	1
 _pf_nf:		DS	1	; digits after the point
+_pf_zpad:	DS	2	; more digits after them, all 0 (a precision over 255)
 _pf_dot:	DS	1
 _pf_x:		DS	1	; the decimal exponent, as a signed byte
 _pf_f0:		DS	1	; index of the first digit that is not 0

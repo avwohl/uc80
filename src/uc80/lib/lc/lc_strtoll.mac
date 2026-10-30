@@ -51,6 +51,8 @@ _strtoll:
 
 ; Static storage that starts as zero
 	COMMON	/lc_strtoll/
+	PUBLIC	__wa_lc_strtoll	;!
+__wa_lc_strtoll:	;!
 ; Shared automatic storage
 ??AUTO_strtoll:
 	ds	8

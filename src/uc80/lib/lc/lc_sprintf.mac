@@ -73,6 +73,8 @@ _sprintf_sink:
 	RET
 
 	COMMON	/lc_sprintf/
+	PUBLIC	__wa_lc_sprintf	;!
+__wa_lc_sprintf:	;!
 
 _sprintf_out:	DS	2	; next byte of the caller's buffer
 

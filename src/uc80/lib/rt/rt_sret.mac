@@ -10,6 +10,8 @@
 	.Z80
 
 	COMMON	/rt_sret/
+	PUBLIC	__wa_rt_sret	;!
+__wa_rt_sret:	;!
 	PUBLIC	__sret_buf
 __sret_buf:	DS	256		; Struct return buffer
 	END

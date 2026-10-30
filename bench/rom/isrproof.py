@@ -28,6 +28,18 @@ iy    Pointer locals in IY and registers in BC and DE under a real NMI.
       walk_isr () on another list (the interrupt function must save IY).
       The three sums must equal a Python model, and each of the three
       functions must use (IY+d).
+memisr  memset, memcpy and struct copies in an NMI function while main does
+      the same on other buffers.
+libmfp  the libm case where the handler calls sin only through a pointer
+      to the library routine (double (*volatile fp)(double) = sin).
+libm  main computes sin, cos and sqrt in a loop while an NMI function (with
+      #pragma uc80 isr_save_workareas) also calls sin and sqrt.  The float
+      interpreter lc_vm and lc_sqrt keep their work areas at fixed addresses,
+      and the handler saves them through the library routines __wasv_lc_vm
+      and the like.  The output of main must equal the output of a run
+      without interrupts, and the same program without the pragma must
+      differ (the proof has teeth).  Interrupts start after main has set
+      its ready flag.
 """
 
 import random
@@ -714,8 +726,137 @@ def prove_memisr(work: Path, period=120011):
                 isr_total=word(0x12), exp_isr=exp_isr, reason=res.reason)
 
 
+LIBM_SRC = r"""
+#include "snd.h"
+#include <z80.h>
+#include <math.h>
+typedef unsigned char B;
+typedef unsigned short U;
+static volatile B ready;
+static volatile U isr_n;
+static volatile long isr_val;
+#ifdef FP
+/* the handler reaches sin only through a pointer to the library routine */
+double (*volatile fp)(double) = sin;
+#define ISR_EXPR ((long) (fp(2.5) * 100000.0))
+#define REF_EXPR ((long) (sin(2.5) * 100000.0))
+#else
+#define ISR_EXPR ((long) (sin(2.5) * 100000.0 + sqrt(7.0) * 1000.0))
+#define REF_EXPR ISR_EXPR
+#endif
+#ifndef REF
+SAVE_PRAGMA
+#pragma uc80 nmi nmi_isr
+void nmi_isr(void)
+{
+    if (!ready || isr_n >= 12)
+        return;
+    isr_val = ISR_EXPR;
+    isr_n++;
+}
+#endif
+static void put32(B port, long v)
+{
+    out(port, (B) v); out(port, (B) (v >> 8));
+    out(port, (B) (v >> 16)); out(port, (B) (v >> 24));
+}
+int main(void)
+{
+    int i;
+    double x = 0.1, y = 3.0;
+    long v;
+
+    ready = 1;
+    for (i = 0; i < 40; i++) {
+        v = (long) (sin(x) * 100000.0 + sqrt(y) * 1000.0 + cos(x + 1.0) * 10.0);
+        put32(0x10, v);
+        x += 0.037;
+        y += 1.7;
+    }
+#ifdef REF
+    isr_val = REF_EXPR;
+    isr_n = 12;
+#else
+    while (isr_n < 12)
+        ;
+#endif
+    put32(0x20, isr_val);
+    out(0x24, (B) isr_n);
+    out(PORT_END, 0);
+    return 0;
+}
+"""
+
+
+def _run_libm(work: Path, tag: str, defs: str, save: bool, nmis: bool):
+    if not save:
+        UC80_FLAGS.append("--no-isr-save-workareas")
+    src = defs + LIBM_SRC.replace(
+        "SAVE_PRAGMA", "#pragma uc80 isr_save_workareas nmi_isr"
+        if save else "")
+    try:
+        info = build_source(work / tag, tag + ".c", src)
+    finally:
+        if not save:
+            UC80_FLAGS.remove("--no-isr-save-workareas")
+    if not info["ok"]:
+        return None, info
+    m = Machine(ram=NEOGEO["ram"], banks=None, ram_fill="random", sp="poison",
+                track=True)
+    m.load_rom(str(info["bin"]))
+    m.load_symbols(str(info["sym"]))
+    m.magic_ports.add(0xFF)
+    if nmis:
+        # the first NMI comes after main has set ready (the handler also
+        # ignores an NMI before that)
+        m.add_nmi_every(900011, start=30000, count=400)
+    res = m.run(max_tstates=120_000_000)
+    outs = [(p & 0xFF, v) for (_t, k, p, v) in m.port_log if k == "OUT"]
+    return (res, outs, m), info
+
+
+def prove_libm(work: Path, fp: bool = False):
+    """main computes sin, sqrt and cos in a loop while an NMI function also
+    calls sin and sqrt (the float interpreter lc_vm and lc_sqrt keep their
+    work areas at fixed addresses).  The handler saves the work areas
+    (#pragma uc80 isr_save_workareas).  The output of main must equal the
+    output of a run without interrupts.  The same program without the pragma
+    must differ: the proof has teeth."""
+    d = "#define FP 1\n" if fp else ""
+    ref, info = _run_libm(work, "libmref" + d[:0] + ("fp" if fp else ""),
+                          d + "#define REF 1\n", False, False)
+    if ref is None:
+        return dict(ok=False, why="build failed\n" + info["log"])
+    _res, ref_outs, _m = ref
+    got, info = _run_libm(work, "libmsave" + ("fp" if fp else ""), d, True, True)
+    if got is None:
+        return dict(ok=False, why="build failed\n" + info["log"])
+    res, outs, m = got
+    bad, info = _run_libm(work, "libmbad" + ("fp" if fp else ""), d, False, True)
+    if bad is None:
+        return dict(ok=False, why="build failed\n" + info["log"])
+    bad_outs = bad[1]
+    main_ref = [x for x in ref_outs if x[0] == 0x10]
+    main_got = [x for x in outs if x[0] == 0x10]
+    main_bad = [x for x in bad_outs if x[0] == 0x10]
+    accepted = len([a for a in m.accepted if a[0] == "nmi"])
+    # --save-workareas makes the control build save too: no control then
+    control_saves = False
+    ok = (res.reason.startswith("port:") and len(main_ref) == 160
+          and main_got == main_ref and outs[-5:] == ref_outs[-5:]
+          and accepted >= 12 and (control_saves or main_bad != main_ref)
+          and m.rom_writes == [])
+    return dict(ok=ok, nmis=accepted, values=len(main_got) // 4,
+                reason=res.reason, same_as_no_interrupts=main_got == main_ref,
+                without_save_differs=main_bad != main_ref
+                or ("n/a (the option is on)" if control_saves else False),
+                stack=m.stack_depth(top=0x10000))
+
+
 PROOFS = {"nmi": prove_nmi, "seq": prove_seq, "bank": prove_bank,
-          "iy": prove_iy, "memisr": prove_memisr}
+          "iy": prove_iy, "memisr": prove_memisr,
+          "libm": prove_libm,
+          "libmfp": lambda work: prove_libm(work, fp=True)}
 
 
 def main(argv=None):

@@ -327,6 +327,8 @@ _fmodl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_fmod/
+	PUBLIC	__wa_lc_fmod	;!
+__wa_lc_fmod:	;!
 ; Shared automatic storage
 ??AUTO_fmod:
 	ds	24

@@ -50,7 +50,7 @@ The register-locals pass treats `LDIR` and `LDI` as instructions that change BC,
 
 ## Switches
 
-- `--no-blockops` keeps the library calls and the old copy code, including the PUSH and POP around a constant destination. The register-locals change (LDI does not read BC, runs of wraps join) has no switch. The join also changes programs that have no block operation.
+- `--no-blockops` keeps the library calls and the old copy code (a `memset` to device memory still goes to `__memset_dev`: a fill that reads a device is a wrong result, not a matter of code size), including the PUSH and POP around a constant destination. The register-locals change (LDI does not read BC, runs of wraps join) has no switch. The join also changes programs that have no block operation.
 - A program that defines a function named `memset` or `memcpy` (static or not) keeps all calls of that name.
 - The order of evaluation of the arguments changes for an inline call. The code evaluates the source first for `memcpy`, then the destination. For `memset` the code evaluates the destination first, then the value. The C standard leaves the order unspecified. The library call evaluated the arguments from right to left.
 - `UC80_NO_BLOCKOPS=1` does the same, for a script.
@@ -58,10 +58,12 @@ The register-locals pass treats `LDIR` and `LDI` as instructions that change BC,
 
 ## Constant addresses, volatile and the work areas
 
-- A call with a pointer that holds a constant address of a volatile object (`static volatile uint8_t *const p = (volatile uint8_t *)0x4000;`) stays a call. A cast to `void *` that drops the qualifier (`memset((void *)0x4300, 0, 8)`) is a cast that the program wrote, and the call becomes inline code.
+- A call of `memcpy` or of `memset` with a size that is not constant stays a call. A `memcpy` with a pointer to a volatile object stays a call. A `memset` to a volatile object or to a constant address is a device fill (see below).
 - A structure copy to a volatile target uses `LDI` or `LDIR`. Both copy from the low address to the high address. A 16-bit member gets the low byte first, as the rule for volatile stores needs.
 - `--isr-save-workareas`: an inline copy in an interrupt function reaches no work area of the runtime. The runtime `memcpy` and `memset` have no work area, so the plan is the same as with `--no-blockops`, and the plan never grows. The handler has no call of `_memcpy` or `_memset`.
-- `memset` stores the first byte and then runs `LDIR`. `LDIR` reads each byte before it writes the byte. A fill of a device register therefore writes the first byte correctly. The other bytes get the values that the device returns on a read. The library routine and the inline code have this limit. Use a loop of volatile stores for such memory. A fill of RAM is correct.
+- A fill of device memory never reads the destination. The destination is device memory in two cases. First, the argument, as the program wrote it (before the conversion to `void *`), points to a volatile object. Second, the argument is a constant address: an integer constant, or a cast of one, such as `(void *)0x4300`; such an address plus or minus an integer constant (`(unsigned char *)REG_BASE + 2`); the address of a member or element of an object at a constant address (`&((struct dev *)0x4B00)->ctl`, `&((unsigned char *)0x4D80)[5]`); and an array member or element there (`((struct dev *)0x4B00)->buf`). The compiler then emits stores only. A fill of up to 6 bytes is a run of stores. A longer fill with a constant size is a loop of `LD (HL),A`, `INC HL` and `DJNZ`.
+- A `memset` to device memory with a size that is not constant, or with a used result, calls `__memset_dev` of the library. This routine also only stores. A pointer that the program cast to `void *` shows no volatile object. Only a constant address makes such a fill a device fill. A `memcpy` has no change, because a copy reads the source and writes the destination. The test `tests/test_memset_device.py` runs these cases in the ROM runner.
+- A fill of RAM keeps `LDIR`: it stores the first byte and copies the byte along. The library routine `memset` does the same. Take a pointer that shows no volatile object and no constant address, for example a `void *` parameter. A fill of a device through this pointer still uses `LDIR`. There the programmer must use a loop of volatile stores.
 - The body of a naked function is assembly text only. It has no call of `memset` or `memcpy`, and the pass does not change it.
 - `--no-whole-program`: each module makes its own inline code, and the result is the same as in the whole program.
 - `tests/test_famh_rom_integration.py` runs these cases in the ROM runner, in the um80 flow and in the sdas flow.

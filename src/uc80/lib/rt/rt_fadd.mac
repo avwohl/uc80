@@ -325,6 +325,8 @@ _fa_u5:
 	RET
 
 	COMMON	/rt_fadd/
+	PUBLIC	__wa_rt_fadd	;!
+__wa_rt_fadd:	;!
 __fa1:
 	DS	6
 __fa2:

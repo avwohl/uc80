@@ -132,6 +132,8 @@ _frexpl:
 
 ; Static storage that starts as zero
 	COMMON	/lc_frexp/
+	PUBLIC	__wa_lc_frexp	;!
+__wa_lc_frexp:	;!
 ; Shared automatic storage
 ??AUTO_frexp:
 	ds	10
