@@ -21,6 +21,16 @@ Numbers from `bench/run.py -c uc80` on 111 programs, against SDCC 4.6.0:
 - `main` 4702a63: 0.9151, 0.8826, 0.5456, 0.6611, 63 of 78.
 - `fami`: 0.9128, 0.8805, 0.5274, 0.6366, 66 of 78.
 
+## Status on 2026-10-30: bug round 4 in the family I tree (branch `integrate11`)
+
+The merge of `bugfix4` into `main` 619b110 gives the branch `integrate11`. The [CHANGELOG](../CHANGELOG.md) lists the checks and the gates.
+
+Numbers from `bench/run.py -c uc80` on 112 programs, against SDCC 4.6.0:
+
+- Merged tree: size 0.9118, whole image 0.8795, T-states (speed mode) 0.5275, 0.6367 without `sort-*`. uc80 is faster than SDCC on 66 of 78 programs.
+- `main` 619b110: 0.9117, 0.8794, 0.5275, 0.6367, 66 of 78.
+- Six programs that link the float printer grow by 51 bytes (the precision above 255), and `rogue36-size` changes because an array bound with `?:` now has a size. The c-testsuite has 220 of 220 passes, also with `--int 32`.
+
 ## Status on 2026-10-30: bug-fix round 4 (branch `bugfix4`)
 
 This round fixes the ISR save of the math library work areas, `memset` to device memory, enumerations with a fixed underlying type, a block typedef that redeclares a typedef name, `#line` and continued lines in the diagnostics, and a `printf` precision above 255. The [CHANGELOG](../CHANGELOG.md) lists them. The code of the bench programs does not change, except one array bound in `rogue36-size` (see the CHANGELOG). The binaries of the programs that link the float printer grow by 51 bytes (the `%.300f` fix), and the geometric means against SDCC 4.6.0 move in the fourth digit.

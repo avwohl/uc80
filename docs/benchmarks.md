@@ -67,8 +67,8 @@ Tested against multiple external test suites:
 | Suite | Pass Rate | Notes |
 |-------|-----------|-------|
 | [c-testsuite](https://github.com/c-testsuite/c-testsuite) | 220/220 | |
-| c-testsuite `--int=32` | 219/220 | 00200 (long-long shift overflows the 64K TPA) |
-| c-testsuite `--int=32 --long=64` | 218/220 | same as above + marginal timeout |
+| c-testsuite `--int=32` | 220/220 | |
+| c-testsuite `--int=32 --long=64` | 219/220 | 00200 (long-long shift overflows the 64K TPA) |
 | [Fujitsu compiler-test-suite](https://github.com/fujitsu/compiler-test-suite) 0003 | 371/374 | |
 | Fujitsu 0010 | 58/75 | 9 int16, 1 float, 2 timeout |
 | Fujitsu 0011 | 287/335 | 14 int16, 5 large struct |

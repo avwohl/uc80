@@ -8,7 +8,7 @@ UC80 targets C24 (ISO/IEC 9899:2024). Core language is complete.
 Standard library is substantially implemented. Main gaps are `_Complex`
 codegen and multibyte/wide character functions.
 
-Test suite results: 219/220 c-testsuite, 488/523 SDCC.
+Test suite results: 220/220 c-testsuite, 488/523 SDCC.
 
 ---
 
@@ -326,8 +326,7 @@ code for them. Do not depend on the code.
 
 A typedef name that a block declares again with a different type in an
 inner block (`typedef short W;` and, in an inner block, `typedef long W;`)
-stops the parser with `unexpected token`. The line number in the message can
-be wrong. The parser is in `uc_core`. Use another name for the inner type.
+works. The inner type ends with the inner block.
 
 ## C99/C11/C24 FEATURES NOT IMPLEMENTED
 
