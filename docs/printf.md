@@ -125,7 +125,7 @@ These limits are deliberate.
   `printf("%1000d", 1)` prints a field of 1000 characters. A precision of a
   float conversion (`%f`, `%e`, `%g`, `%a`) above 255 is correct too. The
   engine makes at most 255 digits, and the rest of the precision is zeros.
-  The exact decimal form of a float has at most 189 digits after the point.
+  The exact decimal form of a float has at most 149 digits after the point.
   So every digit after the 255th is 0, and the rounding does not change.
   `%.300f` of `1.5f` prints `1.5` and 299 zeros, as glibc does. The test
   `tests/test_printf_big_precision.py` compares 18 such conversions with the
