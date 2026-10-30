@@ -526,4 +526,29 @@ _pa_len:	DS	2
 _pa_pad:	DS	2
 _pa_kind:	DS	1
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_printf_a
+	PUBLIC	__wars_lc_printf_a
+__wasv_lc_printf_a:
+	POP	IY
+	LD	HL,-33
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_pa_val
+	LD	BC,33
+	LDIR
+	JP	(IY)
+__wars_lc_printf_a:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_pa_val
+	LD	BC,33
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

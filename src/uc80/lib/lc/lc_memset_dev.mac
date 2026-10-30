@@ -1,0 +1,38 @@
+; lc_memset_dev.mac - memset for device memory
+	.Z80
+
+	CSEG
+
+; ============================================================
+; void *__memset_dev(void *s, int c, size_t n)
+; Fill n bytes of s with c by stores only.  memset copies the first byte
+; with LDIR, and LDIR reads each destination byte before it writes the
+; next one; a device returns something else on a read.  The compiler
+; calls this routine when the destination is volatile memory or a
+; constant address (docs/blockops.md).  Returns: s
+; ============================================================
+	PUBLIC	___memset_dev
+___memset_dev:
+	POP	AF		; return address
+	POP	HL		; HL = s
+	POP	DE		; E = fill byte
+	POP	BC		; BC = n
+	PUSH	BC
+	PUSH	DE
+	PUSH	HL
+	PUSH	AF
+	LD	A,B
+	OR	C
+	RET	Z		; HL = s
+	PUSH	HL		; return value
+_msd_loop:
+	LD	(HL),E
+	INC	HL
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,_msd_loop
+	POP	HL
+	RET
+
+	END

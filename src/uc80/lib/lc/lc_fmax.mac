@@ -171,4 +171,29 @@ _fmaxl:
 ??AUTO_fmax:
 	ds	8
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_fmax
+	PUBLIC	__wars_lc_fmax
+__wasv_lc_fmax:
+	POP	IY
+	LD	HL,-8
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,??AUTO_fmax
+	LD	BC,8
+	LDIR
+	JP	(IY)
+__wars_lc_fmax:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,??AUTO_fmax
+	LD	BC,8
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

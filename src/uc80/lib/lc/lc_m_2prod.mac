@@ -285,4 +285,29 @@ __m_2prod:
 ??AUTO_m_2prod:
 	ds	28
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_m_2prod
+	PUBLIC	__wars_lc_m_2prod
+__wasv_lc_m_2prod:
+	POP	IY
+	LD	HL,-28
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,??AUTO_m_2prod
+	LD	BC,28
+	LDIR
+	JP	(IY)
+__wars_lc_m_2prod:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,??AUTO_m_2prod
+	LD	BC,28
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

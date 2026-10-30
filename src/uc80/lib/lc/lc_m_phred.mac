@@ -266,4 +266,29 @@ _mph_c:
 _mph_df:
 	DS	4
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_m_phred
+	PUBLIC	__wars_lc_m_phred
+__wasv_lc_m_phred:
+	POP	IY
+	LD	HL,-37
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_mph_m
+	LD	BC,37
+	LDIR
+	JP	(IY)
+__wars_lc_m_phred:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_mph_m
+	LD	BC,37
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

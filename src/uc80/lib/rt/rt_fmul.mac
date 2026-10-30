@@ -384,4 +384,29 @@ __fmul_lh:
 __fmul_ll:
 	DS	4
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_rt_fmul
+	PUBLIC	__wars_rt_fmul
+__wasv_rt_fmul:
+	POP	IY
+	LD	HL,-16
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,__fmul_hh
+	LD	BC,16
+	LDIR
+	JP	(IY)
+__wars_rt_fmul:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,__fmul_hh
+	LD	BC,16
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

@@ -323,4 +323,29 @@ __fdiv_man:
 __fdiv_rem:
 	DS	4
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_rt_fdiv
+	PUBLIC	__wars_rt_fdiv
+__wasv_rt_fdiv:
+	POP	IY
+	LD	HL,-4
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,__fdiv_rem
+	LD	BC,4
+	LDIR
+	JP	(IY)
+__wars_rt_fdiv:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,__fdiv_rem
+	LD	BC,4
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

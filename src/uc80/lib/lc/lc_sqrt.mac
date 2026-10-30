@@ -208,4 +208,29 @@ _sq_nan:
 _sq_x:
 	DS	6
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_sqrt
+	PUBLIC	__wars_lc_sqrt
+__wasv_lc_sqrt:
+	POP	IY
+	LD	HL,-6
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_sq_x
+	LD	BC,6
+	LDIR
+	JP	(IY)
+__wars_lc_sqrt:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_sq_x
+	LD	BC,6
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

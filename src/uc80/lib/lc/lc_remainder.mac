@@ -53,4 +53,29 @@ _remainderl:
 ??AUTO_remainder:
 	ds	2
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_remainder
+	PUBLIC	__wars_lc_remainder
+__wasv_lc_remainder:
+	POP	IY
+	LD	HL,-2
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,??AUTO_remainder
+	LD	BC,2
+	LDIR
+	JP	(IY)
+__wars_lc_remainder:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,??AUTO_remainder
+	LD	BC,2
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

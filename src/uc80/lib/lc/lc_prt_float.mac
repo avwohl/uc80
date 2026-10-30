@@ -789,4 +789,29 @@ _pf_dstart:	DS	1
 _pf_dlen:	DS	1
 _pf_dg:		DS	DIGITS+2
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_prt_float
+	PUBLIC	__wars_lc_prt_float
+__wasv_lc_prt_float:
+	POP	IY
+	LD	HL,-215
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_pf_val
+	LD	BC,215
+	LDIR
+	JP	(IY)
+__wars_lc_prt_float:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_pf_val
+	LD	BC,215
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

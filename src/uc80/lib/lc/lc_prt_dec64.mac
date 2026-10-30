@@ -124,4 +124,29 @@ _div64_10_nosub:
 	COMMON	/lc_prt_dec64/
 _prt64_val:	DS	8
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_prt_dec64
+	PUBLIC	__wars_lc_prt_dec64
+__wasv_lc_prt_dec64:
+	POP	IY
+	LD	HL,-8
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_prt64_val
+	LD	BC,8
+	LDIR
+	JP	(IY)
+__wars_lc_prt_dec64:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_prt64_val
+	LD	BC,8
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

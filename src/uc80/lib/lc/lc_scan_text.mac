@@ -216,4 +216,29 @@ _sct_w:
 _sct_cnt:
 	DS	2
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_scan_text
+	PUBLIC	__wars_lc_scan_text
+__wasv_lc_scan_text:
+	POP	IY
+	LD	HL,-10
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_sct_conv
+	LD	BC,10
+	LDIR
+	JP	(IY)
+__wars_lc_scan_text:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_sct_conv
+	LD	BC,10
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

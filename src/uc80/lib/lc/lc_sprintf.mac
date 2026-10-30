@@ -76,4 +76,29 @@ _sprintf_sink:
 
 _sprintf_out:	DS	2	; next byte of the caller's buffer
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_sprintf
+	PUBLIC	__wars_lc_sprintf
+__wasv_lc_sprintf:
+	POP	IY
+	LD	HL,-2
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_sprintf_out
+	LD	BC,2
+	LDIR
+	JP	(IY)
+__wars_lc_sprintf:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_sprintf_out
+	LD	BC,2
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

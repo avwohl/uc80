@@ -842,4 +842,29 @@ _cplx_z:	DS	8	; Input complex
 _cplx_w:	DS	8	; Second input / work area
 _cplx_res:	DS	8	; Result storage
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_complex
+	PUBLIC	__wars_lc_complex
+__wasv_lc_complex:
+	POP	IY
+	LD	HL,-24
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_cplx_z
+	LD	BC,24
+	LDIR
+	JP	(IY)
+__wars_lc_complex:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_cplx_z
+	LD	BC,24
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

@@ -128,4 +128,29 @@ _plo_set:
 	COMMON	/lc_printf_lo/
 _plo_val:	DS	4
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_printf_lo
+	PUBLIC	__wars_lc_printf_lo
+__wasv_lc_printf_lo:
+	POP	IY
+	LD	HL,-4
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_plo_val
+	LD	BC,4
+	LDIR
+	JP	(IY)
+__wars_lc_printf_lo:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_plo_val
+	LD	BC,4
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

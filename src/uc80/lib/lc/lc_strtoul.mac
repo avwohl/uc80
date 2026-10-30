@@ -52,4 +52,29 @@ _strtoul:
 ??AUTO_strtoul:
 	ds	4
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_strtoul
+	PUBLIC	__wars_lc_strtoul
+__wasv_lc_strtoul:
+	POP	IY
+	LD	HL,-4
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,??AUTO_strtoul
+	LD	BC,4
+	LDIR
+	JP	(IY)
+__wars_lc_strtoul:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,??AUTO_strtoul
+	LD	BC,4
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

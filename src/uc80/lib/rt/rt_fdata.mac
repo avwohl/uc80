@@ -29,4 +29,29 @@ __fman1:
 __fman2:
 	DS	4
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_rt_fdata
+	PUBLIC	__wars_rt_fdata
+__wasv_rt_fdata:
+	POP	IY
+	LD	HL,-22
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,__fop1
+	LD	BC,22
+	LDIR
+	JP	(IY)
+__wars_rt_fdata:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,__fop1
+	LD	BC,22
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

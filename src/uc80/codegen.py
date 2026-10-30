@@ -13975,6 +13975,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
                 and self._bo_try(expr.func.name.text, expr.args or [])):
             return
 
+        # memset to volatile memory or a constant address, not inline: the
+        # call goes to the routine that only stores (docs/blockops.md)
+        expr = self._bo_dev_call(expr)
+
         # Get function parameter types if available
         param_types: list = []
         if isinstance(expr.func, ast.Identifier):

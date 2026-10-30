@@ -92,4 +92,29 @@ _ssi_back:
 ??AUTO_scan_stdin:
 	ds	12
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_scan_stdin
+	PUBLIC	__wars_lc_scan_stdin
+__wasv_lc_scan_stdin:
+	POP	IY
+	LD	HL,-14
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_ssi_back
+	LD	BC,14
+	LDIR
+	JP	(IY)
+__wars_lc_scan_stdin:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_ssi_back
+	LD	BC,14
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

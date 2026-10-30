@@ -100,4 +100,29 @@ __mul64_noadd:
 	POP	BC
 	RET
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_rt_mul64
+	PUBLIC	__wars_rt_mul64
+__wasv_rt_mul64:
+	POP	IY
+	LD	HL,-16
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,__mul64_mcd
+	LD	BC,16
+	LDIR
+	JP	(IY)
+__wars_rt_mul64:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,__mul64_mcd
+	LD	BC,16
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

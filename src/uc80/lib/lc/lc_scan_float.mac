@@ -1478,4 +1478,29 @@ ___sc_float_S0:
 ??AUTO_scan_float:
 	ds	182
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_scan_float
+	PUBLIC	__wars_lc_scan_float
+__wasv_lc_scan_float:
+	POP	IY
+	LD	HL,-182
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,??AUTO_scan_float
+	LD	BC,182
+	LDIR
+	JP	(IY)
+__wars_lc_scan_float:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,??AUTO_scan_float
+	LD	BC,182
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

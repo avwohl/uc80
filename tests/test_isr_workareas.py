@@ -468,17 +468,79 @@ def test_the_float_save_names_no_label_of_another_module(
         assert "defined in" not in err
 
 
+def run_sin(paths, kind, period=450001):
+    """Run the FLOAT_SIN program; (machine, the 4 bytes of out)."""
+    m = machine(paths)
+    _p, source, vec = KINDS[kind]
+    if source == "nmi":
+        m.add_nmi_every(period, start=7000)
+    else:
+        m.add_irq_every(period, start=7000, vec=vec)
+    m.run(max_tstates=30_000_000)
+    return m, bytes(m.peek("_out", 4))
+
+
+@pytest.mark.parametrize("kind", ["nmi", "int"])
 @pytest.mark.parametrize("flow", FLOWS)
-def test_a_libc_work_area_is_warned_not_saved(flow, tmp_path, libs):
-    """The data labels of libc modules (sin, sqrt: _vm_pool, _sq_x) are
-    private to the library: the save cannot name them.  The warning stays,
-    and the program still links (no undefined label, no second copy)."""
-    paths, err = build_flow(tmp_path, {"t.c": FLOAT_SIN % KINDS["int"][0]},
-                            flow, libs, extra=("--isr-save-workareas",))
-    assert (tmp_path / "t.bin").exists()
+def test_the_libc_work_areas_are_saved(kind, flow, tmp_path, libs):
+    """sin and sqrt in the main loop and in the handler.  lc_vm (the float
+    interpreter), lc_sqrt and the float work areas are saved by the
+    prologue through the routines __wasv_<block> of the library, so the
+    result equals the result of a run without interrupts.  Without the
+    option the result is wrong."""
+    ref_dir = tmp_path / "ref"
+    ref_dir.mkdir()
+    ref_paths, _err = build_flow(ref_dir, {"t.c": FLOAT_SIN % ""}, flow,
+                                 libs)
+    ref_m = machine(ref_paths)
+    ref_m.run(max_tstates=30_000_000)
+    want = bytes(ref_m.peek("_out", 4))
+    assert want != bytes(4)
+
+    bad_dir = tmp_path / "bad"
+    bad_dir.mkdir()
+    paths, err = build_flow(bad_dir, {"t.c": FLOAT_SIN % KINDS[kind][0]},
+                            flow, libs)
     assert "(work area of lc_vm)" in err
-    assert "saves and restores the work areas of rt_" in err
-    assert "lc_vm" not in err.split("saves and restores")[1].split("\n")[0]
+    assert "--isr-save-workareas" in err
+    m, bad = run_sin(paths, kind)
+    assert m.peek16("_isr_n") >= 3
+    assert bad != want
+
+    paths, err = build_flow(tmp_path, {"t.c": FLOAT_SIN % KINDS[kind][0]},
+                            flow, libs, extra=("--isr-save-workareas",))
+    assert "warning" not in err
+    note = err.split("saves and restores")[1].split("\n")[0]
+    for block in ("lc_vm", "lc_sqrt", "rt_fdata", "rt_fmul"):
+        assert block in note
+    m, got = run_sin(paths, kind)
+    assert m.peek16("_isr_n") >= 3
+    assert got == want
+    assert m.rom_writes == []
+
+
+def test_every_work_area_module_has_the_save_helpers():
+    """gen_wa_helpers.py has run on every module of lib/lc and lib/rt."""
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, str(REPO / "src" / "uc80" / "lib"
+                                            / "gen_wa_helpers.py"),
+                        "--check"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout
+
+
+def test_a_handler_without_libm_links_no_helper(tmp_path):
+    """The helpers cost nothing for a handler that reaches no library work
+    area: the program has no __wasv_ label."""
+    r = compile_text(tmp_path, """
+volatile unsigned char n;
+#pragma uc80 nmi isr
+#pragma uc80 isr_save_workareas isr
+void isr(void) { n++; }
+int main(void) { return 0; }
+""")
+    assert r.returncode == 0, r.stderr
+    assert "__wasv_" not in (tmp_path / "t.mac").read_text()
 
 
 def test_the_option_is_an_error_without_the_whole_program(tmp_path):

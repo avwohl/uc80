@@ -9,4 +9,29 @@
 __tmp32:
 	DS	4
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_rt_tmp32
+	PUBLIC	__wars_rt_tmp32
+__wasv_rt_tmp32:
+	POP	IY
+	LD	HL,-4
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,__tmp32
+	LD	BC,4
+	LDIR
+	JP	(IY)
+__wars_rt_tmp32:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,__tmp32
+	LD	BC,4
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

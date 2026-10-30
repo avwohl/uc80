@@ -273,4 +273,29 @@ _sti_fl:
 _sti_base:
 	DS	1
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_strtoint
+	PUBLIC	__wars_lc_strtoint
+__wasv_lc_strtoint:
+	POP	IY
+	LD	HL,-3
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_sti_nb
+	LD	BC,3
+	LDIR
+	JP	(IY)
+__wars_lc_strtoint:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_sti_nb
+	LD	BC,3
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

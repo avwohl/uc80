@@ -530,4 +530,29 @@ _remquol:
 ??AUTO_remquo:
 	ds	38
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_remquo
+	PUBLIC	__wars_lc_remquo
+__wasv_lc_remquo:
+	POP	IY
+	LD	HL,-38
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,??AUTO_remquo
+	LD	BC,38
+	LDIR
+	JP	(IY)
+__wars_lc_remquo:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,??AUTO_remquo
+	LD	BC,38
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END

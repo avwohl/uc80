@@ -78,7 +78,7 @@ rt_arith32) at a fixed address (isr -> _divide -> __div32); main code that calls
 the same routine can be corrupted by the interrupt
 ```
 
-The warning is safe to ignore when the main program never uses the same routine. One cure is to avoid long division, 64-bit arithmetic and floating point in a handler. The other cure is to let the handler save the work areas.
+The warning for an area that the handler can save ends with the hint `--isr-save-workareas makes the handler save and restore the area`. The warning is safe to ignore when the main program never uses the same routine. One cure is to avoid long division, 64-bit arithmetic and floating point in a handler. The other cure is to let the handler save the work areas.
 
 ### Work areas that the handler saves
 
@@ -94,7 +94,7 @@ The prologue of the handler copies each reached work area to the stack, after th
  
 The compiler saves the work areas as the program text places them. The whole-program build puts the data of the runtime in one block of the program. The order there is not the order of the library files. The compiler takes the address and the size of each label from the program text.
 
-Labels that follow each other join into one area. The warning names the block of the library file, for example `rt_rem32`. An area of up to 6 bytes goes through the stack in words. A larger area goes with `LDIR`. The compiler prints a note with the cost.
+Labels that follow each other join into one area. The work areas of a library module that the link adds (`lc_vm`, `lc_sqrt` and the other `lc_*` modules, and the `rt_*` modules that only a library routine calls) have private labels. Each such module has two public routines instead: `__wasv_BLOCK` pushes the area onto the stack, and `__wars_BLOCK` copies the area back and drops the copy from the stack. The prologue and the epilogue of the handler call them (`CALL __wasv_lc_vm`). The routines use IY for the return address, so the register saves of the prologue must come first, and they do. `src/uc80/lib/gen_wa_helpers.py` writes the routines into the library modules (`--check` finds a module that is out of date), and `build_libs.py` leaves them out of the joined files `libc.mac` and `runtime.mac`. A program that has no handler with the option links none of them. The warning names the block of the library file, for example `rt_rem32`. An area of up to 6 bytes goes through the stack in words. A larger area goes with `LDIR`. The compiler prints a note with the cost.
 
 ```
 uc80: note: interrupt function 'isr' saves and restores the work areas of
@@ -108,7 +108,7 @@ The compiler does not save the blocks that hold state and not temporary values: 
 
 Three more limits apply:
 
-- The data labels of the libc modules (`sin`, `sqrt`, `printf`, and others) are private to the library. The compiler cannot name them, so it does not save these blocks and the warning stays. The compiler embeds the runtime blocks (`rt_*`), and the option saves them.
+- A handler that reaches `sin`, `cos`, `sqrt` or any other function of the math library saves the float interpreter (`lc_vm`, 263 bytes: the stack of 64 floats, and its registers) and `lc_sqrt` with the float work areas. The cost is large: a handler with `sin` and `sqrt` saves 322 bytes of RAM, and needs about 14000 T-states for each interrupt, more than a short handler needs for its work. A handler that is called often should not call the math library. `bench/rom/isrproof.py libm` runs a main loop with `sin`, `cos` and `sqrt` while a handler also calls `sin` and `sqrt`, in both flows. The results of the loop are the same as in a run without interrupts. The same program without the pragma gives other results.
 - The option needs the whole program. With `--no-whole-program` the option is an error for a handler that reaches a work area or calls a routine of another module (that routine is invisible), and for the pragma. A handler that reaches nothing gets no save code and no message, so a makefile can pass the option to every module.
 - A handler that calls a routine that the compilation does not define (`extern` in `--no-whole-program`) gets a warning: the compiler cannot see the work areas or the alternate registers of that routine.
 

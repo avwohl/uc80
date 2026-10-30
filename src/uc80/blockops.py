@@ -33,6 +33,8 @@ from .addrcse import _fields, _is_node
 
 # up to this size a copy or fill is unrolled
 UNROLL = max(1, int(os.environ.get("UC80_BLOCKOP_UNROLL", 4)))
+# a fill of device memory is unrolled up to this size, then a store loop
+DEV_UNROLL = 6
 _LD_HL_CONST = re.compile(r"\tld\tHL,([^(\s;][^;\s]*)$", re.IGNORECASE)
 _NAMES = ("memset", "memcpy")
 
@@ -98,6 +100,54 @@ class BlockOpsMixin:
     def _to_legacy_type(t):
         from .codegen import _to_legacy
         return _to_legacy(t) if t is not None else None
+
+    def _bo_dev_dest(self, node) -> bool:
+        """Does ``memset`` fill device memory?  The destination argument,
+        as written (before the conversion to ``void *``), points to a
+        volatile object, or it is a constant address: an integer constant
+        or a cast of one (``(void *)0x4300``).  A fill of such memory must
+        not read the destination: ``LDIR`` reads each byte it copies, and
+        a device returns something else than the value written."""
+        if not _is_node(node):
+            return False
+        try:
+            t = self._to_legacy_type(self._get_expr_type(node))
+        except Exception:
+            t = None
+        base = getattr(t, "base_type", None)
+        if isinstance(t, (lt.PointerType, lt.ArrayType)) and getattr(
+                base, "is_volatile", False):
+            return True
+        inner = node
+        while isinstance(inner, ast.Cast):
+            inner = inner.expr
+        if isinstance(inner, ast.Identifier):
+            return False
+        try:
+            if self._eval_const_expr(inner) is None:
+                return False
+            it = self._to_legacy_type(self._get_expr_type(inner))
+        except Exception:
+            return False
+        return not isinstance(it, (lt.PointerType, lt.ArrayType))
+
+    def _bo_dev_call(self, expr):
+        """``memset (dest, v, n)`` with a device destination, not inline:
+        the call goes to ``__memset_dev``, which only stores.  Returns the
+        new call, or ``expr`` when nothing changes."""
+        if (not self.enable_blockops or os.environ.get("UC80_NO_BLOCKOPS")
+                or not isinstance(expr.func, ast.Identifier)
+                or expr.func.name.text != "memset"
+                or len(expr.args or []) != 3
+                or "memset" in getattr(self, "user_defined_funcs", ())
+                or self.ctx.current_function in ("memset", "_memset")
+                or self.ctx.lookup("__memset_dev") is None
+                or not self._bo_dev_dest(expr.args[0])):
+            return expr
+        self._bo_count("memset_dev_call")
+        from .codegen import make_identifier
+        return ast.Call(func=make_identifier("__memset_dev"),
+                        args=expr.args, pos=expr.pos)
 
     def _bo_const_addr(self, mark: int) -> "str | None":
         """The lines emitted since ``mark`` are one ``ld HL,const``:
@@ -188,6 +238,43 @@ class BlockOpsMixin:
         e("ld", f"BC,{n - 1}")
         e("ldir")
 
+    def _bo_fill_dev(self, sym: "str | None", n: int,
+                     val: "int | None") -> None:
+        """Fill N bytes of device memory by stores only, from the low
+        address up.  ``sym`` is the constant address, or None when HL holds
+        the address; ``val`` is the byte, or None when A holds it."""
+        e = self.ctx.emit_instr
+        if sym is not None:
+            e("ld", f"HL,{sym}")
+        if val is not None:
+            if val:
+                e("ld", f"A,{val}")
+            else:
+                e("xor", "A")
+        if n <= DEV_UNROLL:
+            for i in range(n):
+                e("ld", "(HL),A")
+                if i != n - 1:
+                    e("inc", "HL")
+            return
+        loop = self.ctx.new_label("MSD")
+        lo, hi = n & 0xFF, n >> 8
+        if hi == 0:
+            e("ld", f"B,{lo}")
+            self.ctx.lines.append(f"{loop}:")
+            e("ld", "(HL),A")
+            e("inc", "HL")
+            e("djnz", loop)
+            return
+        e("ld", f"C,{lo}")
+        e("ld", f"B,{hi + (1 if lo else 0)}")
+        self.ctx.lines.append(f"{loop}:")
+        e("ld", "(HL),A")
+        e("inc", "HL")
+        e("dec", "C")
+        e("jr", f"NZ,{loop}")
+        e("djnz", loop)
+
     # ------------------------------------------------------------------
     # the two calls
     # ------------------------------------------------------------------
@@ -221,7 +308,11 @@ class BlockOpsMixin:
         only = os.environ.get("UC80_BLOCKOP_ONLY")
         if only and self.ctx.current_function not in only.split(","):
             return False
-        if any(self._bo_volatile(a) for a in args):
+        # a device destination is no reason to keep the call: the fill
+        # below never reads it (the other arguments are still checked)
+        dev_dest = name == "memset" and self._bo_dev_dest(args[0])
+        if any(self._bo_volatile(a) for a in (args[1:] if dev_dest
+                                              else args)):
             return False
         e = self.ctx.emit_instr
         lines = self.ctx.lines
@@ -232,6 +323,7 @@ class BlockOpsMixin:
             self._bo_count("memcpy")
             return True
         # memset(d, v, n)
+        dev = n > UNROLL and dev_dest
         v = self._eval_const_expr(args[1])
         val = None if v is None else v & 0xFF
         mark = len(lines)
@@ -244,6 +336,10 @@ class BlockOpsMixin:
             e("ld", "A,L")
             if const is None:
                 e("pop", "HL")
+        if dev:
+            self._bo_fill_dev(const, n, val)
+            self._bo_count("memset_dev")
+            return True
         self._bo_fill(const, n, val)
         self._bo_count("memset")
         return True

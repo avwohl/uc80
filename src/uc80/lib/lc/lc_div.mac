@@ -54,4 +54,29 @@ _div:
 ; div/ldiv result storage
 _div_result:	DS	4	; div_t: quot (2), rem (2)
 
+; ---- BEGIN work-area save helpers (gen_wa_helpers.py) ----
+	CSEG
+	PUBLIC	__wasv_lc_div
+	PUBLIC	__wars_lc_div
+__wasv_lc_div:
+	POP	IY
+	LD	HL,-4
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,_div_result
+	LD	BC,4
+	LDIR
+	JP	(IY)
+__wars_lc_div:
+	POP	IY
+	LD	HL,0
+	ADD	HL,SP
+	LD	DE,_div_result
+	LD	BC,4
+	LDIR
+	LD	SP,HL
+	JP	(IY)
+; ---- END work-area save helpers ----
+
 	END
