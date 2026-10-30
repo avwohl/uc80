@@ -516,7 +516,7 @@ class RangeMixin:
     def _range_loop_facts(self, n) -> dict:
         """Ranges that hold for the variable of a counted ``for`` statement
         inside the statement (see the module comment).  {} when none."""
-        if not self.enable_range_cmp or self._range_aborted:
+        if not self.enable_range_cmp:
             return {}
         try:
             return self._range_loop_facts_1(n)

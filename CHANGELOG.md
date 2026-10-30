@@ -8,7 +8,7 @@ observable behaviour of a program uc80 compiles.
 
 ### Family I step 2 repair
 
-- The range of a loop counter no longer applies to the init clause of the `for` statement (`for (f = (i < 5), i = 0; ...)` compared with the new range). The address-taken and volatile sets are now computed before the function-wide analysis, so a function with a label, inline assembly or a `case` label in a loop no longer gives a loop counter a range when a pointer changes the counter. In such a function the loop ranges are off. `bench/ccfuzz.py` runs `--no-licm --no-range-cmp --no-narrow-index` as a variant. Tests: `tests/test_range_cmp.py` (four new programs). Note in docs/narrow_index.md on the order of unsequenced calls in an index.
+- The range of a loop counter no longer applies to the init clause of the `for` statement (`for (f = (i < 5), i = 0; ...)` compared with the new range). The address-taken and volatile sets are now computed before the function-wide analysis, so a function with a label, inline assembly or a `case` label in a loop no longer gives a loop counter a range when a pointer changes the counter.  `bench/ccfuzz.py` runs `--no-licm --no-range-cmp --no-narrow-index` as a variant. Tests: `tests/test_range_cmp.py` (four new programs). Note in docs/narrow_index.md on the order of unsequenced calls in an index.
 
 ### Family I step 2 (branch `fami`): loop optimisation, gates and numbers
 
