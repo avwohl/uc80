@@ -203,7 +203,7 @@ def _filter_hand_written_asm(asm_text: str):
 
 # The program has this many bytes of BSS of its own or more: the start-up
 # code clears the BSS with the push fill (docs/startup_fast.md).
-BIG_BSS = 512
+BIG_BSS = 256
 
 
 def _common_bytes(code: str) -> int:

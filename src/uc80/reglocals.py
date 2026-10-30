@@ -2485,7 +2485,13 @@ def _routine_reads(sums: _Summaries, label: str, _busy=None) -> int:
     return r
 
 
+# Library routines outside lib/rt that take a register argument.
+_LIB_READS = {"__putchar_v": E}
+
+
 def helper_reads(label: str) -> int:
+    if label in _LIB_READS:
+        return _LIB_READS[label]
     t = _helper_table().get(label.lower())
     return t[0] if t else ALL7
 
@@ -2578,6 +2584,8 @@ def drop_dead_copies(code: str) -> str:
             return D | E | H | L | A
         if t == "__callhl":
             return H | L
+        if t in _LIB_READS:
+            return _LIB_READS[t]
         if t.startswith("__"):
             h = helpers.get(t.lower())
             return h[0] if h else ALL7

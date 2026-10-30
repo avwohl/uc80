@@ -15,6 +15,8 @@ The code generator emits this for `putchar(c);` and for `(void) putchar(c);`:
 
 `__putchar_v` is in `src/uc80/lib/lc/lc_conout.mac`. It takes the character in E. It destroys all registers and returns no value. The routine applies the same rules as `__conout`: LF becomes CR LF, unless the last character was CR, and `___crlf_mode` can switch the change off. `__conout` is now a short wrapper. It saves BC, DE and HL and calls `__putchar_v`. The library has still two `LD C,CONOUT` instructions (the test in `tests/test_crlf.py` counts them).
 
+A call of `__conout` costs 10 T-states more than before. The call of `__putchar_v` is new, and the `CALL BDOS` became a `JP BDOS` in the routine. A program that prints much text with `printf` or `puts` is up to 1.6% slower (`hamurabi`). A program that prints with `putchar` statements is much faster.
+
 The register-locals pass treats `__putchar_v` as a call that changes all registers. A local in BC or DE gets the same wrap as for any other call.
 
 ## When the change applies
