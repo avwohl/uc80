@@ -5449,14 +5449,31 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         """The value of an enumerator initializer: the small evaluator
         below, then the general constant evaluator (sizeof, offsetof,
         comparisons, the conditional operator, ...)."""
-        v = self._eval_enum_expr_basic(expr)
+        self._const_div0 = False
+        try:
+            v = self._eval_const_expr(expr)
+        except Exception:
+            v = None
+        if self._const_div0:
+            raise CodegenError("division by zero in a constant expression",
+                               expr)
+        if isinstance(v, float):
+            raise CodegenError(
+                "an enumerator value is not an integer constant expression",
+                expr)
+        if not isinstance(v, int) or isinstance(v, bool):
+            v = self._eval_enum_expr_basic(expr)
+        return v
+
+    def _enum_init_value(self, expr, name) -> int:
+        """The value of the initializer of enumerator ``name``; an
+        initializer that is no integer constant expression is an error
+        (C23 6.7.3.3), not a silent sequential value."""
+        v = self._eval_enum_expr(expr)
         if v is None:
-            try:
-                v = self._eval_const_expr(expr)
-            except Exception:
-                v = None
-            if not isinstance(v, int) or isinstance(v, bool):
-                return None
+            raise CodegenError(
+                f"the value of enumerator '{name}' is not an integer "
+                f"constant expression", expr)
         return v
 
     def _eval_enum_expr_basic(self, expr: ast.Expression) -> int | None:
@@ -5666,16 +5683,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             # Auto-AST splits `EnumValue(name)` and
             # `EnumValueWithInit(name, value)` — only the latter has a value.
             v_expr = getattr(enum_val, "value", None)
-            if v_expr is not None:
-                evaluated = self._eval_enum_expr(v_expr)
-                if evaluated is not None:
-                    next_value = evaluated
-                else:
-                    next_value = 0
             # `enum_val.name` may be a Token in the auto-AST; lift to str.
             nm = enum_val.name
             if hasattr(nm, "text"):
                 nm = nm.text
+            if v_expr is not None:
+                next_value = self._enum_init_value(v_expr, nm)
             entries.append((nm, next_value))
             self.ctx.enum_constants[nm] = next_value
             next_value += 1
@@ -5739,9 +5752,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             entries = []
             for v in values or []:
                 if isinstance(v, ast.EnumValueWithInit):
-                    evaluated = self._eval_enum_expr(v.value)
-                    if evaluated is not None:
-                        next_value = evaluated
+                    next_value = self._enum_init_value(v.value, v.name.text)
                 entries.append((v.name.text, next_value))
                 self.ctx.enum_constants[v.name.text] = next_value
                 next_value += 1
@@ -7705,9 +7716,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             entries = []
             for v in values or []:
                 if isinstance(v, ast.EnumValueWithInit):
-                    evaluated = self._eval_enum_expr(v.value)
-                    if evaluated is not None:
-                        next_value = evaluated
+                    next_value = self._enum_init_value(v.value, v.name.text)
                 entries.append((v.name.text, next_value))
                 self.ctx.enum_constants[v.name.text] = next_value
                 next_value += 1
@@ -10162,6 +10171,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 # Regular case - evaluate constant expression
                 const_val = self._eval_const_expr(s.value)
                 if const_val is not None:
+                    if any(v == const_val for v, _l in cases):
+                        raise CodegenError(
+                            f"duplicate case value {const_val}", s)
                     label = self.ctx.new_label("CASE")
                     cases.append((const_val, label))
                 # Recurse into the statement following the case label
@@ -10626,6 +10638,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             size = self._type_size(tt)
             self.ctx.emit_instr("ld", f"HL,{size}")
 
+        elif isinstance(expr, ast.AlignofType):
+            # The Z80 has no alignment rules: every type has alignment 1
+            # (the same value as <stdalign.h>).
+            self.ctx.emit_instr("ld", "HL,1")
+
         elif isinstance(expr, ast.SizeofExpr):
             # sizeof(string_literal) returns the array size including null terminator
             if isinstance(expr.operand, ast.StringLiteral):
@@ -11060,7 +11077,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # _is_long_expr knows which operators and operand types.
         if (not is_long_long and not is_long
                 and self.type_config.int_size == 4
-                and self._is_long_expr(expr)):
+                and (self._is_long_expr(expr)
+                     or (op in self._SWAP_CMP or op in ("/", "%"))
+                     and not self._is_float_expr(expr.left)
+                     and not self._is_float_expr(expr.right)
+                     and self._int32_mixed_ushort(expr.left, expr.right))):
             is_long = True
 
         if is_long_long:
@@ -11511,8 +11532,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             # 32-bit, either being unsigned makes the comparison unsigned.
             left_long = self._is_long_expr(expr.left) or self._is_long_long_expr(expr.left)
             right_long = self._is_long_expr(expr.right) or self._is_long_long_expr(expr.right)
-            left_u = self._is_promoted_unsigned(expr.left)
-            right_u = self._is_promoted_unsigned(expr.right)
+            left_u = self._pu32(expr.left)
+            right_u = self._pu32(expr.right)
             if left_long and right_long:
                 is_unsigned = left_u or right_u
             elif left_long:
@@ -16617,7 +16638,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 size = 4
             else:
                 size = self.type_config.int_size
-            return size, self._is_promoted_unsigned(e)
+            return size, self._pu32(e)
         lsize, lu = info(expr.left)
         rsize, ru = info(expr.right)
         if lsize == rsize:
@@ -19841,8 +19862,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                      or self._is_long_long_expr(expr.left))
         right_long = (self._is_long_expr(expr.right)
                       or self._is_long_long_expr(expr.right))
-        left_u = self._is_promoted_unsigned(expr.left)
-        right_u = self._is_promoted_unsigned(expr.right)
+        left_u = self._pu32(expr.left)
+        right_u = self._pu32(expr.right)
         if left_long and right_long:
             return left_u or right_u
         if left_long:
@@ -20521,6 +20542,114 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 and t.name in ("short", "unsigned short", "short int",
                                "unsigned short int"))
 
+    def _bsize(self, t) -> int:
+        """Byte size of a BasicType (0 for any other type)."""
+        if not isinstance(t, lt.BasicType):
+            return 0
+        return self.type_config.sizeof_basic(t.name)
+
+    @staticmethod
+    def _bunsigned(t) -> bool:
+        return (isinstance(t, lt.BasicType)
+                and (t.is_signed is False or t.name.startswith("unsigned")))
+
+    def _int32_bits(self, e) -> int | None:
+        """--int 32 only.  An upper bound of the bits that the magnitude of
+        the integer expression ``e`` needs, or None when ``e`` has no such
+        bound or is not an integer of at most 4 bytes.  An operation on
+        char-sized operands whose bound is 15 or less is exact in 16 bits;
+        a larger bound needs the 32-bit int of C 6.3.1.1."""
+        if isinstance(e, ast.IntLiteral):
+            if self._is_long_expr(e):
+                return 32
+            return abs(int_value(e)).bit_length()
+        if isinstance(e, ast.CharLiteral):
+            return 8
+        if isinstance(e, ast.BinaryOp):
+            op = e.op
+            if op in ("==", "!=", "<", ">", "<=", ">=", "&&", "||"):
+                return 1
+            l = self._int32_bits(e.left)
+            if op == ",":
+                return self._int32_bits(e.right)
+            r = self._int32_bits(e.right)
+            if l is None or r is None:
+                return None
+            if op in ("+", "-", "&", "|", "^"):
+                return max(l, r) + 1
+            if op == "*":
+                return l + r
+            if op == "<<":
+                if isinstance(e.right, ast.IntLiteral):
+                    return l + int_value(e.right)
+                return 32
+            if op in (">>", "/"):
+                return l
+            if op == "%":
+                return min(l, r)
+            return None
+        if isinstance(e, ast.UnaryOp):
+            if e.op == "!":
+                return 1
+            if e.op in ("-", "~", "+"):
+                b = self._int32_bits(e.operand)
+                return None if b is None else b + (e.op != "+")
+            return None
+        if isinstance(e, ast.TernaryOp):
+            a = self._int32_bits(e.true_expr)
+            b = self._int32_bits(e.false_expr)
+            return None if a is None or b is None else max(a, b)
+        if isinstance(e, ast.Cast):
+            t = _to_legacy(e.target_type)
+            if self._bsize(t) == 1:
+                return 8
+        t = _to_legacy(self._get_expr_type(e))
+        if not isinstance(t, lt.BasicType) or t.name in (
+                "float", "double", "long double"):
+            return None
+        sz = self._bsize(t)
+        if sz == 1:
+            return 8
+        if sz > 4 or sz == 0:
+            return None
+        return 32
+
+    def _int32_ushort(self, e) -> bool:
+        t = _to_legacy(self._get_expr_type(e))
+        return self._bsize(t) == 2 and self._bunsigned(t)
+
+    def _int32_mixed_ushort(self, left, right) -> bool:
+        """--int 32: an ``unsigned short`` operand against an operand that
+        is neither unsigned short, unsigned char nor a constant of
+        0..65535.  Both promote to the signed 32-bit int (C 6.3.1.1), so
+        a 16-bit unsigned or signed operation gives the wrong order or
+        quotient (40000 against -1)."""
+        if self.type_config.int_size != 4:
+            return False
+        lu, ru = self._int32_ushort(left), self._int32_ushort(right)
+        if lu == ru:
+            return False
+        other = right if lu else left
+        if self._int32_bits(left) is None or self._int32_bits(right) is None:
+            return False
+        if isinstance(other, ast.IntLiteral):
+            return not 0 <= int_value(other) <= 0xFFFF
+        t = _to_legacy(self._get_expr_type(other))
+        if self._bsize(t) == 1 and self._bunsigned(t):
+            return False
+        return True
+
+    def _pu32(self, e) -> bool:
+        """_is_promoted_unsigned for a 32-bit operation: with --int 32 an
+        operand of at most 16 bits promotes to the signed int."""
+        if (self.type_config.int_size == 4 and not self._is_long_expr(e)
+                and not self._is_long_long_expr(e)):
+            t = _to_legacy(self._get_expr_type(e))
+            if (isinstance(t, lt.BasicType)
+                    and self.type_config.sizeof_basic(t.name) <= 2):
+                return False
+        return self._is_promoted_unsigned(e)
+
     @_scoped_memo
     def _is_long_expr(self, expr) -> bool:
         """Check if an expression has 32-bit type (long but not long long)."""
@@ -20552,8 +20681,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 if self._is_long_expr(expr.operand):
                     return True
                 if expr.op in ("~", "-") and self.type_config.int_size == 4:
-                    return self._is_short_type(
-                        self._get_expr_type(expr.operand))
+                    b = self._int32_bits(expr)
+                    return b is not None and b > 15
                 return False
             # Logical NOT always returns int (0 or 1)
             if expr.op == "!":
@@ -20571,7 +20700,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 if self._is_long_expr(expr.left):
                     return True
                 if expr.op == "<<" and self.type_config.int_size == 4:
-                    return self._is_short_type(self._get_expr_type(expr.left))
+                    b = self._int32_bits(expr)
+                    return b is not None and b > 15
                 return False
             # Binary operation is long if either operand is long
             # (excluding assignment operators which return target type)
@@ -20604,6 +20734,17 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         if expr.op == "*" or _is_short(left_t) \
                                 or _is_short(right_t):
                             return True
+                # An operand that is itself an int expression (a + b,
+                # a << k, a comparison, ...): 16 bits are enough only when
+                # the bound of the magnitude is 15 bits or less.
+                if tc.int_size == 4 and expr.op in (
+                        "*", "+", "-", "&", "|", "^"):
+                    b = self._int32_bits(expr)
+                    if b is not None and b > 15:
+                        return True
+                if (tc.int_size == 4 and expr.op in ("/", "%")
+                        and self._int32_mixed_ushort(expr.left, expr.right)):
+                    return True
                 return False
         expr_type = self._get_expr_type(expr)
         return self._is_long_type(expr_type)
@@ -21099,7 +21240,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if any(self._is_float_expr(x) or self._is_complex_expr(x)
                or self._is_long_long_expr(x) for x in (l, r)):
             return False
-        return self._is_long_expr(l) or self._is_long_expr(r)
+        return (self._is_long_expr(l) or self._is_long_expr(r)
+                or self._int32_mixed_ushort(l, r))
 
     def _is_ptr_expr(self, expr) -> bool:
         return isinstance(_to_legacy(self._get_expr_type(expr)),
@@ -21130,6 +21272,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         nothing emitted, when an operand is not 16-bit."""
         left, right = expr.left, expr.right
         if not (self._cmp16_operand(left) and self._cmp16_operand(right)):
+            return None
+        if self._int32_mixed_ushort(left, right):
             return None
         unsigned = self._cmp16_unsigned(left, right)
         cc = self._gen_byte_cmp_flags(left, right, op, unsigned)
@@ -23371,11 +23515,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 return None
             op_text = expr.op.text if hasattr(expr.op, "text") else expr.op
             if op_text == "-":
-                return -operand_val
+                return self._const_wrap(expr, -operand_val)
             elif op_text == "+":
                 return operand_val
             elif op_text == "~" and not isinstance(operand_val, float):
-                return ~operand_val
+                return self._const_wrap(expr, ~operand_val)
             elif op_text == "!":
                 return 0 if operand_val else 1
         elif isinstance(expr, ast.Cast):
@@ -23384,7 +23528,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             if inner_val is None:
                 return None
             # Apply type conversion based on target type
-            target_type = expr.target_type
+            target_type = _to_legacy(expr.target_type)
             if isinstance(target_type, lt.BasicType):
                 name = target_type.name
                 if self._is_float_type(target_type):
@@ -23403,24 +23547,41 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     return val
             return inner_val  # Fallback: no conversion
         elif isinstance(expr, ast.BinaryOp):
+            op = expr.op.text if hasattr(expr.op, "text") else expr.op
             left_val = self._eval_const_expr(expr.left)
+            if left_val is None:
+                return None
+            if op == "&&" and not left_val:
+                return 0                 # the right operand is not evaluated
+            if op == "||" and left_val:
+                return 1
             right_val = self._eval_const_expr(expr.right)
-            if left_val is None or right_val is None:
+            if right_val is None:
                 return None
             is_float = isinstance(left_val, float) or isinstance(right_val, float)
-            op = expr.op.text if hasattr(expr.op, "text") else expr.op
+            if (op in ("==", "!=", "<", ">", "<=", ">=") and not is_float):
+                left_val, right_val = self._const_cmp_operands(
+                    expr, left_val, right_val)
+            if op == ",":
+                return right_val
             if op == "+":
-                return left_val + right_val
+                return self._const_wrap(expr, left_val + right_val)
             elif op == "-":
-                return left_val - right_val
+                return self._const_wrap(expr, left_val - right_val)
             elif op == "*":
-                return left_val * right_val
-            elif op == "/" and right_val != 0:
+                return self._const_wrap(expr, left_val * right_val)
+            elif op in ("/", "%") and right_val == 0:
+                self._const_div0 = True
+                return None
+            elif op == "/":
                 if is_float:
                     return left_val / right_val
-                return left_val // right_val
-            elif op == "%" and right_val != 0:
-                return left_val % right_val
+                q = abs(left_val) // abs(right_val)     # C truncates
+                return q if (left_val < 0) == (right_val < 0) else -q
+            elif op == "%" and not is_float:
+                q = abs(left_val) // abs(right_val)
+                q = q if (left_val < 0) == (right_val < 0) else -q
+                return left_val - q * right_val
             elif op == "&" and not is_float:
                 return left_val & right_val
             elif op == "|" and not is_float:
@@ -23428,7 +23589,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             elif op == "^" and not is_float:
                 return left_val ^ right_val
             elif op == "<<":
-                return left_val << right_val
+                return self._const_wrap(expr, left_val << right_val)
             elif op == ">>":
                 # Need to determine signedness of left operand for arithmetic vs logical shift
                 left_type = self._get_expr_type(expr.left)
@@ -23484,6 +23645,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 return 1 if left_val and right_val else 0
             elif op == "||":
                 return 1 if left_val or right_val else 0
+        elif isinstance(expr, ast.AlignofType):
+            return 1                     # the Z80 has no alignment rules
+        elif isinstance(expr, ast.SequenceExpr):
+            if self._eval_const_expr(expr.left) is None:
+                return None
+            return self._eval_const_expr(expr.right)
         elif isinstance(expr, ast.SizeofType):
             tt = self._resolve_typename(expr.target_type) if hasattr(self, "_resolve_typename") else expr.target_type
             return self._type_size(tt)
@@ -23496,6 +23663,45 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return self._eval_const_expr(expr.true_expr if c
                                          else expr.false_expr)
         return None  # Not a constant expression
+
+    def _const_wrap(self, expr, value):
+        """``value`` reduced to the width of the unsigned type of ``expr``
+        (a constant of unsigned type wraps: ~0u, 0u - 1); an int is left
+        alone."""
+        if not isinstance(value, int):
+            return value
+        try:
+            if not self._is_promoted_unsigned(expr):
+                return value
+            t = _to_legacy(self._get_expr_type(expr))
+            size = self._bsize(t)
+        except Exception:
+            return value
+        if size < 2:
+            return value
+        return value & ((1 << (8 * size)) - 1)
+
+    def _const_cmp_operands(self, expr, left, right):
+        """The operands of a constant comparison converted to the common
+        type (C 6.3.1.8): both wrap to the width of an unsigned common
+        type, so -1 < 0u is false."""
+        try:
+            ls = max(self._bsize(_to_legacy(self._get_expr_type(expr.left))),
+                     self.type_config.int_size)
+            rs = max(self._bsize(_to_legacy(self._get_expr_type(expr.right))),
+                     self.type_config.int_size)
+            lu = self._is_promoted_unsigned(expr.left)
+            ru = self._is_promoted_unsigned(expr.right)
+        except Exception:
+            return left, right
+        if ls == rs:
+            uns = lu or ru
+        else:
+            uns = lu if ls > rs else ru
+        if not uns:
+            return left, right
+        mask = (1 << (8 * max(ls, rs))) - 1
+        return left & mask, right & mask
 
     def _sizeof_operand_size(self, operand) -> int | None:
         """sizeof of an expression, or None when its type is unknown.  A

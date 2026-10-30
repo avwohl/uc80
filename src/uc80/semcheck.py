@@ -305,9 +305,32 @@ class Checker:
                 params = params.params
             for p in params or []:
                 self.param(p)
+        self.check_labels(fd.body)
         self.visit(fd.body)
         self.pop()
         self.function = None
+
+    def check_labels(self, body):
+        """A label name is declared once in a function (C23 6.8.2); a
+        function with ``__label__`` declarations is not checked."""
+        seen = {}
+        dups = []
+        local = False
+        stack = [body]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, ast.LabelDecl):
+                local = True
+            elif isinstance(n, ast.LabelStmt):
+                text = getattr(n.label, "text", None)
+                if text in seen:
+                    dups.append((n, text))
+                seen[text] = True
+            if _is_node(n):
+                stack.extend(_children(n))
+        if not local:
+            for n, text in dups:
+                self.error(n, f"duplicate label '{text}'", n.label)
 
     # ----- expressions and statements ------------------------------------
 
