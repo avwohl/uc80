@@ -567,7 +567,7 @@ def test_cpm_tstates_match_z88dk_ticks(tmp_path):
         b"\x06\xFF\x10\xFE\x0E\x09\x11\x0F\x01\xCD\x05\x00\xC3\x00\x00Hi$")
     cp = subprocess.run([TICKS, "-l", "100", "-pc", "100", "-counter",
                          "99999999", "prog.com"], cwd=tmp_path,
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, timeout=120)
     ticks_t = int(cp.stdout.rstrip().removeprefix("Hi"))
     m = Machine(mode="cpm")
     m.load_com(str(tmp_path / "prog.com"))

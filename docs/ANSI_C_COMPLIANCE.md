@@ -310,6 +310,25 @@ of a file, then stops with exit status 1.
   a `constexpr` object or a macro. An address (`&x`, an array name, a
   function name), `sizeof` and `offsetof` are constants and are correct.
 
+## Errors that the compiler does not give
+
+These invalid programs compile without an error. The compiler writes
+code for them. Do not depend on the code.
+
+- A decrement or increment of a constant (`--3`).
+- An assignment to an enumeration constant (`E = 2`).
+- A `case` label outside a `switch`.
+- A `goto` to a label that does not exist.
+- A member name that the structure does not have (`s.nosuch`).
+- `return;` in a function that returns `int`.
+- `sizeof` of an incomplete structure.
+- Two declarations of one name in one block.
+
+A typedef name that a block declares again with a different type in an
+inner block (`typedef short W;` and, in an inner block, `typedef long W;`)
+stops the parser with `unexpected token`. The line number in the message can
+be wrong. The parser is in `uc_core`. Use another name for the inner type.
+
 ## C99/C11/C24 FEATURES NOT IMPLEMENTED
 
 - [ ] `_Complex` / `_Imaginary` - parsed but no codegen

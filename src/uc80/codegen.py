@@ -5512,6 +5512,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             if hasattr(nm, "text"):
                 nm = nm.text
             entries.append((nm, next_value))
+            self.ctx.enum_constants[nm] = next_value
             next_value += 1
         self._register_enum_entries(getattr(enum_type, "name", None), entries)
 
@@ -5574,6 +5575,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     if evaluated is not None:
                         next_value = evaluated
                 entries.append((v.name.text, next_value))
+                self.ctx.enum_constants[v.name.text] = next_value
                 next_value += 1
             self._register_enum_entries(tag, entries)
 
@@ -7539,6 +7541,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     if evaluated is not None:
                         next_value = evaluated
                 entries.append((v.name.text, next_value))
+                self.ctx.enum_constants[v.name.text] = next_value
                 next_value += 1
             self._register_enum_entries(tag, entries)
         def _walk_specs_for_enums(specs):
@@ -10883,24 +10886,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if (is_long or is_long_long) and self._is_pointer_arith(expr):
             is_long = is_long_long = False
 
-        # With --int=32, multiplication of two int-promotable operands
-        # is performed in int (= 32-bit) per C 6.3.1.1, so the result
-        # may not fit in 16-bit. Force the 32-bit multiply runtime in
-        # that case — without this, ``short(-2) * unsigned short(0xFFFF)``
-        # truncates to 2 instead of -131070 (torture usmul). For other
-        # operators (+/-/&/|/^/etc.) 16-bit is fine when both operands
-        # fit, and avoids massively slower 32-bit code in tight loops.
-        if (op == "*" and not is_long_long and not is_long
-                and self.type_config.int_size == 4):
-            left_t = self._get_expr_type(expr.left)
-            right_t = self._get_expr_type(expr.right)
-            def _promotes_to_int(t):
-                return (isinstance(t, lt.BasicType)
-                        and t.name in ("char", "signed char", "unsigned char",
-                                       "short", "unsigned short",
-                                       "short int", "unsigned short int"))
-            if _promotes_to_int(left_t) and _promotes_to_int(right_t):
-                is_long = True
+        # With --int=32, an operation on two operands that promote to int
+        # (short + short, short << n, char * char) is done in int (32 bits)
+        # per C 6.3.1.1, so the result may not fit in 16 bits.
+        # _is_long_expr knows which operators and operand types.
+        if (not is_long_long and not is_long
+                and self.type_config.int_size == 4
+                and self._is_long_expr(expr)):
+            is_long = True
 
         if is_long_long:
             self._gen_binary_op_64(expr, op)
@@ -12788,6 +12781,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 # 32-bit negate using runtime
                 self.gen_expr(expr.operand)
                 self._call_runtime("__neg32")
+            elif self._int32_short_operand(expr.operand):
+                # --int 32: -us is an int, the 16-bit value is widened.
+                self.gen_expr(expr.operand)
+                self._extend_hl_to_dehl(
+                    not self._is_unsigned_expr(expr.operand))
+                self._call_runtime("__neg32")
             else:
                 # 16-bit negate: 0 - HL
                 self.gen_expr(expr.operand)
@@ -12819,8 +12818,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self._gen_64bit_operand(expr.operand, to_tmp=False)
                 self._call_runtime("__not64")
                 self._reload_dehl_from_acc64()
-            elif self._is_long_expr(expr.operand):
+            elif (self._is_long_expr(expr.operand)
+                  or self._int32_short_operand(expr.operand)):
                 self.gen_expr(expr.operand)
+                if not self._is_long_expr(expr.operand):
+                    # --int 32: ~us is an int, the 16-bit value is widened.
+                    self._extend_hl_to_dehl(
+                        not self._is_unsigned_expr(expr.operand))
                 # 32-bit bitwise NOT: complement each register inline
                 for r in ("L", "H", "E", "D"):
                     self.ctx.emit_instr("ld", f"A,{r}")
@@ -14289,6 +14293,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 expr.func.name.text in self.ctx.function_names or
                 (func_sym and is_function_type(func_sym.sym_type))
             )
+            # A local or a parameter that has the name of a function hides
+            # the function: the call goes through the pointer.
+            fname = expr.func.name.text
+            if (is_direct_function and fname in self.ctx.locals
+                    and fname not in getattr(self.ctx, "block_externs", ())
+                    and not is_function_type(self.ctx.locals[fname].sym_type)):
+                is_direct_function = False
             if is_direct_function:
                 # Record EXTRN for any function we don't define locally.  The
                 # `function_names` set covers definitions and prototypes seen
@@ -20321,6 +20332,18 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         low 32 bits of a 64-bit value): no extension of HL is needed."""
         return self._is_long_expr(expr) or self._is_long_long_expr(expr)
 
+    def _int32_short_operand(self, expr) -> bool:
+        """--int 32 and ``expr`` has type short: a unary - or ~ of it is
+        an int (32 bits)."""
+        return (self.type_config.int_size == 4
+                and self._is_short_type(self._get_expr_type(expr)))
+
+    @staticmethod
+    def _is_short_type(t) -> bool:
+        return (isinstance(t, lt.BasicType)
+                and t.name in ("short", "unsigned short", "short int",
+                               "unsigned short int"))
+
     @_scoped_memo
     def _is_long_expr(self, expr) -> bool:
         """Check if an expression has 32-bit type (long but not long long)."""
@@ -20349,7 +20372,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if isinstance(expr, ast.UnaryOp):
             # Unary operators preserve operand size for -, +, ~
             if expr.op in ("-", "+", "~"):
-                return self._is_long_expr(expr.operand)
+                if self._is_long_expr(expr.operand):
+                    return True
+                if expr.op in ("~", "-") and self.type_config.int_size == 4:
+                    return self._is_short_type(
+                        self._get_expr_type(expr.operand))
+                return False
             # Logical NOT always returns int (0 or 1)
             if expr.op == "!":
                 return False
@@ -20363,7 +20391,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 return False
             # For shift operations, result type is determined only by LEFT operand (C99 6.5.7)
             if expr.op in ("<<", ">>"):
-                return self._is_long_expr(expr.left)
+                if self._is_long_expr(expr.left):
+                    return True
+                if expr.op == "<<" and self.type_config.int_size == 4:
+                    return self._is_short_type(self._get_expr_type(expr.left))
+                return False
             # Binary operation is long if either operand is long
             # (excluding assignment operators which return target type)
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
@@ -20371,14 +20403,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     return False
                 if self._is_long_expr(expr.left) or self._is_long_expr(expr.right):
                     return True
-                # With --int=32 and short-typed operands, ``short * unsigned short``
-                # promotes both to int (32-bit) per C 6.3.1.1; the multiply must
-                # use the 32-bit runtime or it truncates (torture usmul). Only
-                # do this for multiplication — for ``+`` / ``-`` / ``&`` / etc.,
-                # 16-bit is safe when both operands fit in 16-bit and gives much
-                # better code (avoids pulling in 4096-iter 32-bit loops in
-                # tests like pr51581-1).
-                if expr.op == "*" and tc.int_size == 4:
+                # With --int=32 and short-typed operands, ``short + short``
+                # promotes both to int (32-bit) per C 6.3.1.1; a 16-bit
+                # operation wraps (60000 + 50000 is 110000, not 44464).
+                # ``*`` takes char operands too.  For the other operators
+                # at least one operand has to be a short: the sum of two
+                # chars fits in 16 bits.
+                if expr.op in ("*", "+", "-", "&", "|", "^") \
+                        and tc.int_size == 4:
                     left_t = self._get_expr_type(expr.left)
                     right_t = self._get_expr_type(expr.right)
                     def _is_int_promote(t):
@@ -20386,8 +20418,15 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                                 and t.name in ("char", "signed char", "unsigned char",
                                                "short", "unsigned short",
                                                "short int", "unsigned short int"))
+                    def _is_short(t):
+                        return (isinstance(t, lt.BasicType)
+                                and t.name in ("short", "unsigned short",
+                                               "short int",
+                                               "unsigned short int"))
                     if _is_int_promote(left_t) and _is_int_promote(right_t):
-                        return True
+                        if expr.op == "*" or _is_short(left_t) \
+                                or _is_short(right_t):
+                            return True
                 return False
         expr_type = self._get_expr_type(expr)
         return self._is_long_type(expr_type)
@@ -20399,6 +20438,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return self._uses_tmp32(expr.left) or self._uses_tmp32(expr.right)
         # Complex expressions that use __tmp32 internally
         if isinstance(expr, ast.BinaryOp):
+            # An int 32 operation on short operands is a 32-bit op too.
+            if self.type_config.int_size == 4 and self._is_long_expr(expr):
+                return True
             # Any 32-bit binary op (long or float) will use __tmp32
             if (self._is_long_expr(expr.left) or self._is_long_expr(expr.right) or
                 self._is_float_expr(expr.left) or self._is_float_expr(expr.right)):

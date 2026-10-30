@@ -9,9 +9,11 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
-## Status on 2026-10-30: family I is integrated with bug round 3 (branch `integrate10`)
+## Status on 2026-10-30: family I and bug round 3 in one tree (branch `integrate10`)
 
-The branch `fami` (family I, steps 1 and 2) is merged into `integrate9`. The text conflicts were only in the CHANGELOG, the generated benchmark files and this file. The auto-merged code of `codegen.py`, `main.py`, `reglocals_gen.py`, `lc_printf_core.mac` and `libc.mac` was read, and the interactions were checked with programs that run (`tests/test_integrate10_interactions.py` and a printf test against the host). No pass needed a change. See the [CHANGELOG](../CHANGELOG.md).
+The merge of the branch `fami` (family I, steps 1 and 2) into the tree of `main` 4702a63 (the result of `integrate9`) gives the branch `integrate10`. The text conflicts were only in the CHANGELOG, the generated benchmark files and this file. We read the auto-merged code of `codegen.py`, `main.py`, `reglocals_gen.py`, `lc_printf_core.mac` and `libc.mac`. Programs that run checked the interactions (`tests/test_integrate10_interactions.py` and a printf test against the host). No family I pass needed a change. The [CHANGELOG](../CHANGELOG.md) has the details.
+
+A repair pass fixed five more problems. The enumerators of one enumeration did not see each other, and `--int 32` did short arithmetic in 16 bits. A parameter with the name of a function called the function. `fputc` and `putc` failed with `--int 32`. `tests/test_integrate10_repairs.py` tests each fix. The c-testsuite with `--int 32` has 219 of 220 passes now.
 
 Numbers from `bench/run.py -c uc80` on 111 programs, against SDCC 4.6.0:
 

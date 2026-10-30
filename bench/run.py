@@ -449,7 +449,7 @@ def make_golden(prog: dict, repos: dict) -> None:
         subprocess.run(cmd, check=True)
         out = subprocess.run([str(work / "host")], input=get_stdin(prog),
                              capture_output=True, text=True,
-                             check=False).stdout
+                             check=False, timeout=600).stdout
     (BENCH / "golden").mkdir(exist_ok=True)
     dest = BENCH / "golden" / f"{prog['name']}.txt"
     if "base" in prog:

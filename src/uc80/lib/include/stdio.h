@@ -58,6 +58,16 @@ extern FILE *stderr;
  */
 extern char __crlf_mode;
 
+/* The library reads an int argument as 2 bytes.  With --int 32 an int
+ * argument that is followed by another argument would shift that
+ * argument, so such a parameter is declared as a byte (fputc converts
+ * the character to unsigned char anyway). */
+#if __SIZEOF_INT__ == 4
+#define __LIBINT unsigned char
+#else
+#define __LIBINT int
+#endif
+
 /* Standard I/O functions */
 int putchar(int c);
 int getchar(void);
@@ -78,7 +88,7 @@ int fclose(FILE *stream);
 size_t fread(void *ptr, size_t size, size_t nmemb, FILE *stream);
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream);
 int fgetc(FILE *stream);
-int fputc(int c, FILE *stream);
+int fputc(__LIBINT c, FILE *stream);
 /* libc fgets reads `size` as 16 bits.  Declare it as unsigned short so
  * --int=32 callers don't widen the arg to 4 bytes and shove the stream
  * pointer past the offset libc expects. */
@@ -130,7 +140,7 @@ FILE *freopen(const char *pathname, const char *mode, FILE *stream);
 
 /* Character I/O (can be macros, but implemented as functions for safety) */
 int getc(FILE *stream);
-int putc(int c, FILE *stream);
+int putc(__LIBINT c, FILE *stream);
 
 /* File position using fpos_t */
 int fgetpos(FILE *stream, fpos_t *pos);
@@ -138,7 +148,7 @@ int fsetpos(FILE *stream, const fpos_t *pos);
 
 /* Buffering control */
 void setbuf(FILE *stream, char *buf);
-int setvbuf(FILE *stream, char *buf, int mode, size_t size);
+int setvbuf(FILE *stream, char *buf, __LIBINT mode, size_t size);
 
 /* Error reporting */
 void perror(const char *s);

@@ -142,6 +142,15 @@ Runtime arithmetic routines (rt_arith16, rt_arith32, rt_arith64) are
 already width-specific and need no changes. The codegen dispatches to the
 correct width via _is_int4/_is_int8.
 
+The library reads an `int` argument as 2 bytes. With `--int 32` an `int`
+parameter that comes before another parameter moves the other parameter. In
+`stdio.h`, `fputc`, `putc` and `setvbuf` therefore take an `unsigned char`
+for that parameter when `__SIZEOF_INT__` is 4 (the macro `__LIBINT`).
+
+With `--int 32`, an operation on `short` operands (`+ - & | ^ << ~`, unary
+`-`, and `*`) is done in 32 bits, as C requires. The code is bigger than the
+16-bit code of the same operation.
+
 ## Performance Impact
 
 With --int-size 32, all int operations become 32-bit runtime calls instead
