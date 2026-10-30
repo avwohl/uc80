@@ -3621,6 +3621,10 @@ class CodeGenContext:
     # each of its constants (the enumerated type).  Absent: int.
     enum_types: dict[str, "lt.BasicType"] = field(default_factory=dict)
     enum_negative: set = field(default_factory=set)
+    # C23 6.7.3.3: an enumeration with a fixed underlying type
+    # (``enum e : unsigned char``): tag -> BasicType.  Its objects and its
+    # constants have that type.
+    enum_fixed: dict[str, "lt.BasicType"] = field(default_factory=dict)
     constexpr_values: dict = field(default_factory=dict)
     enum_const_types: dict[str, "lt.BasicType"] = field(default_factory=dict)
 
@@ -4631,6 +4635,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
 
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
+        enum_fixed_table = getattr(unit, "_enum_fixed_types", None) or {}
         self._annotate_typeof(unit)
         self.user_defined_funcs = {
             declarator_ident(i.declarator) for i in unit.items or []
@@ -4711,10 +4716,19 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         # the bare str / int that the legacy aggregate-init code expects.
         self._normalize_designators(unit)
 
+        # ``enum e : T`` (the front end took the ``: T`` out of the text and
+        # kept the type): the type of such an enumeration is known from its
+        # first declaration, also for ``enum e : T;`` and ``sizeof(enum e)``.
+        self._enum_fixed_pending = {
+            k: list(v) for k, v in enum_fixed_table.items()}
+        self._flush_fixed_enums()
+
         # Pre-pass: register every file-scope struct/enum definition AND
         # every file-scope typedef so later references can look up types
         # by name. Mirrors the local-decl path in gen_local_decl.
         for decl in unit.items:
+            if self._enum_fixed_pending:
+                self._flush_fixed_enums()
             if isinstance(decl, ast.Declaration):
                 # Enum constants first: an array bound may be spelled with
                 # one, and the composite below has to be able to fold it.
@@ -4736,6 +4750,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
                                 self.ctx.typedefs[nm] = full
                 except Exception:
                     pass
+
+        if self._enum_fixed_pending:
+            self._flush_fixed_enums()
+            tag, texts = next(iter(self._enum_fixed_pending.items()))
+            raise CodegenError(
+                f"enum {tag}: '{texts[0]}' is not a type name that this "
+                f"file declares, so it cannot be the underlying type "
+                f"(C23 6.7.3.3)")
 
         # Designator indexes spelled with an enumerator or constexpr object.
         self._normalize_designators(unit)
@@ -5445,12 +5467,89 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
         raise CodegenError(
             f"the enumeration values {lo}..{hi} do not fit any integer type")
 
+    def _fixed_enum_basic(self, tag, texts):
+        """The integer type of the enumeration ``tag`` that was declared
+        ``enum tag : TEXT``, or None while a typedef name in TEXT is not yet
+        known.  Declarations that disagree are an error."""
+        from uc_core import frontend
+        found = []
+        for text in texts:
+            known = set(self.ctx.typedefs)
+            try:
+                unit = frontend.parse(f"{text} __uc80_fixed;", "<enum>",
+                                      seed_typedefs=known)
+            except Exception:
+                return None                # a typedef name not known yet
+            specs = unit.items[0].decl_specs
+            t = _to_legacy(resolve_base_type(specs))
+            if not (isinstance(t, lt.BasicType) and t.name in (
+                    "char", "short", "int", "long", "long long", "bool",
+                    "_Bool", "unsigned char", "unsigned short",
+                    "unsigned int", "unsigned long", "unsigned long long")):
+                if isinstance(t, lt.BasicType) and t.name not in (
+                        "void", "float", "double", "long double"):
+                    return None            # a typedef name not known yet
+                raise CodegenError(
+                    f"enum {tag}: the underlying type '{text}' is not an "
+                    f"integer type (C23 6.7.3.3)")
+            found.append((text, t))
+        base_text, base = found[0]
+        for text, t in found[1:]:
+            if (self._type_size(t), self._is_signed_type(t)) != (
+                    self._type_size(base), self._is_signed_type(base)):
+                raise CodegenError(
+                    f"enum {tag} is declared with the underlying types "
+                    f"'{base_text}' and '{text}' (C23 6.7.3.3: they must "
+                    f"be compatible)")
+        return lt.BasicType(name=base.name,
+                            is_signed=self._is_signed_type(base))
+
+    def _flush_fixed_enums(self) -> None:
+        """Resolve the pending ``enum tag : type`` declarations whose type
+        can be named now, and make the type of each enumeration known."""
+        pending = self.__dict__.get("_enum_fixed_pending")
+        if not pending:
+            return
+        for tag in list(pending):
+            t = self._fixed_enum_basic(tag, pending[tag])
+            if t is not None:
+                del pending[tag]
+                self.ctx.enum_fixed[tag] = t
+                self.ctx.enum_types[tag] = t
+                if t.is_signed:
+                    self.ctx.enum_negative.add(tag)
+                else:
+                    self.ctx.enum_negative.discard(tag)
+
+    def _check_fixed_enum_values(self, tag, fixed, entries) -> None:
+        size = self._type_size(fixed)
+        if fixed.name in ("bool", "_Bool"):
+            lo, hi = 0, 1
+        elif fixed.is_signed:
+            lo, hi = -(1 << (size * 8 - 1)), (1 << (size * 8 - 1)) - 1
+        else:
+            lo, hi = 0, (1 << (size * 8)) - 1
+        for name, value in entries:
+            if not lo <= value <= hi:
+                raise CodegenError(
+                    f"enumerator '{name}' of 'enum {tag}' has the value "
+                    f"{value}, which does not fit the underlying type "
+                    f"{'unsigned ' if not fixed.is_signed and fixed.name not in ('bool', '_Bool') else ''}"
+                    f"{fixed.name} ({lo}..{hi}; C23 6.7.3.3)")
+
     def _register_enum_entries(self, tag, entries) -> None:
         """Record the constants (name, value) of one enumeration, and its
         integer type when its values are wider than int."""
         for name, value in entries:
             self.ctx.enum_constants[name] = value
             self.ctx.enum_const_types.pop(name, None)
+        self._flush_fixed_enums()
+        fixed = self.ctx.enum_fixed.get(tag) if tag else None
+        if fixed is not None:
+            self._check_fixed_enum_values(tag, fixed, entries)
+            for name, _v in entries:
+                self.ctx.enum_const_types[name] = fixed
+            return
         wide = self._enum_underlying_type([v for _n, v in entries])
         if tag:
             if any(v < 0 for _n, v in entries):
@@ -11557,9 +11656,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin,
 
         if self._is_long_long_expr(expr):
             # Already 64-bit - generate and store
-            if isinstance(expr, ast.IntLiteral):
-                # Large literal - emit directly
-                val = int_value(expr) & 0xFFFFFFFFFFFFFFFF
+            if (isinstance(expr, ast.IntLiteral)
+                    or (isinstance(expr, ast.Identifier)
+                        and expr.name.text in self.ctx.enum_constants)):
+                # Large literal, or an enumeration constant of a 64-bit
+                # enumeration (the name has no storage): emit directly
+                val = (int_value(expr) if isinstance(expr, ast.IntLiteral)
+                       else self.ctx.enum_constants[expr.name.text]
+                       ) & 0xFFFFFFFFFFFFFFFF
                 self.ctx.emit_instr("ld", f"HL,{val & 0xFFFF}")
                 self.ctx.emit_instr("ld", f"({target}),HL")
                 self.ctx.emit_instr("ld", f"HL,{(val >> 16) & 0xFFFF}")

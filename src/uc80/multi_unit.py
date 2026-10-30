@@ -355,6 +355,13 @@ def uniquify_types(units) -> int:
         count += len(mine)
         td = {n: f"{n}__t{i}" for k, n in mine if k == "td"}
         tag = {n: f"{n}__t{i}" for k, n in mine if k == "tag"}
+        # the types of the enumerations with a fixed underlying type are
+        # kept by tag (uc_core.frontend._strip_enum_fixed_types)
+        fixed = getattr(unit, "_enum_fixed_types", None)
+        if fixed:
+            for old, new in tag.items():
+                if old in fixed:
+                    fixed[new] = fixed.pop(old)
 
         def rename(owner, attr, table):
             tok = getattr(owner, attr, None)

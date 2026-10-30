@@ -1135,7 +1135,8 @@ def main() -> int:
                         pp.macros[define] = Macro(define, body="1")
 
                 source = pp.preprocess(source, str(input_path))
-                srcmap.register(str(input_path), pp.line_map)
+                srcmap.register(str(input_path), pp.line_map,
+                                getattr(pp, "line_breaks", None))
 
                 target_pragmas.extend(pp.target_pragmas)
                 pragma_units.extend([len(asts)] * len(pp.target_pragmas))
@@ -1193,6 +1194,8 @@ def main() -> int:
         scope_names = None
         if len(asts) == 1:
             merged_ast = asts[0]
+            enum_fixed = dict(getattr(asts[0], "_enum_fixed_types", None)
+                              or {})
         else:
             # A static of one file must stay apart from a same-named
             # static (or global) of another file.
@@ -1201,8 +1204,12 @@ def main() -> int:
             scope_names = file_scope_names(asts)
             static_maps = uniquify_statics_map(asts)
             merged_ast = ast_module.TranslationUnit(items=[])
+            enum_fixed = {}
             for unit in asts:
                 merged_ast.items.extend(unit.items)
+                for tag, texts in (getattr(unit, "_enum_fixed_types", None)
+                                   or {}).items():
+                    enum_fixed.setdefault(tag, []).extend(texts)
             if args.verbose:
                 print(f"Merged {len(asts)} files into {len(merged_ast.items)} declarations")
 
@@ -1211,10 +1218,13 @@ def main() -> int:
             opt_level = 3
             ast_opt = Uc80ASTOptimizer(opt_level, type_config=type_config)
             merged_ast = ast_opt.optimize(merged_ast)
+            merged_ast._enum_fixed_types = enum_fixed
             if args.verbose and ast_opt.stats:
                 print(f"  AST optimizations:")
                 for name, count in sorted(ast_opt.stats.items()):
                     print(f"    {name}: {count}")
+
+        merged_ast._enum_fixed_types = enum_fixed
 
         # Determine module name from first input file
         module_name = input_paths[0].stem
@@ -2141,7 +2151,18 @@ def main() -> int:
         return 1
 
     except Exception as e:
-        print(f"uc80: internal error: {e}", file=sys.stderr)
+        msg = str(e)
+        tok = getattr(e, "token", None)
+        if tok is not None:
+            # a parse error names the line of the preprocessed text: say
+            # the file and line of the source instead (srcmap)
+            try:
+                msg = re.sub(r"at line \d+, column",
+                             lambda _m: f"at {srcmap.locate(tok)}, column",
+                             msg, count=1)
+            except Exception:
+                pass
+        print(f"uc80: internal error: {msg}", file=sys.stderr)
         if args.verbose:
             import traceback
             traceback.print_exc()
