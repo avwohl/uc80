@@ -110,6 +110,12 @@ class BlockOpsMixin:
         a device returns something else than the value written."""
         if not _is_node(node):
             return False
+        # a conversion to ``void *`` hides the pointee type: look at the
+        # operand, as the program wrote it
+        while isinstance(node, ast.Cast) and self._bo_void_ptr_cast(node):
+            node = node.expr
+            if not _is_node(node):
+                return False
         try:
             t = self._to_legacy_type(self._get_expr_type(node))
         except Exception:
@@ -119,6 +125,29 @@ class BlockOpsMixin:
                 base, "is_volatile", False):
             return True
         return self._bo_is_const_addr(node)
+
+    def _bo_void_ptr_cast(self, node) -> bool:
+        """``node`` is a cast to a pointer to void (any qualifiers)."""
+        tt = getattr(node, "target_type", None) or getattr(node, "type", None)
+        try:
+            t = self._to_legacy_type(tt)
+        except Exception:
+            return False
+        base = getattr(t, "base_type", None)
+        return (isinstance(t, lt.PointerType) and isinstance(base, lt.BasicType)
+                and base.name == "void")
+
+    def _bo_int_expr(self, node) -> bool:
+        """An expression of integer type (no pointer, no array)."""
+        if not _is_node(node):
+            return False
+        try:
+            it = self._to_legacy_type(self._get_expr_type(node))
+        except Exception:
+            return False
+        if isinstance(it, lt.BasicType):
+            return it.name not in ("void", "float", "double", "long double")
+        return type(it).__name__ == "EnumType"
 
     def _bo_int_const(self, node) -> bool:
         """An integer constant expression (no pointer in it)."""
@@ -133,7 +162,8 @@ class BlockOpsMixin:
     def _bo_is_const_addr(self, node) -> bool:
         """The value of ``node`` is a constant address: an integer constant
         or a cast of one, such an address plus or minus an integer
-        constant (``(unsigned char *) REG_BASE + 2``), the address of a
+        constant or any integer expression (``(unsigned char *) REG_BASE
+        + 2``, ``(unsigned char *) 0x4F00 + y * 32``), the address of a
         member or element of an object at such an address
         (``&((struct dev *) 0x4B00)->ctl``), or an array member or element
         there (``((struct dev *) 0x4B00)->buf``)."""
@@ -148,11 +178,13 @@ class BlockOpsMixin:
         if isinstance(node, ast.BinaryOp):
             op = node.op.text if hasattr(node.op, "text") else str(node.op)
             if op in ("+", "-"):
+                # the offset is any integer expression: the base is the
+                # constant address, and the base is what makes a device
                 if self._bo_is_const_addr(node.left) \
-                        and self._bo_int_const(node.right):
+                        and self._bo_int_expr(node.right):
                     return True
                 if op == "+" and self._bo_is_const_addr(node.right) \
-                        and self._bo_int_const(node.left):
+                        and self._bo_int_expr(node.left):
                     return True
             return False
         if isinstance(node, ast.UnaryOp):
@@ -184,7 +216,7 @@ class BlockOpsMixin:
         if isinstance(node, ast.Member):
             return self._bo_const_lvalue(node.obj)
         if isinstance(node, ast.Index):
-            if not self._bo_int_const(node.index):
+            if not self._bo_int_expr(node.index):
                 return False
             try:
                 t = self._to_legacy_type(self._get_expr_type(node.array))

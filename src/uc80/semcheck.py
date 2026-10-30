@@ -14,7 +14,11 @@ The checks walk each translation unit with its own scope stack:
     6.5.2.4, 6.5.3.1): an object with a const-qualified type, a member of
     a const structure, an object reached through a pointer to const, and
     a structure with a const member (6.3.2.1) are errors;
-  - a variable length array is an error (__STDC_NO_VLA__ is 1).
+  - a variable length array is an error (__STDC_NO_VLA__ is 1);
+  - ``sizeof`` of an incomplete type is an error (6.5.4.5): a structure
+    or union with no definition in scope, an array of unknown size, or
+    ``void``.  This holds in an enumerator and in any other constant
+    expression.
 
 Every message starts with ``file:line:`` of the source line (the
 preprocessor map in ``srcmap`` turns a line of the preprocessed text
@@ -79,7 +83,8 @@ class Scope:
 
     def __init__(self):
         self.names = {}     # name -> ("var" | "typedef" | "enum", type)
-        self.tags = {}      # struct or union tag -> member tuple
+        self.tags = {}      # struct or union tag -> member tuple, or
+                            # None for a tag that is only declared
 
 
 class Checker:
@@ -183,7 +188,7 @@ class Checker:
                                  ResolvedType(kind="basic", name="int"))
             elif isinstance(sp, (ast.StructEmpty,)):
                 name = sp.name.text
-                self.scopes[-1].tags.setdefault(name, ())
+                self.scopes[-1].tags.setdefault(name, None)
             elif isinstance(sp, (ast.TypeofExpr, ast.TypeofUnqualExpr,
                                  ast.AlignasValue, ast.BitIntSpec)):
                 self.visit(sp)
@@ -426,6 +431,57 @@ class Checker:
         op = node.op.text
         if op in _ASSIGN_OPS:
             self.modify(node.left, op)
+
+    def incomplete(self, t, depth=0):
+        """Why the type is incomplete (a word for the message), or None."""
+        if t is None or depth > 8:
+            return None
+        if t.kind == "basic" and t.name == "void":
+            return "void"
+        if t.kind == "array":
+            if t.size_expr is None:
+                return "array of unknown size"
+            return self.incomplete(t.element, depth + 1)
+        if t.kind == "struct":
+            if t.members:
+                return None
+            if t.name is None:
+                return None
+            for sc in reversed(self.scopes):
+                if t.name in sc.tags:
+                    return (None if sc.tags[t.name] is not None
+                            else "struct" if not t.is_union else "union")
+            return "union" if t.is_union else "struct"
+        return None
+
+    def check_sizeof(self, node, t):
+        why = self.incomplete(t)
+        if why is None:
+            return
+        if why in ("struct", "union"):
+            what = "%s '%s'" % (why, t.name)
+        else:
+            what = why
+        self.error(node, "invalid application of 'sizeof' to an "
+                   "incomplete type (%s)" % what)
+
+    def v_SizeofType(self, node):
+        tt = node.target_type
+        t = None
+        if isinstance(tt, ast.TypeName):
+            t = ch.resolve_base_type(tt.decl_specs)
+        elif isinstance(tt, ast.TypeNameWithDeclarator):
+            _, t = ch.resolve_type_from_decl(tt.decl_specs, tt.declarator)
+        self.check_sizeof(node, t)
+        for c in _children(node):
+            if not isinstance(c, (ast.TypeName, ast.TypeNameWithDeclarator)):
+                self.visit(c)
+
+    def v_SizeofExpr(self, node):
+        self.visit(node.operand)
+        t = self.etype(node.operand)
+        if t is not None and t.kind == "struct":
+            self.check_sizeof(node, t)
 
     def v_OffsetofExpr(self, node):
         for c in _children(node):

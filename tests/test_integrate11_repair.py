@@ -256,7 +256,7 @@ def test_same_label_in_two_functions_is_fine(tmp_path):
     assert build_and_run(tmp_path, src) == host(tmp_path, src)
 
 
-# ---- uc_core defects (the frontend is read-only here) -----------------------
+# ---- uc_core defects, repaired in uc_core (bugfix5) -------------------------
 
 BLOCK_ENUM = r"""#include <stdio.h>
 enum { A = 5 };
@@ -275,16 +275,10 @@ int main (void) { printf ("%d %d\n", h (), (int) sizeof (T)); return 0; }
 """
 
 
-@pytest.mark.xfail(reason="uc_core frontend.py _rename_block_scope_tags renames "
-                   "an enumerator in its own initializer; see CHANGELOG",
-                   strict=False)
 def test_block_enumerator_in_its_own_initializer(tmp_path):
     assert build_and_run(tmp_path, BLOCK_ENUM) == host(tmp_path, BLOCK_ENUM)
 
 
-@pytest.mark.xfail(reason="uc_core frontend.py _rename_block_scope_typedefs "
-                   "skips a name inside an enumeration body; see CHANGELOG",
-                   strict=False)
 def test_block_typedef_in_an_enumerator_initializer(tmp_path):
     assert build_and_run(tmp_path, BLOCK_TYPEDEF) == "1 2\n"
 
