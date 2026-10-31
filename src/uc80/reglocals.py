@@ -883,10 +883,11 @@ def _stack_ok(nodes, lo, hi) -> bool:
                     return False
             elif nd.op in ("inc", "dec") and [
                     o.upper() for o in nd.ops] == ["SP"]:
-                if _MODE["byte"]:       # the old pass did not follow SP
-                    depth += -1 if nd.op == "inc" else 1
-                    if depth < 0:
-                        return False
+                if not _MODE["byte"]:   # the old pass did not follow SP
+                    return False
+                depth += -1 if nd.op == "inc" else 1
+                if depth < 0:
+                    return False
             elif nd.op == "ex" and nd.ops and "(SP)" in nd.ops[0].upper():
                 if depth < 2:
                     return False
@@ -2558,7 +2559,14 @@ def try_config(base_nodes: list[Node], config: list[Var], env: Env,
     resident = 0
     for v in config:
         resident |= v.mask()
-    for pair_name in ("BC", "DE"):
+    if env.byte_regs:
+        order = ["BC", "DE"]
+    else:                               # the order of the old pass
+        order = []
+        for v in config:
+            if v.pair() not in order:
+                order.append(v.pair())
+    for pair_name in order:
         unit = [v for v in config if v.pair() == pair_name]
         if not unit:
             continue
