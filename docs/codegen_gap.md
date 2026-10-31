@@ -544,3 +544,17 @@ Honest conclusion:
 - Total cost with the corrected efforts: about 6 days for A to D, about 50 to 70 days for all families. These are estimates.
 
 The hand-edited .mac files of the analysts and reviewers were in a temporary folder and are not kept. Each family section gives enough detail to redo its edit.
+
+## Status on 2026-10-31 (family J, steps 3 to 5)
+
+Loop-invariant loads, byte locals in B, C, D and E, range division and
+the byte compare of a counter are in the compiler. Each has a switch
+that turns the change off. The pages are [licm_load.md](licm_load.md),
+[byte_regs.md](byte_regs.md), [range_div.md](range_div.md) and
+[byte_cse.md](byte_cse.md).
+
+The mean ratio to SDCC 4.6.0 over the 13 listed programs is 0.879.
+Twelve of the 13 programs are faster than SDCC. The program
+`davidly-ttt` has a ratio of 1.086. The reason is the recursion, where
+SDCC keeps more values in registers. The demotion of an `int` local to
+`char` is not done.

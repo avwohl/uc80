@@ -65,3 +65,11 @@ each function: the call graph (built 14 times), the inliner, the
 table of volatile objects, the register-local allocator and the peephole
 pass. `uc_core/_dcfast.py` keeps the answers of `is_dataclass` and
 `fields` for each class. These walks asked for them some 20 million times.
+
+## Byte registers (family J, step 4)
+
+The allocator of register locals tries more configurations when byte
+registers are on. The compile time of `embench-huffbench` rises by about
+38 percent. Other programs rise by less. `--no-byte-regs` gives the
+earlier time. Use `UC80_RL_SKIPFN=name` to keep the locals of one
+function in memory.

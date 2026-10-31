@@ -6,6 +6,24 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Family J, steps 3 to 5: loads out of loops, byte registers, range division (branch `famj`)
+
+Each change has a switch that turns it off, a docs page ([family_j.md](docs/family_j.md)), and tests that run code against the host compiler in several option sets. The tests are in `tests/test_famj_licm_load.py`, `test_famj_byte_regs.py`, `test_famj_byte_cse.py`, `test_famj_range_div.py` and `test_famj_auto_clear.py`.
+
+- **Loop-invariant loads (step 3).** A load `tab[i]`, a row address `m[i]` and a sum `base[inv + var]` move out of a loop that has no call, no store through a pointer and no store to the same array. The part is in `licm.py`. `--no-licm-load`. [licm_load.md](docs/licm_load.md).
+- **Byte locals in B, C, D and E (step 4).** Up to four byte locals (or a word and two bytes) share BC and DE. An address sum that needs a scratch pair takes a form that uses A only. `--no-byte-regs`. [byte_regs.md](docs/byte_regs.md).
+- **Register locals in a function with a taken address (step 5a).** `--no-rl-addr-taken`.
+- **A counter of the range 0 to 255 is compared as one byte (step 5b).** `--no-range-byte-cmp`. [range_compare.md](docs/range_compare.md).
+- **A reload of A that the path already did (step 5b).** `--no-byte-cse`. [byte_cse.md](docs/byte_cse.md).
+- **`x / k` and `x % k` that the range of `x` decides (step 5c).** `--no-range-div`. [range_div.md](docs/range_div.md).
+- **The shared automatic storage `??AUTO` is not cleared at start-up.** `--no-skip-auto-clear`. [startup_fast.md](docs/startup_fast.md).
+- **Bug found by the bench: a public label gave a wrong program.** `intrinsic_label(TIMER_START)` writes `TIMER_START::`. The lenient parser of `reglocals.py` read the second colon as an instruction. Each pass that deletes lines after the peephole (`prune`, `drop_dead_copies`, `prune_iy`) then used wrong line numbers. These passes now return the text unchanged when the node count and the line count differ. `heap_adjust` of `embench-huffbench` lost `ld L,E / ld H,D` and `compdecomp` ended early. The J1 repair commit had this bug, and the benchmark check could not see an early return. The T-states of `embench-huffbench` rise from 2.96M to 9.85M because the program now does all the work. The test is `tests/test_famj_label_lines.py`.
+- **`--no-byte-regs` gives the J1 output again.** The pair order and the stack check follow the old pass (found by `bench/ccfuzz.py` seeds 3052 and 3328).
+
+Numbers against SDCC 4.6.0 (geometric means over the 78 programs): size 0.9284 to 0.9121, image 0.8854 to 0.8702, T-states 0.5068 to 0.5035, T-states without the sort programs 0.6089 to 0.6045. Faster than SDCC in 75 of 78. The 13 listed programs have a mean of 0.879, and 12 of the 13 are faster than SDCC. `stanford-puzzle` 431.5M to 282.0M, `davidly-ttt` 12.29M to 8.77M, `queens` 26.75M to 20.62M, `stanford-quick` 308.6M to 277.7M, `bsd-ppt` 100546 to 92692. The sum of the image sizes is 10210 bytes smaller. Five programs have a larger image (`queens` +6 bytes, `davidly-sieve`, `whetstone`, `whetstone+static`, `embench-ud` +1 to +4 bytes).
+
+Known limits: `davidly-ttt` stays at 1.086 of SDCC. The demotion of an `int` local that has only byte uses to `char` is not done (a hand edit gained 0.8 percent). The compile time rises by up to about 40 percent (`embench-huffbench`).
+
 ### Family J, repair of step J1: two bugs and the size rule (branch `famj`)
 
 Two bugs, found by a verifier:
