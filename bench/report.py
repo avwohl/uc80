@@ -272,8 +272,9 @@ def main() -> int:
            "failed, and **BUILD-TIMEOUT** means a build tool hit its time "
            "limit (1800 s; 600 s for the hitech and dcc tools). "
            "(check) or (time) tells which build failed. "
-           "**WRONG(time)**: the time build has the same defines as the "
-           "check build, and its output is wrong. **HANG(region)**: the "
+           "**WRONG(time)**: the output of the time build is wrong, or "
+           "the time build needed less than half of the T-states of the "
+           "check build. **HANG(region)**: the "
            "program did not get from `TIMER_START` to `TIMER_STOP`.",
            "- Every compiler compiles the same source with the same "
            "defines. A program variant such as `sieve+static` adds a define "

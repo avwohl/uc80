@@ -212,8 +212,40 @@ The dcc labels are the entry points of two empty functions. Thus the
 dcc region includes one RET and one CALL (27 T-states) that the other
 compilers do not have.
 
-When the check defines and the time defines are the same, the runner
-also compares the output of the time build with the golden file.
+The runner checks the time build too. Its output must be the same as
+the output of the host build with the time defines (see
+[The expected output](#the-expected-output)). A time build that has the
+same defines as the check build must print the golden file. A time build
+that prints nothing must print nothing.
+
+A time build that prints nothing cannot show a wrong result. Thus the
+runner also compares the full run of the time build with the full run of
+the check build. The check build does the same work, and it prints. When
+the time build needs less than half of the T-states of the check build,
+the program stopped early, and the status is `WRONG(time)`. An older
+runner gave the status OK to an early stop of `embench-huffbench`.
+
+### The expected output
+
+The expected output of a program is the output of a host build.
+`python3 bench/run.py --golden [name ...]` makes the host build with the
+`cc` of the host, and writes two kinds of file in `bench/golden/`:
+
+- `<name>.txt` is the output of the check build. Each compiler must
+  print this text.
+- `<name>.time.txt` is the output of the time build. The runner writes
+  this file only when the output is not the same as the output of the
+  check build. A variant uses the file of its base program. A program that
+  has no such file uses `<name>.txt` for the time build too.
+
+Read each new file before you commit the file. Make the files again each
+time that you change a program, an edit, a seed or a shared file.
+
+The output must show the work of the program. A program that only prints
+`PASS` shows no work when its own test is weak. `embench-huffbench`
+compared its buffer with a copy of the buffer, and the decoder writes into
+that buffer. An edit in `programs.d/kernels.toml` clears the buffer before
+the decoder runs. An early stop now prints `FAIL`.
 
 ### Statuses
 
@@ -224,7 +256,7 @@ also compares the output of the time build with the golden file.
 | HANG | The check build did not stop before the timeout. |
 | BUILD-FAIL(check), BUILD-FAIL(time) | The compiler, assembler or linker failed. |
 | BUILD-TIMEOUT(check), BUILD-TIMEOUT(time) | A build tool stopped at its time limit: 1800 s in `compilers._run()`, 600 s for the hitech and dcc tools. |
-| WRONG(time) | The time build has the check defines, and its output is not correct. |
+| WRONG(time) | The output of the time build is not correct, or the time build needed less than half of the T-states of the check build. |
 | HANG(time) | The full run of the time build did not stop before the timeout. |
 | HANG(region) | The region run did not get to `TIMER_STOP`. |
 

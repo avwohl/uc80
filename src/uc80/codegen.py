@@ -12975,7 +12975,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 # 32-bit negate using runtime
                 self.gen_expr(expr.operand)
                 self._call_runtime("__neg32")
-            elif self._int32_short_operand(expr.operand):
+            elif (self._int32_short_operand(expr.operand)
+                  or self._int32_int_result(expr)):
                 # --int 32: -us is an int, the 16-bit value is widened.
                 self.gen_expr(expr.operand)
                 self._extend_hl_to_dehl(
@@ -12995,6 +12996,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         elif op == "+":
             self.gen_expr(expr.operand)  # No-op
+            if (self.type_config.int_size == 4 and self._is_long_expr(expr)
+                    and not self._is_long_expr(expr.operand)):
+                # --int 32: +us is an int, the 16-bit value is widened.
+                self._extend_hl_to_dehl(not self._is_unsigned_expr(expr.operand))
 
         elif op == "!":
             # Logical NOT: if zero then 1 else 0.  The zero test sees
@@ -13013,7 +13018,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self._call_runtime("__not64")
                 self._reload_dehl_from_acc64()
             elif (self._is_long_expr(expr.operand)
-                  or self._int32_short_operand(expr.operand)):
+                  or self._int32_short_operand(expr.operand)
+                  or self._int32_int_result(expr)):
                 self.gen_expr(expr.operand)
                 if not self._is_long_expr(expr.operand):
                     # --int 32: ~us is an int, the 16-bit value is widened.
@@ -20641,6 +20647,39 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return False
         return True
 
+    def _int32_int_result(self, expr) -> bool:
+        """--int 32: a unary - or ~ that needs 32 bits (its operand is an
+        int expression that 16-bit code computes: ``-(s >> 1)``)."""
+        return (self.type_config.int_size == 4
+                and self._is_long_expr(expr)
+                and not self._is_long_expr(expr.operand))
+
+    def _int32_wide_quotient(self, expr) -> bool:
+        """--int 32: a right shift, quotient or remainder whose left
+        operand has 16 bits.  C 6.3.1.1 gives the operation the type int,
+        but 16-bit code makes an unsigned 16-bit value (32768..65535 from
+        ``us >> n``, ``us / n``, ``us % n``) that a user of the int sign
+        extends: ``(us >> n) + 1`` was -25535 for us = 40000 and n = 0.
+        The quotient of ``short / short`` is 32768 for -32768 / -1.  Such
+        an operation is done in 32 bits unless the right operand is a
+        constant that keeps the result below 32768."""
+        if self.type_config.int_size != 4:
+            return False
+        op = expr.op
+        left, right = expr.left, expr.right
+        lt_ = _to_legacy(self._get_expr_type(left))
+        if self._bsize(lt_) != 2 or self._is_long_expr(left):
+            return False
+        uns = self._bunsigned(lt_)
+        k = int_value(right) if isinstance(right, ast.IntLiteral) else None
+        if op == ">>":
+            return uns and (k is None or k < 1)
+        if op == "/":
+            return k is None or k < 2 if uns else k is None or k == -1 or k == 0
+        if op == "%":
+            return uns and (k is None or not 1 <= k <= 0x8000)
+        return False
+
     def _pu32(self, e) -> bool:
         """_is_promoted_unsigned for a 32-bit operation: with --int 32 an
         operand of at most 16 bits promotes to the signed int."""
@@ -20685,6 +20724,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 if expr.op in ("~", "-") and self.type_config.int_size == 4:
                     b = self._int32_bits(expr)
                     return b is not None and b > 15
+                if expr.op == "+" and self.type_config.int_size == 4:
+                    return self._int32_ushort(expr.operand)
                 return False
             # Logical NOT always returns int (0 or 1)
             if expr.op == "!":
@@ -20704,7 +20745,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 if expr.op == "<<" and self.type_config.int_size == 4:
                     b = self._int32_bits(expr)
                     return b is not None and b > 15
-                return False
+                return self._int32_wide_quotient(expr)
             # Binary operation is long if either operand is long
             # (excluding assignment operators which return target type)
             if expr.op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="):
@@ -20745,7 +20786,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     if b is not None and b > 15:
                         return True
                 if (tc.int_size == 4 and expr.op in ("/", "%")
-                        and self._int32_mixed_ushort(expr.left, expr.right)):
+                        and (self._int32_mixed_ushort(expr.left, expr.right)
+                             or self._int32_wide_quotient(expr))):
                     return True
                 return False
         expr_type = self._get_expr_type(expr)
@@ -22632,8 +22674,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     self._emit_int_value(_f32_to_int(-float_value(init.operand)),
                                          elem_size)
             else:
-                # Complex expression - reserve space (runtime init would be needed)
-                self.ctx.emit_instr("ds", str(elem_size))
+                # -(short)30000, -(-5), -(1 + 2): a constant expression
+                # under the minus.  Only an expression that is not constant
+                # reserves space.
+                const_val = self._eval_const_expr(init)
+                if const_val is not None:
+                    self._emit_const_scalar(const_val, elem_type, elem_size)
+                else:
+                    self.ctx.emit_instr("ds", str(elem_size))
         elif isinstance(init, ast.Identifier):
             # Auto-AST: ``init.name`` is a uplox Token; the enum-constant
             # registry is keyed by the source text. Look it up via
