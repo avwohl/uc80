@@ -28,6 +28,12 @@ change the result.  The checksum of every result is printed.  With
 `--flags=--int=32` the program types `I16` as `short` for uc80 too, because
 an `int` then has 4 bytes.
 
+With `--flags=--int=32` each program also has 6 to 11 functions of natural
+C arithmetic on operands narrower than int (NarrowGen: sums, products, bit
+operations, shifts, quotients; an interval for each subexpression keeps the
+program free of undefined behaviour).  `--narrow` makes programs of such
+functions only.
+
 Statuses: PASS, WRONG (output differs; the status is REG-WRONG when the
 same program is right with --no-register-cc, which names the convention),
 BUILD-FAIL, HOST-FAIL, HANG.
@@ -1108,7 +1114,7 @@ def one(seed, opts):
         shutil.rmtree(work)
     work.mkdir(parents=True)
     int32 = bool(re.search(r"--int[= ]32\b", opts.flags))
-    if opts.narrow:
+    if getattr(opts, "narrow", False):
         int32 = True
         text = make_program_narrow(seed)
     else:

@@ -63,14 +63,14 @@ CHECK_TOTAL: dict[tuple, int] = {}
 # runs the same code plus the printing: a time build that needs less than
 # this fraction of the T-states of the check build stopped early (a
 # compiler bug did this to embench-huffbench: 2.8M instead of 9.8M).
-MIN_TIME_RATIO = 0.5
+MIN_TIME_RATIO = 0.5       # the manifest key min_time_ratio changes it
 
 
-def stopped_early(total, check_total) -> bool:
-    """True if a time build ran for less than MIN_TIME_RATIO of the
-    T-states of its check build (see MIN_TIME_RATIO)."""
+def stopped_early(total, check_total, ratio: float = MIN_TIME_RATIO) -> bool:
+    """True if a time build ran for less than `ratio` of the T-states of
+    its check build (see MIN_TIME_RATIO)."""
     return bool(check_total and total is not None
-                and total < MIN_TIME_RATIO * check_total)
+                and total < ratio * check_total)
 
 
 def ticks_path() -> Path:
@@ -441,7 +441,8 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
         if normalize(out) != normalize(tgolden):
             row["status"] = "WRONG(time)"
             return row
-        if stopped_early(total, check_total):
+        if stopped_early(total, check_total,
+                         prog.get("min_time_ratio", MIN_TIME_RATIO)):
             row["status"] = "WRONG(time)"
             return row
         s, e = b.symbols.get("TIMER_START"), b.symbols.get("TIMER_STOP")

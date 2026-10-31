@@ -29,6 +29,8 @@ about = "Sieve of Eratosthenes, primes in 2..7999 (z88dk)"
 files = [{ repo = "z88dk", path = "support/benchmarks/sieve/sieve.c", sha256 = "67910eefb4ac4cf26dbcccb98b570bbc8478aada2693cfa06609ffb8f749ceea", main = true }]
 check_defines = ["PRINTF"]
 time_defines = ["TIMER"]
+# the check build prints 1000 primes: the time build needs 26 % of its T-states
+min_time_ratio = 0.15
 variants = [{ name = "static", defines = ["STATIC"] }]
 edit = [{ file = "sieve.c", old = "\nmain()", new = "\nint main(void)" }]
 

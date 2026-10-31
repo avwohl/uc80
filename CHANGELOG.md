@@ -6,6 +6,14 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Bug round 6 (branch `bugfix6`, with `uc_core` branch `bugfix6`)
+
+- **uc_core, a macro parameter inside a string literal.** `#define OUT(s) printf("%s %d\n", s, 1)` with `OUT("x")` gave `printf("%"x" %d\n", "x", 1)`. The compiler either failed or made wrong code. The preprocessor now splits the replacement list into preprocessing tokens. The preprocessor replaces a parameter only where the token is an identifier (C23 6.10.5). A string literal or a character constant is one token, with its `u8`, `u`, `U` or `L` prefix. The same code now handles `#`, `##`, `__VA_ARGS__` and the new `__VA_OPT__`. `##` also works in an object-like macro. Two tokens that were separate stay separate (`- -1`, not `--1`). The test `tests/test_macro_tokens.py` in `uc_core` compares 200 generated macro tests with the host `cc -E`. The `-E` output of all c-testsuite and bench programs is the same, except for white space inside a macro that has several lines.
+- **`--int=32`, a right shift, a quotient and a remainder of 16-bit operands.** `(us >> n) + 1` was -25535 for `us` = 40000 and `n` = 0. The 16-bit code made the unsigned value 40000. The consumer then sign-extended the value as an int. The same error was in `us / n`, `us % n`, `+us`, `short / short` (-32768 / -1) and in `-(s >> 1)` and `~(us >> n)`. These operations now use 32 bits. A constant shift count of 1 or more, or a constant divisor of 2 or more, keeps the 16-bit code, because the result stays below 32768.
+- **A static initializer with a minus before a constant expression held zero.** `int a = -(short)30000;` and `int b = -(-5);` made an object without an initializer, in the 16-bit mode too. The initializer is now evaluated.
+- **`bench/ccfuzz.py` makes chains of narrow operands.** With `--flags=--int=32` each program gets 6 to 11 functions with sums, differences, products, bit operations, shifts, quotients and remainders of `char`, `short` and unsigned operands. The generator keeps an interval for each subexpression, so the programs have no undefined behavior. `--narrow` makes programs of such functions only.
+- **`bench/run.py` checks the time build.** A time build that does not have the check defines was not checked at all. Now its output must be the output of the host build with the time defines (`bench/golden/<name>.time.txt`, made by `run.py --golden`). A time build with less than half of the T-states of its check build is `WRONG(time)`. The program `embench-huffbench` compared its buffer with a copy of the buffer, so a run that never decoded printed `PASS`. An edit now clears the buffer before the decoder runs. See `docs/bench_harness.md`.
+
 ### The gen3 family is in the repository
 
 - The 75 programs of the gen3 family (5 value types, 3 pointer kinds, 5 bodies) were only in a scratch folder. That folder lost its files on 31 October. The programs are now `tests/gen3/h_*.c`.

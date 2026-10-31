@@ -51,6 +51,11 @@ def test_stopped_early():
     assert not run.stopped_early(9_700_000, 9_800_000)
     assert not run.stopped_early(5_000, None)
     assert not run.stopped_early(None, 5_000)
+    # the manifest key min_time_ratio: sieve prints a lot in the check build
+    assert run.stopped_early(2_856_119, 11_000_000, 0.5)
+    assert not run.stopped_early(2_856_119, 11_000_000, 0.15)
+    sieve = next(p for p in run.load_manifest()["program"] if p["name"] == "sieve")
+    assert sieve["min_time_ratio"] == 0.15
 
 
 @pytest.mark.skipif(shutil.which("cc") is None, reason="no host cc")

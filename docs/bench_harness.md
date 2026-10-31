@@ -126,6 +126,7 @@ runner puts `#include "bench.h"` at the top of the main source.
 | `timing` | Optional. `"total"` makes the runner skip the region run. The row then has the cycles of the whole run and `timing=total`, also when the program has TIMER labels. Games use it. |
 | `defines.host` | Optional. More defines for the host build that makes the golden file (`run.py --golden`) only. No compiler gets a define that the other compilers do not get. |
 | `timeout` | Seconds for one run under `z88dk-ticks`. The default is 600. |
+| `min_time_ratio` | Optional. The smallest fraction of the T-states of the check build that the time build must need. The default is 0.5. Use a smaller value when the check build prints a lot (`sieve`: 0.15). |
 
 A variant with `time_only = true` has defines that only move the timed
 region. The check build of the variant then has no variant defines. When
@@ -221,8 +222,8 @@ that prints nothing must print nothing.
 A time build that prints nothing cannot show a wrong result. Thus the
 runner also compares the full run of the time build with the full run of
 the check build. The check build does the same work, and it prints. When
-the time build needs less than half of the T-states of the check build,
-the program stopped early, and the status is `WRONG(time)`. An older
+the time build needs less than half of the T-states of the check build
+(the key `min_time_ratio` changes the fraction), the program stopped early, and the status is `WRONG(time)`. An older
 runner gave the status OK to an early stop of `embench-huffbench`.
 
 ### The expected output
