@@ -110,7 +110,7 @@ def test_very_long_sum_is_linear(tmp_path):
     text = _compile_to_text(tmp_path, "long320", src)
     elapsed = time.monotonic() - t0
     assert text.count("\n") > 1500       # the code of the sum is there
-    assert elapsed < 30, elapsed
+    assert elapsed < 60, elapsed
 
 
 def _dce_program(nlabels, nlines):

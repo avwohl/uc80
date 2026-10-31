@@ -9,6 +9,7 @@ callees.  See docs/register_locals.md.
 from __future__ import annotations
 
 import dataclasses
+import os
 import re
 
 from uc_core import ast
@@ -16,6 +17,8 @@ from uc_core import _dcfast
 from uc_core.volatility import children as _children
 
 from . import iyptr, reglocals
+
+_SKIPFN = os.environ.get("UC80_RL_SKIPFN", "").split(",")
 
 _SETJMP = re.compile(r"setjmp", re.IGNORECASE)
 
@@ -206,7 +209,7 @@ class RegLocalsMixin:
         self._rl_fn_ok = False
         if not self._rl_on or name in self._rl_skip:
             return
-        if name in __import__("os").environ.get("UC80_RL_SKIPFN", "").split(","):
+        if name in _SKIPFN:
             return                      # a debug aid: bisect a wrong result
         self._rl_excl = address_taken_names(func.body)
         self._rl_vol = self._vol_names
