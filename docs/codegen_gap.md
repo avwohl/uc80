@@ -15,9 +15,9 @@ The branch `famj` starts from `main` 619b110. Step J1 has the low-risk causes of
 
 What the analysis predicted by hand edits, and what the compiler gives (total T-states of uc80 over SDCC 4.6.0 speed mode):
 
-- Geometric mean of the 13 programs: 1.196 before, 0.967 predicted, 0.964 measured. 10 of 13 are below 1, as predicted.
-- `bsd-ppt` 1.598 to 0.974 (predicted 0.979). `sieve` 1.475 to 0.967 (0.885). `bsd-bcd` 1.390 to 0.941 (0.939). `empty` 1.218 to 0.776 (0.862). `davidly-sieve` 1.195 to 0.842 (0.873). `tak` 1.055 to 0.881 (0.880). `stanford-quick` 1.041 to 0.868 (0.868). `snd-cmdq` 1.033 to 0.955 (0.962). `sieve+static` 1.013 to 0.860 (0.890). `snd-ymreg` 1.012 to 0.969 (0.959).
-- `sieve` is 0.967, not 0.885. The hand edit of `main` used four more changes: a direct update of the pair, a rotation that the compiler does not do for the first loop, and two hand-made register choices. The loop of the compiler is 1.22M T-states in the timed region. SDCC needs 1.28M.
+- Geometric mean of the 13 programs: 1.196 before, 0.967 predicted, 0.958 measured. 10 of 13 are below 1, as predicted.
+- `bsd-ppt` 1.598 to 0.974 (predicted 0.979). `sieve` 1.475 to 0.938 (0.885). `bsd-bcd` 1.390 to 0.941 (0.939). `empty` 1.218 to 0.776 (0.862). `davidly-sieve` 1.195 to 0.842 (0.873). `tak` 1.055 to 0.881 (0.880). `stanford-quick` 1.041 to 0.866 (0.868). `snd-cmdq` 1.033 to 0.955 (0.962). `sieve+static` 1.013 to 0.825 (0.890). `snd-ymreg` 1.012 to 0.965 (0.959).
+- `sieve` is 0.938, not 0.885. The timed region of the compiler (1.22M T-states) is faster than the region of the hand edit of the analysis (SDCC needs 1.28M). The rest is the part outside the timed region: the hand edit made the final empty loop and the clear of the BSS cheaper than the compiler does.
 - Above SDCC: `davidly-ttt` 1.493, `queens` 1.099, `stanford-puzzle` 1.069. These are the causes C1 and C3 of the analysis. They need the loop-invariant loads (step 3) and the byte-granular register allocation (step 4).
 
 Differences from the plan:
@@ -30,9 +30,9 @@ Differences from the plan:
 
 Numbers from `bench/run.py -c uc80` on 111 programs, against SDCC 4.6.0:
 
-- Size (bytes minus the empty program) 0.9505, whole image 0.9061, T-states (speed mode) 0.5039, and 0.6051 without `sort-*`. uc80 is faster than SDCC on 74 of 78 programs.
+- Size (bytes minus the empty program) 0.9530, whole image 0.9083, T-states (speed mode) 0.5038, and 0.6050 without `sort-*`. uc80 is faster than SDCC on 74 of 78 programs.
 - `main` 619b110 had 0.9117, 0.8794, 0.5275, 0.6367 and 66 of 78.
-- The size means are worse. The empty program is 17 bytes smaller, so the bytes column grows for each program. Loop rotation, the push fill and the runtime shortcut add bytes. 87 of 104 programs are bigger (89 bytes in the median).
+- The size means are worse. The empty program is 17 bytes smaller, so the bytes column grows for each program. Loop rotation, the push fill and the runtime shortcut add bytes. 92 of 104 programs are bigger (90 bytes in the median).
 
 ## Status on 2026-10-30: family I and bug round 3 in one tree (branch `integrate10`)
 
