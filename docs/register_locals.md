@@ -168,7 +168,9 @@ One change is better in every column: the lightest candidate goes from 2 to 1. S
 
 ## Tests
 
-The 75 programs of the gen3 family are in `tests/gen3/`. `tests/test_gen3_family.py` builds each program in 8 option sets. The test fails when two option sets give different output. A plain `pytest` run takes 15 programs. `GEN3_FULL=1 pytest -n 6 tests/test_gen3_family.py` takes all 75 (about 3 minutes). `python3 bench/gen3_harness.py` runs all 75 and prints `RLDIFF` and `hostdiff(info)` lines. `tests/gen3/generate.py` makes the programs.
+The 75 programs of the gen3 family are in `tests/gen3/`. `tests/test_gen3_family.py` builds each program in 8 option sets. The test fails when two option sets give different output. A plain `pytest` run takes 15 programs.
+
+`GEN3_FULL=1 pytest -n 6 tests/test_gen3_family.py` takes all 75 (about 3 minutes). A host difference shows as a warning in the pytest summary. `python3 bench/gen3_harness.py` runs all 75 and prints `RLDIFF` and `hostdiff(info)` lines. `tests/gen3/generate.py` makes the programs.
 
 `tests/test_regl_slotops.py` and `tests/test_regl_noreturn.py` run the programs of the two sections above with the options on and off. `tests/test_register_locals.py` checks the shape of the code and the answers of the answer programs, with and without the pass, in both storage modes. Two programs are regression tests for ccfuzz seeds 40548 (parameter 1 in DE) and 40278 (the high word of a long result in DE). `bench/ccfuzz.py` and `bench/difftest.py` run random programs.
 

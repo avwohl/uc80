@@ -4,16 +4,18 @@ tests/gen3/*.c are 75 programs made by tests/gen3/generate.py (5 value types
 x 3 pointer kinds x 5 bodies).  Each program is built with uc80 in 8 option
 sets and run under cpmemu.  The test fails when two option sets give
 different output, or when a build fails or times out.  A difference from the
-host compiler is only printed (pytest -s): the programs use
+host compiler is only reported, as a pytest warning: the programs use
 implementation-defined conversions.
 
 A plain run takes the quick subset: one program per type and pointer kind
-(15 programs, 120 builds).  GEN3_FULL=1 runs all 75 programs (600 builds, about 3 minutes with -n 6).
+(15 programs, 120 builds).  GEN3_FULL=1 runs all 75 programs
+(600 builds, about 3 minutes with -n 6).
 bench/gen3_harness.py does the full run and prints RLDIFF and hostdiff lines.
 """
 import importlib.util
 import os
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -44,7 +46,7 @@ def test_gen3_programs_present():
 
 @needs_run
 @pytest.mark.parametrize("name", NAMES)
-def test_gen3_option_sets_agree(name, tmp_path, capsys):
+def test_gen3_option_sets_agree(name, tmp_path):
     src = GEN3 / name
     lib = H.lib_dir(tmp_path)
     out = [H.build_run(src, flags, tmp_path / f"v{i}", lib)
@@ -56,5 +58,4 @@ def test_gen3_option_sets_agree(name, tmp_path, capsys):
         assert got.strip() == ref, f"RLDIFF {name} {flags}: {got.strip()!r} vs {ref!r}"
     host = H.host_run(src, tmp_path / "host")
     if host is not None and host.strip() != ref:
-        with capsys.disabled():
-            print(f"\nhostdiff(info) {name}")
+        warnings.warn(f"hostdiff(info) {name}")
