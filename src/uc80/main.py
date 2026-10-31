@@ -210,7 +210,8 @@ BIG_BSS = 6000
 
 def _common_bytes(code: str) -> int:
     """The bytes that the generated text reserves in the COMMON segment (the
-    BSS of the program, without the library modules)."""
+    BSS of the program, without the library modules).  The block /AUTO/
+    (shared automatic storage) is not cleared and does not count."""
     total = 0
     in_common = False
     for ln in code.split("\n"):
@@ -220,7 +221,7 @@ def _common_bytes(code: str) -> int:
         if ln[0] in " \t":
             op = w[0].lower()
             if op == "common":
-                in_common = True
+                in_common = not (len(w) > 1 and w[1].upper() == "/AUTO/")
             elif op in ("cseg", "dseg", "aseg"):
                 in_common = False
             elif in_common and op in ("ds", "defs") and len(w) > 1:
@@ -874,6 +875,48 @@ def main() -> int:
              "the loop (docs/licm.md)"
     )
     parser.add_argument(
+        "--no-licm-load",
+        action="store_true",
+        help="Load an array element and compute a row address in every "
+             "pass of a loop that does not change them (docs/licm_load.md)"
+    )
+    parser.add_argument(
+        "--no-skip-auto-clear",
+        action="store_true",
+        help="Clear the shared automatic storage (??AUTO) with the rest of "
+             "the BSS at start-up (docs/startup_fast.md)"
+    )
+    parser.add_argument(
+        "--no-range-div",
+        action="store_true",
+        help="Divide by a constant at run time even when the range of the "
+             "dividend gives the result (docs/range_div.md)"
+    )
+    parser.add_argument(
+        "--no-rl-addr-taken",
+        action="store_true",
+        help="Keep the locals of a function whose address is taken in "
+             "memory (docs/byte_regs.md)"
+    )
+    parser.add_argument(
+        "--no-range-byte-cmp",
+        action="store_true",
+        help="Compare a loop counter of the range 0..255 as 16 bits "
+             "(docs/range_compare.md)"
+    )
+    parser.add_argument(
+        "--no-byte-cse",
+        action="store_true",
+        help="Reload A with the value that the path to a label already has, "
+             "as in an else-if chain on x & 0xF0 (docs/byte_cse.md)"
+    )
+    parser.add_argument(
+        "--no-byte-regs",
+        action="store_true",
+        help="Put at most two register locals in BC and DE, a byte local "
+             "in C or E only (docs/byte_regs.md)"
+    )
+    parser.add_argument(
         "--no-range-cmp",
         action="store_true",
         help="Use the signed 16-bit compare for a counter that is never "
@@ -1433,6 +1476,7 @@ def main() -> int:
         gen.enable_peep_pairs = not args.no_peep_pairs
         gen.enable_slot_fold = not args.no_slot_fold
         gen.enable_licm = not args.no_licm
+        gen.enable_licm_load = not args.no_licm_load
         gen.enable_range_cmp = not args.no_range_cmp
         gen.enable_narrow_index = not args.no_narrow_index
         # A .mac file or a separate compilation may define _putchar
@@ -1445,6 +1489,18 @@ def main() -> int:
         gen.enable_pair_cmp = not args.no_pair_cmp
         gen.enable_fill_idiom = not args.no_fill_idiom
         gen.enable_shl_inline = not args.no_shl_inline
+        gen.enable_byte_regs = not args.no_byte_regs
+        gen.enable_range_byte_cmp = not args.no_range_byte_cmp
+        gen.enable_rl_addr_taken = not args.no_rl_addr_taken
+        gen.enable_range_div = not args.no_range_div
+        # The start-up code of a whole-program CP/M build skips the shared
+        # automatic storage when it clears the BSS (a sdas, ROM or
+        # separate build keeps the plain layout).
+        gen.auto_noclear = (not args.no_skip_auto_clear and whole_program
+                            and embed_startup and not args.startup_lib
+                            and not args.no_fast_bss_clear
+                            and args.asm_syntax != "sdas"
+                            and not rom)
         gen.sdas_output = args.asm_syntax == "sdas"
         gen.noreturn_extra = set(sdcc_found.noreturn_labels)
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
@@ -1682,8 +1738,14 @@ def main() -> int:
                              roots.im2_table or IM2_DEFAULT_TABLE)
                         if roots.im2_on else None)
                     startup_content = ""
+                skip_auto = (getattr(gen, "auto_noclear_active", False)
+                             and not rom and not args.startup_lib)
                 for line in startup_content.splitlines():
                     stripped = line.strip().upper()
+                    if skip_auto and not stripped.startswith(("EXTRN", ";")):
+                        # clear from the end of ??AUTO on
+                        line = re.sub(r"__bss_start\b", "??AUTOEND", line,
+                                      flags=re.IGNORECASE)
                     # Skip directives that are already in main output
                     if stripped in {'.Z80', 'CSEG', 'DSEG'}:
                         continue
@@ -2190,6 +2252,7 @@ def main() -> int:
                 print(f"  Peephole optimization...")
 
             peep_local.RET_CC = not args.no_param_reg
+            peep_local.RELOAD = not args.no_byte_cse
             peephole = _Peephole(PeepholeOptimizer())
             # Not peephole.optimize(code): inline asm is an optimization
             # barrier and its bytes are never rewritten.

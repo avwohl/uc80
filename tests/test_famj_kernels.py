@@ -232,7 +232,8 @@ static void out(unsigned char port, unsigned char value)
 int main(void) { out(1, 2); out(9, 4); puts("ok"); return 0; }
 """
     on = compile_c(tmp_path, src).read_text()
-    off = compile_c(tmp_path, src, "--no-param-reg", name="o").read_text()
+    off = compile_c(tmp_path, src, "--no-param-reg", "--no-byte-regs",
+                    name="o").read_text()
     f_on = on[on.index("\n_out:"):on.index("@out_ret:")]
     f_off = off[off.index("\n_out:"):off.index("@out_ret:")]
     assert "(??AUTO" in f_off

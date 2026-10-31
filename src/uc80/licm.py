@@ -29,6 +29,11 @@ runs zero times) changes nothing that the program can observe.  An
 expression moves only when it costs at least ``UC80_LICM_MINCOST`` T-states
 (default 40).
 
+With the load part (docs/licm_load.md, switch --no-licm-load) the pass also
+moves the load of an array element ``tab[i]`` and the address of a row
+``m[i]`` of a two-dimensional array out of a loop that has no call, no store
+through a pointer and no store to the same array.
+
 The pass leaves a loop alone when the loop holds a label, or a case label
 of a switch outside the loop (a jump into the loop would skip the moved
 code).  It leaves a function alone that is naked, that is an interrupt
@@ -44,7 +49,9 @@ import sys
 from uc_core import ast
 from uc_core import ast_legacy as lt
 
-from .addrcse import _fields, _ident, _is_node, _tok, _unsafe
+from .addrcse import _fields, _ident, _int, _is_node, _tok, _unsafe
+
+_int_lit = _int
 
 _ASSIGN = ("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=")
 _ARITH = ("+", "-", "*", "<<", ">>", "&", "|", "^")
@@ -87,6 +94,17 @@ def _min_cost() -> int:
         return 40
 
 
+def _load_cost(name="UC80_LICM_MINCOST_LOAD") -> int:
+    try:
+        return int(os.environ.get(name, 40))
+    except ValueError:
+        return 40
+
+
+_ANY = object()      # a store whose target the pass cannot name
+_NOTHING = object()  # a store that changes no named memory
+
+
 class _Var:
     __slots__ = ("name", "auto", "type")
 
@@ -110,6 +128,10 @@ class _Fn:
         self.vars: dict = {}
         self.min_cost = _min_cost()
         self.debug = bool(os.environ.get("UC80_LICM_DEBUG"))
+        self.load = bool(getattr(gen, "enable_licm_load", False))
+        self.isr_names = getattr(gen, "_licm_isr_names", set())
+        self.load_cost = _load_cost()
+        self.addr_cost = _load_cost("UC80_LICM_MINCOST_ADDR")
 
     # -- the walk over statements ---------------------------------------
 
@@ -230,6 +252,8 @@ class _Fn:
         from . import codegen as cg
         assigned: set = set()
         declared: set = set()
+        stores: list = []
+        self.mem_call = False
         stack = [(loop, 0)]
         ok = True
         while stack:
@@ -244,12 +268,16 @@ class _Fn:
             elif isinstance(x, (ast.CaseStmt, ast.DefaultStmt)) and sw == 0:
                 ok = False
             elif isinstance(x, ast.BinaryOp) and _op(x) in _ASSIGN:
+                stores.append(x.left)
                 if isinstance(x.left, ast.Identifier):
                     assigned.add(x.left.name.text)
             elif isinstance(x, (ast.UnaryOp, ast.PostfixOp)) and _op(x) in (
                     "++", "--"):
+                stores.append(x.operand)
                 if isinstance(x.operand, ast.Identifier):
                     assigned.add(x.operand.name.text)
+            elif isinstance(x, (ast.Call, ast.CallNoArgs)):
+                self.mem_call = True
             elif isinstance(x, ast.Declaration):
                 try:
                     for nm, _f, _i, _fn in cg.iter_var_decls(x):
@@ -263,7 +291,43 @@ class _Fn:
                 v = getattr(x, f, None)
                 if v is not None and not isinstance(v, (str, int)):
                     stack.append((v, sw))
+        # what the stores of the loop can change (for the load part)
+        self.mem_any = False
+        self.mem_roots = set()
+        if self.load:
+            for lv in stores:
+                try:
+                    r = self.store_root(lv, declared)
+                except Exception:
+                    r = _ANY
+                if r is _ANY:
+                    self.mem_any = True
+                elif r is not _NOTHING:
+                    self.mem_roots.add(r)
         return assigned, declared, ok
+
+    def store_root(self, lv, declared):
+        """The name of the object that a store to ``lv`` changes, _ANY
+        when the store goes through a pointer or the pass cannot tell,
+        _NOTHING for a local scalar that no pointer can reach."""
+        g = self.g
+        if isinstance(lv, ast.Identifier):
+            name = lv.name.text
+            if name in declared:
+                return _ANY
+            v = self.vars.get(name)
+            if (v is not None and v.auto and name not in self.addr_taken
+                    and not isinstance(v.type, (lt.ArrayType,
+                                                lt.StructType))):
+                return _NOTHING
+            return name
+        if isinstance(lv, ast.Index):
+            if isinstance(g._get_expr_type(lv.array), lt.ArrayType):
+                return self.store_root(lv.array, declared)
+            return _ANY
+        if isinstance(lv, ast.Member):
+            return self.store_root(lv.obj, declared)
+        return _ANY
 
     def hoist(self, loop):
         g = self.g
@@ -288,6 +352,32 @@ class _Fn:
                 return
             if not _is_node(e) or isinstance(e, _SKIP):
                 return
+            if self.load and cont is not None and isinstance(e, ast.Index):
+                try:
+                    d = self.index_cand(e, cont, slot)
+                except Exception as ex:
+                    if self.debug:
+                        print(f"licm: index_cand failed: {ex!r}",
+                              file=sys.stderr)
+                    d = None
+                if d is not None:
+                    key, init, typ, cost, wrap = d
+                    c = found.get(key)
+                    if c is None:
+                        c = _Cand()
+                        c.expr = init
+                        c.type = typ
+                        c.places = []
+                        c.cost = cost
+                        c.uncond = False
+                        found[key] = c
+                        order.append(key)
+                    c.places.append((cont, slot, wrap))
+                    if cond[0] == 0:
+                        c.uncond = True
+                    if wrap is not None:
+                        see(getattr(wrap[0], wrap[1]), wrap[0], wrap[1])
+                    return
             if (cont is not None and isinstance(
                     e, (ast.BinaryOp, ast.UnaryOp, ast.Cast))):
                 cost = self.movable(e)
@@ -304,7 +394,7 @@ class _Fn:
                             c.uncond = False
                             found[key] = c
                             order.append(key)
-                        c.places.append((cont, slot))
+                        c.places.append((cont, slot, None))
                         if cond[0] == 0:
                             c.uncond = True
                         return
@@ -434,8 +524,11 @@ class _Fn:
                 declarators=[ast.InitDeclaratorWithInit(
                     declarator=ast.Declarator(name=_tok(name)), init=init)])
             items.append(decl)
-            for cont, slot in c.places:
+            for cont, slot, wrap in c.places:
                 use = _ident(name)
+                if wrap is not None:
+                    use = ast.Index(array=use,
+                                    index=getattr(wrap[0], wrap[1]))
                 if isinstance(cont, list):
                     cont[slot] = use
                 else:
@@ -447,6 +540,163 @@ class _Fn:
                       f"uses={len(c.places)} cost={c.cost} key={key}",
                       file=sys.stderr)
         return items
+
+    # -- the load part: array elements and row addresses ----------------
+
+    def ptr_leaf_ok(self, name) -> bool:
+        v = self.vars.get(name)
+        if v is None or not v.auto:
+            return False
+        if (name in self.addr_taken or name in self.assigned
+                or name in self.declared or name in self.vol_names):
+            return False
+        t = v.type
+        return (isinstance(t, lt.PointerType)
+                and not getattr(t, "is_volatile", False))
+
+    def idx_key(self, e, allow_const):
+        """(key, cost) of an integer index that the loop does not change."""
+        if self.const_of(e) is not None:
+            if not allow_const:
+                return None
+            return f"#{self.const_of(e)}", 0
+        cost = self.movable(e)
+        if cost is None:
+            return None
+        key = self.key(e)
+        if key is None:
+            return None
+        return key, cost + 16
+
+    def bkey(self, e, ptr_ok):
+        """(key, root name or None, cost) of an array (or, with ptr_ok, an
+        invariant local pointer) whose address the loop does not change."""
+        g = self.g
+        if isinstance(e, ast.Identifier):
+            name = e.name.text
+            if name in self.declared:
+                return None
+            v = self.vars.get(name)
+            if v is not None:
+                if isinstance(v.type, lt.ArrayType):
+                    return f"L:{name}", name, 0
+                if ptr_ok and self.ptr_leaf_ok(name):
+                    return f"P:{name}", None, 0
+                return None
+            sym = g.ctx.globals.get(name)
+            if (sym is not None and name not in g.ctx.function_names
+                    and isinstance(sym.sym_type, lt.ArrayType)):
+                return f"G:{name}", name, 0
+            return None
+        if isinstance(e, ast.Index):
+            if not isinstance(g._get_expr_type(e), lt.ArrayType):
+                return None
+            b = self.bkey(e.array, False)
+            if b is None:
+                return None
+            ik = self.idx_key(e.index, True)
+            if ik is None:
+                return None
+            sc = (0 if self.const_of(e.index) is not None
+                  else self.scale_cost(g._get_expr_type(e)))
+            return f"({b[0]}[{ik[0]}])", b[1], b[2] + ik[1] + sc
+        return None
+
+    def scale_cost(self, t) -> int:
+        try:
+            n = self.g._type_size(t)
+        except Exception:
+            return 60
+        if n <= 1:
+            return 0
+        if n & (n - 1) == 0:
+            return min(11 * (n.bit_length() - 1), 40)
+        return 60
+
+    def rvalue_use(self, cont, slot) -> bool:
+        """True when the node in (cont, slot) is only read."""
+        if isinstance(cont, ast.UnaryOp) and _op(cont) in ("&", "++", "--"):
+            return False
+        if isinstance(cont, ast.PostfixOp):
+            return False
+        if (isinstance(cont, ast.BinaryOp) and _op(cont) in _ASSIGN
+                and slot == "left"):
+            return False
+        if isinstance(cont, (ast.Member, ast.ArrowMember)) and slot == "obj":
+            return not isinstance(cont, ast.Member)
+        return True
+
+    def index_cand(self, e, cont, slot):
+        """(key, init expression, type, cost, wrap) when the Index node
+        ``e`` is a load or an address that moves out of the loop."""
+        g = self.g
+        t = g._get_expr_type(e)
+        if isinstance(t, lt.ArrayType):
+            # a row of a two-dimensional array in the place of a pointer
+            if not (isinstance(cont, ast.Index) and slot == "array"):
+                return None
+            b = self.bkey(e.array, False)
+            ik = self.idx_key(e.index, False)
+            if b is None or ik is None:
+                return None
+            cost = b[2] + ik[1] + self.scale_cost(t) + 21
+            if cost < self.load_cost:
+                return None
+            elem = t.base_type
+            init = ast.UnaryOp(op="&", operand=ast.Index(
+                array=copy.deepcopy(e), index=_int_lit(0)))
+            init._acse = True
+            return (f"R:{b[0]}[{ik[0]}]", init, lt.PointerType(
+                base_type=elem), cost, None)
+        # a load of one element
+        scalar = (isinstance(t, lt.PointerType)
+                  and not getattr(t, "is_volatile", False)) or self.int_type(t)
+        if scalar and self.rvalue_use(cont, slot):
+            if not isinstance(g._get_expr_type(e.array), lt.ArrayType):
+                scalar = False
+        else:
+            scalar = False
+        if scalar:
+            b = self.bkey(e.array, False)
+            ik = self.idx_key(e.index, False)
+            if b is not None and ik is not None and b[1] is not None:
+                root = b[1]
+                if (not self.mem_any and not self.mem_call
+                        and root not in self.mem_roots
+                        and root not in self.isr_names):
+                    cost = (b[2] + ik[1] + self.scale_cost(t) + 21
+                            + 7 * min(g._type_size(t), 2))
+                    if cost >= self.load_cost:
+                        return (f"M:{b[0]}[{ik[0]}]", e, t, cost, None)
+        # base[inv + var]: the address of base[inv] moves
+        idx = e.index
+        if (not isinstance(t, lt.ArrayType) and isinstance(idx, ast.BinaryOp)
+                and _op(idx) == "+"):
+            try:
+                if g._type_size(g._get_expr_type(idx)) > 2:
+                    return None
+            except Exception:
+                return None
+            for inv_side, var_side in (("left", "right"), ("right", "left")):
+                inv = getattr(idx, inv_side)
+                var = getattr(idx, var_side)
+                ik = self.idx_key(inv, False)
+                if ik is None or self.movable(var) is not None:
+                    continue
+                if self.const_of(var) is not None:
+                    continue
+                b = self.bkey(e.array, True)
+                if b is None:
+                    return None
+                cost = b[2] + ik[1] + 21
+                if cost < self.addr_cost:
+                    return None
+                init = ast.UnaryOp(op="&", operand=ast.Index(
+                    array=copy.deepcopy(e.array), index=copy.deepcopy(inv)))
+                init._acse = True
+                return (f"A:{b[0]}+{ik[0]}", init, lt.PointerType(
+                    base_type=t), cost, (idx, var_side))
+        return None
 
     # -- what may move --------------------------------------------------
 
@@ -593,12 +843,56 @@ class LicmMixin:
     """The hook of the pass in the code generator."""
 
     enable_licm = True
+    enable_licm_load = True
+
+    def _licm_isr_set(self, unit) -> set:
+        """The names that an interrupt function, or a function that one
+        calls, mentions.  A load of such a global array does not move."""
+        from . import codegen as cg
+        mentions: dict = {}
+        for item in unit.items:
+            if not isinstance(item, ast.FunctionDef) or item.body is None:
+                continue
+            nm = cg.function_name(item)
+            if nm is None:
+                continue
+            names: set = set()
+            stack = [item.body]
+            while stack:
+                x = stack.pop()
+                if isinstance(x, list):
+                    stack.extend(x)
+                    continue
+                if not _is_node(x):
+                    continue
+                if isinstance(x, ast.Identifier):
+                    names.add(x.name.text)
+                for f in _fields(x):
+                    v = getattr(x, f, None)
+                    if v is not None and not isinstance(v, (str, int)):
+                        stack.append(v)
+            mentions[nm] = names
+        roots = (set(self.isr_funcs or {})
+                 | set(getattr(self, "vector_funcs", None) or ()))
+        out: set = set()
+        todo = [r for r in roots if r in mentions]
+        seen = set(todo)
+        while todo:
+            f = todo.pop()
+            for nm in mentions.get(f, ()):
+                out.add(nm)
+                if nm in mentions and nm not in seen:
+                    seen.add(nm)
+                    todo.append(nm)
+        return out
 
     def _licm_run(self, unit) -> dict:
         stats = {"n": 0}
         if not self.enable_licm:
             return stats
         from . import codegen as cg
+        self._licm_isr_names = (self._licm_isr_set(unit)
+                                if self.enable_licm_load else set())
         only = os.environ.get("UC80_LICM_ONLY")
         only = set(only.split(",")) if only else None
         saved_locals = self.ctx.locals

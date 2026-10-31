@@ -57,6 +57,13 @@ The switches of family J are all off-switches. Each one is in the page of its pa
 - `--no-loop-rotate` ([loop_rotation.md](loop_rotation.md)): the test of a loop is at the top only.
 - `--no-fill-idiom` ([fill_idiom.md](fill_idiom.md)): a loop that fills a byte array stays a loop.
 - `--no-shl-inline` ([shl_inline.md](shl_inline.md)): `1 << n` calls `__shl16`.
+- `--no-licm-load` ([licm_load.md](licm_load.md)): a loop loads an array element and computes a row address in each pass.
+- `--no-byte-regs` ([byte_regs.md](byte_regs.md)): at most two register locals, a byte local only in C or E.
+- `--no-rl-addr-taken` ([byte_regs.md](byte_regs.md)): a function that has its address taken keeps its locals in memory.
+- `--no-range-byte-cmp` ([range_compare.md](range_compare.md)): a counter of the range 0 to 255 is compared as 16 bits.
+- `--no-byte-cse` ([byte_cse.md](byte_cse.md)): a reload of A after a compare and a jump stays.
+- `--no-range-div` ([range_div.md](range_div.md)): `x / k` and `x % k` run at run time, also when the range of `x` gives the result.
+- `--no-skip-auto-clear` ([startup_fast.md](startup_fast.md)): the start-up code clears the shared automatic storage `??AUTO`.
 
 ### Printf Control
 

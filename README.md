@@ -63,7 +63,7 @@ z88dk output. uc80 passes 219 of the 220 c-testsuite tests. Numbers are in
 - [Finding the libraries](https://github.com/avwohl/uc80/blob/main/docs/libraries.md) - `--print-lib-dir`, `--build-libs`, `UC80_LIB_DIR`
 - [Compiler options](https://github.com/avwohl/uc80/blob/main/docs/compiler_options.md) - whole-program optimization, `--printf`, CR LF line endings, `--int`/`--long`, separate compilation
 - [Calling convention](https://github.com/avwohl/uc80/blob/main/docs/calling_convention.md) - register and stack convention, which functions qualify, `--no-register-cc`
-- [Register locals](https://github.com/avwohl/uc80/blob/main/docs/register_locals.md) - up to two scalar locals of a function live in BC or DE, and one pointer lives in IY, `--no-register-locals`
+- [Register locals](https://github.com/avwohl/uc80/blob/main/docs/register_locals.md) - up to four byte locals (or two words) of a function live in B, C, D and E, and one pointer lives in IY, `--no-register-locals`
 - [Address CSE](https://github.com/avwohl/uc80/blob/main/docs/addr_cse.md) - the compiler computes a repeated array element address once, `a = b = K` stores K to each target, `--no-addr-cse`, `--no-chain-store`
 - [Dead locals](https://github.com/avwohl/uc80/blob/main/docs/dead_store.md) - the compiler removes a local that nothing reads, and a store that a later store overwrites, `--no-dead-store`
 - [Inline block operations](https://github.com/avwohl/uc80/blob/main/docs/blockops.md) - `memset` and `memcpy` with a constant size become `LDIR` or `LDI` code, `--no-blockops`
@@ -71,7 +71,7 @@ z88dk output. uc80 passes 219 of the 220 c-testsuite tests. Numbers are in
 - [Loop-invariant code motion](https://github.com/avwohl/uc80/blob/main/docs/licm.md) - an integer expression that a loop does not change is computed before the loop, `--no-licm`
 - [Value ranges](https://github.com/avwohl/uc80/blob/main/docs/range_compare.md) - a counter in 0 to 32767 uses the short unsigned compare, `--no-range-cmp`
 - [Index narrowing](https://github.com/avwohl/uc80/blob/main/docs/narrow_index.md) - a 32-bit array index is computed in 16 bits, `--no-narrow-index`
-- [Family J passes](https://github.com/avwohl/uc80/blob/main/docs/family_j.md) - fast BSS clear, `putchar` statements, loop rotation, fill loops, parameters in registers, and more: one page for each, one `--no-` switch for each
+- [Family J passes](https://github.com/avwohl/uc80/blob/main/docs/family_j.md) - fast BSS clear, `putchar` statements, loop rotation, fill loops, parameters in registers, loads out of loops, byte registers, and more: one page for each, one `--no-` switch for each
 - [Inline assembly](https://github.com/avwohl/uc80/blob/main/docs/inline_assembly.md) - `asm("...")` rules and limits
 - [Volatile objects](https://github.com/avwohl/uc80/blob/main/docs/volatile.md) - every volatile access happens as written, and how each pass keeps that
 - [Binary size and test results](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md) - speed and size against 8 compilers, and external test suite pass rates

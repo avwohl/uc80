@@ -65,7 +65,7 @@ The pass takes the largest such part of each expression. In `y * 80 + x` the par
 - The function is a naked function, an interrupt function or a vector handler.
 - The function has inline assembly, a statement expression or `setjmp`.
 
-An expression that reads a global, an array element or a pointer target never moves. An interrupt can change such a value between two passes of the loop.
+An expression that reads a global, an array element or a pointer target never moves in this part of the pass. [licm_load.md](licm_load.md) describes the part that moves the load of an array element and the address of a row (family J step 3).
 
 ## Switches
 

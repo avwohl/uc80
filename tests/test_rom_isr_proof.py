@@ -26,9 +26,9 @@ def test_nmi_command_queue(tmp_path):
     r = isrproof.prove_nmi(tmp_path)
     assert r["ok"], r
     assert r["nmis"] == 300
-    # 630 T-states from the NMI handler's first instruction to its RETN
+    # 597 T-states from the NMI handler's first instruction to its RETN
     # (the NMI acknowledge, 11 T-states, is not in the figure)
-    assert r["isr_min"] == r["isr_max"] == 630
+    assert r["isr_min"] == r["isr_max"] == 597
 
 
 def test_ym_timer_irq_drives_the_sequencer(tmp_path):

@@ -712,14 +712,26 @@ class _Translator:
         # sdas cannot subtract two external symbols.  The CP/M start-up
         # code (lib/crt0.mac) loads the BSS size minus one that way; here
         # the same value is computed at run time.
-        if (op.lower() == "ld" and operands and re.fullmatch(
-                r"\s*BC\s*,\s*__bss_end\s*-\s*__bss_start\s*-\s*1\s*",
-                operands, re.I)):
-            for o, a in (("ld", "HL,__bss_end"), ("ld", "DE,__bss_start"),
+        m = (op.lower() == "ld" and operands and re.fullmatch(
+            r"\s*BC\s*,\s*__bss_end\s*-\s*(__bss_start|\?\?AUTOEND)"
+            r"\s*-\s*1\s*", operands, re.I))
+        if m:
+            for o, a in (("ld", "HL,__bss_end"), ("ld", f"DE,{m.group(1)}"),
                          ("or", "A"), ("sbc", "HL,DE"), ("dec", "HL"),
                          ("ld", "B,H"), ("ld", "C,L")):
                 self.instruction(o, a)
             return
+        if operands and "??AUTOEND" in operands.upper():
+            # The block /AUTO/ comes first in the BSS: its end is the start
+            # of the BSS plus its length (a difference of two labels of
+            # the same area).  sdldz80 gets __bss_start from the flags.
+            operands = re.sub(r"\?\?AUTOEND\b",
+                              "__bss_start+(??AUTOEND-??AUTO)", operands,
+                              flags=re.I)
+            if not getattr(self, "_bss_start_declared", False):
+                # the EXTRN of the start-up code went with the use
+                self._bss_start_declared = True
+                self.emit_anywhere("\t.globl\t__bss_start")
         ops = _split_args(operands) if operands else []
         cs = [self.classify(o) for o in ops]
         text = "\t" + op

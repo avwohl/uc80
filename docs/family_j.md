@@ -15,7 +15,7 @@ Step 2 changes the code of kernels and loops:
 - [A char result that a mask uses](char_return_mask.md): `--no-char-ret-mask`.
 - [A byte parameter in a spare register](param_reg.md): `--no-param-reg`.
 - [A frame without slots](frame_drop.md): `--no-frame-drop`.
-- [An if with nothing to do](dead_test.md): `--no-dead-test`.
+- [An empty if](dead_test.md): `--no-dead-test`.
 - [Register pairs in a compare and in an index](pair_compare.md): `--no-pair-cmp`.
 - [Loop rotation](loop_rotation.md): `--no-loop-rotate`.
 - [A loop that fills an array](fill_idiom.md): `--no-fill-idiom`.
@@ -23,6 +23,20 @@ Step 2 changes the code of kernels and loops:
 
 Two bugs and the size rule changed some passes after the first version (see the repair entry in the [CHANGELOG](../CHANGELOG.md)). The pages above describe the final code.
 
-## Not in this part
+Step 3 moves loads out of loops:
 
-The larger causes of the analysis stay open. They are the loop-invariant loads and address expressions of `stanford-puzzle`, the byte-granular register allocation of `queens` and `davidly-ttt`, and the compile-time division of `stanford-quick`. [codegen_gap.md](codegen_gap.md) has the numbers.
+- [Loop-invariant loads and row addresses](licm_load.md): `--no-licm-load`.
+
+Step 4 changes the register allocation, and step 5 adds smaller items that use it:
+
+- [Byte locals in B, C, D and E](byte_regs.md): `--no-byte-regs` (step 4), `--no-rl-addr-taken` (step 5a).
+- [A counter of the range 0 to 255 in one byte](range_compare.md): `--no-range-byte-cmp` (step 5b).
+- [A reload of A that the path already did](byte_cse.md): `--no-byte-cse` (step 5b).
+- [Division by a constant that the range decides](range_div.md): `--no-range-div` (step 5c).
+- [The shared automatic storage is not cleared](startup_fast.md): `--no-skip-auto-clear`.
+
+## Not in the code
+
+One item of the plan is not in the code:
+
+- The demotion of an `int` local with byte values to a `char` (step 5a). A hand edit of `MinMax` in `davidly-ttt` gained 0.8 percent. A byte local in an index sum costs a sign extension, so the pass would need a rule for each use.

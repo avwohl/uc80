@@ -33,6 +33,7 @@ from .addrcse import AddrCseMixin
 from .licm import LicmMixin
 from .ranges import RangeMixin
 from .narrow import NarrowMixin
+from .rangediv import RangeDivMixin
 from .deadstore import DeadStoreMixin
 from .blockops import BlockOpsMixin
 from .fillidiom import FillIdiomMixin
@@ -3871,6 +3872,7 @@ _MEMO_MISS = object()
 
 
 class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin, RangeMixin, NarrowMixin,
+                    RangeDivMixin,
                     DeadStoreMixin, BlockOpsMixin, FillIdiomMixin):
     """Z80 code generator."""
 
@@ -3913,6 +3915,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_slot_fold = True
         # Family I step 2 switches (docs/licm.md, docs/range_compare.md).
         self.enable_licm = True
+        self.enable_licm_load = True
         self.enable_range_cmp = True
         self.enable_narrow_index = True
         # Family J switches (docs/void_putchar.md).
@@ -3923,6 +3926,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_pair_cmp = True
         self.enable_fill_idiom = True
         self.enable_shl_inline = True
+        self.enable_byte_regs = True
+        self.enable_range_byte_cmp = True
+        self.enable_rl_addr_taken = True
+        self.enable_range_div = True
+        self.auto_noclear = False       # docs/startup_fast.md
+        self.auto_noclear_active = False
         self.sdas_output = False
         # names that [[noreturn]] or __attribute__((noreturn)) mark (found
         # by the text scan of sdcc_compat)
@@ -4836,6 +4845,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # Index narrowing (docs/narrow_index.md) goes first: a 16-bit
         # expression is cheaper to move out of a loop.
         self.narrow_stats = self._narrow_run(unit)
+        # A division by a constant that the range of the dividend decides
+        # (docs/range_div.md).
+        self.rangediv_stats = self._rangediv_run(unit)
         # Loop-invariant code motion (docs/licm.md).
         self.licm_stats = self._licm_run(unit)
         # Convention selection.  It has to run before the first call is
@@ -5169,9 +5181,25 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         has_bss = uninit_globals or uninit_statics or (
             self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0)
 
+        self.auto_noclear_active = False
+        auto_total = (self.call_graph_analyzer.total_shared_storage
+                      if self.call_graph_analyzer else 0)
         if has_bss:
             self.ctx.emit()
             if self.whole_program:
+                if self.auto_noclear and auto_total > 0:
+                    # The shared automatic storage has its own COMMON
+                    # block, declared before the blank one, so that it
+                    # comes first.  The start-up code clears only what
+                    # follows ??AUTOEND: an automatic variable is never
+                    # read before it is written (docs/startup_fast.md).
+                    self.ctx.emit("; Shared automatic storage (not cleared)")
+                    self.ctx.emit("\tcommon\t/AUTO/")
+                    self.ctx.emit_label("??AUTO")
+                    self.ctx.emit_instr("ds", str(auto_total))
+                    self.ctx.emit_label("??AUTOEND")
+                    self.ctx.emit()
+                    self.auto_noclear_active = True
                 self.ctx.emit(f"{BSS_BANNER_PREFIX} (zeroed by crt0)")
                 self.ctx.emit("\tcommon\t//")
             elif self.bss_block:
@@ -5201,7 +5229,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self.ctx.emit_instr("ds", str(size))
 
         # Shared automatic storage for non-recursive functions
-        if self.call_graph_analyzer and self.call_graph_analyzer.total_shared_storage > 0:
+        if (self.call_graph_analyzer
+                and self.call_graph_analyzer.total_shared_storage > 0
+                and not self.auto_noclear_active):
             self.ctx.emit("; Shared automatic storage")
             self.ctx.emit_label("??AUTO")
             self.ctx.emit_instr("ds", str(self.call_graph_analyzer.total_shared_storage))
@@ -17801,7 +17831,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if s is not None:
             return frozenset("s" if s else "u")
         if isinstance(expr, ast.Identifier):
-            return self._holder_kind(expr.name.text, depth)
+            hk = self._holder_kind(expr.name.text, depth)
+            if hk or not self.enable_range_byte_cmp:
+                return hk
+            # a counter of a loop whose range is 0..255 (docs/range_compare.md)
+            r = self._ival(expr)
+            if r is not None and r[0] >= 0 and r[1] <= 255:
+                return frozenset("us" if r[1] <= 127 else "u")
+            return hk
         if isinstance(expr, _SavedAddrValue):
             # The char at the saved address of a compound assignment.
             cs = self._char_type_signed(expr.ctype)
@@ -18363,6 +18400,21 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 if signed and v >= 0x80:
                     v -= 0x100
                 e("ld", f"HL,{v & 0xFFFF}")
+            return True
+        rsym = self._simple_sym(rhs)
+        if (self.enable_byte_regs and rsym is not None
+                and self._type_size(_to_legacy(rsym.sym_type)) == 1
+                and not getattr(_to_legacy(rsym.sym_type), "is_volatile",
+                                False)
+                and not _ast_has_side_effects(lhs)):
+            # A variable is read after the address: no value to keep
+            # in E or on the stack while the address is computed
+            # (docs/byte_regs.md).
+            self._gen_lvalue_address(lhs)
+            self._gen_expr_a(rhs)
+            e("ld", "(HL),A")
+            if used:
+                self._emit_a_to_hl(signed)
             return True
         self._gen_expr_a(rhs)
         if self._addr_keeps_a(lhs):
@@ -21341,6 +21393,42 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             if flip:
                 e("xor", "128")
             e("cp", str(b))
+            return "C" if op == "<" else "NC"
+        if flip and self.enable_byte_regs and op not in ("==", "!="):
+            # Signed bytes: the flipped values wait in H and L, so that BC
+            # and DE can hold register locals (docs/byte_regs.md).  No code
+            # keeps a value in HL across this compare.
+            e("xor", "128")
+            t1, t2 = "H", "L"
+            if self._a_mem_ok(right):
+                mem = self._a_sym_operand(self._a_simple_sym(right))
+                if "HL" in mem.upper():
+                    # the operand is (HL): HL holds its address
+                    t1, t2 = "D", "E"
+                if op in (">", "<="):
+                    # left > right is right < left: A = right', cp left'
+                    e("ld", f"{t1},A")
+                    e("ld", f"A,{mem}")
+                    e("xor", "128")
+                    e("cp", t1)
+                    return "C" if op == ">" else "NC"
+                e("ld", f"{t1},A")
+                e("ld", f"A,{mem}")
+                e("xor", "128")
+                e("ld", f"{t2},A")
+                e("ld", f"A,{t1}")
+            else:
+                e("push", "AF")
+                self._gen_expr_a(right)
+                e("xor", "128")
+                e("ld", f"{t2},A")
+                e("pop", "AF")
+            if op in (">", "<="):
+                e("ld", f"{t1},A")
+                e("ld", f"A,{t2}")
+                e("cp", t1)
+                return "C" if op == ">" else "NC"
+            e("cp", t2)
             return "C" if op == "<" else "NC"
         if flip:
             e("xor", "128")

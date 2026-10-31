@@ -4,6 +4,8 @@ Without this pass, every named local lives in memory. The slot is a static `??AU
 
 Step 2 adds one pointer local in IY (see "A pointer in IY"). The code is in `src/uc80/iyptr.py`. "Tuning" lists the constants and the measured effect of each one.
 
+Family J step 4 lets four byte locals sit in B, C, D and E, and a word local beside two bytes ([byte_regs.md](byte_regs.md)). `--no-byte-regs` restores the limit of two locals.
+
 ## Which locals qualify
 
 A local qualifies when all of these are true:
