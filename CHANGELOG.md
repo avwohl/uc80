@@ -6,6 +6,14 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### The gen3 family is in the repository
+
+- The 75 programs of the gen3 family (5 value types, 3 pointer kinds, 5 bodies) were only in a scratch folder. That folder lost its files on 31 October. The programs are now `tests/gen3/h_*.c`.
+- `tests/gen3/generate.py` makes the programs again. The generator is the script that made the original programs, taken from the session transcript. The 75 names are the same as in the old list.
+- `tests/test_gen3_family.py` builds each program in 8 option sets and runs it under cpmemu. The test fails when two option sets give different output. A plain run takes 15 programs. `GEN3_FULL=1` takes all 75. The test skips when cpmemu is missing.
+- `bench/gen3_harness.py` runs all 75 programs and prints `RLDIFF` and `hostdiff(info)` lines.
+- Documented in `docs/register_locals.md`, section Tests.
+
 ### Bug round 5 (branch `bugfix5`, with `uc_core` branch `bugfix5`)
 
 This round repairs the four open items of the integrate11 repair. Each repair has tests that run code.
