@@ -30,4 +30,4 @@ The program `davidly-sieve` needs 7.9 million T-states less.
 
 ## Tests
 
-`tests/test_famj_kernels.py` runs fills of 400 bytes and of `signed char`. It runs a fill of `char` with an `unsigned` counter, and fills of an `int` array (no change), of 2 bytes, of an empty range and of a volatile array. It prints sums of the arrays and the counters after the loops. The output must be the same as the host output for the default build, `--no-fill-idiom`, `-O0`, `--no-blockops`, `--no-register-locals` and `--int=32`.
+`tests/test_famj_kernels.py` runs fills of 400 bytes and of `signed char`. It runs a fill of `char` with an `unsigned` counter. It also runs fills of an `int` array (no change), of 2 bytes, of an empty range and of a volatile array. It prints sums of the arrays and the counters after the loops. The output must be the same as the host output for the default build, `--no-fill-idiom`, `-O0`, `--no-blockops`, `--no-register-locals` and `--int=32`.

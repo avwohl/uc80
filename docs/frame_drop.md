@@ -27,4 +27,4 @@ The programs `tak` needs 6.3 million T-states less.
 
 ## Tests
 
-`tests/test_famj_kernels.py` runs `fib`, `ack` and `tak`. It runs two functions that call each other, a function that takes the address of a local, and a function with an array on the stack. A last test uses `longjmp` through a recursive function. It compares the output with the host compiler for the default build, `--no-frame-drop`, `-O0`, `--no-register-locals`, `--no-register-cc`, `--isr-safe` and `--no-shared-storage`.
+`tests/test_famj_kernels.py` runs `fib`, `ack` and `tak`. It runs two functions that call each other. It runs a function that takes the address of a local, and a function with an array on the stack. A last test uses `longjmp` through a recursive function. It compares the output with the host compiler for the default build, `--no-frame-drop`, `-O0`, `--no-register-locals`, `--no-register-cc`, `--isr-safe` and `--no-shared-storage`.

@@ -761,3 +761,24 @@ int main(void)
 ], ids=ids)
 def test_shl_inline(tmp_path, flags):
     same_as_host(tmp_path, SHL_SRC, *flags)
+
+
+# ---- inline assembly stays as written ---------------------------------------
+
+def test_dead_copy_pass_leaves_inline_asm_alone(tmp_path):
+    src = r"""
+extern int puts(const char *);
+unsigned char sink;
+static void f(unsigned char a)
+{
+    sink = a;
+    __asm__("\tld\tc,l\n\tld\tb,a\n");
+    sink++;
+}
+int main(void) { f(3); puts("ok"); return 0; }
+"""
+    text = compile_c(tmp_path, src, "--no-inlining").read_text()
+    seg = text[text.index("\n_f:"):]
+    seg = seg[:seg.index("@f_ret:")]
+    assert re.search(r"ld\s+c,l", seg, re.I)
+    assert re.search(r"ld\s+b,a", seg, re.I)
