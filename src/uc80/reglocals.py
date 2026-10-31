@@ -1480,6 +1480,49 @@ def _pure_reg(nd: Node) -> bool:
     return False
 
 
+def _dollar_span(nodes: list[Node]) -> set:
+    """The nodes that a ``jr cc,$+k`` jumps over or lands on: the size of
+    such a node must not change."""
+    keep: set = set()
+    for i, nd in enumerate(nodes):
+        t = nd.target if nd.kind == "ins" else None
+        if not t or not t.startswith("$"):
+            continue
+        try:
+            k = int(t[1:].replace(" ", ""), 0)
+        except ValueError:
+            k = None
+        j = _dollar_target(nodes, i, k) if k is not None and k > 0 else None
+        if j is None:                   # unknown form: keep the neighbours
+            keep.update(range(max(i - 8, 0), min(i + 9, len(nodes))))
+        else:
+            keep.update(range(i + 1, min(j, len(nodes) - 1) + 1))
+    return keep
+
+
+def _dollar_landings(nodes: list[Node]) -> list:
+    """For each ``jr cc,$+k`` the opcode of the node that the jump lands
+    on, or "?" when no node starts k bytes after the jump."""
+    res = []
+    for i, nd in enumerate(nodes):
+        t = nd.target if nd.kind == "ins" else None
+        if not t or not t.startswith("$"):
+            continue
+        try:
+            k = int(t[1:].replace(" ", ""), 0)
+        except ValueError:
+            res.append("?")
+            continue
+        j = _dollar_target(nodes, i, k) if k > 0 else None
+        if j is None:
+            res.append("?")
+        elif j >= len(nodes):
+            res.append("end")
+        else:
+            res.append(nodes[j].op or nodes[j].kind)
+    return res
+
+
 def drop_dead_code(nodes: list[Node], env: Env) -> list[Node]:
     """Delete the instructions that write registers and flags that nothing
     reads afterwards (the sign extension of a char that nobody uses, a copy
@@ -1490,8 +1533,9 @@ def drop_dead_code(nodes: list[Node], env: Env) -> list[Node]:
         live = liveness(nodes, succ, env.exit_live)
         flive = flags_liveness(nodes, succ)
         drop = set()
+        keep = _dollar_span(nodes)
         for i, nd in enumerate(nodes):
-            if not _pure_reg(nd):
+            if i in keep or not _pure_reg(nd):
                 continue
             out = live_out_of(succ, live, i)
             if nd.wr & out:
@@ -2548,6 +2592,7 @@ def try_config(base_nodes: list[Node], config: list[Var], env: Env,
     _MODE["byte"] = env.byte_regs
     nodes = [copy_node(nd) for nd in base_nodes]
     nodes = rewrite_accesses(nodes, config, env)
+    landings = _dollar_landings(nodes) if env.byte_regs else None
     if sf:
         nodes, changed = scratch_free(nodes, config, env)
         if not changed:
@@ -2584,6 +2629,8 @@ def try_config(base_nodes: list[Node], config: list[Var], env: Env,
         nodes = drop_dead_code(nodes, env)
     if not check(nodes, resident, env.exit_live):
         raise Reject("check")
+    if landings is not None and _dollar_landings(nodes) != landings:
+        raise Reject("a jump of the form $+k lands on another instruction")
     return nodes, pro
 
 
