@@ -436,7 +436,7 @@ These programs are built only. They are not run, and they have no golden file. E
 | curses-demo-size | FITS (10,288) | FITS (13,977) | FITS (14,181) | FITS (19,058) | FITS (18,564) | FITS (23,205) | FITS (13,274) | FITS (15,231) | FITS (19,125) |
 | monop-size | FITS (40,057) | FITS (42,636) | FITS (43,369) | FITS (44,566) | FITS (46,222) | **BUILD-FAIL(link)** | **BUILD-FAIL(objects)** | FITS (46,044) | FITS (48,064) |
 | trek-size | TOO-BIG (68,195) | TOO-BIG | TOO-BIG | TOO-BIG (63,192) | TOO-BIG (70,517) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
-| adventure-size | TOO-BIG (101,786) | TOO-BIG | TOO-BIG | TOO-BIG (110,287) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
+| adventure-size | TOO-BIG (101,785) | TOO-BIG | TOO-BIG | TOO-BIG (110,287) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | battlestar-size | TOO-BIG (146,944) | TOO-BIG | TOO-BIG | TOO-BIG | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | rogue36-size | TOO-BIG (81,152) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | mojozork-size | FITS (38,339) | FITS (34,063) | FITS (35,894) | FITS (40,115) | FITS (43,271) | **BUILD-TIMEOUT(objects)** | **BUILD-FAIL(objects)** | FITS (31,959) | **BUILD-FAIL(objects)** |
@@ -450,9 +450,9 @@ Each cell is **code / code plus data**, in bytes, summed over the objects of the
 | curses-demo-size | 7,905 / 8,049 | 6,351 / 10,433 | 6,500 / 10,582 | 6,758 / 10,960 | 7,217 / 11,418 | 7,855 / 14,111 | 13,007 / 13,007 | 7,524 / 11,662 | 7,800 / 12,001 |
 | monop-size | 26,104 / 36,116 | 33,033 / 35,280 | 33,656 / 35,903 | 24,263 / 35,578 | 26,704 / 37,725 | 27,774 / 41,833 | **BUILD-FAIL(objects)** | 36,315 / 38,679 | 28,616 / 39,630 |
 | trek-size | 46,433 / 57,046 | 50,382 / 52,806 | 51,315 / 53,739 | 39,741 / 52,521 | 45,106 / 58,536 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 58,341 / 60,867 | **BUILD-FAIL(objects)** |
-| adventure-size | 34,517 / 38,041 | 36,026 / 99,795 | 36,559 / 100,328 | 34,128 / 101,415 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 39,516 / 103,427 | **BUILD-FAIL(objects)** |
+| adventure-size | 34,517 / 38,040 | 36,026 / 99,795 | 36,559 / 100,328 | 34,128 / 101,415 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 39,516 / 103,427 | **BUILD-FAIL(objects)** |
 | battlestar-size | 49,879 / 165,996 | 145,441 / 167,768 | 146,623 / 168,950 | 46,508 / 168,329 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 144,859 / 167,285 | **BUILD-FAIL(objects)** |
-| rogue36-size | 72,130 / 90,149 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 86,059 / 98,789 | **BUILD-FAIL(objects)** |
+| rogue36-size | 72,166 / 90,185 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 86,059 / 98,789 | **BUILD-FAIL(objects)** |
 | mojozork-size | 30,138 / 33,696 | 24,012 / 29,568 | 25,818 / 31,374 | 22,204 / 31,481 | 26,152 / 35,168 | **BUILD-TIMEOUT(objects)** | **BUILD-FAIL(objects)** | 21,786 / 27,448 | **BUILD-FAIL(objects)** |
 
 ### Fit in the TPA (speed mode)
@@ -464,7 +464,7 @@ Each cell is **code / code plus data**, in bytes, summed over the objects of the
 | curses-demo-size | FITS (10,288) | FITS (13,972) | FITS (14,222) | FITS (19,227) | FITS (19,018) | FITS (23,346) | FITS (13,998) | FITS (15,422) | FITS (19,138) |
 | monop-size | FITS (40,057) | FITS (42,561) | FITS (43,167) | FITS (45,081) | FITS (48,015) | **BUILD-FAIL(link)** | **BUILD-FAIL(objects)** | FITS (46,678) | FITS (48,077) |
 | trek-size | TOO-BIG (68,195) | TOO-BIG | TOO-BIG | TOO-BIG (65,468) | TOO-BIG (73,809) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
-| adventure-size | TOO-BIG (101,786) | TOO-BIG | TOO-BIG | TOO-BIG (110,659) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
+| adventure-size | TOO-BIG (101,785) | TOO-BIG | TOO-BIG | TOO-BIG (110,659) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | battlestar-size | TOO-BIG (146,944) | TOO-BIG | TOO-BIG | TOO-BIG | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | rogue36-size | TOO-BIG (81,152) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | mojozork-size | FITS (38,339) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | FITS (45,018) | **BUILD-TIMEOUT(objects)** | **BUILD-FAIL(objects)** | FITS (32,534) | **BUILD-FAIL(objects)** |
@@ -478,9 +478,9 @@ Each cell is **code / code plus data**, in bytes, summed over the objects of the
 | curses-demo-size | 7,905 / 8,049 | 6,356 / 10,438 | 6,551 / 10,633 | 6,990 / 11,192 | 7,708 / 11,909 | 7,996 / 14,252 | 14,092 / 14,092 | 7,716 / 11,853 | 7,813 / 12,014 |
 | monop-size | 26,104 / 36,116 | 32,968 / 35,215 | 33,464 / 35,711 | 24,923 / 36,238 | 28,525 / 39,546 | 28,254 / 42,313 | **BUILD-FAIL(objects)** | 36,950 / 39,313 | 28,629 / 39,643 |
 | trek-size | 46,433 / 57,046 | 51,039 / 53,463 | 51,782 / 54,206 | 42,203 / 54,983 | 47,964 / 61,856 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 63,652 / 66,177 | **BUILD-FAIL(objects)** |
-| adventure-size | 34,517 / 38,041 | 36,336 / 100,105 | 37,062 / 100,831 | 34,793 / 102,081 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 41,334 / 105,238 | **BUILD-FAIL(objects)** |
+| adventure-size | 34,517 / 38,040 | 36,336 / 100,105 | 37,062 / 100,831 | 34,793 / 102,081 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 41,334 / 105,238 | **BUILD-FAIL(objects)** |
 | battlestar-size | 49,879 / 165,996 | 145,441 / 167,768 | 146,623 / 168,950 | 46,508 / 168,329 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 146,065 / 168,490 | **BUILD-FAIL(objects)** |
-| rogue36-size | 72,130 / 90,149 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 90,343 / 103,069 | **BUILD-FAIL(objects)** |
+| rogue36-size | 72,166 / 90,185 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 90,343 / 103,069 | **BUILD-FAIL(objects)** |
 | mojozork-size | 30,138 / 33,696 | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | 27,936 / 36,952 | **BUILD-TIMEOUT(objects)** | **BUILD-FAIL(objects)** | 22,362 / 28,023 | **BUILD-FAIL(objects)** |
 
 ## Programs
@@ -602,7 +602,7 @@ Each cell is **code / code plus data**, in bytes, summed over the objects of the
 
 ## Compiler versions
 
-- **uc80**: uc80 0.6.0 (a9b6da1), um80 0.3.52
+- **uc80**: uc80 0.6.0 (aef12b2), um80 0.3.52
 - **sdcc**: SDCC : mcs51/z80/z180/r2k/r2ka/r3ka/r4k/r5k/r6k/sm83/tlcs90/ez80/z80n/r800/ds390/pic16/pic14/TININative/ds400/hc08/s08/stm8/pdk13/pdk14/pdk15/mos6502/mos65c02/f8/f8l TD- 4.6.0 #16555 (Mac OS X ppc)
 - **sdcc-4.4**: SDCC : z80 TD- 4.4.0 #14620 (Mac OS X ppc)
 - **z88dk-zsdcc**: z88dk 2.4, zsdcc 4.5.0 #15242

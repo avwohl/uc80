@@ -17155,6 +17155,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 v = self._eval_const_expr(e)
                 return v if isinstance(v, int) and 0 <= v < 0x80 else None
             if isinstance(e, ast.Identifier):
+                if self.ctx.lookup(e.name.text) is not None:
+                    return None     # a parameter or local hides the constant
                 return self.ctx.enum_constants.get(e.name.text)
             if isinstance(e, ast.SizeofType):
                 return self._type_size(self._resolve_typename(e.target_type))
@@ -21968,6 +21970,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     return base_size * size_val
             return 0  # Unsized/flexible array member - zero size for sizeof
         elif isinstance(t, lt.StructType):
+            # A structure that a type-name defines (sizeof (struct V {int
+            # a;})) is known by its tag from here on
+            if (t.name and t.members
+                    and t.name not in self.ctx.struct_sizes):
+                self._register_inline_types(t)
             # Use cached size if available (handles bitfield packing correctly)
             if t.name and t.name in self.ctx.struct_sizes:
                 return self.ctx.struct_sizes[t.name]

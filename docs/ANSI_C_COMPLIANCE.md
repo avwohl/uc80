@@ -332,9 +332,19 @@ code for them. Do not depend on the code.
 - A `goto` to a label that does not exist.
 - A member name that the structure does not have (`s.nosuch`).
 - `return;` in a function that returns `int`.
-- `sizeof` of an incomplete structure.
-  Example: `enum { A = sizeof (struct Undefined) };` gives the value 0.
 - Two declarations of one name in one block.
+
+`sizeof` of an incomplete type is an error with file and line:
+`enum { A = sizeof (struct Undefined) };`, `sizeof (int[])`, `sizeof (void)`
+and `sizeof (*p)` with a pointer to a structure that has no definition.
+The same error is given for `_Alignof`, for `sizeof` of an element or of
+`*(struct U *)0`, for an array of an incomplete structure and for `sizeof a`
+of an array of unknown size (`extern int a[];`). An array that an initializer
+completes (`int a[] = {1, 2};`) is complete. A tag that the file defines
+somewhere, in a block after a `typedef struct T T;` or in a type-name, is not
+reported. The `FILE` of `stdio.h` is a structure of 170 bytes. The check does
+not look into `typeof (struct U) *p`. The message names the tag as the
+program wrote it.
 
 A typedef name that a block declares again with a different type in an
 inner block (`typedef short W;` and, in an inner block, `typedef long W;`)

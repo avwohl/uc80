@@ -14,7 +14,11 @@ The checks walk each translation unit with its own scope stack:
     6.5.2.4, 6.5.3.1): an object with a const-qualified type, a member of
     a const structure, an object reached through a pointer to const, and
     a structure with a const member (6.3.2.1) are errors;
-  - a variable length array is an error (__STDC_NO_VLA__ is 1).
+  - a variable length array is an error (__STDC_NO_VLA__ is 1);
+  - ``sizeof`` of an incomplete type is an error (6.5.4.5): a structure
+    or union with no definition in scope, an array of unknown size, or
+    ``void``.  This holds in an enumerator and in any other constant
+    expression.
 
 Every message starts with ``file:line:`` of the source line (the
 preprocessor map in ``srcmap`` turns a line of the preprocessed text
@@ -25,6 +29,7 @@ that it finds, so one run shows all of them.
 from __future__ import annotations
 
 import dataclasses
+import re
 
 from uc_core import ast
 from uc_core import _dcfast
@@ -70,8 +75,20 @@ def _from_legacy(t):
         return ResolvedType(kind="pointer", pointee=_from_legacy(t.base_type),
                             is_const=t.is_const, is_volatile=t.is_volatile)
     if isinstance(t, lt.ArrayType):
-        return ResolvedType(kind="array", element=_from_legacy(t.base_type))
+        return ResolvedType(kind="array", element=_from_legacy(t.base_type),
+                            size_expr=t.size)
+    if isinstance(t, lt.StructType) and not t.members:
+        return ResolvedType(kind="struct", name=t.name, is_union=t.is_union,
+                            is_const=t.is_const, is_volatile=t.is_volatile)
     return None
+
+
+# the suffix that uc_core adds to the tag of a block-scope structure
+_TAG_SUFFIX = re.compile(r"__[0-9a-f]{5}_\d+$")
+
+
+def _tag_base(name):
+    return _TAG_SUFFIX.sub("", name) if name else name
 
 
 class Scope:
@@ -79,7 +96,8 @@ class Scope:
 
     def __init__(self):
         self.names = {}     # name -> ("var" | "typedef" | "enum", type)
-        self.tags = {}      # struct or union tag -> member tuple
+        self.tags = {}      # struct or union tag -> member tuple, or
+                            # None for a tag that is only declared
 
 
 class Checker:
@@ -94,6 +112,7 @@ class Checker:
         self.reported = set()   # (function, name) already reported
         self.function = None
         self.in_sizeof = 0
+        self.defined_tags = set()   # tags with a definition in this file
 
     # ----- diagnostics ----------------------------------------------------
 
@@ -145,7 +164,24 @@ class Checker:
 
     # ----- entry ----------------------------------------------------------
 
+    def collect_tags(self, unit):
+        """The tags that this file defines anywhere, without the suffix
+        of a block-scope rename.  A tag that is not visible by name at a
+        ``sizeof`` but is defined in the file (a ``typedef struct T T;``
+        before the definition of ``T`` in a block, or a definition inside
+        a type-name) is not reported."""
+        stack = list(unit.items or [])
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (ast.StructDef, ast.StructAnon)):
+                name = getattr(getattr(n, "name", None), "text", None)
+                if name:
+                    self.defined_tags.add(_tag_base(name))
+            for c in _children(n):
+                stack.append(c)
+
     def run(self, unit):
+        self.collect_tags(unit)
         with ch.typedef_resolver_scope(self._typedef):
             for item in unit.items or []:
                 self.external(item)
@@ -183,7 +219,7 @@ class Checker:
                                  ResolvedType(kind="basic", name="int"))
             elif isinstance(sp, (ast.StructEmpty,)):
                 name = sp.name.text
-                self.scopes[-1].tags.setdefault(name, ())
+                self.scopes[-1].tags.setdefault(name, None)
             elif isinstance(sp, (ast.TypeofExpr, ast.TypeofUnqualExpr,
                                  ast.AlignasValue, ast.BitIntSpec)):
                 self.visit(sp)
@@ -209,7 +245,23 @@ class Checker:
             if storage == "typedef":
                 self.declare(name, "typedef", full)
                 continue
-            self.declare(name, "var", full, constexpr)
+            prior = self.lookup(name) if name else None
+            if (full is not None and full.kind == "array"
+                    and full.size_expr is None):
+                if (prior is not None and prior[0] == "var"
+                        and prior[1] is not None
+                        and prior[1].kind == "array"
+                        and prior[1].size_expr is not None):
+                    # extern int a[8]; int a[]; the earlier size stays
+                    full = prior[1]
+                    self.declare(name, "var", full, constexpr)
+                elif init is not None:
+                    # int a[] = {1, 2}: the initializer completes the type
+                    self.declare(name, "var", None, constexpr)
+                else:
+                    self.declare(name, "var", full, constexpr)
+            else:
+                self.declare(name, "var", full, constexpr)
             if init is not None:
                 self.visit(init)
                 if len(self.scopes) < 2 or storage == "static" or constexpr:
@@ -426,6 +478,65 @@ class Checker:
         op = node.op.text
         if op in _ASSIGN_OPS:
             self.modify(node.left, op)
+
+    def incomplete(self, t, depth=0):
+        """Why the type is incomplete, as (word, tag), or None."""
+        if t is None or depth > 8:
+            return None
+        if t.kind == "basic" and t.name == "void":
+            return ("void", None)
+        if t.kind == "array":
+            if t.size_expr is None:
+                return ("array of unknown size", None)
+            return self.incomplete(t.element, depth + 1)
+        if t.kind == "struct":
+            if t.members:
+                return None
+            if t.name is None:
+                return None
+            word = "union" if t.is_union else "struct"
+            for sc in reversed(self.scopes):
+                if t.name in sc.tags:
+                    return None if sc.tags[t.name] is not None else (
+                        word, t.name)
+            if _tag_base(t.name) in self.defined_tags:
+                return None
+            return (word, t.name)
+        return None
+
+    def check_sizeof(self, node, t, op="sizeof"):
+        why = self.incomplete(t)
+        if why is None:
+            return
+        word, tag = why
+        what = "%s '%s'" % (word, _tag_base(tag)) if tag else word
+        self.error(node, "invalid application of '%s' to an "
+                   "incomplete type (%s)" % (op, what))
+
+    def type_name_type(self, tt):
+        if isinstance(tt, ast.TypeName):
+            return ch.resolve_base_type(tt.decl_specs)
+        if isinstance(tt, ast.TypeNameWithDeclarator):
+            return ch.resolve_type_from_decl(tt.decl_specs, tt.declarator)[1]
+        return None
+
+    def v_SizeofType(self, node):
+        self.check_sizeof(node, self.type_name_type(node.target_type),
+                          "sizeof")
+        for c in _children(node):
+            if not isinstance(c, (ast.TypeName, ast.TypeNameWithDeclarator)):
+                self.visit(c)
+
+    def v_AlignofType(self, node):
+        self.check_sizeof(node, self.type_name_type(node.target_type),
+                          "_Alignof")
+        for c in _children(node):
+            if not isinstance(c, (ast.TypeName, ast.TypeNameWithDeclarator)):
+                self.visit(c)
+
+    def v_SizeofExpr(self, node):
+        self.visit(node.operand)
+        self.check_sizeof(node, self.etype(node.operand))
 
     def v_OffsetofExpr(self, node):
         for c in _children(node):

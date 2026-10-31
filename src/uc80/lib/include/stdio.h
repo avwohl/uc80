@@ -42,6 +42,7 @@ typedef int __intptr_t;
  *   42-169: buffer (128 bytes) - I/O buffer
  * Total: 170 bytes per FILE
  */
+struct _FILE { unsigned char _opaque[170]; };
 typedef struct _FILE FILE;
 
 /* Standard streams */

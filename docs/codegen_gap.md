@@ -23,7 +23,11 @@ Numbers from `bench/run.py -c uc80` on 111 programs, against SDCC 4.6.0:
 
 ## Status on 2026-10-30: repair of integrate11
 
-A repair pass fixed `--int 32` arithmetic of `char` and `short` operands that are `int` expressions, comparisons of `unsigned short` with signed operands, and the integer constant evaluator (casts, `/`, `%`, unsigned conversions, operands that C does not evaluate). It added `_Alignof`, and errors for bad enumerators, duplicate labels and duplicate `case` values. The bench rows did not change. The [CHANGELOG](../CHANGELOG.md) lists two open `uc_core` changes (an enumerator in its own initializer, a block typedef in an enumerator).
+A repair pass fixed `--int 32` arithmetic of `char` and `short` operands that are `int` expressions, comparisons of `unsigned short` with signed operands, and the integer constant evaluator (casts, `/`, `%`, unsigned conversions, operands that C does not evaluate). It added `_Alignof`, and errors for bad enumerators, duplicate labels and duplicate `case` values. The bench rows did not change. The two open `uc_core` changes (an enumerator in its own initializer, a block typedef in an enumerator) are fixed in bug round 5.
+
+## Status on 2026-10-30: bug round 5 (branch `bugfix5`)
+
+Bug round 5 fixes the two `uc_core` scope cases above, makes `memset` to a constant base with a variable offset (and through a `void *` cast of a volatile pointer) a device fill, and makes `sizeof` of an incomplete type an error. The [CHANGELOG](../CHANGELOG.md) has the details and the gates. The bench rows do not change.
 
 ## Status on 2026-10-30: bug round 4 in the family I tree (branch `integrate11`)
 

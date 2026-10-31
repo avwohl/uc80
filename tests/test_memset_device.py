@@ -60,8 +60,50 @@ CASES = [
      [(0x4D42, 10, 0x46)]),
     ("const_element_addr", "memset(&((unsigned char *) 0x4D80)[5], 0x47, 8);",
      [(0x4D85, 8, 0x47)]),
+    # a constant base with an offset that is not constant, and a volatile
+    # pointee before the conversion to void *
+    ("const_var_offset",
+     "memset((unsigned char *) 0x4F00 + (unsigned char) (c * 3), c, c + 1);",
+     [(0x4F99, 52, 0x33)]),
+    ("const_var_offset_macro", "memset((void *) (REG_BASE + i * 16 + j), v, n);",
+     [(0x4C23, 33, 0x3C)]),
+    ("const_var_offset_left", "memset(i * 2 + (unsigned char *) 0x5100, v, 8);",
+     [(0x5104, 8, 0x3C)]),
+    ("const_var_index", "memset(&((unsigned char *) 0x5200)[c], 0x49, 7);",
+     [(0x5233, 7, 0x49)]),
+    ("const_member_var_index",
+     "memset(&((struct dev *) 0x5300)->buf[i], v, 4);",
+     [(0x5304, 4, 0x3C)]),
+    ("volatile_void_cast", "memset((void *) (dev + i * 16 + j), v, n);",
+     [(0x5023, 33, 0x3C)]),
+    ("volatile_void_cast_small", "memset((void *) (dev + j), v, 3);",
+     [(0x5003, 3, 0x3C)]),
+    ("volatile_void_cast_var_n", "memset((void *) (dev + i), v, c + 1);",
+     [(0x5002, 52, 0x3C)]),
+    ("volatile_void_cast_plain", "memset((void *) vp, 1, 20);",
+     [(0x4800, 20, 1)]),
+    ("volatile_offset", "memset(vq + i * 16 + j, v, 12);",
+     [(0x4923, 12, 0x3C)]),
     ("const_plus_var_n", "memset((unsigned char *) 0x4E00 + 1, 0x48, n);",
      [(0x4E01, 33, 0x48)]),
+    # a member or element of a volatile structure is volatile
+    ("vstruct_arrow_index", "memset((void *) &vsd->buf[i], v, 5);",
+     [(0x5703, 5, 0x3C)]),
+    ("vstruct_array_member", "memset((void *) vsd->buf, v, 5);",
+     [(0x5701, 5, 0x3C)]),
+    ("vstruct_array_plus_var", "memset((void *) (vsd->buf + c), v, 5);",
+     [(0x5734, 5, 0x3C)]),
+    ("vstruct_nested", "memset((void *) &vsd->in.q[i], v, 3);",
+     [(0x5715, 3, 0x3C)]),
+    ("cond_of_constants",
+     "memset(sel ? (unsigned char *) 0x4F00 : (unsigned char *) 0x4F80, v, 2);",
+     [(0x4F00, 2, 0x3C)]),
+    ("cond_in_void_cast",
+     "memset((void *) (sel ? (unsigned char *) 0x4F40 : dev), v, 2);",
+     [(0x4F40, 2, 0x3C)]),
+    # a cast to another pointer type is looked through
+    ("volatile_char_cast", "memset((unsigned char *) dev + i, v, 2);",
+     [(0x5002, 2, 0x3C)]),
 ]
 
 
@@ -72,12 +114,19 @@ def source(stmt):
 struct dev {{ unsigned char ctl, st, buf[16]; }};
 volatile unsigned char *vp = (volatile unsigned char *) 0x4800;
 volatile unsigned char *vq = (volatile unsigned char *) 0x4900;
+volatile unsigned char *dev = (volatile unsigned char *) 0x5000;
+struct dev2 {{ unsigned char ctl; unsigned char buf[16];
+    struct {{ unsigned char p[2]; unsigned char q[8]; }} in; }};
+volatile struct dev2 *vsd = (volatile struct dev2 *) 0x5700;
+volatile int sel = 1;
 volatile void *r;
 volatile unsigned char sink;
 int main(void)
 {{
     int c = 0x33;
     unsigned n = 33;
+    int i = 2, j = 3;
+    unsigned char v = 0x3C;
     {stmt}
     sink = (unsigned char) (c + n);
     return 0;
@@ -117,6 +166,51 @@ int main(void) { memset(ram, 9, 100); sink = ram[99]; return 0; }
     text = (tmp_path / "t.mac").read_text().lower()
     assert "ldir" in text
     assert "memset_dev" not in text
+
+
+RAM_CASES = [
+    ("ram_var_offset", "memset(ram + c, 9, 20);"),
+    ("ram_void_cast", "memset((void *) (ram + c), 9, 20);"),
+    ("ram_ptr_var_offset", "memset((void *) (rp + i * 4 + j), v, 40);"),
+    ("ram_const_size_var_value", "memset(ram + i, v, 30);"),
+]
+
+
+@pytest.mark.parametrize("flow", FLOWS)
+@pytest.mark.parametrize("name,stmt", RAM_CASES, ids=[c[0] for c in RAM_CASES])
+def test_a_ram_fill_with_a_variable_offset_keeps_ldir(
+        name, stmt, flow, tmp_path, libs):
+    """No constant address and no volatile pointee: a RAM fill.  The fill
+    runs (the RAM bytes are right) and the code has an LDIR."""
+    src = """
+#include <string.h>
+unsigned char ram[128];
+unsigned char *rp = ram;
+volatile unsigned char sink;
+int main(void)
+{
+    int c = 5, i = 2, j = 3;
+    unsigned char v = 0x3C;
+    %s
+    sink = ram[0];
+    return 0;
+}
+""" % stmt
+    paths, _err = build_flow(tmp_path, {"t.c": src}, flow, libs)
+    m = machine(paths)
+    assert m.run(max_tstates=3_000_000).reason == "halt"
+    assert m.rom_writes == []
+    start = {"ram_var_offset": 5, "ram_void_cast": 5,
+             "ram_ptr_var_offset": 11, "ram_const_size_var_value": 2}[name]
+    cnt = {"ram_var_offset": 20, "ram_void_cast": 20,
+           "ram_ptr_var_offset": 40, "ram_const_size_var_value": 30}[name]
+    val = 9 if name in ("ram_var_offset", "ram_void_cast") else 0x3C
+    got = m.peek("_ram", 128)
+    assert all(b == val for b in got[start:start + cnt])
+    from .rom_flows import run, uc80_cmd
+    run(uc80_cmd("--target=rom", "t.c", "-o", "t2.mac"), tmp_path)
+    text = (tmp_path / "t2.mac").read_text().lower()
+    assert "ldir" in text and "memset_dev" not in text
 
 
 def test_the_device_fill_has_no_ldir(tmp_path):
@@ -174,9 +268,16 @@ int main(void) { sum = work(7, 11); return 0; }
     assert [(a, v) for (_t, a, v, _pc) in m.rom_writes] == exp
 
 
+NO_BLOCKOPS = CASES[:11:5] + [c for c in CASES if c[0] in (
+    "const_var_offset", "const_var_offset_macro", "volatile_void_cast",
+    "volatile_void_cast_var_n", "volatile_offset", "const_var_index",
+    "vstruct_arrow_index", "vstruct_nested", "cond_of_constants",
+    "volatile_char_cast")]
+
+
 @pytest.mark.parametrize("flow", FLOWS)
-@pytest.mark.parametrize("name,stmt,want", CASES[:11:5],
-                         ids=[c[0] for c in CASES[:11:5]])
+@pytest.mark.parametrize("name,stmt,want", NO_BLOCKOPS,
+                         ids=[c[0] for c in NO_BLOCKOPS])
 def test_no_blockops_still_fills_a_device_with_stores(
         name, stmt, want, flow, tmp_path, libs):
     """--no-blockops keeps the library calls for RAM, but a fill of device
