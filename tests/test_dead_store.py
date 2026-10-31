@@ -545,6 +545,7 @@ int main(void) { return f3() + f4(); }
     assert over.get("f4") == {"x"}
 
 
+@needs_run
 def test_two_files_with_the_same_local_and_global_name(tmp_path):
     a = r"""
 #include <stdio.h>
