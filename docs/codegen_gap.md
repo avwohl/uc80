@@ -9,6 +9,17 @@ Evidence rules:
 - Hand edits give upper bounds. A compiler pass will gain less.
 - Size means the image size (`__BSS_START - 0x100`, the 6th column of `bench/results/results.csv`). The older figures in `docs/benchmarks_speed.md` (5866 B and 3926 B for snd-cmdq) come from an earlier run.
 
+## Status on 2026-10-31: repair of step J1 (branch `famj`)
+
+A verifier found two wrong results of J1 (the comma condition of an empty `if`, and a user `_putchar` that `putchar(c);` bypassed). Both are fixed, with tests that run code. The size rule of the lead then changed four of the J1 choices. The [CHANGELOG](../CHANGELOG.md) has the list.
+
+- `__conout` is the old code again. `__putchar_v` and the two data bytes of the console are modules of their own.
+- The push fill starts at 6000 bytes of BSS (was 256). `bsd-ppt` loses 5600 T-states for this.
+- Loop rotation needs a hot loop (body of at most 32 bytes without a call, or at most 100 bytes in another loop) and a budget of 2 percent of the code.
+- The `__div32` shortcut adds 6 bytes (was 22).
+
+Result against SDCC 4.6.0 (main, J1, now): size 0.9117, 0.9530, 0.9284; whole image 0.8794, 0.9083, 0.8854; T-states 0.5275, 0.5038, 0.5068; faster on 66, 74, 74 of 78. The 13 programs: 1.196, 0.958, 0.974, nine below 1. The size mean of `main` is not reached: 0.010 of the difference comes from the empty program that is 17 bytes smaller, and the rest from the loop rotation of the hot loops and the push fill of `sieve`-like programs.
+
 ## Status on 2026-10-30: family J, step J1 is in the code (branch `famj`)
 
 The branch `famj` starts from `main` 619b110. Step J1 has the low-risk causes of the analysis of the 13 programs that ran slower than SDCC. The analysis is in [family_j.md](family_j.md), with a page for each of the eleven changes. The [CHANGELOG](../CHANGELOG.md) has the numbers and the gates.

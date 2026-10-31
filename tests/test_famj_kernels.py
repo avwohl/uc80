@@ -389,6 +389,50 @@ def test_dead_test(tmp_path, flags):
     same_as_host(tmp_path, DEAD_SRC, *flags)
 
 
+COMMA_SRC = r"""
+#include <stdio.h>
+
+static short g;
+static int calls, h;
+static int f(void) { calls++; return 3; }
+
+int main(void)
+{
+    int i = 0, a = 2, n = 0;
+    if ((g = 5, 0)) ;
+    printf("%d\n", g);
+    if ((f(), 0)) ;
+    printf("%d\n", calls);
+    if ((i++, a)) ;
+    printf("%d\n", i);
+    if ((i += 4, 1)) { }
+    printf("%d\n", i);
+    while (a--)
+        if ((g++, 0)) ;
+    printf("%d %d\n", g, a);
+    for (i = 0; i < 4; i++)
+        if ((h += 2, 0)) ;
+    printf("%d\n", h);
+    do
+        if ((n++, n < 3)) ;
+    while (n < 6);
+    printf("%d\n", n);
+    if ((a, 1)) ;
+    if (a ? (n = 9) : 0) ;
+    printf("%d\n", n);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flags", [
+    (), ("--no-dead-test",), ("-O0",), ("--int=32",),
+    ("--no-register-locals",),
+], ids=ids)
+def test_dead_test_comma_keeps_side_effects(tmp_path, flags):
+    same_as_host(tmp_path, COMMA_SRC, *flags)
+
+
 def test_dead_test_shape(tmp_path):
     src = r"""
 volatile unsigned char port;
@@ -664,10 +708,54 @@ def test_loop_rotation_shape(tmp_path):
                     name="o").read_text()
     assert re.search(r"^@RB\d+:", on, re.M)
     assert not re.search(r"^@RB\d+:", off, re.M)
-    # a loop that ends the function is rotated too (the exit is ret cc)
+    # a loop that ends the function is rotated too (the exit is ret cc);
+    # a program of its own: the pass has a budget of bytes for each program
+    tail_src = r"""
+static int sink_g;
+static void tail_loop(int n)
+{
+    int i;
+    for (i = 0; i < n; i++)
+        sink_g += i;
+}
+int main(void) { tail_loop(7); return sink_g; }
+"""
+    on = compile_c(tmp_path, tail_src, name="p").read_text()
     seg = on[on.index("\n_tail_loop:"):]
     seg = seg[:seg.index("@tail_loop_ret:")]
     assert "@RB" in seg and "\tret\t" in seg
+
+
+def test_loop_rotation_only_hot_loops(tmp_path):
+    """A loop with a call, outside another loop, keeps its test at the
+    top.  A short loop inside another loop is rotated."""
+    cold = r"""
+extern int puts(const char *);
+static int n;
+static void f(void) { n++; }
+int main(void)
+{
+    int i;
+    for (i = 0; i < 5; i++)
+        f();
+    return n;
+}
+"""
+    hot = r"""
+static unsigned char flags[100];
+int main(void)
+{
+    int i, k;
+    for (i = 2; i < 10; i++)
+        for (k = i + i; k < 100; k += i)
+            flags[k] = 1;
+    return flags[8];
+}
+"""
+    assert not re.search(r"^@RB\d+:", compile_c(tmp_path, cold).read_text(),
+                         re.M)
+    assert re.search(r"^@RB\d+:", compile_c(tmp_path, hot, name="h").read_text(),
+                     re.M)
 
 
 # ---- 2g: the fill idiom ------------------------------------------------------

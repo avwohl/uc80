@@ -6,6 +6,31 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Family J, repair of step J1: two bugs and the size rule (branch `famj`)
+
+Two bugs, found by a verifier:
+
+- **`if ((g = 5, 0)) ;` lost the comma expression.** The test of `uc_core` for a side effect has no case for a comma expression, so the empty-if pass deleted `if ((f(), 0)) ;` and `if ((i++, a)) ;`. The pass now deletes an `if` only for a list of node types that have no side effect. Other node types stay. `-O0` does not run the pass any more. Tests run comma conditions in several option sets.
+- **A user `_putchar` was bypassed.** `putchar(c);` called `__putchar_v` even when an assembly file or another unit defined `_putchar`. The call of `__putchar_v` is now used only in a whole-program build without `.mac` files on the command line. Tests have a `.mac` file that defines `_putchar`.
+
+The size rule: each change must be neutral in size where it gives no speed.
+
+- **`__conout` is the old code again.** `__putchar_v` has a module of its own (`lc_putchar_v.mac`), and the two data bytes have a module of their own (`lc_conout_d.mac`). A program that prints with `printf` or `puts` links the old `__conout`, and the ten T-states per call are gone. A program with `putchar` statements does not link `__conout`. `tests/test_crlf.py` follows the new file names.
+- **Push fill from 6000 bytes of BSS.** The limit was 256 bytes. The push fill costs 56 bytes and saves 13.9 T-states for each byte, so 83000 T-states at 6000 bytes (20 ms at 4 MHz). A program with less BSS embeds `crt0_small.mac` (21 T-states for each byte, as before). Programs with a BSS of 256 to 5999 bytes are 56 bytes smaller than in J1. `bsd-ppt` (374 bytes of BSS) needs about 5600 T-states more.
+- **Loop rotation for hot loops only.** An outer loop is rotated when its body has at most 32 bytes and no call. A loop in another loop is rotated when its body has at most 100 bytes and no call. The copies of a program may use 2 percent of its code, at least 32 bytes. The deepest loops and the shortest bodies come first. J1 rotated each loop that had a short test and cost up to 12 percent in size for a gain of less than 2 percent in T-states.
+- **Shorter `__div32` shortcut.** The test shares the code of the division by zero. The shortcut now adds 6 bytes (22 before).
+
+Docs: `docs/startup_fast.md` (limit, NMOS note on `LD A,I`), `docs/void_putchar.md`, `docs/loop_rotation.md`, `docs/dead_test.md`, `docs/runtime_shortcuts.md`.
+
+Numbers, `bench/run.py -c uc80` on 112 programs, against SDCC 4.6.0 (main, J1, now):
+
+- Size (bytes minus the empty program): 0.9117, 0.9530, 0.9284. Whole image: 0.8794, 0.9083, 0.8854. T-states (speed mode): 0.5275, 0.5038, 0.5068. Without `sort-*`: 0.6367, 0.6050, 0.6089. Faster than SDCC: 66, 74, 74 of 78.
+- The 13 programs that were above SDCC (total T-states, geometric mean): 1.196, 0.958, 0.974. Nine are below 1 now: `sieve` 0.939, `bsd-bcd` 0.962, `empty` 0.776, `davidly-sieve` 0.842, `tak` 0.881, `stanford-quick` 0.869, `snd-cmdq` 0.974, `sieve+static` 0.825, `snd-ymreg` 0.978. Still above: `bsd-ppt` 1.080 (J1 0.974), `davidly-ttt` 1.523, `queens` 1.132, `stanford-puzzle` 1.072.
+- The size means are not back at the values of main. The empty program is 17 bytes smaller, and the bytes column subtracts it, so each program looks 17 bytes bigger (0.010 of the mean). Without loop rotation the mean is 0.9220 and the whole image 0.8797. 41 programs are bigger than on main, 61 are smaller, and the sum is +752 bytes (J1: +10767).
+- Four programs use more T-states than on main: `embench-slre` +0.275% (the pair rules change which local gets BC), `micro+a32` +0.274% (the `__div32` test costs T-states in a division that does not leave early), `fasta+static` +0.134% and `embench-md5sum` +0.035% (no switch changes these two). `rogue36-size` (build only) was TOO-BIG and is BUILD-FAIL(link) now: `um80` reports phase errors in its branch relaxation for this 55000-line text. Each switch that changes the layout makes the error go away.
+
+Known limits: the push fill for 256 to 5999 bytes of BSS is not in. `bsd-ppt` is 1.080 for this reason and because its hot loops have calls.
+
 ### Family J, step J1: start-up, console, kernels and loops (branch `famj`)
 
 The step has eleven changes. Each one has a switch that turns it off, a docs page ([family_j.md](docs/family_j.md)), and tests that run code. The tests are in `tests/test_famj_startup.py` and `tests/test_famj_kernels.py`. Each program runs under cpmemu and on the host compiler.

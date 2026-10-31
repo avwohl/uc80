@@ -87,28 +87,21 @@ __div32_q:
 	POP	BC
 	RET
 __div32_zero:
+	LD	DE,0FFFFH	; quotient 0FFFFFFFFH
+__div32_cp:			; DE = both words of the quotient
 	LD	HL,(__div32_dvd)
 	LD	(__rem32),HL
 	LD	HL,(__div32_dvd+2)
 	LD	(__rem32+2),HL
-	LD	HL,0FFFFH
-	LD	D,H
-	LD	E,L
+	LD	H,D
+	LD	L,E
 	POP	BC
 	RET
 __div32_big:
 	LD	DE,(__div32_dvd+2)	;@rt-shortcut dividend < 65536 and
 	LD	A,D			;@rt-shortcut divisor >= 65536:
 	OR	E			;@rt-shortcut quotient 0,
-	JR	NZ,__div32_big2		;@rt-shortcut remainder = dividend
-	LD	HL,(__div32_dvd)	;@rt-shortcut
-	LD	(__rem32),HL		;@rt-shortcut
-	LD	(__rem32+2),DE		;@rt-shortcut DE = 0
-	LD	H,D			;@rt-shortcut
-	LD	L,E			;@rt-shortcut
-	POP	BC			;@rt-shortcut
-	RET				;@rt-shortcut
-__div32_big2:				;@rt-shortcut
+	JR	Z,__div32_cp		;@rt-shortcut remainder = dividend
 	PUSH	IY
 	LD	IY,__tmp32
 	LD	A,H

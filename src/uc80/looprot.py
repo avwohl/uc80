@@ -39,6 +39,11 @@ It rotates a loop when
   peephole pass from a jump to a ``ret``), the back jump is followed by
   labels and the ``ret``.
 
+Only hot loops are rotated, and only while the copies fit in a budget of
+2 percent of the code (at least 32 bytes), deepest loops first: an outer
+loop needs a body of at most 32 bytes without a call, a loop inside another
+loop a body of at most 100 bytes without a call.
+
 A test that holds a call is copied as it is.  A test that is a short
 ``&&`` chain is rotated at its first jump only: the copy ends at the first
 conditional exit and jumps to the label that is put after the first exit
@@ -75,6 +80,17 @@ MAX_BYTES = int(os.environ.get("UC80_ROT_BYTES", 14))
 # rotate only a loop that holds no other loop (UC80_ROT_INNER=0: all loops)
 OUTER_BYTES = int(os.environ.get("UC80_ROT_OUTER", 9))
 INNERMOST = os.environ.get("UC80_ROT_INNER", "1") != "0"
+# hot loops only (docs/loop_rotation.md).  A loop with a call or a long
+# body gains too little for the bytes of the copy, unless it lies in
+# another loop: then a body of up to NESTED_BYTES, without a call, is rotated.
+BODY_BYTES = int(os.environ.get("UC80_ROT_BODY", 32))
+NESTED_BYTES = int(os.environ.get("UC80_ROT_NESTED", 100))
+CALLS_OK = os.environ.get("UC80_ROT_CALLS", "0") != "0"
+# the copies of the tests may use this share of the code, at least
+# MIN_BUDGET bytes (UC80_ROT_PERCENT, UC80_ROT_MIN: for tests)
+BUDGET_PERCENT = int(os.environ.get("UC80_ROT_PERCENT", 2))
+MIN_BUDGET = int(os.environ.get("UC80_ROT_MIN", 32))
+_CALL = re.compile(r"^\t(call|rst)\b", re.I)
 
 
 def _bytes(line: str) -> int:
@@ -92,6 +108,19 @@ def _bytes(line: str) -> int:
 def _is_instruction(line: str) -> bool:
     return bool(line) and line[0] in " \t" and bool(
         line.split(";", 1)[0].strip())
+
+
+_DATA_OP = frozenset((
+    "db", "dw", "dd", "ds", "defb", "defw", "defs", "equ", "public", "extrn",
+    "cseg", "dseg", "common", "aseg", "end", "org", "name", "title", ".z80",
+    "assume", "if", "else", "endif", "macro", "endm"))
+
+
+def _is_code(line: str) -> bool:
+    """An instruction, not a data or assembler directive line."""
+    if not _is_instruction(line):
+        return False
+    return line.split(";", 1)[0].split()[0].lower() not in _DATA_OP
 
 
 _ST = re.compile(r"^\tld\t\(([^()\s]+)\),(HL|DE|BC|A)\s*(?:;.*)?$", re.I)
@@ -146,6 +175,18 @@ def rotate(code: str) -> str:
         m = _LABEL.match(ln)
         if m and ln[0] not in " \t":
             label_at.setdefault(m.group(1), i)
+    spans = []                         # (first, last) line of each loop
+    for lab, pos in label_at.items():
+        if lab.startswith("@FOR") or lab.startswith("@WHILE"):
+            for j in range(pos + 1, min(pos + 40, n)):
+                jm = _JCC.match(lines[j])
+                if jm and _END.match(jm.group(3)):
+                    ex = label_at.get(jm.group(3))
+                    if ex is not None and ex > j:
+                        spans.append((pos, ex))
+                    break
+    cands: list = []                   # loops that may be rotated
+    reserved: set[int] = set()
     out: dict[int, str] = {}           # index -> replacement text
     after: dict[int, str] = {}         # index -> text added after the line
     count = 0
@@ -216,7 +257,7 @@ def rotate(code: str) -> str:
                 if y < n and _RET.match(lines[y]):
                     k = x
                     break
-            if k is None or k in out:
+            if k is None or k in reserved:
                 continue
         else:
             jm = _JCC.match(lines[test_end])
@@ -230,17 +271,28 @@ def rotate(code: str) -> str:
             while k > test_end and not lines[k].strip():
                 k -= 1
             bm = _JMP.match(lines[k])
-            if not bm or bm.group(2) != head or k in out:
+            if not bm or bm.group(2) != head or k in reserved:
                 continue
-        if any(idx in out or idx in after for idx in (test_end, k)):
+        if any(idx in reserved for idx in (test_end, k)):
             continue
         if any(_HEAD.match(lines[x]) for x in range(test_end + 1, k)):
             # a loop inside: only a short test pays
             if INNERMOST and sum(_bytes(x) for x in lines[i + 1:test_end]
                                  if _is_instruction(x)) > OUTER_BYTES:
                 continue
+        body_bytes = sum(_bytes(x) for x in lines[test_end + 1:k]
+                         if _is_instruction(x))
+        has_call = any(_CALL.match(x) for x in lines[test_end + 1:k])
+        nested = any(a < i and k < b for a, b in spans)
+        if nested:
+            ok = body_bytes <= NESTED_BYTES and (CALLS_OK or not has_call)
+        else:
+            ok = body_bytes <= BODY_BYTES and (CALLS_OK or not has_call)
+        if not ok:
+            continue
         body_label = f"@RB{count}"
         count += 1
+        depth = sum(1 for a, b in spans if a < i and k < b)
         rename = {lab: lab + "r" for lab in local}
         copy: list[str] = []
         for idx in range(i + 1, test_end):
@@ -250,6 +302,18 @@ def rotate(code: str) -> str:
             copy.append(ln)
         copy = _trim_junction(lines, k, copy)
         copy.append(f"\tjp\t{_INV[cond.lower()]},{body_label}")
+        cost = sum(_bytes(x) for x in copy if _is_instruction(x)) + 1
+        cands.append((-depth, body_bytes, k, test_end, copy, body_label, cost))
+        reserved.update((k, test_end))
+    # Budget: the deepest loops with the shortest bodies first, until the
+    # copies have used about 1.5 percent of the code of the program.
+    budget = max(MIN_BUDGET, sum(_bytes(x) for x in lines
+                                 if _is_code(x)) * BUDGET_PERCENT // 100)
+    cands.sort(key=lambda c: c[:2])
+    for _d, _bb, k, test_end, copy, body_label, cost in cands:
+        if cost > budget:
+            continue
+        budget -= cost
         out[k] = "\n".join(copy)
         after[test_end] = body_label + ":"
     if not out:

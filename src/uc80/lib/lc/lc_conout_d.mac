@@ -1,0 +1,16 @@
+; lc_conout_d.mac - the two bytes of the console writers
+;
+; ___crlf_mode and __conout_last are in a module of their own, so that a
+; program that links only __putchar_v (lc_putchar_v.mac) or only __conout
+; (lc_conout.mac) does not link the code of the other.
+
+	.Z80
+
+	DSEG
+
+	PUBLIC	___crlf_mode
+___crlf_mode:	DB	1	; non-zero: translate LF -> CR LF
+	PUBLIC	__conout_last
+__conout_last:	DB	0	; last character handed to BDOS
+
+	END

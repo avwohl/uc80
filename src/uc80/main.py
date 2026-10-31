@@ -202,8 +202,10 @@ def _filter_hand_written_asm(asm_text: str):
 
 
 # The program has this many bytes of BSS of its own or more: the start-up
-# code clears the BSS with the push fill (docs/startup_fast.md).
-BIG_BSS = 256
+# code clears the BSS with the push fill (docs/startup_fast.md).  The push
+# fill saves about 13.9 T-states a byte and costs 56 bytes of code: at 6000
+# bytes it saves 83000 T-states (20 ms at 4 MHz).
+BIG_BSS = 6000
 
 
 def _common_bytes(code: str) -> int:
@@ -1345,7 +1347,8 @@ def main() -> int:
         if not args.no_ast_optimize:
             opt_level = 3
             ast_opt = Uc80ASTOptimizer(opt_level, type_config=type_config)
-            ast_opt.dead_test = not args.no_dead_test
+            ast_opt.dead_test = (not args.no_dead_test
+                                 and not args.no_optimize)
             merged_ast = ast_opt.optimize(merged_ast)
             if args.verbose and ast_opt.stats:
                 print(f"  AST optimizations:")
@@ -1432,7 +1435,10 @@ def main() -> int:
         gen.enable_licm = not args.no_licm
         gen.enable_range_cmp = not args.no_range_cmp
         gen.enable_narrow_index = not args.no_narrow_index
-        gen.enable_void_putchar = not args.no_void_putchar
+        # A .mac file or a separate compilation may define _putchar
+        # where this compile cannot see it: then putchar stays a call.
+        gen.enable_void_putchar = (not args.no_void_putchar
+                                   and not mac_files and whole_program)
         gen.enable_char_ret_mask = not args.no_char_ret_mask
         gen.enable_param_reg = not args.no_param_reg
         gen.enable_frame_drop = not args.no_frame_drop

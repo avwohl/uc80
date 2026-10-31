@@ -8,7 +8,7 @@ Family J step 1 in [codegen_gap.md](codegen_gap.md) lists the change.
 
 `__div32` (`src/uc80/lib/rt/rt_div32.mac`) divides the dividend in DEHL by the divisor in `__tmp32`. For a divisor of 65536 or more, the old code ran a loop of 16 division steps. It needed about 2000 T-states.
 
-When the dividend is below 65536 and the divisor is 65536 or more, the quotient is 0 and the remainder is the dividend. The new code tests this first, at `__div32_big`. A division such as `temp / 100000L` with a 16-bit `temp` needs about 100 T-states. The program `stanford-quick` does 25000 such divisions. It needs 61 million T-states less.
+When the dividend is below 65536 and the divisor is 65536 or more, the quotient is 0 and the remainder is the dividend. The new code tests this first, at `__div32_big`. The test shares the code of the division by zero (`__div32_cp`), so it adds 6 bytes only. A division such as `temp / 100000L` with a 16-bit `temp` needs about 100 T-states. The program `stanford-quick` does 25000 such divisions. It needs 61 million T-states less.
 
 ## Switch
 

@@ -33,7 +33,7 @@
 ; branch (stream id < 3) through __conout, so fwrite/fputc to a real
 ; FILE * stay byte-for-byte raw in both "w" and "wb" mode.
 ;
-; Entry:  E = character to write (__putchar_v: see below)
+; Entry:  E = character to write
 ; Exit:   BC, DE, HL preserved; AF destroyed (same as a bare BDOS call,
 ;         which preserves nothing) - so `CALL __conout' is a drop-in
 ;         replacement for `LD C,CONOUT / CALL BDOS'.
@@ -46,30 +46,25 @@ CONOUT	EQU	2
 
 	CSEG
 
+	EXTRN	___crlf_mode
+	EXTRN	__conout_last
+
 	PUBLIC	__conout
 __conout:
 	PUSH	BC
 	PUSH	DE
 	PUSH	HL
-	CALL	__putchar_v
-	POP	HL
-	POP	DE
-	POP	BC
-	RET
-
-; __putchar_v - the same output as __conout, for a caller that keeps no
-; register: E = character, every register is destroyed.  The compiler
-; calls it for a putchar whose value is not used (docs/void_putchar.md).
-; BDOS returns to the caller of this routine.
-	PUBLIC	__putchar_v
-__putchar_v:
 	LD	A,E
 	CP	0AH		; LF?
 	JR	Z,__conout_lf
 	LD	(__conout_last),A	; remember this one (fast path: not LF)
 __conout_put:
 	LD	C,CONOUT
-	JP	BDOS
+	CALL	BDOS
+	POP	HL
+	POP	DE
+	POP	BC
+	RET
 
 __conout_lf:
 	LD	HL,__conout_last
@@ -86,11 +81,5 @@ __conout_lf:
 	CALL	BDOS
 	LD	E,0AH
 	JR	__conout_put
-
-	DSEG
-
-	PUBLIC	___crlf_mode
-___crlf_mode:	DB	1	; non-zero: translate LF -> CR LF
-__conout_last:	DB	0	; last character handed to BDOS
 
 	END

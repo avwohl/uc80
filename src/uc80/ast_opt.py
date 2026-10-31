@@ -61,7 +61,35 @@ class Uc80ASTOptimizer(ASTOptimizer):
         else:
             return False
         return (self._is_empty_stmt(stmt.then_branch)
+                and self._known_pure(stmt.condition)
                 and not self._expr_is_impure(stmt.condition))
+
+    def _known_pure(self, e) -> bool:
+        """True only for node types known to have no side effect.  The
+        uc_core test has no case for a comma expression, a statement
+        expression and other node types and calls them pure, so a
+        positive list is used here."""
+        if isinstance(e, (ast.Identifier, ast.IntLiteral, ast.CharLiteral,
+                          ast.FloatLiteral, ast.StringLiteral)):
+            return True
+        if isinstance(e, (ast.UnaryOp, ast.PostfixOp)):
+            op = e.op.text if hasattr(e.op, "text") else e.op
+            return op not in ("++", "--") and self._known_pure(e.operand)
+        if isinstance(e, ast.BinaryOp):
+            op = e.op.text if hasattr(e.op, "text") else e.op
+            return (op not in ("=", "+=", "-=", "*=", "/=", "%=", "&=",
+                               "|=", "^=", "<<=", ">>=", ",")
+                    and self._known_pure(e.left) and self._known_pure(e.right))
+        if isinstance(e, ast.TernaryOp):
+            return all(self._known_pure(x) for x in
+                       (e.condition, e.true_expr, e.false_expr))
+        if isinstance(e, ast.Cast):
+            return self._known_pure(e.expr)
+        if isinstance(e, ast.Index):
+            return self._known_pure(e.array) and self._known_pure(e.index)
+        if isinstance(e, (ast.Member, ast.ArrowMember)):
+            return self._known_pure(e.obj)
+        return False
 
     def _optimize_stmt(self, stmt) -> None:
         super()._optimize_stmt(stmt)

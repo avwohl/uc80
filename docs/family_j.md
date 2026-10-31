@@ -21,6 +21,8 @@ Step 2 changes the code of kernels and loops:
 - [A loop that fills an array](fill_idiom.md): `--no-fill-idiom`.
 - [1 << n in line](shl_inline.md): `--no-shl-inline`.
 
+Two bugs and the size rule changed some passes after the first version (see the repair entry in the [CHANGELOG](../CHANGELOG.md)). The pages above describe the final code.
+
 ## Not in this part
 
 The larger causes of the analysis stay open. They are the loop-invariant loads and address expressions of `stanford-puzzle`, the byte-granular register allocation of `queens` and `davidly-ttt`, and the compile-time division of `stanford-quick`. [codegen_gap.md](codegen_gap.md) has the numbers.

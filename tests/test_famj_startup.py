@@ -135,7 +135,7 @@ def test_bss_clear(tmp_path, crt0, ei, n):
 
 def test_startup_variant_follows_the_bss_size(tmp_path):
     small = "int a[4]; int main(void) { return a[0]; }\n"
-    big = "int a[400]; int main(void) { return a[0]; }\n"
+    big = "int a[4000]; int main(void) { return a[0]; }\n"
     t_small = compile_c(tmp_path, small).read_text()
     t_big = compile_c(tmp_path, big, name="b").read_text()
     t_old = compile_c(tmp_path, big, "--no-fast-bss-clear",
@@ -261,6 +261,53 @@ int main(void)
 """
     text = compile_c(tmp_path, src).read_text()
     assert "__putchar_v" not in text
+
+
+MAC_PUTCHAR = """\t.Z80
+\tPUBLIC\t_putchar
+\tCSEG
+_putchar:
+\tLD\tHL,2
+\tADD\tHL,SP
+\tLD\tE,(HL)
+\tINC\tE
+\tLD\tC,2
+\tCALL\t5
+\tLD\tHL,0
+\tRET
+\tEND
+"""
+
+
+def test_putchar_in_a_mac_file_is_called(tmp_path):
+    """An assembly file on the command line may define _putchar: the
+    statement putchar(c); must call that routine, not __putchar_v."""
+    c_file = tmp_path / "m.c"
+    c_file.write_text("extern int putchar(int);\n"
+                      "int main(void) { putchar('A'); putchar('B'); "
+                      "return 0; }\n")
+    asm = tmp_path / "myputc.mac"
+    asm.write_text(MAC_PUTCHAR)
+    mac = tmp_path / "m.mac"
+    r = subprocess.run(
+        [sys.executable, "-m", "uc80.main", str(c_file), str(asm),
+         "-o", str(mac)],
+        capture_output=True, text=True, cwd=str(REPO), timeout=300)
+    assert r.returncode == 0, r.stderr
+    assert "__putchar_v" not in mac.read_text()
+    assert run_raw(tmp_path, mac, "m") == b"BC"
+
+
+def test_putchar_without_whole_program_is_called(tmp_path):
+    src = "extern int putchar(int);\nint main(void) { putchar('A'); return 0; }\n"
+    text = compile_c(tmp_path, src, "--no-whole-program").read_text()
+    assert "__putchar_v" not in text
+    assert "_putchar" in text
+
+
+def test_putchar_statement_is_void_in_whole_program(tmp_path):
+    src = "extern int putchar(int);\nint main(void) { putchar('A'); return 0; }\n"
+    assert "__putchar_v" in compile_c(tmp_path, src).read_text()
 
 
 # ---- 1c: __div32 shortcut ----------------------------------------------------

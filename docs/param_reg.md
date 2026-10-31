@@ -19,7 +19,12 @@ An example is the function `out(port, value)` of a sound driver. The `port` goes
 
 ## Two more changes
 
-- **Dead register copies.** After the peephole pass, `reglocals.drop_dead_copies` removes `ld B,r` and `ld C,r` from a function of the compiler. It does this when no instruction reads the byte before the next write or the return. The register-locals pass leaves such a copy (`ld B,H`, `ld C,L`) when the peephole rules use HL instead of BC. A function of the compiler does not return a value in B or C. A call reads B or C only if the callee is a helper of `lib/rt` that does. A table gives the reads of each helper.
+- **Dead register copies.** After the peephole pass, `reglocals.drop_dead_copies` removes `ld B,r` and `ld C,r` from a function of the compiler. It removes a copy when no instruction reads the byte before the next write or the return.
+  The register-locals pass leaves such a copy (`ld B,H`, `ld C,L`) when the peephole rules use HL instead of BC.
+  No function of the compiler returns a value in the register pair BC.
+  A call reads BC only for a helper of `lib/rt` that reads them.
+  A table lists these helpers.
+  A table lists the helpers and their reads.
 - **RET cc.** A `jr cc,L` or `jp cc,L` to a label that stands directly before a `ret` becomes `ret cc` (`peep_local.py`, rule 4). The instruction is 1 byte and uses 5 T-states when the condition is false.
 
 ## Switch
