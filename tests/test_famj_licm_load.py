@@ -340,3 +340,69 @@ def test_licm_load_array_of_an_interrupt_function(tmp_path):
     lines = [ln for ln in r.stderr.splitlines() if ln.startswith("licm:")]
     assert not any("G:cnt" in ln for ln in lines)
     assert any("G:tab" in ln for ln in lines)
+
+
+SUM_SRC = r"""
+#include <stdio.h>
+unsigned char img[8 * 40];
+int words[6 * 20];
+
+static int rowsum(int y)
+{
+    int x, s = 0;
+    for (x = 0; x < 40; x++)
+        s += img[y * 40 + x];
+    return s;
+}
+
+/* two sums with the same invariant part share one pointer */
+static int wsum(int y)
+{
+    int x, s = 0;
+    for (x = 0; x < 20; x++)
+        s += words[y * 20 + x] + words[x + y * 20];
+    return s;
+}
+
+/* the sum has a call in the variant part */
+static int next(int *p) { return (*p)++; }
+
+static int csum(int y)
+{
+    int s = 0, c = 0, k;
+    for (k = 0; k < 10; k++)
+        s += img[y * 40 + next(&c)];
+    return s;
+}
+
+int main(void)
+{
+    int i, h = 0;
+    for (i = 0; i < 320; i++)
+        img[i] = (unsigned char)(i * 7);
+    for (i = 0; i < 120; i++)
+        words[i] = i * 3;
+    for (i = 0; i < 8; i++)
+        h = (h * 3 + rowsum(i)) & 0x7FFF;
+    for (i = 0; i < 6; i++)
+        h = (h * 5 + wsum(i)) & 0x7FFF;
+    for (i = 0; i < 8; i++)
+        h = (h * 7 + csum(i)) & 0x7FFF;
+    printf("%d\n", h);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flags", FLAGS, ids=ids)
+def test_licm_load_sum_against_host(tmp_path, flags):
+    same_as_host(tmp_path, SUM_SRC, *flags)
+
+
+def test_licm_load_sum_shape(tmp_path):
+    lines = debug_lines(tmp_path, SUM_SRC)
+    assert any("A:G:img" in ln for ln in moved(lines, "rowsum")), lines
+    w = moved(lines, "wsum")
+    assert len(w) == 1 and "uses=2" in w[0], w
+    # the call stays in the loop, once for each pass
+    assert any("A:G:img" in ln for ln in moved(lines, "csum")), lines

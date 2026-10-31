@@ -22,7 +22,8 @@ pytestmark = pytest.mark.skipif(
 FLAGS = [
     (), ("--no-byte-regs",), ("-O0",), ("--no-register-locals",),
     ("--no-licm-load",), ("--no-pair-cmp",), ("--no-register-cc",),
-    ("--isr-safe",), ("--no-skip-auto-clear",),
+    ("--isr-safe",), ("--no-skip-auto-clear",), ("--no-rl-addr-taken",),
+    ("--no-range-byte-cmp",),
 ]
 
 # The shape of the 8 queens search: four byte locals, three arrays that
@@ -306,3 +307,61 @@ def test_option_off_has_no_byte_local_in_b_or_d(tmp_path):
     f_off = func_text(off, "place")
     assert not re.search(r"\tinc\tB\n", f_off)
     assert not re.search(r"\tinc\tD\n", f_off)
+
+
+# A function whose address is taken: its char local sits in a register, and
+# the sign extension that only the old slot needed goes away.
+PTR_SRC = r"""
+#include <stdio.h>
+
+char board[9];
+
+char win0(void)
+{
+    register int x = board[0];
+    if ((x == board[1] && x == board[2]) || (x == board[3] && x == board[6]))
+        return (char)x;
+    return 0;
+}
+
+char win4(void)
+{
+    register int x = board[4];
+    if ((x == board[0] && x == board[8]) || (x == board[2] && x == board[6]))
+        return (char)x;
+    return 0;
+}
+
+char (*fns[2])(void) = {win0, win4};
+
+int main(void)
+{
+    int i, s = 0, k;
+    for (k = 0; k < 40; k++) {
+        for (i = 0; i < 9; i++)
+            board[i] = (char)(((k >> (i & 3)) + i * (k + 1)) % 3);
+        board[1] = board[0];
+        board[2] = board[0];
+        s = (s * 3 + fns[k & 1]()) & 0x3FFF;
+        s = (s + (*fns[(k + 1) & 1])() * 5) & 0x3FFF;
+    }
+    printf("%d\n", s);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flags", FLAGS, ids=ids)
+def test_byte_regs_function_pointer_against_host(tmp_path, flags):
+    same_as_host(tmp_path, PTR_SRC, *flags)
+
+
+def test_address_taken_function_gets_a_register_local(tmp_path):
+    on = compile_c(tmp_path, PTR_SRC).read_text()
+    off = compile_c(tmp_path, PTR_SRC, "--no-rl-addr-taken",
+                    name="o").read_text()
+    f_on, f_off = func_text(on, "win0"), func_text(off, "win0")
+    assert "(??AUTO" in f_off
+    assert "(??AUTO" not in f_on
+    # no dead sign extension in front of the first compare
+    assert f_on.count("rlca") <= f_off.count("rlca") - 1, (f_on, f_off)

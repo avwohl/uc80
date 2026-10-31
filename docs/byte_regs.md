@@ -28,6 +28,11 @@ The pass uses a form only when three things are true. The register `A` is dead a
   - If HL is dead, the compare reads the registers of the locals.
 - `inc C / jr nz,L / inc B / L:` becomes `inc BC` for a word local in BC.
 
+## Two more rules
+
+- `ld HL,K / ld B,H / ld C,L` becomes `ld BC,K` when HL is dead afterwards. The new code costs 10 T-states, the old code 18.
+- The pass deletes an instruction that only changes registers and flags when no code reads the result. An example is the sign extension of a char into HL (`rlca / sbc A,A / ld H,A`) that no code uses after the pass moved the local into a register. The rule uses the liveness of the pass, so the exit reads the result bytes only. A deleted instruction can make the instruction before it dead, so the rule runs until no instruction goes.
+
 ## The code generator
 
 - The compare of two signed chars keeps the flipped values in H and L, not in D and E.
@@ -52,10 +57,11 @@ The code compares a counter in the range 0 to 255 as one byte (`ld A,C / cp 9`).
 
 ## Tests
 
-The file `tests/test_famj_byte_regs.py` runs five programs in nine option sets against the host compiler:
+The file `tests/test_famj_byte_regs.py` runs six programs in eleven option sets against the host compiler:
 
 - the queens search.
 - byte locals across calls with both conventions.
 - signed and unsigned compares of chars.
 - 16-bit counters beside bytes.
-- a recursive search with stack arguments. Shape tests check the scratch-free forms. `tests/test_conditions.py` has the new text of the signed compare. The tests of the register-locals pass, the ISR tests and the 75 programs of the test family run with the pass on.
+- a recursive search with stack arguments.
+- functions that have their address taken. Shape tests check the scratch-free forms. `tests/test_conditions.py` has the new text of the signed compare. The tests of the register-locals pass, the ISR tests and the 75 programs of the test family run with the pass on.

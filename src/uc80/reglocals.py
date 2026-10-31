@@ -1296,24 +1296,6 @@ def fix_foreign(nodes: list[Node], unit: list[Var], taken: int, env: Env,
                 s, e = _call_group(nodes, i)
                 lo, hi = min(lo, s), max(hi, e)
         intervals.append([lo, hi])
-    # A scratch web of the other byte of the pair that overlaps an interval
-    # joins it: the pop at the end restores both bytes of the pair.
-    if intervals and _MODE["byte"]:
-        others = []
-        for root, idxs in webs.items():
-            if any(nodes[i].wr & M & ~nodes[i].vw and dirty(i)
-                   for i in idxs):
-                continue
-            others.append((min(idxs), max(idxs)))
-        changed = True
-        while changed:
-            changed = False
-            for iv in intervals:
-                for a, b in others:
-                    if a <= iv[1] and b >= iv[0] and (a < iv[0]
-                                                      or b > iv[1]):
-                        iv[0], iv[1] = min(iv[0], a), max(iv[1], b)
-                        changed = True
     # a call inside an interval extends it to its group
     changed = True
     while changed:
@@ -1334,6 +1316,32 @@ def fix_foreign(nodes: list[Node], unit: list[Var], taken: int, env: Env,
             merged[-1][1] = max(merged[-1][1], iv[1])
         else:
             merged.append(list(iv))
+    if _MODE["byte"] and merged and (pm & ~M):
+        # A scratch value in the other byte of the pair that crosses the
+        # end of an interval joins the interval: the pop at the end would
+        # restore the byte and destroy the value.
+        ob = pm & ~M
+        for iv in merged:
+            grew = True
+            while grew:
+                grew = False
+                if not (live_out_of(succ, live, iv[1]) & ob):
+                    break
+                for root, idxs in webs.items():
+                    a, b = min(idxs), max(idxs)
+                    if (a <= iv[1] < b
+                            and any((nodes[i].rd | nodes[i].wr) & ob
+                                    for i in idxs)):
+                        iv[0], iv[1] = min(iv[0], a), max(iv[1], b)
+                        grew = True
+        merged.sort()
+        joined: list[list[int]] = []
+        for iv in merged:
+            if joined and iv[0] <= joined[-1][1] + 1:
+                joined[-1][1] = max(joined[-1][1], iv[1])
+            else:
+                joined.append(list(iv))
+        merged = joined
     inserts: list[tuple[int, int, Node, Node]] = []
     for lo, hi in merged:
         # first clobber
@@ -1433,6 +1441,77 @@ def peephole(nodes: list[Node], config: list[Var], env: Env) -> list[Node]:
         nodes = out
         if not changed:
             break
+    if _MODE["byte"]:
+        nodes = drop_dead_code(nodes, env)
+    return nodes
+
+
+_REG8 = ("A", "B", "C", "D", "E", "H", "L")
+_PAIR_DST = ("BC", "DE", "HL")
+
+
+def _imm_text(o: str) -> bool:
+    return (not o.startswith("(") and bool(o)
+            and _no_reg_token(o, ("H", "L", "HL", "BC", "DE", "SP", "IX",
+                                  "IY", "A", "B", "C", "D", "E", "AF")))
+
+
+def _pure_reg(nd: Node) -> bool:
+    """An instruction that only changes registers and flags: no memory, no
+    jump.  A write of a register local counts: when no read can see the
+    byte, the write is dead."""
+    if (nd.kind != "ins" or nd.flow != "next" or nd.pro or nd.fold
+            or nd.cpm or nd.xr):
+        return False
+    op = nd.op
+    ops = [o.upper().replace(" ", "") for o in nd.ops]
+    if op == "ld" and len(ops) == 2:
+        d, s_ = ops
+        if d in _REG8:
+            return s_ in _REG8 or _imm_text(nd.ops[1])
+        return d in _PAIR_DST and _imm_text(nd.ops[1])
+    if op in ("rlca", "rrca", "rla", "rra", "cpl", "neg", "scf", "ccf"):
+        return not ops
+    if op in ("and", "or", "xor", "sub", "cp") and len(ops) == 1:
+        return ops[0] in _REG8 or _imm_text(nd.ops[0])
+    if op in ("add", "adc", "sbc") and len(ops) == 2 and ops[0] == "A":
+        return ops[1] in _REG8 or _imm_text(nd.ops[1])
+    if op in ("inc", "dec") and len(ops) == 1:
+        return ops[0] in _REG8
+    return False
+
+
+def drop_dead_code(nodes: list[Node], env: Env) -> list[Node]:
+    """Delete the instructions that write registers and flags that nothing
+    reads afterwards (the sign extension of a char that nobody uses, a copy
+    of a value that is dead).  The liveness is the one of the pass:
+    the exit reads the result bytes."""
+    for _ in range(6):
+        succ = build_cfg(nodes)
+        live = liveness(nodes, succ, env.exit_live)
+        flive = flags_liveness(nodes, succ)
+        drop = set()
+        for i, nd in enumerate(nodes):
+            if not _pure_reg(nd):
+                continue
+            out = live_out_of(succ, live, i)
+            if nd.wr & out:
+                continue
+            if not nd.wr:
+                continue
+            eff = _effect(nd.op, ",".join(nd.ops))
+            fw = 0
+            for b, f in enumerate(_FLAG_LIST):
+                if f in eff.writes:
+                    fw |= 1 << b
+            if fw & live_out_of(succ, flive, i):
+                continue
+            drop.add(i)
+        if not drop:
+            break
+        if _DBG:
+            _dbg("dead code", [nodes[i].text.strip() for i in sorted(drop)])
+        nodes = [nd for i, nd in enumerate(nodes) if i not in drop]
     return nodes
 
 
@@ -2553,8 +2632,9 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
     tighten_swaps(nodes, succ, env.exit_live)
     for v in vars_:
         v.weight = _slot_weight(nodes, succ, v)
-    cands = sorted([v for v in vars_ if v.weight >= MIN_WEIGHT],
-                   key=lambda v: -v.weight * (2.0 if v.hint else 1.0))[:4]
+    ranked = sorted([v for v in vars_ if v.weight >= MIN_WEIGHT],
+                    key=lambda v: -v.weight * (2.0 if v.hint else 1.0))
+    cands = ranked[:4]
     _dbg("candidates", [(v.name, v.weight) for v in vars_])
     if not cands:
         return None
@@ -2569,32 +2649,43 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
         return ("C", "E", "B", "D") if byte_regs else ("BC", "DE")
 
     twin = {"B": "D", "D": "B"}     # B and D cost what C and E cost alone
-    for v in cands:
-        for reg in options(v):
-            if byte_regs and v.size == 1 and reg in twin:
-                continue
-            v.reg = reg
-            try:
-                new, pro = try_config(nodes, [v], env, frame, wrap_id)
-            except (Reject, Bail) as ex:
-                _dbg("reject", v.name, reg, ex)
-                continue
-            finally:
-                v.reg = None
-            gain = base - _weighted_cost(new, env) - 0.0
-            if v.hint and gain > 0:
-                gain *= 1.25     # 'register' is a priority hint
-            _dbg("single", v.name, reg, "gain", gain)
-            if _DUMP == v.name + ":" + reg:
-                import sys
-                print("\n".join(render(new)), file=sys.stderr)
-            singles.append((gain, v, reg, new, pro))
-            if gain > best[0] + MIN_GAIN:
-                best = (gain, [(v, reg)], (new, pro))
-            if byte_regs and v.size == 1 and reg in ("C", "E"):
-                # the same value for the high byte of the pair, not built
-                singles.append((gain, v, "B" if reg == "C" else "D", None,
-                                None))
+    def build_singles(batch):
+        nonlocal best
+        for v in batch:
+            for reg in options(v):
+                if byte_regs and v.size == 1 and reg in twin:
+                    continue
+                v.reg = reg
+                try:
+                    new, pro = try_config(nodes, [v], env, frame, wrap_id)
+                except (Reject, Bail) as ex:
+                    _dbg("reject", v.name, reg, ex)
+                    continue
+                finally:
+                    v.reg = None
+                gain = base - _weighted_cost(new, env) - 0.0
+                if v.hint and gain > 0:
+                    gain *= 1.25     # 'register' is a priority hint
+                _dbg("single", v.name, reg, "gain", gain)
+                if _DUMP == v.name + ":" + reg:
+                    import sys
+                    print("\n".join(render(new)), file=sys.stderr)
+                singles.append((gain, v, reg, new, pro))
+                if gain > best[0] + MIN_GAIN:
+                    best = (gain, [(v, reg)], (new, pro))
+                if byte_regs and v.size == 1 and reg in ("C", "E"):
+                    # the same value for the high byte of the pair, not built
+                    singles.append((gain, v, "B" if reg == "C" else "D",
+                                    None, None))
+
+    build_singles(cands)
+    if byte_regs and not singles and len(ranked) > 4:
+        # the four heaviest locals cannot take a register (a scratch value
+        # lives across a label, say): try the next four
+        more = ranked[4:8]
+        _dbg("next candidates", [v.name for v in more])
+        build_singles(more)
+        cands = cands + more
     singles.sort(key=lambda t: -t[0])
 
     def fits(assign, v, reg):
