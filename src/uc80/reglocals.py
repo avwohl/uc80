@@ -1441,8 +1441,6 @@ def peephole(nodes: list[Node], config: list[Var], env: Env) -> list[Node]:
         nodes = out
         if not changed:
             break
-    if _MODE["byte"]:
-        nodes = drop_dead_code(nodes, env)
     return nodes
 
 
@@ -2574,6 +2572,8 @@ def try_config(base_nodes: list[Node], config: list[Var], env: Env,
     if not check(nodes, resident, env.exit_live):
         raise Reject("check before the peephole")
     nodes = peephole(nodes, config, env)
+    if env.byte_regs:
+        nodes = drop_dead_code(nodes, env)
     if not check(nodes, resident, env.exit_live):
         raise Reject("check")
     return nodes, pro
@@ -2848,6 +2848,8 @@ def parse_lenient(lines: list[str], env: Env) -> list[Node]:
                 nd.label = m.group(1)
                 nodes.append(nd)
                 rest = s[m.end():].strip()
+                if rest.startswith(":"):      # ``name::`` is a public label
+                    rest = rest[1:].strip()
                 if not rest:
                     continue
                 s = rest
@@ -3208,6 +3210,9 @@ def drop_dead_copies(code: str) -> str:
 
     env = Env(reads_of, lambda t: ALL7)
     nodes = parse_lenient(lines, env)
+    if len(nodes) != len(lines):
+        # a line gave two nodes: the line numbers below would be wrong
+        return code
     labels = {nd.label: k for k, nd in enumerate(nodes) if nd.kind == "label"}
     entries: set = set()
 
@@ -3304,6 +3309,9 @@ def prune(code: str) -> str:
         return strip_tags(code)
     env = Env(lambda t: ALL7, lambda t: ALL7)
     nodes = parse_lenient(lines, env)
+    if len(nodes) != len(lines):
+        # a line gave two nodes: the line numbers below would be wrong
+        return strip_tags(code)
     sums = _Summaries(nodes)
     helpers = _helper_table()
 

@@ -54,6 +54,7 @@ The code compares a counter in the range 0 to 255 as one byte (`ld A,C / cp 9`).
 - `--no-rl-addr-taken`: no register local in a function that has its address taken.
 - `--no-range-byte-cmp`: 16-bit compare for a counter of the range 0 to 255.
 - `UC80_RL_DEBUG=1` prints each configuration with its gain. `UC80_RL_DUMP=a:C,b:D` prints the text of one configuration.
+- `UC80_RL_SKIPFN=f,g` keeps the locals of the named functions in memory. The switch helps to find the function that gives a wrong result.
 
 ## Tests
 

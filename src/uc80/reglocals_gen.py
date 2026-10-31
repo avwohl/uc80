@@ -206,6 +206,8 @@ class RegLocalsMixin:
         self._rl_fn_ok = False
         if not self._rl_on or name in self._rl_skip:
             return
+        if name in __import__("os").environ.get("UC80_RL_SKIPFN", "").split(","):
+            return                      # a debug aid: bisect a wrong result
         self._rl_excl = address_taken_names(func.body)
         self._rl_vol = self._vol_names
         self._rl_fn_ok = True
