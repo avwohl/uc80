@@ -102,40 +102,91 @@ class BlockOpsMixin:
         return _to_legacy(t) if t is not None else None
 
     def _bo_dev_dest(self, node) -> bool:
-        """Does ``memset`` fill device memory?  The destination argument,
-        as written (before the conversion to ``void *``), points to a
-        volatile object, or it is a constant address: an integer constant
-        or a cast of one (``(void *)0x4300``).  A fill of such memory must
-        not read the destination: ``LDIR`` reads each byte it copies, and
-        a device returns something else than the value written."""
+        """Does ``memset`` fill device memory?  The destination argument
+        points to a volatile object, or it is a constant address.  A fill
+        of such memory must not read the destination: ``LDIR`` reads each
+        byte it copies, and a device returns something else than the
+        value written.  The test looks at the argument as the program
+        wrote it, through every pointer cast (a cast to ``void *`` or to
+        ``unsigned char *`` hides the pointee type), through ``+``, ``-``,
+        ``&``, ``[]``, ``.`` and ``->`` to the object, and into both
+        branches of a conditional: a member of a volatile structure is
+        volatile.  A fill of RAM that is not volatile keeps ``LDIR``."""
         if not _is_node(node):
             return False
-        # a conversion to ``void *`` hides the pointee type: look at the
-        # operand, as the program wrote it
-        while isinstance(node, ast.Cast) and self._bo_void_ptr_cast(node):
-            node = node.expr
-            if not _is_node(node):
-                return False
-        try:
-            t = self._to_legacy_type(self._get_expr_type(node))
-        except Exception:
-            t = None
-        base = getattr(t, "base_type", None)
-        if isinstance(t, (lt.PointerType, lt.ArrayType)) and getattr(
-                base, "is_volatile", False):
+        if isinstance(node, ast.TernaryOp):
+            return (self._bo_dev_dest(node.true_expr)
+                    or self._bo_dev_dest(node.false_expr))
+        if isinstance(node, ast.Cast) and self._bo_dev_dest(node.expr):
             return True
-        return self._bo_is_const_addr(node)
+        return self._bo_ptr_vol(node) or self._bo_is_const_addr(node)
 
-    def _bo_void_ptr_cast(self, node) -> bool:
-        """``node`` is a cast to a pointer to void (any qualifiers)."""
-        tt = getattr(node, "target_type", None) or getattr(node, "type", None)
+    def _bo_type(self, node):
         try:
-            t = self._to_legacy_type(tt)
+            return self._to_legacy_type(self._get_expr_type(node))
         except Exception:
+            return None
+
+    @staticmethod
+    def _bo_top_vol(t) -> bool:
+        if isinstance(t, lt.ArrayType):
+            return getattr(t.base_type, "is_volatile", False)
+        return getattr(t, "is_volatile", False)
+
+    def _bo_ptr_vol(self, node, depth: int = 0) -> bool:
+        """The pointer value ``node`` points to a volatile object."""
+        if not _is_node(node) or depth > 12:
             return False
-        base = getattr(t, "base_type", None)
-        return (isinstance(t, lt.PointerType) and isinstance(base, lt.BasicType)
-                and base.name == "void")
+        t = self._bo_type(node)
+        if isinstance(t, lt.PointerType) and getattr(
+                t.base_type, "is_volatile", False):
+            return True
+        if isinstance(t, lt.ArrayType) and self._bo_top_vol(t):
+            return True
+        if isinstance(node, ast.Cast):
+            return self._bo_ptr_vol(node.expr, depth + 1)
+        if isinstance(node, ast.TernaryOp):
+            return (self._bo_ptr_vol(node.true_expr, depth + 1)
+                    or self._bo_ptr_vol(node.false_expr, depth + 1))
+        if isinstance(node, ast.BinaryOp):
+            op = node.op.text if hasattr(node.op, "text") else str(node.op)
+            if op in ("+", "-"):
+                return (self._bo_ptr_vol(node.left, depth + 1)
+                        or (op == "+"
+                            and self._bo_ptr_vol(node.right, depth + 1)))
+            return False
+        if isinstance(node, ast.UnaryOp):
+            op = node.op.text if hasattr(node.op, "text") else str(node.op)
+            if op == "&":
+                return self._bo_lval_vol(node.operand, depth + 1)
+            return False
+        if isinstance(node, (ast.Member, ast.ArrowMember, ast.Index)):
+            # an array member or element decays to its address
+            return (isinstance(t, lt.ArrayType)
+                    and self._bo_lval_vol(node, depth + 1))
+        return False
+
+    def _bo_lval_vol(self, node, depth: int = 0) -> bool:
+        """The lvalue ``node`` is, or is part of, a volatile object."""
+        if not _is_node(node) or depth > 12:
+            return False
+        if self._bo_top_vol(self._bo_type(node)):
+            return True
+        if isinstance(node, ast.Member):
+            return self._bo_lval_vol(node.obj, depth + 1)
+        if isinstance(node, ast.ArrowMember):
+            t = self._bo_type(node.obj)
+            return (isinstance(t, lt.PointerType)
+                    and getattr(t.base_type, "is_volatile", False))
+        if isinstance(node, ast.Index):
+            if isinstance(self._bo_type(node.array), lt.ArrayType):
+                return self._bo_lval_vol(node.array, depth + 1)
+            return self._bo_ptr_vol(node.array, depth + 1)
+        if isinstance(node, ast.UnaryOp):
+            op = node.op.text if hasattr(node.op, "text") else str(node.op)
+            if op == "*":
+                return self._bo_ptr_vol(node.operand, depth + 1)
+        return False
 
     def _bo_int_expr(self, node) -> bool:
         """An expression of integer type (no pointer, no array)."""

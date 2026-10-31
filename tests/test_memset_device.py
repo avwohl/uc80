@@ -86,6 +86,24 @@ CASES = [
      [(0x4923, 12, 0x3C)]),
     ("const_plus_var_n", "memset((unsigned char *) 0x4E00 + 1, 0x48, n);",
      [(0x4E01, 33, 0x48)]),
+    # a member or element of a volatile structure is volatile
+    ("vstruct_arrow_index", "memset((void *) &vsd->buf[i], v, 5);",
+     [(0x5703, 5, 0x3C)]),
+    ("vstruct_array_member", "memset((void *) vsd->buf, v, 5);",
+     [(0x5701, 5, 0x3C)]),
+    ("vstruct_array_plus_var", "memset((void *) (vsd->buf + c), v, 5);",
+     [(0x5734, 5, 0x3C)]),
+    ("vstruct_nested", "memset((void *) &vsd->in.q[i], v, 3);",
+     [(0x5715, 3, 0x3C)]),
+    ("cond_of_constants",
+     "memset(sel ? (unsigned char *) 0x4F00 : (unsigned char *) 0x4F80, v, 2);",
+     [(0x4F00, 2, 0x3C)]),
+    ("cond_in_void_cast",
+     "memset((void *) (sel ? (unsigned char *) 0x4F40 : dev), v, 2);",
+     [(0x4F40, 2, 0x3C)]),
+    # a cast to another pointer type is looked through
+    ("volatile_char_cast", "memset((unsigned char *) dev + i, v, 2);",
+     [(0x5002, 2, 0x3C)]),
 ]
 
 
@@ -97,6 +115,10 @@ struct dev {{ unsigned char ctl, st, buf[16]; }};
 volatile unsigned char *vp = (volatile unsigned char *) 0x4800;
 volatile unsigned char *vq = (volatile unsigned char *) 0x4900;
 volatile unsigned char *dev = (volatile unsigned char *) 0x5000;
+struct dev2 {{ unsigned char ctl; unsigned char buf[16];
+    struct {{ unsigned char p[2]; unsigned char q[8]; }} in; }};
+volatile struct dev2 *vsd = (volatile struct dev2 *) 0x5700;
+volatile int sel = 1;
 volatile void *r;
 volatile unsigned char sink;
 int main(void)
@@ -248,7 +270,9 @@ int main(void) { sum = work(7, 11); return 0; }
 
 NO_BLOCKOPS = CASES[:11:5] + [c for c in CASES if c[0] in (
     "const_var_offset", "const_var_offset_macro", "volatile_void_cast",
-    "volatile_void_cast_var_n", "volatile_offset", "const_var_index")]
+    "volatile_void_cast_var_n", "volatile_offset", "const_var_index",
+    "vstruct_arrow_index", "vstruct_nested", "cond_of_constants",
+    "volatile_char_cast")]
 
 
 @pytest.mark.parametrize("flow", FLOWS)
