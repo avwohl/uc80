@@ -33,6 +33,8 @@ The compiler keeps the call of `_putchar` in these cases:
 - An assembly file (`.mac`) is on the command line. The file can define `_putchar`, and the compiler cannot see all of its text.
 - The build has `--no-whole-program`. Another unit can define `_putchar`.
 
+A module that the program links after the compile can also define `_putchar`. The compiler cannot see such a module, and the call goes to `__putchar_v`, so the module does not get the call. Before family J the call went to `_putchar`. Use `--no-void-putchar` for such a link. `tests/test_integ12_putchar_link.py` checks both results.
+
 A cast to void now discards the value of any call. `(void) f();` gives the same code as `f();`.
 
 ## Tests

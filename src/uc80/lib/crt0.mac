@@ -55,16 +55,22 @@ __nobss:
 	LD	HL,(__exit_hook)
 	JP	(HL)
 
-; Large BSS (257 bytes or more), BC = size - 1.  The first size mod 16 bytes
-; are cleared one by one.  The rest is cleared from the end down, 16 bytes
-; per loop pass, by 8 PUSH HL with HL = 0.  A PUSH writes below SP, so an
-; interrupt or NMI only touches bytes that the loop has not cleared yet.
+; Large BSS (257 bytes or more), BC = size - 1.  The top of the BSS is
+; cleared from the end down, 16 bytes per loop pass, by 8 PUSH HL with
+; HL = 0.  The loop stops 32 to 47 bytes above __bss_start.  Then SP goes
+; back to the real stack, and a byte loop clears the low 32 to 47 bytes
+; (E = size mod 16 + 32).  A PUSH writes below SP, so an NMI pushes its
+; return address and registers below SP.  During the loop those bytes are
+; not cleared yet.  After the loop they lie in the low part, and the byte
+; loop clears that part last.  An NMI handler that uses more than 32 bytes
+; of stack during the last pass would write below __bss_start.
 ; Interrupts stay off during the loop and come back only if they were on.
 __bss_big:
 	INC	BC		; BC = size
 	LD	A,C
 	AND	15
-	LD	E,A		; E = size mod 16
+	ADD	A,32
+	LD	E,A		; E = size mod 16 + 32
 	SRL	B
 	RR	C
 	SRL	B
@@ -72,16 +78,9 @@ __bss_big:
 	SRL	B
 	RR	C
 	SRL	B
-	RR	C		; BC = number of 16-byte blocks
-	LD	HL,__bss_start
-	OR	A
-	JR	Z,__bss_nor
-__bss_rl:
-	LD	(HL),0
-	INC	HL
-	DEC	E
-	JR	NZ,__bss_rl
-__bss_nor:
+	RR	C		; BC = number of 16-byte blocks (at least 16)
+	DEC	BC
+	DEC	BC		; two blocks stay for the byte loop
 	LD	A,I		; P/V = interrupt flag
 	PUSH	AF
 	DI
@@ -104,6 +103,12 @@ __bss_bl:
 	DEC	HL
 	DEC	HL
 	LD	SP,HL
+	LD	HL,__bss_start
+__bss_rl:
+	LD	(HL),0
+	INC	HL
+	DEC	E
+	JR	NZ,__bss_rl
 	POP	AF
 	JP	PO,__nobss
 	EI

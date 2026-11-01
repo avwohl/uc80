@@ -899,6 +899,28 @@ def _legacy_pointee(pt):
     return base
 
 
+def _requalify(t, is_const, is_volatile):
+    """The legacy type ``t`` with the qualifiers written on a typedef
+    name added (``volatile S_t *p``).  ``t`` may be shared with the
+    typedef table, so a qualified copy is made and ``t`` is not changed."""
+    if not (is_const or is_volatile):
+        return t
+    if not isinstance(t, (lt.BasicType, lt.PointerType, lt.StructType,
+                          lt.EnumType)):
+        return t
+    want_c = bool(is_const) and not getattr(t, "is_const", False)
+    want_v = bool(is_volatile) and not getattr(t, "is_volatile", False)
+    if not (want_c or want_v):
+        return t
+    import copy
+    c = copy.copy(t)
+    if want_c:
+        c.is_const = True
+    if want_v:
+        c.is_volatile = True
+    return c
+
+
 def _to_legacy(t, ctx=None):
     """Convert a ResolvedType (either uc80- or uc_core-class) to its
     ast_legacy equivalent.
@@ -945,7 +967,8 @@ def _to_legacy(t, ctx=None):
                     name=inner.name, is_signed=inner.is_signed,
                     is_const=t.is_const or inner.is_const,
                     is_volatile=t.is_volatile or inner.is_volatile)
-            return inner
+            return _requalify(inner, getattr(t, "is_const", False),
+                              getattr(t, "is_volatile", False))
         return t
     k = t.kind
     if k == "basic":
@@ -979,7 +1002,8 @@ def _to_legacy(t, ctx=None):
         # name → its resolved type; recurse to handle typedef-of-typedef.
         reg = _ACTIVE_TYPEDEFS
         if reg is not None and t.name in reg:
-            return _to_legacy(reg[t.name])
+            return _requalify(_to_legacy(reg[t.name]), t.is_const,
+                              t.is_volatile)
         return lt.TypedefName(name=t.name) if hasattr(lt, "TypedefName") else t
     return t
 
@@ -22941,14 +22965,41 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             if const_val is not None:
                 self._emit_const_scalar(const_val, elem_type, elem_size)
             else:
-                # Complex initializer - reserve space
-                self.ctx.emit_instr("ds", str(elem_size))
+                # An element or member of array type decays to an address
+                label, offset = self._try_resolve_address_const(init)
+                if label is not None:
+                    self._emit_address_const(label, offset)
+                else:
+                    # Complex initializer - reserve space
+                    self.ctx.emit_instr("ds", str(elem_size))
 
     def _try_resolve_address_const(self, expr) -> tuple:
         """Try to resolve an expression as (label, offset) for static initialization.
         Returns (label_str, offset_int) or (None, 0) if not resolvable.
         Handles: &var, &var.member, &var+N, var (for arrays/functions).
         """
+        if isinstance(expr, (ast.Index, ast.Member, ast.ArrowMember)):
+            # An element or member of array type decays to its address:
+            # ``short *p = m[1];`` is ``&m[1][0]``.
+            try:
+                et = _to_legacy(self._get_expr_type(expr))
+            except Exception:
+                et = None
+            if isinstance(et, lt.ArrayType):
+                r = self._try_resolve_address_const(
+                    ast.UnaryOp(op="&", operand=expr, pos=expr.pos))
+                if r[0] is not None:
+                    return r
+        elif isinstance(expr, ast.UnaryOp) and expr.op == "*":
+            # ``*m`` for an array of arrays is the first row, at the
+            # address of ``m``.
+            try:
+                et = _to_legacy(self._get_expr_type(expr.operand))
+            except Exception:
+                et = None
+            if (isinstance(et, lt.ArrayType)
+                    and isinstance(_to_legacy(et.base_type), lt.ArrayType)):
+                return self._try_resolve_address_const(expr.operand)
         if isinstance(expr, ast.UnaryOp) and expr.op == "&":
             operand = expr.operand
             if isinstance(operand, ast.Identifier):
@@ -23155,6 +23206,20 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         inner_offset = self._resolve_member_offset(parent_type, member)
                         if inner_offset >= 0:
                             return (parent_label, parent_offset + inner_offset)
+            elif isinstance(obj, ast.Index):
+                # element[i].member: the address of the element, plus the
+                # offset of the member
+                elem_label, elem_off = self._try_resolve_address_const(
+                    ast.UnaryOp(op="&", operand=obj, pos=obj.pos))
+                if elem_label is not None:
+                    try:
+                        et = _to_legacy(self._get_expr_type(obj))
+                    except Exception:
+                        et = None
+                    if isinstance(et, lt.StructType):
+                        inner_offset = self._resolve_member_offset(et, member)
+                        if inner_offset >= 0:
+                            return (elem_label, elem_off + inner_offset)
             return None
 
     def _emit_address_const(self, label: str, offset: int) -> None:

@@ -20,7 +20,7 @@ The range of an expression comes from these rules:
 - An expression of a type of 16 bits or less holds a value of that type. The code cannot change this.
 - A cast keeps the range of the operand when the new type holds the range. When the new type is narrower, the range is the range of the new type.
 - A local variable of 32 bits has the union of the ranges of all values that the function stores to the variable. Each store has the form `v = e` or `T v = e`.
-- A store converts the value to the type of the variable. When the type does not hold the range of the stored value, the range is the range of the type. A plain `char` has the range -128 to 255. A variable of a type without known bounds has no range. Difftest seed 9574 found this: the pass gave 0 for a `char` of -59 divided as `unsigned long`, and the answer is 1. See `tests/test_integ12_range_div_store.py`.
+- A store converts the value to the type of the variable. When the type does not hold the range of the stored value, the range is the range of the type. The plain `char` of uc80 is signed, but the pass does not rely on this. A stored range in -128 to 127 stays. Any other range gives the `char` no range. So `char c = 200;` has no range, and the code divides at run time. The answer for `c / 65536UL` is 65535, because `c` holds -56. A variable of a type without known bounds has no range. Difftest seed 9574 found this: the pass gave 0 for a `char` of -59 divided as `unsigned long`, and the answer is 1. See `tests/test_integ12_range_div_store.py`.
 
 A local variable has a range when all of these are true:
 

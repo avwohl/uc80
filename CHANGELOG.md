@@ -6,17 +6,41 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Repair of `integrate12`
+
+A verifier found these problems after the integration. Each has a test that runs code.
+
+- **Range division and a plain `char` (miscompile, in `famj` too).** The first fix clamped a plain `char` to -128 to 255. So `char c = 200;` kept the range 200 to 200, and `c / 65536UL` gave 0. The plain `char` of uc80 is signed, so `c` holds -56 and the answer is 65535. A stored range outside -128 to 127 now gives a plain `char` no range. The test `tests/test_integ12_range_div_store.py` has 21 cases: `char`, `signed char`, `unsigned char`, `short` and `unsigned short`, with a constant, `+=`, `*=` and `++`, and five divisors. The new test fails with the first fix.
+- **`volatile` on a typedef name or a struct (miscompile, in `main` too, empty-if only in `famj`).** The front end dropped the qualifier of a cast type or a declaration type that names a typedef or a struct. `u8 x = *(volatile u8 *) 0x4300;` lost the read, `if (*(volatile u8 *) 0x4300) ;` lost the read, and `memset((void *) p->buf, v, n)` with `volatile S_t *p` used `LDIR`, which reads the device. `src/uc80/volatile_fix.py` puts the qualifier back, and `_to_legacy` keeps the qualifier of a typedef name for a struct. The pass that makes expressions narrow also read only one byte of `(unsigned char) vw` with `volatile u16 vw`. Now the code reads the word. The bench program `micro` has 10500 more T-states for this reason, and its image is 1 byte bigger. `tests/test_integ12_volatile_typedef.py` has 37 tests, both ROM flows for the `memset` cases.
+- **NMI during the push fill of the BSS clear (regression of `famj`).** The push fill cleared the low bytes first. An NMI near the end of the loop pushed its bytes into the cleared part and left them there. 24 of 81 phases failed. The loop now stops 32 to 47 bytes above `__bss_start`, and a byte loop on the real stack clears the low part last. `tests/test_integ12_bss_nmi.py` runs an NMI at 81 phases. An NMI handler that uses more than 32 bytes of stack in the last pass can still write below `__bss_start` (`docs/startup_fast.md`).
+- **A pointer initialized with a decayed row (miscompile, in `main` too).** `short *p = m[1];` for `short m[4][5]` gave a null pointer without a message. The same happened with `*m + 7`, `cm[2]`, `m3[1][2]` and `gs.ins[1].a`. The initializer is now an address constant. `tests/test_integ12_array_row_init.py` checks the offsets.
+- **A separately linked `_putchar` (documented).** `putchar(c);` calls `__putchar_v`, so a `_putchar` that is linked after the compile does not get the call. Use `--no-void-putchar`. `docs/void_putchar.md` and `tests/test_integ12_putchar_link.py` show both results.
+- **`isrproof.py --save-workareas` prints FAILED for `libm` and `libmfp`.** The verifier ran the option on `main` 36a9edd and got the same lines. The control "without the save the result differs" cannot differ when the option is on. The FAILED lines are not a defect.
+
+Gates after the repair, on the final tree:
+
+- `pytest -n 6`: 3794 passed.
+- `run_ctests.py`: 220 of 220, and 220 of 220 with `--int 32`.
+- `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
+- `difftest.py --count 800 -j 8` with the seeds 9000, 19000 and 29000: no UC80-WRONG and no MODEL-DIFF line in the full logs.
+- `ccfuzz.py`: 2000 programs, 1500 with `--ll`, and 400 of each in the option sets `-O0`, `--no-register-locals`, `--no-licm --no-range-cmp --no-narrow-index`, `--int=32` and all 18 family J switches off. All PASS.
+- The gen3 family with `GEN3_FULL=1`: 76 passed. `gen3_harness.py`: 75 programs, no RLDIFF.
+- Bench: 104 OK, 3 FITS and 5 TOO-BIG, as before. Against SDCC 4.6.0 the size is 0.9124, the whole image 0.8705, the T-states 0.5036, and without `sort-*` 0.6047. 75 of 78 programs are faster.
+- The rows changed by the repair: 1 byte more image and 804 T-states more in the programs that use the push fill (the new byte loop at the end), and `micro` has 10500 T-states more (the word read of `vw`). These rows have the same T-states as before in the other programs. Against both parents, no row has more T-states. Some rows have an image bigger than both parents. `bsd-arithmetic` is one (the float printer fix, 51 bytes). The 15 programs with the push fill are the others. They are 1 byte bigger than `famj`, and 56 to 79 bytes bigger than `main`. The fast clear costs these bytes.
+
 ### Integration of `famj` (family J) into the bug round 5 tree (branch `integrate12`)
 
 The merge of `famj` (head ebe5309, base 619b110) into `main` 36a9edd had text conflicts in four files.
 
 `CHANGELOG.md` keeps both sides. `bench/results/results.csv` and `docs/benchmarks_speed.md` come from `bench/run.py` and `bench/report.py`.
 
-In `codegen.py` the conflict was in the code for a call. Both sides added a step before the call code. Bug round 5 added `_bo_dev_call` (`memset` to a device). Family J added `_putchar_v_try`. The two steps do not overlap, and the merged code keeps both. The files `main.py` and `libc.mac` merged without a conflict. I read the combined code.
+In `codegen.py` the conflict was in the code for a call. Both sides added a step before the call code. Bug round 5 added `_bo_dev_call` (`memset` to a device). Family J added `_putchar_v_try`. The two steps do not overlap, and the merged code keeps both.
+
+The files `main.py` and `libc.mac` merged without a conflict. The combined code was read by hand.
 
 - **Fill idiom and device memory.** The fill idiom changes only a loop over a global array of bytes that is not volatile. A loop stays a store loop when it stores a constant to a volatile pointer, a constant address or a volatile structure. `tests/test_integ12_fill_device.py` runs 8 loops in `romrun`, in both flows, with 6 option sets. It compares the write log. No loop writes a byte that an `LDIR` fill would write.
 - **Start-up code and interrupts.** The start-up code skips the `??AUTO` block only in a whole-program CP/M build with the embedded start-up code. ROM, sdas and separate builds keep the plain layout. The save of the library work areas for interrupt handlers does not depend on that clear. `isrproof.py` passes 7 of 7 with `ul80` and with `--sdas`.
-- **Bug in a family J pass, fixed here.** Difftest seed 9574 found a wrong result of the range division. A store to a narrow local wraps the value into the type of the local. The pass took the range of the stored expression. So a `char` of -59 divided by `2147483648UL` gave 0, and the answer is 1. The range of a local is now clamped to the type of the local. A plain `char` has the range -128 to 255. `famj` had this bug before the merge. `tests/test_integ12_range_div_store.py` tests the fix. The rule is in `docs/range_div.md`.
+- **Bug in a family J pass, fixed here.** Difftest seed 9574 found a wrong result of the range division. A store to a narrow local wraps the value into the type of the local. The pass took the range of the stored expression. So a `char` of -59 divided by `2147483648UL` gave 0, and the answer is 1. The range of a local is now clamped to the type of the local. A plain `char` that stores a value outside -128 to 127 has no range (see the repair below). `famj` had this bug before the merge. `tests/test_integ12_range_div_store.py` tests the fix. The rule is in `docs/range_div.md`.
 - **Other interactions.** `tests/test_integ12_combined.py` runs `putchar` statements, a user `putchar` in C, `printf`, `fprintf` to `stdout`, `sizeof(struct pt)`, and enums with the range division and the byte compare. The option sets include `--int=32`, `--no-void-putchar` and `-O0`.
 
 Gates on the merged tree:

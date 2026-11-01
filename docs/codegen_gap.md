@@ -586,3 +586,11 @@ Twelve of the 13 programs are faster than SDCC. The program
 `davidly-ttt` has a ratio of 1.086. The reason is the recursion, where
 SDCC keeps more values in registers. The demotion of an `int` local to
 `char` is not done.
+
+## Status on 2026-11-01 (integration of family J with bug round 5)
+
+The branch `integrate12` has family J and bug rounds 3 to 5. The mean ratio
+to SDCC 4.6.0 is 0.9124 for the size, 0.8705 for the whole image and 0.5036
+for the T-states. 75 of the 78 programs are faster. The numbers are in
+[benchmarks_speed.md](benchmarks_speed.md). The repair pass after the
+integration changed the means by 0.0003 at most.

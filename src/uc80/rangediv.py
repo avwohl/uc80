@@ -267,7 +267,12 @@ class _Fn:
                 if (vb is None and self.is_int(vt)
                         and not isinstance(vt, lt.EnumType)
                         and self.g._type_size(vt) == 1):
-                    vb = (-128, 255)    # plain char: either signedness
+                    # plain char: a value outside -128..127 may wrap
+                    # (signed char) or may not (unsigned char), so no
+                    # range is known for it
+                    vb = (-128, 127)
+                    if not (vb[0] <= r[0] and r[1] <= vb[1]):
+                        vb = None
                 if vb is None:
                     r = None            # no type bounds: no range
                 elif not (vb[0] <= r[0] and r[1] <= vb[1]):

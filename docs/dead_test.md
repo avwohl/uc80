@@ -20,6 +20,8 @@ The programs `sieve` and `sieve+static` need 347000 T-states less.
 
 `--no-dead-test` keeps these statements. `-O0` keeps them too.
 
+A cast to a volatile typedef name or to a volatile struct keeps the read. `(volatile u8 *) 0x4300` is an example, with `typedef unsigned char u8`. The front end drops the qualifier of such a cast type, and `src/uc80/volatile_fix.py` puts the qualifier back. The dead-store pass uses the same rule. `tests/test_integ12_volatile_typedef.py` checks the reads and the device `memset`.
+
 ## Tests
 
 `tests/test_famj_kernels.py` runs a program with empty ifs. The conditions are pure, or have a call, or have `n++`. One if has an empty block. The output must be the same as the host output for the default build, `--no-dead-test`, `-O0` and `--no-ast-optimize`. A second test shows that a volatile read stays in the code. A third test runs conditions with a comma (`(g = 5, 0)`, `(f(), 0)`, `(i++, a)`), also inside loop bodies.

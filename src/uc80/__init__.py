@@ -77,3 +77,8 @@ def lib_file(name: str) -> Path:
     """
     p = lib_dir() / name
     return p if p.exists() else _PKG_LIB / name
+
+
+from . import volatile_fix as _volatile_fix  # noqa: E402
+
+_volatile_fix.install()
