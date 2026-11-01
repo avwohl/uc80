@@ -290,6 +290,9 @@ class Uc80ASTOptimizer(ASTOptimizer):
                 "char unsigned": "c"}.get(self._var_types.get(name), None)
         if kind is not None and _has_type_use(stmts):
             kind = None         # sizeof(v), _Generic(v): the type matters
+        if (kind is None and name not in self._var_types
+                and _size_of_tree(stmts)[1]):
+            return None         # a call can change a global counter
         items: list = []
         for i in range(n):
             val = start + i * step

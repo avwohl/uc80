@@ -11,8 +11,9 @@ three steps.
 2. Dead register writes.  A backward liveness pass over the bytes A, B, C,
    D, E, H and L (the flags are not tracked) finds ``ld r,s`` and
    ``ld rr,n`` instructions whose result is never read, and deletes them.
-   Only a load from a register or an immediate goes: a memory read might be
-   volatile.  A call reads every register and writes every register, a
+   Only a load from a register or a number goes: a memory read might be
+   volatile, the address of a symbol can be a link hook, and ``ld A,I``
+   sets the flags.  A call reads every register and writes every register, a
    return reads every register, and a jump to a label outside the run reads
    every register.  A run with an instruction that the effect tables do
    not know is left alone.
@@ -78,7 +79,7 @@ class _R:
     """One line of the run."""
 
     __slots__ = ("line", "kind", "op", "ops", "rd", "wr", "flow", "target",
-                 "dead", "cond")
+                 "dead", "cond", "fw")
 
     def __init__(self, line: str):
         self.line = line
@@ -91,6 +92,7 @@ class _R:
         self.target = None
         self.dead = False
         self.cond = False
+        self.fw = False             # the instruction writes a flag
 
 
 def _mask(regs) -> int:
@@ -142,6 +144,7 @@ def _parse(lines: list[str]) -> list[_R]:
         r.flow = eff.flow
         r.target = eff.target
         r.cond = bool(eff.cond)
+        r.fw = any(w.startswith("f") for w in eff.writes)
         if r.op == "halt":
             r.flow = "next"        # an interrupt resumes at the next line
         if eff.flow == "call":
@@ -285,15 +288,16 @@ def _dead_writes(rs: list[_R]) -> bool:
     live_out, _ = _liveness(rs)
     changed = False
     for i, r in enumerate(rs):
-        if r.kind != "ins" or r.op != "ld" or len(r.ops) != 2:
-            continue
+        if r.kind != "ins" or r.op != "ld" or len(r.ops) != 2 or r.fw:
+            continue                # ld A,I and ld A,R set the flags
         d = r.ops[0].lower()
         s = r.ops[1]
         if d in _BIT:
             dm = _BIT[d]
-            if not (_is_reg8(s) or _IMM.match(s)
-                    or re.match(r"^[@?$.A-Za-z_][@?$.\w+\-]*$", s)
-                    or re.match(r"^(low|high)\s", s, re.I)):
+            # a symbol is not deleted: a load of an address can be the
+            # way that the compiler makes the linker take a module
+            # (__sc_float_on)
+            if not (_is_reg8(s) or _IMM.match(s)):
                 continue
             if s.lower() == d:
                 if _allow():
@@ -303,8 +307,7 @@ def _dead_writes(rs: list[_R]) -> bool:
             if not (dm & live_out[i]) and _allow():
                 r.dead = True
                 changed = True
-        elif d in _PAIRS and not s.startswith("(") and not _is_reg8(s) and \
-                s.lower() not in _PAIRS:
+        elif d in _PAIRS and _IMM.match(s):
             dm = _mask(_PAIRS[d])
             if not (dm & live_out[i]) and _allow():
                 r.dead = True

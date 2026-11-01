@@ -39,9 +39,10 @@ except rule 3, which keeps the labels where they are.
    tests ``H or L`` is zero and bit 7 of H.  The rule needs D and A to be
    dead after the test (the general compare leaves garbage in both) and
    turns off with ``--no-sign-one``.
-8. ``jr L`` or ``jp L`` where the label L stands directly before a ``ret``
-   becomes ``ret`` (one byte for two or three, and 5 or 6 T-states less;
-   ``--no-ret-jump`` turns the rule off).
+8. ``jr L`` or ``jp L`` where the compiler label L (``@...``) stands
+   directly before a ``ret`` becomes ``ret`` (one byte for two or three,
+   and 5 or 6 T-states less; ``--no-ret-jump`` turns the rule off).  A
+   jump to a function (an interrupt vector of a ROM) stays a jump.
 9. ``cp 0`` followed by a conditional jump, call or return on Z, NZ, C or
    NC becomes ``or A`` (one byte for two; ``--no-cp-zero`` turns the rule
    off).  ``or A`` gives the same Z, S and C flags.
@@ -772,7 +773,8 @@ def _pass(lines: list[str]) -> tuple[list[str], bool]:
             continue
         # Rule 8.
         if (RET_JMP and ret_labels_all and ins[0] in ("jr", "jp")
-                and len(ins[1]) == 1 and ins[1][0] in ret_labels_all):
+                and len(ins[1]) == 1 and ins[1][0] in ret_labels_all
+                and ins[1][0][0] in "@?"):
             out[i] = "\tret"
             changed = True
             continue

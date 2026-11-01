@@ -430,17 +430,22 @@ int main(void)
 }
 """
 
-    def run_reads(self, tmp_path, expr):
+    def run_reads(self, tmp_path, expr, period=331):
         build(tmp_path, self.SRC % expr)
         m = machine(tmp_path)
-        m.add_irq_every(331, start=331)
+        m.add_irq_every(period, start=period)
         res = m.run(max_tstates=60_000_000)
         assert res.reason == "halt"
         assert m.peek16("_reads") == 4000
         return m.peek16("_seen_bad")
 
     def test_plain_read_through_a_pointer_can_tear(self, tmp_path):
-        assert self.run_reads(tmp_path, "*ptr") > 0
+        # Whether an interrupt falls between the two byte reads depends on
+        # the length of the loop, so the test tries a few periods of the
+        # interrupt (a loop that is as long as a divisor of the period
+        # would never be hit).
+        assert any(self.run_reads(tmp_path, "*ptr", period) > 0
+                   for period in (331, 337, 347, 353, 359))
 
     def test_load16_of_a_known_address_is_one_instruction(self, tmp_path):
         assert self.run_reads(tmp_path, "z80_load16(&cnt)") == 0

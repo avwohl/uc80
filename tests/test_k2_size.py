@@ -905,6 +905,7 @@ int gi;
 int tab[4][16];
 unsigned char ub[8];
 static int seen_i(void) { return gi * 10; }
+static void bump(void) { gi++; }
 static int total;
 #define LOOP(TYPE, A, OP, B, S) { TYPE v; int s = 0; \
     for (v = A; v OP B; v += S) { s = s * 3 + (int) v + 1; } \
@@ -929,6 +930,10 @@ int main(void)
     /* the counter is a global that a function reads */
     for (gi = 0; gi < 3; gi++) total += seen_i();
     printf("%d %d\n", total, gi);
+    /* a call in the body changes the global counter */
+    n = 0;
+    for (gi = 0; gi < 3; gi++) { bump(); n += gi; }
+    printf("%d %d\n", n, gi);
     /* the counter is unsigned char and the body adds it */
     for (u = 1; u < 4; u++) ub[u] = (unsigned char) (u * 100);
     printf("%d %d %d %d %d\n", ub[1], ub[2], ub[3], ub[0], (int) u);
