@@ -6471,6 +6471,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     )
     # libc routines that call __div16
     _DIV16_LIBC = re.compile(r"\b_(fread|fwrite|div|ldiv|lldiv|cbrt)\b")
+    # libc routines that call __shr32 (through __m_round)
+    _SHR32_LIBC = re.compile(
+        r"\b_(ceil|floor|round|trunc|rint|nearbyint|lrint|llrint|lround|"
+        r"llround|modf)[fl]?\b")
     # libc routines that call __div32
     _DIV32_LIBC = re.compile(
         r"\b_(ldiv|lldiv|cbrt|scanf|fscanf|sscanf|vscanf|vsscanf|vfscanf|"
@@ -6490,7 +6494,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 continue
             need = any(o in used for o in others)
             if not need and short in ("__div16b", "__mod16b", "__div32w",
-                                      "__mod32w"):
+                                      "__mod32w", "__shr32c"):
                 if text is None:
                     # a reference in an instruction (the prototypes of
                     # stdio.h have an EXTRN line each)
@@ -6498,8 +6502,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         ln for ln in self.ctx.lines
                         if not ln.lstrip().lower().startswith(
                             ("extrn", "public", ";")))
-                need = bool((self._DIV16_LIBC if short.endswith("16b")
-                             else self._DIV32_LIBC).search(text))
+                rx = (self._DIV16_LIBC if short.endswith("16b")
+                      else self._SHR32_LIBC if short == "__shr32c"
+                      else self._DIV32_LIBC)
+                need = bool(rx.search(text))
             if need:
                 used.discard(short)
                 used.add(fast)

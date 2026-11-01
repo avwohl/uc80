@@ -59,7 +59,12 @@ A format that is not a string literal (for example the format parameter of a `vf
 
 A format that the program builds at run time comes from a string literal of the program in nearly all cases. So the compiler now takes the union of the conversions of all string literals of the program. It adds `int` to this set, always. The same union decides the optional parts that [printf_hook.py](libraries.md) links (`%n`, `*`, `%hhd`, `%a`).
 
-The rule has a risk. A program that reads a format from a file or from the user can ask for a conversion that no literal has. The conversion then prints wrong text. Use `--printf all`, or `--no-printf-literal-union`, for such a program.
+The rule has a risk. A program can build a format at run time, or read a format from a file or from the user. The format can then ask for a conversion that no literal has. The conversion would print as plain text. So the compiler uses the union only when it can show that every format that is not a literal comes from a literal. The proof has these cases:
+
+- The format is a parameter of a function (a wrapper around `vprintf` or `vfprintf`). The function does not assign the parameter. The program does not take the address of the function. Every call of the function passes a string literal at that position. A call can instead pass a parameter of another function that passes the same test.
+- The format is a pointer variable that the program sets once, in its declaration, from a string literal. The program does not assign the pointer and does not take its address.
+
+Any other format that is not a literal (an array, an expression, a pointer that the program assigns, the address of `printf`) has no proof. The compiler then links every conversion, as before. This includes a format that `sprintf` builds, a format in a char array, and a format from `argv` or from a file.
 
 When no string literal of the program has a conversion, the format must come from outside, and the compiler links every conversion as before. The rule does not apply to a build with an assembly file or without whole-program mode. These builds keep every conversion.
 
@@ -95,6 +100,11 @@ The routine saves its 23 bytes of static storage on the stack when it starts, an
 
 The module has 411 bytes and the library routine `qsort` is not linked. The T-states of the four benchmark programs with 20 elements are not higher than before (see the results below).
 
+Limits of `__qsort_s`:
+
+- The sort is stable. The generic `qsort` is not stable. A program that sorts elements with equal keys can print the elements in another order than before. ISO C allows both orders.
+- For random data, `__qsort_s` is slower than the generic `qsort` when the count is above 16. A test with 20 sorts of random integers showed: 16 elements 0.9% faster, 20 elements 3.7% slower, 32 elements 6.3% slower. A sort of 32 structs of 6 bytes is 9.1% slower. Data in nearly sorted order, or an array of 2 elements, is much faster. Each call saves and restores 23 bytes of static storage. Use `--no-qsort-small` for a program that sorts large random arrays of 20 to 32 elements and needs speed.
+
 ## A 16-bit divide by a small constant
 
 The routines `__div16`, `__dv8w`, `__dv8n` and `__mod16` have 176 bytes. They are fast, and they are 64 bytes bigger than the routine of SDCC. The programs `queens` and `tak` divide only by the constant 10.
@@ -110,6 +120,10 @@ The routine `__shr32` has 74 bytes with special paths for the counts 5 to 7. A s
 The compiler now calls `__shr32c` when the count has the form `x * 4`, `x << 2` or a multiple of 4. The module `rt_shr32c.mac` has 45 bytes. It moves words and bytes, and then it shifts at most 7 bits one by one.
 
 A count of 5, 6 or 7 is slower than in `__shr32`. A count that is a multiple of 4 takes the same time or less. So the compiler uses `__shr32c` for these counts only, and every other count keeps `__shr32`. A program that has both kinds of count calls `__shr32` at every site. The program `crc` shifts by multiples of 4, and its T-states do not change. The change saves 29 bytes in `crc`.
+
+## The start-up code and the speed
+
+The small start-up code (`LDIR`) needs about 21 T-states for each byte of BSS. The push fill needs about 9. A program that counts the whole run, and not a timed part, shows the loss. `bsd-wump` needs 4.8% more cycles, and `v7-backgammon` 0.08%. A program with a BSS of 6000 bytes or more shows the same in `total_cycles` (`sieve` +6%). Use `--fast-bss-clear` to get the old speed.
 
 ## Not in the code
 

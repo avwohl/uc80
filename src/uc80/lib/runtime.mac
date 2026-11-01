@@ -1221,7 +1221,7 @@ __div16_zero:
 ; 16-bit unsigned division by a divisor of 1 to 255:
 ; HL = DE / L (H = 0 on entry).  The remainder is in DE.
 ; The compiler calls this routine for a constant divisor of 1 to 255
-; (docs/k1_link_size.md).  It is 53 bytes.  __div16 with __dv8n is 176
+; (docs/k1_link_size.md).  It is 47 bytes.  __div16 with __dv8n is 176
 ; bytes.  A dividend below the divisor returns at once.  A dividend whose
 ; high byte is below the divisor needs 8 steps, any other dividend needs
 ; 16 steps.

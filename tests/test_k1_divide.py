@@ -3,7 +3,7 @@
 __div32w (no 32/32 path) divides an unsigned 32-bit value when the divisor is
 proved to be below 65536: a constant, an unsigned type of 16 bits or less, a
 cast of such a value to a 32-bit type, or an AND with a small constant.
-__div16b (38 bytes) divides an unsigned 16-bit value by a constant of 1 to
+__div16b (47 bytes) divides an unsigned 16-bit value by a constant of 1 to
 255.  Each test runs one C program with uc80 and with the host compiler and
 compares a checksum of all results.  The options --no-div32w and --no-div16b
 build the same program with the old routines.
@@ -287,4 +287,19 @@ def test_option_keeps_shr32(tmp_path):
     src = SHR32.replace("@ANY@", "")
     want, got, text = run_both(tmp_path, src, "--no-shr32-loop")
     assert "call\t__shr32c" not in text and "\n__shr32c:" not in text
+    assert got == want
+
+
+def test_shr32_when_a_libc_rounding_routine_is_linked(tmp_path):
+    """floor() calls __shr32 inside the library: the verifier found that
+    both __shr32 and __shr32c were linked.  Every site calls __shr32."""
+    src = SHR32.replace("@ANY@", "").replace(
+        "    printf(\"%lu\\n\"",
+        "    printf(\"%d\\n\", (int) floor((double) (acc & 0xFFFFu) / 16.0));\n"
+        "    printf(\"%lu\\n\"").replace(
+        "#include <stdio.h>", "#include <stdio.h>\n#include <math.h>", 1)
+    assert "math.h" in src
+    want, got, text = run_both(tmp_path, src)
+    assert "call\t__shr32c" not in text and "\n__shr32c:" not in text
+    assert "call\t__shr32\n" in text
     assert got == want

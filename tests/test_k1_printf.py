@@ -237,3 +237,161 @@ int main(int argc, char **argv)
 """
     want, got, text = run_both(tmp_path, src)
     assert got == want == "2.5"
+
+
+BUILT_WITH_SPRINTF = r"""
+#include <stdio.h>
+int main(void)
+{
+    char fmt[16];
+    sprintf(fmt, "%%%d.%df", 8, 2);
+    printf(fmt, 3.14159);
+    printf("\n%d\n", 5);
+    return 0;
+}
+"""
+
+BUILT_FROM_CHARS = r"""
+#include <stdio.h>
+int main(void)
+{
+    char fmt[] = {'%', 'l', 'u', '\n', 0};
+    const char *p = fmt;
+    printf(p, 123456789UL);
+    printf("%d\n", 5);
+    return 0;
+}
+"""
+
+BUILT_BY_STORES = r"""
+#include <stdio.h>
+int main(void)
+{
+    char fmt[8];
+    fmt[0] = '%'; fmt[1] = 'x'; fmt[2] = '\n'; fmt[3] = 0;
+    printf(fmt, 48879);
+    printf("%d\n", 5);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("src", [BUILT_WITH_SPRINTF, BUILT_FROM_CHARS,
+                                 BUILT_BY_STORES])
+def test_run_time_format_keeps_every_conversion(tmp_path, src):
+    # The verifier found: the literal union dropped %f and %lu for a format
+    # that the program builds at run time.
+    want, got, _ = run_both(tmp_path, src)
+    assert got == want
+
+
+WRAPPER_LITERALS = r"""
+#include <stdio.h>
+#include <stdarg.h>
+static void say(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+}
+int main(void)
+{
+    say("%d %u %s\n", -5, 7u, "abc");
+    say("%5.2f|%lu\n", 3.14159, 123456789UL);
+    say("done\n");
+    return 0;
+}
+"""
+
+WRAPPER_NON_LITERAL = r"""
+#include <stdio.h>
+#include <stdarg.h>
+static char buf[16];
+static void say(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+}
+int main(void)
+{
+    buf[0] = '%'; buf[1] = 'u'; buf[2] = '\n';
+    say("%d\n", 5);
+    say(buf, 4000u);
+    return 0;
+}
+"""
+
+WRAPPER_VIA_WRAPPER = r"""
+#include <stdio.h>
+#include <stdarg.h>
+static void vsay(const char *fmt, va_list ap) { vprintf(fmt, ap); }
+static void say(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vsay(fmt, ap);
+    va_end(ap);
+}
+int main(void)
+{
+    say("%d %x\n", 12, 255);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("src", [WRAPPER_LITERALS, WRAPPER_NON_LITERAL,
+                                 WRAPPER_VIA_WRAPPER])
+def test_wrapper_format_matches_host(tmp_path, src):
+    want, got, _ = run_both(tmp_path, src)
+    assert got == want
+
+
+def test_wrapper_called_with_literals_drops_the_float_printer(tmp_path):
+    src = WRAPPER_VIA_WRAPPER
+    _w, _g, text = run_both(tmp_path, src)
+    off = run_both(tmp_path, src, "--no-printf-literal-union")[2]
+    assert "\tdb\t'f'" not in text
+    assert "\tdb\t'f'" in off
+
+
+def test_wrapper_with_a_run_time_argument_keeps_every_conversion(tmp_path):
+    # say(buf, ...) passes an array that the program writes: no proof that
+    # the format comes from a literal, so %u must still print.
+    want, got, _ = run_both(tmp_path, WRAPPER_NON_LITERAL)
+    assert got == want and "4000" in got
+
+
+POINTER_FROM_LITERAL = r"""
+#include <stdio.h>
+static const char *fmt_a = "  A = %s\n";
+int main(void)
+{
+    printf(fmt_a, "x");
+    printf("%d\n", 3);
+    return 0;
+}
+"""
+
+POINTER_REASSIGNED = r"""
+#include <stdio.h>
+static char buf[8];
+static const char *fmt_a = "  A = %s\n";
+int main(void)
+{
+    buf[0] = '%'; buf[1] = 'u'; buf[2] = '\n';
+    printf(fmt_a, "x");
+    fmt_a = buf;
+    printf(fmt_a, 4000u);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("src", [POINTER_FROM_LITERAL, POINTER_REASSIGNED])
+def test_pointer_format_matches_host(tmp_path, src):
+    want, got, _ = run_both(tmp_path, src)
+    assert got == want
