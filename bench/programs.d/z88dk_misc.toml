@@ -29,6 +29,9 @@ time_defines = ["TIMER", "NUM=20", "STYLE=0"]
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 609);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 10681);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 31880);\n#endif" },
 ]
 
 [[program]]
@@ -41,6 +44,9 @@ time_defines = ["TIMER", "NUM=20", "STYLE=1"]
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 10);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 19);\n#endif" },
 ]
 
 [[program]]
@@ -53,6 +59,9 @@ time_defines = ["TIMER", "NUM=20", "STYLE=2"]
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 10);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 19);\n#endif" },
 ]
 
 [[program]]
@@ -65,6 +74,9 @@ time_defines = ["TIMER", "NUM=20", "STYLE=3"]
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 10);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 10);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 10);\n#endif" },
 ]
 
 [[program]]
@@ -77,6 +89,9 @@ time_defines = ["TIMER", "NUM=5000", "STYLE=0"]
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 16692);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 32766);\n#endif" },
 ]
 timeout = 3600
 
@@ -90,6 +105,9 @@ time_defines = ["TIMER", "NUM=5000", "STYLE=1"]
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 2500);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 4999);\n#endif" },
 ]
 timeout = 3600
 
@@ -103,6 +121,9 @@ time_defines = ["TIMER", "NUM=5000", "STYLE=2"]
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 2500);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 4999);\n#endif" },
 ]
 timeout = 3600
 
@@ -116,6 +137,9 @@ time_defines = ["TIMER", "NUM=5000", "STYLE=3"]
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 2500);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 2500);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 2500);\n#endif" },
 ]
 timeout = 3600
 

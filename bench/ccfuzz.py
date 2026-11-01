@@ -28,6 +28,12 @@ change the result.  The checksum of every result is printed.  With
 `--flags=--int=32` the program types `I16` as `short` for uc80 too, because
 an `int` then has 4 bytes.
 
+With `--flags=--int=32` each program also has 6 to 11 functions of natural
+C arithmetic on operands narrower than int (NarrowGen: sums, products, bit
+operations, shifts, quotients; an interval for each subexpression keeps the
+program free of undefined behaviour).  `--narrow` makes programs of such
+functions only.
+
 Statuses: PASS, WRONG (output differs; the status is REG-WRONG when the
 same program is right with --no-register-cc, which names the convention),
 BUILD-FAIL, HOST-FAIL, HANG.
@@ -220,8 +226,176 @@ def make_program_ll(seed):
 
 # ------------------------------------------------------------ generator
 
+
+# ------------------------------------------- narrow chains (--int=32)
+#
+# Natural C arithmetic, no cut to the type of the result: with a 32-bit
+# int a sum of operands narrower than int is computed in 32 bits.  The
+# generator keeps an interval for every subexpression and only builds an
+# operation whose result fits in `int`, so the program has no undefined
+# behaviour and the host (int is 32 bits) and uc80 --int=32 must agree.
+# Used only when the flags have --int=32; with 16-bit int the same text
+# would overflow on the host.
+
+NARROW = {   # name -> (C spelling, lo, hi)
+    "uchar": ("unsigned char", 0, 255),
+    "schar": ("signed char", -128, 127),
+    "chr": ("char", -128, 127),
+    "ushort": ("unsigned short", 0, 65535),
+    "short": ("short", -32768, 32767),
+}
+INT_LO, INT_HI = -2 ** 31, 2 ** 31 - 1
+
+
+def _bits_iv(lo, hi):
+    """Interval of a bitwise result of operands in [lo, hi] (loose)."""
+    m = max(abs(lo), abs(hi), 1)
+    k = m.bit_length()
+    return (0, 2 ** k - 1) if lo >= 0 else (-2 ** k, 2 ** k - 1)
+
+
+class NarrowGen:
+    def __init__(self, r):
+        self.r = r
+
+    def leaf(self, params):
+        r = self.r
+        k = r.random()
+        if k < 0.7 or not params:
+            if params:
+                n, t = r.choice(params)
+                return n, NARROW[t][1], NARROW[t][2]
+        if k < 0.85:
+            c = r.choice([0, 1, 2, 3, 7, 100, 255, 256, 300, 1000, 32767,
+                          40000, 65535, 70000, -1, -5, -128, -300, -32768])
+            return (f"({c})" if c < 0 else str(c)), c, c
+        n, t = r.choice(params)
+        return f"(({NARROW[t][0]})({n}))", NARROW[t][1], NARROW[t][2]
+
+    def expr(self, params, depth):
+        r = self.r
+        if depth <= 0 or r.random() < 0.25:
+            return self.leaf(params)
+        for _ in range(12):
+            op = r.choice(["+", "+", "+", "-", "-", "*", "&", "|", "^", "<<",
+                           ">>", "neg", "not", "cast", "/", "%", "vshr",
+                           "vshl"])
+            a = self.expr(params, depth - 1)
+            if op in ("neg", "not"):
+                lo, hi = (-a[2], -a[1]) if op == "neg" else (-a[2] - 1, -a[1] - 1)
+                if INT_LO <= lo and hi <= INT_HI:
+                    return (f"({'-' if op == 'neg' else '~'}{a[0]})", lo, hi)
+                continue
+            if op == "cast":
+                t = r.choice(list(NARROW))
+                nlo, nhi = NARROW[t][1], NARROW[t][2]
+                lo, hi = (a[1], a[2]) if nlo <= a[1] and a[2] <= nhi else (nlo, nhi)
+                return (f"(({NARROW[t][0]})({a[0]}))", lo, hi)
+            if op in ("<<", ">>"):
+                n = r.randrange(0, 9)
+                if op == "<<":
+                    if a[1] < 0 or (a[2] << n) > INT_HI:
+                        continue
+                    return (f"({a[0]} << {n})", a[1] << n, a[2] << n)
+                return (f"({a[0]} >> {n})", a[1] >> n, a[2] >> n)
+            b = self.expr(params, depth - 1)
+            if op in ("/", "%"):
+                # a nonzero divisor: (b | 1); INT_MIN / -1 is undefined
+                if a[1] <= INT_LO:
+                    continue
+                dlo, dhi = _bits_iv(b[1], b[2])
+                m = max(abs(a[1]), abs(a[2]))
+                return (f"({a[0]} {op} ({b[0]} | 1))", -m if a[1] < 0 else 0, m)
+            if op in ("vshr", "vshl"):
+                # a variable count 0..7 or 0..15
+                if op == "vshr":
+                    return (f"({a[0]} >> ({b[0]} & 15))", min(a[1], 0), max(a[2], 0))
+                if a[1] < 0 or (a[2] << 7) > INT_HI:
+                    continue
+                return (f"({a[0]} << ({b[0]} & 7))", 0, a[2] << 7)
+            if op in "+-*":
+                c = [eval(f"{x} {op} {y}") for x in (a[1], a[2])
+                     for y in (b[1], b[2])]
+                lo, hi = min(c), max(c)
+            else:
+                lo, hi = _bits_iv(min(a[1], b[1]), max(a[2], b[2]))
+            if INT_LO <= lo and hi <= INT_HI:
+                return (f"({a[0]} {op} {b[0]})", lo, hi)
+        return self.leaf(params)
+
+    def value(self, t):
+        r = self.r
+        lo, hi = NARROW[t][1], NARROW[t][2]
+        return r.choice([lo, hi, 0, 1, -1 if lo < 0 else hi - 1,
+                         r.randint(lo, hi), r.randint(lo, hi)])
+
+    def function(self, n):
+        """Returns (definition text, [call texts])."""
+        r = self.r
+        np = r.randint(2, 6)
+        params = [(f"p{i}", r.choice(list(NARROW))) for i in range(np)]
+        ret = r.choice(["int", "int", "unsigned", "short", "unsigned char"])
+        shape = r.choice(["ret", "ret", "locals", "cmp", "acc", "chain"])
+        sig = ", ".join(f"{NARROW[t][0]} {nm}" for nm, t in params)
+        body = []
+        scope = list(params)
+        if shape == "locals":
+            for i in range(r.randint(1, 3)):
+                nm, t = f"l{i}", r.choice(list(NARROW))
+                src = r.choice(params)[0]
+                body.append(f"{NARROW[t][0]} {nm} = {src};")
+                scope.append((nm, t))
+        if shape == "chain":
+            # a plain sum or difference of 2..6 narrow operands
+            ops = [r.choice(params) for _ in range(r.randint(2, 6))]
+            e = ops[0][0]
+            lo = hi = None
+            iv = [NARROW[ops[0][1]][1], NARROW[ops[0][1]][2]]
+            for nm, t in ops[1:]:
+                op = r.choice("+++-")
+                tl, th = NARROW[t][1], NARROW[t][2]
+                c = [iv[0] + tl, iv[1] + th] if op == "+" else [iv[0] - th, iv[1] - tl]
+                iv = [min(c), max(c)]
+                e = f"{e} {op} {nm}"
+            text = e
+        else:
+            text = self.expr(scope, r.randint(2, 4))[0]
+        if shape == "cmp":
+            k = r.choice([0, 100, 40000, -5, 65535])
+            expr = f"({text}) {r.choice(['<', '>', '==', '!=', '<=', '>='])} {k}"
+            ret = "int"
+        elif shape == "acc":
+            body.append("int acc = 0;")
+            for i in range(r.randint(2, 4)):
+                body.append(f"acc = acc + {self.expr(scope, 1)[0]};")
+            expr = "acc"
+        else:
+            expr = text
+        if ret in ("short", "unsigned char"):
+            expr = f"({ret})({expr})"
+        elif ret == "unsigned":
+            expr = f"(unsigned)({expr})"
+        fn = f"nw{n}"
+        stat = r.choice(["static ", ""])
+        defn = f"{stat}{ret} {fn}({sig})\n{{\n" + "".join(
+            f"  {b}\n" for b in body) + f"  return {expr};\n}}\n"
+        calls = []
+        for _ in range(r.randint(2, 4)):
+            vals = [self.value(t) for _, t in params]
+            if r.random() < 0.5:
+                args = ", ".join(f"({NARROW[t][0]})({v})"
+                                 for (_, t), v in zip(params, vals))
+            else:
+                # arguments that the compiler cannot fold: a volatile cell
+                args = ", ".join(f"({NARROW[t][0]})(vol_i = {v}, vol_i)"
+                                 for (_, t), v in zip(params, vals))
+            calls.append(f"MIX(chk, {fn}({args}));")
+        return defn, calls
+
+
 class Gen:
-    def __init__(self, seed, trace=False):
+    def __init__(self, seed, trace=False, int32=False):
+        self.int32 = int32
         self.trace = trace
         self.r = random.Random(seed)
         self.seed = seed
@@ -809,6 +983,14 @@ L32 lsum(int n, ...)
                 f = self.make_function(idx, pure_funcs, impure_funcs)
                 (pure_funcs if f.pure else impure_funcs).append(f)
         self.pure_funcs, self.impure_funcs = pure_funcs, impure_funcs
+        nw_calls = []
+        if self.int32:
+            o.append("volatile int vol_i;")
+            ng = NarrowGen(r)
+            for n in range(r.randrange(6, 12)):
+                defn, calls = ng.function(n)
+                o.append(defn)
+                nw_calls.extend(calls)
         # main
         o.append("int main(void)")
         o.append("{")
@@ -841,6 +1023,7 @@ L32 lsum(int n, ...)
                             "MIX(chk, gs[q].l); MIX(chk, gs[q].u); } }")
             if self.trace or j % 6 == 5:
                 body.append('printf("%lu\\n", chk);')
+        body.extend(nw_calls)
         body.append('printf("%lu\\n", chk);')
         o.extend("  " + l for l in body)
         o.append("  return 0;")
@@ -857,8 +1040,27 @@ L32 lsum(int n, ...)
         return out
 
 
-def make_program(seed, trace=False):
-    g = Gen(seed, trace)
+def make_program_narrow(seed):
+    """Only narrow-operand chains: many small functions, quick to build."""
+    r = random.Random(seed)
+    ng = NarrowGen(r)
+    o = [HEADER % {"seed": seed}, "volatile int vol_i;"]
+    calls = []
+    for n in range(40):
+        defn, c = ng.function(n)
+        o.append(defn)
+        calls.extend(c)
+    o.append("int main(void)\n{\n  unsigned long chk = 7;")
+    for i, c in enumerate(calls):
+        o.append("  " + c)
+        if i % 8 == 7:
+            o.append('  printf("%lu\\n", chk);')
+    o.append('  printf("%lu\\n", chk);\n  return 0;\n}')
+    return "\n".join(o) + "\n"
+
+
+def make_program(seed, trace=False, int32=False):
+    g = Gen(seed, trace, int32)
     return g.program()
 
 
@@ -911,8 +1113,13 @@ def one(seed, opts):
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
-    text = make_program_ll(seed) if opts.ll else make_program(seed)
-    if re.search(r"--int[= ]32\b", opts.flags):
+    int32 = bool(re.search(r"--int[= ]32\b", opts.flags))
+    if getattr(opts, "narrow", False):
+        int32 = True
+        text = make_program_narrow(seed)
+    else:
+        text = make_program_ll(seed) if opts.ll else make_program(seed, int32=int32)
+    if int32:
         # The program models int as 16 bits (I16 is int on uc80, short on
         # the host).  With --int 32 an int has 4 bytes, so I16 is short.
         text = text.replace("typedef int I16; typedef unsigned int U16;",
@@ -983,16 +1190,24 @@ def main():
                     help="use only the --flags, not the variant of the seed")
     ap.add_argument("--ll", action="store_true",
                     help="64-bit mode: long long parameters and results")
+    ap.add_argument("--narrow", action="store_true",
+                    help="only chains of narrow operands (implies --int=32)")
     ap.add_argument("--print", type=int, metavar="SEED")
     ap.add_argument("--trace", action="store_true",
                     help="with --print: print the checksum after each statement")
     opts = ap.parse_args()
+    if opts.narrow and not re.search(r"--int[= ]32\b", opts.flags):
+        opts.flags += " --int=32"
     opts.work = str(Path(opts.work).resolve())
     if opts.keep:
         opts.keep = str(Path(opts.keep).resolve())
     if opts.print is not None:
+        if opts.narrow:
+            sys.stdout.write(make_program_narrow(opts.print))
+            return 0
         sys.stdout.write(make_program_ll(opts.print) if opts.ll
-                         else make_program(opts.print, opts.trace))
+                         else make_program(opts.print, opts.trace,
+                                           "--int=32" in opts.flags))
         return 0
     Path(opts.work).mkdir(parents=True, exist_ok=True)
     seeds = range(opts.seed, opts.seed + opts.count)

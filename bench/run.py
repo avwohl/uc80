@@ -56,6 +56,14 @@ FIELDS = ["program", "tier", "compiler", "mode", "status", "image", "bss",
 # one already checked (a time_only variant, for example) reuses the result.
 CHECKED: dict[tuple, int] = {}
 
+# A time build may print nothing, so its output cannot say that the
+# program computed the right result.  Such a program checks its own result
+# after TIMER_STOP (BENCH_CHECK_EQ in bench.h): when a value is wrong, it
+# loops for ever.  A time build of such a program that does not finish in
+# a time that depends on the check build is WRONG(time), not HANG(time).
+def has_selfcheck(prog: dict) -> bool:
+    return any("BENCH_CHECK" in e.get("new", "") for e in prog.get("edit", []))
+
 
 def ticks_path() -> Path:
     return Path(os.environ.get(
@@ -237,12 +245,24 @@ def cell_lock(path: Path):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def golden_path(prog: dict) -> Path:
-    """golden/<variant>.txt when it exists, else golden/<base>.txt."""
-    own = BENCH / "golden" / f"{prog['name']}.txt"
+def golden_path(prog: dict, kind: str = "check") -> Path:
+    """golden/<variant>.txt when it exists, else golden/<base>.txt.
+
+    kind "time": the output that the time build must print.  It is
+    golden/<name>.time.txt (or the one of the base program) when the host
+    time build prints something else than the check build, for example
+    nothing at all when the check defines turn the printing on.  Without
+    such a file it is the check golden file.
+    """
+    gdir = BENCH / "golden"
+    if kind == "time":
+        for nm in (prog["name"], prog.get("base")):
+            if nm and (gdir / f"{nm}.time.txt").exists():
+                return gdir / f"{nm}.time.txt"
+    own = gdir / f"{prog['name']}.txt"
     if "base" in prog and own.exists():
         return own
-    return BENCH / "golden" / f"{prog.get('base', prog['name'])}.txt"
+    return gdir / f"{prog.get('base', prog['name'])}.txt"
 
 
 def build_defines(prog: dict, kind: str) -> list[str]:
@@ -345,9 +365,14 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
     row = {"program": prog["name"], "tier": prog.get("tier", 1),
            "compiler": comp.name, "mode": mode, "version": version}
     golden = golden_path(prog).read_text()
+    # The time build is checked too: its output must match the host time
+    # build (golden/<name>.time.txt, or the check golden file).  A time
+    # build that stops early or computes a wrong result is WRONG(time).
+    tgolden = golden_path(prog, "time").read_text()
     stdin = get_stdin(prog)
     limit = prog.get("timeout", 600)
-    same = build_defines(prog, "check") == build_defines(prog, "time")
+    selfcheck = has_selfcheck(prog)
+    check_elapsed = 0.0
     for kind in ("check", "time"):
         defines = build_defines(prog, kind)
         key = (prog.get("base", prog["name"]), comp.name, mode,
@@ -383,8 +408,10 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
                 # nothing): the program is too big, it does not hang.
                 too_big_row(row, b, size)
                 return row
+            t0 = time.monotonic()
             out, total = run_ticks(b.com, stdin=stdin, timeout=limit,
                                    expect=golden)
+            check_elapsed = time.monotonic() - t0
             (work / "output.txt").write_text(out)
             if normalize(out) != normalize(golden):
                 row["status"] = "WRONG" if total is not None else "HANG"
@@ -396,17 +423,19 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
             return row
         row["com"], row["image"], row["bss"] = size, b.image, b.bss
         t0 = time.monotonic()
-        out, total = run_ticks(b.com, stdin=stdin, timeout=limit,
-                               expect=golden if same else None)
+        # A failed self-check loops for ever: do not wait for the whole
+        # limit when the check build needed little time.
+        tlimit = (min(limit, max(120.0, 20 * check_elapsed))
+                  if selfcheck and check_elapsed else limit)
+        out, total = run_ticks(b.com, stdin=stdin, timeout=tlimit,
+                               expect=tgolden)
         elapsed = time.monotonic() - t0
         (work / "output.txt").write_text(out)
         row["total_cycles"] = total
         if total is None:
-            row["status"] = "HANG(time)"
+            row["status"] = "WRONG(time)" if selfcheck else "HANG(time)"
             return row
-        # The time build has the check build's defines, so its output
-        # must match the golden file too.
-        if same and normalize(out) != normalize(golden):
+        if normalize(out) != normalize(tgolden):
             row["status"] = "WRONG(time)"
             return row
         s, e = b.symbols.get("TIMER_START"), b.symbols.get("TIMER_STOP")
@@ -431,36 +460,61 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
     return row
 
 
-def make_golden(prog: dict, repos: dict) -> None:
-    """Build the check variant with the host cc and save its output.
-
-    A variant gets its own golden/<variant>.txt only when its output
-    differs from the golden file of its base program.
-    """
-    work = WORK / prog["name"] / "host"
+def host_output(prog: dict, repos: dict, kind: str) -> str:
+    """Build the program with the host cc and the defines of `kind`
+    (check or time) and return its output."""
+    work = WORK / prog["name"] / "host" / kind
     with cell_lock(work):
         if work.exists():
             shutil.rmtree(work)
         srcs = prepare_sources(prog, repos, work)
         cmd = (["cc", "-w", "-O1", f"-I{BENCH}", f"-I{work}"]
-               + [f"-D{d}" for d in build_defines(prog, "check")
+               + [f"-D{d}" for d in build_defines(prog, kind)
                   + prog.get("defines", {}).get("host", [])]
                + [str(s) for s in srcs] + ["-o", str(work / "host"), "-lm"])
         subprocess.run(cmd, check=True)
-        out = subprocess.run([str(work / "host")], input=get_stdin(prog),
-                             capture_output=True, text=True,
-                             check=False, timeout=600).stdout
-    (BENCH / "golden").mkdir(exist_ok=True)
-    dest = BENCH / "golden" / f"{prog['name']}.txt"
+        return subprocess.run([str(work / "host")], input=get_stdin(prog),
+                              capture_output=True, text=True,
+                              check=False, timeout=600).stdout
+
+
+def make_golden(prog: dict, repos: dict) -> None:
+    """Build the program with the host cc and save its output.
+
+    The check build gives golden/<program>.txt.  A variant gets its own
+    file only when its output differs from the golden file of its base
+    program.  The time build gives golden/<program>.time.txt, only when
+    its output differs from the check output (the file that run.py would
+    use without it).
+    """
+    out = host_output(prog, repos, "check")
+    gdir = BENCH / "golden"
+    gdir.mkdir(exist_ok=True)
+    dest = gdir / f"{prog['name']}.txt"
     if "base" in prog:
-        base = BENCH / "golden" / f"{prog['base']}.txt"
+        base = gdir / f"{prog['base']}.txt"
         if base.exists() and normalize(base.read_text()) == normalize(out):
             if dest.exists():
                 dest.unlink()
             print(f"golden/{prog['name']}.txt: same as golden/{base.name}")
-            return
-    dest.write_text(normalize(out))
-    print(f"golden/{prog['name']}.txt: {len(out.splitlines())} lines")
+        else:
+            dest.write_text(normalize(out))
+            print(f"golden/{prog['name']}.txt: {len(out.splitlines())} lines")
+    else:
+        dest.write_text(normalize(out))
+        print(f"golden/{prog['name']}.txt: {len(out.splitlines())} lines")
+    tdest = gdir / f"{prog['name']}.time.txt"
+    if tdest.exists():
+        tdest.unlink()
+    if build_defines(prog, "check") == build_defines(prog, "time"):
+        return
+    tout = host_output(prog, repos, "time")
+    # what run.py uses without a file of its own: the time file of the
+    # base program, else the check golden file
+    if normalize(tout) != normalize(golden_path(prog, "time").read_text()):
+        tdest.write_text(normalize(tout))
+        print(f"golden/{prog['name']}.time.txt: "
+              f"{len(tout.splitlines())} lines")
 
 
 def main() -> int:

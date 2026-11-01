@@ -206,3 +206,28 @@ Tests currently failing due to 16-bit int:
 	Fujitsu 0010	9			most
 	Fujitsu 0011	14			most
 	Fujitsu 0012	4			4
+
+## Operands narrower than int under --int=32
+
+With `--int=32`, an operand of type `char`, `short` or a smaller
+bit-field becomes an `int` of 32 bits (C23 6.3.1.1). The code generator
+uses 16-bit code for a few operations, because the 16-bit result is the
+same. The function `_is_long_expr` in `codegen.py` decides. The rule is:
+an operation uses 32 bits when its result can need more than 15 bits.
+
+- `+ - * & | ^ <<` of operands narrower than int use 32 bits, unless the
+  bound of the result is 15 bits or less (`_int32_bits`).
+- `us >> n`, `us / n` and `us % n` with an `unsigned short` `us` can give
+  32768 to 65535. A consumer sign-extends an int, so these operations use
+  32 bits too. A constant shift count of 1 or more, a constant divisor of
+  2 or more and a constant modulus of 1 to 32768 keep the 16-bit code
+  (`_int32_wide_quotient`).
+- `short / short` gives 32768 for -32768 / -1, so a divisor that is not a
+  constant (or is -1) uses 32 bits.
+- A unary `+`, `-` or `~` uses 32 bits when its operand is such an
+  operation (`_int32_int_result`).
+
+`bench/ccfuzz.py --flags=--int=32` and `bench/ccfuzz.py --narrow` test
+this rule. They make chains of narrow operands. Each subexpression has an interval,
+so no program has undefined behavior. The tests compare the output with
+the host build, where `int` has 32 bits.

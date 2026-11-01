@@ -62,4 +62,23 @@ _bt_end:
 #define intrinsic_label(name)
 #endif
 
+/* Self-check of a time build.  A time build prints nothing, so its output
+ * cannot show that the program computed the right result.  The program
+ * checks its own result after TIMER_STOP: when a value is wrong, the
+ * program loops for ever, and bench/run.py reports WRONG(time).  The
+ * three macros are plain statements.  (A `while` loop, not `if ... for
+ * (;;)`: z88dk-sccz80 -O3 fails to assemble the second form.)  A host build
+ * with -DBENCH_SHOW prints each checked value instead; the expected
+ * value in the manifest comes from that output (docs/bench_harness.md). */
+#ifdef BENCH_SHOW
+#include <stdio.h>
+#define BENCH_CHECK(c)
+#define BENCH_CHECK_EQ(e, k) printf("%.10g\n", (double)(e))
+#define BENCH_CHECK_NEAR(e, k, t) printf("%.10g\n", (double)(e))
+#else
+#define BENCH_CHECK(c) while (!(c)) ;
+#define BENCH_CHECK_EQ(e, k) while ((e) != (k)) ;
+#define BENCH_CHECK_NEAR(e, k, t) while ((e) < (k) - (t) || (e) > (k) + (t)) ;
+#endif
+
 #endif

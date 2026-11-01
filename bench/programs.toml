@@ -30,7 +30,11 @@ files = [{ repo = "z88dk", path = "support/benchmarks/sieve/sieve.c", sha256 = "
 check_defines = ["PRINTF"]
 time_defines = ["TIMER"]
 variants = [{ name = "static", defines = ["STATIC"] }]
-edit = [{ file = "sieve.c", old = "\nmain()", new = "\nint main(void)" }]
+edit = [
+  { file = "sieve.c", old = "\nmain()", new = "\nint main(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sieve.c", old = "TIMER_STOP();\n\n   PRINTF3", new = "TIMER_STOP();\n#ifdef TIMER\n   BENCH_CHECK_EQ(count, 1007);\n#endif\n\n   PRINTF3" },
+]
 
 [[program]]
 name = "empty"

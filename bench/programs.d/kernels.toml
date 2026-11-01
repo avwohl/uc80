@@ -167,6 +167,12 @@ files = [
 edit = [
   { file = "beebsc.c", old = '#include "beebsc.h"', new = '#include "support.h"' },
   { file = "libhuffbench.c", old = "#define LOCAL_SCALE_FACTOR 11", new = "#define LOCAL_SCALE_FACTOR 1" },
+  # verify_benchmark compares test_data with orig_data, and the decoder
+  # writes into test_data, which holds the original bytes already: a
+  # program that stops before the decoder has run still verified OK
+  # (a uc80 bug did so).  Clearing the buffer makes the decoder the only
+  # source of the output bytes.  500 bytes, about 0.1 % of the run time.
+  { file = "libhuffbench.c", old = "  bits32 heap2[256];", new = "  memset (data, 0, data_len);\n  bits32 heap2[256];" },
 ]
 
 [[program]]

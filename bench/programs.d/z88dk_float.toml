@@ -132,6 +132,8 @@ static void bench_check(int w, int h)
     bench_check(w, h);
 #endif
     return 0;''' },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "mandelbrot.c", old = "TIMER_STOP();\n\n#ifdef PRINTF\n    bench_check(w, h);\n#endif", new = "TIMER_STOP();\n\n#ifdef PRINTF\n    bench_check(w, h);\n#endif\n#ifdef TIMER\n    {   /* the same tolerance as bench_check: 2 pixels */\n        int bn = 0, bi;\n        unsigned char bx;\n        for (bi = 0; bi < 480; bi++) {\n            bx = bench_out[bi];\n            while (bx) { bn += bx & 1; bx >>= 1; }\n        }\n        BENCH_CHECK_NEAR(bn, 1424, 2);\n    }\n#endif" },
 ]
 
 [[program]]
@@ -199,6 +201,8 @@ static void bench_print(double v)
 #endif
 
 #define pi 3.141592653589793''' },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "n-body.c", old = "TIMER_STOP();\n", new = "TIMER_STOP();\n#ifdef TIMER\n  BENCH_CHECK_NEAR(bodies[0].x, 0.007413152922, 0.02);\n  BENCH_CHECK_NEAR(bodies[1].x, 1.423180107, 0.02);\n#endif\n" },
 ]
 
 [[program]]
@@ -263,6 +267,8 @@ static void bench_print(double v)
 #endif
 
 #define NUM 100''' },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "spectral-norm.c", old = "TIMER_STOP();\n", new = "TIMER_STOP();\n#ifdef TIMER\n  BENCH_CHECK_NEAR(vBv / vv, 1.623636586, 0.001);\n#endif\n" },
 ]
 
 [[program]]
@@ -302,6 +308,9 @@ edit = [
    "GCTACTCGGGAGGCTGAGGCAGGAGAATCGCTTGAACCCGGG"
    "AGGCGGAGGTTGCAGTGAGCCGAGATCGCGCCACTGCACTCC"
 ''' },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "fasta.c", old = "double gen_random (double max) {\n    static long last = 42;", new = "static long last = 42;\n\ndouble gen_random (double max) {" },
+  { file = "fasta.c", old = "TIMER_STOP();\n", new = "TIMER_STOP();\n#ifdef TIMER\n    BENCH_CHECK_EQ(last, 111466L);\n#endif\n" },
 ]
 
 [[program]]
@@ -386,4 +395,6 @@ static void bench_print(double v)
     }
 }
 #endif''' },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "whetstone.c", old = "TIMER_STOP();\n\n#ifdef TIMEFUNC", new = "TIMER_STOP();\n#ifdef TIMER\n   BENCH_CHECK_EQ(J, 2);\n   BENCH_CHECK_EQ(K, 3);\n   BENCH_CHECK_EQ(E1[1], 3);\n   BENCH_CHECK_EQ(E1[2], 2);\n   BENCH_CHECK_EQ(E1[3], 3);\n   BENCH_CHECK_NEAR(X, 0.8346655195, 0.001);\n#endif\n\n#ifdef TIMEFUNC" },
 ]
