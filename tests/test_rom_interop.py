@@ -76,7 +76,7 @@ def test_isr_proofs_with_sdas(sdas_isr_proofs, tmp_path):
     select run from an sdldz80 image with the same port logs.  The vector
     at 66h is a JP to a C function here, so the code starts at 69h."""
     r = isrproof.prove_nmi(tmp_path)
-    assert r["ok"] and r["nmis"] == 300 and r["isr_min"] == 630
+    assert r["ok"] and r["nmis"] == 300 and r["isr_min"] == 597
     r = isrproof.prove_seq(tmp_path)
     assert r["ok"] and r["irqs"] == 500 and r["got"] == r["expected"] == 7934
     r = isrproof.prove_bank(tmp_path)

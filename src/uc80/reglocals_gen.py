@@ -9,6 +9,7 @@ callees.  See docs/register_locals.md.
 from __future__ import annotations
 
 import dataclasses
+import os
 import re
 
 from uc_core import ast
@@ -16,6 +17,8 @@ from uc_core import _dcfast
 from uc_core.volatility import children as _children
 
 from . import iyptr, reglocals
+
+_SKIPFN = os.environ.get("UC80_RL_SKIPFN", "").split(",")
 
 _SETJMP = re.compile(r"setjmp", re.IGNORECASE)
 
@@ -118,7 +121,11 @@ class RegLocalsMixin:
             return
         from . import regcc
         skip = set(self.keep_names) | set(self.public_names) | set(self.isr_funcs)
-        skip |= set(self.absolute) | set(scan.value_refs & self._rl_defined(unit))
+        skip |= set(self.absolute)
+        if not self.enable_rl_addr_taken:
+            # a function whose address is taken (a callback, an entry of a
+            # table): its callers do not know it (docs/byte_regs.md)
+            skip |= set(scan.value_refs & self._rl_defined(unit))
         skip |= set(self.naked)     # no prologue; the body is user assembly
         libnames = regcc.lib_asm_names()
         asm_names = scan.asm_tokens | self.foreign_asm_names
@@ -202,6 +209,8 @@ class RegLocalsMixin:
         self._rl_fn_ok = False
         if not self._rl_on or name in self._rl_skip:
             return
+        if name in _SKIPFN:
+            return                      # a debug aid: bisect a wrong result
         self._rl_excl = address_taken_names(func.body)
         self._rl_vol = self._vol_names
         self._rl_fn_ok = True
@@ -249,6 +258,8 @@ class RegLocalsMixin:
         env = dataclasses.replace(self._rl_env(),
                                   exit_live=self._rl_exit_live(),
                                   peep_pairs=self.enable_peep_pairs,
+                                  pair_cmp=self.enable_pair_cmp,
+                                  byte_regs=self.enable_byte_regs,
                                   slot_fold=self.enable_slot_fold)
         res = reglocals.allocate(region, self._rl_vars, env,
                                  frame_mode, self._rl_wrap_id)
@@ -292,6 +303,8 @@ class RegLocalsMixin:
         """The bytes a return leaves live: nothing for void, A and HL for a
         scalar of up to two bytes, the wide mask for the rest."""
         from . import codegen as cg
+        if self.enable_byte_regs and self._ret_in_a():
+            return reglocals.A      # a char result in A; H and L are junk
         t = self.ctx.current_return_type
         try:
             t = cg._to_legacy(t)

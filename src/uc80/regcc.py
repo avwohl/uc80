@@ -623,3 +623,138 @@ def push_pop_slots(lines: list, start: int, offsets) -> int:
     if changed:
         lines[start:] = region
     return changed
+
+
+# ---------------------------------------------------------------------------
+# A byte parameter in a spare register (uc80 --no-param-reg turns it off)
+# ---------------------------------------------------------------------------
+#
+# After forward_slots, a byte parameter (A, or E for the second parameter)
+# can still be stored in a slot and loaded back after a label or a write of
+# the register it came in.  In a function that holds no call, no register
+# stays alive across anything but the function's own instructions.  A
+# register that no instruction of the function names then keeps the value
+# from entry to return.  The store becomes ``ld R,A`` (13 T-states less)
+# and each load ``ld X,R`` (9 T-states less).  A parameter that arrives in
+# E and that the function never writes needs no store at all: it stays in E.
+
+_FREE_ORDER = ("d", "c", "b", "e")
+
+
+def keep_params_in_regs(lines: list, start: int, slots: dict, init: dict,
+                        incoming: set) -> set:
+    """Rewrite ``lines[start:]`` in place.  ``slots`` and ``init`` are the
+    arguments of forward_slots; ``incoming`` holds the registers in which
+    a caller passes the parameters (a, e, d, h, l).  Returns the names of
+    the parameters that no longer have a slot."""
+    if _effect is None or not slots:
+        return set()
+    region = lines[start:]
+    if any("__UC80_ASM" in ln for ln in region):
+        return set()
+    labels = {ln.split(":", 1)[0].strip() for ln in region
+              if ln and ln[0] not in " \t;" and ":" in ln}
+    mentioned: set = set()
+    written: set = set()
+    for ln in region:
+        ins = _ins(ln)
+        if ins is None:
+            continue
+        mn, ops = ins
+        if mn in ("call", "rst", "exx", "halt") or mn == "ex" and (
+                ops and ops[0].lower().startswith("af")):
+            return set()
+        try:
+            eff = _effect(mn, ",".join(ops))
+        except Exception:
+            return set()
+        if eff.flow in ("jump", "branch") and mn in ("jp", "jr", "djnz"):
+            if not ops or ops[-1] not in labels:
+                return set()            # a jump out of the function
+        if eff.flow in ("stop", "call", "data"):
+            return set()
+        names = set(eff.reads) | set(eff.writes)
+        if eff.swap_de_hl:
+            names |= {"d", "e", "h", "l"}
+        mentioned |= names
+        written |= set(eff.writes)
+        if eff.swap_de_hl:
+            written |= {"d", "e", "h", "l"}
+    owners: dict = {}
+    for key, name in slots.items():
+        owners.setdefault(name, []).append(key)
+    taken = set(incoming)
+    changed_owners: set = set()
+    for name, keys in sorted(owners.items()):
+        keys.sort()
+        if any(k[0] != "a" for k in keys):
+            continue
+        first = keys[0]
+        in_reg = init.get(first)
+        if in_reg not in ("a", "e") or len(keys) > 2:
+            continue
+        if len(keys) == 2 and (in_reg != "e" or init.get(keys[1]) != "d"
+                               or keys[1][1] != first[1] + 1):
+            continue
+        n = first[1]
+        # every mention of the slot must be a byte load or store (or the
+        # entry store of the word DE); the high byte of a word is junk and
+        # must not be read
+        loads, stores, bad = [], [], False
+        for i, ln in enumerate(region):
+            ins = _ins(ln)
+            if ins is None:
+                continue
+            text = ln.split(";", 1)[0]
+            offs = [int(m.group(1) or 0) for m in _AUTO_ANY.finditer(text)]
+            if not any(o in (n, n + 1) for o in offs):
+                continue
+            mn, ops = ins
+            if mn == "ld" and len(ops) == 2:
+                sl = [_slot(o) for o in ops]
+                if sl[1] == ("a", n) and ops[0].lower() in _R8:
+                    loads.append(i)
+                    continue
+                if sl[0] == ("a", n) and ops[1].lower() in _R8:
+                    stores.append((i, ops[1].lower()))
+                    continue
+                if (sl[0] == ("a", n) and ops[1].lower() == "de"
+                        and in_reg == "e" and len(keys) == 2):
+                    stores.append((i, "e"))
+                    continue
+            bad = True
+            break
+        if bad or not loads:
+            continue
+        # a register for the value
+        r = None
+        if in_reg == "e" and "e" not in written:
+            r = "e"
+        elif in_reg == "a" and "a" not in written:
+            r = "a"
+        else:
+            for c in _FREE_ORDER:
+                if c not in mentioned and c not in taken:
+                    r = c
+                    break
+        if r is None:
+            continue
+        # a store of the entry register itself is dropped; every other
+        # store becomes a move
+        if r in ("a", "e") and any(src != r for _, src in stores):
+            continue            # a write of the entry register
+        for i, src in stores:
+            region[i] = None if src == r else f"\tld\t{r.upper()},{src.upper()}"
+        for i in loads:
+            mn, ops = _ins(region[i])
+            region[i] = (None if ops[0].lower() == r
+                         else f"\tld\t{ops[0].upper()},{r.upper()}")
+        taken.add(r)
+        mentioned.add(r)
+        if r not in incoming:
+            written.add(r)
+        changed_owners.add(name)
+    if not changed_owners:
+        return set()
+    lines[start:] = [ln for ln in region if ln is not None]
+    return changed_owners

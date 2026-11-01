@@ -29,6 +29,9 @@ REPO = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO / "src" / "uc80" / "lib"
 LC_DIR = LIB_DIR / "lc"
 CONOUT_MAC = LC_DIR / "lc_conout.mac"
+# the two bytes of the console writers: own module, so that __putchar_v
+# and __conout do not link each other
+CONOUT_DATA = LC_DIR / "lc_conout_d.mac"
 CPMEMU = REPO.parent / "cpmemu" / "src" / "cpmemu"
 
 # The console writers that must route through __conout.  (lc_prt_dec64.mac
@@ -69,7 +72,7 @@ class TestChokePointInvariant:
             hits = _BDOS_CONOUT.findall(path.read_text())
             if hits:
                 offenders[path.name] = len(hits)
-        assert offenders == {"lc_conout.mac": 2}, (
+        assert offenders == {"lc_conout.mac": 2, "lc_putchar_v.mac": 2}, (
             "console output must go through __conout; found direct BDOS 2 "
             "calls in %r" % offenders)
 
@@ -132,15 +135,15 @@ class TestConoutModule:
 
     def test_exports_the_runtime_flag(self):
         """Three underscores: uc80 prefixes the C name __crlf_mode with one."""
-        assert "\tPUBLIC\t___crlf_mode\n" in CONOUT_MAC.read_text()
+        assert "\tPUBLIC\t___crlf_mode\n" in CONOUT_DATA.read_text()
 
     def test_flag_defaults_to_translating(self):
-        assert re.search(r"^___crlf_mode:\s+DB\s+1\b", CONOUT_MAC.read_text(),
+        assert re.search(r"^___crlf_mode:\s+DB\s+1\b", CONOUT_DATA.read_text(),
                          re.MULTILINE)
 
     def test_flag_lives_in_initialised_data_not_bss(self):
         """crt0 zeroes COMMON; a DB 1 default only survives in DSEG."""
-        src = CONOUT_MAC.read_text()
+        src = CONOUT_DATA.read_text()
         assert src.index("\tDSEG") < src.index("___crlf_mode:")
         assert "COMMON" not in src
 
@@ -194,7 +197,7 @@ class TestLibcMacInSync:
     def test_libc_mac_has_no_stale_bdos_2_writers(self):
         # concat_modules() emits every lc/ module verbatim, so the same
         # invariant has to hold in the monolithic file.
-        assert len(_BDOS_CONOUT.findall((LIB_DIR / "libc.mac").read_text())) == 2
+        assert len(_BDOS_CONOUT.findall((LIB_DIR / "libc.mac").read_text())) == 4
 
     def test_libc_mac_lists_lc_conout(self):
         assert "; lc_conout.mac" in (LIB_DIR / "libc.mac").read_text()

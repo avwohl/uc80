@@ -698,6 +698,9 @@ def prune_iy(code: str) -> str:
         return strip(code)
     env = Env(lambda t: rl.ALL7, lambda t: rl.ALL7)
     nodes = rl.parse_lenient(lines, env)
+    if len(nodes) != len(lines):
+        # a line gave two nodes: the line numbers below would be wrong
+        return strip(code)
     _mark(nodes, False)
     sums = _IYSums(nodes)
     table = _rt_iy()

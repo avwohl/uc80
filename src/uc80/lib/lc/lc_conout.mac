@@ -46,6 +46,9 @@ CONOUT	EQU	2
 
 	CSEG
 
+	EXTRN	___crlf_mode
+	EXTRN	__conout_last
+
 	PUBLIC	__conout
 __conout:
 	PUSH	BC
@@ -78,11 +81,5 @@ __conout_lf:
 	CALL	BDOS
 	LD	E,0AH
 	JR	__conout_put
-
-	DSEG
-
-	PUBLIC	___crlf_mode
-___crlf_mode:	DB	1	; non-zero: translate LF -> CR LF
-__conout_last:	DB	0	; last character handed to BDOS
 
 	END

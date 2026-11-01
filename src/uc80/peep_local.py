@@ -16,11 +16,24 @@ except rule 3, which keeps the labels where they are.
    ``jp X``: the callee returns to the caller's caller.  Nothing is left
    to clean up, because a cleanup would stand between the two.  setjmp is
    excluded: it saves the return address.
+4. ``jr cc,L`` or ``jp cc,L`` where the label L stands directly before a
+   ``ret`` becomes ``ret cc``: the jump would only run the return.  A
+   one-byte instruction, and 1 T-state less when the jump is taken and
+   2 less when it is not (uc80 --no-param-reg turns the rule off).
+5. A reload of A that the path already did (docs/byte_regs.md).  In
+   ``ld A,x / and K / cp C1 / jr nz,L`` ... ``L: ld A,x / and K / cp C2``
+   the label L has no other reference and follows an unconditional jump,
+   so A holds ``x & K`` at L: the two instructions at L go.  The rule
+   needs the instructions to be next to each other (a volatile access has
+   a fence label beside it) and turns off with ``--no-byte-cse``.
 """
 
 from __future__ import annotations
 
 import re
+
+RET_CC = True
+RELOAD = True
 
 _REG8 = ("a", "b", "c", "d", "e", "h", "l")
 _PAIR = {"bc": ("b", "c"), "de": ("d", "e"), "hl": ("h", "l"),
@@ -120,11 +133,156 @@ def _next_ins(lines: list[str], i: int):
     return j if j < len(lines) else None
 
 
+def _label_before_ret(lines: list[str]) -> set[str]:
+    """The labels that stand directly before a ``ret`` (other labels and
+    comments may lie between)."""
+    found: set[str] = set()
+    pending: list[str] = []
+    for ln in lines:
+        if _is_comment(ln):
+            continue
+        if ln[0] not in " \t":
+            text = ln.split(";", 1)[0].strip()
+            if text.endswith(":") and " " not in text and "\t" not in text:
+                pending.append(text[:-1])
+                continue
+            pending = []
+            continue
+        if _split(ln) == ("ret", []):
+            found.update(pending)
+        pending = []
+    return found
+
+
+_ALU_IMM = ("and", "or", "xor", "sub", "add", "adc", "sbc")
+
+
+def _alu_a_imm(ins) -> bool:
+    """``and K``, ``or K``, ``xor K``, ``sub K`` or ``add A,K`` with an
+    immediate K: an instruction that changes A and reads no memory."""
+    if ins is None:
+        return False
+    mnem, ops = ins
+    if mnem not in _ALU_IMM:
+        return False
+    if mnem in ("add", "adc", "sbc"):
+        return len(ops) == 2 and ops[0].lower() == "a" and bool(
+            _IMM.match(ops[1]))
+    return len(ops) == 1 and bool(_IMM.match(ops[0]))
+
+
+def _norm(ins):
+    return (ins[0], tuple(o.lower() for o in ins[1])) if ins else None
+
+
+def _redundant_reload(lines: list[str]) -> tuple[list[str], bool]:
+    """Rule 5."""
+    n = len(lines)
+    label_at: dict[int, str] = {}
+    name_idx: dict[str, int] = {}
+    for i, ln in enumerate(lines):
+        if ln and ln[0] not in " \t":
+            t = ln.split(";", 1)[0].strip()
+            if t.endswith(":") and " " not in t and "\t" not in t:
+                label_at[i] = t[:-1]
+                name_idx[t[:-1]] = i
+    if not label_at:
+        return lines, False
+    refs: dict[str, int] = {}
+    ref_line: dict[str, int] = {}
+    tok = re.compile(r"[@?$.A-Za-z_][@?$.A-Za-z0-9_]*")
+    for i, ln in enumerate(lines):
+        if i in label_at:
+            continue
+        for t in tok.findall(ln.split(";", 1)[0]):
+            if t in name_idx:
+                refs[t] = refs.get(t, 0) + 1
+                ref_line[t] = i
+    ins = [_split(ln) for ln in lines]
+    drop: set[int] = set()
+
+    def prev_ins(i):
+        """Index of the instruction line before i; None when a label, a
+        directive or the start of the text comes first."""
+        j = i - 1
+        while j >= 0 and _is_comment(lines[j]):
+            j -= 1
+        if j < 0 or ins[j] is None:
+            return None
+        return j
+
+    for p, name in label_at.items():
+        if refs.get(name) != 1:
+            continue
+        jline = ref_line[name]
+        jins = ins[jline]
+        if (jins is None or jins[0] not in ("jr", "jp") or len(jins[1]) != 2
+                or jins[1][1] != name):
+            continue
+        # the line before the label ends the code of the previous path
+        q = prev_ins(p)
+        if q is None:
+            continue
+        qi = ins[q]
+        if not ((qi[0] in ("jp", "jr") and len(qi[1]) == 1
+                 and qi[1][0].lower() not in ("(hl)",))
+                or qi == ("ret", []) or qi[0] in ("reti", "retn")):
+            continue
+        # S: ld A,x and the ALU instructions after the label
+        s_idx = []
+        k = p + 1
+        while k < n and _is_comment(lines[k]):
+            k += 1
+        if k >= n or ins[k] is None:
+            continue
+        first = ins[k]
+        if not (first[0] == "ld" and len(first[1]) == 2
+                and first[1][0].lower() == "a"
+                and first[1][1].lower() not in ("a",)):
+            continue
+        s_idx.append(k)
+        k += 1
+        while len(s_idx) < 3:
+            while k < n and _is_comment(lines[k]):
+                k += 1
+            if k < n and _alu_a_imm(ins[k]):
+                s_idx.append(k)
+                k += 1
+            else:
+                break
+        if len(s_idx) < 2:
+            continue                    # a bare reload gains nothing here
+        # before the jump: S, then at most one cp
+        want = [_norm(ins[i]) for i in s_idx]
+        j = prev_ins(jline)
+        if j is None:
+            continue
+        if ins[j][0] == "cp":
+            j = prev_ins(j)
+            if j is None:
+                continue
+        seq = []
+        while j is not None and len(seq) < len(want):
+            seq.append(_norm(ins[j]))
+            j = prev_ins(j)
+        seq.reverse()
+        if seq != want:
+            continue
+        drop.update(s_idx)
+    if not drop:
+        return lines, False
+    return [ln for i, ln in enumerate(lines) if i not in drop], True
+
+
 def _pass(lines: list[str]) -> tuple[list[str], bool]:
+    reloaded = False
+    if RELOAD:
+        lines, reloaded = _redundant_reload(lines)
     out = list(lines)
-    changed = False
+    changed = reloaded
     drop: set[int] = set()
     n = len(out)
+    ret_labels = _label_before_ret(out) if RET_CC else set()
     for i in range(n):
         if i in drop:
             continue
@@ -160,6 +318,16 @@ def _pass(lines: list[str]) -> tuple[list[str], bool]:
                 drop.add(j)
                 changed = True
                 continue
+        # Rule 4.
+        if (ret_labels and ins[0] in ("jr", "jp") and len(ins[1]) == 2
+                and ins[1][1] in ret_labels
+                and ins[1][0].lower() in (("z", "nz", "c", "nc")
+                                          if ins[0] == "jr" else
+                                          ("z", "nz", "c", "nc", "po", "pe",
+                                           "p", "m"))):
+            out[i] = f"\tret\t{ins[1][0]}"
+            changed = True
+            continue
         # Rule 3.
         if ins[0] == "call" and len(ins[1]) == 1:
             target = ins[1][0]

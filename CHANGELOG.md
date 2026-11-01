@@ -6,6 +6,38 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Integration of `famj` (family J) into the bug round 5 tree (branch `integrate12`)
+
+The merge of `famj` (head ebe5309, base 619b110) into `main` 36a9edd had text conflicts in four files.
+
+`CHANGELOG.md` keeps both sides. `bench/results/results.csv` and `docs/benchmarks_speed.md` come from `bench/run.py` and `bench/report.py`.
+
+In `codegen.py` the conflict was in the code for a call. Both sides added a step before the call code. Bug round 5 added `_bo_dev_call` (`memset` to a device). Family J added `_putchar_v_try`. The two steps do not overlap, and the merged code keeps both. The files `main.py` and `libc.mac` merged without a conflict. I read the combined code.
+
+- **Fill idiom and device memory.** The fill idiom changes only a loop over a global array of bytes that is not volatile. A loop stays a store loop when it stores a constant to a volatile pointer, a constant address or a volatile structure. `tests/test_integ12_fill_device.py` runs 8 loops in `romrun`, in both flows, with 6 option sets. It compares the write log. No loop writes a byte that an `LDIR` fill would write.
+- **Start-up code and interrupts.** The start-up code skips the `??AUTO` block only in a whole-program CP/M build with the embedded start-up code. ROM, sdas and separate builds keep the plain layout. The save of the library work areas for interrupt handlers does not depend on that clear. `isrproof.py` passes 7 of 7 with `ul80` and with `--sdas`.
+- **Bug in a family J pass, fixed here.** Difftest seed 9574 found a wrong result of the range division. A store to a narrow local wraps the value into the type of the local. The pass took the range of the stored expression. So a `char` of -59 divided by `2147483648UL` gave 0, and the answer is 1. The range of a local is now clamped to the type of the local. A plain `char` has the range -128 to 255. `famj` had this bug before the merge. `tests/test_integ12_range_div_store.py` tests the fix. The rule is in `docs/range_div.md`.
+- **Other interactions.** `tests/test_integ12_combined.py` runs `putchar` statements, a user `putchar` in C, `printf`, `fprintf` to `stdout`, `sizeof(struct pt)`, and enums with the range division and the byte compare. The option sets include `--int=32`, `--no-void-putchar` and `-O0`.
+
+Gates on the merged tree:
+
+- `pytest -n 6`: 3750 passed (3634 before the new tests and the fix, 116 new).
+- `run_ctests.py`: 220 of 220, and 220 of 220 with `--int 32`.
+- `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
+- `difftest.py --count 800 -j 8` with the seeds 9000 and 19000: the first run found one UC80-WRONG (seed 9574, the bug above). After the fix, the run of seed 9000 has no UC80-WRONG and no MODEL-DIFF. The run of seed 19000 had none before the fix. The fix only removes folds, and the bench rows did not change with the fix.
+- `ccfuzz.py`: 2000 programs, 1500 with `--ll`, and 400 of each in the option sets `-O0`, `--no-register-locals`, `--no-licm --no-range-cmp --no-narrow-index`, `--int=32` and all 18 family J switches off. All PASS.
+- The gen3 family with `GEN3_FULL=1`: 76 passed. `gen3_harness.py`: 75 programs, no RLDIFF. All 75 programs in the 8 option sets with all family J switches off give the output of the default build.
+
+Bench: `bench/run.py -c uc80` on all 112 programs. The run regenerates the rows and the generated tables. `rogue36-size` assembles (image 71479, TOO-BIG as expected). The table gives the geometric means against SDCC 4.6.0 (speed mode), with `main` and `famj` in brackets.
+
+- Size: 0.9122 (0.9118, 0.9121). Whole image: 0.8703 (0.8795, 0.8702).
+- T-states: 0.5035 (0.5275, 0.5035). Without `sort-*`: 0.6045 (0.6367, 0.6045).
+- 75 of 78 programs are faster (66, 75).
+- One row is bigger than both parents: `bsd-arithmetic` has image 9066. `main` has 9053 and `famj` has 9015. The program links the float printer. The precision fix (`lc_prt_float`) adds 51 bytes. `main` has the fix and `famj` has not. The 13 bytes more than `main` come from family J (the loop rotation and the push fill), as in the other programs. The row has fewer T-states than both parents: 1847598. `main` has 1858417. `famj` has 1847338, which is 260 less because it has no precision fix.
+- No row is slower than both parents.
+- Against `famj`, 4 rows have more T-states, and the float printer fix causes all of them: `bsd-arithmetic` +260, and `fuzix-startrek`, `v7-fish` and `v7-wump` +42 each.
+- Against `famj`, 6 rows are 51 bytes bigger from the same fix: `bsd-arithmetic`, `empire-trefonas`, `fuzix-startrek`, `trek-size`, `v7-fish` and `v7-wump`. `adventure-size` is 1 byte bigger. `rogue36-size` is 50 bytes smaller, from the `?:` array bound.
+
 ### The gen3 family is in the repository
 
 - The 75 programs of the gen3 family (5 value types, 3 pointer kinds, 5 bodies) were only in a scratch folder. That folder lost its files on 31 October. The programs are now `tests/gen3/h_*.c`.
@@ -78,6 +110,86 @@ The merge of `bugfix4` (head 0a81fe2, based on 4702a63) into `main` 619b110 had 
   - `bsd-arithmetic`, `empire-trefonas`, `fuzix-startrek`, `trek-size`, `v7-fish` and `v7-wump` link the float printer. Each has 51 bytes more image and 2 bytes more bss: the fix for a precision above 255 (`lc_prt_float`, `_pf_zpad`, 2 bytes). The cost is 42 T-states for each call of the float printer: `fuzix-startrek`, `v7-fish` and `v7-wump` +42. `bsd-arithmetic` has +260, from several calls. `empire-trefonas` is TOO-BIG, and its `.com` grows from 69504 to 69632 bytes (page size). `v7-wump` has `.com` 10240 to 10368 bytes for the same reason.
   - `rogue36-size` is TOO-BIG, and ul80 wraps the figures. The bound of `static int used[MAX3 (NCOLORS, NSTONES, NWOOD)];` has `?:` operators. The array now has 48 bytes, where it had 0. Image -50 and bss +50 in the wrapped figures. This row is more correct than before. It is not a loss.
   - No other row is slower or bigger than `main`.
+
+### Family J, steps 3 to 5: loads out of loops, byte registers, range division (branch `famj`)
+
+Each change has a switch that turns it off, a docs page ([family_j.md](docs/family_j.md)), and tests that run code against the host compiler in several option sets. The tests are in `tests/test_famj_licm_load.py`, `test_famj_byte_regs.py`, `test_famj_byte_cse.py`, `test_famj_range_div.py` and `test_famj_auto_clear.py`.
+
+- **Loop-invariant loads (step 3).** A load `tab[i]`, a row address `m[i]` and a sum `base[inv + var]` move out of a loop that has no call, no store through a pointer and no store to the same array. The part is in `licm.py`. `--no-licm-load`. [licm_load.md](docs/licm_load.md).
+- **Byte locals in B, C, D and E (step 4).** Up to four byte locals (or a word and two bytes) share BC and DE. An address sum that needs a scratch pair takes a form that uses A only. `--no-byte-regs`. [byte_regs.md](docs/byte_regs.md).
+- **Register locals in a function with a taken address (step 5a).** `--no-rl-addr-taken`.
+- **A counter of the range 0 to 255 is compared as one byte (step 5b).** `--no-range-byte-cmp`. [range_compare.md](docs/range_compare.md).
+- **A reload of A that the path already did (step 5b).** `--no-byte-cse`. [byte_cse.md](docs/byte_cse.md).
+- **`x / k` and `x % k` that the range of `x` decides (step 5c).** `--no-range-div`. [range_div.md](docs/range_div.md).
+- **The shared automatic storage `??AUTO` is not cleared at start-up.** `--no-skip-auto-clear`. [startup_fast.md](docs/startup_fast.md).
+- **Image size against the J1 repair.** The mean image size is smaller (0.8702 against 0.8854 of SDCC). Five programs are bigger: queens +6 bytes, whetstone +4, whetstone+static +4, davidly-sieve +1, embench-ud +1. The cause is not found. The total of the image is 10210 bytes smaller. `fasta+static` is 0.17 percent slower than main.
+- **Debug switch `UC80_RL_SKIPFN`.** The compiler reads the variable one time at load.
+- **Test limit.** `test_very_long_sum_is_linear` has a limit of 60 s, because a loaded machine needs 26 s.
+- **Bug found by the bench: a public label gave a wrong program.** `intrinsic_label(TIMER_START)` writes `TIMER_START::`. The lenient parser of `reglocals.py` read the second colon as an instruction. Each pass that deletes lines after the peephole (`prune`, `drop_dead_copies`, `prune_iy`) then used wrong line numbers. These passes now return the text unchanged when the node count and the line count differ. `heap_adjust` of `embench-huffbench` lost `ld L,E / ld H,D` and `compdecomp` ended early. The J1 repair commit had this bug, and the benchmark check could not see an early return. The T-states of `embench-huffbench` rise from 2.96M to 9.85M because the program now does all the work. The test is `tests/test_famj_label_lines.py`.
+- **A jump `jr cc,$+k` landed on the wrong instruction.** The dead-code pass of the byte registers deleted the `inc L` that `jr NZ,$+3` skips. The pass now keeps each instruction that such a jump skips or lands on, and a configuration is rejected when a `$+k` jump lands on another opcode (found by `bench/difftest.py` seed 7111). The test is `tests/test_famj_dollar_jump.py`.
+- **`--no-byte-regs` gives the J1 output again.** The pair order and the stack check follow the old pass (found by `bench/ccfuzz.py` seeds 3052 and 3328).
+
+Numbers against SDCC 4.6.0 (geometric means over the 78 programs): size 0.9284 to 0.9121, image 0.8854 to 0.8702, T-states 0.5068 to 0.5035, T-states without the sort programs 0.6089 to 0.6045. Faster than SDCC in 75 of 78. The 13 listed programs have a mean of 0.879, and 12 of the 13 are faster than SDCC. `stanford-puzzle` 431.5M to 282.0M, `davidly-ttt` 12.29M to 8.77M, `queens` 26.75M to 20.62M, `stanford-quick` 308.6M to 277.7M, `bsd-ppt` 100546 to 92692. The sum of the image sizes is 10210 bytes smaller. Five programs have a larger image (`queens` +6 bytes, `davidly-sieve`, `whetstone`, `whetstone+static`, `embench-ud` +1 to +4 bytes).
+
+Known limits: `davidly-ttt` stays at 1.086 of SDCC. The demotion of an `int` local that has only byte uses to `char` is not done (a hand edit gained 0.8 percent). The compile time rises by up to about 40 percent (`embench-huffbench`).
+
+### Family J, repair of step J1: two bugs and the size rule (branch `famj`)
+
+Two bugs, found by a verifier:
+
+- **`if ((g = 5, 0)) ;` lost the comma expression.** The test of `uc_core` for a side effect has no case for a comma expression, so the empty-if pass deleted `if ((f(), 0)) ;` and `if ((i++, a)) ;`. The pass now deletes an `if` only for a list of node types that have no side effect. Other node types stay. `-O0` does not run the pass any more. Tests run comma conditions in several option sets.
+- **A user `_putchar` was bypassed.** `putchar(c);` called `__putchar_v` even when an assembly file or another unit defined `_putchar`. The call of `__putchar_v` is now used only in a whole-program build without `.mac` files on the command line. Tests have a `.mac` file that defines `_putchar`.
+
+The size rule: each change must be neutral in size where it gives no speed.
+
+- **`__conout` is the old code again.** `__putchar_v` has a module of its own (`lc_putchar_v.mac`), and the two data bytes have a module of their own (`lc_conout_d.mac`). A program that prints with `printf` or `puts` links the old `__conout`, and the ten T-states per call are gone. A program with `putchar` statements does not link `__conout`. `tests/test_crlf.py` follows the new file names.
+- **Push fill from 6000 bytes of BSS.** The limit was 256 bytes. The push fill costs 56 bytes and saves 13.9 T-states for each byte, so 83000 T-states at 6000 bytes (20 ms at 4 MHz). A program with less BSS embeds `crt0_small.mac` (21 T-states for each byte, as before). Programs with a BSS of 256 to 5999 bytes are 56 bytes smaller than in J1. `bsd-ppt` (374 bytes of BSS) needs about 5600 T-states more.
+- **Loop rotation for hot loops only.** An outer loop is rotated when its body has at most 32 bytes and no call. A loop in another loop is rotated when its body has at most 100 bytes and no call. The copies of a program may use 2 percent of its code, at least 32 bytes. The deepest loops and the shortest bodies come first. J1 rotated each loop that had a short test and cost up to 12 percent in size for a gain of less than 2 percent in T-states.
+- **Shorter `__div32` shortcut.** The test shares the code of the division by zero. The shortcut now adds 6 bytes (22 before).
+
+Docs: `docs/startup_fast.md` (limit, NMOS note on `LD A,I`), `docs/void_putchar.md`, `docs/loop_rotation.md`, `docs/dead_test.md`, `docs/runtime_shortcuts.md`.
+
+Numbers, `bench/run.py -c uc80` on 112 programs, against SDCC 4.6.0 (main, J1, now):
+
+- Size (bytes minus the empty program): 0.9117, 0.9530, 0.9284. Whole image: 0.8794, 0.9083, 0.8854. T-states (speed mode): 0.5275, 0.5038, 0.5068. Without `sort-*`: 0.6367, 0.6050, 0.6089. Faster than SDCC: 66, 74, 74 of 78.
+- The 13 programs that were above SDCC (total T-states, geometric mean): 1.196, 0.958, 0.974. Nine are below 1 now: `sieve` 0.939, `bsd-bcd` 0.962, `empty` 0.776, `davidly-sieve` 0.842, `tak` 0.881, `stanford-quick` 0.869, `snd-cmdq` 0.974, `sieve+static` 0.825, `snd-ymreg` 0.978. Still above: `bsd-ppt` 1.080 (J1 0.974), `davidly-ttt` 1.523, `queens` 1.132, `stanford-puzzle` 1.072.
+- The size means are not back at the values of main. The empty program is 17 bytes smaller, and the bytes column subtracts it, so each program looks 17 bytes bigger (0.010 of the mean). Without loop rotation the mean is 0.9220 and the whole image 0.8797. 41 programs are bigger than on main, 61 are smaller, and the sum is +752 bytes (J1: +10767).
+- Four programs use more T-states than on main: `embench-slre` +0.275% (the pair rules change which local gets BC), `micro+a32` +0.274% (the `__div32` test costs T-states in a division that does not leave early), `fasta+static` +0.134% and `embench-md5sum` +0.035% (no switch changes these two). `rogue36-size` (build only) was TOO-BIG and is BUILD-FAIL(link) now: `um80` reports phase errors in its branch relaxation for this 55000-line text. Each switch that changes the layout makes the error go away.
+
+Known limits: the push fill for 256 to 5999 bytes of BSS is not in. `bsd-ppt` is 1.080 for this reason and because its hot loops have calls.
+
+### Family J, step J1: start-up, console, kernels and loops (branch `famj`)
+
+The step has eleven changes. Each one has a switch that turns it off, a docs page ([family_j.md](docs/family_j.md)), and tests that run code. The tests are in `tests/test_famj_startup.py` and `tests/test_famj_kernels.py`. Each program runs under cpmemu and on the host compiler.
+
+Step 1, start-up, console and runtime:
+
+- **Fast BSS clear.** The start-up code cleared the BSS with one `LDIR` and some tests. A BSS of less than 256 bytes uses `crt0_small.mac`: a link-time `LD BC,size-1` and `LDIR`. The empty program needs 135 T-states (212 before), and its image is 32 bytes (49 before). A program with 256 bytes of BSS or more embeds `crt0.mac`. For a BSS of 257 bytes or more this file clears 16 bytes in each pass with 8 `PUSH HL`, with interrupts off. `--no-fast-bss-clear` embeds the old text. [startup_fast.md](docs/startup_fast.md).
+- **`putchar` as a statement.** `putchar(c);` and `(void) putchar(c);` call the new `__putchar_v` with the char in E. A character costs about 103 T-states (254 before). `__conout` calls `__putchar_v`, so each `__conout` call costs 10 T-states more. `--no-void-putchar`. [void_putchar.md](docs/void_putchar.md).
+- **`__div32` for a small dividend.** A dividend below 65536 and a divisor of 65536 or more gives quotient 0 and remainder = dividend at once. `--no-rt-shortcuts` (embedded copy only). [runtime_shortcuts.md](docs/runtime_shortcuts.md).
+
+Step 2, kernels and loops:
+
+- **Char result and a mask.** `f(x) & 0x80` counts as a byte use of `f`, so `f` returns the char in A. `--no-char-ret-mask`. [char_return_mask.md](docs/char_return_mask.md).
+- **Byte parameter in a spare register.** A call-free function can load a byte parameter after a label. The parameter then stays in D, C, B or E. After the peephole pass, dead copies `ld B,r` and `ld C,r` go away. `jr cc,L` to a label before a `ret` becomes `ret cc`. `--no-param-reg`. [param_reg.md](docs/param_reg.md).
+- **Frame without slots.** After the register locals, a function that names IX no more loses the frame code. `call f` and `ret` then become `jp f`. `--no-frame-drop`. [frame_drop.md](docs/frame_drop.md).
+- **Empty if.** `if (c) ;` with a pure `c` goes away. `--no-dead-test`. [dead_test.md](docs/dead_test.md).
+- **Pair compare.** A register pair is read directly in a compare, and `ld HL,K / add HL,rr` replaces the wrap `push rr / ld rr,K / add HL,rr / pop rr`. `--no-pair-cmp`. [pair_compare.md](docs/pair_compare.md).
+- **Loop rotation.** The test of a `for` or `while` loop is copied to the end of the loop. Each pass saves 9 T-states. A test has at most 14 bytes, and at most 9 bytes in a loop that holds another loop. `--no-loop-rotate`. [loop_rotation.md](docs/loop_rotation.md).
+- **Fill loop.** `for (i = C0; i < N; i++) a[i] = K;` over a global byte array becomes one `LDIR` fill. `--no-fill-idiom`. [fill_idiom.md](docs/fill_idiom.md).
+- **`1 << n` in line.** `--no-shl-inline`. [shl_inline.md](docs/shl_inline.md).
+
+Other changes: `sdas.py` computes the BSS size at run time (sdas cannot subtract two linker symbols). `reglocals.helper_reads` knows that `__putchar_v` reads only E, so a local in BC or DE is not read by the call. Three older tests changed. `test_iy_pointers` uses `--no-pair-cmp`, because the pair rules can prefer BC to IY. `test_register_cc` uses `--no-frame-drop` in its frame test. `test_integrate10_interactions` compares the handler writes only, because the interrupt lands in another place of the main loop when the speed changes. `test_rom_target` accepts the header of `crt0_small.mac`.
+
+Numbers, `bench/run.py -c uc80` on 111 programs, against SDCC 4.6.0:
+
+- The 13 programs that were above SDCC (total T-states of uc80 over SDCC, geometric mean 1.196): now 0.958, and 10 of them are below 1. `bsd-ppt` 0.974 (1.598), `sieve` 0.938 (1.475), `bsd-bcd` 0.941 (1.390), `empty` 0.776 (1.218), `davidly-sieve` 0.842 (1.195), `tak` 0.881 (1.055), `stanford-quick` 0.866 (1.041), `snd-cmdq` 0.955 (1.033), `sieve+static` 0.825 (1.013), `snd-ymreg` 0.965 (1.012).
+- Still above SDCC: `davidly-ttt` 1.493 (1.523), `queens` 1.099 (1.134), `stanford-puzzle` 1.069 (1.072). The causes are byte-granular register allocation and loop-invariant loads (steps 3 and 4 of the plan).
+- All programs: size (bytes minus the empty program) 0.9530 (0.9117), whole image 0.9083 (0.8794), T-states (speed mode) 0.5038 (0.5275), without `sort-*` 0.6050 (0.6367). uc80 is faster than SDCC on 74 of 78 programs (66).
+- The size means are worse for two reasons. The empty program is 17 bytes smaller, and the bytes column subtracts it, so each program looks 17 bytes bigger. The loop rotation (about 1.8% of the size mean), the push fill (56 bytes for a program with 256 bytes of BSS or more) and the runtime shortcut add bytes. 92 of 104 programs are bigger, by 90 bytes in the median. The biggest are `stanford-puzzle` (+358) and the `micro` programs (+324). 12 programs are smaller: `tak` -63, `bsd-bcd` -50, `binary-trees` -45.
+- Eleven programs use more T-states, by 1.6% or less. In ten of them a `__conout` call costs 10 T-states more: `hamurabi` +1.6%, `bsd-morse` +0.7%, `v7-fish` +0.45%, `fuzix-startrek` +0.35%, `game-guess` +0.24%, `fasta+static` +0.15%, `bsd-fish` +0.14%, `embench-md5sum` +0.03%, `bsd-arithmetic` +0.02% and `umchess` +0.001%. `embench-slre` is 0.27% slower: the pair rules change which local the cost model puts in BC. No status changed.
+
+Gates: `pytest -n 6`: 3209 passed (3066 on `main`, 143 new). `run_ctests.py`: 220 of 220. A first run of this gate had 219 of 220, with 00129 as a compile failure. The program compiles with `main` and with this tree, and the failure did not come back. `difftest.py --count 800 -j 8` with the seeds 9000 and 19000: no UC80-WRONG and no MODEL-DIFF. `ccfuzz.py`: 2000 programs, 1000 with `--ll`, and 400 of each in the option sets `-O0`, `--no-register-locals`, `--no-licm --no-range-cmp --no-narrow-index`, `--int=32` and all eleven new switches: all PASS. The 75 programs of the gen3 family: no RLDIFF. `isrproof.py` with `ul80` and with `--sdas`: five of five OK. `sndrom.py`: four of four OK.
 
 ### Integration of `fami` (family I) into the bug round 3 tree (branch `integrate10`)
 

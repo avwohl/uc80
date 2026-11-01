@@ -126,7 +126,9 @@ class TestShape:
 
 class TestCalls:
     def test_call_that_changes_iy_is_wrapped(self, tmp_path):
-        mac = comp(tmp_path, CALLER)
+        # --no-pair-cmp: with the pair rules (docs/pair_compare.md) the
+        # cost model can prefer BC for the pointer in touch
+        mac = comp(tmp_path, CALLER, "--no-pair-cmp")
         assert has_iy(body_of(mac, "touch"))
         txt = body_of(mac, "caller")
         assert has_iy(txt)

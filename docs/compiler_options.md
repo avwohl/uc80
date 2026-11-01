@@ -44,6 +44,27 @@ Three switches belong to family I step 1. `--no-discard-comma` computes the righ
 
 Three switches belong to family I step 2. `--no-licm` computes a loop-invariant integer expression in each pass of the loop ([licm.md](licm.md)). `--no-range-cmp` uses the signed 16-bit compare for a counter that is never negative ([range_compare.md](range_compare.md)). `--no-narrow-index` computes a 32-bit array index in 32 bits, although only the low 16 bits reach the address ([narrow_index.md](narrow_index.md)).
 
+The switches of family J are all off-switches. Each one is in the page of its pass:
+
+- `--no-fast-bss-clear` ([startup_fast.md](startup_fast.md)): the old start-up code with one `LDIR`.
+- `--no-void-putchar` ([void_putchar.md](void_putchar.md)): a `putchar` statement calls `_putchar`.
+- `--no-rt-shortcuts` ([runtime_shortcuts.md](runtime_shortcuts.md)): the embedded runtime has no early exits.
+- `--no-char-ret-mask` ([char_return_mask.md](char_return_mask.md)): `f(x) & 0x80` is an `int` use of `f`.
+- `--no-param-reg` ([param_reg.md](param_reg.md)): a byte parameter keeps its slot, dead register copies stay, no `ret cc`.
+- `--no-frame-drop` ([frame_drop.md](frame_drop.md)): a frame without slots stays.
+- `--no-dead-test` ([dead_test.md](dead_test.md)): an `if` with an empty body stays.
+- `--no-pair-cmp` ([pair_compare.md](pair_compare.md)): a register pair is copied to HL for a compare or an index.
+- `--no-loop-rotate` ([loop_rotation.md](loop_rotation.md)): the test of a loop is at the top only.
+- `--no-fill-idiom` ([fill_idiom.md](fill_idiom.md)): a loop that fills a byte array stays a loop.
+- `--no-shl-inline` ([shl_inline.md](shl_inline.md)): `1 << n` calls `__shl16`.
+- `--no-licm-load` ([licm_load.md](licm_load.md)): a loop loads an array element and computes a row address in each pass.
+- `--no-byte-regs` ([byte_regs.md](byte_regs.md)): at most two register locals, a byte local only in C or E.
+- `--no-rl-addr-taken` ([byte_regs.md](byte_regs.md)): a function that has its address taken keeps its locals in memory.
+- `--no-range-byte-cmp` ([range_compare.md](range_compare.md)): a counter of the range 0 to 255 is compared as 16 bits.
+- `--no-byte-cse` ([byte_cse.md](byte_cse.md)): a reload of A after a compare and a jump stays.
+- `--no-range-div` ([range_div.md](range_div.md)): `x / k` and `x % k` run at run time, also when the range of `x` gives the result.
+- `--no-skip-auto-clear` ([startup_fast.md](startup_fast.md)): the start-up code clears the shared automatic storage `??AUTO`.
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or

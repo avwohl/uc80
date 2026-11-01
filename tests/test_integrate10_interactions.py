@@ -215,7 +215,15 @@ def test_loop_passes_keep_volatile_accesses_in_a_handler(flow, tmp_path, libs):
     from tests.test_famh_rom_integration import trace
     a = trace(tmp_path, "new", ISR, flow, libs, irq=7001)
     b = trace(tmp_path, "old", ISR, flow, libs, extra=LOOPS_OFF, irq=7001)
-    wa = [x for x in a[0] if x[0] == 0x4000][:20]
-    wb = [x for x in b[0] if x[0] == 0x4000][:20]
-    assert wa == wb and len(wa) == 20
+    wa = [x for x in a[0] if x[0] == 0x4000]
+    wb = [x for x in b[0] if x[0] == 0x4000]
+    # The interrupt lands in another place of the main loop when the code
+    # of the two builds has another speed.  main writes 35, the handler
+    # writes k + 1 four times for each interrupt.  The two builds must
+    # give the same handler writes and the same number of main writes.
+    ha = [x for x in wa if x[1] != 35][:16]
+    hb = [x for x in wb if x[1] != 35][:16]
+    assert ha == hb and len(ha) == 16
+    assert len([x for x in wa if x[1] == 35]) == len(
+        [x for x in wb if x[1] == 35]) == 12
     assert a[1][:16] == b[1][:16]

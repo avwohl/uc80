@@ -375,7 +375,9 @@ class TestDiagnostics:
         r = subprocess.run(uc80_cmd(str(src), "-o", str(tmp_path / "t.mac")),
                            capture_output=True, text=True, cwd=str(REPO))
         assert r.returncode == 0, r.stderr
-        assert "crt0.mac - C Runtime Startup for CP/M" in (tmp_path / "t.mac").read_text()
+        text = (tmp_path / "t.mac").read_text()
+        # crt0.mac, or crt0_small.mac for a program with a small BSS
+        assert re.search(r"crt0(_small)?\.mac - C Runtime Startup for CP/M", text)
 
     def test_stack_top_needs_rom_target(self, tmp_path):
         src = tmp_path / "t.c"

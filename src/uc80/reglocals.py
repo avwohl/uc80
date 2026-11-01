@@ -3,7 +3,9 @@
 The code generator keeps every named local in memory: a static ``??AUTO``
 slot or an IX frame slot.  This module works on the assembly text of one
 function, after the body is generated, and moves up to two scalar locals
-(a char, an int, a pointer) into BC or DE for the whole function.
+(a char, an int, a pointer) into BC or DE for the whole function.  With
+``byte_regs`` (docs/byte_regs.md) a char local takes any of B, C, D and E,
+and up to four locals share the two pairs.
 
 The module is a text pass.  It needs from the code generator the slots
 (``Var``) and a model of what each call reads (``Env``).  It finds
@@ -51,6 +53,10 @@ PAIR_MASK = {"BC": B | C, "DE": D | E}
 LO_NAME = {"BC": "C", "DE": "E"}
 HI_NAME = {"BC": "B", "DE": "D"}
 OTHER_PAIR = {"BC": "DE", "DE": "BC"}
+# the pair of a register name; a byte local may sit in B, C, D or E
+# (docs/byte_regs.md).  "BC" and "DE" as the register of a byte local mean
+# the low byte, C and E.
+PAIR_OF = {"B": "BC", "C": "BC", "D": "DE", "E": "DE", "BC": "BC", "DE": "DE"}
 _BIT_OF_LETTER = {"B": B, "C": C, "D": D, "E": E}
 MAX_NODES = 2500
 _DUMP = __import__("os").environ.get("UC80_RL_DUMP", "")
@@ -71,9 +77,14 @@ LOOP_BASE = _knob("UC80_RL_LOOPB", 8.0)     # weight of one loop level
 MIN_WEIGHT = _knob("UC80_RL_MINWEIGHT", 1.0)  # the lightest candidate
 PRICE_PRUNE = _knob("UC80_RL_PRICEPRUNE", 1.0)  # 0: price every wrap
 MAX_VARS = int(_knob("UC80_RL_MAXVARS", 2))  # locals in BC and DE
+MAX_BYTE_VARS = int(_knob("UC80_RL_MAXBYTES", 4))  # byte locals in B, C, D, E
+COLD_W = _knob("UC80_RL_COLD", 0.25)        # weight of an early-exit block
 RENAME = _knob("UC80_RL_RENAME", 1.0)       # 0: wrap, never rename
 PRUNE = _knob("UC80_RL_PRUNE", 1.0)         # 0: keep every wrap
 _DBG = bool(__import__("os").environ.get("UC80_RL_DEBUG"))
+# True while a function is allocated with byte_regs on: the rules that
+# docs/byte_regs.md adds (the old text with the switch off).
+_MODE = {"byte": True}
 
 
 def _dbg(*a):
@@ -146,6 +157,8 @@ class Env:
     # family I step 1 (docs/peephole_pairs.md, docs/register_locals.md)
     peep_pairs: bool = True     # the rules of pair_rules, R3 for k > 1
     slot_fold: bool = True      # fold ld HL,slot + (HL) operand; noreturn
+    pair_cmp: bool = True       # docs/pair_compare.md
+    byte_regs: bool = True      # docs/byte_regs.md: B, C, D, E for bytes
     noreturn: Callable[[str], bool] = lambda name: False
 
 
@@ -643,16 +656,22 @@ class Var:
     hint: bool = False                 # declared with 'register'
     is_ptr: bool = False               # a pointer (a candidate for IY)
 
+    def letter(self) -> str:
+        """The register of a one-byte local."""
+        return self.reg if len(self.reg) == 1 else LO_NAME[self.reg]
+
+    def pair(self) -> str:
+        return PAIR_OF[self.reg]
+
     def bytemap(self):
-        lo, hi = LO_NAME[self.reg], HI_NAME[self.reg]
         if self.size == 2:
-            return [lo, hi]
-        return [lo] + [None] * (self.nbytes - 1)
+            return [LO_NAME[self.reg], HI_NAME[self.reg]]
+        return [self.letter()] + [None] * (self.nbytes - 1)
 
     def mask(self) -> int:
         if self.size == 2:
             return PAIR_MASK[self.reg]
-        return _BIT_OF_LETTER[LO_NAME[self.reg]]
+        return _BIT_OF_LETTER[self.letter()]
 
 
 _AUTO_MEM = re.compile(r"^\(\?\?AUTO\+(\d+)\)$", re.IGNORECASE)
@@ -849,20 +868,28 @@ def _is_sp_use(nd: Node) -> bool:
 def _stack_ok(nodes, lo, hi) -> bool:
     """The stack in [lo, hi] never goes below its depth at lo and ends
     at that depth, and nothing reads SP in a way the pass cannot follow.
-    The cleanup ``ld HL,n / add HL,SP / ld SP,HL`` pops n/2 words."""
+    The cleanup ``ld HL,n / add HL,SP / ld SP,HL`` pops n/2 words, and
+    ``inc SP`` pops half of one.  The depth counts bytes."""
     depth = 0
     i = lo
     while i <= hi:
         nd = nodes[i]
         if nd.kind == "ins":
             if nd.op == "push":
-                depth += 1
+                depth += 2
             elif nd.op == "pop":
-                depth -= 1
+                depth -= 2
+                if depth < 0:
+                    return False
+            elif nd.op in ("inc", "dec") and [
+                    o.upper() for o in nd.ops] == ["SP"]:
+                if not _MODE["byte"]:   # the old pass did not follow SP
+                    return False
+                depth += -1 if nd.op == "inc" else 1
                 if depth < 0:
                     return False
             elif nd.op == "ex" and nd.ops and "(SP)" in nd.ops[0].upper():
-                if depth < 1:
+                if depth < 2:
                     return False
             elif (nd.op == "ld" and len(nd.ops) == 2
                   and nd.ops[0].upper() == "HL" and _NUM.match(nd.ops[1])
@@ -874,7 +901,7 @@ def _stack_ok(nodes, lo, hi) -> bool:
                 v = int(nd.ops[1])
                 if v < 0 or v % 2:
                     return False
-                depth -= v // 2
+                depth -= v
                 if depth < 0:
                     return False
                 i += 3
@@ -1098,18 +1125,22 @@ def _rename_node(nd: Node, env: Env) -> Node:
 def sink_pops(nodes, succ, M: int, live, other_free: bool, env: Env):
     """A cleanup ``pop rr`` whose value nobody reads: when it writes a byte
     of the local, it pops into the other pair (when that pair is free and
-    dead there) or the stack pointer moves by two ``inc SP``."""
+    dead there) or the stack pointer moves by two ``inc SP``.  Nobody reads
+    the value when no scratch read sees it: the local itself may be live
+    (the pop would destroy it, and a wrap would have to restore it)."""
     out = list(nodes)
     changed = False
     i = 0
     res: list[Node] = []
+    slive = scratch_liveness(nodes, succ, env.exit_live)
     for i, nd in enumerate(nodes):
         if (nd.kind == "ins" and nd.op == "pop" and nd.ops
                 and nd.ops[0].upper() in ("BC", "DE") and (nd.wr & M)
                 and not (nd.vw & M)):
             pair = nd.ops[0].upper()
             lo = live_out_of(succ, live, i)
-            if not (lo & PAIR_MASK[pair]):
+            if not ((live_out_of(succ, slive, i) if _MODE["byte"] else lo)
+                    & PAIR_MASK[pair]):
                 alt = OTHER_PAIR[pair]
                 if other_free and not (lo & PAIR_MASK[alt]):
                     res.append(make_ins("pop", alt, env=env))
@@ -1122,13 +1153,18 @@ def sink_pops(nodes, succ, M: int, live, other_free: bool, env: Env):
     return res if changed else nodes
 
 
-def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
+def fix_foreign(nodes: list[Node], unit: list[Var], taken: int, env: Env,
                 wrap_id: list[int]) -> list[Node]:
-    """Make the instructions that touch the register of ``var`` safe.
-    ``taken`` is the mask of the bytes that other locals occupy."""
-    M = var.mask()
-    pm = PAIR_MASK[var.reg]
-    other = OTHER_PAIR[var.reg]
+    """Make the instructions that touch the registers of the locals in
+    ``unit`` safe.  All locals of the unit sit in one pair (BC or DE): a
+    word local, or one or two byte locals.  ``taken`` is the mask of the
+    bytes that locals of the other pair occupy."""
+    M = 0
+    for v in unit:
+        M |= v.mask()
+    pair_name = unit[0].pair()
+    pm = PAIR_MASK[pair_name]
+    other = OTHER_PAIR[pair_name]
     om = PAIR_MASK[other]
     other_free = not (taken & om)
     # ---- 1. cleanup pops
@@ -1204,7 +1240,7 @@ def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
             if any(entry_read[i] for i in idxs):
                 continue
             lo, hi = min(idxs), max(idxs)
-            if any(not _renameable(nodes[i], var.reg) for i in idxs):
+            if any(not _renameable(nodes[i], pair_name) for i in idxs):
                 continue
             if any(nodes[i].flow == "call" for i in idxs):
                 continue
@@ -1281,6 +1317,32 @@ def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
             merged[-1][1] = max(merged[-1][1], iv[1])
         else:
             merged.append(list(iv))
+    if _MODE["byte"] and merged and (pm & ~M):
+        # A scratch value in the other byte of the pair that crosses the
+        # end of an interval joins the interval: the pop at the end would
+        # restore the byte and destroy the value.
+        ob = pm & ~M
+        for iv in merged:
+            grew = True
+            while grew:
+                grew = False
+                if not (live_out_of(succ, live, iv[1]) & ob):
+                    break
+                for root, idxs in webs.items():
+                    a, b = min(idxs), max(idxs)
+                    if (a <= iv[1] < b
+                            and any((nodes[i].rd | nodes[i].wr) & ob
+                                    for i in idxs)):
+                        iv[0], iv[1] = min(iv[0], a), max(iv[1], b)
+                        grew = True
+        merged.sort()
+        joined: list[list[int]] = []
+        for iv in merged:
+            if joined and iv[0] <= joined[-1][1] + 1:
+                joined[-1][1] = max(joined[-1][1], iv[1])
+            else:
+                joined.append(list(iv))
+        merged = joined
     inserts: list[tuple[int, int, Node, Node]] = []
     for lo, hi in merged:
         # first clobber
@@ -1304,14 +1366,20 @@ def fix_foreign(nodes: list[Node], var: Var, taken: int, env: Env,
             if i >= c1 and nd.kind == "marker" and (nd.vr & M):
                 raise Reject("read of the local after a clobber")
         if not _region_ok(nodes, succ, lo, hi) or not _stack_ok(nodes, lo, hi):
+            if _DBG:
+                _dbg("wrap region", _region_ok(nodes, succ, lo, hi),
+                     _stack_ok(nodes, lo, hi),
+                     [x.text.strip() or x.label for x in nodes[lo:hi + 1]])
             raise Reject("wrap region")
-        if var.size == 1:
-            ob = PAIR_MASK[var.reg] & ~M
-            if live_out_of(succ, live, hi) & ob:
-                raise Reject("other byte of the pair is live")
+        ob = pm & ~M
+        if ob and live_out_of(succ, live, hi) & ob:
+            if _DBG:
+                _dbg("other byte live after", [x.text.strip() for x in
+                                                 nodes[lo:hi + 3]])
+            raise Reject("other byte of the pair is live")
         wrap_id[0] += 1
         tag = f"; RL{wrap_id[0]}"
-        pair = var.reg
+        pair = pair_name
         push = make_ins("push", pair, vr=M, env=env, tag=tag)
         pop = make_ins("pop", pair, vw=M, env=env, tag=tag)
         inserts.append((lo, hi, push, pop))
@@ -1353,6 +1421,9 @@ def peephole(nodes: list[Node], config: list[Var], env: Env) -> list[Node]:
             nodes, changed = drop_known_copies(nodes)
         succ = build_cfg(nodes)
         live = liveness(nodes, succ, env.exit_live)
+        _PEEP["flive"] = None       # computed when a rule asks for it
+        _PEEP["nodes"] = nodes
+        _PEEP["succ"] = succ
         out: list[Node] = []
         i = 0
         n = len(nodes)
@@ -1374,6 +1445,119 @@ def peephole(nodes: list[Node], config: list[Var], env: Env) -> list[Node]:
     return nodes
 
 
+_REG8 = ("A", "B", "C", "D", "E", "H", "L")
+_PAIR_DST = ("BC", "DE", "HL")
+
+
+def _imm_text(o: str) -> bool:
+    return (not o.startswith("(") and bool(o)
+            and _no_reg_token(o, ("H", "L", "HL", "BC", "DE", "SP", "IX",
+                                  "IY", "A", "B", "C", "D", "E", "AF")))
+
+
+def _pure_reg(nd: Node) -> bool:
+    """An instruction that only changes registers and flags: no memory, no
+    jump.  A write of a register local counts: when no read can see the
+    byte, the write is dead."""
+    if (nd.kind != "ins" or nd.flow != "next" or nd.pro or nd.fold
+            or nd.cpm or nd.xr):
+        return False
+    op = nd.op
+    ops = [o.upper().replace(" ", "") for o in nd.ops]
+    if op == "ld" and len(ops) == 2:
+        d, s_ = ops
+        if d in _REG8:
+            return s_ in _REG8 or _imm_text(nd.ops[1])
+        return d in _PAIR_DST and _imm_text(nd.ops[1])
+    if op in ("rlca", "rrca", "rla", "rra", "cpl", "neg", "scf", "ccf"):
+        return not ops
+    if op in ("and", "or", "xor", "sub", "cp") and len(ops) == 1:
+        return ops[0] in _REG8 or _imm_text(nd.ops[0])
+    if op in ("add", "adc", "sbc") and len(ops) == 2 and ops[0] == "A":
+        return ops[1] in _REG8 or _imm_text(nd.ops[1])
+    if op in ("inc", "dec") and len(ops) == 1:
+        return ops[0] in _REG8
+    return False
+
+
+def _dollar_span(nodes: list[Node]) -> set:
+    """The nodes that a ``jr cc,$+k`` jumps over or lands on: the size of
+    such a node must not change."""
+    keep: set = set()
+    for i, nd in enumerate(nodes):
+        t = nd.target if nd.kind == "ins" else None
+        if not t or not t.startswith("$"):
+            continue
+        try:
+            k = int(t[1:].replace(" ", ""), 0)
+        except ValueError:
+            k = None
+        j = _dollar_target(nodes, i, k) if k is not None and k > 0 else None
+        if j is None:                   # unknown form: keep the neighbours
+            keep.update(range(max(i - 8, 0), min(i + 9, len(nodes))))
+        else:
+            keep.update(range(i + 1, min(j, len(nodes) - 1) + 1))
+    return keep
+
+
+def _dollar_landings(nodes: list[Node]) -> list:
+    """For each ``jr cc,$+k`` the opcode of the node that the jump lands
+    on, or "?" when no node starts k bytes after the jump."""
+    res = []
+    for i, nd in enumerate(nodes):
+        t = nd.target if nd.kind == "ins" else None
+        if not t or not t.startswith("$"):
+            continue
+        try:
+            k = int(t[1:].replace(" ", ""), 0)
+        except ValueError:
+            res.append("?")
+            continue
+        j = _dollar_target(nodes, i, k) if k > 0 else None
+        if j is None:
+            res.append("?")
+        elif j >= len(nodes):
+            res.append("end")
+        else:
+            res.append(nodes[j].op or nodes[j].kind)
+    return res
+
+
+def drop_dead_code(nodes: list[Node], env: Env) -> list[Node]:
+    """Delete the instructions that write registers and flags that nothing
+    reads afterwards (the sign extension of a char that nobody uses, a copy
+    of a value that is dead).  The liveness is the one of the pass:
+    the exit reads the result bytes."""
+    for _ in range(6):
+        succ = build_cfg(nodes)
+        live = liveness(nodes, succ, env.exit_live)
+        flive = flags_liveness(nodes, succ)
+        drop = set()
+        keep = _dollar_span(nodes)
+        for i, nd in enumerate(nodes):
+            if i in keep or not _pure_reg(nd):
+                continue
+            out = live_out_of(succ, live, i)
+            if nd.wr & out:
+                continue
+            if not nd.wr:
+                continue
+            eff = _effect(nd.op, ",".join(nd.ops))
+            fw = 0
+            for b, f in enumerate(_FLAG_LIST):
+                if f in eff.writes:
+                    fw |= 1 << b
+            if fw & live_out_of(succ, flive, i):
+                continue
+            drop.add(i)
+        if not drop:
+            break
+        if _DBG:
+            _dbg("dead code", [nodes[i].text.strip() for i in sorted(drop)])
+        nodes = [nd for i, nd in enumerate(nodes) if i not in drop]
+    return nodes
+
+
 def _window(nodes, i, k):
     """k consecutive plain-or-marker-free instruction nodes from i, or None."""
     if i + k > len(nodes):
@@ -1384,6 +1568,16 @@ def _window(nodes, i, k):
     return w
 
 
+_PEEP: dict = {"flive": None, "nodes": None, "succ": None}
+
+
+def _flags_after(nodes, succ, j) -> int:
+    """The flags that are live after node j (lazily computed)."""
+    if _PEEP["flive"] is None:
+        _PEEP["flive"] = flags_liveness(nodes, succ)
+    return live_out_of(succ, _PEEP["flive"], j)
+
+
 def _try_rules(nodes, succ, live, config, env, i):
     for v in config:
         if v.size != 2:
@@ -1391,6 +1585,20 @@ def _try_rules(nodes, succ, live, config, env, i):
         R = v.reg
         rhi, rlo = HI_NAME[R], LO_NAME[R]
         mask = PAIR_MASK[R]
+        # ---- R0: inc rlo / jr nz,L / inc rhi / L:  ->  inc R  (the 16-bit
+        # increment of a local that sits in a pair; no flag is read after)
+        if _MODE["byte"] and i + 3 < len(nodes):
+            a, b, c, d = nodes[i:i + 4]
+            if (_plain(a) and a.op == "inc" and [o.upper() for o in a.ops] == [rlo]
+                    and b.kind == "ins" and b.op == "jr" and b.flow == "branch"
+                    and [o.upper() for o in b.ops][0] == "NZ"
+                    and _plain(c) and c.op == "inc"
+                    and [o.upper() for o in c.ops] == [rhi]
+                    and d.kind == "label" and (b.target or "") == d.label
+                    and not any(x.kind == "ins" and (x.target or "") == d.label
+                                for k, x in enumerate(nodes) if k != i + 1)
+                    and not _flags_after(nodes, succ, i + 3)):
+                return 4, [make_ins("inc", R, vr=mask, vw=mask, env=env)]
         # ---- R3: inc / dec of the local through HL (k of them with
         # peep_pairs: ld H,B / ld L,C / inc HL x k / ld B,H / ld C,L)
         w = _window(nodes, i, 5)
@@ -1524,15 +1732,18 @@ def drop_known_copies(nodes: list[Node]):
     return out, changed
 
 
-def _flags_dead(nodes, j: int) -> bool:
+def _flags_dead(nodes, j: int, calls_kill: bool = False) -> bool:
     """True when no instruction after node j reads a flag before every flag
     is written again.  A branch, a call, a return or a label stops the
-    scan with False."""
+    scan with False.  With ``calls_kill`` a call ends the scan with True:
+    the code of this compiler never reads a flag after a call."""
     pending = set(_FLAGS)
     for k in range(j + 1, min(len(nodes), j + 16)):
         nd = nodes[k]
         if nd.kind == "marker":
             continue
+        if calls_kill and nd.kind == "ins" and nd.flow == "call":
+            return True
         if nd.kind != "ins" or nd.flow != "next":
             return False
         eff = _effect(nd.op, ",".join(nd.ops))
@@ -1547,11 +1758,161 @@ def _flags_dead(nodes, j: int) -> bool:
 _FLAGS = frozenset(("fc", "fz", "fs", "fp", "fh", "fn"))
 
 
+def _try_pair_add(nodes, i, env):
+    """Rule (e) of _try_pair_rules: ``push R / ld R,K / add HL,R / pop R``
+    where HL holds a copy of R from an earlier ``ld H,Rh / ld L,Rl`` with
+    nothing that writes HL or R in between.  K has no register."""
+    R = nodes[i].ops[0].upper()
+    if R not in PAIR_MASK or i + 3 >= len(nodes):
+        return None
+    n0, n1, n2, n3 = nodes[i:i + 4]
+    if not all(_plain(x) and not x.pro for x in (n0, n1, n2, n3)):
+        return None
+    if not (n1.op == "ld" and len(n1.ops) == 2 and n1.ops[0].upper() == R
+            and n2.op == "add" and [o.upper() for o in n2.ops] == ["HL", R]
+            and n3.op == "pop" and [o.upper() for o in n3.ops] == [R]):
+        return None
+    k = n1.ops[1]
+    if not _no_reg_token(k, ("H", "L", "HL", "BC", "DE", "SP", "IX", "IY",
+                             "A", "B", "C", "D", "E", "AF")) or k.startswith("("):
+        return None
+    pm = PAIR_MASK[R] | H | L
+    j = i - 1
+    steps = 0
+    while j >= 1 and steps < 14:
+        nj = nodes[j]
+        if nj.kind == "marker":
+            j -= 1
+            continue
+        if nj.kind != "ins" or nj.pro or nj.fold:
+            return None
+        steps += 1
+        if _pair_copy(nodes, j - 1) == ("HL", R) and not (
+                nodes[j - 1].kind != "ins" or nodes[j].kind != "ins"):
+            break
+        if nj.flow not in ("next", "branch") or nj.wr & pm:
+            return None
+        if _is_swap(nj) or nj.op in ("push", "pop") or _is_sp_use(nj):
+            return None
+        j -= 1
+    else:
+        return None
+    return 4, [make_ins("ld", "HL", k, env=env),
+               make_ins("add", "HL", R, vr=n2.vr | PAIR_MASK[R], env=env)]
+
+
+_ALU1 = ("sub", "cp", "and", "or", "xor")
+_ALU2 = ("add", "adc", "sbc")
+
+
+def _sub_hl_byte(nd, hi, lo, vmask, env):
+    """``nd`` with its 8-bit reads of H and L replaced by ``hi`` and
+    ``lo``.  None when it reads H or L in any other way; ``nd`` itself
+    when it does not read them."""
+    if not nd.rd & (H | L):
+        return nd
+    ops = [o.upper() for o in nd.ops]
+
+    def sub(o):
+        return hi if o == "H" else lo if o == "L" else None
+
+    new = None
+    if nd.op == "ld" and len(ops) == 2 and ops[0] == "A" and ops[1] in ("H", "L"):
+        new = ["A", sub(ops[1])]
+    elif nd.op in _ALU1 and len(ops) == 1 and ops[0] in ("H", "L"):
+        new = [sub(ops[0])]
+    elif nd.op in _ALU2 and len(ops) == 2 and ops[0] == "A" and ops[1] in ("H", "L"):
+        new = ["A", sub(ops[1])]
+    if new is None:
+        return None
+    src = new[-1]
+    return make_ins(nd.op, *new, vr=vmask & BYTE_BIT[src.lower()], env=env)
+
+
+def _try_pair_direct(nodes, succ, live, i, R, env):
+    """Rule (f) of _try_pair_rules."""
+    hi, lo = _PAIRS3[R]
+    vmask = nodes[i].vr | nodes[i + 1].vr
+    out: list = []
+    j = i + 2
+    while j < len(nodes) and j < i + 12:
+        nj = nodes[j]
+        if not _plain(nj) or nj.pro:
+            return None
+        if nj.wr & (H | L | PAIR_MASK[R]):
+            return None
+        sj = _sub_hl_byte(nj, hi, lo, vmask, env)
+        if sj is None:
+            return None
+        out.append(sj)
+        if not (live_out_of(succ, live, j) & (H | L)):
+            return j - i + 1, out
+        j += 1
+    return None
+
+
+def _hl_equals(nodes, i, R):
+    """HL holds a copy of the pair R at node i: an ``ld H,Rh / ld L,Rl``
+    before it with no write of HL or R between and no label."""
+    pm = PAIR_MASK[R] | H | L
+    j = i - 1
+    steps = 0
+    while j >= 1 and steps < 14:
+        nj = nodes[j]
+        if nj.kind == "marker":
+            j -= 1
+            continue
+        if nj.kind != "ins" or nj.pro or nj.fold:
+            return False
+        steps += 1
+        if (_pair_copy(nodes, j - 1) == ("HL", R)
+                and nodes[j - 1].kind == "ins"):
+            return True
+        if nj.flow not in ("next", "branch") or nj.wr & pm:
+            return False
+        if _is_swap(nj) or nj.op in ("push", "pop") or _is_sp_use(nj):
+            return False
+        j -= 1
+    return False
+
+
+def _try_pair_add2(nodes, succ, live, i, env):
+    """Rule (e2) of _try_pair_rules: ``ld rr,K / add HL,rr`` where HL holds
+    a copy of the other pair R and rr is dead afterwards: ``ld HL,K / add
+    HL,R``.  K has no register."""
+    n0, n1 = nodes[i], nodes[i + 1]
+    rr = n0.ops[0].upper()
+    if not (_plain(n0) and _plain(n1) and not n0.pro and not n1.pro
+            and n1.op == "add" and [o.upper() for o in n1.ops] == ["HL", rr]):
+        return None
+    k = n0.ops[1]
+    if not _no_reg_token(k, ("H", "L", "HL", "BC", "DE", "SP", "IX", "IY",
+                             "A", "B", "C", "D", "E", "AF")) or k.startswith("("):
+        return None
+    R = "DE" if rr == "BC" else "BC"
+    if live_out_of(succ, live, i + 1) & PAIR_MASK[rr]:
+        return None
+    if not _hl_equals(nodes, i, R):
+        return None
+    return 2, [make_ins("ld", "HL", k, env=env),
+               make_ins("add", "HL", R, vr=PAIR_MASK[R], env=env)]
+
+
 def _try_pair_rules(nodes, succ, live, env, i):
     """Rules that need no register local (docs/peephole_pairs.md)."""
     nd0 = nodes[i]
     if nd0.kind != "ins" or nd0.pro:
         return None
+    # ---- (g) ld HL,K / ld Rh,H / ld Rl,L  ->  ld R,K   (HL dead afterwards)
+    if (_MODE["byte"] and nd0.op == "ld" and len(nd0.ops) == 2
+            and nd0.ops[0].upper() == "HL" and i + 2 < len(nodes)
+            and _plain(nd0) and _imm_ok(nd0.ops[1])):
+        pc2 = _pair_copy(nodes, i + 1)
+        if (pc2 and pc2[0] in ("BC", "DE") and pc2[1] == "HL"
+                and _plain(nodes[i + 1]) and _plain(nodes[i + 2])
+                and not (live_out_of(succ, live, i + 2) & (H | L))):
+            vw = nodes[i + 1].vw | nodes[i + 2].vw
+            return 3, [make_ins("ld", pc2[0], nd0.ops[1], vw=vw, env=env)]
     # ---- (a) ld H,B / ld L,C / ld A,(HL)  ->  ld A,(BC)   (HL dead)
     #          ld H,B / ld L,C / ld (HL),A  ->  ld (BC),A   (HL dead)
     pc = _pair_copy(nodes, i)
@@ -1567,6 +1928,24 @@ def _try_pair_rules(nodes, succ, live, env, i):
             if d == "(HL)" and s_ == "A":
                 mk = nodes[i].vr | nodes[i + 1].vr
                 return 3, [make_ins("ld", f"({src})", "A", vr=mk, env=env)]
+    # ---- (e) ld H,R / ld L,R / ... / push R / ld R,K / add HL,R / pop R
+    #          ->  ld HL,K / add HL,R      (HL = R still; docs/pair_compare.md)
+    if env.pair_cmp and nd0.op == "push" and len(nd0.ops) == 1:
+        r_ = _try_pair_add(nodes, i, env)
+        if r_ is not None:
+            return r_
+    # ---- (e2) ld rr,K / add HL,rr  ->  ld HL,K / add HL,R   (rr dead, HL = R)
+    if (env.pair_cmp and nd0.op == "ld" and len(nd0.ops) == 2
+            and nd0.ops[0].upper() in ("BC", "DE") and i + 1 < len(nodes)):
+        r_ = _try_pair_add2(nodes, succ, live, i, env)
+        if r_ is not None:
+            return r_
+    # ---- (f) ld H,R / ld L,R / <ops that read H and L as bytes> with HL
+    #          dead afterwards: read R directly (docs/pair_compare.md)
+    if env.pair_cmp and pc and pc[0] == "HL" and pc[1] in ("BC", "DE"):
+        r_ = _try_pair_direct(nodes, succ, live, i, pc[1], env)
+        if r_ is not None:
+            return r_
     # ---- (c) ld A,r / g.. / ld (HL),A -> g.. / ld (HL),r   (A dead)
     r = _ld_rr(nd0)
     if r and r[0] == "A" and r[1] != "A" and _plain(nd0):
@@ -1612,6 +1991,290 @@ def _try_pair_rules(nodes, succ, live, env, i):
                     new.append(make_ins("rl", hi, vr=vm & (B | D), vw=vw & (B | D), env=env))
                 return 4 + k, new
     return None
+
+
+# ---------------------------------------------------------------------------
+# Scratch-free forms (docs/byte_regs.md)
+# ---------------------------------------------------------------------------
+
+_SF_X = re.compile(r"^(?:[BCDEA]|\(IX[+-]\d+\))$", re.IGNORECASE)
+
+
+def _imm_ok(text: str) -> bool:
+    """An address expression without a register or a memory operand."""
+    return (not text.startswith("(")
+            and _no_reg_token(text, ("H", "L", "HL", "BC", "DE", "SP", "IX",
+                                     "IY", "A", "B", "C", "D", "E", "AF")))
+
+
+def scratch_liveness(nodes, succ, exit_live: int):
+    """Like ``liveness``, for the scratch values only: a read as a register
+    local does not make a byte live, and every write ends the value."""
+    n = len(nodes)
+    live_in = [0] * (n + 1)
+    live_in[n] = exit_live
+    gen = [(nd.rd & ~nd.vr) | nd.xr for nd in nodes]
+    kill = [nd.wr | nd.cpm for nd in nodes]
+    changed = True
+    while changed:
+        changed = False
+        for i in range(n - 1, -1, -1):
+            out = 0
+            for s_ in succ[i]:
+                out |= live_in[s_]
+            new = (out & ~kill[i]) | gen[i]
+            if new != live_in[i]:
+                live_in[i] = new
+                changed = True
+    return live_in
+
+
+def flags_liveness(nodes, succ) -> list[int]:
+    """Bit masks (one bit per flag, in the order of _FLAG_LIST) of the flags
+    that are live at the entry of each node.  A call ends every flag: the
+    code of this compiler reads no flag after a call."""
+    n = len(nodes)
+    gen = [0] * n
+    kill = [0] * n
+    full = (1 << len(_FLAG_LIST)) - 1
+    for i, nd in enumerate(nodes):
+        if nd.kind != "ins":
+            continue
+        if nd.flow == "call":
+            kill[i] = full
+            continue
+        eff = _effect(nd.op, ",".join(nd.ops))
+        for b, f in enumerate(_FLAG_LIST):
+            if f in eff.reads:
+                gen[i] |= 1 << b
+            if f in eff.writes:
+                kill[i] |= 1 << b
+    live_in = [0] * (n + 1)
+    changed = True
+    while changed:
+        changed = False
+        for i in range(n - 1, -1, -1):
+            out = 0
+            for s_ in succ[i]:
+                out |= live_in[s_]
+            new = (out & ~kill[i]) | gen[i]
+            if new != live_in[i]:
+                live_in[i] = new
+                changed = True
+    return live_in
+
+
+_FLAG_LIST = ("fc", "fz", "fs", "fp", "fh", "fn")
+
+
+def _sf_rule(nodes, succ, live, slive, flive, resident, env, i, phase):
+    """``ld L,x / ld H,0 / ld rr,SYM / add HL,rr`` becomes the same address
+    in HL through A only (no use of BC or DE), and ``ld rr,SYM / add HL,rr``
+    likewise.  rr is a pair that holds a resident local; A is dead after."""
+    n0 = nodes[i]
+    if not _plain(n0) or n0.pro or n0.fold:
+        return None
+
+    def pair_op(a, b):
+        """rr when a is ``ld rr,SYM`` and b is ``add HL,rr``."""
+        if not (_plain(a) and _plain(b) and not a.pro and not b.pro
+                and a.op == "ld" and len(a.ops) == 2
+                and a.ops[0].upper() in ("BC", "DE")
+                and b.op == "add"
+                and [o.upper() for o in b.ops] == ["HL", a.ops[0].upper()]):
+            return None
+        rr = a.ops[0].upper()
+        if not (PAIR_MASK[rr] & resident) or not _imm_ok(a.ops[1]):
+            return None
+        return rr
+
+    # S1
+    if phase == 1 and i + 3 < len(nodes) and n0.op == "ld" \
+            and len(n0.ops) == 2 \
+            and n0.ops[0].upper() == "L" and _SF_X.match(n0.ops[1]):
+        n1 = nodes[i + 1]
+        if (_plain(n1) and not n1.pro and n1.op == "ld"
+                and [o.upper() for o in n1.ops] == ["H", "0"]):
+            rr = pair_op(nodes[i + 2], nodes[i + 3])
+            if rr is not None:
+                x = n0.ops[1]
+                sym = nodes[i + 2].ops[1]
+                last = i + 3
+                if _DBG:
+                    _dbg("sf S1", nodes[i].text.strip(), sym,
+                         "A", bool(live_out_of(succ, live, last) & A),
+                         "rr", bool(live_out_of(succ, slive, last)
+                                    & PAIR_MASK[rr]),
+                         "flags", live_out_of(succ, flive, last))
+                if (not (live_out_of(succ, live, last) & A)
+                        and not (live_out_of(succ, slive, last)
+                                 & PAIR_MASK[rr])
+                        and not live_out_of(succ, flive, last)):
+                    new = []
+                    if x.upper() != "A":
+                        new.append(make_ins("ld", "A", x, vr=n0.vr, env=env))
+                    new += [make_ins("add", "A", f"LOW ({sym})", env=env),
+                            make_ins("ld", "L", "A", env=env),
+                            make_ins("ld", "A", f"HIGH ({sym})", env=env),
+                            make_ins("adc", "A", "0", env=env),
+                            make_ins("ld", "H", "A", env=env)]
+                    return 4, new
+    # S3: the signed compare of HL with a constant.  The flipped high
+    # byte waits in a scratch register r; H is free after the compare, so
+    # it takes the place of r.
+    if (phase == 2 and i + 6 < len(nodes) and n0.op == "ld"
+            and [o.upper() for o in n0.ops] == ["A", "H"]):
+        w = nodes[i + 1:i + 7]
+        if all(_plain(x) and not x.pro and not x.fold for x in w):
+            n1, n2, n3, n4, n5, n6 = w
+            r = n2.ops[0].upper() if n2.op == "ld" and len(n2.ops) == 2 else ""
+            if (n1.op == "xor" and [o.upper() for o in n1.ops] == ["128"]
+                    and r in ("B", "C", "D", "E")
+                    and n2.ops[1].upper() == "A"
+                    and BYTE_BIT[r.lower()] & resident
+                    and n3.op == "ld" and [o.upper() for o in n3.ops] == ["A", "L"]
+                    and n4.op == "sub" and len(n4.ops) == 1
+                    and _imm_ok(n4.ops[0])
+                    and n5.op == "ld" and [o.upper() for o in n5.ops] == ["A", r]
+                    and n6.op == "sbc" and len(n6.ops) == 2
+                    and n6.ops[0].upper() == "A" and _imm_ok(n6.ops[1])):
+                last = i + 6
+                if not (live_out_of(succ, slive, last) & BYTE_BIT[r.lower()]):
+                    body = [n0, n1, make_ins("ld", "H", "A", env=env), n3, n4,
+                            make_ins("ld", "A", "H", env=env), n6]
+                    if not (live_out_of(succ, live, last) & H):
+                        return 7, body
+                    # H holds a copy of a register: put the copy back
+                    for k in (1, 2):
+                        c = nodes[i - k] if i - k >= 0 else None
+                        if (c is not None and _plain(c) and not c.pro
+                                and c.op == "ld" and len(c.ops) == 2
+                                and c.ops[0].upper() == "H"
+                                and c.ops[1].upper() in ("B", "C", "D", "E")
+                                and c.ops[1].upper() != r
+                                and (k == 1 or (_plain(nodes[i - 1])
+                                                and nodes[i - 1].wr == L))):
+                            return 7, body + [make_ins(
+                                "ld", "H", c.ops[1].upper(), vr=c.vr, env=env)]
+    # S3a: the same, behind the copy ``ld H,X / ld L,Y`` when HL is dead
+    # after the compare: the compare reads X and Y directly.
+    if (phase == 2 and i + 8 < len(nodes) and n0.op == "ld"
+            and len(n0.ops) == 2 and n0.ops[0].upper() == "H"
+            and n0.ops[1].upper() in ("B", "C", "D", "E")):
+        n1 = nodes[i + 1]
+        w = nodes[i + 2:i + 9]
+        if (_plain(n1) and not n1.pro and n1.op == "ld"
+                and len(n1.ops) == 2 and n1.ops[0].upper() == "L"
+                and n1.ops[1].upper() in ("B", "C", "D", "E")
+                and all(_plain(x) and not x.pro and not x.fold for x in w)):
+            m0, m1, m2, m3, m4, m5, m6 = w
+            r = m2.ops[0].upper() if m2.op == "ld" and len(m2.ops) == 2 else ""
+            if (m0.op == "ld" and [o.upper() for o in m0.ops] == ["A", "H"]
+                    and m1.op == "xor" and [o.upper() for o in m1.ops] == ["128"]
+                    and r in ("B", "C", "D", "E")
+                    and m2.ops[1].upper() == "A"
+                    and BYTE_BIT[r.lower()] & resident
+                    and m3.op == "ld" and [o.upper() for o in m3.ops] == ["A", "L"]
+                    and m4.op == "sub" and len(m4.ops) == 1
+                    and _imm_ok(m4.ops[0])
+                    and m5.op == "ld" and [o.upper() for o in m5.ops] == ["A", r]
+                    and m6.op == "sbc" and len(m6.ops) == 2
+                    and m6.ops[0].upper() == "A" and _imm_ok(m6.ops[1])):
+                last = i + 8
+                if (not (live_out_of(succ, live, last) & (H | L))
+                        and not (live_out_of(succ, slive, last)
+                                 & BYTE_BIT[r.lower()])):
+                    return 9, [
+                        make_ins("ld", "A", n0.ops[1].upper(), vr=n0.vr,
+                                 env=env),
+                        m1, make_ins("ld", "H", "A", env=env),
+                        make_ins("ld", "A", n1.ops[1].upper(), vr=n1.vr,
+                                 env=env),
+                        m4, make_ins("ld", "A", "H", env=env), m6]
+    # S4: ld rr,(mem) / add HL,rr with a memory word that the sum reads
+    if (phase == 1 and i + 1 < len(nodes) and n0.op == "ld"
+            and len(n0.ops) == 2
+            and n0.ops[0].upper() in ("BC", "DE")):
+        n1 = nodes[i + 1]
+        rr = n0.ops[0].upper()
+        m = re.match(r"^\((\?\?AUTO\+\d+|[A-Za-z_@$.?][A-Za-z0-9_@$.?]*"
+                     r"(?:\+\d+)?)\)$", n0.ops[1])
+        if (m and _plain(n1) and not n1.pro and n1.op == "add"
+                and [o.upper() for o in n1.ops] == ["HL", rr]
+                and PAIR_MASK[rr] & resident):
+            last = i + 1
+            if (not (live_out_of(succ, live, last) & A)
+                    and not (live_out_of(succ, slive, last) & PAIR_MASK[rr])
+                    and not live_out_of(succ, flive, last)):
+                base = m.group(1)
+                return 2, [make_ins("ld", "A", f"({base})", env=env),
+                           make_ins("add", "A", "L", env=env),
+                           make_ins("ld", "L", "A", env=env),
+                           make_ins("ld", "A", f"({base}+1)", env=env),
+                           make_ins("adc", "A", "H", env=env),
+                           make_ins("ld", "H", "A", env=env)]
+    # S5: ld R,K / add HL,R where R is a resident pair and HL holds a copy
+    # of R: the sum is HL = K + R, and R need not change.
+    if (phase == 1 and i + 1 < len(nodes) and n0.op == "ld"
+            and len(n0.ops) == 2 and n0.ops[0].upper() in ("BC", "DE")
+            and (PAIR_MASK[n0.ops[0].upper()] & resident)
+            == PAIR_MASK[n0.ops[0].upper()]):
+        R = n0.ops[0].upper()
+        n1 = nodes[i + 1]
+        if (_plain(n1) and not n1.pro and n1.op == "add"
+                and [o.upper() for o in n1.ops] == ["HL", R]
+                and _imm_ok(n0.ops[1]) and _hl_equals(nodes, i, R)
+                and not (live_out_of(succ, slive, i + 1) & PAIR_MASK[R])):
+            return 2, [make_ins("ld", "HL", n0.ops[1], env=env),
+                       make_ins("add", "HL", R, vr=PAIR_MASK[R], env=env)]
+    # S2
+    if phase == 1 and i + 1 < len(nodes) and n0.op == "ld":
+        rr = pair_op(n0, nodes[i + 1])
+        if rr is not None:
+            sym = n0.ops[1]
+            last = i + 1
+            if (not (live_out_of(succ, live, last) & A)
+                    and not (live_out_of(succ, slive, last) & PAIR_MASK[rr])
+                    and not live_out_of(succ, flive, last)):
+                return 2, [make_ins("ld", "A", "L", env=env),
+                           make_ins("add", "A", f"LOW ({sym})", env=env),
+                           make_ins("ld", "L", "A", env=env),
+                           make_ins("ld", "A", "H", env=env),
+                           make_ins("adc", "A", f"HIGH ({sym})", env=env),
+                           make_ins("ld", "H", "A", env=env)]
+    return None
+
+
+def scratch_free(nodes: list[Node], config: list[Var], env: Env):
+    """Rewrite the address sums that use BC or DE as a scratch pair where
+    a resident local sits, so that they need no wrap.  Phase 1 changes the
+    sums; phase 2 changes the signed compares, which need to know which
+    copies of a local the sums left dead.  Returns (nodes, changed)."""
+    resident = 0
+    for v in config:
+        resident |= v.mask()
+    changed_any = False
+    for phase in (1, 2):
+        succ = build_cfg(nodes)
+        live = liveness(nodes, succ, env.exit_live)
+        slive = scratch_liveness(nodes, succ, env.exit_live)
+        flive = flags_liveness(nodes, succ)
+        out: list[Node] = []
+        i = 0
+        n = len(nodes)
+        while i < n:
+            r = _sf_rule(nodes, succ, live, slive, flive, resident, env, i,
+                         phase)
+            if r is None:
+                out.append(nodes[i])
+                i += 1
+            else:
+                used, new = r
+                out.extend(new)
+                i += used
+                changed_any = True
+        nodes = out
+    return nodes, changed_any
 
 
 # ---------------------------------------------------------------------------
@@ -1780,6 +2443,24 @@ def loop_weights(nodes, succ) -> list[float]:
     for i in range(n):
         d += diff[i]
         out.append(LOOP_BASE ** min(d, 3))
+    if COLD_W != 1.0 and _MODE["byte"]:
+        # A forward branch around code that ends in a return jumps over an
+        # early exit (``if (row == n) { ...; return; }``).  The static
+        # guess: the exit is the rare path, so its loops do not count
+        # as hot as the loops of the main path.
+        for i, nd in enumerate(nodes):
+            if nd.kind != "ins" or nd.flow != "branch" or not succ[i]:
+                continue
+            t = succ[i][0]
+            if not (i + 1 < t < n):
+                continue
+            j = t - 1
+            while j > i and nodes[j].kind != "ins":
+                j -= 1
+            if (j > i and nodes[j].flow in ("jump", "return")
+                    and not nodes[j].cond and succ[j] == [n]):
+                for k in range(i + 1, t):
+                    out[k] *= COLD_W
     return out
 
 
@@ -1802,6 +2483,7 @@ def cost(nodes, succ=None, est=None) -> tuple[float, int]:
 
 
 def _weighted_cost(nodes, env: Env) -> float:
+    _MODE["byte"] = env.byte_regs
     """Cost with the wraps priced at what they cost after ``prune`` (a wrap
     around calls that write nothing of the pair is free)."""
     succ = build_cfg(nodes)
@@ -1903,11 +2585,18 @@ def _entry_moves(assigned: list[Var], env: Env):
 
 
 def try_config(base_nodes: list[Node], config: list[Var], env: Env,
-               frame: bool, wrap_id: list[int]):
+               frame: bool, wrap_id: list[int], sf: bool = False):
     """Build the text for one assignment of locals to registers.  Returns
-    (nodes, prologue nodes) or raises Reject."""
+    (nodes, prologue nodes) or raises Reject.  With ``sf`` the address
+    sums that use BC or DE as a scratch pair take the scratch-free form."""
+    _MODE["byte"] = env.byte_regs
     nodes = [copy_node(nd) for nd in base_nodes]
     nodes = rewrite_accesses(nodes, config, env)
+    landings = _dollar_landings(nodes) if env.byte_regs else None
+    if sf:
+        nodes, changed = scratch_free(nodes, config, env)
+        if not changed:
+            raise Reject("scratch-free form: nothing to change")
     pro: list[Node] = []
     if frame:
         pro = _entry_moves(config, env)
@@ -1915,19 +2604,33 @@ def try_config(base_nodes: list[Node], config: list[Var], env: Env,
     resident = 0
     for v in config:
         resident |= v.mask()
-    for v in config:
+    if env.byte_regs:
+        order = ["BC", "DE"]
+    else:                               # the order of the old pass
+        order = []
+        for v in config:
+            if v.pair() not in order:
+                order.append(v.pair())
+    for pair_name in order:
+        unit = [v for v in config if v.pair() == pair_name]
+        if not unit:
+            continue
         taken = 0
         for u in config:
-            if u is not v:
-                taken |= PAIR_MASK[u.reg]
-        nodes = fix_foreign(nodes, v, taken, env, wrap_id)
+            if u.pair() != pair_name:
+                taken |= u.mask()
+        nodes = fix_foreign(nodes, unit, taken, env, wrap_id)
     # the check runs before the peephole too: the peephole removes copies
     # of an entry value that the check must see
     if not check(nodes, resident, env.exit_live):
         raise Reject("check before the peephole")
     nodes = peephole(nodes, config, env)
+    if env.byte_regs:
+        nodes = drop_dead_code(nodes, env)
     if not check(nodes, resident, env.exit_live):
         raise Reject("check")
+    if landings is not None and _dollar_landings(nodes) != landings:
+        raise Reject("a jump of the form $+k lands on another instruction")
     return nodes, pro
 
 
@@ -1962,6 +2665,7 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
              wrap_id: list[int], max_vars: int = MAX_VARS) -> Optional[Result]:
     """Choose registers for the locals in ``vars_`` and return the new text
     of the function body, or None when nothing pays."""
+    _MODE["byte"] = env.byte_regs
     if _effect is None or not vars_:
         return None
     try:
@@ -1983,59 +2687,184 @@ def allocate(lines: list[str], vars_: list[Var], env: Env, frame: bool,
     tighten_swaps(nodes, succ, env.exit_live)
     for v in vars_:
         v.weight = _slot_weight(nodes, succ, v)
-    cands = sorted([v for v in vars_ if v.weight >= MIN_WEIGHT],
-                   key=lambda v: -v.weight * (2.0 if v.hint else 1.0))[:4]
+    ranked = sorted([v for v in vars_ if v.weight >= MIN_WEIGHT],
+                    key=lambda v: -v.weight * (2.0 if v.hint else 1.0))
+    cands = ranked[:4]
     _dbg("candidates", [(v.name, v.weight) for v in vars_])
     if not cands:
         return None
     base = _weighted_cost(nodes, env)
     best = (0.0, None, None)
     singles = []
-    for v in cands:
-        for reg in ("BC", "DE"):
-            v.reg = reg
-            try:
-                new, pro = try_config(nodes, [v], env, frame, wrap_id)
-            except (Reject, Bail) as ex:
-                _dbg("reject", v.name, reg, ex)
-                continue
-            finally:
-                v.reg = None
-            gain = base - _weighted_cost(new, env) - 0.0
-            if v.hint and gain > 0:
-                gain *= 1.25     # 'register' is a priority hint
-            _dbg("single", v.name, reg, "gain", gain)
-            if _DUMP == v.name + ":" + reg:
-                import sys
-                print("\n".join(render(new)), file=sys.stderr)
-            singles.append((gain, v, reg, new, pro))
-            if gain > best[0] + MIN_GAIN:
-                best = (gain, [(v, reg)], (new, pro))
+    byte_regs = env.byte_regs and MAX_BYTE_VARS > 2
+
+    def options(v):
+        if v.size == 2:
+            return ("BC", "DE")
+        return ("C", "E", "B", "D") if byte_regs else ("BC", "DE")
+
+    twin = {"B": "D", "D": "B"}     # B and D cost what C and E cost alone
+    def build_singles(batch):
+        nonlocal best
+        for v in batch:
+            for reg in options(v):
+                if byte_regs and v.size == 1 and reg in twin:
+                    continue
+                v.reg = reg
+                try:
+                    new, pro = try_config(nodes, [v], env, frame, wrap_id)
+                except (Reject, Bail) as ex:
+                    _dbg("reject", v.name, reg, ex)
+                    continue
+                finally:
+                    v.reg = None
+                gain = base - _weighted_cost(new, env) - 0.0
+                if v.hint and gain > 0:
+                    gain *= 1.25     # 'register' is a priority hint
+                _dbg("single", v.name, reg, "gain", gain)
+                if _DUMP == v.name + ":" + reg:
+                    import sys
+                    print("\n".join(render(new)), file=sys.stderr)
+                singles.append((gain, v, reg, new, pro))
+                if gain > best[0] + MIN_GAIN:
+                    best = (gain, [(v, reg)], (new, pro))
+                if byte_regs and v.size == 1 and reg in ("C", "E"):
+                    # the same value for the high byte of the pair, not built
+                    singles.append((gain, v, "B" if reg == "C" else "D",
+                                    None, None))
+
+    build_singles(cands)
+    if byte_regs and not singles and len(ranked) > 4:
+        # the four heaviest locals cannot take a register (a scratch value
+        # lives across a label, say): try the next four
+        more = ranked[4:8]
+        _dbg("next candidates", [v.name for v in more])
+        build_singles(more)
+        cands = cands + more
     singles.sort(key=lambda t: -t[0])
-    if max_vars >= 2 and len(cands) >= 2:
+
+    def fits(assign, v, reg):
+        """The register of v is free in the assignment."""
+        v.reg = reg
+        m = v.mask()
+        v.reg = None
+        for u, r in assign:
+            u.reg = r
+            um = u.mask()
+            u.reg = None
+            if um & m:
+                return False
+        return True
+
+    def evaluate(assign):
+        for v, r in assign:
+            v.reg = r
+        try:
+            pairs = {v.pair() for v, _ in assign}
+            res = None
+            # the scratch-free form pays when both pairs hold a local: the
+            # scratch sums can then neither be renamed nor leave BC free
+            for sf in ((False, True) if len(pairs) == 2 and byte_regs
+                       else (False,)):
+                try:
+                    new, pro = try_config(nodes, [v for v, _ in assign], env,
+                                          frame, wrap_id, sf)
+                except (Reject, Bail) as ex:
+                    _dbg("reject", "+".join(v.name for v, _ in assign), ex)
+                    continue
+                g = base - _weighted_cost(new, env)
+                if res is None or g > res[0]:
+                    res = (g, new, pro, sf)
+        finally:
+            for v, _ in assign:
+                v.reg = None
+        if res is None:
+            return None
+        gain, new, pro, sf = res
+        if _DUMP and _DUMP == ",".join(f"{v.name}:{r}" for v, r in assign):
+            import sys
+            print("\n".join(render(new)), file=sys.stderr)
+        if gain > 0:
+            gain *= 1.0 + 0.25 * sum(v.hint for v, _ in assign) / len(assign)
+        _dbg("config", " ".join(f"{v.name}:{r}" for v, r in assign),
+             "sf" if sf else "", "gain", gain)
+        return gain, new, pro
+
+    limit = MAX_BYTE_VARS if byte_regs else max_vars
+    if limit >= 2 and len(cands) >= 2:
         tried = set()
-        top = [t for t in singles if t[0] > 0][:6]
+        level = []                  # (gain, assign) of the last size
+        if byte_regs:
+            # the best register of each local in each pair: a local that
+            # is poor alone (a scratch pair in the way) can be good beside
+            # a local in the other pair
+            top = []
+            seen_vp: dict = {}
+            for t in singles:
+                if t[0] <= 0:
+                    continue
+                key = (id(t[1]), PAIR_OF[t[2]])
+                # both bytes of a pair for a byte local, so that two byte
+                # locals can share a pair
+                if seen_vp.get(key, 0) >= (2 if t[1].size == 1 else 1):
+                    continue
+                seen_vp[key] = seen_vp.get(key, 0) + 1
+                top.append(t)
+            top = top[:10]
+        else:
+            top = [t for t in singles if t[0] > 0][:6]
         for a in range(len(top)):
             for b in range(len(top)):
                 _, v1, r1 = top[a][:3]
                 _, v2, r2 = top[b][:3]
-                if v1 is v2 or r1 == r2 or (id(v1), id(v2)) in tried:
+                if v1 is v2:
                     continue
-                tried.add((id(v1), id(v2)))
-                v1.reg, v2.reg = r1, r2
-                try:
-                    new, pro = try_config(nodes, [v1, v2], env, frame, wrap_id)
-                except (Reject, Bail) as ex:
-                    _dbg("reject", v1.name, v2.name, ex)
+                if byte_regs:
+                    key = frozenset(((id(v1), r1), (id(v2), r2)))
+                    if key in tried or not fits([(v1, r1)], v2, r2):
+                        continue
+                else:               # the order of the old search
+                    key = (id(v1), id(v2))
+                    if r1 == r2 or key in tried:
+                        continue
+                tried.add(key)
+                ev = evaluate([(v1, r1), (v2, r2)])
+                if ev is None:
                     continue
-                finally:
-                    v1.reg = v2.reg = None
-                gain = base - _weighted_cost(new, env)
-                if gain > 0:
-                    gain *= 1.0 + 0.25 * (v1.hint + v2.hint) / 2
-                _dbg("pair", v1.name, r1, v2.name, r2, "gain", gain)
+                gain, new, pro = ev
+                level.append((gain, [(v1, r1), (v2, r2)]))
                 if gain > best[0] + MIN_GAIN:
                     best = (gain, [(v1, r1), (v2, r2)], (new, pro))
+        # three and four locals: extend the best of the last size
+        size = 2
+        while byte_regs and size < limit and level:
+            level.sort(key=lambda t: -t[0])
+            nxt = []
+            seen = set()
+            for _g, assign in level[:2]:
+                if _g <= 0:
+                    continue
+                used = {id(v) for v, _ in assign}
+                for w in cands:
+                    if id(w) in used:
+                        continue
+                    for reg in options(w):
+                        if not fits(assign, w, reg):
+                            continue
+                        cfg = assign + [(w, reg)]
+                        key = frozenset((id(v), r) for v, r in cfg)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        ev = evaluate(cfg)
+                        if ev is None:
+                            continue
+                        gain, new, pro = ev
+                        nxt.append((gain, cfg))
+                        if gain > best[0] + MIN_GAIN:
+                            best = (gain, cfg, (new, pro))
+            level = nxt
+            size += 1
     if best[1] is None:
         return None
     gain, assign, (new, pro) = best
@@ -2074,6 +2903,8 @@ def parse_lenient(lines: list[str], env: Env) -> list[Node]:
                 nd.label = m.group(1)
                 nodes.append(nd)
                 rest = s[m.end():].strip()
+                if rest.startswith(":"):      # ``name::`` is a public label
+                    rest = rest[1:].strip()
                 if not rest:
                     continue
                 s = rest
@@ -2326,7 +3157,13 @@ def _routine_reads(sums: _Summaries, label: str, _busy=None) -> int:
     return r
 
 
+# Library routines outside lib/rt that take a register argument.
+_LIB_READS = {"__putchar_v": E}
+
+
 def helper_reads(label: str) -> int:
+    if label in _LIB_READS:
+        return _LIB_READS[label]
     t = _helper_table().get(label.lower())
     return t[0] if t else ALL7
 
@@ -2367,6 +3204,147 @@ def strip_tags(code: str) -> str:
     return re.sub(r"[ \t]*; RL\d+[ \t]*(?=\n|$)", "", code)
 
 
+_FN_MARK = re.compile(r"^; Function (\S+)")
+
+
+def drop_dead_copies(code: str) -> str:
+    """Delete ``ld B,r`` and ``ld C,r`` of a compiled function when nothing
+    reads the byte before it is written again or the function returns.
+    A function of this compiler returns no value in B or C, and a call of
+    one of its functions or a library function reads no register in B or
+    C (the stack convention, or A, HL, E and DE for the register
+    convention).  The rt helpers are looked up in their table.  A call
+    does not end the value: the callee may leave the byte alone.  The text
+    is the final program (uc80 --no-param-reg keeps these copies)."""
+    if _effect is None or "; Function " not in code:
+        return code
+    lines = code.split("\n")
+    # line ranges of the compiled functions: from the marker to the first
+    # RET after the @name_ret label
+    ranges: list[tuple[int, int]] = []
+    names: set[str] = set()
+    i = 0
+    while i < len(lines):
+        m = _FN_MARK.match(lines[i])
+        if not m:
+            i += 1
+            continue
+        nm = m.group(1)
+        j = i + 1
+        end = None
+        seen_ret_label = False
+        while j < len(lines) and not lines[j].startswith("; Function "):
+            if lines[j].startswith(f"@{nm}_ret:"):
+                seen_ret_label = True
+            if seen_ret_label and lines[j].strip().lower() in (
+                    "ret", "reti", "retn"):
+                end = j
+                break
+            j += 1
+        if end is not None:
+            ranges.append((i, end))
+            names.add("_" + nm)
+        i = (end if end is not None else j) + 1
+    if not ranges:
+        return code
+    helpers = _helper_table()
+
+    def reads_of(t: Optional[str]) -> int:
+        if not t:
+            return ALL7
+        if t in names:
+            return D | E | H | L | A
+        if t == "__callhl":
+            return H | L
+        if t in _LIB_READS:
+            return _LIB_READS[t]
+        if t.startswith("__"):
+            h = helpers.get(t.lower())
+            return h[0] if h else ALL7
+        return ALL7
+
+    env = Env(reads_of, lambda t: ALL7)
+    nodes = parse_lenient(lines, env)
+    if len(nodes) != len(lines):
+        # a line gave two nodes: the line numbers below would be wrong
+        return code
+    labels = {nd.label: k for k, nd in enumerate(nodes) if nd.kind == "label"}
+    entries: set = set()
+
+    def live_after(k: int, bit: int, lo: int, hi: int) -> bool:
+        """The byte ``bit`` written by node k may still be read."""
+        seen: set = set()
+        stack = [k + 1]
+        steps = 0
+        while stack:
+            j = stack.pop()
+            if j in seen:
+                continue
+            seen.add(j)
+            steps += 1
+            if steps > 300 or j > hi or j < lo:
+                return True
+            nd = nodes[j]
+            if nd.kind in ("label", "other", "marker"):
+                stack.append(j + 1)
+                continue
+            if nd.kind != "ins":
+                return True
+            succ, ext = _lenient_succ(nodes, j, labels, entries)
+            if succ is None:
+                return True
+            if nd.flow == "call":
+                if not nd.target:
+                    return True
+                if nd.rd & bit:
+                    return True
+                # a callee may leave the byte alone (prune removed the wrap
+                # because it does): the value flows on
+                stack.extend(succ)
+                continue
+            if nd.flow in ("jump", "branch") and ext is not None:
+                if reads_of(ext) & bit:
+                    return True
+            if nd.rd & bit:
+                return True
+            if nd.flow == "next" and nd.wr & bit:
+                continue            # written again
+            if nd.flow == "return":
+                if nd.cond:
+                    stack.extend(succ)
+                continue
+            if nd.flow == "stop":
+                return True
+            stack.extend(succ)
+        return False
+
+    drop: set = set()
+    for lo, hi in ranges:
+        in_asm = False
+        for k in range(lo, hi):
+            text = lines[k]
+            if "__UC80_ASM_BEGIN__" in text:
+                in_asm = True
+            elif "__UC80_ASM_END__" in text:
+                in_asm = False
+            nd = nodes[k]
+            if in_asm or nd.kind != "ins" or nd.flow != "next" \
+                    or nd.op != "ld":
+                continue
+            if len(nd.ops) != 2 or nd.ops[0].upper() not in ("B", "C"):
+                continue
+            if nd.ops[1].upper() not in ("A", "B", "C", "D", "E", "H", "L"):
+                continue
+            if ";" in nd.text and "RL" in nd.text:
+                continue
+            bit = B if nd.ops[0].upper() == "B" else C
+            if not live_after(k, bit, lo, hi):
+                drop.add(k)
+    if not drop:
+        return code
+    return "\n".join(ln for k, ln in enumerate(lines) if k not in drop)
+
+
 def prune(code: str) -> str:
     """Remove each ``push rr`` / ``pop rr`` wrap (``; RLn``) when nothing
     between the two writes rr.  The text is the final program: the
@@ -2386,6 +3364,9 @@ def prune(code: str) -> str:
         return strip_tags(code)
     env = Env(lambda t: ALL7, lambda t: ALL7)
     nodes = parse_lenient(lines, env)
+    if len(nodes) != len(lines):
+        # a line gave two nodes: the line numbers below would be wrong
+        return strip_tags(code)
     sums = _Summaries(nodes)
     helpers = _helper_table()
 

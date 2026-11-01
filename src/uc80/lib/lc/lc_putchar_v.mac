@@ -1,0 +1,47 @@
+; lc_putchar_v.mac - __putchar_v, the console write of a putchar statement
+;
+; Same output rules as __conout (lc_conout.mac): LF gets a CR before it
+; unless the last character was a CR or ___crlf_mode is zero.  The
+; compiler calls __putchar_v for putchar(c); as a statement
+; (docs/void_putchar.md).
+;
+; Entry:  E = character.  Exit: every register is destroyed.
+; BDOS returns to the caller of this routine.
+
+	.Z80
+
+BDOS	EQU	5
+CONOUT	EQU	2
+
+	EXTRN	___crlf_mode
+	EXTRN	__conout_last
+
+	CSEG
+
+	PUBLIC	__putchar_v
+__putchar_v:
+	LD	A,E
+	CP	0AH		; LF?
+	JR	Z,__putchar_lf
+	LD	(__conout_last),A	; remember this one (fast path: not LF)
+__putchar_put:
+	LD	C,CONOUT
+	JP	BDOS
+
+__putchar_lf:
+	LD	HL,__conout_last
+	LD	C,(HL)		; C = previous character written
+	LD	(HL),A		; remember this one (LF)
+	LD	A,(___crlf_mode)
+	OR	A
+	JR	Z,__putchar_put	; translation disabled - pass LF through
+	LD	A,C
+	CP	0DH		; already preceded by CR?
+	JR	Z,__putchar_put
+	LD	E,0DH		; no - emit CR first
+	LD	C,CONOUT
+	CALL	BDOS
+	LD	E,0AH
+	JR	__putchar_put
+
+	END

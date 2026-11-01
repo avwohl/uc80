@@ -25,26 +25,18 @@ __start:
 	LD	SP,HL
 
 	; Zero BSS region (COMMON segment)
-	; C standard requires static storage to be zero-initialized
-	LD	HL,__bss_end
-	LD	DE,__bss_start
-	OR	A
-	SBC	HL,DE		; HL = bss size
-	LD	B,H
-	LD	C,L
+	; C standard requires static storage to be zero-initialized.
+	; The BSS always holds __exit_hook (2 bytes), so its size is at least 2.
+	; Small BSS (up to 256 bytes): clear the first byte, then LDIR copies it
+	; onward.  Large BSS: see __bss_big, after the exit jump.
+	LD	BC,__bss_end-__bss_start-1
 	LD	A,B
-	OR	C
-	JR	Z,__nobss	; skip if no BSS
+	OR	A
+	JR	NZ,__bss_big
 	LD	HL,__bss_start
 	LD	(HL),0
-	DEC	BC		; size - 1 (first byte already set)
-	LD	A,B
-	OR	C
-	JR	Z,__nobss	; skip LDIR if only 1 byte
-	LD	D,H
-	LD	E,L
-	INC	DE		; DE = bss_start + 1
-	LDIR			; fill with zeros
+	LD	DE,__bss_start+1
+	LDIR
 __nobss:
 
 	; Call main - return value left in HL (16-bit), DEHL (32-bit), or
@@ -62,5 +54,59 @@ __nobss:
 	; of its width.
 	LD	HL,(__exit_hook)
 	JP	(HL)
+
+; Large BSS (257 bytes or more), BC = size - 1.  The first size mod 16 bytes
+; are cleared one by one.  The rest is cleared from the end down, 16 bytes
+; per loop pass, by 8 PUSH HL with HL = 0.  A PUSH writes below SP, so an
+; interrupt or NMI only touches bytes that the loop has not cleared yet.
+; Interrupts stay off during the loop and come back only if they were on.
+__bss_big:
+	INC	BC		; BC = size
+	LD	A,C
+	AND	15
+	LD	E,A		; E = size mod 16
+	SRL	B
+	RR	C
+	SRL	B
+	RR	C
+	SRL	B
+	RR	C
+	SRL	B
+	RR	C		; BC = number of 16-byte blocks
+	LD	HL,__bss_start
+	OR	A
+	JR	Z,__bss_nor
+__bss_rl:
+	LD	(HL),0
+	INC	HL
+	DEC	E
+	JR	NZ,__bss_rl
+__bss_nor:
+	LD	A,I		; P/V = interrupt flag
+	PUSH	AF
+	DI
+	LD	SP,__bss_end
+	LD	HL,0
+__bss_bl:
+	PUSH	HL
+	PUSH	HL
+	PUSH	HL
+	PUSH	HL
+	PUSH	HL
+	PUSH	HL
+	PUSH	HL
+	PUSH	HL
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,__bss_bl
+	LD	HL,(6)
+	DEC	HL
+	DEC	HL
+	LD	SP,HL
+	POP	AF
+	JP	PO,__nobss
+	EI
+	JP	__nobss
 
 	END	__start

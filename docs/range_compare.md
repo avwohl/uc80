@@ -75,6 +75,14 @@ T-states of the whole run, change against the commit before, when only this pass
 
 The image of each program becomes smaller or stays equal. The queens program does not change. Its counters have the type `uint8_t`, and the compiler compares such values as bytes.
 
+## Counters in the range 0 to 255
+
+A counter with a range in 0 to 255 needs only one byte for a compare. The loop `for (p = 0; p < 9; p++)` has the range 0 to 9 for `p`.
+
+The old code for `p < 9` had 16 bits: `ld A,L / sub 9 / ld A,H / sbc A,0`. The new code has 8 bits: `ld A,L / cp 9`. The function `_byte_kind` in `codegen.py` gives the kind `u` (0 to 255) to such a variable. The byte compare of `_gen_byte_cmp_flags` does the rest.
+
+`--no-range-byte-cmp` turns this off. The part is step 5b of family J ([family_j.md](family_j.md)).
+
 ## Tests
 
 `tests/test_range_cmp.py` runs programs in eight option sets. The output must equal the output of the host compiler. The programs cover these cases:

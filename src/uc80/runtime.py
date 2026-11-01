@@ -33,9 +33,13 @@ class RuntimeLibrary:
         self.data_sections: list[str] = []  # DSEG content
         self.file_level_externs: set[str] = set()  # EXTRN at file level (before any function)
 
-    def load_file(self, path: Path) -> None:
-        """Load and parse a .mac assembly file."""
+    def load_file(self, path: Path, drop_tag: str | None = None) -> None:
+        """Load and parse a .mac assembly file.  A line that holds the
+        comment ``drop_tag`` is left out (uc80 --no-rt-shortcuts)."""
         content = path.read_text()
+        if drop_tag:
+            content = "\n".join(l for l in content.split("\n")
+                                if drop_tag not in l)
         self._parse_assembly(content)
 
     def _parse_assembly(self, content: str) -> None:
@@ -516,10 +520,15 @@ def load_lib_modules() -> LibModules:
     return LibModules(lib_file("runtime.mac").parent)
 
 
-def load_runtime_library() -> RuntimeLibrary:
-    """Load the default runtime library."""
+RT_SHORTCUT_TAG = ";@rt-shortcut"
+
+
+def load_runtime_library(shortcuts: bool = True) -> RuntimeLibrary:
+    """Load the default runtime library.  Without ``shortcuts`` the lines
+    tagged ``;@rt-shortcut`` are left out."""
     lib = RuntimeLibrary()
     runtime_path = lib_file("runtime.mac")
     if runtime_path.exists():
-        lib.load_file(runtime_path)
+        lib.load_file(runtime_path,
+                      None if shortcuts else RT_SHORTCUT_TAG)
     return lib

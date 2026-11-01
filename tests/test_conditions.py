@@ -117,8 +117,10 @@ class TestByteConditions:
 
     def test_two_signed_chars(self):
         o = cond("sc < c", params="signed char c")
-        assert o == ["ld\tA,(_sc)", "xor\t128", "ld\tD,A", "ld\tA,(IX+4)",
-                     "xor\t128", "ld\tE,A", "ld\tA,D", "cp\tE",
+        # H and L hold the flipped values: BC and DE stay free for
+        # register locals (docs/byte_regs.md)
+        assert o == ["ld\tA,(_sc)", "xor\t128", "ld\tH,A", "ld\tA,(IX+4)",
+                     "xor\t128", "ld\tL,A", "ld\tA,H", "cp\tL",
                      "jp\tNC,@ENDIF2"]
 
     def test_uchar_always_true(self):

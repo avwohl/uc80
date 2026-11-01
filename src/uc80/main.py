@@ -39,6 +39,7 @@ from .multi_unit import (file_scope_names, uniquify_enumerators, uniquify_static
                          uniquify_types)
 
 from . import peep_local
+from . import looprot
 from . import iyptr, reglocals
 
 # Import peephole optimizer from upeepz80 library
@@ -198,6 +199,37 @@ def _filter_hand_written_asm(asm_text: str):
         if match:
             defined_labels.add(match.group(1))
     return lines, publics, defined_labels
+
+
+# The program has this many bytes of BSS of its own or more: the start-up
+# code clears the BSS with the push fill (docs/startup_fast.md).  The push
+# fill saves about 13.9 T-states a byte and costs 56 bytes of code: at 6000
+# bytes it saves 83000 T-states (20 ms at 4 MHz).
+BIG_BSS = 6000
+
+
+def _common_bytes(code: str) -> int:
+    """The bytes that the generated text reserves in the COMMON segment (the
+    BSS of the program, without the library modules).  The block /AUTO/
+    (shared automatic storage) is not cleared and does not count."""
+    total = 0
+    in_common = False
+    for ln in code.split("\n"):
+        w = ln.split(";", 1)[0].split()
+        if not w:
+            continue
+        if ln[0] in " \t":
+            op = w[0].lower()
+            if op == "common":
+                in_common = not (len(w) > 1 and w[1].upper() == "/AUTO/")
+            elif op in ("cseg", "dseg", "aseg"):
+                in_common = False
+            elif in_common and op in ("ds", "defs") and len(w) > 1:
+                try:
+                    total += int(w[1], 0)
+                except ValueError:
+                    pass
+    return total
 
 
 class _Peephole:
@@ -843,10 +875,118 @@ def main() -> int:
              "the loop (docs/licm.md)"
     )
     parser.add_argument(
+        "--no-licm-load",
+        action="store_true",
+        help="Load an array element and compute a row address in every "
+             "pass of a loop that does not change them (docs/licm_load.md)"
+    )
+    parser.add_argument(
+        "--no-skip-auto-clear",
+        action="store_true",
+        help="Clear the shared automatic storage (??AUTO) with the rest of "
+             "the BSS at start-up (docs/startup_fast.md)"
+    )
+    parser.add_argument(
+        "--no-range-div",
+        action="store_true",
+        help="Divide by a constant at run time even when the range of the "
+             "dividend gives the result (docs/range_div.md)"
+    )
+    parser.add_argument(
+        "--no-rl-addr-taken",
+        action="store_true",
+        help="Keep the locals of a function whose address is taken in "
+             "memory (docs/byte_regs.md)"
+    )
+    parser.add_argument(
+        "--no-range-byte-cmp",
+        action="store_true",
+        help="Compare a loop counter of the range 0..255 as 16 bits "
+             "(docs/range_compare.md)"
+    )
+    parser.add_argument(
+        "--no-byte-cse",
+        action="store_true",
+        help="Reload A with the value that the path to a label already has, "
+             "as in an else-if chain on x & 0xF0 (docs/byte_cse.md)"
+    )
+    parser.add_argument(
+        "--no-byte-regs",
+        action="store_true",
+        help="Put at most two register locals in BC and DE, a byte local "
+             "in C or E only (docs/byte_regs.md)"
+    )
+    parser.add_argument(
         "--no-range-cmp",
         action="store_true",
         help="Use the signed 16-bit compare for a counter that is never "
              "negative (docs/range_compare.md)"
+    )
+    parser.add_argument(
+        "--no-void-putchar",
+        action="store_true",
+        help="Call the stack-convention putchar for a putchar whose value "
+             "is not used (docs/void_putchar.md)"
+    )
+    parser.add_argument(
+        "--no-char-ret-mask",
+        action="store_true",
+        help="Do not count f(x) & 255-or-less as a byte use of a char "
+             "function (docs/char_return_mask.md)"
+    )
+    parser.add_argument(
+        "--no-param-reg",
+        action="store_true",
+        help="Keep a byte parameter that a function uses after a label in "
+             "a memory slot (docs/param_reg.md)"
+    )
+    parser.add_argument(
+        "--no-loop-rotate",
+        action="store_true",
+        help="Keep the test of a for or while loop at the top only "
+             "(docs/loop_rotation.md)"
+    )
+    parser.add_argument(
+        "--no-frame-drop",
+        action="store_true",
+        help="Keep the stack frame of a function whose slots the register "
+             "locals emptied (docs/frame_drop.md)"
+    )
+    parser.add_argument(
+        "--no-dead-test",
+        action="store_true",
+        help="Keep an if with an empty body and a condition without side "
+             "effects (docs/dead_test.md)"
+    )
+    parser.add_argument(
+        "--no-pair-cmp",
+        action="store_true",
+        help="Copy a register pair to HL for a compare or an index "
+             "(docs/pair_compare.md)"
+    )
+    parser.add_argument(
+        "--no-fill-idiom",
+        action="store_true",
+        help="Keep a loop that stores a constant in a byte array as a loop "
+             "(docs/fill_idiom.md)"
+    )
+    parser.add_argument(
+        "--no-shl-inline",
+        action="store_true",
+        help="Call the runtime routine for 1 << n with a variable n "
+             "(docs/shl_inline.md)"
+    )
+    parser.add_argument(
+        "--no-rt-shortcuts",
+        action="store_true",
+        help="Embed the runtime routines without their early exits "
+             "(docs/runtime_shortcuts.md)"
+    )
+    parser.add_argument(
+        "--no-fast-bss-clear",
+        action="store_true",
+        help="Embed the old start-up code that clears the BSS with one "
+             "LDIR (docs/startup_fast.md)"
     )
     parser.add_argument(
         "--no-narrow-index",
@@ -1268,6 +1408,8 @@ def main() -> int:
         if not args.no_ast_optimize:
             opt_level = 3
             ast_opt = Uc80ASTOptimizer(opt_level, type_config=type_config)
+            ast_opt.dead_test = (not args.no_dead_test
+                                 and not args.no_optimize)
             merged_ast = ast_opt.optimize(merged_ast)
             merged_ast._enum_fixed_types = enum_fixed
             if args.verbose and ast_opt.stats:
@@ -1355,8 +1497,32 @@ def main() -> int:
         gen.enable_peep_pairs = not args.no_peep_pairs
         gen.enable_slot_fold = not args.no_slot_fold
         gen.enable_licm = not args.no_licm
+        gen.enable_licm_load = not args.no_licm_load
         gen.enable_range_cmp = not args.no_range_cmp
         gen.enable_narrow_index = not args.no_narrow_index
+        # A .mac file or a separate compilation may define _putchar
+        # where this compile cannot see it: then putchar stays a call.
+        gen.enable_void_putchar = (not args.no_void_putchar
+                                   and not mac_files and whole_program)
+        gen.enable_char_ret_mask = not args.no_char_ret_mask
+        gen.enable_param_reg = not args.no_param_reg
+        gen.enable_frame_drop = not args.no_frame_drop
+        gen.enable_pair_cmp = not args.no_pair_cmp
+        gen.enable_fill_idiom = not args.no_fill_idiom
+        gen.enable_shl_inline = not args.no_shl_inline
+        gen.enable_byte_regs = not args.no_byte_regs
+        gen.enable_range_byte_cmp = not args.no_range_byte_cmp
+        gen.enable_rl_addr_taken = not args.no_rl_addr_taken
+        gen.enable_range_div = not args.no_range_div
+        # The start-up code of a whole-program CP/M build skips the shared
+        # automatic storage when it clears the BSS (a sdas, ROM or
+        # separate build keeps the plain layout).
+        gen.auto_noclear = (not args.no_skip_auto_clear and whole_program
+                            and embed_startup and not args.startup_lib
+                            and not args.no_fast_bss_clear
+                            and args.asm_syntax != "sdas"
+                            and not rom)
+        gen.sdas_output = args.asm_syntax == "sdas"
         gen.noreturn_extra = set(sdcc_found.noreturn_labels)
         gen.naked_file = {n: f for n, f, _l in sdcc_found.naked}
         for msg in sdcc_compat.naked_mismatches(
@@ -1532,7 +1698,15 @@ def main() -> int:
                 startup_path = lib_file("crt0_rom.mac")
             else:
                 # Default: crt0.mac from the package's library directory
-                startup_path = lib_file("crt0.mac")
+                # crt0.mac has the push fill for a large BSS.  Its extra
+                # code pays only when the program has a big BSS of its own.
+                if args.no_fast_bss_clear:
+                    startup_name = "crt0_slow.mac"
+                elif _common_bytes(code) >= BIG_BSS:
+                    startup_name = "crt0.mac"
+                else:
+                    startup_name = "crt0_small.mac"
+                startup_path = lib_file(startup_name)
 
             if startup_path.exists():
                 startup_content = startup_path.read_text()
@@ -1585,8 +1759,14 @@ def main() -> int:
                              roots.im2_table or IM2_DEFAULT_TABLE)
                         if roots.im2_on else None)
                     startup_content = ""
+                skip_auto = (getattr(gen, "auto_noclear_active", False)
+                             and not rom and not args.startup_lib)
                 for line in startup_content.splitlines():
                     stripped = line.strip().upper()
+                    if skip_auto and not stripped.startswith(("EXTRN", ";")):
+                        # clear from the end of ??AUTO on
+                        line = re.sub(r"__bss_start\b", "??AUTOEND", line,
+                                      flags=re.IGNORECASE)
                     # Skip directives that are already in main output
                     if stripped in {'.Z80', 'CSEG', 'DSEG'}:
                         continue
@@ -1647,7 +1827,8 @@ def main() -> int:
                 runtime_lib = RuntimeLibrary()
                 runtime_lib.load_file(Path(args.runtime_lib))
             else:
-                runtime_lib = load_runtime_library()
+                runtime_lib = load_runtime_library(
+                    shortcuts=not args.no_rt_shortcuts)
 
             # Get required functions from codegen AND from EXTRN references
             needed = set(gen.ctx.runtime_used)
@@ -1715,7 +1896,7 @@ def main() -> int:
 
                 if funcs:
                     # Add CP/M BDOS constants if any I/O functions are used
-                    io_funcs = {'_printf', '_putchar', '_getchar', '_puts', '_gets'}
+                    io_funcs = {'_printf', '_putchar', '__putchar_v', '_getchar', '_puts', '_gets'}
                     needs_bdos = any(f.name in io_funcs for f in funcs)
 
                     runtime_code.append("\n\tcseg\n; Embedded runtime library functions")
@@ -1847,7 +2028,7 @@ def main() -> int:
                         lib_code = [f"\n; Embedded from {lib_path}"]
 
                         # Add CP/M BDOS constants if any I/O functions are used
-                        io_funcs = {'_printf', '_putchar', '_getchar', '_puts', '_gets'}
+                        io_funcs = {'_printf', '_putchar', '__putchar_v', '_getchar', '_puts', '_gets'}
                         needs_bdos = any(f.name in io_funcs for f in funcs)
                         # Check if BDOS is already defined in the code
                         bdos_defined = any('BDOS' in line and 'EQU' in line.upper() for line in lines)
@@ -2098,6 +2279,8 @@ def main() -> int:
             if args.verbose:
                 print(f"  Peephole optimization...")
 
+            peep_local.RET_CC = not args.no_param_reg
+            peep_local.RELOAD = not args.no_byte_cse
             peephole = _Peephole(PeepholeOptimizer())
             # Not peephole.optimize(code): inline asm is an optimization
             # barrier and its bytes are never rewritten.
@@ -2115,6 +2298,8 @@ def main() -> int:
         # The register-locals wraps that protect nothing (the peephole
         # pass has run: the callees are final).
         code = reglocals.prune(code)
+        if not args.no_param_reg:
+            code = reglocals.drop_dead_copies(code)
         code = iyptr.prune_iy(code)
 
         # The volatile markers and fence labels are for the passes above only.
@@ -2122,6 +2307,8 @@ def main() -> int:
         if BARRIER_BEGIN in code:
             code = "\n".join(ln for ln in code.split("\n")
                              if ln.strip() not in (BARRIER_BEGIN, BARRIER_END))
+        if not args.no_loop_rotate and not args.no_optimize:
+            code = looprot.rotate(code)
 
         # Drop EXTRNs nothing uses: ul80 links the library module for each
         # one.  Done last, so appended .mac files count as uses and names
