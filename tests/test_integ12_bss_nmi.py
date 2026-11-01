@@ -41,7 +41,7 @@ int main(void)
 def build(tmp_path, size, *flags):
     (tmp_path / "t.c").write_text(SRC)
     cmd = [sys.executable, "-m", "uc80.main", str(tmp_path / "t.c"),
-           f"-DSIZE={size}", *flags, "-o", str(tmp_path / "t.mac")]
+           f"-DSIZE={size}", "--fast-bss-clear", *flags, "-o", str(tmp_path / "t.mac")]
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(REPO))
     assert r.returncode == 0, r.stderr
     subprocess.run(["um80", str(tmp_path / "t.mac"), "-o",

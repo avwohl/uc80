@@ -1,0 +1,19 @@
+; rt_mod16b.mac - __mod16b
+; Family K step 7
+
+	.Z80
+
+	EXTRN	__div16b
+
+	CSEG
+; ============================================================
+; 16-bit unsigned modulo by a divisor of 1 to 255:
+; HL = DE % L (H = 0 on entry)
+; ============================================================
+	PUBLIC	__mod16b
+__mod16b:
+	CALL	__div16b	; remainder in DE
+	EX	DE,HL
+	RET
+
+	END

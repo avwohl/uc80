@@ -172,10 +172,21 @@ int main(void) {
 
 
 def test_qsort_does_not_link_bsearch(tmp_path):
+    # a count that is not a constant: the generic qsort
+    _, syms = link(tmp_path, '#include <stdlib.h>\n'
+                   'static int c(const void *a, const void *b){return 0;}\n'
+                   'volatile int n = 2;\n'
+                   'int main(void){ int v[2]; qsort(v,n,2,c); return 0; }\n')
+    assert "_QSORT" in syms and "_BSEARCH" not in syms
+    assert "__QSORT_S" not in syms
+
+
+def test_qsort_of_a_constant_small_count_links_the_short_routine(tmp_path):
     _, syms = link(tmp_path, '#include <stdlib.h>\n'
                    'static int c(const void *a, const void *b){return 0;}\n'
                    'int main(void){ int v[2]; qsort(v,2,2,c); return 0; }\n')
-    assert "_QSORT" in syms and "_BSEARCH" not in syms
+    assert "__QSORT_S" in syms
+    assert "_QSORT" not in syms and "_BSEARCH" not in syms
 
 
 def test_rand_does_not_link_runtime_multiply(tmp_path):

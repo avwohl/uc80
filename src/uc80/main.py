@@ -929,6 +929,49 @@ def main() -> int:
              "is not used (docs/void_putchar.md)"
     )
     parser.add_argument(
+        "--no-printf-to-putchar",
+        action="store_true",
+        help="Keep printf(\"\\n\") and printf of one character as printf "
+             "calls (docs/k1_link_size.md)"
+    )
+    parser.add_argument(
+        "--no-drop-printf-tables",
+        action="store_true",
+        help="Emit the printf dispatch tables in a program that calls no "
+             "printf (docs/k1_link_size.md)"
+    )
+    parser.add_argument(
+        "--no-printf-literal-union",
+        action="store_true",
+        help="For a printf format that is not a literal, link every "
+             "conversion, not only those of the string literals "
+             "(docs/k1_link_size.md)"
+    )
+    parser.add_argument(
+        "--no-div32w",
+        action="store_true",
+        help="Call __div32 and __mod32 for every unsigned 32-bit division, "
+             "also when the divisor is below 65536 (docs/k1_link_size.md)"
+    )
+    parser.add_argument(
+        "--no-qsort-small",
+        action="store_true",
+        help="Call the generic qsort also for an array of at most 32 "
+             "elements of at most 8 bytes (docs/k1_link_size.md)"
+    )
+    parser.add_argument(
+        "--no-div16b",
+        action="store_true",
+        help="Call __div16 and __mod16 also for a constant divisor of 1 to "
+             "255 (docs/k1_link_size.md)"
+    )
+    parser.add_argument(
+        "--no-shr32-loop",
+        action="store_true",
+        help="Use the fast __shr32 for a 32-bit shift right by a count "
+             "that is not a constant (docs/k1_link_size.md)"
+    )
+    parser.add_argument(
         "--no-char-ret-mask",
         action="store_true",
         help="Do not count f(x) & 255-or-less as a byte use of a char "
@@ -987,6 +1030,13 @@ def main() -> int:
         action="store_true",
         help="Embed the old start-up code that clears the BSS with one "
              "LDIR (docs/startup_fast.md)"
+    )
+    parser.add_argument(
+        "--fast-bss-clear",
+        action="store_true",
+        help="Embed the start-up code with the push fill for a BSS of "
+             "6000 bytes or more; the default is the small start-up code "
+             "(docs/startup_fast.md)"
     )
     parser.add_argument(
         "--no-narrow-index",
@@ -1442,7 +1492,12 @@ def main() -> int:
         # program that calls it needs every conversion, as vsprintf does
         # (its format is not a literal).
         if printf_features is None and printf_hook.uses_unscanned(merged_ast):
-            printf_features = {"all"}
+            printf_features = (
+                None if (args.no_printf_literal_union
+                         or mac_files or not whole_program)
+                else printf_hook.literal_union_features(merged_ast))
+            if printf_features is None:
+                printf_features = {"all"}
         # ...and either way, close the set over its implied features.
         if printf_features is not None:
             printf_features = _close_format_features(printf_features)
@@ -1504,6 +1559,14 @@ def main() -> int:
         # where this compile cannot see it: then putchar stays a call.
         gen.enable_void_putchar = (not args.no_void_putchar
                                    and not mac_files and whole_program)
+        gen.enable_printf_putchar = not args.no_printf_to_putchar
+        gen.enable_printf_union = not args.no_printf_literal_union
+        gen.enable_div32w = not args.no_div32w
+        gen.enable_qsort_small = not args.no_qsort_small
+        gen.enable_div16b = not args.no_div16b
+        gen.enable_shr32_loop = not args.no_shr32_loop
+        gen.enable_drop_printf_tables = not args.no_drop_printf_tables
+        gen.has_mac_files = bool(mac_files)
         gen.enable_char_ret_mask = not args.no_char_ret_mask
         gen.enable_param_reg = not args.no_param_reg
         gen.enable_frame_drop = not args.no_frame_drop
@@ -1536,7 +1599,10 @@ def main() -> int:
         gen.vector_funcs = set(roots.vectors.values()) | (
             {"<asm>"} if mac_files else set())
         code = gen.generate(merged_ast)
-        printf_need = printf_hook.printf_needs(merged_ast, printf_features)
+        printf_need = printf_hook.printf_needs(
+            merged_ast, printf_features,
+            union=(not args.no_printf_literal_union and whole_program
+                   and not mac_files))
         code = printf_hook.patch_tables(
             code, printf_need,
             (args.int_bits // 8) if args.int_bits else Z80_CPM.int_size)
@@ -1702,7 +1768,7 @@ def main() -> int:
                 # code pays only when the program has a big BSS of its own.
                 if args.no_fast_bss_clear:
                     startup_name = "crt0_slow.mac"
-                elif _common_bytes(code) >= BIG_BSS:
+                elif args.fast_bss_clear and _common_bytes(code) >= BIG_BSS:
                     startup_name = "crt0.mac"
                 else:
                     startup_name = "crt0_small.mac"

@@ -1,0 +1,90 @@
+; rt_div32w.mac - __div32w
+; Family K step 5: __div32 without the divisor >= 65536 path
+
+	.Z80
+
+	EXTRN	__tmp32
+	EXTRN	__dv8n
+	EXTRN	__dv8w
+	EXTRN	__div32_dvd
+	EXTRN	__rem32
+
+	CSEG
+; ============================================================
+; 32-bit unsigned division: DEHL = DEHL / (__tmp32), for a divisor that
+; the compiler has proved to be below 65536 (the high word of __tmp32 is
+; 0).  Same result as __div32, and the same T-states minus the test of the
+; high word, and without the 32/32 loop (about 144 bytes).  Remainder in
+; __rem32.  The compiler calls __div32 in place of this routine when the
+; program needs __div32 anyway (_fold_short_helpers in codegen.py).
+; Division by zero: quotient 0FFFFFFFFH, remainder = dividend.
+; Preserves BC, IX, IY.  __tmp32 is not changed.
+; ============================================================
+	PUBLIC	__div32w
+__div32w:
+	PUSH	BC
+	LD	(__div32_dvd),HL
+	LD	(__div32_dvd+2),DE
+	LD	DE,(__tmp32)
+	LD	A,D
+	OR	A
+	JR	NZ,__div32w_w
+	OR	E
+	JR	Z,__div32w_zero
+	LD	C,E		; divisor 1..255
+	LD	HL,__div32_dvd+3
+	XOR	A
+	LD	E,(HL)
+	CALL	__dv8n
+	LD	(HL),E
+	DEC	HL
+	LD	E,(HL)
+	CALL	__dv8n
+	LD	(HL),E
+	DEC	HL
+	LD	E,(HL)
+	CALL	__dv8n
+	LD	(HL),E
+	DEC	HL
+	LD	E,(HL)
+	CALL	__dv8n
+	LD	(HL),E
+	LD	L,A
+	LD	H,0
+	JR	__div32w_r16
+__div32w_w:
+	LD	HL,0		; divisor 256..65535
+	LD	A,(__div32_dvd+3)
+	CALL	__dv8w
+	LD	(__div32_dvd+3),A
+	LD	A,(__div32_dvd+2)
+	CALL	__dv8w
+	LD	(__div32_dvd+2),A
+	LD	A,(__div32_dvd+1)
+	CALL	__dv8w
+	LD	(__div32_dvd+1),A
+	LD	A,(__div32_dvd)
+	CALL	__dv8w
+	LD	(__div32_dvd),A
+__div32w_r16:
+	LD	(__rem32),HL
+	LD	HL,0
+	LD	(__rem32+2),HL
+__div32w_q:
+	LD	HL,(__div32_dvd)
+	LD	DE,(__div32_dvd+2)
+	POP	BC
+	RET
+__div32w_zero:
+	LD	DE,0FFFFH	; quotient 0FFFFFFFFH
+__div32w_cp:			; DE = both words of the quotient
+	LD	HL,(__div32_dvd)
+	LD	(__rem32),HL
+	LD	HL,(__div32_dvd+2)
+	LD	(__rem32+2),HL
+	LD	H,D
+	LD	L,E
+	POP	BC
+	RET
+
+	END

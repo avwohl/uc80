@@ -1,0 +1,49 @@
+; rt_shr32c.mac - __shr32c
+; Family K step 8
+
+	.Z80
+
+	CSEG
+; ============================================================
+; 32-bit logical right shift: DEHL = DEHL >> A (unsigned)
+; A shorter __shr32 for a program that shifts by a count that is not a
+; constant (docs/k1_link_size.md): word and byte moves, then at most
+; 7 single-bit steps.  A shift by 5, 6 or 7 is slower than in __shr32,
+; every other count takes the same time or less.  Same registers as
+; __shr32; preserves BC.
+; ============================================================
+	PUBLIC	__shr32c
+__shr32c:
+	CP	32
+	JR	NC,__shr32c_z
+	CP	16
+	JR	C,__shr32c_1
+	EX	DE,HL		; shift by 16: word move
+	LD	DE,0
+	SUB	16
+__shr32c_1:
+	CP	8
+	JR	C,__shr32c_2
+	LD	L,H		; shift by 8: byte move
+	LD	H,E
+	LD	E,D
+	LD	D,0
+	SUB	8
+__shr32c_2:
+	OR	A
+	RET	Z
+__shr32c_lp:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	DEC	A
+	JR	NZ,__shr32c_lp
+	RET
+__shr32c_z:
+	LD	HL,0
+	LD	D,H
+	LD	E,L
+	RET
+
+	END

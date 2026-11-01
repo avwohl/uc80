@@ -594,3 +594,7 @@ to SDCC 4.6.0 is 0.9124 for the size, 0.8705 for the whole image and 0.5036
 for the T-states. 75 of the 78 programs are faster. The numbers are in
 [benchmarks_speed.md](benchmarks_speed.md). The repair pass after the
 integration changed the means by 0.0003 at most.
+
+## Status on 2026-11-01 (family K step 1)
+
+Step 1 of family K links less library code. The whole image of 14 of the 26 programs that were bigger than SDCC 4.6.0 is now at or below the image of SDCC. The mean ratio to SDCC is 0.8401 for the size and 0.8021 for the whole image. The T-state means are 0.5011 and 0.6045 without the `sort-*` programs. 75 of the 78 programs are faster. The changes and the numbers are in [k1_link_size.md](k1_link_size.md). Twelve programs are still above the image of SDCC: the five `sort-*` programs with a `qsort` that is too big, `davidly-e`, `dhrystone21` (three builds), `stanford-puzzle`, `crc` and `mojozork-size`.

@@ -104,10 +104,74 @@ def needs_of_format(text):
     return need
 
 
-def printf_needs(unit, features=None):
+def _all_literal_texts(unit):
+    """The decoded text of every string literal of the program (adjacent
+    literals are joined)."""
+    from uc_core._dcfast import fields as _fields, is_dataclass as _is_dc
+    from .codegen import _decode_string_literal
+
+    def decode(pieces):
+        try:
+            return "".join(_decode_string_literal(p.value.text)
+                           for p in pieces)
+        except Exception:
+            return None
+
+    texts = []
+    seen = set()
+
+    def walk(node):
+        if isinstance(node, (list, tuple)):
+            if node and all(isinstance(p, ast.StringLiteral) for p in node):
+                text = decode(node)
+                if text is not None:
+                    texts.append(text)
+                return
+            for item in node:
+                walk(item)
+            return
+        if not _is_dc(node) or id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, ast.StringLiteral):
+            if node.value.text.startswith('"'):
+                text = decode([node])
+                if text is not None:
+                    texts.append(text)
+            return
+        for f in _fields(node):
+            walk(getattr(node, f.name, None))
+
+    for item in unit.items:
+        walk(item)
+    return texts
+
+
+_CONVERSION = re.compile(r"%[^%]")
+
+
+def literal_union_features(unit):
+    """The ``#pragma printf`` feature set for a program with a format that
+    is not a literal: the conversions of every string literal of the
+    program, and always ``int``.  None when no string literal has a
+    conversion: the format then comes from outside the program and needs
+    every conversion.  docs/k1_link_size.md."""
+    from .codegen import CodeGenerator
+    features = {"int"}
+    texts = _all_literal_texts(unit)
+    if not any(_CONVERSION.search(t) for t in texts):
+        return None      # no literal has a conversion: the format is input
+    for text in texts:
+        CodeGenerator._extract_printf_specifiers(text, features)
+    return features
+
+
+def printf_needs(unit, features=None, union=False):
     """The set of optional printf parts the program needs.
 
-    FEATURES is the set from ``#pragma printf`` or ``--printf``, or None."""
+    FEATURES is the set from ``#pragma printf`` or ``--printf``, or None.
+    UNION: a format that is not a literal needs the parts that any string
+    literal of the program asks for, not every part."""
     if features and "all" in features:
         return set(ALL_EXPLICIT)
     need = set()
@@ -138,6 +202,12 @@ def printf_needs(unit, features=None):
             if node.name.text in PRINTF_FORMAT_ARG:
                 unknown = True           # the address of a printf function
         stack.extend(children(node))
+    if unknown and union:
+        texts = _all_literal_texts(unit)
+        if any(_CONVERSION.search(t) for t in texts):
+            for text in texts:
+                need |= needs_of_format(text)
+            return need
     return need | ALL if unknown else need
 
 

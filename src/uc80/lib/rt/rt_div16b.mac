@@ -1,0 +1,60 @@
+; rt_div16b.mac - __div16b
+; Family K step 7
+
+	.Z80
+
+	CSEG
+; ============================================================
+; 16-bit unsigned division by a divisor of 1 to 255:
+; HL = DE / L (H = 0 on entry).  The remainder is in DE.
+; The compiler calls this routine for a constant divisor of 1 to 255
+; (docs/k1_link_size.md).  It is 47 bytes.  __div16 with __dv8n is 176
+; bytes.  A dividend below the divisor returns at once.  A dividend whose
+; high byte is below the divisor needs 8 steps, any other dividend needs
+; 16 steps.
+; Preserves BC, IX, IY.  Clobbers A, flags.  Does not set __divrem.
+; ============================================================
+	PUBLIC	__div16b
+__div16b:
+	PUSH	BC
+	LD	C,L
+	EX	DE,HL		; HL = dividend
+	LD	A,H
+	CP	C
+	JR	NC,__div16b_f	; H >= divisor: 16 steps
+	LD	B,8
+	OR	A
+	JR	NZ,__div16b_s	; 0 < H < divisor: 8 steps, remainder H
+	LD	A,L
+	CP	C
+	JR	C,__div16b_q	; dividend < divisor
+	XOR	A		; remainder 0
+__div16b_s:
+	LD	H,L		; the 8 bits of L are the dividend
+	LD	L,0
+	JR	__div16b_l
+__div16b_q:
+	EX	DE,HL		; quotient 0, remainder = dividend
+	LD	HL,0
+	POP	BC
+	RET
+__div16b_f:
+	XOR	A
+	LD	B,16
+__div16b_l:
+	ADD	HL,HL		; next dividend bit out, quotient bit 0 in
+	RLA
+	JR	C,__div16b_u	; remainder passed 255: above the divisor
+	CP	C
+	JR	C,__div16b_n
+__div16b_u:
+	SUB	C
+	INC	L
+__div16b_n:
+	DJNZ	__div16b_l
+	LD	E,A
+	LD	D,0
+	POP	BC
+	RET
+
+	END

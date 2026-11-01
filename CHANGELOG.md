@@ -6,6 +6,37 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Family K step 1: less library code in the image
+
+The image of a program is the linked code, with the library and the start-up code. Step 1 links less library code. Each change has a switch that turns the change off. The page is `docs/k1_link_size.md`. The tests are `tests/test_k1_printf.py`, `tests/test_k1_divide.py` and `tests/test_k1_qsort_small.py`. The tests run code and compare the output with the host compiler.
+
+- **`printf("\n")` and `printf("c")` become `putchar`.** The call linked the printf core (about 880 bytes). Now `call __putchar_v` does the work. The rule needs a whole program that has no other printf call. Switch: `--no-printf-to-putchar`.
+- **No printf tables without a printf call.** A program that never calls `printf` had 4 dead table bytes. Switch: `--no-drop-printf-tables`.
+- **The small start-up code is the default.** The push fill (74 more bytes) was a loss in nine programs, because the clear runs before the timed part. `--fast-bss-clear` selects the push fill. The tests of the push fill use the switch. A program with a BSS of 6000 bytes or more needs about 14 T-states more for each byte at the start.
+- **A format that is not a literal links the conversions of the string literals.** The compiler took every conversion, also the float printer. `fuzix-startrek` is 2594 bytes smaller (with the other changes). When no literal has a conversion, the compiler takes every conversion as before. Switch: `--no-printf-literal-union`.
+- **A 32-bit divide for a narrow divisor.** `__div32w` and `__mod32w` have no 32/32 path (144 bytes). The compiler uses them when the divisor of an unsigned division is below 65536 (a constant, an unsigned type of 16 bits or less, a cast of such a value, `x & k`). A program that needs `__div32` too calls `__div32` at every site. `pi` is 1041 bytes smaller and 1.1% faster. Switch: `--no-div32w`.
+- **`qsort` for a small array.** `__qsort_s` (411 bytes) sorts a constant count of 32 or less with a constant element size of 8 or less. It uses a strict-descending test with a reverse, and a binary insertion sort. `qsort` has 855 bytes. The routine saves its static storage, so a comparator can call `qsort`. The four 20-element sort programs are 448 bytes smaller. The T-states of these programs are 0.4% to 20% lower. Switch: `--no-qsort-small`.
+- **A 16-bit divide by a small constant.** `__div16b` and `__mod16b` (47 and 5 bytes) divide by a constant of 1 to 255. `__div16`, `__dv8w` and `__dv8n` have 176 bytes. A program that needs `__div16` too calls `__div16` at every site. `queens`, `tak` and `stanford-intmm` are 133 bytes smaller. Switch: `--no-div16b`.
+- **A shorter 32-bit shift.** `__shr32c` (45 bytes) is for a count that is a multiple of 4. `__shr32` has 74 bytes. `crc` is 29 bytes smaller from this change and takes the same T-states. Switch: `--no-shr32-loop`.
+- **Not done.** The plan had a shorter `__div16` for a divisor of 256 or more (42 bytes in a program without a 32-bit divide). The change needs a second copy of three more routines for its switch.
+
+Gates on the final tree:
+
+- `pytest -n 6`: 3826 passed.
+- `run_ctests.py`: 220 of 220, and 220 of 220 with `--int 32`.
+- `difftest.py --count 800 -j 8` with the seeds 51000 and 61000: no UC80-WRONG and no MODEL-DIFF line.
+- `ccfuzz.py`: 2000 programs and 1000 with `--ll`. The option sets `-O0`, `--no-register-locals`, `--int=32` and all new switches off have 400 programs each. All PASS.
+- The gen3 family with `GEN3_FULL=1`: 76 passed.
+- `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
+- Bench: the 112 uc80 rows. No row has a bigger image than before. Against SDCC 4.6.0 the size is 0.8401 (0.9124 before), the whole image 0.8021 (0.8705), the T-states 0.5011 (0.5036), and without `sort-*` 0.6045 (0.6047). 75 of 78 programs are faster. 14 of the 26 programs that were bigger than SDCC are at or below the SDCC image now.
+- With all new switches off (and `--fast-bss-clear`), the rows of `v7-backgammon`, `embench-md5sum` and `embench-huffbench` are the same as before.
+
+Rows that are slower than before:
+
+- `bsd-wump` needs 4.8% more T-states, and `v7-backgammon` needs 0.08% more. Both count the whole run, and the BSS clear with `LDIR` is slower than the push fill. `--fast-bss-clear` gives the old numbers.
+- The programs with a BSS of 6000 bytes or more have more T-states in the column `total_cycles` (for example `sieve` +6%, the sort programs +2.7%). The timed part is not changed.
+- `embench-md5sum` (+2 T-states) and `embench-huffbench` (+1) change by an amount that depends on the heap address.
+
 ### Repair of `integrate12`
 
 A verifier found these problems after the integration. Each has a test that runs code.

@@ -270,6 +270,11 @@ class TestStaging:
         assert "call\t__shr32" in o
         assert "(__tmp32)" not in " ".join(o)
 
+    def test_count_that_is_a_multiple_of_4_calls_the_short_routine(self):
+        # family K step 8 (docs/k1_link_size.md)
+        o = fn("ulr = ul >> (i * 4);")
+        assert "call\t__shr32c" in o
+
     def test_variable_multiplier_is_staged_through_BC(self):
         o = fn("ulr = ul * ul2;")
         assert o[2:6] == ["ld\tBC,(_ul2)", "ld\t(__tmp32),BC",

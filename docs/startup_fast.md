@@ -10,8 +10,8 @@ The BSS holds `__exit_hook` (2 bytes) in each program. So the size is at least 2
 
 The compiler embeds one of three files. The choice depends on the BSS of the program itself (the `ds` bytes of the COMMON segment in the generated text, without the library modules):
 
-- **`crt0_small.mac`**, for less than 6000 bytes (`BIG_BSS` in `src/uc80/main.py`). The code loads `BC` with the size minus 1 as a link-time expression (`__bss_end-__bss_start-1`). It stores 0 in the first byte and runs `LDIR`. This works for each size, and it is shorter than the old code. The empty program needs 135 T-states. It needed 212 T-states. Its image is 32 bytes. It was 49 bytes.
-- **`crt0.mac`**, for 6000 bytes or more. The code is the same as in the other file for a BSS of up to 256 bytes. For 257 bytes or more it jumps to `__bss_big`. This code is after the exit jump. It sets SP to `__bss_end` and clears 16 bytes in each pass with 8 `PUSH HL` (`HL` is 0). The loop stops 32 to 47 bytes above `__bss_start`. Then SP goes back to the real stack, and a byte loop clears the low 32 to 47 bytes (`size mod 16 + 32`). The cost is about 9 T-states for each byte. This file is also the source of `crt0.rel`, which a separate link uses.
+- **`crt0_small.mac`**, the default for each size of BSS (family K step 3 in [k1_link_size.md](k1_link_size.md)). Before this step the default was this file for less than 6000 bytes. The code loads `BC` with the size minus 1 as a link-time expression (`__bss_end-__bss_start-1`). It stores 0 in the first byte and runs `LDIR`. This works for each size, and it is shorter than the old code. The empty program needs 135 T-states. It needed 212 T-states. Its image is 32 bytes. It was 49 bytes.
+- **`crt0.mac`**, with `--fast-bss-clear`, for 6000 bytes or more (`BIG_BSS` in `src/uc80/main.py`). Without the option the compiler embeds `crt0_small.mac` also for a big BSS. The code is the same as in the other file for a BSS of up to 256 bytes. For 257 bytes or more it jumps to `__bss_big`. This code is after the exit jump. It sets SP to `__bss_end` and clears 16 bytes in each pass with 8 `PUSH HL` (`HL` is 0). The loop stops 32 to 47 bytes above `__bss_start`. Then SP goes back to the real stack, and a byte loop clears the low 32 to 47 bytes (`size mod 16 + 32`). The cost is about 9 T-states for each byte. This file is also the source of `crt0.rel`, which a separate link uses.
 - **`crt0_slow.mac`**, with `--no-fast-bss-clear`. The file has the old code.
 
 The big path writes below SP. An interrupt or an NMI pushes its return address below SP too. During the loop, such a push touches only bytes that the loop has not cleared yet. At the end of the loop, SP is 32 to 47 bytes above `__bss_start`, and the byte loop clears the bytes below SP last. So an NMI handler that uses up to 32 bytes of stack leaves no dirty byte.
@@ -51,6 +51,8 @@ A program that reads an automatic variable before it writes the variable has und
 `bsd-ppt`: 100,546 T-states before, 92,692 after (SDCC: 93,101).
 
 ## Switches
+
+- `--fast-bss-clear` embeds `src/uc80/lib/crt0.mac` (the push fill) when the BSS of the program is 6000 bytes or more. The option is off by default. The clear runs before the timed part of a program, and the 74 bytes of code were a loss in nine benchmark programs.
 
 - `--no-skip-auto-clear` clears `??AUTO` with the rest of the BSS (the layout before step 5).
 

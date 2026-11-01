@@ -18138,6 +18138,298 @@ QS_NV	EQU	QS_END-QS_VARS
 
 	CSEG
 ; ============================================================
+; lc_qsort_s.mac
+; ============================================================
+; lc_qsort_s.mac - __qsort_s: qsort of a few small elements
+
+	CSEG
+
+; ============================================================
+; void _qsort_s(void *base, size_t nmemb, size_t size,
+;               int (*compar)(const void *, const void *))
+;
+; Family K step 6 (docs/k1_link_size.md).  The compiler calls this routine
+; in place of qsort when nmemb is a constant of 32 or less and size is a
+; constant of 8 or less.  The arguments are the arguments of qsort.  A
+; program cannot call the routine in another way: an element size of more
+; than 8 bytes overflows the key buffer.
+;
+; The routine is 230 bytes.  qsort (lc_qsort.mac) is 855 bytes.  Plan:
+;  1. If every pair of neighbours is in strict descending order, reverse
+;     the array and return.  The test uses the compare of the first pair
+;     that the sort needs anyway, so ordered data loses no compare.
+;  2. Binary insertion sort.  The compare of an element with its left
+;     neighbour comes first, so ordered data costs nmemb-1 compares.  An
+;     element that is out of order is copied to the key buffer.  A binary
+;     search over the sorted part finds the place (after equal elements,
+;     so the sort is stable), one LDDR moves the larger elements one place
+;     to the right, and the key goes in the gap.  The search needs about
+;     log2(k) compares for the k-th element where a linear search needs
+;     k/2.  The middle element of lo..hi is lo + (d - (k odd ? size : 0))/2
+;     with d = hi - lo and k = d/size; k is odd when d AND (size AND -size)
+;     is not zero.
+;
+; Calling convention (uc80): compar(a, b) is called with
+;	PUSH b / PUSH a / CALL compar / POP / POP
+; and returns the result in HL.  The comparator may change every register
+; except IX and SP, so no value stays in a register over a compare.
+;
+; Reentrancy: the working variables are in static storage.  The routine
+; copies them to the stack on entry and back on exit, so a comparator that
+; calls qsort works.  An interrupt handler that calls qsort while the
+; routine runs is not supported (as for qsort).
+;
+; Stack on entry (after PUSH IX): base(IX+4), nmemb(IX+6), size(IX+8),
+; compar(IX+10).  Preserves BC and IX.
+; ============================================================
+	PUBLIC	__qsort_s
+__qsort_s:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	PUSH	BC
+	LD	HL,-QSS_NV		; save the static area
+	ADD	HL,SP
+	LD	SP,HL
+	EX	DE,HL
+	LD	HL,QSS_VARS
+	LD	BC,QSS_NV
+	LDIR
+	LD	L,(IX+8)		; size; 0 means nothing to do
+	LD	H,(IX+9)
+	LD	A,H
+	OR	L
+	JP	Z,qsx
+	LD	(QSS_SIZE),HL
+	LD	L,(IX+6)		; nmemb; less than 2 means nothing to do
+	LD	H,(IX+7)
+	DEC	HL
+	LD	A,H
+	OR	L
+	JP	Z,qsx
+	BIT	7,H
+	JP	NZ,qsx
+	LD	B,H
+	LD	C,L			; BC = nmemb - 1
+	LD	A,0C3H			; QSS_TRAMP: JP compar
+	LD	(QSS_TRAMP),A
+	LD	L,(IX+10)
+	LD	H,(IX+11)
+	LD	(QSS_TRAMP+1),HL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	(QSS_BASE),HL
+	LD	DE,(QSS_SIZE)
+qsl:	ADD	HL,DE			; last = base + (nmemb-1)*size
+	DEC	BC
+	LD	A,B
+	OR	C
+	JR	NZ,qsl
+	LD	(QSS_LAST),HL
+	XOR	A			; mask = size AND -size
+	SUB	E
+	LD	L,A
+	LD	A,0
+	SBC	A,D
+	LD	H,A
+	LD	A,L
+	AND	E
+	LD	L,A
+	LD	A,H
+	AND	D
+	LD	H,A
+	LD	(QSS_MASK),HL
+
+; --- first pair: in order, or the start of a strict descending run
+	LD	HL,(QSS_BASE)
+	LD	DE,(QSS_SIZE)
+	ADD	HL,DE
+	PUSH	HL			; [p] with p = second element
+	LD	HL,(QSS_BASE)		; a = first element
+qsd:	PUSH	HL
+	LD	DE,(QSS_SIZE)
+	ADD	HL,DE
+	PUSH	HL			; b = a + size
+	OR	A
+	SBC	HL,DE
+	PUSH	HL			; a
+	CALL	QSS_TRAMP
+	POP	DE
+	POP	DE
+	POP	DE			; DE = a
+	BIT	7,H
+	JR	NZ,qsf
+	LD	A,H
+	OR	L
+	JR	Z,qsf
+	LD	HL,(QSS_SIZE)		; compar(a, a + size) > 0
+	ADD	HL,DE			; next a
+	LD	DE,(QSS_LAST)
+	OR	A
+	SBC	HL,DE
+	ADD	HL,DE			; (ADD HL keeps Z)
+	JR	NZ,qsd
+qsv:	POP	HL			; drop p
+	LD	HL,(QSS_BASE)		; lo
+	LD	DE,(QSS_LAST)		; hi
+qsr:	PUSH	HL
+	PUSH	DE
+	CALL	qsw
+	POP	DE
+	POP	HL
+	LD	BC,(QSS_SIZE)
+	ADD	HL,BC			; lo += size
+	EX	DE,HL
+	OR	A
+	SBC	HL,BC			; hi -= size
+	EX	DE,HL
+	PUSH	HL
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	JR	C,qsr			; while lo < hi
+qsx:	LD	HL,0			; restore the static area
+	ADD	HL,SP
+	LD	DE,QSS_VARS
+	LD	BC,QSS_NV
+	LDIR
+	LD	HL,QSS_NV
+	ADD	HL,SP
+	LD	SP,HL
+	POP	BC
+	POP	IX
+	RET
+
+qsf:	LD	HL,(QSS_BASE)		; not descending
+	OR	A
+	SBC	HL,DE
+	JR	Z,qsn			; the first pair is in order
+	JR	qso			; p is out of order
+
+; --- insertion sort: [p] is on the stack, p is the element to place
+qsn:	POP	HL			; next element
+	LD	DE,(QSS_SIZE)
+	ADD	HL,DE
+	LD	DE,(QSS_LAST)
+	EX	DE,HL
+	OR	A
+	SBC	HL,DE			; last - p
+	JR	C,qsx			; p is past the last element
+	PUSH	DE			; [p]
+	PUSH	DE			; b = p
+	LD	HL,(QSS_SIZE)
+	EX	DE,HL
+	OR	A
+	SBC	HL,DE			; a = p - size
+	PUSH	HL
+	CALL	QSS_TRAMP
+	POP	DE
+	POP	DE
+	BIT	7,H
+	JR	NZ,qsn			; compar(a, p) < 0: in order
+	LD	A,H
+	OR	L
+	JR	Z,qsn			; = 0: in order
+qso:	POP	HL			; out of order: HL = p
+	PUSH	HL
+	LD	DE,(QSS_SIZE)
+	OR	A
+	SBC	HL,DE
+	LD	(QSS_HI),HL		; hi = p - size: its element is above key
+	ADD	HL,DE			; HL = p
+	LD	DE,QSS_KEY
+	LD	BC,(QSS_SIZE)
+	LDIR				; key = *p
+	LD	HL,(QSS_BASE)
+	LD	(QSS_LO),HL
+qsb:	LD	HL,(QSS_HI)		; binary search in lo..hi
+	LD	DE,(QSS_LO)
+	OR	A
+	SBC	HL,DE			; d = hi - lo
+	JR	Z,qsm			; lo = hi: DE = the place
+	LD	DE,(QSS_MASK)
+	LD	A,H
+	AND	D
+	LD	B,A
+	LD	A,L
+	AND	E
+	OR	B
+	JR	Z,qsh			; k even
+	LD	DE,(QSS_SIZE)
+	OR	A
+	SBC	HL,DE			; d - size
+qsh:	SRL	H
+	RR	L
+	LD	DE,(QSS_LO)
+	ADD	HL,DE			; mid
+	PUSH	HL
+	LD	DE,QSS_KEY
+	PUSH	DE			; b = key
+	PUSH	HL			; a = mid
+	CALL	QSS_TRAMP
+	POP	DE
+	POP	DE
+	POP	DE			; DE = mid
+	BIT	7,H
+	JR	NZ,qsu
+	LD	A,H
+	OR	L
+	JR	Z,qsu
+	LD	(QSS_HI),DE		; mid above key: hi = mid
+	JR	qsb
+qsu:	LD	HL,(QSS_SIZE)		; mid not above key: lo = mid + size
+	ADD	HL,DE
+	LD	(QSS_LO),HL
+	JR	qsb
+qsm:	POP	HL			; HL = p, DE = place, stack empty
+	PUSH	HL
+	PUSH	DE
+	OR	A
+	SBC	HL,DE
+	LD	B,H
+	LD	C,L			; BC = p - place, in bytes
+	ADD	HL,DE			; HL = p
+	DEC	HL
+	PUSH	HL
+	LD	DE,(QSS_SIZE)
+	ADD	HL,DE
+	EX	DE,HL			; DE = p - 1 + size
+	POP	HL			; HL = p - 1
+	LDDR				; move [place, p) up by one element
+	POP	DE			; DE = place
+	LD	HL,QSS_KEY
+	LD	BC,(QSS_SIZE)
+	LDIR				; put the key in the gap
+	JR	qsn
+
+; Swap the elements at HL and DE.  Clobbers A and BC.
+qsw:	LD	BC,(QSS_SIZE)
+qsw1:	LD	A,(DE)
+	LDI				; (DE) <- (HL); HL++, DE++, BC--
+	DEC	HL
+	LD	(HL),A
+	INC	HL
+	JP	PE,qsw1
+	RET
+
+	COMMON	/lc_qsort_s/
+; Working storage.  The routine saves these QSS_NV bytes on its stack on
+; entry and restores them on exit.
+QSS_VARS:
+QSS_TRAMP:	DS	3	; JP compar
+QSS_SIZE:	DS	2	; element size
+QSS_BASE:	DS	2	; first element
+QSS_LAST:	DS	2	; last element
+QSS_MASK:	DS	2	; size AND -size
+QSS_LO:		DS	2	; binary search: lowest place
+QSS_HI:		DS	2	; binary search: element above the key
+QSS_KEY:	DS	8	; copy of the element in hand
+QSS_END:
+QSS_NV	EQU	QSS_END-QSS_VARS
+
+
+	CSEG
+; ============================================================
 ; lc_quick_exit.mac
 ; ============================================================
 ; lc_quick_exit.mac - quick_exit and at_quick_exit (C11)

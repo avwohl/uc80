@@ -65,6 +65,17 @@ The switches of family J are all off-switches. Each one is in the page of its pa
 - `--no-range-div` ([range_div.md](range_div.md)): `x / k` and `x % k` run at run time, also when the range of `x` gives the result.
 - `--no-skip-auto-clear` ([startup_fast.md](startup_fast.md)): the start-up code clears the shared automatic storage `??AUTO`.
 
+The switches of family K step 1 are off-switches, with one exception. Each one is in [k1_link_size.md](k1_link_size.md):
+
+- `--no-printf-to-putchar`: `printf("\n");` and `printf("c");` stay calls of `printf`.
+- `--no-drop-printf-tables`: the printf dispatch tables are in a program that calls no `printf`.
+- `--fast-bss-clear`: the push fill of the start-up code for a BSS of 6000 bytes or more (the default is the small code). Of these switches, only `--fast-bss-clear` turns a change on.
+- `--no-printf-literal-union`: a format that is not a literal links every conversion.
+- `--no-div32w`: an unsigned 32-bit division by a narrow divisor calls `__div32` and `__mod32`.
+- `--no-qsort-small`: `qsort` of a constant count of 32 or less calls the generic `qsort`.
+- `--no-div16b`: an unsigned 16-bit division by a constant of 1 to 255 calls `__div16` and `__mod16`.
+- `--no-shr32-loop`: a 32-bit shift right by a variable count calls `__shr32`.
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or
