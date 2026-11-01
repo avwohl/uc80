@@ -3964,6 +3964,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_div32w = True
         self.enable_qsort_small = True
         self.enable_div16b = True
+        self.enable_const_store = True
+        self.enable_sdivmod_merge = True
+        self.enable_for_entry = True
+        self.enable_puts_small = True
+        self.enable_compact_div16 = True
+        self.compact_div16 = True
         self.enable_shr32_loop = True
         # Family K step 2: no printf tables without a printf call.
         self.enable_drop_printf_tables = True
@@ -5032,6 +5038,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self.gen_declaration(decl)
 
         self._fold_short_helpers()
+        self._fold_signed_divmod()
+        self._decide_compact_div16()
 
         # Emit printf/scanf dispatch tables if features are known
         if self._should_emit_printf_tables():
@@ -6514,6 +6522,45 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     if short in ln else ln for ln in self.ctx.lines]
                 text = None
 
+    def _fold_signed_divmod(self) -> None:
+        """A program that calls both __sdiv16 and __smod16 calls the
+        routines that share one body (rt_sdivmod16.mac, 21 bytes less in
+        the image).  docs/k2_code_size.md."""
+        used = self.ctx.runtime_used
+        if (not self.enable_sdivmod_merge or "__sdiv16" not in used
+                or "__smod16" not in used):
+            return
+        text = "\n".join(
+            ln for ln in self.ctx.lines
+            if not ln.lstrip().lower().startswith(("extrn", "public", ";")))
+        if self._DIV16_LIBC.search(text):
+            return
+        for old, new in (("__sdiv16", "__sdiv16m"),
+                         ("__smod16", "__smod16m")):
+            used.discard(old)
+            used.add(new)
+            self.ctx.lines[:] = [
+                re.sub(r"\b" + old + r"\b", new, ln) if old in ln else ln
+                for ln in self.ctx.lines]
+
+    _DIV32_NAMES = frozenset((
+        "__div32", "__mod32", "__sdiv32", "__smod32", "__div32w",
+        "__mod32w"))
+
+    def _decide_compact_div16(self) -> None:
+        """The compact __div16 (8-step loop for a divisor of 256 or more,
+        no __dv8w) saves bytes only when no 32-bit divide in the program
+        needs __dv8w too.  docs/k2_code_size.md."""
+        used = self.ctx.runtime_used
+        ok = self.enable_compact_div16 and not (used & self._DIV32_NAMES)
+        if ok:
+            text = "\n".join(
+                ln for ln in self.ctx.lines
+                if not ln.lstrip().lower().startswith(
+                    ("extrn", "public", ";")))
+            ok = not self._DIV32_LIBC.search(text)
+        self.compact_div16 = ok
+
     def _count_is_multiple_of_4(self, e) -> bool:
         """The shift count ``e`` is a multiple of 4 (``x * 4``, ``x << 2``,
         or the cast of such a value): __shr32c takes the same time as
@@ -6540,6 +6587,21 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return False
         k = self._const_int_operand(e)
         return k is not None and 1 <= k <= 255
+
+    def _puts_small_ok(self, expr) -> bool:
+        """``puts(s)`` of the libc calls __puts_s (lc_puts_s.mac) in place
+        of puts: no IX frame.  Only for a CP/M whole-program build whose
+        puts is the libc puts.  docs/k2_code_size.md."""
+        if (not self.enable_puts_small or not self.whole_program
+                or self.rom_data or self.sdas_output or self.has_mac_files
+                or not isinstance(expr.func, ast.Identifier)
+                or expr.func.name.text != "puts"
+                or len(expr.args or []) != 1
+                or "puts" in getattr(self, '_defined_function_names', set())
+                or "puts" in self.ctx.locals):
+            return False
+        sym = self.ctx.lookup("puts")
+        return sym is None or sym.is_global
 
     def _qsort_small_ok(self, expr) -> bool:
         """``qsort(base, n, size, cmp)`` with n a constant of 32 or less and
@@ -10431,6 +10493,24 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # inside the init clause (which can read the old value).
         if loop_ranges:
             self._range_scoped = {**saved_ranges, **loop_ranges}
+
+        # A counter that starts at a constant for which the first test is
+        # true: the loop has its test at the end only (docs/k2_code_size.md).
+        if stmt.condition and self._for_entry_true(stmt):
+            body_label = self.ctx.new_label("FORB")
+            self.ctx.emit_label(body_label)
+            self.gen_statement(stmt.body)
+            self.ctx.emit_label(update_label)
+            if stmt.update:
+                with self._vol_region(stmt.update):
+                    self.gen_expr_discard(stmt.update)
+            with self._vol_region(stmt.condition):
+                self._gen_branch(stmt.condition, body_label, True)
+            self.ctx.emit_label(end_label)
+            self._range_scoped = saved_ranges
+            self.ctx.break_labels.pop()
+            self.ctx.continue_labels.pop()
+            return
         self.ctx.emit_label(start_label)
 
         # Condition
@@ -10453,6 +10533,73 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self._range_scoped = saved_ranges
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
+
+    _CMP_OPS = {
+        "<": lambda a, b: a < b, "<=": lambda a, b: a <= b,
+        ">": lambda a, b: a > b, ">=": lambda a, b: a >= b,
+        "!=": lambda a, b: a != b, "==": lambda a, b: a == b,
+    }
+    _CMP_FLIP = {"<": ">", "<=": ">=", ">": "<", ">=": "<=", "!=": "!=",
+                 "==": "=="}
+
+    def _for_entry_true(self, stmt: ast.ForStmt) -> bool:
+        """The init clause of ``stmt`` stores a constant in an integer
+        variable and the condition compares that variable with a constant
+        (``for (i = 0; i < 8; i++)``) so that the first test is true.
+        Both constants lie in 0..32767 and the first fits the variable.
+        The loop then needs no test before the body."""
+        if not self.enable_for_entry or stmt.condition is None:
+            return False
+        init = stmt.init
+        if isinstance(init, ast.ExpressionStmt):
+            init = init.expr
+        name = c1 = None
+        if isinstance(init, ast.Declaration):
+            vs = list(iter_var_decls(init))
+            if len(vs) != 1 or vs[0][2] is None or vs[0][3]:
+                return False
+            name = vs[0][0]
+            if isinstance(vs[0][2], ast.InitializerList):
+                return False
+            c1 = self._const_int_operand(vs[0][2])
+        elif (isinstance(init, ast.BinaryOp) and self._op_of(init) == "="
+                and isinstance(init.left, ast.Identifier)):
+            name = init.left.name.text
+            c1 = self._const_int_operand(init.right)
+        if name is None or c1 is None:
+            return False
+        cond = stmt.condition
+        if not isinstance(cond, ast.BinaryOp):
+            return False
+        op = self._op_of(cond)
+        if op not in self._CMP_OPS:
+            return False
+        if isinstance(cond.left, ast.Identifier) and cond.left.name.text == name:
+            c2 = self._const_int_operand(cond.right)
+        elif (isinstance(cond.right, ast.Identifier)
+              and cond.right.name.text == name):
+            c2 = self._const_int_operand(cond.left)
+            op = self._CMP_FLIP[op]
+        else:
+            return False
+        if c2 is None or not (0 <= c1 <= 32767 and 0 <= c2 <= 32767):
+            return False
+        sym = self.ctx.lookup(name)
+        if sym is None:
+            return False
+        t = _to_legacy(sym.sym_type)
+        if (not isinstance(t, (lt.BasicType, lt.EnumType))
+                or self._is_float_type(t) or self._is_volatile_type(t)
+                or self._is_bool_type(t) or self._is_long_long_type(t)):
+            return False
+        size = self._type_size(t)
+        if size not in (1, 2, 4):
+            return False
+        signed = self._is_signed_type(t)
+        top = (1 << (8 * size - (1 if signed else 0))) - 1
+        if c1 > top:
+            return False
+        return bool(self._CMP_OPS[op](c1, c2))
 
     def gen_break(self) -> None:
         """Generate code for break statement."""
@@ -14926,6 +15073,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 if self._qsort_small_ok(expr):
                     self.ctx.implicit_externs.add("__qsort_s")
                     self.ctx.emit_instr("call", "__qsort_s")
+                elif self._puts_small_ok(expr):
+                    self.ctx.implicit_externs.add("__puts_s")
+                    self.ctx.emit_instr("call", "__puts_s")
                 else:
                     self.ctx.emit_instr(
                         "call", gsym.label() if gsym is not None
@@ -19577,12 +19727,36 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if not self._scalar16_type(t) or self._is_float_expr(rhs):
             return False
         k = self._const_int_operand(rhs)
+        alabel = None
         if k is None and self._simple_sym(rhs) is None:
-            return False
+            alabel = self._link_address_operand(rhs)
+            if alabel is None:
+                return False
         e = self.ctx.emit_instr
         used = expr is not self._discard_expr
         loc = self._direct_loc(lhs) if isinstance(
             lhs, (ast.Index, ast.Member)) else None
+        if alabel is not None and loc is not None and not (
+                loc[0] == "label" or self._ix_in_range(loc[2], 2)):
+            loc = None
+        if alabel is not None and loc is not None:
+            if loc[0] == "label":
+                e("ld", f"HL,{alabel}")
+                e("ld", f"({self._label_plus(loc[1], loc[2])}),HL")
+            else:
+                e("ld", f"HL,{alabel}")
+                e("ld", f"({ix_off(loc[2])}),L")
+                e("ld", f"({ix_off(loc[2] + 1)}),H")
+            return True
+        if alabel is not None:
+            self._gen_lvalue_address(lhs)
+            e("ld", f"DE,{alabel}")
+            e("ld", "(HL),E")
+            e("inc", "HL")
+            e("ld", "(HL),D")
+            if used:
+                e("ex", "DE,HL")
+            return True
         if loc is not None and (loc[0] == "label"
                                 or self._ix_in_range(loc[2], 2)):
             # A named object at a fixed address: store straight to it.
@@ -19620,6 +19794,41 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if used:
             e("ex", "DE,HL")
         return True
+
+    _LD_HL_LABEL = re.compile(r"^\tld\tHL,([A-Za-z_@?$][^\s(]*)$")
+
+    def _link_address_operand(self, rhs) -> str | None:
+        """The label text when ``rhs`` is a function name, a string
+        literal or ``&global``: gen_expr loads it with the single
+        instruction ``ld HL,label``, which then moves to DE after the
+        address of the target (docs/k2_code_size.md).  None otherwise,
+        with nothing emitted."""
+        if not self.enable_const_store:
+            return None
+        if isinstance(rhs, ast.Identifier):
+            sym = self.ctx.lookup(rhs.name.text)
+            if (sym is None or not sym.is_global
+                    or rhs.name.text not in self.ctx.function_names):
+                return None
+        elif isinstance(rhs, ast.UnaryOp):
+            op = rhs.op.text if hasattr(rhs.op, "text") else rhs.op
+            if op != "&" or not isinstance(rhs.operand, ast.Identifier):
+                return None
+        elif not (isinstance(rhs, ast.StringLiteral)
+                  or (isinstance(rhs, list) and rhs
+                      and all(isinstance(p, ast.StringLiteral)
+                              for p in rhs))):
+            return None
+        lines = self.ctx.lines
+        mark = len(lines)
+        self.gen_expr(rhs)
+        new = lines[mark:]
+        del lines[mark:]
+        if len(new) == 1:
+            m = self._LD_HL_LABEL.match(new[0])
+            if m is not None:
+                return m.group(1)
+        return None
 
     def _gen_store32_const(self, expr: ast.BinaryOp, target_type) -> bool:
         """``*p = K``, ``a[i] = K``, ``s.m = K`` for a long target: the

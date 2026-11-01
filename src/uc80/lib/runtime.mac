@@ -1156,6 +1156,8 @@ __ctz64_done:
 ; Also sets __divrem to remainder (DE % HL), and returns the
 ; remainder in DE.  Division by zero: HL = 0, remainder 0.
 ; Preserves BC, IX, IY.  Clobbers A, flags.
+; A divisor of 256 or more uses a loop of 8 steps (family K, step 2);
+; lib/rt_alt/rt_div16.mac has the older version with __dv8w.
 ; ============================================================
 	PUBLIC	__div16
 __div16:
@@ -1189,10 +1191,28 @@ __div16_n:
 	LD	D,0
 	JR	__div16_done
 __div16_w:
-	LD	A,L		; divisor >= 256: quotient < 256
-	LD	L,H
+	LD	A,L		; divisor >= 256: quotient < 256, and the
+	LD	L,H		; remainder so far is the high byte
 	LD	H,0
-	CALL	__dv8w		; A = quotient, HL = remainder
+	LD	B,8
+__div16_wl:
+	RLA			; dividend bit out, quotient bit in (as
+	ADC	HL,HL		; the complement of the carry)
+	JR	C,__div16_wo	; remainder passed 65535: above the divisor
+	SBC	HL,DE
+	JR	NC,__div16_wk
+	ADD	HL,DE		; restore; this sets carry
+__div16_wk:
+	DJNZ	__div16_wl
+	JR	__div16_wd
+__div16_wo:
+	OR	A
+	SBC	HL,DE		; borrows
+	CCF			; carry 0: quotient bit 1
+	DJNZ	__div16_wl
+__div16_wd:
+	RLA
+	CPL			; A = quotient, HL = remainder
 	EX	DE,HL
 	LD	L,A
 	LD	H,0
@@ -5578,6 +5598,76 @@ __sdiv64_dvspos:
 	CALL	__neg64
 __sdiv64_done:
 	POP	AF		; discard saved acc sign
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_sdivmod16.mac
+; ============================================================
+; rt_sdivmod16.mac - __sdiv16m, __smod16m, __sdm16
+; Family K, step 2 (docs/k2_code_size.md)
+
+
+
+	CSEG
+; ============================================================
+; 16-bit signed division and modulo that share one body.
+;   __sdiv16m: HL = DE / HL (signed, truncated toward zero)
+;   __smod16m: HL = DE % HL (signed, the sign of the dividend)
+; The compiler calls these two in place of __sdiv16 and __smod16 when
+; a program uses both (the two routines take 70 bytes together, these
+; three take 49).  A program that uses only one of them keeps the
+; routine of rt_sdiv16.mac or rt_smod16.mac.  Each call takes about 20
+; T-states more than the separate routines.
+; Preserves BC, IX, IY.  Sets __divrem as __div16 does.
+; ============================================================
+	PUBLIC	__sdiv16m
+__sdiv16m:
+	LD	A,D
+	XOR	H		; S = sign of the quotient, C = 0
+	JR	__sdm16
+
+	PUBLIC	__smod16m
+__smod16m:
+	LD	A,D
+	OR	A		; S = sign of the dividend
+	SCF			; C = 1: the remainder
+	JR	__sdm16
+
+	PUBLIC	__sdm16
+__sdm16:
+	PUSH	AF
+	BIT	7,D
+	JR	Z,__sdm16_1
+	XOR	A		; DE = -DE
+	SUB	E
+	LD	E,A
+	SBC	A,A
+	SUB	D
+	LD	D,A
+__sdm16_1:
+	BIT	7,H
+	JR	Z,__sdm16_2
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__sdm16_2:
+	CALL	__div16
+	POP	AF
+	JR	NC,__sdm16_d	; the quotient
+	EX	DE,HL		; the remainder: HL = remainder
+__sdm16_d:
+	RET	P
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
 	RET
 
 

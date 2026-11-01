@@ -4,7 +4,6 @@
 	.Z80
 
 	EXTRN	__dv8n
-	EXTRN	__dv8w
 	EXTRN	__divrem
 
 	CSEG
@@ -13,6 +12,8 @@
 ; Also sets __divrem to remainder (DE % HL), and returns the
 ; remainder in DE.  Division by zero: HL = 0, remainder 0.
 ; Preserves BC, IX, IY.  Clobbers A, flags.
+; A divisor of 256 or more uses a loop of 8 steps (family K, step 2);
+; lib/rt_alt/rt_div16.mac has the older version with __dv8w.
 ; ============================================================
 	PUBLIC	__div16
 __div16:
@@ -46,10 +47,28 @@ __div16_n:
 	LD	D,0
 	JR	__div16_done
 __div16_w:
-	LD	A,L		; divisor >= 256: quotient < 256
-	LD	L,H
+	LD	A,L		; divisor >= 256: quotient < 256, and the
+	LD	L,H		; remainder so far is the high byte
 	LD	H,0
-	CALL	__dv8w		; A = quotient, HL = remainder
+	LD	B,8
+__div16_wl:
+	RLA			; dividend bit out, quotient bit in (as
+	ADC	HL,HL		; the complement of the carry)
+	JR	C,__div16_wo	; remainder passed 65535: above the divisor
+	SBC	HL,DE
+	JR	NC,__div16_wk
+	ADD	HL,DE		; restore; this sets carry
+__div16_wk:
+	DJNZ	__div16_wl
+	JR	__div16_wd
+__div16_wo:
+	OR	A
+	SBC	HL,DE		; borrows
+	CCF			; carry 0: quotient bit 1
+	DJNZ	__div16_wl
+__div16_wd:
+	RLA
+	CPL			; A = quotient, HL = remainder
 	EX	DE,HL
 	LD	L,A
 	LD	H,0

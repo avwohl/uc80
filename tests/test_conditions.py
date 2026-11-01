@@ -265,7 +265,9 @@ class TestJumpChains:
     def test_for_loop(self):
         o = fn("int n = 0; for (uc = 0; uc < 200; uc++) n++; return n;")
         i = o.index("cp\t200")
-        assert o[i - 1] == "ld\tA,(_uc)" and o[i + 1].startswith("jp\tNC,")
+        # the counter starts at 0, so the first test is true: the loop has
+        # its test at the end (docs/k2_code_size.md)
+        assert o[i - 1] == "ld\tA,(_uc)" and o[i + 1].startswith("jp\tC,@FORB")
 
     def test_ternary(self):
         o = fn("return u <= v ? 3 : 4;")

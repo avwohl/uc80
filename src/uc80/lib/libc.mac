@@ -17534,6 +17534,48 @@ _puts_newline:
 
 	CSEG
 ; ============================================================
+; lc_puts_s.mac
+; ============================================================
+; lc_puts_s.mac - __puts_s: puts without a stack frame
+
+
+	CSEG
+
+; ============================================================
+; int _puts_s(const char *s)
+; Output a string followed by a newline, as puts does.  Family K, step 2
+; (docs/k2_code_size.md).  The compiler calls this routine in place of
+; puts.  It does not use IX, and it does not save BC, because __conout
+; keeps BC, DE and HL.  The routine is 31 bytes.  puts (lc_puts.mac) is
+; 40 bytes.
+; Argument: pointer to string on the stack at SP+2
+; Returns: 0
+; ============================================================
+	PUBLIC	__puts_s
+__puts_s:
+	LD	HL,2
+	ADD	HL,SP
+	LD	E,(HL)
+	INC	HL
+	LD	H,(HL)
+	LD	L,E
+__puts_s_loop:
+	LD	A,(HL)
+	OR	A
+	JR	Z,__puts_s_nl	; end of string
+	LD	E,A
+	CALL	__conout	; preserves HL
+	INC	HL
+	JR	__puts_s_loop
+__puts_s_nl:
+	LD	E,0AH
+	CALL	__conout
+	LD	HL,0
+	RET
+
+
+	CSEG
+; ============================================================
 ; lc_qsort.mac
 ; ============================================================
 ; lc_qsort.mac - qsort (bsearch is in lc_bsearch.mac)
@@ -18154,7 +18196,7 @@ QS_NV	EQU	QS_END-QS_VARS
 ; program cannot call the routine in another way: an element size of more
 ; than 8 bytes overflows the key buffer.
 ;
-; The routine is 230 bytes.  qsort (lc_qsort.mac) is 855 bytes.  Plan:
+; The routine is 411 bytes.  qsort (lc_qsort.mac) is 855 bytes.  Plan:
 ;  1. If every pair of neighbours is in strict descending order, reverse
 ;     the array and return.  The test uses the compare of the first pair
 ;     that the sort needs anyway, so ordered data loses no compare.

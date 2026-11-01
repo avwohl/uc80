@@ -523,12 +523,24 @@ def load_lib_modules() -> LibModules:
 RT_SHORTCUT_TAG = ";@rt-shortcut"
 
 
-def load_runtime_library(shortcuts: bool = True) -> RuntimeLibrary:
+def load_runtime_library(shortcuts: bool = True,
+                         compact_div16: bool = True) -> RuntimeLibrary:
     """Load the default runtime library.  Without ``shortcuts`` the lines
-    tagged ``;@rt-shortcut`` are left out."""
+    tagged ``;@rt-shortcut`` are left out.  Without ``compact_div16`` the
+    functions of lib/rt_alt/*.mac (the older __div16, with __dv8w for a
+    divisor of 256 or more) replace the ones of the same name."""
     lib = RuntimeLibrary()
     runtime_path = lib_file("runtime.mac")
     if runtime_path.exists():
         lib.load_file(runtime_path,
                       None if shortcuts else RT_SHORTCUT_TAG)
+        if not compact_div16:
+            alt = lib_file("rt_alt/rt_div16.mac")
+            if alt.exists():
+                lib._parse_assembly(alt.read_text())
+                # the alternative file does not know the other functions
+                for f in list(lib.functions.values()):
+                    f.dependencies |= {n for n in f.externs
+                                       if n in lib.functions
+                                       and n not in f.publics}
     return lib

@@ -39,6 +39,7 @@ from .multi_unit import (file_scope_names, uniquify_enumerators, uniquify_static
                          uniquify_types)
 
 from . import peep_local
+from . import peep_flow
 from . import looprot
 from . import iyptr, reglocals
 
@@ -244,7 +245,11 @@ class _Peephole:
         return self.inner.stats
 
     def optimize(self, code: str) -> str:
-        return peep_local.optimize(self.inner.optimize(code))
+        text = peep_local.optimize(self.inner.optimize(code))
+        flowed = peep_flow.optimize(text)
+        if flowed is not text:
+            text = peep_local.optimize(flowed)
+        return text
 
 
 def _optimize_outside_asm(peephole, code: str) -> str:
@@ -960,6 +965,66 @@ def main() -> int:
              "elements of at most 8 bytes (docs/k1_link_size.md)"
     )
     parser.add_argument(
+        "--no-const-store",
+        action="store_true",
+        help="Store the address of a function or string into an array "
+             "element or member with the push/pop sequence "
+             "(docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-puts-small",
+        action="store_true",
+        help="Call the libc puts, with its IX frame, and not __puts_s "
+             "(docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-div16-compact",
+        action="store_true",
+        help="Embed the older __div16 that calls __dv8w for a divisor of "
+             "256 or more (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-branch-merge",
+        action="store_true",
+        help="Do not share the start and the end of the two arms of an "
+             "if/else (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-for-entry",
+        action="store_true",
+        help="Test the condition of a for loop before the first pass also "
+             "when the counter starts at a constant that passes it "
+             "(docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-sign-one",
+        action="store_true",
+        help="Use the general signed compare also for x < 1 and x > 0 "
+             "(docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-sdivmod-merge",
+        action="store_true",
+        help="Call separate __sdiv16 and __smod16 also when a program uses "
+             "both (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-flow-opt",
+        action="store_true",
+        help="Do not remove dead register writes and register copies by "
+             "the liveness pass (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-ret-jump",
+        action="store_true",
+        help="Keep a jump to a ret as a jump (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-cp-zero",
+        action="store_true",
+        help="Keep cp 0 before a conditional jump (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
         "--no-div16b",
         action="store_true",
         help="Call __div16 and __mod16 also for a constant divisor of 1 to "
@@ -1564,6 +1629,11 @@ def main() -> int:
         gen.enable_div32w = not args.no_div32w
         gen.enable_qsort_small = not args.no_qsort_small
         gen.enable_div16b = not args.no_div16b
+        gen.enable_const_store = not args.no_const_store
+        gen.enable_sdivmod_merge = not args.no_sdivmod_merge
+        gen.enable_for_entry = not args.no_for_entry
+        gen.enable_puts_small = not args.no_puts_small
+        gen.enable_compact_div16 = not args.no_div16_compact
         gen.enable_shr32_loop = not args.no_shr32_loop
         gen.enable_drop_printf_tables = not args.no_drop_printf_tables
         gen.has_mac_files = bool(mac_files)
@@ -1894,7 +1964,9 @@ def main() -> int:
                 runtime_lib.load_file(Path(args.runtime_lib))
             else:
                 runtime_lib = load_runtime_library(
-                    shortcuts=not args.no_rt_shortcuts)
+                    shortcuts=not args.no_rt_shortcuts,
+                    compact_div16=(gen.compact_div16
+                                   and not args.no_div16_compact))
 
             # Get required functions from codegen AND from EXTRN references
             needed = set(gen.ctx.runtime_used)
@@ -2347,6 +2419,11 @@ def main() -> int:
 
             peep_local.RET_CC = not args.no_param_reg
             peep_local.RELOAD = not args.no_byte_cse
+            peep_local.BRANCH_MERGE = not args.no_branch_merge
+            peep_local.SIGN_ONE = not args.no_sign_one
+            peep_local.RET_JMP = not args.no_ret_jump
+            peep_local.CP_ZERO = not args.no_cp_zero
+            peep_flow.ENABLED = not args.no_flow_opt
             peephole = _Peephole(PeepholeOptimizer())
             # Not peephole.optimize(code): inline asm is an optimization
             # barrier and its bytes are never rewritten.
