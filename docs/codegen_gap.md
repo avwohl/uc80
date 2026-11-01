@@ -594,3 +594,13 @@ to SDCC 4.6.0 is 0.9124 for the size, 0.8705 for the whole image and 0.5036
 for the T-states. 75 of the 78 programs are faster. The numbers are in
 [benchmarks_speed.md](benchmarks_speed.md). The repair pass after the
 integration changed the means by 0.0003 at most.
+
+## Status on 2026-11-01 (integration of bug round 6, branch integrate13)
+
+The branch `integrate13` has `integrate12` and bug round 6. The mean ratio
+to SDCC 4.6.0 is 0.9109 for the size, 0.8726 for the whole image and 0.5023
+for the T-states (0.6029 without `sort-*`). 75 of the 78 programs are
+faster. The means of the section above (0.9124, 0.8705, 0.5036) are the
+means of `integrate12` only. Bug round 6 also made the rows of the other
+compilers again, and it added self-check code to the time builds of 29
+programs. The causes of the 44 changed uc80 rows are in `CHANGELOG.md`.

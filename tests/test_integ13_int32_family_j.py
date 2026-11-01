@@ -52,3 +52,31 @@ def test_int32_quotients_and_family_j(tmp_path, flags):
     mac = compile_c(tmp_path, SRC, "--int=32", *flags)
     out = run_raw(tmp_path, mac).decode("latin-1").replace("\r", "")
     assert out == EXPECT
+
+
+RD_SRC = r"""
+#include <stdio.h>
+
+int big = 200000;                  /* an int of 32 bits under --int=32 */
+int rnd(void) { return big; }
+
+int main(void)
+{
+    long temp;
+    temp = rnd();                  /* the case of docs/range_div.md */
+    printf("%d %ld %ld %ld\n", (int)sizeof(int), temp / 100000L,
+           temp % 100000L, temp - (temp / 100000L) * 100000L - 50000L);
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flags", [(), ("-O0",)], ids=ids)
+def test_range_division_does_not_fold_for_32_bit_int(tmp_path, flags):
+    """With a 16-bit int the range of `rnd()` decides `temp / 100000L`
+    (0).  With --int=32 the range is 32 bits wide, and the fold must stay
+    off: the quotient is 2.  A change of the guard in rangediv.fold fails
+    this test."""
+    mac = compile_c(tmp_path, RD_SRC, "--int=32", *flags)
+    out = run_raw(tmp_path, mac).decode("latin-1").replace("\r", "")
+    assert out == "4 2 0 -50000\n"

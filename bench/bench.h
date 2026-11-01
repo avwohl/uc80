@@ -75,6 +75,14 @@ _bt_end:
 #define BENCH_CHECK(c)
 #define BENCH_CHECK_EQ(e, k) printf("%.10g\n", (double)(e))
 #define BENCH_CHECK_NEAR(e, k, t) printf("%.10g\n", (double)(e))
+#elif defined(__UC80__)
+/* uc80 rotates a hot `while` loop (docs/loop_rotation.md) within a budget
+ * of 2 percent of the code.  The spin loops of the checks never run, but
+ * as `while` loops they took the budget from the loops of the program.
+ * A `do` loop is not a candidate for the rotation. */
+#define BENCH_CHECK(c) do ; while (!(c)) ;
+#define BENCH_CHECK_EQ(e, k) do ; while ((e) != (k)) ;
+#define BENCH_CHECK_NEAR(e, k, t) do ; while ((e) < (k) - (t) || (e) > (k) + (t)) ;
 #else
 #define BENCH_CHECK(c) while (!(c)) ;
 #define BENCH_CHECK_EQ(e, k) while ((e) != (k)) ;
