@@ -6,6 +6,7 @@ Each change has a switch that turns the change off. Each change has a test that 
 
 - [Addresses stored through a pointer](#addresses-stored-through-a-pointer): `--no-const-store`.
 - [A for loop with a test at the end](#a-for-loop-with-a-test-at-the-end): `--no-for-entry`.
+- [Unrolling a short counted loop](#unrolling-a-short-counted-loop): `--no-loop-unroll`.
 - [The two arms of an if and else](#the-two-arms-of-an-if-and-else): `--no-branch-merge`.
 - [The signed test x < 1](#the-signed-test-x--1): `--no-sign-one`.
 - [Dead register writes and copies](#dead-register-writes-and-copies): `--no-flow-opt`.
@@ -48,6 +49,29 @@ The compiler uses the new form when all of these are true:
 - The first test is true for these constants.
 
 Each loop is 6 to 12 bytes smaller. The programs `stanford-puzzle`, the `sort-*` programs and `pi` are 15 to 110 bytes smaller from this change alone.
+
+## Unrolling a short counted loop
+
+The AST optimizer of `uc_core` has a loop unroller for level 3. It never ran for a loop such as `for (i = 0; i < 4; i++)`. The tree wraps the init clause in an expression statement, and the unroller did not look inside. The class `Uc80ASTOptimizer` in `ast_opt.py` now has its own `_try_loop_unroll`.
+
+The unroller applies these rules:
+
+- The init clause stores a constant from 0 to 32767 in a variable. The condition compares the variable with such a constant (`<`, `<=`, `!=`). The update has the form `v++` or `v += c` with `c` above 0.
+- The loop has 1 to 4 passes. The body has no declaration, `break`, `continue`, `goto` or label.
+- The body does not assign the variable. The program does not take the address of the variable. The variable is not `volatile`.
+- A loop with a call in the body and two or more passes stays a loop.
+
+The unrolled code has one copy of the body for each pass. A local variable of type `int`, `short`, `unsigned` or `unsigned char` becomes a literal in each copy. The constant folder then folds the expressions. An index such as `p[i + 8 * (j + 8 * k)]` becomes a fixed address. A variable of another type, or a global variable, gets the assignment `v = value` before each copy. Code with `sizeof(v)` or `_Generic(v ...)` keeps the variable.
+
+The unrolled code ends with the assignment of the value that the loop leaves in the variable. The unroller of `uc_core` stopped one step before this value. The assignments that nobody reads go away in later passes.
+
+The compiler unrolls a loop first when it is the whole body of another loop. The decision for the outer loop then sees the folded inner copies.
+
+The function `_cost` in `ast_opt.py` estimates the size of a tree in bytes. A variable costs 3, an operator 2, a literal 2 and a fixed address 3. An index that is not a literal costs 8 more than its index expression. A call costs 8 more than its arguments, and the control of a loop costs 12.
+
+The compiler folds the copies and compares their cost with the cost of the loop. The loop stays when the copies cost more than `UNROLL_SLACK` (4) bytes more. The environment variable `UC80_UNROLL_DEBUG=1` prints both costs for each loop.
+
+The program `stanford-puzzle` has 13 nests of three short loops. The nests become stores to fixed addresses. The program is 530 bytes smaller.
 
 ## The two arms of an if and else
 

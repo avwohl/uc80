@@ -1025,6 +1025,12 @@ def main() -> int:
         help="Keep cp 0 before a conditional jump (docs/k2_code_size.md)"
     )
     parser.add_argument(
+        "--no-loop-unroll",
+        action="store_true",
+        help="Do not unroll a counted loop of at most 4 passes with a short "
+             "body (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
         "--no-div16b",
         action="store_true",
         help="Call __div16 and __mod16 also for a constant divisor of 1 to "
@@ -1525,6 +1531,7 @@ def main() -> int:
             ast_opt = Uc80ASTOptimizer(opt_level, type_config=type_config)
             ast_opt.dead_test = (not args.no_dead_test
                                  and not args.no_optimize)
+            ast_opt.loop_unroll = not args.no_loop_unroll
             merged_ast = ast_opt.optimize(merged_ast)
             merged_ast._enum_fixed_types = enum_fixed
             if args.verbose and ast_opt.stats:

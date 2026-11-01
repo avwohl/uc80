@@ -28,7 +28,10 @@ three steps.
    ``ld D,H`` and ``ld E,L``.  A store through a pointer, a call, a block
    move or a label clears what the pass knows.  The pass tracks labels
    only, and it ignores the objects of fixed addresses (``___abs...``).
-6. The test ``while (n--)`` on a 16-bit value in memory:
+6. A constant that a register already holds.  After ``ld HL,5`` a later
+   ``ld HL,5`` goes (also for a byte register).  A label, a call or a write
+   to the register ends the fact.
+7. The test ``while (n--)`` on a 16-bit value in memory:
    ``push HL / dec HL / ld (X),HL / pop HL / ld A,H / or L / jcc`` becomes
    ``ld A,H / or L / dec HL / ld (X),HL`` (HL holds n-1 afterwards; when
    HL is live after the test, one ``inc HL`` follows).
@@ -445,6 +448,71 @@ def _mem_forward(rs: list[_R]) -> bool:
     return changed
 
 
+def _int_of(op: str):
+    op = op.strip()
+    if not _IMM.match(op):
+        return None
+    t = op.lower()
+    try:
+        if t.endswith("h"):
+            return int(t[:-1], 16)
+        if t.startswith(("0x", "-0x", "+0x")):
+            return int(t, 16)
+        return int(t, 10)
+    except ValueError:
+        return None
+
+
+def _const_forward(rs: list[_R]) -> bool:
+    """Step 6."""
+    changed = False
+    known: dict[str, int] = {}
+    for r in rs:
+        if r.kind == "label":
+            known.clear()
+            continue
+        if r.kind != "ins" or r.dead:
+            continue
+        ops = r.ops
+        low = [o.lower() for o in ops]
+        if r.op == "ld" and len(ops) == 2:
+            dst = low[0]
+            v = _int_of(ops[1])
+            if v is not None and dst in _BIT:
+                v &= 0xFF
+                if known.get(dst) == v:
+                    if _allow():
+                        r.dead = True
+                        changed = True
+                        continue
+                known[dst] = v
+                continue
+            if v is not None and dst in _PAIRS:
+                v &= 0xFFFF
+                hi, lo = _PAIRS[dst]
+                if known.get(hi) == v >> 8 and known.get(lo) == v & 255:
+                    if _allow():
+                        r.dead = True
+                        changed = True
+                        continue
+                known[hi] = v >> 8
+                known[lo] = v & 255
+                continue
+            if dst in _BIT and low[1] in _BIT:
+                if low[1] in known:
+                    known[dst] = known[low[1]]
+                else:
+                    known.pop(dst, None)
+                continue
+        if r.wr:
+            for k in list(known):
+                if _BIT[k] & r.wr:
+                    del known[k]
+        if r.flow in ("jump", "return", "stop", "call"):
+            known.clear()
+    return changed
+
+
 def _inc_sp(rs: list[_R]) -> bool:
     """Step 4."""
     live_out, _ = _liveness(rs)
@@ -574,12 +642,16 @@ def optimize(code: str) -> str:
                 rs = _drop(rs)
                 rs = _parse(_text(rs))
                 m = True
+            q = _const_forward(rs)
+            if q:
+                rs = _drop(rs)
+                rs = _parse(_text(rs))
             p = _post_dec(rs)
             if p:
                 rs = _drop(rs)
                 rs = _parse(_text(rs))
-            any_change = any_change or c or d or p or k or m
-            if not (c or d or p or k or m):
+            any_change = any_change or c or d or p or k or m or q
+            if not (c or d or p or k or m or q):
                 break
     except _Bail:
         return code

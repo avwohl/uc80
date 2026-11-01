@@ -76,6 +76,19 @@ The switches of family K step 1 are off-switches, with one exception. Each one i
 - `--no-div16b`: an unsigned 16-bit division by a constant of 1 to 255 calls `__div16` and `__mod16`.
 - `--no-shr32-loop`: a 32-bit shift right by a variable count calls `__shr32`.
 
+The switches of family K step 2 are all off-switches. Each one is in [k2_code_size.md](k2_code_size.md):
+
+- `--no-const-store`: the address of a function or a string is stored through a pointer with `push HL` and `pop DE`.
+- `--no-for-entry`: a counted `for` loop tests the condition before the first pass.
+- `--no-branch-merge`: the two arms of an if and else keep their common start and end.
+- `--no-sign-one`: the test `x < 1` of a 16-bit value uses the general signed compare.
+- `--no-flow-opt`: the liveness pass of `peep_flow.py` does not run.
+- `--no-sdivmod-merge`: a program that uses `__sdiv16` and `__smod16` links both routines.
+- `--no-div16-compact`: `__div16` calls `__dv8w` for a divisor of 256 or more.
+- `--no-puts-small`: a call of `puts` uses the routine with the `IX` frame.
+- `--no-ret-jump`: a jump to a `ret` stays a jump.
+- `--no-cp-zero`: `cp 0` stays before a conditional jump.
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or

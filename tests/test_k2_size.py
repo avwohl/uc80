@@ -892,3 +892,96 @@ def test_ret_jump_and_cp_zero_match_host(tmp_path, flags):
     assert got == want
     if not flags:
         assert "or\tA" in text
+
+
+# ---------------------------------------------------------------------------
+# A counted loop of at most 4 passes is unrolled
+# ---------------------------------------------------------------------------
+
+UNROLL_PROG = r"""
+#include <stdio.h>
+#include <stdint.h>
+int gi;
+int tab[4][16];
+unsigned char ub[8];
+static int seen_i(void) { return gi * 10; }
+static int total;
+#define LOOP(TYPE, A, OP, B, S) { TYPE v; int s = 0; \
+    for (v = A; v OP B; v += S) { s = s * 3 + (int) v + 1; } \
+    printf("%d %d\n", s, (int) v); }
+#define SET(TYPE) \
+    LOOP(TYPE, 0, <, 1, 1) LOOP(TYPE, 0, <=, 0, 1) LOOP(TYPE, 0, <, 4, 1) \
+    LOOP(TYPE, 1, <=, 4, 1) LOOP(TYPE, 2, <, 9, 3) LOOP(TYPE, 0, <, 0, 1) \
+    LOOP(TYPE, 3, <=, 5, 2) LOOP(TYPE, 5, <, 5, 1)
+int main(void)
+{
+    int i, j, k, n = 0;
+    uint16_t u;
+    SET(int) SET(unsigned) SET(unsigned char) SET(short) SET(long)
+    SET(unsigned short)
+    /* a nest that folds to constant addresses */
+    for (i = 0; i <= 3; i++) for (j = 0; j <= 1; j++) for (k = 0; k <= 0; k++)
+        tab[0][i + 8 * (j + 8 * k)] = 1 + i;
+    for (i = 0; i <= 1; i++) for (j = 0; j <= 0; j++) for (k = 0; k <= 3; k++)
+        tab[1][i + 2 * (j + 2 * k)] = 5 + k;
+    for (i = 0; i < 4; i++) { n += tab[0][i] + tab[0][i + 8] + tab[1][i]; }
+    printf("%d %d %d %d\n", n, i, j, k);
+    /* the counter is a global that a function reads */
+    for (gi = 0; gi < 3; gi++) total += seen_i();
+    printf("%d %d\n", total, gi);
+    /* the counter is unsigned char and the body adds it */
+    for (u = 1; u < 4; u++) ub[u] = (unsigned char) (u * 100);
+    printf("%d %d %d %d %d\n", ub[1], ub[2], ub[3], ub[0], (int) u);
+    /* the counter is changed in the body or has its address taken */
+    for (i = 0; i < 4; i++) { n++; if (i == 1) i++; }
+    printf("%d %d\n", n, i);
+    {
+        int q, *pq = &q, sum = 0;
+        for (q = 0; q < 3; q++) { sum += *pq; *pq += 0; }
+        printf("%d %d\n", sum, q);
+    }
+    /* sizeof of the counter must not change */
+    {
+        unsigned char c8;
+        int sz = 0;
+        for (c8 = 0; c8 < 3; c8++) sz += (int) sizeof(c8) + (int) sizeof c8;
+        printf("%d %d\n", sz, c8);
+    }
+    /* continue and break keep the loop */
+    for (i = 0; i < 4; i++) { if (i == 2) continue; n += i; }
+    for (i = 0; i < 4; i++) { if (i == 3) break; n += 7; }
+    printf("%d %d\n", n, i);
+    /* a loop in a loop with a call in the inner body */
+    for (i = 0; i < 3; i++) for (j = 0; j < 2; j++) n += seen_i() + i + j;
+    printf("%d %d %d\n", n, i, j);
+    return 0;
+}
+"""
+
+
+@needs_tools
+@pytest.mark.parametrize("flags", [(), ("--no-loop-unroll",), ("-O0",),
+                                   ("--int=32",)])
+def test_loop_unroll_matches_host(tmp_path, flags):
+    want, got, text = run_both(tmp_path, UNROLL_PROG, *flags)
+    assert got == want
+
+
+@needs_tools
+def test_loop_unroll_shrinks_a_nest_of_constant_stores(tmp_path):
+    src = r"""
+int p[512];
+int main(void)
+{
+    int i, j, k;
+    for (i = 0; i <= 3; i++) for (j = 0; j <= 1; j++) for (k = 0; k <= 0; k++)
+        p[i + 8 * (j + 8 * k)] = 1;
+    return p[9];
+}
+"""
+    want, got, on = run_both(tmp_path, src)
+    d = tmp_path / "off"
+    d.mkdir()
+    _w, _g, off = run_both(d, src, "--no-loop-unroll")
+    assert "@FORB" not in on and "ld\t(_p+18),HL" in on
+    assert len(on) < len(off)

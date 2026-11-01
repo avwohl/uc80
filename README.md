@@ -73,6 +73,7 @@ z88dk output. uc80 passes 220 of the 220 c-testsuite tests. Numbers are in
 - [Index narrowing](https://github.com/avwohl/uc80/blob/main/docs/narrow_index.md) - a 32-bit array index is computed in 16 bits, `--no-narrow-index`
 - [Family J passes](https://github.com/avwohl/uc80/blob/main/docs/family_j.md) - fast BSS clear, `putchar` statements, loop rotation, fill loops, parameters in registers, loads out of loops, byte registers, and more: one page for each, one `--no-` switch for each
 - [Family K step 1](https://github.com/avwohl/uc80/blob/main/docs/k1_link_size.md) - less library code in the linked image: `printf("\n")`, 32-bit and 16-bit divide, `qsort` of a few elements, one `--no-` switch for each
+- [Family K step 2](https://github.com/avwohl/uc80/blob/main/docs/k2_code_size.md) - smaller generated code: counted `for` loops, if/else arms, a liveness pass, divide and `puts` routines, one `--no-` switch for each
 - [Inline assembly](https://github.com/avwohl/uc80/blob/main/docs/inline_assembly.md) - `asm("...")` rules and limits
 - [Volatile objects](https://github.com/avwohl/uc80/blob/main/docs/volatile.md) - every volatile access happens as written, and how each pass keeps that
 - [Binary size and test results](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md) - speed and size against 8 compilers, and external test suite pass rates
