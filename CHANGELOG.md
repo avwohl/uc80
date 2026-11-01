@@ -6,6 +6,27 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Integration of `bugfix6` into the `integrate12` tree (branch `integrate13`, with `uc_core` branch `bugfix6`)
+
+The merge of `bugfix6` (head a8bfe43) into `main` 27f2edc had text conflicts only in `CHANGELOG.md`, `bench/results/results.csv` and `docs/benchmarks_speed.md`. `CHANGELOG.md` keeps both entries. The uc80 rows of `results.csv` are made again, and the other compilers keep the rows of `bugfix6`. `docs/benchmarks_speed.md` is made again with `bench/report.py`.
+
+- **`codegen.py` was read after the merge.** The `--int 32` changes (`_int32_wide_quotient`, `_int32_int_result`, the unary `+`, `-` and `~` cases, the static initializer) sit in other functions than the family J code and the `integrate12` code. They do not conflict. `rangediv.py` does not fold under `--int 32` (`fold` returns None when `int_size` is not 2), so the wider quotient of a 16-bit operand never meets the fold. The fold keeps the 16-bit rule only. `tests/test_integ13_int32_family_j.py` runs quotients, shifts, byte compares and loops under `--int=32` with the family J passes on and off.
+- **`volatile` in cast types, fixed in `uc_core`.** `resolved_to_legacy` dropped `is_volatile` for the kinds typedef, struct, union and enum. Now `resolved_to_legacy` keeps the flag. `uc_core` has `tests/test_volatile_legacy_types.py` (8 tests). The file `src/uc80/volatile_fix.py` does not exist any more, and `uc80/__init__.py` does not install the wrapper. All 37 tests of `tests/test_integ12_volatile_typedef.py` pass without the wrapper. 11 of them fail with the old `uc_core`. The `memset` and block-operation device tests pass in both ROM flows. The `const` qualifier of these kinds is still dropped, as before. The `uc386` tests pass.
+- **The generated `.mac` is the same as before.** The token-based preprocessor gives `.mac` files that are byte-identical to the files of `main` 27f2edc (with `uc_core` b2b0aa9). This holds for 220 c-testsuite programs with the default options and with `--int=32` (440 files). This holds for all 75 gen3 programs. This holds for all 224 builds of the 112 bench programs (check and time), when both compilers read the same source. One line differs in `adventure-size`: the `__FILE__` text holds the name of the work directory. No known fix changes the code of these programs.
+- **Rows that change in `results.csv`.** 44 of the 112 uc80 rows have another image or another T-state count, and no status changes (104 OK, 3 FITS, 5 TOO-BIG). The compiler is not the cause, as the item above shows. The cause is the new program source of `bugfix6`. The time build of 29 programs now ends with `BENCH_CHECK` lines: `binary-trees`, `davidly-e`, `davidly-tpi`, `dhrystone21`, `fannkuch`, `fasta`, `mandelbrot`, `n-body`, `pi`, `pi_ldiv`, `sieve`, the `sort-*` programs, `spectral-norm`, `stanford-*`, `whetstone` and their variants. The check code changes the image by -4 to 413 bytes (`n-body` +396, `spectral-norm` +413, `fannkuch` +106). The check also makes the program use a result that the old time build did not use. So `sieve` now counts the primes inside the timed region and has 2989087 T-states against 1223848 (the old `.mac` has no count and the new `.mac` has the count). `fasta` has 1640000 fewer T-states, because `bugfix6` moves `last` out of `gen_random` to a file-scope static. `embench-huffbench` has 18 bytes more image and 10765 more T-states, because the edit clears the buffer before the decoder runs. The programs that `bugfix6` did not change have the same rows as `main`.
+- **Bench against SDCC 4.6.0.** The rows of the other compilers change too in `bugfix6`. So the means move: size 0.9138 (`main` 0.9124), whole image 0.8752 (0.8705), T-states 0.5023 (0.5036), without `sort-*` 0.6030 (0.6047). 75 of 78 programs are faster, as on `main`. The new uc80 rows with the old SDCC rows give a size mean of 0.9387. The check code explains the rise. The new SDCC rows have the same check code, and they lower the ratio again.
+
+Gates after the integration, on the final tree:
+
+- `pytest -n 6`: 3815 passed (`main` 3794).
+- `run_ctests.py`: 220 of 220, and 220 of 220 with `--int 32`.
+- `uc_core` `pytest`: 457 passed, 1 skipped. `uc386` `pytest` with the `bugfix6` `uc_core`: 515 passed, 7 skipped.
+- The gen3 family with `GEN3_FULL=1`: 76 passed.
+- `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
+- `difftest.py --count 800 -j 8`: seed 1 and seed 5000 give no `UC80-WRONG`, no `MODEL-DIFF` and no `ALL-DIFF` (549 and 554 PASS, the rest are SDCC build errors, hangs and wrong results).
+- `ccfuzz.py`: 2000 programs, 1500 with `--ll`, `--narrow --flags=--int=32` 400, and 400 each with `--flags=-O0`, `--flags=--no-register-locals`, `--flags=--int=32`, 14 and all 18 family J switches off. All PASS.
+- Bench: all 112 programs with `bench/run.py -c uc80`.
+
 ### Repair of `integrate12`
 
 A verifier found these problems after the integration. Each has a test that runs code.
