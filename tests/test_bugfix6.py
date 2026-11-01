@@ -29,6 +29,40 @@ int main(void)
         "x 1\nsqs\nabc-s\n5\n7|__VA_ARGS__|\n"
 
 
+def test_macro_expansion_boundaries_run(tmp_path):
+    """Tokens stay separate at the end of a macro call, an object-like
+    macro that names itself expands once, and #__VA_ARGS__ keeps one
+    space where the source had white space."""
+    src = r"""#include <stdio.h>
+#define T(t) t
+#define ID(x) x
+#define EMPTY
+#define SV(...) #__VA_ARGS__
+int var = 4, AA = 5;
+#define var (var + 1)
+#define AA BB + 1
+#define BB AA * 2
+#define VO(a, ...) a __VA_OPT__(+ 100) + 0
+int main(void)
+{
+  T(int)x = 3;
+  int a = 10, r;
+  r = a ID(-)-1;
+  printf("%d %d\n", x, r);
+  printf("%d\n", var);
+  printf("%d\n", AA);
+  puts(SV(1, 2, 3));
+  puts(SV(a ,  b,c));
+  printf("%d %d %d\n", VO(1), VO(1, 2), VO(1, EMPTY));
+  r = a -EMPTY-1;
+  printf("%d\n", r);
+  return 0;
+}
+"""
+    assert build_and_run(tmp_path, src) == \
+        "3 11\n5\n11\n1, 2, 3\na , b,c\n1 101 1\n11\n"
+
+
 # The expected text is the output of the host cc (int has 32 bits there).
 INT32_SRC = r"""#include <stdio.h>
 volatile int vn = 0, vc = 1;

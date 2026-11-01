@@ -126,7 +126,6 @@ runner puts `#include "bench.h"` at the top of the main source.
 | `timing` | Optional. `"total"` makes the runner skip the region run. The row then has the cycles of the whole run and `timing=total`, also when the program has TIMER labels. Games use it. |
 | `defines.host` | Optional. More defines for the host build that makes the golden file (`run.py --golden`) only. No compiler gets a define that the other compilers do not get. |
 | `timeout` | Seconds for one run under `z88dk-ticks`. The default is 600. |
-| `min_time_ratio` | Optional. The smallest fraction of the T-states of the check build that the time build must need. The default is 0.5. Use a smaller value when the check build prints a lot (`sieve`: 0.15). |
 
 A variant with `time_only = true` has defines that only move the timed
 region. The check build of the variant then has no variant defines. When
@@ -219,12 +218,59 @@ the output of the host build with the time defines (see
 same defines as the check build must print the golden file. A time build
 that prints nothing must print nothing.
 
-A time build that prints nothing cannot show a wrong result. Thus the
-runner also compares the full run of the time build with the full run of
-the check build. The check build does the same work, and it prints. When
-the time build needs less than half of the T-states of the check build
-(the key `min_time_ratio` changes the fraction), the program stopped early, and the status is `WRONG(time)`. An older
-runner gave the status OK to an early stop of `embench-huffbench`.
+An empty output cannot show a wrong result. Thus a program with an empty
+time output checks its own result after `TIMER_STOP`. It uses the macros
+of `bench/bench.h`:
+
+- `BENCH_CHECK_EQ(expression, value)` starts a loop that never ends when
+  the expression is not equal to the value.
+- `BENCH_CHECK_NEAR(expression, value, tolerance)` does the same when
+  the expression is more than `tolerance` from the value. Use this macro
+  for float results and for the bitmap of `mandelbrot`.
+- `BENCH_CHECK(condition)` does the same when the condition is false.
+
+The checks are `edit` entries in the manifest, inside `#ifdef TIMER`.
+The 29 programs that have a `.time.txt` file have checks. The program
+`davidly-e` prints only the word `done`, so it has checks too. When a
+result is wrong, the program does not end. The runner waits at most 20
+times the run time of the check build (at least 120 seconds, and not
+more than `timeout`). Then it gives the status `WRONG(time)`.
+
+The expected values come from a host build. Build the program with the
+time defines and `-DBENCH_SHOW`. The macros then print the checked
+values, one value for each `BENCH_CHECK_EQ` and `BENCH_CHECK_NEAR`. The
+build does not loop. Write the values in the `edit` entries.
+
+The runner does not compare the T-states of the time build with those of
+the check build. The check build prints a lot, so it can need much more
+time than the work. For `sieve` and the `printf` of SDCC, the time build
+needs 5 % of the T-states of the check build.
+
+An older runner used a ratio of the two counts. That rule gave
+`WRONG(time)` to correct runs of other compilers. It did not find a wrong
+result that needs the same work. The check of the result replaced the
+rule.
+
+A check looks at the final state of the program. These are the checked
+values:
+
+- The sum of the values that the check build prints: `stanford-*`,
+  `davidly-e`, `davidly-tpi`, `pi` and `pi_ldiv`.
+- The global variables that the check build prints: `dhrystone21` and
+  `whetstone`.
+- The last number of the random sequence: `fasta`.
+- The sorted array: `sort-*` check the order, and the first, the middle
+  and the last element.
+- The count of primes: `sieve`.
+- Float results, with a tolerance: `n-body`, `spectral-norm` and
+  `mandelbrot`.
+
+A wrong intermediate result that leaves the final state right is not
+found.
+
+The program `embench-huffbench` prints the result of its own verify. An
+older runner gave the status OK to an early stop of this program. The
+verify cannot pass now when the decoder did not run.
 
 ### The expected output
 

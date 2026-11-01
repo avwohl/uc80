@@ -126,6 +126,11 @@ edit = [
   { file = "Perm.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
   { file = "Perm.c", old = "\tprintf(\"%d\\n\", pctr);", new = "#ifdef TIMER\n\tbench_sink = pctr;\n#else\n\tprintf(\"%u\\n\", pctr);  /* bench port: pctr is unsigned */\n#endif" },
   { file = "Perm.c", old = "\tfor (i = 0; i < 100; i++) Perm();", new = "\tbench_timer_start();\n\tfor (i = 0; i < 10; i++) Perm();  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "Perm.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  # (long): z88dk-sccz80 sign-extends an unsigned int that goes to a long on assignment (43300 becomes -22236)
+  { file = "Perm.c", old = "bench_sink = ", new = "bench_sum += bench_sink = (long)" },
+  { file = "Perm.c", old = "\tbench_timer_stop();\n\treturn 0;", new = "\tbench_timer_stop();\n#ifdef TIMER\n\tBENCH_CHECK_EQ(bench_sum, 433000L);\n#endif\n\treturn 0;" },
 ]
 
 [[program]]
@@ -144,6 +149,10 @@ edit = [
   { file = "Towers.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
   { file = "Towers.c", old = "\t printf(\"%d\\n\", movesdone);", new = "#ifdef TIMER\n\t bench_sink = movesdone;\n#else\n\t printf(\"%d\\n\", movesdone);\n#endif" },
   { file = "Towers.c", old = "\tfor (i = 0; i < 100; i++) Towers();", new = "\tbench_timer_start();\n\tfor (i = 0; i < 10; i++) Towers();  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "Towers.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  { file = "Towers.c", old = "bench_sink = ", new = "bench_sum += bench_sink = " },
+  { file = "Towers.c", old = "\tbench_timer_stop();\n\treturn 0;", new = "\tbench_timer_stop();\n#ifdef TIMER\n\tBENCH_CHECK_EQ(bench_sum, 163830L);\n#endif\n\treturn 0;" },
 ]
 
 [[program]]
@@ -162,6 +171,10 @@ edit = [
   { file = "Queens.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
   { file = "Queens.c", old = "\t printf(\"%d\\n\", run + 1);", new = "#ifdef TIMER\n\t bench_sink = run + 1;\n#else\n\t printf(\"%d\\n\", run + 1);\n#endif" },
   { file = "Queens.c", old = "\tfor (i = 0; i < 100; i++) Queens(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 10; i++) Queens(i);  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "Queens.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  { file = "Queens.c", old = "bench_sink = ", new = "bench_sum += bench_sink = " },
+  { file = "Queens.c", old = "\tbench_timer_stop();\n\treturn 0;", new = "\tbench_timer_stop();\n#ifdef TIMER\n\tBENCH_CHECK_EQ(bench_sum, 55);\n#endif\n\treturn 0;" },
 ]
 
 [[program]]
@@ -183,6 +196,10 @@ edit = [
   { file = "IntMM.c", old = "\t\tm[i][j] = temp - (temp/120)*120 - 60;", new = "\t\tm[i][j] = (int)(temp - (temp/120)*120) - 60;" },
   { file = "IntMM.c", old = "\tprintf(\"%d\\n\", imr[run + 1][run + 1]);", new = "#ifdef TIMER\n\tbench_sink = imr[run + 1][run + 1];\n#else\n\tprintf(\"%d\\n\", imr[run + 1][run + 1]);\n#endif" },
   { file = "IntMM.c", old = "\tfor (i = 0; i < 10; i++) Intmm(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 5; i++) Intmm(i);  /* bench port: LLVM runs 10 passes */\n\tbench_timer_stop();" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "IntMM.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  { file = "IntMM.c", old = "bench_sink = ", new = "bench_sum += bench_sink = " },
+  { file = "IntMM.c", old = "\tbench_timer_stop();\n\treturn 0;", new = "\tbench_timer_stop();\n#ifdef TIMER\n\tBENCH_CHECK_EQ(bench_sum, 2208);\n#endif\n\treturn 0;" },
 ]
 
 [[program]]
@@ -200,6 +217,10 @@ edit = [
   { file = "Puzzle.c", old = "struct complex    z[fftsize+1], w[fftsize+1], e[fftsize2+1];\n", new = "" },
   { file = "Puzzle.c", old = "\t printf(\"%d\\n\", n);\n\t printf(\"%d\\n\", kount);", new = "#ifdef TIMER\n\t bench_sink = n + kount;\n#else\n\t printf(\"%d\\n\", n);\n\t printf(\"%d\\n\", kount);\n#endif" },
   { file = "Puzzle.c", old = "\tfor (i = 0; i < 100; i++) Puzzle();", new = "\tbench_timer_start();\n\tfor (i = 0; i < 2; i++) Puzzle();  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "Puzzle.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  { file = "Puzzle.c", old = "bench_sink = ", new = "bench_sum += bench_sink = " },
+  { file = "Puzzle.c", old = "\tbench_timer_stop();\n\treturn 0;", new = "\tbench_timer_stop();\n#ifdef TIMER\n\tBENCH_CHECK_EQ(bench_sum, 4164);\n#endif\n\treturn 0;" },
 ]
 
 [[program]]
@@ -223,6 +244,10 @@ edit = [
   { file = "Quicksort.c", old = "\tint i,j,x,w;", new = "\tint i,j;\n\tlong x,w;" },
   { file = "Quicksort.c", old = "\t  printf(\"%d\\n\", sortlist[run + 1]);", new = "#ifdef TIMER\n\t  bench_sink = sortlist[run + 1];\n#else\n\t  printf(\"%ld\\n\", sortlist[run + 1]);\n#endif" },
   { file = "Quicksort.c", old = "\tfor (i = 0; i < 100; i++) Quick(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 5; i++) Quick(i);  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "Quicksort.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  { file = "Quicksort.c", old = "bench_sink = ", new = "bench_sum += bench_sink = " },
+  { file = "Quicksort.c", old = "\tbench_timer_stop();\n\treturn 0;", new = "\tbench_timer_stop();\n#ifdef TIMER\n\tBENCH_CHECK_EQ(bench_sum, -249945L);\n#endif\n\treturn 0;" },
 ]
 
 [[program]]
@@ -245,6 +270,10 @@ edit = [
   { file = "Bubblesort.c", old = "void Bubble(int run) {\n\tint i, j;", new = "void Bubble(int run) {\n\tint i;\n\tlong j;" },
   { file = "Bubblesort.c", old = "\tprintf(\"%d\\n\", sortlist[run + 1]);", new = "#ifdef TIMER\n\tbench_sink = sortlist[run + 1];\n#else\n\tprintf(\"%ld\\n\", sortlist[run + 1]);\n#endif" },
   { file = "Bubblesort.c", old = "\tfor (i = 0; i < 100; i++) Bubble(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 5; i++) Bubble(i);  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "Bubblesort.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  { file = "Bubblesort.c", old = "bench_sink = ", new = "bench_sum += bench_sink = " },
+  { file = "Bubblesort.c", old = "\tbench_timer_stop();\n\treturn 0;", new = "\tbench_timer_stop();\n#ifdef TIMER\n\tBENCH_CHECK_EQ(bench_sum, -248623L);\n#endif\n\treturn 0;" },
 ]
 
 [[program]]
@@ -272,6 +301,10 @@ edit = [
   { file = "Treesort.c", old = "\tprintf(\"%d\\n\", sortlist[2 + run]);", new = "#ifdef TIMER\n\tbench_sink = sortlist[2 + run];\n#else\n\tprintf(\"%ld\\n\", sortlist[2 + run]);\n#endif" },
   { file = "Treesort.c", old = "    if ( ! Checktree(tree) ) printf ( \" Error in Tree.\\n\");", new = "    if ( ! Checktree(tree) ) printf ( \" Error in Tree.\\n\");\n    FreeTree(tree);" },
   { file = "Treesort.c", old = "\tfor (i = 0; i < 100; i++) Trees(i);", new = "\tbench_timer_start();\n\tfor (i = 0; i < 10; i++) Trees(i);  /* bench port: LLVM runs 100 passes */\n\tbench_timer_stop();" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "Treesort.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  { file = "Treesort.c", old = "bench_sink = ", new = "bench_sum += bench_sink = " },
+  { file = "Treesort.c", old = "\tbench_timer_stop();\n\treturn 0;", new = "\tbench_timer_stop();\n#ifdef TIMER\n\tBENCH_CHECK_EQ(bench_sum, -135765L);\n#endif\n\treturn 0;" },
 ]
 
 [[program]]
@@ -286,6 +319,10 @@ edit = [
   { file = "e.c", old = "  for (n = N - 1; n > 0; --n) {", new = "  intrinsic_label(TIMER_START);\n  for (n = N - 1; n > 0; --n) {" },
   { file = "e.c", old = "      printf(\"%d\", x);", new = "#ifdef TIMER\n      bench_sink = x;\n#else\n      printf(\"%d\", x);\n#endif" },
   { file = "e.c", old = "  printf( \"\\ndone\\n\" );", new = "  intrinsic_label(TIMER_STOP);\n  printf( \"\\ndone\\n\" );" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "e.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  { file = "e.c", old = "bench_sink = ", new = "bench_sum += bench_sink = " },
+  { file = "e.c", old = "  intrinsic_label(TIMER_STOP);\n", new = "  intrinsic_label(TIMER_STOP);\n#ifdef TIMER\n  BENCH_CHECK_EQ(bench_sum, 912);\n#endif\n" },
 ]
 
 [[program]]
@@ -362,4 +399,8 @@ edit = [
   { file = "tpi.c", old = "    for (k = SIZE; k > 0; k -= 14) {", new = "    intrinsic_label(TIMER_START);\n    for (k = SIZE; k > 0; k -= 14) {" },
   { file = "tpi.c", old = "        printf(\"%.4d\", c + d / 10000);\n        fflush(stdout);", new = "#ifdef TIMER\n        bench_sink = c + d / 10000;\n#else\n        printf(\"%04ld\", c + d / 10000);  /* bench port: long value; %04 prints the same as %.4 for 0..9999 */\n        /* bench port: fflush(stdout) removed (not in the SDCC library) */\n#endif" },
   { file = "tpi.c", old = "    printf(\"\\n\");\n    return 0;", new = "    intrinsic_label(TIMER_STOP);\n    printf(\"\\n\");\n    return 0;" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "tpi.c", old = "volatile long bench_sink;\n", new = "volatile long bench_sink;\nlong bench_sum;\n" },
+  { file = "tpi.c", old = "bench_sink = ", new = "bench_sum += bench_sink = " },
+  { file = "tpi.c", old = "    intrinsic_label(TIMER_STOP);\n", new = "    intrinsic_label(TIMER_STOP);\n#ifdef TIMER\n    BENCH_CHECK_EQ(bench_sum, 177636L);\n#endif\n" },
 ]

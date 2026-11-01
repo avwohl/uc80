@@ -55,22 +55,14 @@ FIELDS = ["program", "tier", "compiler", "mode", "status", "image", "bss",
 # check defines) -> .com size.  A variant whose check build is the same as
 # one already checked (a time_only variant, for example) reuses the result.
 CHECKED: dict[tuple, int] = {}
-# The T-states of the same check builds (same key): see MIN_TIME_RATIO.
-CHECK_TOTAL: dict[tuple, int] = {}
 
-# A time build without the check defines may print nothing, so its output
-# cannot say that the program computed the right result.  The check build
-# runs the same code plus the printing: a time build that needs less than
-# this fraction of the T-states of the check build stopped early (a
-# compiler bug did this to embench-huffbench: 2.8M instead of 9.8M).
-MIN_TIME_RATIO = 0.5       # the manifest key min_time_ratio changes it
-
-
-def stopped_early(total, check_total, ratio: float = MIN_TIME_RATIO) -> bool:
-    """True if a time build ran for less than `ratio` of the T-states of
-    its check build (see MIN_TIME_RATIO)."""
-    return bool(check_total and total is not None
-                and total < ratio * check_total)
+# A time build may print nothing, so its output cannot say that the
+# program computed the right result.  Such a program checks its own result
+# after TIMER_STOP (BENCH_CHECK_EQ in bench.h): when a value is wrong, it
+# loops for ever.  A time build of such a program that does not finish in
+# a time that depends on the check build is WRONG(time), not HANG(time).
+def has_selfcheck(prog: dict) -> bool:
+    return any("BENCH_CHECK" in e.get("new", "") for e in prog.get("edit", []))
 
 
 def ticks_path() -> Path:
@@ -379,14 +371,14 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
     tgolden = golden_path(prog, "time").read_text()
     stdin = get_stdin(prog)
     limit = prog.get("timeout", 600)
-    check_total = None
+    selfcheck = has_selfcheck(prog)
+    check_elapsed = 0.0
     for kind in ("check", "time"):
         defines = build_defines(prog, kind)
         key = (prog.get("base", prog["name"]), comp.name, mode,
                tuple(defines), golden_path(prog).name)
         work = WORK / prog["name"] / comp.name / mode / kind
         if kind == "check" and key in CHECKED:
-            check_total = CHECK_TOTAL.get(key)
             row["check_com"] = CHECKED[key]
             if work.exists():
                 shutil.rmtree(work)
@@ -416,33 +408,34 @@ def _bench_one(prog, comp, mode, repos, version) -> dict:
                 # nothing): the program is too big, it does not hang.
                 too_big_row(row, b, size)
                 return row
+            t0 = time.monotonic()
             out, total = run_ticks(b.com, stdin=stdin, timeout=limit,
                                    expect=golden)
+            check_elapsed = time.monotonic() - t0
             (work / "output.txt").write_text(out)
             if normalize(out) != normalize(golden):
                 row["status"] = "WRONG" if total is not None else "HANG"
                 return row
             CHECKED[key] = size
-            CHECK_TOTAL[key] = check_total = total
             continue
         if not fits_address_space(size):
             too_big_row(row, b, size)       # a build with other defines
             return row
         row["com"], row["image"], row["bss"] = size, b.image, b.bss
         t0 = time.monotonic()
-        out, total = run_ticks(b.com, stdin=stdin, timeout=limit,
+        # A failed self-check loops for ever: do not wait for the whole
+        # limit when the check build needed little time.
+        tlimit = (min(limit, max(120.0, 20 * check_elapsed))
+                  if selfcheck and check_elapsed else limit)
+        out, total = run_ticks(b.com, stdin=stdin, timeout=tlimit,
                                expect=tgolden)
         elapsed = time.monotonic() - t0
         (work / "output.txt").write_text(out)
         row["total_cycles"] = total
         if total is None:
-            row["status"] = "HANG(time)"
+            row["status"] = "WRONG(time)" if selfcheck else "HANG(time)"
             return row
         if normalize(out) != normalize(tgolden):
-            row["status"] = "WRONG(time)"
-            return row
-        if stopped_early(total, check_total,
-                         prog.get("min_time_ratio", MIN_TIME_RATIO)):
             row["status"] = "WRONG(time)"
             return row
         s, e = b.symbols.get("TIMER_START"), b.symbols.get("TIMER_STOP")

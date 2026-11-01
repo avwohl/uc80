@@ -45,6 +45,8 @@ edit = [
   # init_floatpack, __dtoa_digits).  Only the TIMEFUNC code (never built)
   # prints %f, so drop that bit and keep %d %s %c and the flags.
   { file = "dhry.h", old = "CLIB_OPT_PRINTF = 0x44000601", new = "CLIB_OPT_PRINTF = 0x40000601" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "dhry_1.c", old = "TIMER_STOP();\n\n#ifdef TIMEFUNC", new = "TIMER_STOP();\n#ifdef TIMER\n  BENCH_CHECK_EQ(Int_Glob, 5);\n  BENCH_CHECK_EQ(Bool_Glob, 1);\n  BENCH_CHECK_EQ(Ch_1_Glob, 65);\n  BENCH_CHECK_EQ(Ch_2_Glob, 66);\n  BENCH_CHECK_EQ(Arr_1_Glob[8], 7);\n  BENCH_CHECK_EQ(Arr_2_Glob[8][7], 20010);\n  BENCH_CHECK_EQ(Ptr_Glob->variant.var_1.Int_Comp, 17);\n  BENCH_CHECK_EQ(Next_Ptr_Glob->variant.var_1.Int_Comp, 18);\n  BENCH_CHECK_EQ(Int_1_Loc, 5);\n  BENCH_CHECK_EQ(Int_2_Loc, 13);\n  BENCH_CHECK_EQ(Int_3_Loc, 7);\n#endif\n\n#ifdef TIMEFUNC" },
 ]
 
 # fannkuch-redux, The Computer Language Benchmarks Game.  License:
@@ -64,6 +66,13 @@ variants = [
 
 # pi to 800 digits (Stanford spigot), 32-bit multiply/divide/modulo.
 # License: none stated (unverified); fetched, not vendored.
+edit = [
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "fannkuch.c", old = "int perm [N_MAX];", new = "int bench_flips, bench_sum;\nint perm [N_MAX];" },
+  { file = "fannkuch.c", old = "                PRINTF2(\"%d\\n\", checksum);\n", new = "                PRINTF2(\"%d\\n\", checksum);\n                bench_sum = checksum;\n" },
+  { file = "fannkuch.c", old = "n, fannkuchredux(n));", new = "n, bench_flips = fannkuchredux(n));" },
+  { file = "fannkuch.c", old = "TIMER_STOP();\n\n    return 0;", new = "TIMER_STOP();\n#ifdef TIMER\n    BENCH_CHECK_EQ(bench_flips, 16);\n    BENCH_CHECK_EQ(bench_sum, 228);\n#endif\n\n    return 0;" },
+]
 [[program]]
 name = "pi"
 tier = 1
@@ -92,6 +101,10 @@ edit = [
   # count on the same line and run.py cannot split the two.  Print a
   # newline after the timed region (check build only).
   { file = "pi.c", old = "TIMER_STOP();", new = "TIMER_STOP();\n#ifdef PRINTF\n   printf(\"\\n\");\n#endif" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "pi.c", old = "int main()\n{", new = "unsigned long bench_sum;\n\nint main()\n{" },
+  { file = "pi.c", old = "      PRINTF(\"%04d\", c + (uint16_t)(d / 10000));", new = "#ifdef TIMER\n      bench_sum += c + (uint16_t)(d / 10000);\n#endif\n      PRINTF(\"%04d\", c + (uint16_t)(d / 10000));" },
+  { file = "pi.c", old = "TIMER_STOP();\n", new = "TIMER_STOP();\n#ifdef TIMER\n   BENCH_CHECK_EQ(bench_sum, 1006062L);\n   BENCH_CHECK_EQ(c, 9488);\n#endif\n" },
 ]
 variants = [{ name = "static", defines = ["STATIC"] }]
 
@@ -117,6 +130,10 @@ edit = [
   # count on the same line and run.py cannot split the two.  Print a
   # newline after the timed region (check build only).
   { file = "pi_ldiv.c", old = "TIMER_STOP();", new = "TIMER_STOP();\n#ifdef PRINTF\n   printf(\"\\n\");\n#endif" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "pi_ldiv.c", old = "int main()\n{", new = "unsigned long bench_sum;\n\nint main()\n{" },
+  { file = "pi_ldiv.c", old = "      PRINTF(\"%04d\", c + (uint16_t)(res.quot));", new = "#ifdef TIMER\n      bench_sum += c + (uint16_t)(res.quot);\n#endif\n      PRINTF(\"%04d\", c + (uint16_t)(res.quot));" },
+  { file = "pi_ldiv.c", old = "TIMER_STOP();\n", new = "TIMER_STOP();\n#ifdef TIMER\n   BENCH_CHECK_EQ(bench_sum, 1006062L);\n   BENCH_CHECK_EQ(c, 9488);\n#endif\n" },
 ]
 variants = [{ name = "static", defines = ["STATIC"] }]
 
@@ -144,4 +161,6 @@ edit = [
   # long truncates (z88dk --math32 gives 510 trees, not 512).  The z88dk
   # sdcc readme adds the same rounding.
   { file = "binary-trees.c", old = "iterations = pow(2, maxDepth - depth + minDepth);", new = "iterations = pow(2, maxDepth - depth + minDepth) + 0.5;" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "binary-trees.c", old = "TIMER_STOP();\n\n} /* main() */", new = "TIMER_STOP();\n#ifdef TIMER\n    BENCH_CHECK_EQ(check, -32);\n    BENCH_CHECK_EQ(ItemCheck(longLivedTree), -1);\n#endif\n\n} /* main() */" },
 ]

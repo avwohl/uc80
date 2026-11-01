@@ -8,10 +8,6 @@
 # The test cases are separate programs, not variants, because each case
 # prints different numbers, and a variant shares the golden file of its base.
 #
-# The check build prints the sorted numbers, and the time build prints
-# nothing: the time build needs 14 % to 52 % of the T-states of the check
-# build, so min_time_ratio is 0.05 (see docs/bench_harness.md).
-#
 # The one edit masks t << 9 to 32 bits in g_rand().  The host cc that makes
 # the golden file has a 64-bit unsigned long, so without the mask the
 # host sequence differs from the 32-bit sequence.  On every Z80 compiler
@@ -30,10 +26,12 @@ about = "library qsort() of 20 ints, random order (z88dk sorting; license: Clari
 files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
 check_defines = ["PRINTF", "NUM=20", "STYLE=0"]
 time_defines = ["TIMER", "NUM=20", "STYLE=0"]
-min_time_ratio = 0.05
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 609);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 10681);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 31880);\n#endif" },
 ]
 
 [[program]]
@@ -43,10 +41,12 @@ about = "library qsort() of 20 ints, already sorted (z88dk sorting; license: Cla
 files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
 check_defines = ["PRINTF", "NUM=20", "STYLE=1"]
 time_defines = ["TIMER", "NUM=20", "STYLE=1"]
-min_time_ratio = 0.05
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 10);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 19);\n#endif" },
 ]
 
 [[program]]
@@ -56,10 +56,12 @@ about = "library qsort() of 20 ints, reverse order (z88dk sorting; license: Clar
 files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
 check_defines = ["PRINTF", "NUM=20", "STYLE=2"]
 time_defines = ["TIMER", "NUM=20", "STYLE=2"]
-min_time_ratio = 0.05
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 10);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 19);\n#endif" },
 ]
 
 [[program]]
@@ -69,10 +71,12 @@ about = "library qsort() of 20 ints, all equal (z88dk sorting; license: Clarifie
 files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
 check_defines = ["PRINTF", "NUM=20", "STYLE=3"]
 time_defines = ["TIMER", "NUM=20", "STYLE=3"]
-min_time_ratio = 0.05
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 10);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 10);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 10);\n#endif" },
 ]
 
 [[program]]
@@ -82,10 +86,12 @@ about = "library qsort() of 5000 ints, random order (z88dk sorting; license: Cla
 files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
 check_defines = ["PRINTF", "NUM=5000", "STYLE=0"]
 time_defines = ["TIMER", "NUM=5000", "STYLE=0"]
-min_time_ratio = 0.05
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 16692);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 32766);\n#endif" },
 ]
 timeout = 3600
 
@@ -96,10 +102,12 @@ about = "library qsort() of 5000 ints, already sorted (z88dk sorting; license: C
 files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
 check_defines = ["PRINTF", "NUM=5000", "STYLE=1"]
 time_defines = ["TIMER", "NUM=5000", "STYLE=1"]
-min_time_ratio = 0.05
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 2500);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 4999);\n#endif" },
 ]
 timeout = 3600
 
@@ -110,10 +118,12 @@ about = "library qsort() of 5000 ints, reverse order (z88dk sorting; license: Cl
 files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
 check_defines = ["PRINTF", "NUM=5000", "STYLE=2"]
 time_defines = ["TIMER", "NUM=5000", "STYLE=2"]
-min_time_ratio = 0.05
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 0);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 2500);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 4999);\n#endif" },
 ]
 timeout = 3600
 
@@ -124,10 +134,12 @@ about = "library qsort() of 5000 ints, all equal (z88dk sorting; license: Clarif
 files = [{ repo = "z88dk", path = "support/benchmarks/sorting/sort.c", sha256 = "9ceba00f01046abdb1cc66d98b080481790de5e884a92da24b0106697b65a48f", main = true }]
 check_defines = ["PRINTF", "NUM=5000", "STYLE=3"]
 time_defines = ["TIMER", "NUM=5000", "STYLE=3"]
-min_time_ratio = 0.05
 edit = [
   { file = "sort.c", old = "t ^= t << 9;", new = "t ^= (t << 9) & 0xffffffffUL;" },
   { file = "sort.c", old = "\nvoid perform_sort(void)", new = "\nstatic void perform_sort(void)" },
+  # self-check of the time build (docs/bench_harness.md): the program loops for ever when a result is wrong
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\nFAIL\");", new = "   PRINTF1(\"\\n\\nFAIL\");\n#ifdef TIMER\n         while (1) ;\n#endif" },
+  { file = "sort.c", old = "   PRINTF1(\"\\n\\n\\n\");", new = "   PRINTF1(\"\\n\\n\\n\");\n#ifdef TIMER\n   BENCH_CHECK(i == NUM);\n   BENCH_CHECK_EQ(numbers[0], 2500);\n   BENCH_CHECK_EQ(numbers[NUM / 2], 2500);\n   BENCH_CHECK_EQ(numbers[NUM - 1], 2500);\n#endif" },
 ]
 timeout = 3600
 
