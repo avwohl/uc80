@@ -38,12 +38,12 @@ A verifier found more problems after the integration. Each has a test that runs 
 
 Gates after the integration, on the final tree:
 
-- `pytest -n 6`: 3815 passed (`main` 3794).
+- `pytest -n 6`: 3818 passed (`main` 3794).
 - `run_ctests.py`: 220 of 220, and 220 of 220 with `--int 32`.
-- `uc_core` `pytest`: 457 passed, 1 skipped. `uc386` `pytest` with the `bugfix6` `uc_core`: 515 passed, 7 skipped.
+- `uc_core` `pytest`: 465 passed, 1 skipped. `uc386` `pytest` with the `bugfix6` `uc_core`: 515 passed, 7 skipped.
 - The gen3 family with `GEN3_FULL=1`: 76 passed.
 - `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
-- `difftest.py --count 800 -j 8`: seed 1 and seed 5000 give no `UC80-WRONG`, no `MODEL-DIFF` and no `ALL-DIFF` (549 and 554 PASS, the rest are SDCC build errors, hangs and wrong results).
+- `difftest.py --count 800 -j 8`: seed 1 and seed 5000 give no `UC80-WRONG`, no `MODEL-DIFF` and no `ALL-DIFF` (549 and 553 PASS, the rest are SDCC build errors, hangs and wrong results).
 - `ccfuzz.py`: 2000 programs, 1500 with `--ll`, `--narrow --flags=--int=32` 400, and 400 each with `--flags=-O0`, `--flags=--no-register-locals`, `--flags=--int=32`, 14 and all 18 family J switches off. All PASS.
 - Bench: all 112 programs with `bench/run.py -c uc80`: 104 OK, 3 FITS, 5 TOO-BIG, as on `main`.
 
