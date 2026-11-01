@@ -101,7 +101,7 @@ python3 bench/run.py && python3 bench/report.py
 | coremark (unofficial) | 15,823 / 25,444,519 | 16,878 / 28,540,039 | **WRONG** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 17,605 / 42,473,617 | **BUILD-FAIL(check)** |
 | embench-crc32 | 1,728 / 3,237,339 | 1,939 / 5,100,483 | 1,958 / 5,122,072 | 3,061 / 4,549,678 | 4,634 / 5,032,003 | **BUILD-FAIL(check)** | 3,344 / 6,616,112 | 1,852 / 5,429,059 | 3,199 / 4,760,770 |
 | embench-edn | 9,850 / 9,453,279 | 13,336 / 13,230,884 | **WRONG** | 13,317 / 19,088,981 | 8,906 / 18,160,832 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 6,898 / 25,026,618 | **BUILD-FAIL(check)** |
-| embench-huffbench | 3,221 / 9,960,723 | 3,928 / 15,022,590 | 3,998 / 15,170,182 | **WRONG** | 6,824 / 26,233,521 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 5,890 / 31,950,896 | **HANG** |
+| embench-huffbench | 3,239 / 9,971,489 | 3,947 / 15,033,282 | 4,017 / 15,180,779 | **WRONG** | 6,844 / 26,244,375 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 5,920 / 31,961,621 | **HANG** |
 | embench-matmult-int | 6,787 / 14,573,919 | 10,393 / 37,622,958 | **WRONG** | 11,429 / 22,867,633 | 5,723 / 36,564,142 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 3,445 / 25,404,623 | **BUILD-FAIL(check)** |
 | embench-md5sum | 4,067 / 3,546,695 | 4,628 / 6,120,775 | 4,740 / 6,436,860 | 5,727 / 6,188,995 | 5,359 / 8,416,332 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 3,380 / 20,079,320 | **BUILD-FAIL(check)** |
 | embench-nettle-sha256 | 28,050 / 6,602,615 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 34,680 / 6,641,719 | **BUILD-FAIL(check)** |
@@ -230,7 +230,7 @@ uc80 has no speed mode, so its column repeats the size mode result.
 | coremark (unofficial) | 15,823 / 25,444,519 | 16,669 / 28,288,511 | **WRONG** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 18,994 / 40,963,114 | **BUILD-FAIL(check)** |
 | embench-crc32 | 1,728 / 3,237,339 | 1,976 / 5,073,997 | 1,981 / 5,092,431 | 3,067 / 4,574,084 | 4,652 / 5,031,847 | **BUILD-FAIL(check)** | 3,361 / 6,114,114 | 1,848 / 5,429,059 | 3,203 / 4,724,930 |
 | embench-edn | 9,850 / 9,453,279 | 13,618 / 13,311,038 | **WRONG** | 13,992 / 18,691,866 | 9,513 / 16,213,211 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 6,628 / 24,964,933 | **BUILD-FAIL(check)** |
-| embench-huffbench | 3,221 / 9,960,723 | 3,917 / 13,908,860 | 4,006 / 14,274,659 | **WRONG** | 7,102 / 22,682,804 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 5,909 / 31,936,697 | **HANG** |
+| embench-huffbench | 3,239 / 9,971,489 | 3,936 / 13,919,630 | 4,025 / 14,285,256 | **WRONG** | 7,127 / 22,695,032 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 5,939 / 31,947,422 | **HANG** |
 | embench-matmult-int | 6,787 / 14,573,919 | 10,473 / 37,947,605 | **WRONG** | 11,407 / 18,536,005 | 5,765 / 34,315,742 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 3,441 / 25,404,623 | **BUILD-FAIL(check)** |
 | embench-md5sum | 4,067 / 3,546,695 | 4,667 / 5,908,332 | 4,771 / 6,187,697 | 5,774 / 6,006,388 | 5,471 / 7,967,579 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 3,386 / 20,088,002 | **BUILD-FAIL(check)** |
 | embench-nettle-sha256 | 28,050 / 6,602,615 | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | **WRONG** | **BUILD-FAIL(check)** | **BUILD-FAIL(check)** | 34,862 / 6,641,719 | **BUILD-FAIL(check)** |
@@ -345,7 +345,7 @@ Only programs where both counts are TIMER-region counts.
 | dhrystone21+static | 1,814 | 1,544 | 1.17 | 215,400,098 | 291,980,109 | 0.74 |
 | embench-crc32 | 1,728 | 1,939 | 0.89 | 3,237,339 | 5,100,483 | 0.63 |
 | embench-edn | 9,850 | 13,336 | 0.74 | 9,453,279 | 13,230,884 | 0.71 |
-| embench-huffbench | 3,221 | 3,928 | 0.82 | 9,960,723 | 15,022,590 | 0.66 |
+| embench-huffbench | 3,239 | 3,947 | 0.82 | 9,971,489 | 15,033,282 | 0.66 |
 | embench-matmult-int | 6,787 | 10,393 | 0.65 | 14,573,919 | 37,622,958 | 0.39 |
 | embench-md5sum | 4,067 | 4,628 | 0.88 | 3,546,695 | 6,120,775 | 0.58 |
 | embench-nsichneu | 39,019 | 40,051 | 0.97 | 1,962,957 | 2,624,379 | 0.75 |
@@ -438,7 +438,7 @@ These programs are built only. They are not run, and they have no golden file. E
 | trek-size | TOO-BIG (68,195) | TOO-BIG | TOO-BIG | TOO-BIG (63,192) | TOO-BIG (70,517) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | adventure-size | TOO-BIG (101,785) | TOO-BIG | TOO-BIG | TOO-BIG (110,287) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | battlestar-size | TOO-BIG (146,944) | TOO-BIG | TOO-BIG | TOO-BIG | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
-| rogue36-size | TOO-BIG (81,152) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
+| rogue36-size | TOO-BIG (80,640) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | mojozork-size | FITS (38,339) | FITS (34,063) | FITS (35,894) | FITS (40,115) | FITS (43,271) | **BUILD-TIMEOUT(objects)** | **BUILD-FAIL(objects)** | FITS (31,959) | **BUILD-FAIL(objects)** |
 
 ### Size of the objects (size mode)
@@ -466,7 +466,7 @@ Each cell is **code / code plus data**, in bytes, summed over the objects of the
 | trek-size | TOO-BIG (68,195) | TOO-BIG | TOO-BIG | TOO-BIG (65,468) | TOO-BIG (73,809) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | adventure-size | TOO-BIG (101,785) | TOO-BIG | TOO-BIG | TOO-BIG (110,659) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | battlestar-size | TOO-BIG (146,944) | TOO-BIG | TOO-BIG | TOO-BIG | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
-| rogue36-size | TOO-BIG (81,152) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
+| rogue36-size | TOO-BIG (80,640) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | TOO-BIG | **BUILD-FAIL(objects)** |
 | mojozork-size | FITS (38,339) | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | **BUILD-FAIL(objects)** | FITS (45,018) | **BUILD-TIMEOUT(objects)** | **BUILD-FAIL(objects)** | FITS (32,534) | **BUILD-FAIL(objects)** |
 
 ### Size of the objects (speed mode)
@@ -602,7 +602,7 @@ Each cell is **code / code plus data**, in bytes, summed over the objects of the
 
 ## Compiler versions
 
-- **uc80**: uc80 0.6.0 (aef12b2), um80 0.3.52
+- **uc80**: uc80 0.6.0 (bff5638), um80 0.3.52
 - **sdcc**: SDCC : mcs51/z80/z180/r2k/r2ka/r3ka/r4k/r5k/r6k/sm83/tlcs90/ez80/z80n/r800/ds390/pic16/pic14/TININative/ds400/hc08/s08/stm8/pdk13/pdk14/pdk15/mos6502/mos65c02/f8/f8l TD- 4.6.0 #16555 (Mac OS X ppc)
 - **sdcc-4.4**: SDCC : z80 TD- 4.4.0 #14620 (Mac OS X ppc)
 - **z88dk-zsdcc**: z88dk 2.4, zsdcc 4.5.0 #15242
