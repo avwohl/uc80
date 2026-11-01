@@ -5,7 +5,7 @@ names a typedef or a struct.  The dead store pass, the empty-if pass and
 the device memset then treated the access as plain RAM.  Found by a
 verifier on integrate12: ``u8 x = *(volatile u8 *) 0x4300;`` lost the
 read, and ``memset`` to a member array of a ``volatile S_t`` object used
-LDIR.  Fixed by ``uc80/volatile_fix.py``.
+LDIR.  Fixed in uc_core (resolved_to_legacy keeps volatile).
 """
 
 import re
