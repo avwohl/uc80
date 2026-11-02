@@ -164,8 +164,48 @@ def _trim_junction(lines: list[str], k: int, copy: list[str]) -> list[str]:
     return copy
 
 
+_JR_BACK = re.compile(
+    r"^\t(jr)\s+(nz|z|nc|c|po|pe|p|m),\s*(@FORB\d+)\s*(?:;.*)?$", re.I)
+
+
+def fast_bottom_tests(code: str) -> str:
+    """The bottom test of a counted ``for`` loop (``--no-for-entry`` turns
+    the shape off) jumps back with ``jr cc`` (12 T-states when taken).
+    Rotation uses ``jp cc`` (10).  A hot loop, without a call and with a
+    body of at most NESTED_BYTES, gets the ``jp``: one byte more, 2
+    T-states less in each pass (docs/k2_code_size.md)."""
+    if "@FORB" not in code:
+        return code
+    lines = code.split("\n")
+    pos = {}
+    for i, ln in enumerate(lines):
+        m = _LABEL.match(ln)
+        if m and ln[0] not in " \t" and m.group(1).startswith("@FORB"):
+            pos[m.group(1)] = i
+    for k, ln in enumerate(lines):
+        m = _JR_BACK.match(ln)
+        if not m or m.group(3) not in pos or pos[m.group(3)] >= k:
+            continue
+        body = [x for x in lines[pos[m.group(3)] + 1:k] if _is_instruction(x)]
+        if any(_CALL.match(x) for x in body):
+            continue
+        if sum(_bytes(x) for x in body) > NESTED_BYTES:
+            continue
+        lines[k] = f"\tjp\t{m.group(2)},{m.group(3)}"
+    return "\n".join(lines)
+
+
 def rotate(code: str) -> str:
     """Rotate the loops of the program text ``code``."""
+    if HARDEN:
+        code = fast_bottom_tests(code)
+    return _rotate(code)
+
+
+HARDEN = True
+
+
+def _rotate(code: str) -> str:
     if "@FOR" not in code and "@WHILE" not in code:
         return code
     lines = code.split("\n")

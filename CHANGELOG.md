@@ -10,20 +10,28 @@ observable behaviour of a program uc80 compiles.
 
 Step 1 linked less library code. Step 2 makes the generated code and the runtime routines smaller. Each change has a switch that turns the change off. The page is `docs/k2_code_size.md`.
 
-- **A counted `for` loop has its test at the end.** The init clause stores a constant. The first test is true for this constant. The loop then has no test before the body. The copy of the test that loop rotation made is not needed. 80 of the 112 programs are smaller (2 to 160 bytes). Most are faster too. Switch: `--no-for-entry`.
+- **A counted `for` loop has its test at the end.** The init clause stores a constant. The first test is true for this constant. The loop then has no test before the body. The copy of the test that loop rotation made is not needed. 80 of the 112 programs are smaller (2 to 160 bytes). Most are faster too. Switch: `--no-for-entry`. A loop with a counter in memory loaded the counter in each pass (`davidly-sieve` +4.7%). The repair has three parts: a global or static counter keeps the rotated loop, the liveness pass keeps HL across the loop label, and the jump back is `jp cc` in a hot loop. `davidly-sieve` is now 91 bytes smaller and not slower than `main`.
 - **A short counted loop is unrolled.** The loop `for (i = 0; i < 4; i++)` has at most 4 passes. A local counter becomes a constant in each copy, and the copies fold into stores to fixed addresses. The unroller of `uc_core` never ran, because the tree wraps the init clause. The new unroller keeps the final value of the counter (the old code stopped one step before it). A size estimate decides. `stanford-puzzle` is about 520 bytes smaller from this change. Switch: `--no-loop-unroll`.
 - **A liveness pass removes dead code.** It removes dead register writes and register copies. It removes the reload of a word that a register pair holds, and a constant that a register holds. It removes dead code behind a jump and a jump to the next line. It folds `ld HL,4 / add HL,BC / inc HL / inc HL` into one offset. A pair of `inc SP` after a call becomes `pop AF`. `while (n--)` loses its `push` and `pop`. A conditional call in the runtime stopped the first version of the pass for the whole program. So the big programs got no gain. `rogue36-size` is 6528 bytes smaller after this repair. Switch: `--no-flow-opt`.
 - **The two arms of an `if` and `else` share their start and their end.** `crc` is 63 bytes smaller and 5.6% faster. Switch: `--no-branch-merge`.
 - **The address of a function or a string is stored without `push` and `pop`.** `mojozork-size` is 412 bytes smaller. Switch: `--no-const-store`.
 - **The test `x < 1` of a 16-bit value uses `ld A,H / or L` and `bit 7,H`.** Eight bytes in place of twelve. Switch: `--no-sign-one`.
 - **A jump to a `ret` becomes `ret`, and `cp 0` before a Z or C jump becomes `or A`.** Switches: `--no-ret-jump`, `--no-cp-zero`.
-- **A shorter signed divide and modulo.** A program that calls `__sdiv16` and `__smod16` uses one shared body (49 bytes in place of 70). `davidly-e` is 91 bytes smaller and 2.7% slower. Switch: `--no-sdivmod-merge`.
+- **A shorter signed divide and modulo.** A program that calls `__sdiv16` and `__smod16` outside every loop, in `main`, uses one shared body (49 bytes in place of 70). With `--size-helpers` all calls use the body: `davidly-e` is 91 bytes smaller and 2.7% slower. Switch: `--no-sdivmod-merge`.
 - **A shorter `__div16`.** A divisor of 256 or more uses an eight-step loop in place of `__dv8w`. This saves 42 bytes in a program with no 32-bit divide. Switch: `--no-div16-compact`.
 - **`puts` without a frame.** `__puts_s` has 28 bytes (`puts` has 38). Switch: `--no-puts-small`.
-- **A multiply of 25 bytes when the program multiplies little.** `__mul16c` replaces `__mul16` and its three helpers (139 bytes) when every multiplication stands in `main`, at most one loop deep. `dhrystone21` (three builds) is 116 bytes smaller and `whetstone` 42 bytes. Their T-states do not change. Switch: `--no-mul16c`.
+- **A multiply of 25 bytes when the program multiplies little.** `__mul16c` replaces `__mul16` and its three helpers (139 bytes) when every multiplication stands in `main`, outside every loop. With `--size-helpers` one loop level is allowed: `dhrystone21` (three builds) is 116 bytes smaller and `whetstone` 42 bytes, with the same T-states. A loop of multiplications is up to 2.1 times slower with `__mul16c`, so this is not the default. Switch: `--no-mul16c`.
 - **Not done.** A word `qsort` for the `sort-*-5000` programs: the generic `qsort` has 855 bytes, and the programs need about 460. The strength reduction of array indexes: the unroller removes the need in `stanford-puzzle`.
 
 Repairs found by the gates:
+
+- Repair pass after a review of the step 2 tree. Each fix has a test that runs code (`tests/test_k2_size.py`).
+  - A short counted loop with a `volatile` counter was unrolled, and the reads of the counter went. The unroller now keeps such a loop (local, global or static counter). A test compares the code with `--no-loop-unroll`.
+  - A loop with a bottom test and a counter in memory loaded the counter in each pass (`davidly-sieve` +4.7%). A global or static counter keeps the rotated loop. The liveness pass keeps HL across the label of a bottom-test loop when the line before and every jump back agree. A hot bottom-test loop jumps back with `jp cc`. `davidly-sieve` is 91 bytes smaller and not slower than `main`.
+  - `__mul16c` made a loop of multiplications up to 2.1 times slower. It is now used only when every multiplication stands in `main` outside every loop. The option `--size-helpers` allows one loop level again.
+  - The shared signed divide costs about 55 T-states a call, not 20. It is now used only when every signed divide stands in `main` outside every loop. `--size-helpers` allows all calls. `dhrystone21` (three builds) and `davidly-e` are bigger again as a result. `davidly-e` has 498 bytes (SDCC 489), `dhrystone21` 1701 (SDCC 1612).
+  - A store of IX, IY or SP to a word did not end a forwarded word at the next address. It does now.
+  - Rejected finding: `bsd-wump` is 4.6% slower than `main`, but not from the shared divide. With all step 2 switches off the cycles are the same within 0.2%. The cause is the start-up clear of the BSS of step 1 (`--fast-bss-clear`, see step 1 below).
 
 - `ld A,I` sets the flags, and the pass deleted it as a dead load.
 - A load of the address `__sc_float_on` is a link hook.
@@ -33,30 +41,26 @@ Repairs found by the gates:
 
 Gates on the final tree:
 
-- `pytest -n 6`: 3905 passed (3797 on `main`).
+- `pytest -n 6`: 3925 passed (3797 on `main`).
 - `run_ctests.py`: 220 of 220, and 220 of 220 with `--int 32`.
 - `difftest.py --count 800 -j 8` with the seeds 51000 and 61000: no UC80-WRONG and no MODEL-DIFF line.
-- `ccfuzz.py`: 1000 programs, 500 with `--ll`, and 400 each with `--int=32` and `--no-mul16c`. All PASS. Before the last change (`__mul16c`) the sets were larger: 2000 programs, 1000 with `--ll`, and 400 each with `-O0`, `--no-register-locals`, `--int=32`, all new switches off, `--no-flow-opt`, `--no-loop-unroll`, `--no-for-entry` and `--no-branch-merge`. All PASS.
-- A loop fuzzer (random nests of counted loops with `break`, `continue`, calls and several counter types, compared with the host compiler): 2900 programs in all, with `--int=32`, `-O0` and `--no-register-locals` for part of them. All PASS.
+- `ccfuzz.py`: 2000 programs, 1000 with `--ll`, and 400 each with `-O0`, `--no-register-locals`, `--int=32`, `--size-helpers`, `--no-for-entry`, `--no-loop-unroll` and `--no-mul16c`. All PASS. `run_ctests.py` and the difftest runs were done again after the repair.
+- A loop fuzzer (random nests of counted loops with `break`, `continue`, calls and several counter types, compared with the host compiler): 600 programs after the repair (2900 before). All PASS.
 - The gen3 family with `GEN3_FULL=1`: 76 passed.
 - `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
-- Bench: 112 uc80 rows, no status change, no row with a bigger image. The method is the one of `bench/report.py`.
+- Bench: 112 uc80 rows, no status change, no row with a bigger image. Only `bsd-wump` has more T-states than `main` (+4.6%, step 1). The method is the one of `bench/report.py`.
 
 Numbers against SDCC 4.6.0, with the values of `main` and of the tree with the step 2 switches off in brackets:
 
-- Size 0.8149 (0.9124 and 0.8426).
-- Whole image 0.7787 (0.8705 and 0.8045).
-- T-states 0.4971 (0.5036 and 0.5011), and 0.5991 without the `sort-*` programs (0.6047 and 0.6045).
+- Size 0.8213 (0.9124 and 0.8426).
+- Whole image 0.7845 (0.8705 and 0.8045).
+- T-states 0.4962 (0.5036 and 0.5011), and 0.5979 without the `sort-*` programs (0.6047 and 0.6045).
 - uc80 is faster than SDCC on 76 of the 78 programs (75 on `main`).
-- 20 of the 26 programs that were bigger than SDCC are now at or below its image.
+- 16 of the 26 programs that were bigger than SDCC are now at or below its image. The size helpers (`--size-helpers`) would add `davidly-e` and the three `dhrystone21` builds, with more T-states.
 
-Rows that are slower than with the step 2 switches off:
+Rows that are slower than `main`: only `bsd-wump` (+4.6%, the BSS clear of step 1). Before the repair `davidly-sieve` (+4.7%), `davidly-e`, `micro+a8` and `micro+a16` were slower too.
 
-- `davidly-e` +2.7% and `micro+a8` +0.8% (the shared signed divide and modulo, about 20 T-states a call).
-- `davidly-sieve` +4.7%. A loop with a counter in memory and a test at the end loads the counter again in each pass. Rotation had HL ready.
-- `micro+a16` +0.2%, and `pi_ldiv` and `pi_ldiv+static` by 45 T-states in 1.8 billion.
-
-Programs that are still bigger than SDCC: the four `sort-*-5000` programs and `sort-ran-20` (the `qsort` of the library), and `mojozork-size` (3% bigger).
+Programs that are still bigger than SDCC: the four `sort-*-5000` programs and `sort-ran-20` (the `qsort` of the library), `mojozork-size` (3% bigger), `davidly-e` (+9 bytes) and the three `dhrystone21` builds (+89 to +111 bytes).
 
 ### Family K step 1: less library code in the image
 

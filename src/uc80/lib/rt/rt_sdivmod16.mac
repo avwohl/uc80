@@ -13,7 +13,7 @@
 ; The compiler calls these two in place of __sdiv16 and __smod16 when
 ; a program uses both (the two routines take 70 bytes together, these
 ; three take 49).  A program that uses only one of them keeps the
-; routine of rt_sdiv16.mac or rt_smod16.mac.  Each call takes about 20
+; routine of rt_sdiv16.mac or rt_smod16.mac.  Each call takes about 55
 ; T-states more than the separate routines.
 ; Preserves BC, IX, IY.  Sets __divrem as __div16 does.
 ; ============================================================

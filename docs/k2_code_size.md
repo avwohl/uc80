@@ -14,7 +14,7 @@ Each change has a switch that turns the change off. Each change has a test that 
 - [A shorter signed divide and modulo](#a-shorter-signed-divide-and-modulo): `--no-sdivmod-merge`.
 - [A shorter 16-bit divide](#a-shorter-16-bit-divide): `--no-div16-compact`.
 - [puts without a frame](#puts-without-a-frame): `--no-puts-small`.
-- [A multiply of 25 bytes](#a-multiply-of-25-bytes): `--no-mul16c`.
+- [A multiply of 25 bytes](#a-multiply-of-25-bytes): `--no-mul16c`, `--size-helpers`.
 
 ## Addresses stored through a pointer
 
@@ -59,7 +59,7 @@ The unroller applies these rules:
 
 - The init clause stores a constant from 0 to 32767 in a variable. The condition compares the variable with such a constant (`<`, `<=`, `!=`). The update has the form `v++` or `v += c` with `c` above 0.
 - The loop has 1 to 4 passes. The body has no declaration, `break`, `continue`, `goto` or label.
-- The body does not assign the variable. The program does not take the address of the variable. The variable is not `volatile`.
+- The body does not assign the variable. The program does not take the address of the variable. The variable is not `volatile` (a local, a global or a static variable). The compiler keeps every read of a `volatile` counter.
 - A loop with a call in the body and two or more passes stays a loop.
 
 The unrolled code has one copy of the body for each pass. A local variable of type `int`, `short`, `unsigned` or `unsigned char` becomes a literal in each copy. The constant folder then folds the expressions. An index such as `p[i + 8 * (j + 8 * k)]` becomes a fixed address. A variable of another type, or a global variable, gets the assignment `v = value` before each copy. Code with `sizeof(v)` or `_Generic(v ...)` keeps the variable.
@@ -119,7 +119,11 @@ Two small peephole rules save one byte at a time, but they apply very often:
 
 The routines `__sdiv16` and `__smod16` have 35 bytes each. They have the same two negations at the start and the same negation at the end. The module `rt_sdivmod16.mac` has `__sdiv16m`, `__smod16m` and a shared body `__sdm16`. The three routines have 49 bytes.
 
-The compiler calls the new routines when a program calls both `__sdiv16` and `__smod16`, and no libc routine calls them (`div`, `cbrt`). A program that calls only one routine keeps the old routine, because the shared body is bigger than one old routine. A call of the new routines needs about 20 T-states more. The program `davidly-e` is 27 bytes smaller and has 2.7% more T-states.
+The compiler calls the new routines when all of these are true:
+
+- The program calls both `__sdiv16` and `__smod16`. A program that calls only one routine keeps the old routine, because the shared body is bigger than one old routine.
+- No libc routine calls them (`div`, `cbrt`).
+- Every signed divide stands in `main`, outside every loop. A call of the new routines needs about 55 T-states more than a call of the old routines. A hot divide must keep the old routines. The switch `--size-helpers` removes this rule. The program `davidly-e` is 27 bytes smaller with `--size-helpers` and has 2.7% more T-states. The program `bsd-wump` has 4.7% more T-states.
 
 ## A shorter 16-bit divide
 
@@ -145,12 +149,22 @@ The module `rt_mul16c.mac` has `__mul16c` with 25 bytes. The routine adds the le
 
 The compiler calls `__mul16c` in place of `__mul16` when all of these are true:
 
-- Every multiplication of the program stands in `main`, at most one loop deep.
+- Every multiplication of the program stands in `main`, outside every loop. With `--size-helpers`, a multiplication one loop deep also counts.
 - The program calls no other multiply routine (`__mul32` and the others).
 - The program does not call `fread`, `fwrite`, `rand` or `srand`. These libc routines link `__mul16`.
 - The int has 16 bits.
 
-A multiplication in another function, or in a loop nest of two levels or more, keeps the fast routine. The rule is narrow on purpose. A function that `main` calls in a loop could multiply very often, and the compiler cannot see this. The programs `dhrystone21` (three builds) and `whetstone` are 116 and 42 bytes smaller. Their T-states do not change.
+A multiplication in another function, or in a loop, keeps the fast routine. The rule is narrow on purpose. A function that `main` calls in a loop could multiply very often, and the compiler cannot see this. A loop of multiplications is up to 2.1 times slower with `__mul16c`. With `--size-helpers` the programs `dhrystone21` (three builds) and `whetstone` are 116 and 42 bytes smaller, and their T-states do not change.
+
+## A counter in memory
+
+A `for` loop with a bottom test reloaded a counter that lives in memory at the start of each pass. This cost 16 T-states a pass, because loop rotation kept the counter in HL. Three rules remove the loss:
+
+- Only a local counter gets the bottom-test form. A global or static counter keeps the rotated loop.
+- The liveness pass knows what HL holds at the loop label. The label of a bottom-test loop (`@FORB`) keeps the words that the line before it and every jump back to it agree on. Then the first `ld HL,(i)` of the body goes. The label must have no other jump and no other mention in the text. Turn this off with `--no-flow-opt`.
+- The jump back of a hot bottom-test loop is `jp cc` (10 T-states) in place of `jr cc` (12 T-states when taken). A loop is hot when it has no call and at most 100 bytes of body. Turn this off with `--no-for-entry`.
+
+The program `davidly-sieve` was 4.7% slower with the first version. It is now 0.002% faster than `main` and 91 bytes smaller.
 
 ## Tests
 

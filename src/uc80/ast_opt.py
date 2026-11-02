@@ -257,6 +257,8 @@ class Uc80ASTOptimizer(ASTOptimizer):
             return None
         if name in self._address_taken_vars:
             return None
+        if self._touches_volatile(cond.left):
+            return None                 # every read of a volatile counts
         if name in self._get_modified_vars_in_stmt(stmt.body):
             return None
         cmp_op = _op(cond)

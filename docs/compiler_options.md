@@ -87,7 +87,8 @@ The switches of family K step 2 are all off-switches. Each one is in [k2_code_si
 - `--no-sdivmod-merge`: a program that uses `__sdiv16` and `__smod16` links both routines.
 - `--no-div16-compact`: `__div16` calls `__dv8w` for a divisor of 256 or more.
 - `--no-puts-small`: a call of `puts` uses the routine with the `IX` frame.
-- `--no-mul16c`: a program that multiplies only in `main`, at most one loop deep, links `__mul16` and its helpers.
+- `--no-mul16c`: a program that multiplies only in `main`, outside every loop, links `__mul16` and its helpers.
+- `--size-helpers`: `__mul16c` (one loop level) and the shared signed divide (any place) are used also for calls in loops. The program gets smaller and slower.
 - `--no-ret-jump`: a jump to a `ret` stays a jump.
 - `--no-cp-zero`: `cp 0` stays before a conditional jump.
 

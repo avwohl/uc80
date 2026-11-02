@@ -1003,6 +1003,12 @@ def main() -> int:
              "(docs/k2_code_size.md)"
     )
     parser.add_argument(
+        "--size-helpers",
+        action="store_true",
+        help="Take the small but slower __mul16c and the shared signed "
+             "divide also for calls inside loops (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
         "--no-sdivmod-merge",
         action="store_true",
         help="Call separate __sdiv16 and __smod16 also when a program uses "
@@ -1645,8 +1651,10 @@ def main() -> int:
         gen.enable_div16b = not args.no_div16b
         gen.enable_const_store = not args.no_const_store
         gen.enable_mul16c = not args.no_mul16c
+        gen.size_helpers = args.size_helpers
         gen.enable_sdivmod_merge = not args.no_sdivmod_merge
         gen.enable_for_entry = not args.no_for_entry
+        looprot.HARDEN = not args.no_for_entry
         gen.enable_puts_small = not args.no_puts_small
         gen.enable_compact_div16 = not args.no_div16_compact
         gen.enable_shr32_loop = not args.no_shr32_loop

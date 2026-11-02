@@ -255,15 +255,49 @@ def test_div16_matches_host(tmp_path, flags):
 
 
 @needs_tools
-@pytest.mark.parametrize("flags", [(), ("--no-sdivmod-merge",),
+@pytest.mark.parametrize("flags", [(), ("--size-helpers",),
+                                   ("--size-helpers", "--no-sdivmod-merge"),
                                    ("--no-div16-compact",)])
 def test_signed_divmod_matches_host(tmp_path, flags):
     want, got, text = run_both(tmp_path, SDM_PROG, *flags)
     assert got == want
-    if not flags:
+    # the divides stand in a loop: the shared body only with the option
+    if "--size-helpers" in flags and "--no-sdivmod-merge" not in flags:
         assert "__sdiv16m" in text and "__smod16m" in text
-    if flags == ("--no-sdivmod-merge",):
+    else:
         assert "__sdiv16m" not in text
+
+
+SDM_COLD = r"""
+#include <stdio.h>
+int main(void)
+{
+    volatile short a = -1234, b = 17;
+    short x = a, y = b;
+    printf("%d %d %d %d\n", x / y, x % y, -x / y, x % -y);
+    return 0;
+}
+"""
+
+
+@needs_tools
+@pytest.mark.parametrize("flags", [(), ("--no-sdivmod-merge",)])
+def test_signed_divmod_outside_a_loop_uses_the_shared_body(tmp_path, flags):
+    want, got, text = run_both(tmp_path, SDM_COLD, *flags)
+    assert got == want
+    assert ("__sdiv16m" in text) == (not flags)
+
+
+@needs_tools
+def test_signed_divmod_in_another_function_keeps_the_fast_routines(tmp_path):
+    src = SDM_COLD.replace("int main(void)", "static short f(short x, short y)\n"
+                           "{ return x / y + x % y; }\n"
+                           "static short (*volatile pf)(short, short) = f;\n"
+                           "int main(void)")
+    src = src.replace("return 0;", "printf(\"%d\\n\", pf(x, y)); return 0;")
+    want, got, text = run_both(tmp_path, src)
+    assert got == want
+    assert "__sdiv16m" not in text
 
 
 @needs_tools
@@ -763,6 +797,18 @@ def test_flow_forwarding_stops_at_a_label_a_call_and_an_overlap():
         assert "ld\tHL,(??AUTO+0)" in out, stop
 
 
+def test_flow_forwarding_stops_at_a_wide_store_over_the_second_byte():
+    for reg in ("IX", "IY", "SP", "DE"):
+        text = f"""_f:
+	ld	(??AUTO+1),HL
+	ld	(??AUTO+0),{reg}
+	ld	HL,(??AUTO+1)
+	ret
+"""
+        out = flow(text)
+        assert "ld\tHL,(??AUTO+1)" in out, reg
+
+
 def test_flow_forwarding_ignores_other_labels_in_a_store():
     text = """_f:
 	ld	(??AUTO+0),HL
@@ -1159,16 +1205,39 @@ MUL_NESTED = MUL_MAIN.replace(
 
 
 @needs_tools
-@pytest.mark.parametrize("flags", [(), ("--no-mul16c",)])
+@pytest.mark.parametrize("flags", [(), ("--size-helpers",),
+                                   ("--size-helpers", "--no-mul16c")])
 def test_mul16c_matches_host(tmp_path, flags):
+    # the products stand in a loop: __mul16c only with the option
     want, got, text = run_both(tmp_path, MUL_MAIN, *flags)
+    assert got == want
+    assert ("__mul16c" in text) == (flags == ("--size-helpers",))
+
+
+MUL_COLD = r"""
+#include <stdio.h>
+int main(void)
+{
+    volatile short a = 1237, b = -29;
+    short x = a, y = b;
+    printf("%d %d %d\n", (short) (x * y), (short) (y * y),
+           (short) ((short) (x * 3) * (short) (y * 5)));
+    return 0;
+}
+"""
+
+
+@needs_tools
+@pytest.mark.parametrize("flags", [(), ("--no-mul16c",)])
+def test_mul16c_outside_a_loop_is_the_default(tmp_path, flags):
+    want, got, text = run_both(tmp_path, MUL_COLD, *flags)
     assert got == want
     assert ("__mul16c" in text) == (not flags)
 
 
 @needs_tools
 def test_mul16c_is_not_used_in_a_loop_nest_or_outside_main(tmp_path):
-    want, got, text = run_both(tmp_path, MUL_NESTED)
+    want, got, text = run_both(tmp_path, MUL_NESTED, "--size-helpers")
     assert got == want
     assert "__mul16c" not in text and "__mul16" in text
     src = r"""
@@ -1208,3 +1277,169 @@ int main(void)
 """
     want, got, _text = run_both(tmp_path, src, "--no-loop-unroll")
     assert got == want
+
+
+# ---------------------------------------------------------------------------
+# Repair pass: volatile counter, counter in memory, size helpers
+# ---------------------------------------------------------------------------
+
+VOL_LOOP = r"""
+#include <stdio.h>
+volatile short vi;
+volatile unsigned char vc;
+short s;
+static void f(void) { for (vi = 0; vi < 3; vi++) s += 2; }
+static void g(void) { for (vc = 0; vc < 3; vc++) s += 3; }
+static int h(void)
+{
+    volatile short i;
+    int t = 0;
+    for (i = 0; i < 3; i++) t += 5;
+    return t + i;
+}
+int main(void)
+{
+    f(); g();
+    printf("%d %d %d %d\n", s, vi, vc, h());
+    return 0;
+}
+"""
+
+
+@needs_tools
+def test_loop_unroll_keeps_a_loop_with_a_volatile_counter(tmp_path):
+    want, got, on = run_both(tmp_path, VOL_LOOP)
+    assert got == want
+    d = tmp_path / "off"
+    d.mkdir()
+    _w, _g, off = run_both(d, VOL_LOOP, "--no-loop-unroll")
+    # the loops are not unrolled: the code is the same with the pass off
+    assert on == off
+
+
+FOR_MEM = r"""
+#include <stdio.h>
+short gi, gs; unsigned char buf[64]; short w[64];
+static int local_loop(void)
+{
+    int k, t = 0;
+    for (k = 0; k < 40; k++) t += buf[k] + k;
+    return t;
+}
+int main(void)
+{
+    short k;
+    for (k = 0; k < 10; k++) {
+        for (gi = 0; gi < 50; gi++) { buf[gi] = (unsigned char)(buf[gi] + gi); gs += buf[gi & 31]; }
+        for (gi = 1; gi < 50; gi += 2) { w[gi] += gs; }
+    }
+    printf("%d %d %d\n", gs, w[3], local_loop());
+    return 0;
+}
+"""
+
+
+@needs_tools
+@pytest.mark.parametrize("flags", [(), ("--no-for-entry",)])
+def test_for_entry_leaves_a_counter_in_memory_alone(tmp_path, flags):
+    want, got, text = run_both(tmp_path, FOR_MEM, *flags)
+    assert got == want
+    # the k loop of main and the loop of local_loop have the bottom test
+    # (a local counter); the two loops on the global gi keep the rotation
+    n = sum(1 for ln in text.split("\n")
+            if ln.startswith("FORB") or "FORB" in ln.split(":")[0]
+            and ln.rstrip().endswith(":"))
+    assert n == (0 if flags else 2), n
+
+
+def test_flow_loop_entry_keeps_the_counter_in_hl():
+    base = """_f:
+	ld	HL,0
+	ld	(??AUTO+0),HL
+{pre}@FORB1:
+	ld	HL,(??AUTO+0)
+	ld	A,L
+	ld	(_x),A
+	ld	HL,(??AUTO+0)
+	inc	HL
+	ld	(??AUTO+0),HL
+{clobber}	ld	A,L
+	cp	10
+	jr	c,@FORB1
+	ret
+"""
+    out = flow(base.format(pre="", clobber=""))
+    assert out.count("ld\tHL,(??AUTO+0)") == 0
+    # the jump back has another HL: the load stays
+    out = flow(base.format(pre="", clobber="\tld\tHL,5\n"))
+    assert "ld\tHL,(??AUTO+0)" in out.split("@FORB1:")[1].split("ld\t(_x)")[0]
+    # a jump into the label from before it: the load stays
+    out = flow(base.format(pre="\tjr\tz,@FORB1\n", clobber=""))
+    assert "ld\tHL,(??AUTO+0)" in out.split("@FORB1:")[1].split("ld\t(_x)")[0]
+    # the counter is stored through a pointer in the body: the load stays
+    out = flow(base.format(pre="", clobber="\tld\t(DE),A\n"))
+    assert "ld\tHL,(??AUTO+0)" in out.split("@FORB1:")[1].split("ld\t(_x)")[0]
+
+
+def test_fast_bottom_test_uses_jp_for_a_hot_loop_only():
+    from uc80 import looprot
+    hot = "@FORB1:\n\tld\tA,(_x)\n\tinc\tA\n\tld\t(_x),A\n\tcp\t9\n\tjr c,@FORB1\n"
+    assert "\tjp\tc,@FORB1" in looprot.fast_bottom_tests(hot)
+    cold = hot.replace("\tinc\tA\n", "\tcall\t_g\n")
+    assert looprot.fast_bottom_tests(cold) == cold
+    big = hot.replace("\tinc\tA\n", "\tinc\tA\n" * 200)
+    assert looprot.fast_bottom_tests(big) == big
+
+
+SIEVE_PROG = r"""
+#include <stdio.h>
+char flags[301];
+int main(void)
+{
+    int i, k, prime, count, iter;
+    int total = 0;
+    for (iter = 1; iter <= 3; iter++) {
+        count = 0;
+        for (i = 0; i <= 300; i++) flags[i] = 1;
+        for (i = 0; i <= 300; i++) {
+            if (flags[i]) {
+                prime = i + i + 3;
+                for (k = i + prime; k <= 300; k += prime) flags[k] = 0;
+                count++;
+            }
+        }
+        total += count;
+    }
+    printf("%d %d\n", count, total);
+    return 0;
+}
+"""
+
+PTR_LOOP = r"""
+#include <stdio.h>
+static void bump(int *p) { *p += 1; }
+int main(void)
+{
+    int i, j, s = 0;
+    for (i = 0; i < 6; i++) { s += i; if (i == 2) bump(&i); }
+    for (j = 1; j <= 5; j++) { int *q = &j; s += *q; if (j == 3) *q = 4; }
+    printf("%d %d %d\n", s, i, j);
+    return 0;
+}
+"""
+
+
+@needs_tools
+@pytest.mark.parametrize("src", [SIEVE_PROG, PTR_LOOP])
+@pytest.mark.parametrize("flags", [(), ("--no-for-entry",),
+                                   ("--no-flow-opt",)])
+def test_loop_entry_forwarding_matches_host(tmp_path, src, flags):
+    want, got, _text = run_both(tmp_path, src, *flags)
+    assert got == want
+
+
+@needs_tools
+def test_for_entry_loop_with_a_memory_counter_jumps_back_with_jp(tmp_path):
+    want, got, text = run_both(tmp_path, SIEVE_PROG)
+    assert got == want
+    assert "jr c,@FORB" not in text and "jp\tc,@FORB" in text

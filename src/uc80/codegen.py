@@ -3967,6 +3967,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_const_store = True
         self.enable_mul16c = True
         self._mul16_sites = []
+        self._sdiv_sites = []
+        self.size_helpers = False
         self.enable_sdivmod_merge = True
         self.enable_for_entry = True
         self.enable_puts_small = True
@@ -6533,6 +6535,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if (not self.enable_sdivmod_merge or "__sdiv16" not in used
                 or "__smod16" not in used):
             return
+        # The shared body costs T-states a call: only a program that
+        # divides outside every loop, in main, takes it by default.
+        if not self.size_helpers and any(
+                fn != "main" or depth > 0 for fn, depth in self._sdiv_sites):
+            return
         text = "\n".join(
             ln for ln in self.ctx.lines
             if not ln.lstrip().lower().startswith(("extrn", "public", ";")))
@@ -6550,9 +6557,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     _MUL16_LIBC = re.compile(r"\b_(fread|fwrite|rand|srand|rand_r)\b")
 
     def _decide_mul16c(self) -> None:
-        """A program whose multiplications all stand in main, at most one
-        loop deep, calls __mul16c (25 bytes, about 150 T-states a call
-        more) in place of __mul16 and its three helpers (139 bytes).
+        """A program whose multiplications all stand in main outside every
+        loop (one loop deep with --size-helpers) calls __mul16c (25 bytes,
+        about 150 T-states a call more) in place of __mul16 and its three helpers (139 bytes).
         docs/k2_code_size.md."""
         used = self.ctx.runtime_used
         if (not self.enable_mul16c or "__mul16" not in used
@@ -6560,7 +6567,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 or self.type_config.int_size != 2
                 or any(n.startswith("__mul") and n not in
                        ("__mul16", "__mul16c") for n in used)
-                or any(fn != "main" or depth > 1
+                or any(fn != "main" or depth > (1 if self.size_helpers else 0)
                        for fn, depth in self._mul16_sites)):
             return
         text = "\n".join(
@@ -10617,6 +10624,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return False
         sym = self.ctx.lookup(name)
         if sym is None:
+            return False
+        if sym.is_global or sym.is_static:
+            # A counter in memory: loop rotation keeps it in HL from the
+            # test into the body, the bottom test reloads it each pass
+            # (+16 T-states a pass, davidly-sieve +4.7%).
             return False
         t = _to_legacy(sym.sym_type)
         if (not isinstance(t, (lt.BasicType, lt.EnumType))
@@ -21787,6 +21799,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if name == "__mul16":
             self._mul16_sites.append((self.ctx.current_function,
                                       len(self.ctx.continue_labels)))
+        elif name in ("__sdiv16", "__smod16"):
+            self._sdiv_sites.append((self.ctx.current_function,
+                                     len(self.ctx.continue_labels)))
         self.ctx.emit_instr("call", name)
 
     def _store_tmp32(self) -> None:

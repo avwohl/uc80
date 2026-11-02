@@ -389,8 +389,58 @@ def _label_addr(op: str):
     return name, off
 
 
+def _loop_labels(rs: list[_R]) -> set[str]:
+    """Labels ``@FORB...`` that only backward jumps and the line before
+    reach, and that the run names nowhere else (step 5, loop entry)."""
+    pos = {r.op: i for i, r in enumerate(rs) if r.kind == "label"
+           and r.op.startswith("@FORB")}
+    if not pos:
+        return set()
+    bad: set[str] = set()
+    for i, r in enumerate(rs):
+        if r.kind == "label":
+            continue
+        for name in pos:
+            if name in r.line:
+                if (r.kind == "ins" and r.flow in ("jump", "branch")
+                        and r.target == name and i > pos[name]
+                        and r.op in ("jr", "jp", "djnz")):
+                    continue
+                bad.add(name)
+    return set(pos) - bad
+
+
 def _mem_forward(rs: list[_R]) -> bool:
-    """Step 5."""
+    """Step 5.  A loop entry label (``@FORB``) keeps the facts that the
+    line before it and every jump to it agree on."""
+    loops = _loop_labels(rs)
+    if not loops:
+        return _mem_walk(rs, True, {}, None)[0]
+    allowed: dict[str, object] = {name: None for name in loops}
+    for _ in range(8):
+        entry: dict = {}
+        jf: dict = {name: [] for name in loops}
+        _mem_walk(rs, False, allowed, (entry, jf))
+        changed = False
+        for name in loops:
+            e = dict(entry.get(name) or {})
+            for f in jf[name]:
+                e = {k: v for k, v in e.items() if f.get(k) == v}
+            if allowed[name] != e:
+                allowed[name] = e
+                changed = True
+        if not changed:
+            break
+    else:
+        allowed = {name: {} for name in loops}
+    return _mem_walk(rs, True, allowed, None)[0]
+
+
+def _mem_walk(rs: list[_R], apply: bool, allowed: dict, rec):
+    """One walk of step 5.  ``apply`` False only follows the facts.
+    ``allowed`` maps a loop label to the facts that it keeps (None: the
+    facts of the line before).  ``rec`` collects (entry facts, facts at
+    each jump to a loop label)."""
     changed = False
     facts: dict[tuple[str, int], str] = {}
 
@@ -406,10 +456,22 @@ def _mem_forward(rs: list[_R]) -> bool:
 
     for r in rs:
         if r.kind == "label":
-            facts.clear()
+            if r.op in allowed:
+                keep = allowed[r.op]
+                if keep is None:
+                    keep = dict(facts)
+                if rec is not None:
+                    rec[0][r.op] = dict(facts)
+                facts.clear()
+                facts.update(keep)
+            else:
+                facts.clear()
             continue
         if r.kind != "ins" or r.dead:
             continue
+        if (rec is not None and r.target in allowed and r.target
+                and r.flow in ("jump", "branch")):
+            rec[1][r.target].append(dict(facts))
         ops = [o.strip() for o in r.ops]
         low = [o.lower() for o in ops]
         # a load of a pair from a label
@@ -418,10 +480,16 @@ def _mem_forward(rs: list[_R]) -> bool:
             sym, off = _label_addr(ops[1])
             held = facts.get((sym, off))
             if held == low[0]:
+                if not apply:
+                    continue
                 if _allow():
                     r.dead = True
                     changed = True
                     continue
+            elif held is not None and not apply:
+                drop_pair_bytes(_mask(_PAIRS[low[0]]))
+                facts[(sym, off)] = low[0]
+                continue
             elif held is not None and _allow():
                 d, h = _PAIRS[low[0]], _PAIRS[held]
                 r.line = (f"\tld\t{d[0].upper()},{h[0].upper()}\n"
@@ -456,13 +524,15 @@ def _mem_forward(rs: list[_R]) -> bool:
             if tgt is None:
                 facts.clear()
             else:
-                drop_overlap(tgt[0], tgt[1], 1)
+                wide = len(low) > 1 and low[1] in ("hl", "de", "bc", "sp",
+                                                   "ix", "iy")
+                drop_overlap(tgt[0], tgt[1], 2 if wide else 1)
             continue
         if r.wr:
             drop_pair_bytes(r.wr)
         if r.flow in ("jump", "return", "stop"):
             facts.clear()
-    return changed
+    return changed, facts
 
 
 def _int_of(op: str):
