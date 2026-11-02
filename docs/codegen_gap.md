@@ -619,4 +619,6 @@ Six programs are still above the image of SDCC. The four `sort-*-5000` programs 
 
 ## Status on 2026-11-02 (integration of family K, branch integrate14)
 
-The branch `integrate14` has family K (steps 1 and 2) and the tree of `integrate13`. The mean ratio to SDCC 4.6.0 is 0.8236 for the size, 0.7895 for the whole image and 0.4949 for the T-states (0.5961 without `sort-*`). 76 of the 78 programs are faster. The image of all 112 uc80 rows is smaller than on `integrate13`. Eight programs are still above the whole image of SDCC: five `sort-*` programs and the three `dhrystone21` builds. The programs `davidly-ttt` and `micro+loop` are slower than SDCC in speed mode. The causes of the rows that are slower than before are in `CHANGELOG.md`.
+The branch `integrate14` has family K (steps 1 and 2) and the tree of `integrate13`. The mean ratio to SDCC 4.6.0 is 0.8236 for the size, 0.7895 for the whole image and 0.4949 for the T-states (0.5961 without `sort-*`). 76 of the 78 programs are faster. The image of all 112 uc80 rows is smaller than on `integrate13`.
+
+Eight programs are still above the whole image of SDCC: five `sort-*` programs and the three `dhrystone21` builds. The programs `davidly-ttt` and `micro+loop` are slower than SDCC in speed mode. The causes of the rows that are slower than before are in `CHANGELOG.md`.
