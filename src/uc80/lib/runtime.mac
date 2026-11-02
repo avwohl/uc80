@@ -4435,6 +4435,47 @@ __m1632_2:
 
 	CSEG
 ; ============================================================
+; rt_mul16c.mac
+; ============================================================
+; rt_mul16c.mac - __mul16c
+; Family K, step 2 (docs/k2_code_size.md)
+
+
+	CSEG
+; ============================================================
+; 16-bit multiplication in 25 bytes: HL = DE * HL (low 16 bits; signed
+; and unsigned give the same bits).
+; The compiler calls this routine in place of __mul16 when every
+; multiplication of a program stands outside a loop nest, and the
+; program needs none of the other multiply routines (they have 139 bytes
+; and are faster).  The routine adds DE, shifted left, for each set bit of
+; the right operand, from the lowest bit to the highest set bit.  A right
+; operand of 3 needs about 175 T-states, a right operand of 255 about 700.
+; Preserves BC, IX, IY.  Clobbers A, DE, flags.
+; ============================================================
+	PUBLIC	__mul16c
+__mul16c:
+	PUSH	BC
+	LD	B,H
+	LD	C,L		; BC = the right operand
+	LD	HL,0
+__mul16c_l:
+	SRL	B
+	RR	C		; the lowest bit of BC goes to the carry
+	JR	NC,__mul16c_n
+	ADD	HL,DE
+__mul16c_n:
+	SLA	E
+	RL	D		; DE = DE * 2
+	LD	A,B
+	OR	C
+	JR	NZ,__mul16c_l	; until no bit is left
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
 ; rt_mul16ng.mac
 ; ============================================================
 ; rt_mul16ng.mac - __mul16ng

@@ -1124,3 +1124,87 @@ def test_flow_keeps_the_second_load_of_a_constant_after_a_call():
 	ret
 """
     assert flow(text).count("ld\tHL,1") == 2
+
+
+# ---------------------------------------------------------------------------
+# __mul16c: the multiply of 25 bytes
+# ---------------------------------------------------------------------------
+
+MUL_MAIN = r"""
+#include <stdio.h>
+#include <stdint.h>
+static int16_t vals[] = {0, 1, 2, 3, 5, 7, 10, 100, 127, 128, 255, 256, 257,
+                         1000, 4096, 12345, 32767, -1, -2, -3, -128, -255,
+                         -256, -1000, -12345, -32768};
+int main(void)
+{
+    int i, j;
+    uint32_t h = 0;
+    int16_t a, b;
+    for (i = 0; i < 26; i++) {
+        a = vals[i];
+        b = vals[(i * 7 + 3) % 26];
+        h = h * 31 + (uint16_t) (a * b);
+        b = vals[(i * 11 + 5) % 26];
+        h = h * 31 + (uint16_t) (a * b);
+    }
+    printf("%lu\n", (unsigned long) h);
+    return 0;
+}
+"""
+
+MUL_NESTED = MUL_MAIN.replace(
+    "    for (i = 0; i < 26; i++) {",
+    "    for (j = 0; j < 2; j++)\n    for (i = 0; i < 26; i++) {")
+
+
+@needs_tools
+@pytest.mark.parametrize("flags", [(), ("--no-mul16c",)])
+def test_mul16c_matches_host(tmp_path, flags):
+    want, got, text = run_both(tmp_path, MUL_MAIN, *flags)
+    assert got == want
+    assert ("__mul16c" in text) == (not flags)
+
+
+@needs_tools
+def test_mul16c_is_not_used_in_a_loop_nest_or_outside_main(tmp_path):
+    want, got, text = run_both(tmp_path, MUL_NESTED)
+    assert got == want
+    assert "__mul16c" not in text and "__mul16" in text
+    src = r"""
+#include <stdio.h>
+static int mul(int a, int b) { return a * b; }
+static int (*volatile pm)(int, int) = mul;
+int main(void)
+{
+    int i, s = 0;
+    for (i = 0; i < 20; i++) s += pm(i, i + 3);
+    printf("%d\n", s);
+    return 0;
+}
+"""
+    d = tmp_path / "f"
+    d.mkdir()
+    want, got, text = run_both(d, src)
+    assert got == want
+    assert "__mul16c" not in text
+
+
+@needs_tools
+def test_mul16c_all_small_products_match_host(tmp_path):
+    src = r"""
+#include <stdio.h>
+#include <stdint.h>
+int main(void)
+{
+    uint16_t a, b;
+    uint32_t h = 0;
+    for (a = 0; a < 300; a += 7)
+        for (b = 0; b < 300; b += 5) h = h * 31 + (uint16_t) (a * b);
+    for (a = 65000; a != 64990; a++) h = h * 31 + (uint16_t) (a * 3u);
+    printf("%lu\n", (unsigned long) h);
+    return 0;
+}
+"""
+    want, got, _text = run_both(tmp_path, src, "--no-loop-unroll")
+    assert got == want

@@ -14,6 +14,7 @@ Each change has a switch that turns the change off. Each change has a test that 
 - [A shorter signed divide and modulo](#a-shorter-signed-divide-and-modulo): `--no-sdivmod-merge`.
 - [A shorter 16-bit divide](#a-shorter-16-bit-divide): `--no-div16-compact`.
 - [puts without a frame](#puts-without-a-frame): `--no-puts-small`.
+- [A multiply of 25 bytes](#a-multiply-of-25-bytes): `--no-mul16c`.
 
 ## Addresses stored through a pointer
 
@@ -135,6 +136,21 @@ The routine `puts` used `IX` for a frame and saved `BC`. The routine `__conout` 
 The compiler calls `__puts_s` for a call of `puts` in a whole program for CP/M. The program must not define its own `puts`. The call is the same as the call of `puts`: the argument is on the stack and the caller removes the argument. A ROM build, a build with an assembly file and sdas text keep `puts`.
 
 The program `davidly-e` and the programs that print a line are 10 bytes smaller. A program that also takes the address of `puts` links both routines.
+
+## A multiply of 25 bytes
+
+The routine `__mul16` is speed-tuned. It has 139 bytes with its helpers `__mul16w`, `__mul16ng` and `__mul8x16`. SDCC has a multiply of 23 bytes. The program `dhrystone21` multiplies once in each pass of its main loop.
+
+The module `rt_mul16c.mac` has `__mul16c` with 25 bytes. The routine adds the left operand, shifted left, for each set bit of the right operand. It starts at the lowest bit and stops after the highest set bit. A right operand of 3 needs about 175 T-states. A right operand of 255 needs about 700 T-states.
+
+The compiler calls `__mul16c` in place of `__mul16` when all of these are true:
+
+- Every multiplication of the program stands in `main`, at most one loop deep.
+- The program calls no other multiply routine (`__mul32` and the others).
+- The program does not call `fread`, `fwrite`, `rand` or `srand`. These libc routines link `__mul16`.
+- The int has 16 bits.
+
+A multiplication in another function, or in a loop nest of two levels or more, keeps the fast routine. The rule is narrow on purpose. A function that `main` calls in a loop could multiply very often, and the compiler cannot see this. The programs `dhrystone21` (three builds) and `whetstone` are 116 and 42 bytes smaller. Their T-states do not change.
 
 ## Tests
 

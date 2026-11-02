@@ -20,7 +20,8 @@ Step 1 linked less library code. Step 2 makes the generated code and the runtime
 - **A shorter signed divide and modulo.** A program that calls `__sdiv16` and `__smod16` uses one shared body (49 bytes in place of 70). `davidly-e` is 91 bytes smaller and 2.7% slower. Switch: `--no-sdivmod-merge`.
 - **A shorter `__div16`.** A divisor of 256 or more uses an eight-step loop in place of `__dv8w`. This saves 42 bytes in a program with no 32-bit divide. Switch: `--no-div16-compact`.
 - **`puts` without a frame.** `__puts_s` has 28 bytes (`puts` has 38). Switch: `--no-puts-small`.
-- **Not done.** A word `qsort` for the `sort-*-5000` programs: the generic `qsort` has 855 bytes, and the programs need about 460. The strength reduction of array indexes: the unroller removes the need in `stanford-puzzle`. A compact multiply: it makes `dhrystone21` 7% slower.
+- **A multiply of 25 bytes when the program multiplies little.** `__mul16c` replaces `__mul16` and its three helpers (139 bytes) when every multiplication stands in `main`, at most one loop deep. `dhrystone21` (three builds) is 116 bytes smaller and `whetstone` 42 bytes. Their T-states do not change. Switch: `--no-mul16c`.
+- **Not done.** A word `qsort` for the `sort-*-5000` programs: the generic `qsort` has 855 bytes, and the programs need about 460. The strength reduction of array indexes: the unroller removes the need in `stanford-puzzle`.
 
 Repairs found by the gates:
 
@@ -39,7 +40,7 @@ Gates on the final tree:
 - A loop fuzzer (random nests of counted loops with `break`, `continue`, calls and several counter types, compared with the host compiler): 1400 programs, also with `--int=32` and `-O0`. All PASS.
 - The gen3 family with `GEN3_FULL=1`: 76 passed.
 - `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
-- Bench: 112 uc80 rows. The method is the one of `bench/report.py`. Against SDCC 4.6.0 the size is 0.8168 (0.9124 on `main`, 0.8426 with the step 2 switches off). The whole image is 0.7805 (0.8705). The T-states are 0.4971 (0.5036), and 0.5991 without the `sort-*` programs (0.6047). uc80 is faster than SDCC on 76 of the 78 programs (75 on `main`). 17 of the 26 programs that were bigger than SDCC are now at or below its image.
+- Bench: 112 uc80 rows. The method is the one of `bench/report.py`. Against SDCC 4.6.0 the size is 0.8149 (0.9124 on `main`, 0.8426 with the step 2 switches off). The whole image is 0.7787 (0.8705). The T-states are 0.4971 (0.5036), and 0.5991 without the `sort-*` programs (0.6047). uc80 is faster than SDCC on 76 of the 78 programs (75 on `main`). 20 of the 26 programs that were bigger than SDCC are now at or below its image.
 
 Rows that are slower than with the step 2 switches off:
 
@@ -47,7 +48,7 @@ Rows that are slower than with the step 2 switches off:
 - `davidly-sieve` +4.7%. A loop with a counter in memory and a test at the end loads the counter again in each pass. Rotation had HL ready.
 - `micro+a16` +0.2%, and `pi_ldiv` and `pi_ldiv+static` by 45 T-states in 1.8 billion.
 
-Programs that are still bigger than SDCC: the four `sort-*-5000` programs and `sort-ran-20` (the `qsort` of the library), `dhrystone21` (three builds, the speed-tuned multiply has 139 bytes against 23), and `mojozork-size`.
+Programs that are still bigger than SDCC: the four `sort-*-5000` programs and `sort-ran-20` (the `qsort` of the library), and `mojozork-size` (3% bigger).
 
 ### Family K step 1: less library code in the image
 

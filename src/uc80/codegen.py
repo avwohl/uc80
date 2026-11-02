@@ -3965,6 +3965,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_qsort_small = True
         self.enable_div16b = True
         self.enable_const_store = True
+        self.enable_mul16c = True
+        self._mul16_sites = []
         self.enable_sdivmod_merge = True
         self.enable_for_entry = True
         self.enable_puts_small = True
@@ -5039,6 +5041,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self._fold_short_helpers()
         self._fold_signed_divmod()
+        self._decide_mul16c()
         self._decide_compact_div16()
 
         # Emit printf/scanf dispatch tables if features are known
@@ -6542,6 +6545,34 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self.ctx.lines[:] = [
                 re.sub(r"\b" + old + r"\b", new, ln) if old in ln else ln
                 for ln in self.ctx.lines]
+
+    # libc routines that call __mul16
+    _MUL16_LIBC = re.compile(r"\b_(fread|fwrite|rand|srand|rand_r)\b")
+
+    def _decide_mul16c(self) -> None:
+        """A program whose multiplications all stand in main, at most one
+        loop deep, calls __mul16c (25 bytes, about 150 T-states a call
+        more) in place of __mul16 and its three helpers (139 bytes).
+        docs/k2_code_size.md."""
+        used = self.ctx.runtime_used
+        if (not self.enable_mul16c or "__mul16" not in used
+                or not self._mul16_sites
+                or self.type_config.int_size != 2
+                or any(n.startswith("__mul") and n not in
+                       ("__mul16", "__mul16c") for n in used)
+                or any(fn != "main" or depth > 1
+                       for fn, depth in self._mul16_sites)):
+            return
+        text = "\n".join(
+            ln for ln in self.ctx.lines
+            if not ln.lstrip().lower().startswith(("extrn", "public", ";")))
+        if self._MUL16_LIBC.search(text):
+            return
+        used.discard("__mul16")
+        used.add("__mul16c")
+        self.ctx.lines[:] = [
+            re.sub(r"\b__mul16\b", "__mul16c", ln) if "__mul16" in ln
+            else ln for ln in self.ctx.lines]
 
     _DIV32_NAMES = frozenset((
         "__div32", "__mod32", "__sdiv32", "__smod32", "__div32w",
@@ -21753,6 +21784,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     def _call_runtime(self, name: str) -> None:
         """Call a runtime library function."""
         self.ctx.runtime_used.add(name)
+        if name == "__mul16":
+            self._mul16_sites.append((self.ctx.current_function,
+                                      len(self.ctx.continue_labels)))
         self.ctx.emit_instr("call", name)
 
     def _store_tmp32(self) -> None:

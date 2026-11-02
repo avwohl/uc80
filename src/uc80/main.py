@@ -1031,6 +1031,13 @@ def main() -> int:
              "body (docs/k2_code_size.md)"
     )
     parser.add_argument(
+        "--no-mul16c",
+        action="store_true",
+        help="Call __mul16 and its helpers also when all multiplications "
+             "of the program are in main, at most one loop deep "
+             "(docs/k2_code_size.md)"
+    )
+    parser.add_argument(
         "--no-div16b",
         action="store_true",
         help="Call __div16 and __mod16 also for a constant divisor of 1 to "
@@ -1637,6 +1644,7 @@ def main() -> int:
         gen.enable_qsort_small = not args.no_qsort_small
         gen.enable_div16b = not args.no_div16b
         gen.enable_const_store = not args.no_const_store
+        gen.enable_mul16c = not args.no_mul16c
         gen.enable_sdivmod_merge = not args.no_sdivmod_merge
         gen.enable_for_entry = not args.no_for_entry
         gen.enable_puts_small = not args.no_puts_small
