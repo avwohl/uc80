@@ -1563,6 +1563,7 @@ class CallGraphAnalyzer:
     total_shared_storage: int = 0  # Total size of shared storage area
     is_variadic: dict[str, bool] = field(default_factory=dict)  # func -> is variadic
     has_body: set[str] = field(default_factory=set)  # functions with definitions (not just declarations)
+    loop_funcs: set[str] = field(default_factory=set)  # functions with a loop in the body
     is_static: dict[str, bool] = field(default_factory=dict)  # func -> is static (internal linkage)
     whole_program: bool = True  # True = no other C files at link time
     struct_sizes: dict[str, int] = field(default_factory=dict)  # struct name -> size in bytes
@@ -1931,6 +1932,18 @@ class CallGraphAnalyzer:
         self.call_graph[name] = calls
         self.address_taken.update(address_taken)
         self.indirect_call_sigs[name] = indirect_sigs
+        stack = [func.body]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, (list, tuple)):
+                stack.extend(x)
+                continue
+            if not _dcfast.is_dataclass(x) or isinstance(x, type):
+                continue
+            if isinstance(x, (ast.ForStmt, ast.WhileStmt, ast.DoWhileStmt)):
+                self.loop_funcs.add(name)
+                break
+            stack.extend(_children(x))
 
     def _analyze_asm(self, node, calls: set[str], address_taken: set[str]) -> None:
         """Treat every `_name` in an asm template as a reference to the C
@@ -3972,6 +3985,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_mul16c = True
         self._mul16_sites = []
         self._loop_stmts = []
+        self._static_init_labels = None
+        self._fn_static_fn = None
+        self._fn_static_labels = {}
         self._dm_pending = {}
         self._loop_calls = {}
         self.enable_mul16c_loop = True
@@ -5187,10 +5203,15 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 var_type, init = entry[0], entry[1]
                 resolved_addr = entry[2] if len(entry) > 2 else None
                 self.ctx.emit_label(label)
-                if has_resolved:
-                    self._emit_address_const(*resolved_addr)
-                else:
-                    self._emit_initializer(init, var_type)
+                self._static_init_labels = (entry[3] if len(entry) > 3
+                                            else None)
+                try:
+                    if has_resolved:
+                        self._emit_address_const(*resolved_addr)
+                    else:
+                        self._emit_initializer(init, var_type)
+                finally:
+                    self._static_init_labels = None
 
         def emit_compound_literals(items):
             for label, init, target_type, size in items:
@@ -8505,6 +8526,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         # Record mapping from variable name to label for late-binding initializers
         self.ctx.static_local_labels[decl.name] = label
+        if self._fn_static_fn != func_name:
+            self._fn_static_fn = func_name
+            self._fn_static_labels = {}
+        self._fn_static_labels[decl.name] = label
 
         # Register as a "global" for access purposes, but mark is_static=True
         # so we don't add another _ prefix when accessing
@@ -8524,7 +8549,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 resolved_addr = addr
 
         # Store type, init value, and pre-resolved address for data segment emission
-        self.ctx.static_locals[label] = (decl.var_type, decl.init, resolved_addr)
+        # the statics of the function seen so far: an initializer such as
+        # { &slot, 3 } names one of them, and is emitted after the function
+        self.ctx.static_locals[label] = (
+            decl.var_type, decl.init, resolved_addr,
+            dict(self._fn_static_labels))
 
     def _gen_local_string_array_init(self, sym: 'Symbol', array_type: lt.ArrayType,
                                       string_lit: ast.StringLiteral,
@@ -21976,9 +22005,22 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                                      len(self.ctx.continue_labels)))
         self.ctx.emit_instr("call", name)
 
+    def _light_callee(self, func) -> bool:
+        """True for a call of a function of this program that has no
+        call and no loop in its body: the call costs little, so a loop of
+        such calls is no reason for the slow __mul16c."""
+        if not isinstance(func, ast.Identifier):
+            return False
+        cga = getattr(self, "call_graph_analyzer", None)
+        name = func.name.text
+        return (cga is not None and name in cga.has_body
+                and not cga.call_graph.get(name)
+                and name not in cga.loop_funcs)
+
     def _loop_call_count(self) -> int:
         """The number of calls in the innermost loop being generated (0
-        outside a loop).  Counted on the tree, once for each loop."""
+        outside a loop), without the calls of light functions.  Counted
+        on the tree, once for each loop."""
         if not self._loop_stmts:
             return 0
         stmt = self._loop_stmts[-1]
@@ -21994,7 +22036,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 if not _dcfast.is_dataclass(x) or isinstance(x, type):
                     continue
                 if isinstance(x, (ast.Call, ast.CallNoArgs)):
-                    n += 1
+                    if not self._light_callee(x.func):
+                        n += 1
                 stack.extend(_children(x))
             self._loop_calls[id(stmt)] = n
         return n
@@ -23674,13 +23717,17 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if isinstance(expr, ast.UnaryOp) and expr.op == "&":
             operand = expr.operand
             if isinstance(operand, ast.Identifier):
-                sym = self.ctx.lookup(operand.name)
+                oname = getattr(operand.name, "text", operand.name)
+                sym = self.ctx.lookup(oname)
+                if (self._static_init_labels is not None
+                        and oname in self._static_init_labels):
+                    return (self._static_init_labels[oname], 0)
                 if sym:
                     return (sym.label(), 0)
-                elif operand.name in self.ctx.static_local_labels:
-                    return (self.ctx.static_local_labels[operand.name], 0)
+                elif oname in self.ctx.static_local_labels:
+                    return (self.ctx.static_local_labels[oname], 0)
                 else:
-                    return (f"_{operand.name}", 0)
+                    return (f"_{oname}", 0)
             elif isinstance(operand, (ast.Member, ast.ArrowMember)):
                 # &struct.member or &((struct*)base)->member chain
                 if isinstance(operand, ast.Member) and isinstance(operand.obj, ast.Identifier):

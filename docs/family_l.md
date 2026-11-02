@@ -39,24 +39,32 @@ In the second case no code reads the pointer before the assignment. So the point
 
 The compiler also changes `(&obj)->member` to `obj.member` and `*(&obj)` to `obj` everywhere. A macro such as `#define G (&state)` makes such expressions.
 
-The change saves 3348 bytes in `mojozork-size`.
+The change saves 3306 bytes in `mojozork-size`.
 
 ## qsort of 16-bit elements
 
-A call `qsort(base, n, 2, cmp)` calls the library routine `__qsort_wr` (`lc_qsort_w.mac`, 332 bytes) in place of `qsort` (855 bytes). The routine takes `HL` = base, `DE` = number of elements and `BC` = comparator. The comparator takes its two pointers in `HL` and `DE` and returns the result in `HL`.
+A call `qsort(base, n, 2, cmp)` calls the library routine `__qsort_wr` (`lc_qsort_w.mac`, 336 bytes) in place of `qsort` (855 bytes). The routine takes `HL` = base, `DE` = number of elements and `BC` = comparator. The comparator takes its two pointers in `HL` and `DE` and returns the result in `HL`.
 
-The routine checks first if the array is one run. A run in increasing order needs no work. The routine reverses a run in strictly decreasing order. Other arrays use a quicksort. The pivot is the element at one quarter of the part, because the middle element of an array in organ-pipe order is the largest one and gives a number of compares in the order of n squared. The recursion goes into the smaller part, so the stack depth is at most log2(n) levels.
+The routine checks first if the array is one run. A run that goes up needs no work. The routine reverses a run that goes down in every step. Other arrays use a quicksort. The pivot is the element at one quarter of the part. The middle element of an array in organ-pipe order is the largest one, and it gives about n squared compares.
+
+The recursion goes into the smaller part, so the stack depth is at most log2(n) levels.
 
 The comparator gets the register convention for calls only when all of these are true:
 
 - Every use of the name of the comparator is the fourth argument of a call `qsort(b, n, 2, name)`.
 - The comparator has two parameters of one word each, and it returns an `int`.
 - The comparator cannot reach `qsort`, `bsearch` or a function that calls back (`raise`, `signal` and the like). The check follows the direct calls. An indirect call or inline assembly in the comparator, or in a function that the comparator calls, turns the change off.
-- The program defines no interrupt function, no function named `qsort` and no assembly file. The type `int` has 16 bits.
+- The program has no interrupt function, no function named `qsort` and no assembly file. The type `int` has 16 bits.
 
 The routine keeps its state in static storage and is not reentrant. The checks above make sure that no comparator calls a sort. If a check fails, the call keeps the stack convention and the generic `qsort`. A call with a constant count of 32 or less and an element size of 1 to 8 still uses `__qsort_s` when the checks fail.
 
-The eight sort programs of the benchmark shrink and run faster. The program `sort-ran-5000` goes from 36.0 million to 26.6 million T-states.
+The eight sort programs of the benchmark shrink and run faster. The program `sort-ran-5000` goes from 36.0 million to 28.6 million T-states.
+
+The routine has no insertion sort for small parts. For a constant count of 32 or less, `__qsort_s` (insertion sort) is faster on an input that is almost sorted. We measured 20 elements. A random input needs 1.09 times the T-states of `__qsort_s`.
+
+A sorted array with one element moved needs up to 2.7 times. An array with few different values needs up to 2 times. A sorted, reversed or equal input needs 0.70 to 0.73 times. With 200 elements or more, the routine wins or ties on every shape tried.
+
+The benchmark `sort-ran-20` gains from the routine: 50,424 against 56,863 T-states, and 107 bytes less. Use `--no-qsort-wr` for a program that sorts small arrays that are almost sorted.
 
 ## Calls of empty functions
 
@@ -86,20 +94,30 @@ The compiler finds a pair of operations when the operands are variables of 16 bi
 - The first operation always runs when its statement runs. It is not on the right of `&&` or `||` and not in an arm of `?:`.
 - No statement between the two operations changes an operand. A call between the two operations is possible only when the operands are local variables. The second statement can be the assignment `x = ... x / n ...` to an operand.
 - Between the two statements there is no label, no loop, no `if` and no other control statement.
-- For signed values, the program has no other division or remainder that can call `__sdiv16` or `__smod16`, and the pair is in a loop or in a function other than `main`. Else the two routines of family K (or the shared body) are smaller than `__sdivmod16`, and the pair stays as two operations. Unsigned pairs never make the image bigger.
+- For signed values, the pair needs two conditions. The program has no other division or remainder that can call `__sdiv16` or `__smod16`. The pair is in a loop or in a function other than `main`. Else the two routines of family K (or the shared body) are smaller than `__sdivmod16`, and the pair stays as two operations. Unsigned pairs never make the image bigger.
 
 If the first operation does not end in a divide call (a constant divisor that is a power of two, for example), the compiler computes the second operation after the first. The result is correct in all cases.
 
-The change gives a gain of 38% in T-states for `davidly-e`.
+The change gives a gain of 38% in T-states for `davidly-e`. The hidden local variable adds 2 bytes of BSS there, and the image is 27 bytes smaller.
 
 ## An empty counted loop
 
 A loop `for (v = c1; v < c2; v += c) ;` with constant bounds and an empty body only sets the counter. The compiler changes the loop to `v = final;`. The counter must be a non-volatile variable of an integer type of 16 bits or more, and the final value must be 32767 or less. The loop test uses `<`, `<=` or `!=`.
 
+A ROM build or a build with `--freestanding` does not make this change. A ROM program often waits with such a loop. The fold removes the wait: a loop of 3000 iterations took 162,409 T-states, and then 357. Use `--empty-loop-fold` to fold the loops in a ROM build too. Else make the counter `volatile`.
+
 The sort programs have such a loop in `main`, because the print statements of the loop are empty in a timed build. The change saves 35 bytes in each sort program.
 
 ## A short multiply in a loop with calls
 
-Family K step 2 uses `__mul16c` (25 bytes) in place of `__mul16` and its helpers (139 bytes) when each multiplication stands in `main` outside every loop. The new rule also allows a multiplication in a loop of depth 1 when the loop has three calls or more. The calls cost much more than the multiply. So the slower short routine does not change the run time in a measurable way. A loop with fewer calls keeps `__mul16`.
+Family K step 2 uses `__mul16c` (25 bytes) in place of `__mul16` and its helpers (139 bytes) when each multiplication stands in `main` outside every loop. The new rule also allows a multiplication in a loop of depth 1 when the loop has three heavy calls or more. A call is light when the callee is a function of the program with no call and no loop in the body. Light calls do not count.
+
+Library calls and indirect calls are heavy. A heavy call costs much more than the multiply, so the slower short routine does not change the run time in a measurable way. A loop with fewer heavy calls keeps `__mul16`. A loop of three light calls and two multiplies was 80 percent slower with the first version of this rule.
 
 The change saves 116 bytes in each of the three `dhrystone21` programs.
+
+## Known timing noise
+
+The program `embench-tarfind` needs 1185 T-states more (0.04 percent) than before this step. The code is 13 bytes shorter, so the heap array starts at another address. A build with one extra `nop` gives 3,228,426 T-states, fewer than before.
+
+So the cause is the address of the array, not the code. The row is the only one that is slower.

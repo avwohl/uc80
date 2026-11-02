@@ -1066,6 +1066,12 @@ def main() -> int:
              "an assignment of the final counter value (docs/family_l.md)"
     )
     parser.add_argument(
+        "--empty-loop-fold",
+        action="store_true",
+        help="Fold an empty counted loop also in a ROM or freestanding "
+             "build, where the loop is off by default (docs/family_l.md)"
+    )
+    parser.add_argument(
         "--no-mul16c-loop",
         action="store_true",
         help="Keep __mul16 for a multiplication in a loop with calls in "
@@ -1581,7 +1587,11 @@ def main() -> int:
             ast_opt.dead_test = (not args.no_dead_test
                                  and not args.no_optimize)
             ast_opt.loop_unroll = not args.no_loop_unroll
-            ast_opt.empty_loop_fold = not args.no_empty_loop_fold
+            # a ROM program uses an empty counted loop as a delay
+            ast_opt.empty_loop_fold = (
+                not args.no_empty_loop_fold
+                and (args.empty_loop_fold
+                     or not (args.target == "rom" or args.freestanding)))
             merged_ast = ast_opt.optimize(merged_ast)
             merged_ast._enum_fixed_types = enum_fixed
             if args.verbose and ast_opt.stats:

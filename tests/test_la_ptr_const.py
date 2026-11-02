@@ -3,7 +3,7 @@
 compiler and compares the output; the .mac text shows if the pointer is
 gone."""
 
-from ._faml import needs_toolchain, run_both
+from ._faml import needs_toolchain, run_both, host_output, uc80_output
 
 pytestmark = needs_toolchain
 
@@ -296,3 +296,31 @@ int main(void)
     want, got, text = run_both(tmp_path, src)
     assert got == want == "4 9 3 4"
     assert "ld\t(_state),HL" in text
+
+
+def test_static_initializer_names_another_function_static(tmp_path):
+    # { &slot, 3 } inside a function wrote the text of a token (found in
+    # step LA); the same label is now used, with and without --no-ptr-const
+    src = r"""
+#include <stdio.h>
+typedef struct { int *p; int n; } W;
+static int slot2 = 9;
+static int f(void)
+{
+    static int slot = 5;
+    static W w = { &slot, 3 };
+    static W v = { &slot2, 4 };
+    return *w.p + w.n + *v.p + v.n;
+}
+int main(void)
+{
+    static int slot = 7;
+    static W w = { &slot, 3 };
+    printf("%d %d\n", *w.p + w.n, f());
+    return 0;
+}
+"""
+    want = host_output(tmp_path, src)
+    for flags in ((), ("--no-ptr-const",)):
+        got, _ = uc80_output(tmp_path, src, *flags)
+        assert got == want

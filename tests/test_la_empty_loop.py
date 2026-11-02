@@ -80,3 +80,25 @@ int main(void)
     want, got, text = run_both(tmp_path, src)
     assert got == want == "3"
     assert "@FOR" in text
+
+
+def test_rom_build_keeps_the_delay_loop(tmp_path):
+    """A ROM program waits with an empty counted loop: no fold by default."""
+    import subprocess
+    import sys
+    from .test_struct_return_abi import REPO
+    src = tmp_path / "d.c"
+    src.write_text("void delay(void) { unsigned i; for (i = 0; i < 3000; i++); }\n"
+                   "int main(void) { delay(); return 0; }\n")
+
+    def mac(*flags):
+        out = tmp_path / ("d%d.mac" % len(flags))
+        r = subprocess.run([sys.executable, "-m", "uc80.main", str(src),
+                            "-o", str(out), "--target=rom", *flags],
+                           capture_output=True, text=True, cwd=str(REPO),
+                           timeout=300)
+        assert r.returncode == 0, r.stderr
+        return out.read_text()
+
+    assert "sub\t184" in mac()
+    assert "sub\t184" not in mac("--empty-loop-fold")

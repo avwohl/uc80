@@ -304,6 +304,8 @@ int main(void)
     for (i = 0; i < N; i++) a[i] = i; a[N-1] = -1;  go("sorted+1");
     for (i = 0; i < N; i++) a[i] = i < N/2 ? N/2 - i : i - N/2; go("valley");
     for (i = 0; i < N; i++) a[i] = (i * 7) % 10;    go("sawtooth");
+    for (i = 0; i < N; i++) a[i] = (i + 1) % N;     go("rot1");
+    for (i = 0; i < N; i++) a[i] = (i + N / 3) % N; go("rotk");
     return 0;
 }
 """
@@ -314,7 +316,7 @@ int main(void)
         parts = line.split()
         if len(parts) == 3 and parts[2] in ("ok", "BAD"):
             rows[parts[0]] = (int(parts[1]), parts[2])
-    assert len(rows) == 10, got
+    assert len(rows) == 12, got
     import math
     limit = 3 * 1000 * math.log2(1000)
     for name, (calls, status) in rows.items():
