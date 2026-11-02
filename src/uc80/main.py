@@ -1037,6 +1037,18 @@ def main() -> int:
              "body (docs/k2_code_size.md)"
     )
     parser.add_argument(
+        "--no-empty-call",
+        action="store_true",
+        help="Keep a call of a function with an empty body when its "
+             "arguments have no side effect (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-empty-loop-fold",
+        action="store_true",
+        help="Do not fold an empty counted loop with constant bounds into "
+             "an assignment of the final counter value (docs/family_l.md)"
+    )
+    parser.add_argument(
         "--no-mul16c",
         action="store_true",
         help="Call __mul16 and its helpers also when all multiplications "
@@ -1545,7 +1557,16 @@ def main() -> int:
             ast_opt.dead_test = (not args.no_dead_test
                                  and not args.no_optimize)
             ast_opt.loop_unroll = not args.no_loop_unroll
+            ast_opt.empty_loop_fold = not args.no_empty_loop_fold
             merged_ast = ast_opt.optimize(merged_ast)
+            if not args.no_empty_call and not args.no_optimize:
+                from . import empty_calls
+                n_empty = empty_calls.run(merged_ast)
+                if n_empty:
+                    if args.verbose:
+                        print(f"  Deleted {n_empty} call(s) of empty "
+                              f"functions")
+                    merged_ast = ast_opt.optimize(merged_ast)
             merged_ast._enum_fixed_types = enum_fixed
             if args.verbose and ast_opt.stats:
                 print(f"  AST optimizations:")

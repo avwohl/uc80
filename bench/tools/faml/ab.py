@@ -4,10 +4,10 @@ Build uc80 for check+time kinds; optionally replace program .mac text via --mac 
 link extra modules (assembled with um80) before libc.lib; verify check output vs golden; print image + region cycles."""
 import sys, os, shutil, subprocess, argparse
 from pathlib import Path
-WT = Path("/private/tmp/claude-501/-Users-wohl-src-uc80/ec4c5501-bd11-4fd4-8f7f-ed83b93def9a/scratchpad/wt/famlan")
+WT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(WT/"bench"))
 import run
-OUT = Path(__file__).parent/"ab"
+OUT = Path(os.environ.get("AB_OUT", "/tmp/ab"))
 ap = argparse.ArgumentParser()
 ap.add_argument("prog"); ap.add_argument("--obj", action="append", default=[])
 ap.add_argument("--flags", default=""); ap.add_argument("--tag", default="x")
@@ -19,11 +19,13 @@ man = run.load_manifest()
 prog = [p for p in man["program"] if p["name"] == a.prog][0]
 repos = man.get("repo", {})
 lib = Path(subprocess.run(["uc80","--print-lib-dir"],capture_output=True,text=True).stdout.strip())
-golden = run.golden_path(prog).read_text()
+gp = run.golden_path(prog)
+golden = gp.read_text() if gp.exists() else ""
+SIZEONLY = not gp.exists()
 stdin = run.get_stdin(prog)
 res = {}
 for kind in ("check","time"):
-    if kind=="check" and a.nocheck: continue
+    if kind=="check" and (a.nocheck or SIZEONLY): continue
     wd = OUT/a.prog/f"{a.tag}_{kind}"
     if wd.exists(): shutil.rmtree(wd)
     srcs = run.prepare_sources(prog, repos, wd)
