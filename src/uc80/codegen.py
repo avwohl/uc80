@@ -3965,6 +3965,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_printf_union = True
         self.enable_div32w = True
         self.enable_qsort_small = True
+        self.enable_ptr_const = True
         self.enable_div16b = True
         self.enable_const_store = True
         self.enable_mul16c = True
@@ -4755,6 +4756,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # code paths apply (LD A,(K), LD (K),A, LD HL,(K)).
         self.absolute.update(absaddr.rewrite(
             unit, self._const_int_operand, self._type_size))
+        self._ptr_const_run(unit)
         if self.isr_funcs:
             self._check_isr_functions(unit)
         # Build call graph for optimizations
@@ -6642,6 +6644,22 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return False
         sym = self.ctx.lookup("puts")
         return sym is None or sym.is_global
+
+    def _ptr_const_run(self, unit) -> None:
+        """A static pointer that holds one address becomes the address
+        (ptrconst.py, docs/family_l.md)."""
+        self.ptr_const_count = 0
+        if (not self.enable_ptr_const or not self.whole_program
+                or self.rom_data or self.sdas_output or self.has_mac_files
+                or self.isr_funcs or self.naked
+                or set(self.keep_names) - {"main"}):
+            return
+        from . import ptrconst
+        scan = regcc.scan_program(unit, function_name)
+        asm = scan.asm_tokens | self.foreign_asm_names
+        self.ptr_const_count = ptrconst.run(
+            unit, asm_names=asm, name_of=function_name,
+            params_of=function_params)
 
     def _qsort_small_ok(self, expr) -> bool:
         """``qsort(base, n, size, cmp)`` with n a constant of 32 or less and

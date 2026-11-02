@@ -965,6 +965,12 @@ def main() -> int:
              "elements of at most 8 bytes (docs/k1_link_size.md)"
     )
     parser.add_argument(
+        "--no-ptr-const",
+        action="store_true",
+        help="Keep a static pointer variable that holds one object address "
+             "(docs/family_l.md)"
+    )
+    parser.add_argument(
         "--no-qsort-wr",
         action="store_true",
         help="Call the generic qsort for an array of 2-byte elements, with "
@@ -1676,6 +1682,7 @@ def main() -> int:
         gen.enable_div32w = not args.no_div32w
         gen.enable_qsort_small = not args.no_qsort_small
         gen.enable_qsort_wr = not args.no_qsort_wr
+        gen.enable_ptr_const = not args.no_ptr_const
         gen.enable_div16b = not args.no_div16b
         gen.enable_const_store = not args.no_const_store
         gen.enable_mul16c = not args.no_mul16c
