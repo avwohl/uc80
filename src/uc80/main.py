@@ -965,6 +965,12 @@ def main() -> int:
              "elements of at most 8 bytes (docs/k1_link_size.md)"
     )
     parser.add_argument(
+        "--no-qsort-wr",
+        action="store_true",
+        help="Call the generic qsort for an array of 2-byte elements, with "
+             "the stack convention for the comparator (docs/family_l.md)"
+    )
+    parser.add_argument(
         "--no-const-store",
         action="store_true",
         help="Store the address of a function or string into an array "
@@ -1669,6 +1675,7 @@ def main() -> int:
         gen.enable_printf_union = not args.no_printf_literal_union
         gen.enable_div32w = not args.no_div32w
         gen.enable_qsort_small = not args.no_qsort_small
+        gen.enable_qsort_wr = not args.no_qsort_wr
         gen.enable_div16b = not args.no_div16b
         gen.enable_const_store = not args.no_const_store
         gen.enable_mul16c = not args.no_mul16c

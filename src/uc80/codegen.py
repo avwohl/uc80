@@ -37,6 +37,7 @@ from .rangediv import RangeDivMixin
 from .deadstore import DeadStoreMixin
 from .blockops import BlockOpsMixin
 from .fillidiom import FillIdiomMixin
+from .qsortwr import QsortWrMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE,
@@ -3911,7 +3912,8 @@ _MEMO_MISS = object()
 
 class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin, RangeMixin, NarrowMixin,
                     RangeDivMixin,
-                    DeadStoreMixin, BlockOpsMixin, FillIdiomMixin):
+                    DeadStoreMixin, BlockOpsMixin, FillIdiomMixin,
+                    QsortWrMixin):
     """Z80 code generator."""
 
     _expr_memo = None   # see _scoped_memo
@@ -7374,11 +7376,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         function, not variadic, not main, and returns no aggregate.  Every
         call has as many arguments as the definition has parameters."""
         self._regcc = {}
+        self._wr_cmps = frozenset()
         if (not self.register_cc or not self.whole_program
                 or self.type_config.int_size != 2):
             return
         scan = regcc.scan_program(unit, function_name)
         self._regcc_scan = scan
+        wr_cands = self._wr_candidates(unit, scan, function_name)
         libnames = regcc.lib_asm_names()
         asm_names = scan.asm_tokens | self.foreign_asm_names
         isr_reach: set[str] = set()
@@ -7386,6 +7390,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             isr_reach = self.call_graph_analyzer.isr_reachable()
         elif self.isr_funcs:
             return          # cannot tell what an interrupt reaches
+        wr_final: set[str] = set()
         for item in unit.items:
             if not isinstance(item, ast.FunctionDef) or item.body is None:
                 continue
@@ -7394,7 +7399,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 continue
             if (name in self.keep_names or name in self.public_names
                     or name in self.naked or name in self.isr_funcs or name in self.absolute
-                    or name in isr_reach or name in scan.value_refs
+                    or name in isr_reach
+                    or (name in scan.value_refs and name not in wr_cands)
                     or name in scan.asm_funcs):
                 continue
             low = name.lower()
@@ -7452,9 +7458,18 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 else:
                     plan.loc[i] = "E" if size == 1 else "DE"
                 plan.spill[i] = plan.names[i] is not None and plan.names[i] in used
+            if name in wr_cands:
+                # the comparator of __qsort_wr: HL and DE, result in HL
+                if (len(plan.types) != 2 or plan.ret_a
+                        or plan.sizes != [2, 2]
+                        or plan.loc != ["HL", "DE"]):
+                    continue
             if not plan.reg_params() and not plan.ret_a:
                 continue
             self._regcc[name] = plan
+            if name in wr_cands:
+                wr_final.add(name)
+        self._wr_cmps = frozenset(wr_final)
         # A char result in A pays only when the calls that use it as a byte
         # are at least as many as the calls that need an int.
         ra = [n for n, p in self._regcc.items() if p.ret_a]
@@ -14472,6 +14487,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
     def _gen_call(self, expr: ast.Call, want_a: bool) -> None:
         discarded = expr is self._discard_expr
+        if self._wr_cmps:
+            self._wr_guard(expr)
+            if self._qsort_wr_ok(expr):
+                self._gen_qsort_wr(expr)
+                return
         # Handle GCC builtins
         if isinstance(expr.func, ast.Identifier):
             if expr.func.name.text in Z80_BUILTINS:
