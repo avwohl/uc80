@@ -46,7 +46,7 @@ Three switches belong to family I step 2. `--no-licm` computes a loop-invariant 
 
 The switches of family J are all off-switches. Each one is in the page of its pass:
 
-- `--no-fast-bss-clear` ([startup_fast.md](startup_fast.md)): the old start-up code with one `LDIR`.
+- `--no-fast-bss-clear` ([startup_fast.md](startup_fast.md)): embeds `crt0_slow.mac`, the start-up code from before family J. This file is not the default small start-up code.
 - `--no-void-putchar` ([void_putchar.md](void_putchar.md)): a `putchar` statement calls `_putchar`.
 - `--no-rt-shortcuts` ([runtime_shortcuts.md](runtime_shortcuts.md)): the embedded runtime has no early exits.
 - `--no-char-ret-mask` ([char_return_mask.md](char_return_mask.md)): `f(x) & 0x80` is an `int` use of `f`.
@@ -69,7 +69,7 @@ The switches of family K step 1 are off-switches, with one exception. Each one i
 
 - `--no-printf-to-putchar`: `printf("\n");` and `printf("c");` stay calls of `printf`.
 - `--no-drop-printf-tables`: the printf dispatch tables are in a program that calls no `printf`.
-- `--fast-bss-clear`: the push fill of the start-up code for a BSS of 6000 bytes or more (the default is the small code). Of these switches, only `--fast-bss-clear` turns a change on.
+- `--fast-bss-clear`: the push fill of the start-up code for a BSS of 6000 bytes or more, also for a program with a `TIMER_START` label. Without the option the push fill is the default only for a program with no such label. Of these switches, only `--fast-bss-clear` turns a change on.
 - `--no-printf-literal-union`: a format that is not a literal links every conversion.
 - `--no-div32w`: an unsigned 32-bit division by a narrow divisor calls `__div32` and `__mod32`.
 - `--no-qsort-small`: `qsort` of a constant count of 32 or less calls the generic `qsort`.
@@ -85,7 +85,7 @@ The switches of family K step 2 are all off-switches. Each one is in [k2_code_si
 - `--no-sign-one`: the test `x < 1` of a 16-bit value uses the general signed compare.
 - `--no-flow-opt`: the liveness pass of `peep_flow.py` does not run.
 - `--no-sdivmod-merge`: a program that uses `__sdiv16` and `__smod16` links both routines.
-- `--no-div16-compact`: `__div16` calls `__dv8w` for a divisor of 256 or more.
+- `--no-div16-compact`: `__div16` calls `__dv8w` for a divisor of 256 or more. The compact `__div16` is the default only when every 16-bit divide stands in `main` outside every loop (`--size-helpers` removes the rule).
 - `--no-puts-small`: a call of `puts` uses the routine with the `IX` frame.
 - `--no-mul16c`: a program that multiplies only in `main`, outside every loop, links `__mul16` and its helpers.
 - `--size-helpers`: `__mul16c` (one loop level) and the shared signed divide (any place) are used also for calls in loops. The program gets smaller and slower.

@@ -8,7 +8,7 @@ Each change has a switch that turns the change off. Each change has a test that 
 
 - [printf of one character](#printf-of-one-character): `--no-printf-to-putchar`.
 - [No printf tables without printf](#no-printf-tables-without-printf): `--no-drop-printf-tables`.
-- [The small start-up code](#the-small-start-up-code): `--fast-bss-clear` (the old default).
+- [The small start-up code](#the-small-start-up-code): `--fast-bss-clear`.
 - [Formats that are not literals](#formats-that-are-not-literals): `--no-printf-literal-union`.
 - [A 32-bit divide for a narrow divisor](#a-32-bit-divide-for-a-narrow-divisor): `--no-div32w`.
 - [qsort for a small array](#qsort-for-a-small-array): `--no-qsort-small`.
@@ -49,9 +49,9 @@ The start-up code of a CP/M program sets the BSS to zero. [startup_fast.md](star
 
 The clear runs before `main`. The timed part of a benchmark program starts later, so the push fill gave no gain in a timed run. The 74 bytes were a loss in nine programs.
 
-The small file is now the default for every size of BSS. The option `--fast-bss-clear` selects the push fill again, for a BSS of 6000 bytes or more. The option `--no-fast-bss-clear` still selects the old file `crt0_slow.mac`.
+Family K made the small file the default for every size of BSS. Integrate14 changed this rule, because of the speed rule (no loss of T-states for bytes): the push fill is the default again for a BSS of 6000 bytes or more when the program has no `TIMER_START` label. Such a program counts the whole run, so the clear is in the measured time (`bsd-wump`). A program with a `TIMER_START` label keeps the small file, because its clear runs before the timed part. The option `--fast-bss-clear` selects the push fill also for a program with a label. The option `--no-fast-bss-clear` selects the file `crt0_slow.mac` (the code from before family J), not the small file.
 
-A program with a BSS of 6000 bytes or more needs about 83000 T-states more at the start (20 ms at 4 MHz) without the option. The program `stanford-bubble` needs 0.07% more T-states in total. The timed T-states do not change.
+A program with a BSS of 6000 bytes or more needs about 83000 T-states more at the start (20 ms at 4 MHz) for a program with a `TIMER_START` label. The program `stanford-bubble` needs 0.07% more T-states in total. The timed T-states do not change.
 
 ## Formats that are not literals
 
@@ -123,7 +123,7 @@ A count of 5, 6 or 7 is slower than in `__shr32`. A count that is a multiple of 
 
 ## The start-up code and the speed
 
-The small start-up code (`LDIR`) needs about 21 T-states for each byte of BSS. The push fill needs about 9. A program that counts the whole run, and not a timed part, shows the loss. `bsd-wump` needs 4.8% more cycles, and `v7-backgammon` 0.08%. A program with a BSS of 6000 bytes or more shows the same in `total_cycles` (`sieve` +6%). Use `--fast-bss-clear` to get the old speed.
+The small start-up code (`LDIR`) needs about 21 T-states for each byte of BSS. The push fill needs about 9. A program that counts the whole run, and not a timed part, would show the loss (`bsd-wump` +4.6%). So such a program, with a BSS of 6000 bytes or more, gets the push fill by default. A program with a `TIMER_START` label and a big BSS shows the loss only in `total_cycles` (`sieve` +6%). Use `--fast-bss-clear` to get the old speed there.
 
 ## Not in the code
 
@@ -189,7 +189,6 @@ The means against SDCC 4.6.0, from `bench/report.py` on the merged table:
 
 No row has a bigger image than before. The rows that need more T-states than before:
 
-- `bsd-wump` (+4.8%) and `v7-backgammon` (+0.08%): both count the whole run, and the start-up clear with `LDIR` is slower than the push fill. `--fast-bss-clear` gives the old numbers.
 - `embench-md5sum` (+2 T-states) and `embench-huffbench` (+1 T-state): the heap address moves, and the count depends on the data.
 - A program with a BSS of 6000 bytes or more has a bigger `total_cycles`. The start-up needs about 14 T-states more for each byte of BSS (`sieve` +6%, the `sort-*-5000` programs +2.7%). The timed part is not changed.
 

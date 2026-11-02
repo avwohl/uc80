@@ -6,6 +6,20 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Repair of integrate14
+
+The verifiers gave 14 findings. This pass checked each one. The tests are in `tests/test_integ14_repair.py`. Each test runs a program and compares the output with the host compiler.
+
+- **Wrong code: `continue` in a `switch` in a short counted loop.** The unroller copied the body, and the `continue` then acted like a `break` of the `switch`. The walker of `uc_core` does not enter a `switch`. `Uc80ASTOptimizer._contains_flow_control` now looks at every node below the body, and refuses a `switch`, `case`, label, `goto`, `break` and `continue`.
+- **Wrong code: the printf literal union.** `union_is_safe` did not see `fmt++`, `p--` (postfix) and `&fmt` of a parameter. A format like `"%%.2f"` after `p++` printed `%.2f` and did not link the float printer. Postfix `++` and `--` count as an assignment now, and a parameter with an `&` has no proof.
+- **Speed: the push fill is the default again for a big BSS without a timed region.** The small `LDIR` start-up code made `bsd-wump` 4.61 percent slower than `main`. It breaks the speed rule. A BSS of 6000 bytes or more now gets `crt0.mac` when the program has no `TIMER_START` label. A program with a label keeps the small code (its clear runs before the timed part). `--fast-bss-clear` forces the push fill.
+- **Speed: the step of a register counter in a `for` loop.** The new loop shape updated a counter in `BC` through `HL` (`ld H,B / ld L,C / inc HL / ld B,H / ld C,L`, 22 T-states), and it was up to 11 percent slower than `main`. Step 9 of `peep_flow.py` makes `inc BC` and `ld H,B / ld L,C` (14 T-states) for this sequence, with `DE` and `dec` too. The test follows the step from `B` and `C`.
+- **Speed: the compact `__div16` is the default only for divides in `main` outside loops.** It needs 90 to 280 T-states more for each divide by 256 or more. The earlier text said 70. `--size-helpers` removes the rule.
+- **Docs.** `--no-fast-bss-clear` selects `crt0_slow.mac` (the code from before family J), not the default small file. `startup_fast.md`, `k1_link_size.md`, `compiler_options.md` and the `--help` text say so. The text of the integration entry about the size means has the measurement now.
+- **Test gap.** A test with a `while` loop with a local counter and `BENCH_CHECK_EQ`, `BENCH_CHECK` and `BENCH_CHECK_NEAR` checks the rotation labels: one rotated loop, and the check loops stay `do` loops.
+- **Rejected: a label before `}` in C23.** `switch (x) { case 1: }` is not parsed. This is old (`main` has the same error), and the parser of `uc_core` is generated from a grammar. The fix is a grammar change in `uc_core` and not a part of this integration.
+- **Not repaired: the fuzz counts.** The verifiers stopped some fuzz runs because of the machine load. The gates below ran to the end.
+
 ### Integration of family K into the bug round 6 tree (branch `integrate14`)
 
 The merge of `famk` (head ce83370) into `main` 73a58f6 had text conflicts only in `CHANGELOG.md` and `docs/codegen_gap.md`. Both files keep both entries. The files `bench/results/results.csv` and `docs/benchmarks_speed.md` merged without a conflict, and the benchmark run made them again. The libraries were built again, and `runtime.mac` got one changed comment from `rt_sdivmod16.mac`.
@@ -21,7 +35,7 @@ The merge of `famk` (head ce83370) into `main` 73a58f6 had text conflicts only i
 - **Rows that are slower than `main`.**
   - `bsd-wump` needs 4.61 percent more T-states (3936315 to 4117621). The program has no timer region, and its BSS has 13732 bytes. The `LDIR` clear of the BSS takes about 13 T-states a byte more than the push fill. `--fast-bss-clear` gives the old number.
   - The column `total_cycles` (the whole run) grows for programs with a large BSS: `sieve` +2.88 percent, `sieve+static` +2.49, `embench-tarfind` +2.78, `embench-huffbench` +0.66, `davidly-sieve` +0.36 and `stanford-bubble` +0.02. The cause is the same. The column `cycles` (the timed region) of these programs is not larger: it is 0.002 to 1.0 percent smaller.
-  - The size means are 0.8236 and 0.7895 (famk alone, measured on the old bench sources: 0.8213 and 0.7845). The `famk` number comes from a run on the bench sources before the self-check code of bug round 6. That code adds bytes to the programs.
+  - The size means are 0.8236 and 0.7895 (famk alone, measured on the old bench sources: 0.8213 and 0.7845). The repair pass checked the cause. The `famk` compiler (ce83370) on the new bench sources gives the same rows as the merged tree (`n-body` 4996, `spectral-norm` 3432, `whetstone` 10070, `binary-trees` 5425), and the merged tree with all family K switches off gives `n-body` 5070, as `main` does. So the merge adds no bytes. The difference comes from the bench sources: the self-check code of bug round 6 adds bytes, and the saving of family K on `n-body` is 74 bytes on the new sources (392 on the old sources).
 - **Ratio to SDCC 4.6.0 (geometric mean).** Size 0.8236, whole image 0.7895, T-states 0.4949, T-states without `sort-*` 0.5961, 76 of 78 programs faster. `main` 73a58f6 has 0.9109, 0.8726, 0.5023, 0.6029 and 75 of 78.
 - Still above SDCC in the whole image (size mode): `sort-equ-5000`, `sort-ord-5000`, `sort-ran-20`, `sort-ran-5000` and `sort-rev-5000` (the `qsort` of the library), `dhrystone21` (1814 against 1811 bytes), `dhrystone21+nostructassign` (1814 against 1789) and `dhrystone21+static` (1850 against 1774).
 - Slower than SDCC in speed mode: `davidly-ttt` (8239388 against 7960572 T-states) and `micro+loop` (1256037 against 1102397).

@@ -197,6 +197,7 @@ def union_is_safe(unit):
     decl_any = {}     # declared name -> count over the whole program
     lit_ptr = set()   # pointer variables initialised from a literal
     addr_taken = set()
+    va_amp = set()    # ids of the &last of va_start
 
     def walk(node, fname):
         stack = [node]
@@ -212,6 +213,14 @@ def union_is_safe(unit):
                     callee_count[cn] = callee_count.get(cn, 0) + 1
             elif isinstance(n, ast.BinaryOp):
                 op = getattr(n.op, "text", n.op)
+                if op == "=" and isinstance(n.right, ast.BinaryOp):
+                    # ap = (va_list)&last + k: the va_start of stdarg.h
+                    # takes the address of the last named parameter
+                    rop = getattr(n.right.op, "text", n.right.op)
+                    lft = _strip_casts(n.right.left)
+                    if (rop == "+" and isinstance(lft, ast.UnaryOp)
+                            and getattr(lft.op, "text", lft.op) == "&"):
+                        va_amp.add(id(lft))
                 if (isinstance(op, str) and op.endswith("=")
                         and op not in ("==", "!=", "<=", ">=")
                         and isinstance(n.left, ast.Identifier)):
@@ -225,7 +234,8 @@ def union_is_safe(unit):
                         lit_ptr.add(nm)
             elif isinstance(n, (ast.UnaryOp, ast.PostfixOp)):
                 op = getattr(n.op, "text", n.op)
-                if op == "&" and isinstance(n.operand, ast.Identifier):
+                if (op == "&" and isinstance(n.operand, ast.Identifier)
+                        and id(n) not in va_amp):
                     addr_taken.add(n.operand.name.text)
                 if op in ("++", "--") and isinstance(n.operand, ast.Identifier):
                     assigned[(fname, n.operand.name.text)] = True

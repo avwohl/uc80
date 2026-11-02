@@ -5,7 +5,7 @@ usage: bench/loopfuzz.py SEED COUNT [-j N] [--flags=...]  (docs/k2_code_size.md)
 
 Each program has nested loops with constant init and bound, small steps,
 several counter types, bodies with array stores through the counters,
-accumulations, if/else with break/continue, calls, a global counter, and a
+accumulations, if/else and switch with break/continue, calls, a global counter, and a
 checksum that is printed.  The program uses only types whose size is the
 same for the host and for uc80 (int16_t, uint16_t, int8/uint8, int32).
 """
@@ -77,6 +77,14 @@ def gen(seed: int) -> str:
                 out.append("bump(); sum = (uint16_t)(sum + gc);")
             elif kind < 0.78:
                 out.append(f"t = f((uint16_t)({expr()}));")
+            elif kind < 0.84 and in_loop:
+                # a switch with continue or break (a continue in a switch
+                # was copied wrong by the unroller in integrate14)
+                c1 = r.choice(["continue", "break", "sum += 3"])
+                c2 = r.choice(["continue", "break", "t += 5"])
+                k = r.randint(1, 3)
+                out.append(f"switch (({expr()}) & 3) {{ case 0: {c1}; "
+                           f"case {k}: sum++; break; default: t += 1; {c2}; }}")
             elif kind < 0.9 and in_loop:
                 c = r.choice(["break", "continue"])
                 out.append(f"if (({expr()} & 3) == {r.randint(0,3)}) {c};")

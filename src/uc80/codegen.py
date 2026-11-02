@@ -3969,6 +3969,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self._mul16_sites = []
         self._sdiv_sites = []
         self._div16_sites = []
+        self._div_const = None
         self.size_helpers = False
         self.enable_sdivmod_merge = True
         self.enable_for_entry = True
@@ -11807,6 +11808,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         elif op == "/":
             # Use signed or unsigned division based on promoted operand types
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
+            self._div_const = self._const_int_operand(expr.right)
             shift = self._mul_shift_count(expr.right)
             if is_unsigned and shift is not None and shift < 16:
                 # Unsigned divide by 2^n: a logical shift right.  (The
@@ -11830,6 +11832,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                                        else "__sdiv16")
         elif op == "%":
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
+            self._div_const = self._const_int_operand(expr.right)
             shift = self._mul_shift_count(expr.right)
             if is_unsigned and shift is not None and shift < 16:
                 # Unsigned remainder by 2^n: a mask.
@@ -13422,12 +13425,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self._call_runtime("__mul16")
         elif op == "/":
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
+            self._div_const = self._const_int_operand(expr.right)
             if is_unsigned and self._div16b_ok(expr.right):
                 self._call_runtime("__div16b")
             else:
                 self._call_runtime("__div16" if is_unsigned else "__sdiv16")
         elif op == "%":
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
+            self._div_const = self._const_int_operand(expr.right)
             if is_unsigned and self._div16b_ok(expr.right):
                 self._call_runtime("__mod16b")
             else:
@@ -17742,6 +17747,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         else:
             self.ctx.emit_instr("ld", f"DE,{n}")
             self.ctx.emit_instr("ex", "DE,HL")
+            self._div_const = n
             self._call_runtime("__sdiv16")
 
     # ------------------------------------------------------------------
@@ -21854,8 +21860,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self._sdiv_sites.append((self.ctx.current_function,
                                      len(self.ctx.continue_labels)))
         if name in ("__div16", "__mod16", "__sdiv16", "__smod16"):
-            self._div16_sites.append((self.ctx.current_function,
-                                      len(self.ctx.continue_labels)))
+            k = self._div_const
+            # a constant divisor under 256 takes the same T-states in the
+            # compact __div16, so the site does not count
+            if not (k is not None and 0 < abs(k) < 256):
+                self._div16_sites.append((self.ctx.current_function,
+                                          len(self.ctx.continue_labels)))
+        self._div_const = None
         self.ctx.emit_instr("call", name)
 
     def _store_tmp32(self) -> None:
