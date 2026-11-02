@@ -176,7 +176,7 @@ def test_qsort_does_not_link_bsearch(tmp_path):
     _, syms = link(tmp_path, '#include <stdlib.h>\n'
                    'static int c(const void *a, const void *b){return 0;}\n'
                    'volatile int n = 2;\n'
-                   'int main(void){ int v[2]; qsort(v,n,2,c); return 0; }\n')
+                   'int main(void){ char v[6]; qsort(v,n,3,c); return 0; }\n')
     assert "_QSORT" in syms and "_BSEARCH" not in syms
     assert "__QSORT_S" not in syms
 
@@ -184,8 +184,18 @@ def test_qsort_does_not_link_bsearch(tmp_path):
 def test_qsort_of_a_constant_small_count_links_the_short_routine(tmp_path):
     _, syms = link(tmp_path, '#include <stdlib.h>\n'
                    'static int c(const void *a, const void *b){return 0;}\n'
-                   'int main(void){ int v[2]; qsort(v,2,2,c); return 0; }\n')
+                   'int main(void){ char v[6]; qsort(v,2,3,c); return 0; }\n')
     assert "__QSORT_S" in syms
+    assert "_QSORT" not in syms and "_BSEARCH" not in syms
+
+
+def test_qsort_of_words_links_the_word_routine(tmp_path):
+    # family L, L2: element size 2 and a comparator that only qsort uses
+    _, syms = link(tmp_path, '#include <stdlib.h>\n'
+                   'static int c(const void *a, const void *b){return 0;}\n'
+                   'int main(void){ int v[2]; qsort(v,2,2,c); return 0; }\n')
+    assert "__QSORT_WR" in syms
+    assert "__QSORT_S" not in syms
     assert "_QSORT" not in syms and "_BSEARCH" not in syms
 
 
