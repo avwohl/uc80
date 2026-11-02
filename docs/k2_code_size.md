@@ -155,6 +155,7 @@ A multiplication in another function, or in a loop nest of two levels or more, k
 ## Tests
 
 - `tests/test_k2_size.py` runs one program for each change with the switch on and off. It compares the output with the host compiler.
+- `bench/loopfuzz.py` makes random nests of counted loops (`python3 bench/loopfuzz.py SEED COUNT`). It compares uc80 with the host compiler. The loops have `break`, `continue`, calls and several counter types.
 - The tests of the loops use all comparison operators, the types `char`, `short`, `int`, `long` and `unsigned long`, nested loops, `continue` and `break`.
 - The divide tests use divisors from 1 to 65535 and extreme dividends. They test signed and unsigned values, with and without a 32-bit divide in the program.
 - The tests of the passes work on assembly text and check which instructions move or go.

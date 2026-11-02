@@ -33,14 +33,22 @@ Repairs found by the gates:
 
 Gates on the final tree:
 
-- `pytest -n 6`: 3901 passed (3797 on `main`).
+- `pytest -n 6`: 3905 passed (3797 on `main`).
 - `run_ctests.py`: 220 of 220, and 220 of 220 with `--int 32`.
 - `difftest.py --count 800 -j 8` with the seeds 51000 and 61000: no UC80-WRONG and no MODEL-DIFF line.
-- `ccfuzz.py`: 2000 programs and 1000 with `--ll`. The option sets `-O0`, `--no-register-locals`, `--int=32`, all new switches off, `--no-flow-opt`, `--no-loop-unroll`, `--no-for-entry` and `--no-branch-merge` have 400 programs each. All PASS.
-- A loop fuzzer (random nests of counted loops with `break`, `continue`, calls and several counter types, compared with the host compiler): 1400 programs, also with `--int=32` and `-O0`. All PASS.
+- `ccfuzz.py`: 1000 programs, 500 with `--ll`, and 400 each with `--int=32` and `--no-mul16c`. All PASS. Before the last change (`__mul16c`) the sets were larger: 2000 programs, 1000 with `--ll`, and 400 each with `-O0`, `--no-register-locals`, `--int=32`, all new switches off, `--no-flow-opt`, `--no-loop-unroll`, `--no-for-entry` and `--no-branch-merge`. All PASS.
+- A loop fuzzer (random nests of counted loops with `break`, `continue`, calls and several counter types, compared with the host compiler): 2900 programs in all, with `--int=32`, `-O0` and `--no-register-locals` for part of them. All PASS.
 - The gen3 family with `GEN3_FULL=1`: 76 passed.
 - `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
-- Bench: 112 uc80 rows. The method is the one of `bench/report.py`. Against SDCC 4.6.0 the size is 0.8149 (0.9124 on `main`, 0.8426 with the step 2 switches off). The whole image is 0.7787 (0.8705). The T-states are 0.4971 (0.5036), and 0.5991 without the `sort-*` programs (0.6047). uc80 is faster than SDCC on 76 of the 78 programs (75 on `main`). 20 of the 26 programs that were bigger than SDCC are now at or below its image.
+- Bench: 112 uc80 rows, no status change, no row with a bigger image. The method is the one of `bench/report.py`.
+
+Numbers against SDCC 4.6.0, with the values of `main` and of the tree with the step 2 switches off in brackets:
+
+- Size 0.8149 (0.9124 and 0.8426).
+- Whole image 0.7787 (0.8705 and 0.8045).
+- T-states 0.4971 (0.5036 and 0.5011), and 0.5991 without the `sort-*` programs (0.6047 and 0.6045).
+- uc80 is faster than SDCC on 76 of the 78 programs (75 on `main`).
+- 20 of the 26 programs that were bigger than SDCC are now at or below its image.
 
 Rows that are slower than with the step 2 switches off:
 
