@@ -3966,10 +3966,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_div32w = True
         self.enable_qsort_small = True
         self.enable_ptr_const = True
+        self.enable_divmod_pair = True
         self.enable_div16b = True
         self.enable_const_store = True
         self.enable_mul16c = True
         self._mul16_sites = []
+        self._loop_stmts = []
+        self._loop_calls = {}
+        self.enable_mul16c_loop = True
         self._sdiv_sites = []
         self.size_helpers = False
         self.enable_sdivmod_merge = True
@@ -4803,6 +4807,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self.call_graph_analyzer = self._new_analyzer()
                 self.call_graph_analyzer.build_call_graph(unit)
 
+        self._divmod_pair_run(unit)
         self._vol = VolatileInfo(unit)
         self._vol_names = self._vol.file_names
 
@@ -6477,9 +6482,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     # bytes only when the program does not need the fast routine too.
     _SHORT_HELPERS = (
         ("__div16b", "__div16", ("__div16", "__mod16", "__sdiv16",
-                                 "__smod16")),
+                                 "__smod16", "__sdivmod16")),
         ("__mod16b", "__mod16", ("__div16", "__mod16", "__sdiv16",
-                                 "__smod16")),
+                                 "__smod16", "__sdivmod16")),
         ("__shr32c", "__shr32", ("__shr32",)),
         ("__div32w", "__div32", ("__div32", "__mod32", "__sdiv32",
                                  "__smod32")),
@@ -6560,6 +6565,18 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     # libc routines that call __mul16
     _MUL16_LIBC = re.compile(r"\b_(fread|fwrite|rand|srand|rand_r)\b")
 
+    # a loop with this many calls in it: a multiply costs little there
+    MUL16C_LOOP_CALLS = 3
+
+    def _mul16c_depth(self, depth: int, calls: int) -> int:
+        """The deepest loop nesting at which a multiply site may call
+        __mul16c: 0, or 1 for --size-helpers or for a loop with calls."""
+        if self.size_helpers:
+            return 1
+        if self.enable_mul16c_loop and calls >= self.MUL16C_LOOP_CALLS:
+            return 1
+        return 0
+
     def _decide_mul16c(self) -> None:
         """A program whose multiplications all stand in main outside every
         loop (one loop deep with --size-helpers) calls __mul16c (25 bytes,
@@ -6571,8 +6588,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 or self.type_config.int_size != 2
                 or any(n.startswith("__mul") and n not in
                        ("__mul16", "__mul16c") for n in used)
-                or any(fn != "main" or depth > (1 if self.size_helpers else 0)
-                       for fn, depth in self._mul16_sites)):
+                or any(fn != "main" or depth > self._mul16c_depth(depth, calls)
+                       for fn, depth, calls in self._mul16_sites)):
             return
         text = "\n".join(
             ln for ln in self.ctx.lines
@@ -6644,6 +6661,58 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return False
         sym = self.ctx.lookup("puts")
         return sym is None or sym.is_global
+
+    # ---- one divide for x / y and x % y (divmod_pair.py, L4)
+
+    _dm_capture = None
+
+    def _divmod_pair_run(self, unit) -> None:
+        self.divmod_pairs = 0
+        if (not self.enable_divmod_pair or self.type_config.int_size != 2
+                or self.rom_data and False):
+            return
+        from . import divmod_pair
+        self.divmod_pairs = divmod_pair.run(
+            unit, int_size=self.type_config.int_size, name_of=function_name,
+            params_of=function_params)
+
+    def _gen_divmod_first(self, expr) -> None:
+        """``__uc80_dm_first(E1, T, E2)``: E1 in HL, and the other result
+        of the divide in the variable T.  E2 is the other operation: it
+        is computed when E1 does not end in a call that returns both."""
+        e1, tvar, e2 = expr.args
+        sym = self.ctx.lookup(tvar.name.text)
+        cap = {"node": e1, "sym": sym, "done": False}
+        prev = self._dm_capture
+        self._dm_capture = cap
+        try:
+            self.gen_expr(e1)
+        finally:
+            self._dm_capture = prev
+        if not cap["done"]:
+            self.ctx.emit_instr("push", "HL")
+            self.gen_expr(e2)
+            self._store_local(sym, 2)
+            self.ctx.emit_instr("pop", "HL")
+
+    def _dm_call(self, expr, routine: str, op: str) -> bool:
+        """The call that divides ``expr`` is the first of a pair: call the
+        routine that returns the quotient in HL and the remainder in DE,
+        and put the result that ``expr`` does not need into T."""
+        cap = self._dm_capture
+        if cap is None or cap["node"] is not expr or cap["done"]:
+            return False
+        e = self.ctx.emit_instr
+        self._call_runtime(routine)
+        if op == "/":
+            e("ex", "DE,HL")
+            self._store_local(cap["sym"], 2)
+            e("ex", "DE,HL")
+        else:
+            self._store_local(cap["sym"], 2)
+            e("ex", "DE,HL")
+        cap["done"] = True
+        return True
 
     def _ptr_const_run(self, unit) -> None:
         """A static pointer that holds one address becomes the address
@@ -10496,6 +10565,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self.ctx.break_labels.append(end_label)
         self.ctx.continue_labels.append(start_label)
+        self._loop_stmts.append(stmt)
 
         self.ctx.emit_label(start_label)
         with self._vol_region(stmt.condition):
@@ -10505,6 +10575,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.emit_instr("jp", start_label)
         self.ctx.emit_label(end_label)
 
+        self._loop_stmts.pop()
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
 
@@ -10516,6 +10587,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self.ctx.break_labels.append(end_label)
         self.ctx.continue_labels.append(cond_label)
+        self._loop_stmts.append(stmt)
 
         self.ctx.emit_label(start_label)
         self.gen_statement(stmt.body)
@@ -10530,6 +10602,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self.ctx.emit_instr("jp", f"NZ,{start_label}")
         self.ctx.emit_label(end_label)
 
+        self._loop_stmts.pop()
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
 
@@ -10543,6 +10616,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self.ctx.break_labels.append(end_label)
         self.ctx.continue_labels.append(update_label)
+        self._loop_stmts.append(stmt)
         # The counter of the loop has a known range inside the loop
         # (docs/range_compare.md).
         saved_ranges = self._range_scoped
@@ -10579,6 +10653,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self._gen_branch(stmt.condition, body_label, True)
             self.ctx.emit_label(end_label)
             self._range_scoped = saved_ranges
+            self._loop_stmts.pop()
             self.ctx.break_labels.pop()
             self.ctx.continue_labels.pop()
             return
@@ -10602,6 +10677,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.emit_label(end_label)
 
         self._range_scoped = saved_ranges
+        self._loop_stmts.pop()
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
 
@@ -11848,8 +11924,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         self.ctx.emit_instr("rr", "L")
             else:
                 if is_unsigned and self._div16b_ok(expr.right):
-                    self._call_runtime("__div16b")
-                else:
+                    if not self._dm_call(expr, "__div16b", op):
+                        self._call_runtime("__div16b")
+                elif not self._dm_call(
+                        expr, "__div16" if is_unsigned else "__sdivmod16",
+                        op):
                     self._call_runtime("__div16" if is_unsigned
                                        else "__sdiv16")
         elif op == "%":
@@ -11871,8 +11950,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     self.ctx.emit_instr("and", str(hi))
                     self.ctx.emit_instr("ld", "H,A")
             elif is_unsigned and self._div16b_ok(expr.right):
-                self._call_runtime("__mod16b")
-            else:
+                if not self._dm_call(expr, "__div16b", op):
+                    self._call_runtime("__mod16b")
+            elif not self._dm_call(
+                    expr, "__div16" if is_unsigned else "__sdivmod16", op):
                 self._call_runtime("__mod16" if is_unsigned else "__smod16")
         elif op == "&":
             self.ctx.emit_instr("ld", "A,H")
@@ -14505,6 +14586,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
     def _gen_call(self, expr: ast.Call, want_a: bool) -> None:
         discarded = expr is self._discard_expr
+        if (isinstance(expr.func, ast.Identifier)
+                and expr.func.name.text == "__uc80_dm_first"):
+            self._gen_divmod_first(expr)
+            return
         if self._wr_cmps:
             self._wr_guard(expr)
             if self._qsort_wr_ok(expr):
@@ -17106,6 +17191,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             # Get return type of function call
             if isinstance(expr.func, ast.Identifier):
                 fname = expr.func.name.text
+                if fname == "__uc80_dm_first":
+                    return self._get_expr_type(expr.args[0])
                 if fname in _BUILTIN_RET:
                     return _BUILTIN_RET[fname]
                 if fname in Z80_BUILTINS:
@@ -21878,11 +21965,35 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.runtime_used.add(name)
         if name == "__mul16":
             self._mul16_sites.append((self.ctx.current_function,
-                                      len(self.ctx.continue_labels)))
+                                      len(self.ctx.continue_labels),
+                                      self._loop_call_count()))
         elif name in ("__sdiv16", "__smod16"):
             self._sdiv_sites.append((self.ctx.current_function,
                                      len(self.ctx.continue_labels)))
         self.ctx.emit_instr("call", name)
+
+    def _loop_call_count(self) -> int:
+        """The number of calls in the innermost loop being generated (0
+        outside a loop).  Counted on the tree, once for each loop."""
+        if not self._loop_stmts:
+            return 0
+        stmt = self._loop_stmts[-1]
+        n = self._loop_calls.get(id(stmt))
+        if n is None:
+            n = 0
+            stack = [stmt]
+            while stack:
+                x = stack.pop()
+                if isinstance(x, (list, tuple)):
+                    stack.extend(x)
+                    continue
+                if not _dcfast.is_dataclass(x) or isinstance(x, type):
+                    continue
+                if isinstance(x, (ast.Call, ast.CallNoArgs)):
+                    n += 1
+                stack.extend(_children(x))
+            self._loop_calls[id(stmt)] = n
+        return n
 
     def _store_tmp32(self) -> None:
         """Store DEHL to __tmp32 for 32-bit binary operations."""

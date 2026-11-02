@@ -1,0 +1,64 @@
+; rt_sdqr16.mac - __sdivmod16
+; Family L, L4 (docs/family_l.md)
+
+	.Z80
+
+	EXTRN	__div16
+
+	CSEG
+; ============================================================
+; 16-bit signed division with both results: DE / HL (signed)
+;   HL = quotient (truncated toward zero)
+;   DE = remainder (the sign of the dividend)
+; The compiler calls this routine when a function divides the same two
+; values twice, once for x / y and once for x % y.  Division by zero:
+; HL = 0 and DE = 0, as __sdiv16 gives.
+; Preserves BC, IX, IY.  Sets __divrem as __div16 does.
+; ============================================================
+	PUBLIC	__sdivmod16
+__sdivmod16:
+	PUSH	BC
+	LD	B,D		; B = sign of the dividend
+	LD	C,H		; C = sign of the divisor
+	BIT	7,D
+	JR	Z,__sdqr16_1
+	XOR	A		; DE = -DE
+	SUB	E
+	LD	E,A
+	SBC	A,A
+	SUB	D
+	LD	D,A
+__sdqr16_1:
+	BIT	7,H
+	JR	Z,__sdqr16_2
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__sdqr16_2:
+	CALL	__div16		; HL = quotient, DE = remainder
+	LD	A,B
+	XOR	C
+	JP	P,__sdqr16_3
+	XOR	A		; the quotient is negative
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__sdqr16_3:
+	BIT	7,B
+	JR	Z,__sdqr16_4
+	XOR	A		; the remainder takes the sign of the dividend
+	SUB	E
+	LD	E,A
+	SBC	A,A
+	SUB	D
+	LD	D,A
+__sdqr16_4:
+	POP	BC
+	RET
+
+	END

@@ -965,6 +965,11 @@ def main() -> int:
              "elements of at most 8 bytes (docs/k1_link_size.md)"
     )
     parser.add_argument(
+        "--no-divmod-pair",
+        action="store_true",
+        help="Divide twice for x / y and x %% y (docs/family_l.md)"
+    )
+    parser.add_argument(
         "--no-ptr-const",
         action="store_true",
         help="Keep a static pointer variable that holds one object address "
@@ -1059,6 +1064,12 @@ def main() -> int:
         action="store_true",
         help="Do not fold an empty counted loop with constant bounds into "
              "an assignment of the final counter value (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-mul16c-loop",
+        action="store_true",
+        help="Keep __mul16 for a multiplication in a loop with calls in "
+             "it (docs/family_l.md)"
     )
     parser.add_argument(
         "--no-mul16c",
@@ -1683,9 +1694,11 @@ def main() -> int:
         gen.enable_qsort_small = not args.no_qsort_small
         gen.enable_qsort_wr = not args.no_qsort_wr
         gen.enable_ptr_const = not args.no_ptr_const
+        gen.enable_divmod_pair = not args.no_divmod_pair
         gen.enable_div16b = not args.no_div16b
         gen.enable_const_store = not args.no_const_store
         gen.enable_mul16c = not args.no_mul16c
+        gen.enable_mul16c_loop = not args.no_mul16c_loop
         gen.size_helpers = args.size_helpers
         gen.enable_sdivmod_merge = not args.no_sdivmod_merge
         gen.enable_for_entry = not args.no_for_entry
