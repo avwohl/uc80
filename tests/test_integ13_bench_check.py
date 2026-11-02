@@ -22,10 +22,9 @@ SRC = r"""
 #include <stdio.h>
 #include "bench.h"
 
-unsigned g;
+unsigned g, i;
 int main(void)
 {
-    unsigned i;
     for (i = 0; i < 100; i++)
         g += i;
     BENCH_CHECK_EQ(g, 4950);
@@ -40,7 +39,9 @@ int main(void)
 def test_check_loops_do_not_take_the_rotation_budget(tmp_path):
     mac = compile_c(tmp_path, SRC, f"-I{REPO / 'bench'}")
     text = mac.read_text()
-    # one rotated loop: the loop of the program, none of the checks
+    # one rotated loop: the loop of the program, none of the checks.  The
+    # counter is a global: a local counter gets the for-entry shape of
+    # family K (a test at the end, no rotation).
     assert text.count("@RB") == 2, text.count("@RB")   # label + jump
     out = run_raw(tmp_path, mac).decode("latin-1").replace("\r", "")
     assert out == "ok 4950\n"
