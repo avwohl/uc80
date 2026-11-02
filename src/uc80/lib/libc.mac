@@ -18496,9 +18496,11 @@ QSS_NV	EQU	QSS_END-QSS_VARS
 ; IX and SP.
 ;
 ; Plan: if the array is one run (ascending, or strictly descending) the
-; routine returns, or reverses the array.  Else a quicksort with the middle
-; element as pivot; the recursion goes into the smaller part and the loop
-; into the larger part, so the stack depth is at most log2(n) levels.
+; routine returns, or reverses the array.  Else a quicksort with the element
+; at one quarter of the part as pivot (the middle element is the
+; largest one of an organ-pipe array, and gives n*n/2 compares).  The
+; recursion goes into the smaller part and the loop into the larger part,
+; so the stack depth is at most log2(n) levels.
 ; The routine changes AF, BC, DE, HL and keeps IX and IY.
 ; ============================================================
 
@@ -18584,8 +18586,10 @@ qw_top:
 	RET	Z
 	SRL	H
 	RR	L
+	SRL	H
+	RR	L
 	RES	0,L
-	ADD	HL,DE			; HL = mid
+	ADD	HL,DE			; HL = lo + (hi - lo) / 4: the pivot
 	LD	E,(HL)
 	INC	HL
 	LD	D,(HL)

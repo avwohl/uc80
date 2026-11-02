@@ -138,6 +138,7 @@ class _Func:
         self.types: dict = {}
         self.addr: set = set()
         self.declared: dict = {}
+        self.static_names: set = set()      # static or extern locals
         for name, key in _function_param_typekeys(f.declarator):
             self._decl(name, key)
         self._scan(f.body)
@@ -166,6 +167,10 @@ class _Func:
                     nm = _deep_name(dd)
                     if nm is not None:
                         self._decl(nm, _decl_type_key(n.decl_specs, dd))
+                        for sp in n.decl_specs or []:
+                            if (type(sp).__name__ == "StorageClass"
+                                    and _tok(sp.kw) in ("static", "extern")):
+                                self.static_names.add(nm)
             elif (isinstance(n, ast.UnaryOp) and _opt(n) == "&"
                   and isinstance(n.operand, ast.Identifier)):
                 self.addr.add(_tok(n.operand.name))
@@ -193,7 +198,7 @@ class _Func:
             nm = _tok(e.name)
             if nm in self.declared:
                 key = self.types.get(nm)
-                glob = False
+                glob = nm in self.static_names
             else:
                 key = self.gtypes.get(nm)
                 glob = True

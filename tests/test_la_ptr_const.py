@@ -256,3 +256,23 @@ int main(void)
     want, got, text = run_both(tmp_path, src)
     assert got == want
     assert check(text)
+
+
+def test_function_static_with_initializer_moves_to_file_scope(tmp_path):
+    src = r"""
+#include <stdio.h>
+typedef struct W { int *ref; int n; } W;
+static int slot = 7;
+static W *g;
+int main(void)
+{
+    static W w = { &slot, 3 };
+    g = &w;
+    *g->ref += g->n;
+    printf("%d %d\n", slot, w.n);
+    return 0;
+}
+"""
+    want, got, text = run_both(tmp_path, src)
+    assert got == want == "10 3"
+    assert check(text)

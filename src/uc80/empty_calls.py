@@ -142,8 +142,9 @@ def _declared_in(func) -> set[str]:
     return names
 
 
-def run(unit) -> int:
-    """Delete the calls in ``unit``.  Returns the number of calls."""
+def run(unit, keep=frozenset()) -> int:
+    """Delete the calls in ``unit``.  Returns the number of calls.  The
+    functions in ``keep`` (entry points, interrupt functions) stay."""
     defs: dict[str, list] = {}
     for item in unit.items or []:
         if isinstance(item, ast.FunctionDef) and item.body is not None:
@@ -151,7 +152,8 @@ def run(unit) -> int:
             if nm is not None:
                 defs.setdefault(nm, []).append(item)
     empty = {nm for nm, fs in defs.items()
-             if len(fs) == 1 and nm != "main" and _body_is_empty(fs[0])}
+             if len(fs) == 1 and nm != "main" and nm not in keep
+             and _body_is_empty(fs[0])}
     if not empty:
         return 0
     vol = VolatileInfo(unit)

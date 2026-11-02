@@ -268,3 +268,56 @@ def test_with_int32_uses_the_old_path(tmp_path):
     want, got, text = run_both(tmp_path, src, "--int=32")
     assert got == want
     assert "__qsort_wr" not in text
+
+
+def test_comparison_count_is_n_log_n(tmp_path):
+    """No O(n^2) case in __qsort_wr: the same patterns as the test of the
+    generic qsort (tests/test_qsort.py), 1000 elements."""
+    src = r"""
+#include <stdio.h>
+#include <stdlib.h>
+#define N 1000
+static int a[N];
+static unsigned long calls;
+static int up(const void *x, const void *y)
+{ int p = *(const int *) x, q = *(const int *) y; calls++; return (p > q) - (p < q); }
+static unsigned seed = 1;
+static int rnd(void) { seed = seed * 25173u + 13849u; return (int) (seed >> 1); }
+static void go(const char *name)
+{
+    int i, ok = 1;
+    calls = 0;
+    qsort(a, N, sizeof(int), up);
+    for (i = 1; i < N; i++) if (a[i - 1] > a[i]) ok = 0;
+    printf("%s %lu %s\n", name, calls, ok ? "ok" : "BAD");
+}
+int main(void)
+{
+    int i;
+    for (i = 0; i < N; i++) a[i] = rnd();          go("random");
+    for (i = 0; i < N; i++) a[i] = i;               go("sorted");
+    for (i = 0; i < N; i++) a[i] = N - i;           go("reversed");
+    for (i = 0; i < N; i++) a[i] = 5;               go("equal");
+    for (i = 0; i < N; i++) a[i] = 5; a[0] = 9;     go("equal+1");
+    for (i = 0; i < N; i++) a[i] = rnd() % 3;       go("few");
+    for (i = 0; i < N; i++) a[i] = i < N/2 ? i : N - i; go("organ");
+    for (i = 0; i < N; i++) a[i] = i; a[N-1] = -1;  go("sorted+1");
+    for (i = 0; i < N; i++) a[i] = i < N/2 ? N/2 - i : i - N/2; go("valley");
+    for (i = 0; i < N; i++) a[i] = (i * 7) % 10;    go("sawtooth");
+    return 0;
+}
+"""
+    want, got, text = run_both(tmp_path, src)
+    assert "call\t__qsort_wr" in text
+    rows = {}
+    for line in got.splitlines():
+        parts = line.split()
+        if len(parts) == 3 and parts[2] in ("ok", "BAD"):
+            rows[parts[0]] = (int(parts[1]), parts[2])
+    assert len(rows) == 10, got
+    import math
+    limit = 3 * 1000 * math.log2(1000)
+    for name, (calls, status) in rows.items():
+        assert status == "ok", name
+        assert calls < limit, "%s: %d comparator calls" % (name, calls)
+    assert rows["sorted"][0] == 999 and rows["reversed"][0] == 999

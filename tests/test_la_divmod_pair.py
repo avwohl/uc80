@@ -272,3 +272,33 @@ int main(void)
 """
     want, got, text = run_both(tmp_path, src, "--int=32")
     assert got == want
+
+
+def test_static_local_changed_by_recursion(tmp_path):
+    # a static local is shared by the recursive calls: a call between the
+    # two operations can change it
+    src = r"""
+#include <stdio.h>
+static int depth_q, depth_r;
+static int walk(int level, int n)
+{
+    static int x = 100;
+    int r;
+    r = x % n;
+    if (level > 0)
+        walk(level - 1, n);
+    else
+        x = x + 11;
+    depth_q = x / n;
+    depth_r = r;
+    return depth_q;
+}
+int main(void)
+{
+    printf("%d\n", walk(2, 7));
+    printf("%d %d\n", depth_q, depth_r);
+    return 0;
+}
+"""
+    want, got, text = run_both(tmp_path, src)
+    assert got == want

@@ -43,7 +43,7 @@ The change saves 3348 bytes in `mojozork-size`.
 
 A call `qsort(base, n, 2, cmp)` calls the library routine `__qsort_wr` (`lc_qsort_w.mac`, 332 bytes) in place of `qsort` (855 bytes). The routine takes `HL` = base, `DE` = number of elements and `BC` = comparator. The comparator takes its two pointers in `HL` and `DE` and returns the result in `HL`.
 
-The routine checks first if the array is one run. A run in increasing order needs no work. The routine reverses a run in strictly decreasing order. Other arrays use a quicksort with the middle element as pivot. The recursion goes into the smaller part, so the stack depth is at most log2(n) levels.
+The routine checks first if the array is one run. A run in increasing order needs no work. The routine reverses a run in strictly decreasing order. Other arrays use a quicksort. The pivot is the element at one quarter of the part, because the middle element of an array in organ-pipe order is the largest one and gives a number of compares in the order of n squared. The recursion goes into the smaller part, so the stack depth is at most log2(n) levels.
 
 The comparator gets the register convention for calls only when all of these are true:
 

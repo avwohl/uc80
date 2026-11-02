@@ -1574,6 +1574,7 @@ def main() -> int:
                 print(f"Merged {len(asts)} files into {len(merged_ast.items)} declarations")
 
         # AST-level expression optimization
+        ast_opt = None
         if not args.no_ast_optimize:
             opt_level = 3
             ast_opt = Uc80ASTOptimizer(opt_level, type_config=type_config)
@@ -1582,14 +1583,6 @@ def main() -> int:
             ast_opt.loop_unroll = not args.no_loop_unroll
             ast_opt.empty_loop_fold = not args.no_empty_loop_fold
             merged_ast = ast_opt.optimize(merged_ast)
-            if not args.no_empty_call and not args.no_optimize:
-                from . import empty_calls
-                n_empty = empty_calls.run(merged_ast)
-                if n_empty:
-                    if args.verbose:
-                        print(f"  Deleted {n_empty} call(s) of empty "
-                              f"functions")
-                    merged_ast = ast_opt.optimize(merged_ast)
             merged_ast._enum_fixed_types = enum_fixed
             if args.verbose and ast_opt.stats:
                 print(f"  AST optimizations:")
@@ -1650,6 +1643,20 @@ def main() -> int:
             args.entry, target_pragmas, sdcc_found.isrs,
             _ambiguous_functions(asts, [str(p) for p in input_paths
                                         if p.suffix.lower() != ".mac"]))
+        # A call of a function with an empty body is deleted (docs/family_l.md).
+        # An entry point or an interrupt function stays: a direct call of
+        # one is an error that the code generator reports.
+        if (ast_opt is not None and not args.no_empty_call
+                and not args.no_optimize):
+            from . import empty_calls
+            n_empty = empty_calls.run(
+                merged_ast,
+                keep=set(roots.keep) | set(roots.public) | set(roots.isrs))
+            if n_empty:
+                if args.verbose:
+                    print(f"  Deleted {n_empty} call(s) of empty functions")
+                merged_ast = ast_opt.optimize(merged_ast)
+                merged_ast._enum_fixed_types = enum_fixed
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                            enable_inlining, enable_const_propagation, whole_program,
                            embed_runtime=embed_runtime,

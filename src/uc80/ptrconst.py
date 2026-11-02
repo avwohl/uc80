@@ -417,6 +417,12 @@ def _resolve_object(obj, items, gdecl, by_name, funcs, local_names,
         return None
     if _defines_types(f.body):
         return None
+    init = getattr(d, "init", None)
+    if init is not None:
+        # the initializer moves to file scope: it may not name a local
+        locs = _local_decl_names(f, params_of) - {obj}
+        if any(_mentions(init, nm) for nm in locs):
+            return None
     # the name must not be a parameter of f or declared in another function
     if any(_deep_name_in_params(params_of(f), obj)):
         return None
