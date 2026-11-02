@@ -3958,6 +3958,26 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_narrow_index = True
         # Family J switches (docs/void_putchar.md).
         self.enable_void_putchar = True
+        # Family K step 1: printf("\n") becomes putchar (docs/k1_link_size.md).
+        self.enable_printf_putchar = True
+        self.enable_printf_union = True
+        self.enable_div32w = True
+        self.enable_qsort_small = True
+        self.enable_div16b = True
+        self.enable_const_store = True
+        self.enable_mul16c = True
+        self._mul16_sites = []
+        self._sdiv_sites = []
+        self.size_helpers = False
+        self.enable_sdivmod_merge = True
+        self.enable_for_entry = True
+        self.enable_puts_small = True
+        self.enable_compact_div16 = True
+        self.compact_div16 = True
+        self.enable_shr32_loop = True
+        # Family K step 2: no printf tables without a printf call.
+        self.enable_drop_printf_tables = True
+        self.has_mac_files = False
         self.enable_char_ret_mask = True
         self.enable_param_reg = True
         self.enable_frame_drop = True
@@ -4967,6 +4987,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # concat-baked default table wins, and that default only knows the
         # 16-bit-int handlers — breaking --int=32 and --long=64.
         explicit_printf_features = self.printf_features is not None
+        self._printf_explicit = explicit_printf_features
         if self.printf_features is None:
             detected = self._auto_detect_printf_features(unit)
             if detected is not None:
@@ -4981,8 +5002,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     if detected is not None:
                         self.printf_features = detected
             else:
-                # Non-literal format string somewhere — must include every handler.
-                self.printf_features = {"all"}
+                # Non-literal format string somewhere.  Every handler, or
+                # (family K step 4) the conversions of all string literals
+                # of the program, which is where such a format comes from.
+                if (self.enable_printf_union and self.whole_program
+                        and not self.has_mac_files):
+                    from .printf_hook import literal_union_features
+                    self.printf_features = (literal_union_features(unit)
+                                            or {"all"})
+                else:
+                    self.printf_features = {"all"}
         else:
             # An explicit --printf/#pragma feature set skips detection, but we
             # still want the literal format strings so we can warn about the
@@ -5011,6 +5040,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # Generate code for each declaration
         for decl in unit.items:
             self.gen_declaration(decl)
+
+        self._fold_short_helpers()
+        self._fold_signed_divmod()
+        self._decide_mul16c()
+        self._decide_compact_div16()
 
         # Emit printf/scanf dispatch tables if features are known
         if self._should_emit_printf_tables():
@@ -6095,6 +6129,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         """
         if self.printf_features is None:
             return False
+        if (self.enable_drop_printf_tables and self.whole_program
+                and not self.has_mac_files
+                and not getattr(self, '_printf_explicit', True)
+                and not self._printf_calls_seen
+                and not self.printf_features):
+            # No printf-family call is left: the four table bytes are
+            # dead (docs/k1_link_size.md).
+            return False
         return self.whole_program or "main" in self.ctx.function_names
 
     def _emit_printf_format_tables(self) -> None:
@@ -6400,6 +6442,235 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     # can register just the handlers this unit really uses.
                     features.add('spec:' + spec)
 
+    def _div32_narrow_ok(self, e) -> bool:
+        """The divisor ``e`` of an unsigned 32-bit division is proved to be
+        in 0..65535, so __div32w (no 32/32 path) does the division.  The
+        proof: a constant in range; an expression of an unsigned type of 16
+        bits or less; a cast of such an expression to a 32-bit type; ``x &
+        k`` with k in range.  docs/k1_link_size.md."""
+        if not self.enable_div32w:
+            return False
+        k = self._const_int_operand(e)
+        if k is not None:
+            return 0 <= k <= 0xFFFF
+        t = _to_legacy(self._get_expr_type(e))
+        if (isinstance(t, lt.BasicType) and not self._is_float_type(t)
+                and t.is_signed == False and self._type_size(t) <= 2):
+            return True
+        if (isinstance(e, ast.Cast) and isinstance(t, lt.BasicType)
+                and not self._is_float_type(t)
+                and self._type_size(t) == 4):
+            return self._div32_narrow_ok(e.expr)
+        op = getattr(getattr(e, 'op', None), 'text', None)
+        if isinstance(e, ast.BinaryOp) and op == '&':
+            for side in (e.left, e.right):
+                k = self._const_int_operand(side)
+                if k is not None and 0 <= k <= 0xFFFF:
+                    return True
+        return False
+
+    # The short routines of family K (__div16b, __mod16b, __shr32c) save
+    # bytes only when the program does not need the fast routine too.
+    _SHORT_HELPERS = (
+        ("__div16b", "__div16", ("__div16", "__mod16", "__sdiv16",
+                                 "__smod16")),
+        ("__mod16b", "__mod16", ("__div16", "__mod16", "__sdiv16",
+                                 "__smod16")),
+        ("__shr32c", "__shr32", ("__shr32",)),
+        ("__div32w", "__div32", ("__div32", "__mod32", "__sdiv32",
+                                 "__smod32")),
+        ("__mod32w", "__mod32", ("__div32", "__mod32", "__sdiv32",
+                                 "__smod32")),
+    )
+    # libc routines that call __div16
+    _DIV16_LIBC = re.compile(r"\b_(fread|fwrite|div|ldiv|lldiv|cbrt)\b")
+    # libc routines that call __shr32 (through __m_round)
+    _SHR32_LIBC = re.compile(
+        r"\b_(ceil|floor|round|trunc|rint|nearbyint|lrint|llrint|lround|"
+        r"llround|modf)[fl]?\b")
+    # libc routines that call __div32
+    _DIV32_LIBC = re.compile(
+        r"\b_(ldiv|lldiv|cbrt|scanf|fscanf|sscanf|vscanf|vsscanf|vfscanf|"
+        r"strtod|atof)\b")
+
+    def _fold_short_helpers(self) -> None:
+        """When the program calls a routine that the short one replaces
+        (or a libc routine that needs it), call the fast routine at every
+        site: the image holds one copy.  docs/k1_link_size.md."""
+        used = self.ctx.runtime_used
+        names = {s for s, _f, _o in self._SHORT_HELPERS}
+        if not (names & used):
+            return
+        text = None
+        for short, fast, others in self._SHORT_HELPERS:
+            if short not in used:
+                continue
+            need = any(o in used for o in others)
+            if not need and short in ("__div16b", "__mod16b", "__div32w",
+                                      "__mod32w", "__shr32c"):
+                if text is None:
+                    # a reference in an instruction (the prototypes of
+                    # stdio.h have an EXTRN line each)
+                    text = "\n".join(
+                        ln for ln in self.ctx.lines
+                        if not ln.lstrip().lower().startswith(
+                            ("extrn", "public", ";")))
+                rx = (self._DIV16_LIBC if short.endswith("16b")
+                      else self._SHR32_LIBC if short == "__shr32c"
+                      else self._DIV32_LIBC)
+                need = bool(rx.search(text))
+            if need:
+                used.discard(short)
+                used.add(fast)
+                self.ctx.lines[:] = [
+                    re.sub(r"\b" + short + r"\b", fast, ln)
+                    if short in ln else ln for ln in self.ctx.lines]
+                text = None
+
+    def _fold_signed_divmod(self) -> None:
+        """A program that calls both __sdiv16 and __smod16 calls the
+        routines that share one body (rt_sdivmod16.mac, 21 bytes less in
+        the image).  docs/k2_code_size.md."""
+        used = self.ctx.runtime_used
+        if (not self.enable_sdivmod_merge or "__sdiv16" not in used
+                or "__smod16" not in used):
+            return
+        # The shared body costs T-states a call: only a program that
+        # divides outside every loop, in main, takes it by default.
+        if not self.size_helpers and any(
+                fn != "main" or depth > 0 for fn, depth in self._sdiv_sites):
+            return
+        text = "\n".join(
+            ln for ln in self.ctx.lines
+            if not ln.lstrip().lower().startswith(("extrn", "public", ";")))
+        if self._DIV16_LIBC.search(text):
+            return
+        for old, new in (("__sdiv16", "__sdiv16m"),
+                         ("__smod16", "__smod16m")):
+            used.discard(old)
+            used.add(new)
+            self.ctx.lines[:] = [
+                re.sub(r"\b" + old + r"\b", new, ln) if old in ln else ln
+                for ln in self.ctx.lines]
+
+    # libc routines that call __mul16
+    _MUL16_LIBC = re.compile(r"\b_(fread|fwrite|rand|srand|rand_r)\b")
+
+    def _decide_mul16c(self) -> None:
+        """A program whose multiplications all stand in main outside every
+        loop (one loop deep with --size-helpers) calls __mul16c (25 bytes,
+        about 150 T-states a call more) in place of __mul16 and its three helpers (139 bytes).
+        docs/k2_code_size.md."""
+        used = self.ctx.runtime_used
+        if (not self.enable_mul16c or "__mul16" not in used
+                or not self._mul16_sites
+                or self.type_config.int_size != 2
+                or any(n.startswith("__mul") and n not in
+                       ("__mul16", "__mul16c") for n in used)
+                or any(fn != "main" or depth > (1 if self.size_helpers else 0)
+                       for fn, depth in self._mul16_sites)):
+            return
+        text = "\n".join(
+            ln for ln in self.ctx.lines
+            if not ln.lstrip().lower().startswith(("extrn", "public", ";")))
+        if self._MUL16_LIBC.search(text):
+            return
+        used.discard("__mul16")
+        used.add("__mul16c")
+        self.ctx.lines[:] = [
+            re.sub(r"\b__mul16\b", "__mul16c", ln) if "__mul16" in ln
+            else ln for ln in self.ctx.lines]
+
+    _DIV32_NAMES = frozenset((
+        "__div32", "__mod32", "__sdiv32", "__smod32", "__div32w",
+        "__mod32w"))
+
+    def _decide_compact_div16(self) -> None:
+        """The compact __div16 (8-step loop for a divisor of 256 or more,
+        no __dv8w) saves bytes only when no 32-bit divide in the program
+        needs __dv8w too.  docs/k2_code_size.md."""
+        used = self.ctx.runtime_used
+        ok = self.enable_compact_div16 and not (used & self._DIV32_NAMES)
+        if ok:
+            text = "\n".join(
+                ln for ln in self.ctx.lines
+                if not ln.lstrip().lower().startswith(
+                    ("extrn", "public", ";")))
+            ok = not self._DIV32_LIBC.search(text)
+        self.compact_div16 = ok
+
+    def _count_is_multiple_of_4(self, e) -> bool:
+        """The shift count ``e`` is a multiple of 4 (``x * 4``, ``x << 2``,
+        or the cast of such a value): __shr32c takes the same time as
+        __shr32 for these counts.  docs/k1_link_size.md."""
+        if isinstance(e, ast.Cast):
+            return self._count_is_multiple_of_4(e.expr)
+        if not isinstance(e, ast.BinaryOp):
+            return False
+        op = getattr(e.op, 'text', e.op)
+        if op == '<<':
+            k = self._const_int_operand(e.right)
+            return k is not None and k >= 2
+        if op == '*':
+            for side in (e.left, e.right):
+                k = self._const_int_operand(side)
+                if k is not None and k != 0 and k % 4 == 0:
+                    return True
+        return False
+
+    def _div16b_ok(self, e) -> bool:
+        """The divisor ``e`` of an unsigned 16-bit division is a constant of
+        1 to 255: __div16b (47 bytes) divides.  docs/k1_link_size.md."""
+        if not self.enable_div16b or self.type_config.int_size != 2:
+            return False
+        k = self._const_int_operand(e)
+        return k is not None and 1 <= k <= 255
+
+    def _puts_small_ok(self, expr) -> bool:
+        """``puts(s)`` of the libc calls __puts_s (lc_puts_s.mac) in place
+        of puts: no IX frame.  Only for a CP/M whole-program build whose
+        puts is the libc puts.  docs/k2_code_size.md."""
+        if (not self.enable_puts_small or not self.whole_program
+                or self.rom_data or self.sdas_output or self.has_mac_files
+                or not isinstance(expr.func, ast.Identifier)
+                or expr.func.name.text != "puts"
+                or len(expr.args or []) != 1
+                or "puts" in getattr(self, '_defined_function_names', set())
+                or "puts" in self.ctx.locals):
+            return False
+        sym = self.ctx.lookup("puts")
+        return sym is None or sym.is_global
+
+    def _qsort_small_ok(self, expr) -> bool:
+        """``qsort(base, n, size, cmp)`` with n a constant of 32 or less and
+        size a constant of 1 to 8 calls __qsort_s (lc_qsort_s.mac, 411
+        bytes) in place of the generic qsort (855 bytes).  Only for the libc
+        qsort of a CP/M whole-program build.  docs/k1_link_size.md."""
+        if (not self.enable_qsort_small or not self.whole_program
+                or self.rom_data or self.sdas_output or self.has_mac_files
+                or not isinstance(expr.func, ast.Identifier)
+                or expr.func.name.text != "qsort"
+                or len(expr.args or []) != 4
+                or "qsort" in getattr(self, '_defined_function_names', set())
+                or "qsort" in self.ctx.locals):
+            return False
+        sym = self.ctx.lookup("qsort")
+        if sym is not None and not sym.is_global:
+            return False
+        n = self._const_int_operand(expr.args[1])
+        size = self._const_int_operand(expr.args[2])
+        return (n is not None and size is not None
+                and 0 <= n <= 32 and 1 <= size <= 8)
+
+    def _printf_putchar_ok(self) -> bool:
+        """printf of one character may become putchar(c), which the
+        statement path turns into ``call __putchar_v``: only where that path
+        is on and the program has no putchar of its own."""
+        return (self.enable_printf_putchar and self.enable_void_putchar
+                and not self.rom_data and not self.sdas_output
+                and 'putchar' not in getattr(self, '_defined_function_names',
+                                             set()))
+
     def _rewrite_printf_to_puts(self, unit: ast.TranslationUnit) -> bool:
         """Rewrite printf("text\\n") and printf("%s\\n", s) to puts(...).
 
@@ -6480,6 +6751,17 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 body = fmt
                 target = 'cputs'
             if len(expr.args) == 1:
+                if (len(fmt) == 1 and fmt != '%' and fmt != '\0'
+                        and self._printf_putchar_ok()):
+                    # printf("\n") and printf("x"): putchar(c) calls
+                    # __putchar_v, no printf core (docs/k1_link_size.md).
+                    new_args = [make_int_lit(ord(fmt))]
+                    new_name = dataclasses.replace(expr.func.name,
+                                                   text='putchar')
+                    return dataclasses.replace(
+                        expr,
+                        func=dataclasses.replace(expr.func, name=new_name),
+                        args=new_args)
                 if '%' in body or '\0' in body or not body:
                     return expr
                 tok = dataclasses.replace(first.value, text=encode(body))
@@ -10249,6 +10531,24 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # inside the init clause (which can read the old value).
         if loop_ranges:
             self._range_scoped = {**saved_ranges, **loop_ranges}
+
+        # A counter that starts at a constant for which the first test is
+        # true: the loop has its test at the end only (docs/k2_code_size.md).
+        if stmt.condition and self._for_entry_true(stmt):
+            body_label = self.ctx.new_label("FORB")
+            self.ctx.emit_label(body_label)
+            self.gen_statement(stmt.body)
+            self.ctx.emit_label(update_label)
+            if stmt.update:
+                with self._vol_region(stmt.update):
+                    self.gen_expr_discard(stmt.update)
+            with self._vol_region(stmt.condition):
+                self._gen_branch(stmt.condition, body_label, True)
+            self.ctx.emit_label(end_label)
+            self._range_scoped = saved_ranges
+            self.ctx.break_labels.pop()
+            self.ctx.continue_labels.pop()
+            return
         self.ctx.emit_label(start_label)
 
         # Condition
@@ -10271,6 +10571,78 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self._range_scoped = saved_ranges
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
+
+    _CMP_OPS = {
+        "<": lambda a, b: a < b, "<=": lambda a, b: a <= b,
+        ">": lambda a, b: a > b, ">=": lambda a, b: a >= b,
+        "!=": lambda a, b: a != b, "==": lambda a, b: a == b,
+    }
+    _CMP_FLIP = {"<": ">", "<=": ">=", ">": "<", ">=": "<=", "!=": "!=",
+                 "==": "=="}
+
+    def _for_entry_true(self, stmt: ast.ForStmt) -> bool:
+        """The init clause of ``stmt`` stores a constant in an integer
+        variable and the condition compares that variable with a constant
+        (``for (i = 0; i < 8; i++)``) so that the first test is true.
+        Both constants lie in 0..32767 and the first fits the variable.
+        The loop then needs no test before the body."""
+        if not self.enable_for_entry or stmt.condition is None:
+            return False
+        init = stmt.init
+        if isinstance(init, ast.ExpressionStmt):
+            init = init.expr
+        name = c1 = None
+        if isinstance(init, ast.Declaration):
+            vs = list(iter_var_decls(init))
+            if len(vs) != 1 or vs[0][2] is None or vs[0][3]:
+                return False
+            name = vs[0][0]
+            if isinstance(vs[0][2], ast.InitializerList):
+                return False
+            c1 = self._const_int_operand(vs[0][2])
+        elif (isinstance(init, ast.BinaryOp) and self._op_of(init) == "="
+                and isinstance(init.left, ast.Identifier)):
+            name = init.left.name.text
+            c1 = self._const_int_operand(init.right)
+        if name is None or c1 is None:
+            return False
+        cond = stmt.condition
+        if not isinstance(cond, ast.BinaryOp):
+            return False
+        op = self._op_of(cond)
+        if op not in self._CMP_OPS:
+            return False
+        if isinstance(cond.left, ast.Identifier) and cond.left.name.text == name:
+            c2 = self._const_int_operand(cond.right)
+        elif (isinstance(cond.right, ast.Identifier)
+              and cond.right.name.text == name):
+            c2 = self._const_int_operand(cond.left)
+            op = self._CMP_FLIP[op]
+        else:
+            return False
+        if c2 is None or not (0 <= c1 <= 32767 and 0 <= c2 <= 32767):
+            return False
+        sym = self.ctx.lookup(name)
+        if sym is None:
+            return False
+        if sym.is_global or sym.is_static:
+            # A counter in memory: loop rotation keeps it in HL from the
+            # test into the body, the bottom test reloads it each pass
+            # (+16 T-states a pass, davidly-sieve +4.7%).
+            return False
+        t = _to_legacy(sym.sym_type)
+        if (not isinstance(t, (lt.BasicType, lt.EnumType))
+                or self._is_float_type(t) or self._is_volatile_type(t)
+                or self._is_bool_type(t) or self._is_long_long_type(t)):
+            return False
+        size = self._type_size(t)
+        if size not in (1, 2, 4):
+            return False
+        signed = self._is_signed_type(t)
+        top = (1 << (8 * size - (1 if signed else 0))) - 1
+        if c1 > top:
+            return False
+        return bool(self._CMP_OPS[op](c1, c2))
 
     def gen_break(self) -> None:
         """Generate code for break statement."""
@@ -11442,7 +11814,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         self.ctx.emit_instr("srl", "H")
                         self.ctx.emit_instr("rr", "L")
             else:
-                self._call_runtime("__div16" if is_unsigned else "__sdiv16")
+                if is_unsigned and self._div16b_ok(expr.right):
+                    self._call_runtime("__div16b")
+                else:
+                    self._call_runtime("__div16" if is_unsigned
+                                       else "__sdiv16")
         elif op == "%":
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
             shift = self._mul_shift_count(expr.right)
@@ -11461,6 +11837,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     self.ctx.emit_instr("ld", "A,H")
                     self.ctx.emit_instr("and", str(hi))
                     self.ctx.emit_instr("ld", "H,A")
+            elif is_unsigned and self._div16b_ok(expr.right):
+                self._call_runtime("__mod16b")
             else:
                 self._call_runtime("__mod16" if is_unsigned else "__smod16")
         elif op == "&":
@@ -11656,7 +12034,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self.ctx.emit_instr("ld", f"A,{shift}")
                 self._call_runtime("__shr32")
             else:
-                self._call_runtime("__div32" if is_unsigned else "__sdiv32")
+                if is_unsigned and self._div32_narrow_ok(expr.right):
+                    self._call_runtime("__div32w")
+                else:
+                    self._call_runtime("__div32" if is_unsigned
+                                       else "__sdiv32")
         elif op == "%":
             is_unsigned = self._binop_is_unsigned(expr)
             shift = self._mul_shift_count(expr.right)
@@ -11671,7 +12053,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self.ctx.emit_instr("pop", "HL")
                 self._call_runtime("__and32")
             else:
-                self._call_runtime("__mod32" if is_unsigned else "__smod32")
+                if is_unsigned and self._div32_narrow_ok(expr.right):
+                    self._call_runtime("__mod32w")
+                else:
+                    self._call_runtime("__mod32" if is_unsigned
+                                       else "__smod32")
         elif op == "&":
             self._call_runtime("__and32")
         elif op == "|":
@@ -11688,7 +12074,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self.ctx.emit_instr("ld", "A,(__tmp32)")
             is_unsigned = self._is_promoted_unsigned(expr.left)
             if is_unsigned:
-                self._call_runtime("__shr32")
+                if (self.enable_shr32_loop
+                        and self._count_is_multiple_of_4(expr.right)):
+                    # A count that is a multiple of 4: the short routine
+                    # takes the same time as __shr32 (family K step 8).
+                    self._call_runtime("__shr32c")
+                else:
+                    self._call_runtime("__shr32")
             else:
                 self._call_runtime("__sar32")
         elif op in ("==", "!=", "<", ">", "<=", ">="):
@@ -13021,10 +13413,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self._call_runtime("__mul16")
         elif op == "/":
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
-            self._call_runtime("__div16" if is_unsigned else "__sdiv16")
+            if is_unsigned and self._div16b_ok(expr.right):
+                self._call_runtime("__div16b")
+            else:
+                self._call_runtime("__div16" if is_unsigned else "__sdiv16")
         elif op == "%":
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
-            self._call_runtime("__mod16" if is_unsigned else "__smod16")
+            if is_unsigned and self._div16b_ok(expr.right):
+                self._call_runtime("__mod16b")
+            else:
+                self._call_runtime("__mod16" if is_unsigned else "__smod16")
         elif op == "&":
             self.ctx.emit_instr("ld", "A,H")
             self.ctx.emit_instr("and", "D")
@@ -14721,9 +15119,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 # A global whose name case-folds onto an earlier global has
                 # a label_override; the call must use the same label.
                 gsym = self.ctx.globals.get(expr.func.name.text)
-                self.ctx.emit_instr(
-                    "call", gsym.label() if gsym is not None
-                    else f"_{expr.func.name.text}")
+                if self._qsort_small_ok(expr):
+                    self.ctx.implicit_externs.add("__qsort_s")
+                    self.ctx.emit_instr("call", "__qsort_s")
+                elif self._puts_small_ok(expr):
+                    self.ctx.implicit_externs.add("__puts_s")
+                    self.ctx.emit_instr("call", "__puts_s")
+                else:
+                    self.ctx.emit_instr(
+                        "call", gsym.label() if gsym is not None
+                        else f"_{expr.func.name.text}")
             else:
                 # Function pointer variable - load pointer and call indirectly
                 self.gen_expr(expr.func)
@@ -19371,12 +19776,36 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if not self._scalar16_type(t) or self._is_float_expr(rhs):
             return False
         k = self._const_int_operand(rhs)
+        alabel = None
         if k is None and self._simple_sym(rhs) is None:
-            return False
+            alabel = self._link_address_operand(rhs)
+            if alabel is None:
+                return False
         e = self.ctx.emit_instr
         used = expr is not self._discard_expr
         loc = self._direct_loc(lhs) if isinstance(
             lhs, (ast.Index, ast.Member)) else None
+        if alabel is not None and loc is not None and not (
+                loc[0] == "label" or self._ix_in_range(loc[2], 2)):
+            loc = None
+        if alabel is not None and loc is not None:
+            if loc[0] == "label":
+                e("ld", f"HL,{alabel}")
+                e("ld", f"({self._label_plus(loc[1], loc[2])}),HL")
+            else:
+                e("ld", f"HL,{alabel}")
+                e("ld", f"({ix_off(loc[2])}),L")
+                e("ld", f"({ix_off(loc[2] + 1)}),H")
+            return True
+        if alabel is not None:
+            self._gen_lvalue_address(lhs)
+            e("ld", f"DE,{alabel}")
+            e("ld", "(HL),E")
+            e("inc", "HL")
+            e("ld", "(HL),D")
+            if used:
+                e("ex", "DE,HL")
+            return True
         if loc is not None and (loc[0] == "label"
                                 or self._ix_in_range(loc[2], 2)):
             # A named object at a fixed address: store straight to it.
@@ -19414,6 +19843,41 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if used:
             e("ex", "DE,HL")
         return True
+
+    _LD_HL_LABEL = re.compile(r"^\tld\tHL,([A-Za-z_@?$][^\s(]*)$")
+
+    def _link_address_operand(self, rhs) -> str | None:
+        """The label text when ``rhs`` is a function name, a string
+        literal or ``&global``: gen_expr loads it with the single
+        instruction ``ld HL,label``, which then moves to DE after the
+        address of the target (docs/k2_code_size.md).  None otherwise,
+        with nothing emitted."""
+        if not self.enable_const_store:
+            return None
+        if isinstance(rhs, ast.Identifier):
+            sym = self.ctx.lookup(rhs.name.text)
+            if (sym is None or not sym.is_global
+                    or rhs.name.text not in self.ctx.function_names):
+                return None
+        elif isinstance(rhs, ast.UnaryOp):
+            op = rhs.op.text if hasattr(rhs.op, "text") else rhs.op
+            if op != "&" or not isinstance(rhs.operand, ast.Identifier):
+                return None
+        elif not (isinstance(rhs, ast.StringLiteral)
+                  or (isinstance(rhs, list) and rhs
+                      and all(isinstance(p, ast.StringLiteral)
+                              for p in rhs))):
+            return None
+        lines = self.ctx.lines
+        mark = len(lines)
+        self.gen_expr(rhs)
+        new = lines[mark:]
+        del lines[mark:]
+        if len(new) == 1:
+            m = self._LD_HL_LABEL.match(new[0])
+            if m is not None:
+                return m.group(1)
+        return None
 
     def _gen_store32_const(self, expr: ast.BinaryOp, target_type) -> bool:
         """``*p = K``, ``a[i] = K``, ``s.m = K`` for a long target: the
@@ -21374,6 +21838,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     def _call_runtime(self, name: str) -> None:
         """Call a runtime library function."""
         self.ctx.runtime_used.add(name)
+        if name == "__mul16":
+            self._mul16_sites.append((self.ctx.current_function,
+                                      len(self.ctx.continue_labels)))
+        elif name in ("__sdiv16", "__smod16"):
+            self._sdiv_sites.append((self.ctx.current_function,
+                                     len(self.ctx.continue_labels)))
         self.ctx.emit_instr("call", name)
 
     def _store_tmp32(self) -> None:

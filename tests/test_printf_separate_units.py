@@ -127,9 +127,14 @@ class TestExactlyOneUnitDefinesTheTable:
 
     def test_whole_program_unit_without_printf_still_emits_a_table(self,
                                                                   tmp_path):
-        """Unchanged behaviour; only separate compilation needed narrowing."""
-        helper, _ = compile_unit(tmp_path, "helper", HELPER_C)
+        """Only separate compilation needed narrowing.  Family K step 2: a
+        program without a printf call has no table unless the option says
+        so."""
+        helper, _ = compile_unit(tmp_path, "helper", HELPER_C,
+                                 "--no-drop-printf-tables")
         assert base_table(helper) == []
+        helper, _ = compile_unit(tmp_path, "helper2", HELPER_C)
+        assert base_table(helper) is None
 
 
 class TestWideningIsAnnounced:

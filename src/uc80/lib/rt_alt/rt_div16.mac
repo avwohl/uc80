@@ -1,0 +1,67 @@
+; rt_div16.mac - __div16
+; Split from rt_arith16.mac
+
+	.Z80
+
+	EXTRN	__dv8n
+	EXTRN	__dv8w
+	EXTRN	__divrem
+
+	CSEG
+; ============================================================
+; 16-bit unsigned division: HL = DE / HL
+; Also sets __divrem to remainder (DE % HL), and returns the
+; remainder in DE.  Division by zero: HL = 0, remainder 0.
+; Preserves BC, IX, IY.  Clobbers A, flags.
+; ============================================================
+	PUBLIC	__div16
+__div16:
+	EX	DE,HL		; HL = dividend, DE = divisor
+	LD	A,D
+	OR	E
+	JR	Z,__div16_zero
+	PUSH	BC
+	LD	A,D
+	OR	A
+	JR	NZ,__div16_w
+	LD	C,E		; divisor < 256
+	LD	A,H
+	CP	C
+	JR	C,__div16_lo	; H < divisor: quotient < 256
+	LD	E,H
+	XOR	A
+	CALL	__dv8n		; E = quotient high byte, A = remainder
+	LD	H,E
+	LD	E,L
+	CALL	__dv8n		; E = quotient low byte
+	LD	L,E
+	JR	__div16_n
+__div16_lo:
+	LD	E,L		; A = H is the remainder so far
+	CALL	__dv8n
+	LD	L,E
+	LD	H,0
+__div16_n:
+	LD	E,A
+	LD	D,0
+	JR	__div16_done
+__div16_w:
+	LD	A,L		; divisor >= 256: quotient < 256
+	LD	L,H
+	LD	H,0
+	CALL	__dv8w		; A = quotient, HL = remainder
+	EX	DE,HL
+	LD	L,A
+	LD	H,0
+__div16_done:
+	LD	(__divrem),DE
+	POP	BC
+	RET
+__div16_zero:
+	LD	HL,0
+	LD	(__divrem),HL
+	LD	D,H
+	LD	E,L
+	RET
+
+	END

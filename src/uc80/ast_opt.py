@@ -23,9 +23,14 @@ usual arithmetic conversions, for the sizes in the TypeConfig.
 
 from __future__ import annotations
 
+import copy
+
 from uc_core import ast
-from uc_core.ast_optimizer import ASTOptimizer, _binop
+from uc_core.ast_optimizer import (ASTOptimizer, _binop, _idname, _iv, _op,
+                                   make_identifier)
 from uc_core._const import int_flags, int_value, make_int_lit
+
+from .addrcse import _fields, _is_node
 
 # Conversion ranks of the types a literal or a folded result can have.
 _INT, _LONG, _LLONG = 1, 2, 3
@@ -34,11 +39,292 @@ _FOLD_OPS = frozenset(("+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>",
                        "==", "!=", "<", ">", "<=", ">="))
 
 
+def _has_declaration(node) -> bool:
+    """A declaration anywhere in the statement."""
+    stack = [node]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, list):
+            stack.extend(x)
+            continue
+        if isinstance(x, ast.Declaration):
+            return True
+        if not _is_node(x):
+            continue
+        for f in _fields(x):
+            v = getattr(x, f, None)
+            if v is not None and not isinstance(v, (str, int)):
+                stack.append(v)
+    return False
+
+
+def _has_type_use(node) -> bool:
+    """sizeof, typeof, _Generic, alignof or offsetof in the statement."""
+    stack = [node]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, list):
+            stack.extend(x)
+            continue
+        if not _is_node(x):
+            continue
+        if type(x).__name__ in ("SizeofExpr", "SizeofType", "AlignofType",
+                                "TypeofExpr", "TypeofType",
+                                "TypeofUnqualExpr", "GenericSelection",
+                                "_GenericSelection", "OffsetofExpr"):
+            return True
+        for f in _fields(x):
+            v = getattr(x, f, None)
+            if v is not None and not isinstance(v, (str, int)):
+                stack.append(v)
+    return False
+
+
+def _const_address(node) -> bool:
+    """``name[c1][c2]...`` with integer literals: a fixed address."""
+    while isinstance(node, ast.Index):
+        if not isinstance(node.index, ast.IntLiteral):
+            return False
+        node = node.array
+    return isinstance(node, ast.Identifier)
+
+
+def _cost(node) -> int:
+    """A rough size in bytes of the code of a tree.  A variable costs 3
+    bytes (a load or a store), an operator 2, a literal 2, a fixed
+    address 3, an index that is not a literal 8 bytes more than the index
+    expression, a call 8 bytes more than its arguments and a loop 12 bytes
+    for its control.  A constant assignment to a plain variable is free:
+    the dead stores of an unrolled loop go away."""
+    if node is None or isinstance(node, (str, int)):
+        return 0
+    if isinstance(node, list):
+        return sum(_cost(x) for x in node)
+    if not _is_node(node):
+        return 0
+    name = type(node).__name__
+    if name in ("IntLiteral", "CharLiteral", "FloatLiteral",
+                "StringLiteral"):
+        return 2
+    if name == "Identifier":
+        return 3
+    if name == "Index":
+        if _const_address(node):
+            return 3
+        return 8 + _cost(node.index) + (
+            0 if isinstance(node.array, (ast.Identifier, ast.Index))
+            else _cost(node.array))
+    if name == "ExpressionStmt":
+        e = node.expr
+        if (isinstance(e, ast.BinaryOp) and _op(e) == "="
+                and isinstance(e.left, ast.Identifier)
+                and isinstance(e.right, ast.IntLiteral)):
+            return 0
+        return _cost(e)
+    if name in ("Call", "CallNoArgs"):
+        return 8 + sum(_cost(getattr(node, f, None)) for f in _fields(node)
+                       if f != "func")
+    if name == "ForStmt":
+        return 12 + sum(_cost(getattr(node, f, None)) for f in _fields(node))
+    if name in ("WhileStmt", "DoWhileStmt"):
+        return 8 + sum(_cost(getattr(node, f, None)) for f in _fields(node))
+    if name in ("IfStmt", "IfStmtElse"):
+        return 4 + sum(_cost(getattr(node, f, None)) for f in _fields(node))
+    total = 0
+    for f in _fields(node):
+        total += _cost(getattr(node, f, None))
+    if name in ("BinaryOp", "UnaryOp", "PostfixOp", "TernaryOp", "Cast"):
+        total += 2
+    return total
+
+
+def _size_of_tree(node) -> tuple[int, bool]:
+    """(the number of nodes, whether a call is in the tree)."""
+    count = 0
+    calls = False
+    stack = [node]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, list):
+            stack.extend(x)
+            continue
+        if not _is_node(x):
+            continue
+        count += 1
+        if type(x).__name__ in ("Call", "CallNoArgs", "AsmStmt",
+                                "AsmDeclaration", "StmtExpr"):
+            calls = True
+        for f in _fields(x):
+            v = getattr(x, f, None)
+            if v is not None and not isinstance(v, (str, int)):
+                stack.append(v)
+    return count, calls
+
+
+def _subst_name(node, name: str, val: int, unsigned: bool):
+    """The tree with each use of the variable ``name`` replaced by the
+    literal ``val`` (an unsigned literal for an unsigned int)."""
+    if isinstance(node, ast.Identifier):
+        if _idname(node) == name:
+            return make_int_lit(val, unsigned=unsigned)
+        return node
+    if isinstance(node, list):
+        for i, x in enumerate(node):
+            node[i] = _subst_name(x, name, val, unsigned)
+        return node
+    if _is_node(node):
+        for f in _fields(node):
+            v = getattr(node, f, None)
+            if v is None or isinstance(v, (str, int)):
+                continue
+            new = _subst_name(v, name, val, unsigned)
+            if new is not v:
+                setattr(node, f, new)
+    return node
+
+
+# a debug aid: UC80_UNROLL_DEBUG=1 prints the cost of each loop that the
+# unroller tries
+_DEBUG = bool(__import__("os").environ.get("UC80_UNROLL_DEBUG"))
+# a counted loop of 1 to 4 passes is unrolled when the copies, after
+# folding, cost at most this many bytes more than the loop (_cost)
+UNROLL_SLACK = 4
+
+
 class Uc80ASTOptimizer(ASTOptimizer):
     """See the module docstring."""
 
     # uc80 --no-dead-test turns the removal of an empty ``if`` off
     dead_test = True
+    # uc80 --no-loop-unroll turns the unrolling of a short counted loop off
+    loop_unroll = True
+
+    # ---- a short counted loop (docs/k2_code_size.md)
+
+    def _try_loop_unroll(self, stmt):
+        """uc_core's unroller, rewritten.  The init clause of a ``for`` is
+        an ExpressionStmt in the tree, so uc_core never matched a loop with
+        ``i = 0``.  The counter must keep the value that the loop leaves
+        (the copies of uc_core stop one step before it), and it must not
+        be assigned in the body or have its address taken.  A local
+        counter of a plain integer type becomes a literal in each copy,
+        and the copies fold.  The loop is unrolled only when the folded
+        copies cost no more than the loop (``_cost``)."""
+        if not self.loop_unroll:
+            return None
+        # A short loop that is the whole body of another loop is the only
+        # place that the caller never visits (it visits the items of a
+        # block).  It is unrolled first, in place.
+        if isinstance(stmt.body, ast.ForStmt):
+            inner = self._try_loop_unroll(stmt.body)
+            if inner is not None:
+                stmt.body = inner
+        init = stmt.init
+        view = stmt
+        name = None
+        if isinstance(init, ast.ExpressionStmt):
+            init = init.expr
+            view = copy.copy(stmt)
+            view.init = init
+        if (isinstance(init, ast.BinaryOp) and _op(init) == "="
+                and isinstance(init.left, ast.Identifier)
+                and isinstance(init.right, ast.IntLiteral)):
+            name = _idname(init.left)
+            start = _iv(init.right)
+        else:
+            return None                 # the declaration form: left alone
+        cond, upd = stmt.condition, stmt.update
+        if not (isinstance(cond, ast.BinaryOp)
+                and isinstance(cond.left, ast.Identifier)
+                and _idname(cond.left) == name
+                and isinstance(cond.right, ast.IntLiteral)):
+            return None
+        end = _iv(cond.right)
+        if (isinstance(upd, (ast.UnaryOp, ast.PostfixOp))
+                and _op(upd) == "++"
+                and isinstance(upd.operand, ast.Identifier)
+                and _idname(upd.operand) == name):
+            step = 1
+        elif (isinstance(upd, ast.BinaryOp) and _op(upd) == "+="
+                and isinstance(upd.left, ast.Identifier)
+                and _idname(upd.left) == name
+                and isinstance(upd.right, ast.IntLiteral)):
+            step = _iv(upd.right)
+        else:
+            return None
+        if step is None or step <= 0 or not (0 <= start <= 32767
+                                             and 0 <= end <= 32767):
+            return None
+        if name in self._address_taken_vars:
+            return None
+        if self._touches_volatile(cond.left):
+            return None                 # every read of a volatile counts
+        if name in self._get_modified_vars_in_stmt(stmt.body):
+            return None
+        cmp_op = _op(cond)
+        if cmp_op == "<":
+            n = max(0, (end - start + step - 1) // step)
+        elif cmp_op == "<=":
+            n = max(0, (end - start + step) // step)
+        elif cmp_op == "!=":
+            if (end - start) % step:
+                return None
+            n = max(0, (end - start) // step)
+        else:
+            return None
+        if not 1 <= n <= 4:
+            return None
+        body = stmt.body
+        stmts = self._get_flat_stmts(body)
+        if (stmts is None or len(stmts) > 40
+                or self._contains_flow_control(body)
+                or _has_declaration(body)):
+            return None
+        # an inner short loop is unrolled first: the size of the outer
+        # decision then counts the folded inner copies
+        stmts = [self._try_loop_unroll(x) or x
+                 if isinstance(x, ast.ForStmt) else x for x in stmts]
+        nodes, calls = _size_of_tree(stmts)
+        if n > 1 and calls:
+            return None
+        kind = {"int": "s", "short": "s", "int short": "s",
+                "unsigned": "u", "int unsigned": "u",
+                "char unsigned": "c"}.get(self._var_types.get(name), None)
+        if kind is not None and _has_type_use(stmts):
+            kind = None         # sizeof(v), _Generic(v): the type matters
+        if (kind is None and name not in self._var_types
+                and _size_of_tree(stmts)[1]):
+            return None         # a call can change a global counter
+        items: list = []
+        for i in range(n):
+            val = start + i * step
+            if kind is None:
+                items.append(ast.ExpressionStmt(expr=_binop(
+                    "=", make_identifier(name), make_int_lit(val))))
+            for st in stmts:
+                st = copy.deepcopy(st)
+                if kind is not None:
+                    st = _subst_name(st, name, val, kind == "u")
+                items.append(st)
+        items.append(ast.ExpressionStmt(expr=_binop(
+            "=", make_identifier(name), make_int_lit(start + n * step))))
+        result = ast.CompoundStmt(items=items)
+        # The unrolled copies must not be bigger than the loop: fold them
+        # (a counter that is a constant gives a constant index) and count
+        # the nodes.
+        snap = self._snapshot()
+        self._optimize_stmt(result)
+        if _DEBUG:
+            import sys
+            print(f"unroll {name} kind={kind}: cost {_cost(result)} against "
+                  f"{_cost(stmt)} (slack {UNROLL_SLACK})",
+                  file=sys.stderr)
+        if _cost(result) > _cost(stmt) + UNROLL_SLACK:
+            self._restore(snap)
+            return None
+        self._stat("loop_unroll")
+        self._changed = True
+        return result
 
     # ---- an if with nothing to do (docs/dead_test.md)
 

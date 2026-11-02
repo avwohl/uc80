@@ -1,0 +1,20 @@
+; rt_mod32w.mac - __mod32w
+; Family K step 5
+
+	.Z80
+
+	EXTRN	__div32w
+	EXTRN	__rem32
+
+	CSEG
+; ============================================================
+; 32-bit unsigned modulo: DEHL = DEHL % (__tmp32), divisor below 65536
+; ============================================================
+	PUBLIC	__mod32w
+__mod32w:
+	CALL	__div32w
+	LD	HL,(__rem32)
+	LD	DE,(__rem32+2)
+	RET
+
+	END

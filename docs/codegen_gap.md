@@ -604,3 +604,15 @@ faster. The means of the section above (0.9124, 0.8705, 0.5036) are the
 means of `integrate12` only. Bug round 6 also made the rows of the other
 compilers again, and it added self-check code to the time builds of 29
 programs. The causes of the 44 changed uc80 rows are in `CHANGELOG.md`.
+
+## Status on 2026-11-01 (family K step 1)
+
+Step 1 of family K links less library code. The whole image of 14 of the 26 programs that were bigger than SDCC 4.6.0 is now at or below the image of SDCC. The mean ratio to SDCC is 0.8401 for the size and 0.8021 for the whole image. The T-state means are 0.5011 and 0.6045 without the `sort-*` programs. 75 of the 78 programs are faster. The changes and the numbers are in [k1_link_size.md](k1_link_size.md). Twelve programs are still above the image of SDCC: the five `sort-*` programs with a `qsort` that is too big, `davidly-e`, `dhrystone21` (three builds), `stanford-puzzle`, `crc` and `mojozork-size`.
+
+## Status on 2026-11-01 (family K step 2)
+
+Step 2 of family K makes the generated code smaller. It adds counted `for` loops with the test at the end and a loop unroller. It adds a liveness pass, the merge of the arms of an if and else, and shorter divide and `puts` routines.
+
+The whole image of 16 of the 26 programs that were bigger than SDCC 4.6.0 is now at or below the image of SDCC. The mean ratio to SDCC is 0.8213 for the size and 0.7845 for the whole image. The T-state means are 0.4962 and 0.5979 without the `sort-*` programs. 76 of the 78 programs are faster. The option `--size-helpers` adds 4 more programs at the cost of T-states. [k2_code_size.md](k2_code_size.md) has the changes and the numbers.
+
+Six programs are still above the image of SDCC. The four `sort-*-5000` programs and `sort-ran-20` carry the `qsort` of the library (855 bytes, or 415 bytes for `__qsort_s`). `mojozork-size` is 3% above.

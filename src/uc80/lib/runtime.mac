@@ -1156,6 +1156,8 @@ __ctz64_done:
 ; Also sets __divrem to remainder (DE % HL), and returns the
 ; remainder in DE.  Division by zero: HL = 0, remainder 0.
 ; Preserves BC, IX, IY.  Clobbers A, flags.
+; A divisor of 256 or more uses a loop of 8 steps (family K, step 2);
+; lib/rt_alt/rt_div16.mac has the older version with __dv8w.
 ; ============================================================
 	PUBLIC	__div16
 __div16:
@@ -1189,10 +1191,28 @@ __div16_n:
 	LD	D,0
 	JR	__div16_done
 __div16_w:
-	LD	A,L		; divisor >= 256: quotient < 256
-	LD	L,H
+	LD	A,L		; divisor >= 256: quotient < 256, and the
+	LD	L,H		; remainder so far is the high byte
 	LD	H,0
-	CALL	__dv8w		; A = quotient, HL = remainder
+	LD	B,8
+__div16_wl:
+	RLA			; dividend bit out, quotient bit in (as
+	ADC	HL,HL		; the complement of the carry)
+	JR	C,__div16_wo	; remainder passed 65535: above the divisor
+	SBC	HL,DE
+	JR	NC,__div16_wk
+	ADD	HL,DE		; restore; this sets carry
+__div16_wk:
+	DJNZ	__div16_wl
+	JR	__div16_wd
+__div16_wo:
+	OR	A
+	SBC	HL,DE		; borrows
+	CCF			; carry 0: quotient bit 1
+	DJNZ	__div16_wl
+__div16_wd:
+	RLA
+	CPL			; A = quotient, HL = remainder
 	EX	DE,HL
 	LD	L,A
 	LD	H,0
@@ -1205,6 +1225,69 @@ __div16_zero:
 	LD	(__divrem),HL
 	LD	D,H
 	LD	E,L
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_div16b.mac
+; ============================================================
+; rt_div16b.mac - __div16b
+; Family K step 7
+
+
+	CSEG
+; ============================================================
+; 16-bit unsigned division by a divisor of 1 to 255:
+; HL = DE / L (H = 0 on entry).  The remainder is in DE.
+; The compiler calls this routine for a constant divisor of 1 to 255
+; (docs/k1_link_size.md).  It is 47 bytes.  __div16 with __dv8n is 176
+; bytes.  A dividend below the divisor returns at once.  A dividend whose
+; high byte is below the divisor needs 8 steps, any other dividend needs
+; 16 steps.
+; Preserves BC, IX, IY.  Clobbers A, flags.  Does not set __divrem.
+; ============================================================
+	PUBLIC	__div16b
+__div16b:
+	PUSH	BC
+	LD	C,L
+	EX	DE,HL		; HL = dividend
+	LD	A,H
+	CP	C
+	JR	NC,__div16b_f	; H >= divisor: 16 steps
+	LD	B,8
+	OR	A
+	JR	NZ,__div16b_s	; 0 < H < divisor: 8 steps, remainder H
+	LD	A,L
+	CP	C
+	JR	C,__div16b_q	; dividend < divisor
+	XOR	A		; remainder 0
+__div16b_s:
+	LD	H,L		; the 8 bits of L are the dividend
+	LD	L,0
+	JR	__div16b_l
+__div16b_q:
+	EX	DE,HL		; quotient 0, remainder = dividend
+	LD	HL,0
+	POP	BC
+	RET
+__div16b_f:
+	XOR	A
+	LD	B,16
+__div16b_l:
+	ADD	HL,HL		; next dividend bit out, quotient bit 0 in
+	RLA
+	JR	C,__div16b_u	; remainder passed 255: above the divisor
+	CP	C
+	JR	C,__div16b_n
+__div16b_u:
+	SUB	C
+	INC	L
+__div16b_n:
+	DJNZ	__div16b_l
+	LD	E,A
+	LD	D,0
+	POP	BC
 	RET
 
 
@@ -1386,6 +1469,94 @@ __div32_gs:
 	INC	C
 __div32_gn:
 	DJNZ	__div32_gl
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_div32w.mac
+; ============================================================
+; rt_div32w.mac - __div32w
+; Family K step 5: __div32 without the divisor >= 65536 path
+
+
+
+	CSEG
+; ============================================================
+; 32-bit unsigned division: DEHL = DEHL / (__tmp32), for a divisor that
+; the compiler has proved to be below 65536 (the high word of __tmp32 is
+; 0).  Same result as __div32, and the same T-states minus the test of the
+; high word, and without the 32/32 loop (about 144 bytes).  Remainder in
+; __rem32.  The compiler calls __div32 in place of this routine when the
+; program needs __div32 anyway (_fold_short_helpers in codegen.py).
+; Division by zero: quotient 0FFFFFFFFH, remainder = dividend.
+; Preserves BC, IX, IY.  __tmp32 is not changed.
+; ============================================================
+	PUBLIC	__div32w
+__div32w:
+	PUSH	BC
+	LD	(__div32_dvd),HL
+	LD	(__div32_dvd+2),DE
+	LD	DE,(__tmp32)
+	LD	A,D
+	OR	A
+	JR	NZ,__div32w_w
+	OR	E
+	JR	Z,__div32w_zero
+	LD	C,E		; divisor 1..255
+	LD	HL,__div32_dvd+3
+	XOR	A
+	LD	E,(HL)
+	CALL	__dv8n
+	LD	(HL),E
+	DEC	HL
+	LD	E,(HL)
+	CALL	__dv8n
+	LD	(HL),E
+	DEC	HL
+	LD	E,(HL)
+	CALL	__dv8n
+	LD	(HL),E
+	DEC	HL
+	LD	E,(HL)
+	CALL	__dv8n
+	LD	(HL),E
+	LD	L,A
+	LD	H,0
+	JR	__div32w_r16
+__div32w_w:
+	LD	HL,0		; divisor 256..65535
+	LD	A,(__div32_dvd+3)
+	CALL	__dv8w
+	LD	(__div32_dvd+3),A
+	LD	A,(__div32_dvd+2)
+	CALL	__dv8w
+	LD	(__div32_dvd+2),A
+	LD	A,(__div32_dvd+1)
+	CALL	__dv8w
+	LD	(__div32_dvd+1),A
+	LD	A,(__div32_dvd)
+	CALL	__dv8w
+	LD	(__div32_dvd),A
+__div32w_r16:
+	LD	(__rem32),HL
+	LD	HL,0
+	LD	(__rem32+2),HL
+__div32w_q:
+	LD	HL,(__div32_dvd)
+	LD	DE,(__div32_dvd+2)
+	POP	BC
+	RET
+__div32w_zero:
+	LD	DE,0FFFFH	; quotient 0FFFFFFFFH
+__div32w_cp:			; DE = both words of the quotient
+	LD	HL,(__div32_dvd)
+	LD	(__rem32),HL
+	LD	HL,(__div32_dvd+2)
+	LD	(__rem32+2),HL
+	LD	H,D
+	LD	L,E
+	POP	BC
 	RET
 
 
@@ -4038,6 +4209,27 @@ __mod16:
 
 	CSEG
 ; ============================================================
+; rt_mod16b.mac
+; ============================================================
+; rt_mod16b.mac - __mod16b
+; Family K step 7
+
+
+
+	CSEG
+; ============================================================
+; 16-bit unsigned modulo by a divisor of 1 to 255:
+; HL = DE % L (H = 0 on entry)
+; ============================================================
+	PUBLIC	__mod16b
+__mod16b:
+	CALL	__div16b	; remainder in DE
+	EX	DE,HL
+	RET
+
+
+	CSEG
+; ============================================================
 ; rt_mod32.mac
 ; ============================================================
 ; rt_mod32.mac - __mod32
@@ -4052,6 +4244,27 @@ __mod16:
 	PUBLIC	__mod32
 __mod32:
 	CALL	__div32
+	LD	HL,(__rem32)
+	LD	DE,(__rem32+2)
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_mod32w.mac
+; ============================================================
+; rt_mod32w.mac - __mod32w
+; Family K step 5
+
+
+
+	CSEG
+; ============================================================
+; 32-bit unsigned modulo: DEHL = DEHL % (__tmp32), divisor below 65536
+; ============================================================
+	PUBLIC	__mod32w
+__mod32w:
+	CALL	__div32w
 	LD	HL,(__rem32)
 	LD	DE,(__rem32+2)
 	RET
@@ -4216,6 +4429,47 @@ __m1632_2:
 	LD	H,D
 	LD	E,C
 	LD	D,A
+	POP	BC
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_mul16c.mac
+; ============================================================
+; rt_mul16c.mac - __mul16c
+; Family K, step 2 (docs/k2_code_size.md)
+
+
+	CSEG
+; ============================================================
+; 16-bit multiplication in 25 bytes: HL = DE * HL (low 16 bits; signed
+; and unsigned give the same bits).
+; The compiler calls this routine in place of __mul16 when every
+; multiplication of a program stands outside a loop nest, and the
+; program needs none of the other multiply routines (they have 139 bytes
+; and are faster).  The routine adds DE, shifted left, for each set bit of
+; the right operand, from the lowest bit to the highest set bit.  A right
+; operand of 3 needs about 175 T-states, a right operand of 255 about 700.
+; Preserves BC, IX, IY.  Clobbers A, DE, flags.
+; ============================================================
+	PUBLIC	__mul16c
+__mul16c:
+	PUSH	BC
+	LD	B,H
+	LD	C,L		; BC = the right operand
+	LD	HL,0
+__mul16c_l:
+	SRL	B
+	RR	C		; the lowest bit of BC goes to the carry
+	JR	NC,__mul16c_n
+	ADD	HL,DE
+__mul16c_n:
+	SLA	E
+	RL	D		; DE = DE * 2
+	LD	A,B
+	OR	C
+	JR	NZ,__mul16c_l	; until no bit is left
 	POP	BC
 	RET
 
@@ -5390,6 +5644,76 @@ __sdiv64_done:
 
 	CSEG
 ; ============================================================
+; rt_sdivmod16.mac
+; ============================================================
+; rt_sdivmod16.mac - __sdiv16m, __smod16m, __sdm16
+; Family K, step 2 (docs/k2_code_size.md)
+
+
+
+	CSEG
+; ============================================================
+; 16-bit signed division and modulo that share one body.
+;   __sdiv16m: HL = DE / HL (signed, truncated toward zero)
+;   __smod16m: HL = DE % HL (signed, the sign of the dividend)
+; The compiler calls these two in place of __sdiv16 and __smod16 when
+; a program uses both (the two routines take 70 bytes together, these
+; three take 49).  A program that uses only one of them keeps the
+; routine of rt_sdiv16.mac or rt_smod16.mac.  Each call takes about 55
+; T-states more than the separate routines.
+; Preserves BC, IX, IY.  Sets __divrem as __div16 does.
+; ============================================================
+	PUBLIC	__sdiv16m
+__sdiv16m:
+	LD	A,D
+	XOR	H		; S = sign of the quotient, C = 0
+	JR	__sdm16
+
+	PUBLIC	__smod16m
+__smod16m:
+	LD	A,D
+	OR	A		; S = sign of the dividend
+	SCF			; C = 1: the remainder
+	JR	__sdm16
+
+	PUBLIC	__sdm16
+__sdm16:
+	PUSH	AF
+	BIT	7,D
+	JR	Z,__sdm16_1
+	XOR	A		; DE = -DE
+	SUB	E
+	LD	E,A
+	SBC	A,A
+	SUB	D
+	LD	D,A
+__sdm16_1:
+	BIT	7,H
+	JR	Z,__sdm16_2
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+__sdm16_2:
+	CALL	__div16
+	POP	AF
+	JR	NC,__sdm16_d	; the quotient
+	EX	DE,HL		; the remainder: HL = remainder
+__sdm16_d:
+	RET	P
+	XOR	A		; HL = -HL
+	SUB	L
+	LD	L,A
+	SBC	A,A
+	SUB	H
+	LD	H,A
+	RET
+
+
+	CSEG
+; ============================================================
 ; rt_setjmp.mac
 ; ============================================================
 ; rt_setjmp.mac - _setjmp
@@ -5786,6 +6110,58 @@ __shr32_ll:
 	POP	BC
 	RET
 __shr32_z:
+	LD	HL,0
+	LD	D,H
+	LD	E,L
+	RET
+
+
+	CSEG
+; ============================================================
+; rt_shr32c.mac
+; ============================================================
+; rt_shr32c.mac - __shr32c
+; Family K step 8
+
+
+	CSEG
+; ============================================================
+; 32-bit logical right shift: DEHL = DEHL >> A (unsigned)
+; A shorter __shr32 for a program that shifts by a count that is not a
+; constant (docs/k1_link_size.md): word and byte moves, then at most
+; 7 single-bit steps.  A shift by 5, 6 or 7 is slower than in __shr32,
+; every other count takes the same time or less.  Same registers as
+; __shr32; preserves BC.
+; ============================================================
+	PUBLIC	__shr32c
+__shr32c:
+	CP	32
+	JR	NC,__shr32c_z
+	CP	16
+	JR	C,__shr32c_1
+	EX	DE,HL		; shift by 16: word move
+	LD	DE,0
+	SUB	16
+__shr32c_1:
+	CP	8
+	JR	C,__shr32c_2
+	LD	L,H		; shift by 8: byte move
+	LD	H,E
+	LD	E,D
+	LD	D,0
+	SUB	8
+__shr32c_2:
+	OR	A
+	RET	Z
+__shr32c_lp:
+	SRL	D
+	RR	E
+	RR	H
+	RR	L
+	DEC	A
+	JR	NZ,__shr32c_lp
+	RET
+__shr32c_z:
 	LD	HL,0
 	LD	D,H
 	LD	E,L

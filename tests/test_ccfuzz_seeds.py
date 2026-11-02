@@ -40,6 +40,7 @@ def _ccfuzz():
     (80548, "-O0"),
     (80548, ""),
     (777109, "--no-shared-storage"),   # an IY wrap spanned an earlier call group
+    (466, ""),                         # two merges of the arms of one ?: made a label twice
 ])
 def test_ccfuzz_seed_matches_the_host(tmp_path, seed, flags):
     mod = _ccfuzz()

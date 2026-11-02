@@ -58,7 +58,9 @@ def test_hello_links_no_unused_libc(tmp_path):
         '#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n'
         'int main(void) { puts("hello"); return 0; }\n')})
     assert "hello" in out
-    assert size == 256
+    # 128 bytes (one record) since family K step 2: puts calls __puts_s,
+    # which has no IX frame (256 before)
+    assert size == 128
 
 
 def test_appended_mac_keeps_header_extrn(tmp_path):

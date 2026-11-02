@@ -64,7 +64,9 @@ Rules for a module in `src/uc80/lib/lc/`:
   `lc_printf_a`, `lc_printf_llo`, `lc_printf_llxu`, `lc_printf_hh`,
   `lc_printf_skip`). `printf_hook.py` links a module only when a format string
   of the program needs it ([printf](printf.md)).
-- `lc_qsort.mac` holds `qsort`. `lc_bsearch.mac` holds `bsearch`.
+- `lc_qsort.mac` holds `qsort`. `lc_qsort_s.mac` holds `__qsort_s`, which the compiler calls for a constant count of 32 or less and a constant size of 8 or less ([k1_link_size.md](k1_link_size.md)). `lc_bsearch.mac` holds `bsearch`.
+- `rt_div32w.mac`, `rt_mod32w.mac`, `rt_div16b.mac` and `rt_shr32c.mac` are the shorter divide and shift routines of family K ([k1_link_size.md](k1_link_size.md)).
+- `rt_sdivmod16.mac` has `__sdiv16m`, `__smod16m` and their shared body `__sdm16`. `lc_puts_s.mac` has `__puts_s`, the `puts` without an `IX` frame. The file `lib/rt_alt/rt_div16.mac` is not in the libraries. It holds the older `__div16` that the compiler embeds for a program with a 32-bit divide, or with `--no-div16-compact` ([k2_code_size.md](k2_code_size.md)).
 - `lc_fprintf.mac` holds `fprintf` and `vfprintf`, which share the stream sink.
   `lc_vprintf.mac` and `lc_vsprintf.mac` hold `vprintf` and `vsprintf`.
   `lc_snprintf.mac` and `lc_vsnprintf.mac` are the two entry points of the

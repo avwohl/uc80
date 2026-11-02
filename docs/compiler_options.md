@@ -65,6 +65,33 @@ The switches of family J are all off-switches. Each one is in the page of its pa
 - `--no-range-div` ([range_div.md](range_div.md)): `x / k` and `x % k` run at run time, also when the range of `x` gives the result.
 - `--no-skip-auto-clear` ([startup_fast.md](startup_fast.md)): the start-up code clears the shared automatic storage `??AUTO`.
 
+The switches of family K step 1 are off-switches, with one exception. Each one is in [k1_link_size.md](k1_link_size.md):
+
+- `--no-printf-to-putchar`: `printf("\n");` and `printf("c");` stay calls of `printf`.
+- `--no-drop-printf-tables`: the printf dispatch tables are in a program that calls no `printf`.
+- `--fast-bss-clear`: the push fill of the start-up code for a BSS of 6000 bytes or more (the default is the small code). Of these switches, only `--fast-bss-clear` turns a change on.
+- `--no-printf-literal-union`: a format that is not a literal links every conversion.
+- `--no-div32w`: an unsigned 32-bit division by a narrow divisor calls `__div32` and `__mod32`.
+- `--no-qsort-small`: `qsort` of a constant count of 32 or less calls the generic `qsort`.
+- `--no-div16b`: an unsigned 16-bit division by a constant of 1 to 255 calls `__div16` and `__mod16`.
+- `--no-shr32-loop`: a 32-bit shift right by a variable count calls `__shr32`.
+
+The switches of family K step 2 are all off-switches. Each one is in [k2_code_size.md](k2_code_size.md):
+
+- `--no-const-store`: the address of a function or a string is stored through a pointer with `push HL` and `pop DE`.
+- `--no-for-entry`: a counted `for` loop tests the condition before the first pass.
+- `--no-loop-unroll`: a counted loop of 1 to 4 passes stays a loop.
+- `--no-branch-merge`: the two arms of an if and else keep their common start and end.
+- `--no-sign-one`: the test `x < 1` of a 16-bit value uses the general signed compare.
+- `--no-flow-opt`: the liveness pass of `peep_flow.py` does not run.
+- `--no-sdivmod-merge`: a program that uses `__sdiv16` and `__smod16` links both routines.
+- `--no-div16-compact`: `__div16` calls `__dv8w` for a divisor of 256 or more.
+- `--no-puts-small`: a call of `puts` uses the routine with the `IX` frame.
+- `--no-mul16c`: a program that multiplies only in `main`, outside every loop, links `__mul16` and its helpers.
+- `--size-helpers`: `__mul16c` (one loop level) and the shared signed divide (any place) are used also for calls in loops. The program gets smaller and slower.
+- `--no-ret-jump`: a jump to a `ret` stays a jump.
+- `--no-cp-zero`: `cp 0` stays before a conditional jump.
+
 ### Printf Control
 
 In whole-program mode, an expression statement `printf("text\n");` or

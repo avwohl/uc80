@@ -138,10 +138,14 @@ def test_startup_variant_follows_the_bss_size(tmp_path):
     big = "int a[4000]; int main(void) { return a[0]; }\n"
     t_small = compile_c(tmp_path, small).read_text()
     t_big = compile_c(tmp_path, big, name="b").read_text()
+    t_fast = compile_c(tmp_path, big, "--fast-bss-clear",
+                       name="f").read_text()
     t_old = compile_c(tmp_path, big, "--no-fast-bss-clear",
                       name="o").read_text()
     assert "__bss_big" not in t_small and "LDIR" in t_small.upper()
-    assert "__bss_big:" in t_big
+    # Family K step 3: the push fill needs --fast-bss-clear.
+    assert "__bss_big" not in t_big and "LDIR" in t_big.upper()
+    assert "__bss_big:" in t_fast
     assert "__bss_big" not in t_old and "LDIR" in t_old.upper()
 
 
@@ -160,7 +164,7 @@ int main(void)
     return 0;
 }
 """
-    for flags in ((), ("--no-fast-bss-clear",)):
+    for flags in ((), ("--fast-bss-clear",), ("--no-fast-bss-clear",)):
         mac = compile_c(tmp_path, src, *flags)
         assert run_raw(tmp_path, mac).decode().strip() == "0 0"
 

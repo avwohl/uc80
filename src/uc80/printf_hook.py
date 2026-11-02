@@ -104,10 +104,242 @@ def needs_of_format(text):
     return need
 
 
-def printf_needs(unit, features=None):
+def _all_literal_texts(unit):
+    """The decoded text of every string literal of the program (adjacent
+    literals are joined)."""
+    from uc_core._dcfast import fields as _fields, is_dataclass as _is_dc
+    from .codegen import _decode_string_literal
+
+    def decode(pieces):
+        try:
+            return "".join(_decode_string_literal(p.value.text)
+                           for p in pieces)
+        except Exception:
+            return None
+
+    texts = []
+    seen = set()
+
+    def walk(node):
+        if isinstance(node, (list, tuple)):
+            if node and all(isinstance(p, ast.StringLiteral) for p in node):
+                text = decode(node)
+                if text is not None:
+                    texts.append(text)
+                return
+            for item in node:
+                walk(item)
+            return
+        if not _is_dc(node) or id(node) in seen:
+            return
+        seen.add(id(node))
+        if isinstance(node, ast.StringLiteral):
+            if node.value.text.startswith('"'):
+                text = decode([node])
+                if text is not None:
+                    texts.append(text)
+            return
+        for f in _fields(node):
+            walk(getattr(node, f.name, None))
+
+    for item in unit.items:
+        walk(item)
+    return texts
+
+
+_CONVERSION = re.compile(r"%[^%]")
+
+
+def _decl_name(decl):
+    """The identifier that a declarator declares, or None."""
+    while decl is not None:
+        name = getattr(decl, "name", None)
+        if name is not None:
+            return getattr(name, "text", None)
+        decl = getattr(decl, "inner", None) or getattr(decl, "declarator", None)
+    return None
+
+
+def _function_info(fdef):
+    """(name, [parameter names]) of a FunctionDef."""
+    decl = fdef.declarator
+    name = _decl_name(decl)
+    params = getattr(decl, "params", None)
+    plist = getattr(params, "params", params)
+    if not isinstance(plist, (list, tuple)):
+        plist = []
+    names = [_decl_name(getattr(p, "declarator", None)) for p in plist]
+    return name, names
+
+
+def _strip_casts(e):
+    while isinstance(e, ast.Cast):
+        e = e.expr
+    return e
+
+
+def union_is_safe(unit):
+    """True when every format of the program that is not a literal comes
+    from a literal.  The format must be a parameter of a function (a
+    wrapper around vprintf or vfprintf), the wrapper must not assign the
+    parameter or declare a name that hides it, the address of the wrapper
+    must not be taken, and every call of the wrapper must pass a string
+    literal, or a parameter that passes this test in turn, at that
+    position.  A format in a variable, an array or an expression, an
+    address of a printf function, or an unscanned call has no such proof:
+    the program keeps every conversion (docs/k1_link_size.md)."""
+    funcs = {}        # name -> (FunctionDef, [param names])
+    calls = []        # (Call, enclosing function name or None)
+    idents = {}       # name -> number of Identifier nodes
+    callee_count = {}  # name -> number of Identifier nodes that are callees
+    assigned = {}     # (function name, identifier name) -> True
+    declared = {}     # (function name, declared name) -> count
+    decl_any = {}     # declared name -> count over the whole program
+    lit_ptr = set()   # pointer variables initialised from a literal
+    addr_taken = set()
+
+    def walk(node, fname):
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, ast.Identifier):
+                nm = n.name.text
+                idents[nm] = idents.get(nm, 0) + 1
+            elif isinstance(n, (ast.Call, ast.CallNoArgs)):
+                calls.append((n, fname))
+                if isinstance(n.func, ast.Identifier):
+                    cn = n.func.name.text
+                    callee_count[cn] = callee_count.get(cn, 0) + 1
+            elif isinstance(n, ast.BinaryOp):
+                op = getattr(n.op, "text", n.op)
+                if (isinstance(op, str) and op.endswith("=")
+                        and op not in ("==", "!=", "<=", ">=")
+                        and isinstance(n.left, ast.Identifier)):
+                    assigned[(fname, n.left.name.text)] = True
+            elif isinstance(n, ast.InitDeclaratorWithInit):
+                d = n.declarator
+                if (isinstance(d, ast.PointerDeclarator)
+                        and _literal_text(n.init) is not None):
+                    nm = _decl_name(d)
+                    if nm:
+                        lit_ptr.add(nm)
+            elif isinstance(n, ast.UnaryOp):
+                op = getattr(n.op, "text", n.op)
+                if op == "&" and isinstance(n.operand, ast.Identifier):
+                    addr_taken.add(n.operand.name.text)
+                if op in ("++", "--") and isinstance(n.operand, ast.Identifier):
+                    assigned[(fname, n.operand.name.text)] = True
+            elif isinstance(n, ast.Declarator):
+                key = (fname, n.name.text)
+                declared[key] = declared.get(key, 0) + 1
+                decl_any[n.name.text] = decl_any.get(n.name.text, 0) + 1
+            stack.extend(children(n))
+
+    for item in unit.items:
+        if isinstance(item, ast.FunctionDef):
+            name, params = _function_info(item)
+            funcs[name] = (item, params)
+            walk(item.body, name)
+        else:
+            walk(item, None)
+
+    # an address of a printf function (not a call of it)
+    for nm in PRINTF_FORMAT_ARG:
+        if idents.get(nm, 0) > callee_count.get(nm, 0):
+            return False
+
+    def literal_arg(arg):
+        return _literal_text(arg) is not None
+
+    def param_ok(fname, index, visiting):
+        key = (fname, index)
+        if key in visiting:
+            return True
+        info = funcs.get(fname)
+        if info is None:
+            return False
+        _item, params = info
+        if index >= len(params) or params[index] is None:
+            return False
+        pname = params[index]
+        if (fname, pname) in assigned or declared.get((fname, pname), 0):
+            return False
+        # the address of the wrapper is not taken
+        if idents.get(fname, 0) != callee_count.get(fname, 0):
+            return False
+        visiting = visiting | {key}
+        for call, caller in calls:
+            if not (isinstance(call.func, ast.Identifier)
+                    and call.func.name.text == fname):
+                continue
+            args = call.args if isinstance(call, ast.Call) else []
+            if index >= len(args):
+                return False
+            if not arg_ok(args[index], caller, visiting):
+                return False
+        return True
+
+    def arg_ok(arg, fname, visiting):
+        if literal_arg(arg):
+            return True
+        if isinstance(arg, list):
+            return False
+        e = _strip_casts(arg)
+        if not isinstance(e, ast.Identifier):
+            return False
+        nm = e.name.text
+        if (nm in lit_ptr and decl_any.get(nm, 0) == 1
+                and nm not in addr_taken
+                and not any(k[1] == nm for k in assigned)):
+            return True      # a pointer set once from a literal
+        if fname not in funcs:
+            return False
+        params = funcs[fname][1]
+        if nm not in params:
+            return False
+        return param_ok(fname, params.index(nm), visiting)
+
+    for call, fname in calls:
+        if not isinstance(call, (ast.Call, ast.CallNoArgs)):
+            continue
+        if not isinstance(call.func, ast.Identifier):
+            continue
+        name = call.func.name.text
+        if name not in PRINTF_FORMAT_ARG:
+            continue
+        args = call.args if isinstance(call, ast.Call) else []
+        index = PRINTF_FORMAT_ARG[name]
+        if index >= len(args):
+            return False
+        if not arg_ok(args[index], fname, frozenset()):
+            return False
+    return True
+
+
+def literal_union_features(unit):
+    """The ``#pragma printf`` feature set for a program with a format that
+    is not a literal: the conversions of every string literal of the
+    program, and always ``int``.  None when no string literal has a
+    conversion: the format then comes from outside the program and needs
+    every conversion.  docs/k1_link_size.md."""
+    from .codegen import CodeGenerator
+    if not union_is_safe(unit):
+        return None
+    features = {"int"}
+    texts = _all_literal_texts(unit)
+    if not any(_CONVERSION.search(t) for t in texts):
+        return None      # no literal has a conversion: the format is input
+    for text in texts:
+        CodeGenerator._extract_printf_specifiers(text, features)
+    return features
+
+
+def printf_needs(unit, features=None, union=False):
     """The set of optional printf parts the program needs.
 
-    FEATURES is the set from ``#pragma printf`` or ``--printf``, or None."""
+    FEATURES is the set from ``#pragma printf`` or ``--printf``, or None.
+    UNION: a format that is not a literal needs the parts that any string
+    literal of the program asks for, not every part."""
     if features and "all" in features:
         return set(ALL_EXPLICIT)
     need = set()
@@ -138,6 +370,12 @@ def printf_needs(unit, features=None):
             if node.name.text in PRINTF_FORMAT_ARG:
                 unknown = True           # the address of a printf function
         stack.extend(children(node))
+    if unknown and union and union_is_safe(unit):
+        texts = _all_literal_texts(unit)
+        if any(_CONVERSION.search(t) for t in texts):
+            for text in texts:
+                need |= needs_of_format(text)
+            return need
     return need | ALL if unknown else need
 
 

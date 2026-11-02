@@ -3158,7 +3158,9 @@ def _routine_reads(sums: _Summaries, label: str, _busy=None) -> int:
 
 
 # Library routines outside lib/rt that take a register argument.
-_LIB_READS = {"__putchar_v": E}
+_LIB_READS = {"__putchar_v": E,
+              # stack-argument routines of libc: no register is read
+              "__puts_s": 0, "__qsort_s": 0}
 
 
 def helper_reads(label: str) -> int:
