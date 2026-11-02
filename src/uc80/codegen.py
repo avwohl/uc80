@@ -3946,6 +3946,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                  isr_safe: bool = False,
                  absolute: "dict[str, int] | None" = None,
                  register_cc: bool = True,
+                 regcall_names: "set[str] | None" = None,
                  foreign_asm_names: "set[str] | None" = None,
                  register_locals: bool = True,
                  naked_funcs: "set[str] | None" = None,
@@ -3983,6 +3984,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_div16b = True
         self.enable_const_store = True
         self.enable_mul16c = True
+        self.enable_mul8x16 = True
+        self.enable_byte_shl = True
+        self.enable_byte_tern = True
         self._mul16_sites = []
         self._loop_stmts = []
         self._static_init_labels = None
@@ -4053,6 +4057,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # #pragma uc80 public: file-scope names that get a PUBLIC label even
         # if static, so assembly can name them.
         self.public_names = set(public_names or ())
+        # #pragma uc80 regcall: external functions whose assembly takes the
+        # register convention (docs/family_l.md); None turns the pragma off.
+        self.regcall_names = (set(regcall_names)
+                              if regcall_names is not None else None)
+        self._regcall_ext: set[str] = set()
         # Compound-literal labels the code writes at run time.
         self._cl_written: set[str] = set()
         self.ctx = CodeGenContext()
@@ -7476,7 +7485,90 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             visit(item.body, False, locs, fchar)
         return {n: tuple(v) for n, v in counts.items()}
 
+    def _plan_regcall(self, unit) -> None:
+        """The external functions that ``#pragma uc80 regcall`` names get
+        the register convention: parameter 0 in A (byte) or HL, parameter
+        1 in E (byte) or DE, a char result in A.  The assembly routine
+        has to take the same registers.  The pragma needs a prototype with
+        at most two parameters of one or two bytes, no body in the
+        program, and no use of the name except as the callee of a direct
+        call (the address of such a function would call it with the stack
+        convention)."""
+        self._regcall_ext = set()
+        names = self.regcall_names
+        if (not names or not self.register_cc
+                or self.type_config.int_size != 2):
+            return
+        scan = regcc.scan_program(unit, function_name)
+        defined = {function_name(i) for i in unit.items
+                   if isinstance(i, ast.FunctionDef) and i.body is not None}
+        seen: set[str] = set()
+        for item in unit.items:
+            if not isinstance(item, ast.Declaration):
+                continue
+            for d in item.declarators or []:
+                dd = getattr(d, "declarator", d)
+                nm = declarator_ident(dd)
+                if nm not in names or nm in seen:
+                    continue
+                try:
+                    _, ft = resolve_type_from_decl(item.decl_specs, dd)
+                    ft = _to_legacy(ft)
+                except Exception:
+                    continue
+                if not isinstance(ft, lt.FunctionType):
+                    continue
+                seen.add(nm)
+                where = f"#pragma uc80 regcall {nm}"
+                if nm in defined:
+                    raise CodegenError(
+                        f"{where}: the program defines '{nm}'; the pragma is "
+                        f"for an external function")
+                ptypes = [_to_legacy(t) for t in (ft.param_types or [])]
+                if (len(ptypes) == 1 and isinstance(ptypes[0], lt.BasicType)
+                        and ptypes[0].name == "void"):
+                    ptypes = []
+                if (getattr(ft, "is_variadic", False) or len(ptypes) > 2
+                        or not all(self._regcc_param_ok(t) for t in ptypes)):
+                    raise CodegenError(
+                        f"{where}: '{nm}' needs a prototype with at most two "
+                        f"parameters, each an integer or pointer of one or "
+                        f"two bytes, and no '...'")
+                if self._struct_return_size(ft.return_type):
+                    raise CodegenError(f"{where}: '{nm}' returns a struct")
+                if nm in scan.value_refs:
+                    raise CodegenError(
+                        f"{where}: the program uses '{nm}' other than as the "
+                        f"callee of a call; the address would call it with "
+                        f"the stack convention")
+                bad = scan.call_args.get(nm, set()) - {len(ptypes)}
+                if bad:
+                    raise CodegenError(
+                        f"{where}: a call of '{nm}' has {sorted(bad)} "
+                        f"argument(s), the prototype has {len(ptypes)}")
+                plan = regcc.RegPlan()
+                plan.types = ptypes
+                plan.names = [None] * len(ptypes)
+                plan.sizes = [self._type_size(t) for t in ptypes]
+                plan.spill = [False] * len(ptypes)
+                plan.loc = [None] * len(ptypes)
+                for i, sz in enumerate(plan.sizes):
+                    plan.loc[i] = (("A" if sz == 1 else "HL") if i == 0
+                                   else ("E" if sz == 1 else "DE"))
+                sg = self._char_type_signed(ft.return_type)
+                if sg is not None:
+                    plan.ret_a = True
+                    plan.ret_signed = sg
+                if not plan.reg_params() and not plan.ret_a:
+                    continue
+                self._regcc[nm] = plan
+                self._regcall_ext.add(nm)
+
     def _plan_register_cc(self, unit) -> None:
+        self._plan_register_cc_defs(unit)
+        self._plan_regcall(unit)
+
+    def _plan_register_cc_defs(self, unit) -> None:
         """Decide, for every function, whether its first two scalar
         parameters travel in registers.  Runs before any call is generated.
 
@@ -7631,7 +7723,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return None
         sym = self.ctx.lookup(nm)
         if (sym is None or not sym.is_global
-                or nm not in self.ctx.function_names
+                or (nm not in self.ctx.function_names
+                    and nm not in self._regcall_ext)
                 or not is_function_type(sym.sym_type)):
             return None
         return plan
@@ -7911,6 +8004,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 and not use_shared_storage and not self._stmt_expr_seen
                 and self._drop_dead_frame(frame_start, frame_size, pushed)):
             frame_size = 0
+        elif (self.enable_frame_drop and frame_size > 0
+                and not use_shared_storage and not self._stmt_expr_seen
+                and self._drop_dead_locals(frame_start, frame_size, pushed)):
+            frame_size = 0
 
         if (isr_kind is None and name != "main" and self.register_cc
                 and frame_size == 0 and not self._stmt_expr_seen):
@@ -8096,6 +8193,57 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if res_at is not None:
             del lines[res_at:res_at + 3]
         del lines[base:base + n_push]
+        return True
+
+    _IX_POS = re.compile(r"^\t\w+\t.*\(IX\+\d+\)", re.IGNORECASE)
+
+    def _drop_dead_locals(self, frame_start: int, frame_size: int,
+                          pushed: int) -> bool:
+        """The reservation ``ld HL,-n / add HL,SP / ld SP,HL`` of a frame
+        whose body reaches IX only at a non-negative offset (the
+        parameters and the saved IX): the register-locals pass moved
+        every local out of the n bytes, so the reservation goes (and the
+        ``ld SP,IX`` of the epilogue with it; --no-frame-drop).  Returns
+        True when the reservation is gone."""
+        if pushed != 0 or frame_size <= 0:
+            return False
+        lines = self.ctx.lines
+        base = frame_start + 3
+        want = f"\tld\tHL,-{frame_size}"
+        at = None
+        for k in range(base, min(len(lines) - 2, base + 40)):
+            if (lines[k].split(";", 1)[0].rstrip() == want
+                    and lines[k + 1].split(";", 1)[0].strip() == "add\tHL,SP"
+                    and lines[k + 2].split(";", 1)[0].strip() == "ld\tSP,HL"):
+                at = k
+                break
+        if at is None:
+            return False
+        for k, ln in enumerate(lines[base:], base):
+            if k in (at, at + 1, at + 2):
+                continue
+            code = ln.split(";", 1)[0]
+            if "setjmp" in code.lower():
+                return False
+            if re.search(r"\bSP\b", code, re.IGNORECASE) and not re.match(
+                    r"^\t(ld\tSP,IX|call\b)", code, re.IGNORECASE):
+                if not re.match(r"^\t(push|pop)\b", code, re.IGNORECASE):
+                    return False
+            if not self._IX_USE.search(code):
+                continue
+            if self._IX_POS.match(code):
+                continue
+            if re.match(r"^\tld\tSP,IX\s*$", code, re.IGNORECASE):
+                continue
+            if re.match(r"^\tpush\tIX\s*$", code, re.IGNORECASE):
+                prev = lines[k - 1].split(";", 1)[0] if k else ""
+                nxt = lines[k + 1].split(";", 1)[0] if k + 1 < len(lines) \
+                    else ""
+                if (re.match(r"^\tld\t(HL|DE),\d+\s*$", prev)
+                        and re.match(r"^\tpop\t(DE|HL|BC)\s*$", nxt)):
+                    continue
+            return False
+        del lines[at:at + 3]
         return True
 
     def _frame_is_unused(self, frame_start: int, frame_size: int) -> bool:
@@ -11900,6 +12048,30 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # Restore left operand to DE
         self.ctx.emit_instr("pop", "DE")
 
+    def _gen_mul8_call(self, expr) -> bool:
+        """``x * y`` of 16 bits, left in DE and right in HL, where one
+        operand is known to be 0..255: the byte goes to A and the other
+        operand to DE, and __mul8x16 (the loop that __mul16 ends in)
+        multiplies at once.  The low 16 bits of the product are the same,
+        so a signed int is right too.  Returns False, with nothing
+        emitted, when neither operand is a byte (--no-mul8x16)."""
+        if not self.enable_mul8x16:
+            return False
+
+        def is_byte(x) -> bool:
+            return (self._int_scalar_expr(x) and self._cmp16_operand(x)
+                    and "u" in self._byte_kind(x))
+        e = self.ctx.emit_instr
+        if is_byte(expr.right):
+            e("ld", "A,L")
+        elif is_byte(expr.left):
+            e("ld", "A,E")
+            e("ex", "DE,HL")
+        else:
+            return False
+        self._call_runtime("__mul8x16")
+        return True
+
     def _emit_binary_op_16_tail(self, expr, op: str, ptr_elem_size: int,
                                 ptr_sub: bool) -> None:
         """The operation itself, with left in DE and right in HL."""
@@ -11926,7 +12098,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     # Swap: we want the non-constant in HL
                     # Left (constant) is in DE, right (variable) is in HL - already correct
                     pass
-                else:
+                elif not self._gen_mul8_call(expr):
                     self._call_runtime("__mul16")
             if shift is not None:
                 # Emit repeated ADD HL,HL if left was constant,
@@ -18872,6 +19044,15 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     def _a_structural(self, expr) -> bool:
         """``expr`` (casts peeled) is an operator that _gen_expr_a
         computes in A rather than through gen_expr."""
+        if isinstance(expr, ast.TernaryOp):
+            # c ? a : b with an arm of each kind in A (--no-byte-tern)
+            return (self.enable_byte_tern
+                    and self._int_scalar_expr(expr.true_expr)
+                    and self._int_scalar_expr(expr.false_expr)
+                    and self._cmp16_operand(expr.true_expr)
+                    and self._cmp16_operand(expr.false_expr)
+                    and self._a_profitable(expr.true_expr)
+                    and self._a_profitable(expr.false_expr))
         if isinstance(expr, ast.BinaryOp):
             op = expr.op.text if hasattr(expr.op, "text") else expr.op
             if op in ("/", "%"):
@@ -18885,6 +19066,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 return self._mul_pow2_shift(expr) is not None
             if op in ("<<", ">>"):
                 k = self._const_int_operand(expr.right)
+                if k is None and self._byte_shl_var(expr):
+                    return True
                 if k is None or not 0 <= k <= 15:
                     return False
                 if op == ">>" and not self._byte_kind(expr.left):
@@ -18900,6 +19083,22 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return (op in ("~", "-", "+")
                     and self._int_scalar_expr(expr.operand))
         return False
+
+    def _byte_shl_var(self, expr) -> bool:
+        """``K << n`` with a constant K and a variable count n that is
+        read in place: the low byte is computed in A by a loop of add A,A
+        (--no-byte-shl).  The count is the low byte of n; a count of 16 or
+        more is undefined in C for a 16-bit int."""
+        op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if (not self.enable_byte_shl or op != "<<"
+                or self._const_int_operand(expr.left) is None):
+            return False
+        cnt = self._peel_int_casts(expr.right)
+        return (self._const_int_operand(cnt) is None
+                and self._a_simple_sym(cnt) is not None
+                and self._cmp16_operand(cnt)
+                and self._type_size(_to_legacy(self._get_expr_type(cnt)))
+                in (1, 2))
 
     def _mul_pow2_shift(self, expr):
         """For ``x * 2^n`` or ``2^n * x`` with an integer x and
@@ -19023,6 +19222,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self.gen_expr(expr)
             e("ld", "A,L")
             return
+        if isinstance(expr, ast.TernaryOp):
+            else_label = self.ctx.new_label("TERNA_E")
+            end_label = self.ctx.new_label("TERNA_END")
+            self._gen_cond_false_jump(expr.condition, else_label)
+            self._gen_expr_a(expr.true_expr)
+            e("jp", end_label)
+            self.ctx.emit_label(else_label)
+            self._gen_expr_a(expr.false_expr)
+            self.ctx.emit_label(end_label)
+            return
         if isinstance(expr, ast.UnaryOp):
             self._gen_expr_a(expr.operand)
             op = expr.op.text if hasattr(expr.op, "text") else expr.op
@@ -19041,6 +19250,21 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return
         left, right = expr.left, expr.right
         shift = None
+        if op == "<<" and self._const_int_operand(right) is None:
+            # K << n: A = K, E = n + 1, then add A,A until E is 1.
+            self._gen_expr_a(right)
+            e("ld", "E,A")
+            e("ld", f"A,{self._const_int_operand(left) & 0xFF}")
+            e("inc", "E")
+            top = self.ctx.new_label("SHLB")
+            test = self.ctx.new_label("SHLT")
+            e("jr", test)
+            self.ctx.emit_label(top)
+            e("add", "A,A")
+            self.ctx.emit_label(test)
+            e("dec", "E")
+            e("jr", f"NZ,{top}")
+            return
         if op == "*":
             # x * 2^n: the low byte is that of x << n.
             left, shift = self._mul_pow2_shift(expr)

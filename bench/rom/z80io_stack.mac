@@ -1,0 +1,36 @@
+; z80io.mac - out (port, value) and in (port) as real Z80 port instructions.
+; Part of the uc80 benchmark harness.  SPDX-License-Identifier: GPL-3.0-or-later
+;
+; uc80 pushes the arguments right to left, each in a 16-bit slot, so at
+; entry (SP) is the return address, (SP+2) the first argument and (SP+4)
+; the second.  A char result is returned in L with H = 0.
+;
+; void out (uint8_t port, uint8_t value)
+; uint8_t in (uint8_t port)
+; B is 0, so the 16-bit port address is the port number.
+
+	.Z80
+	CSEG
+
+	PUBLIC	_out
+_out:	LD	HL,2
+	ADD	HL,SP
+	LD	C,(HL)
+	INC	HL
+	INC	HL
+	LD	A,(HL)
+	LD	B,0
+	OUT	(C),A
+	RET
+
+	PUBLIC	_in
+_in:	LD	HL,2
+	ADD	HL,SP
+	LD	C,(HL)
+	LD	B,0
+	IN	A,(C)
+	LD	L,A
+	LD	H,0
+	RET
+
+	END

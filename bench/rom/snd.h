@@ -27,6 +27,7 @@
 
 void out(uint8_t port, uint8_t value);
 uint8_t in(uint8_t port);
+#pragma uc80 regcall out in
 
 static void rom_putu(unsigned int v)
 {

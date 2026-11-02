@@ -1,9 +1,10 @@
 ; z80io.mac - out (port, value) and in (port) as real Z80 port instructions.
 ; Part of the uc80 benchmark harness.  SPDX-License-Identifier: GPL-3.0-or-later
 ;
-; uc80 pushes the arguments right to left, each in a 16-bit slot, so at
-; entry (SP) is the return address, (SP+2) the first argument and (SP+4)
-; the second.  A char result is returned in L with H = 0.
+; The register convention of uc80 (#pragma uc80 regcall out in, in snd.h):
+; the first byte argument is in A, the second in E, a char result is
+; returned in A.  z80io_stack.mac has the stack-convention version for a
+; build with --no-regcall.
 ;
 ; void out (uint8_t port, uint8_t value)
 ; uint8_t in (uint8_t port)
@@ -13,24 +14,16 @@
 	CSEG
 
 	PUBLIC	_out
-_out:	LD	HL,2
-	ADD	HL,SP
-	LD	C,(HL)
-	INC	HL
-	INC	HL
-	LD	A,(HL)
+_out:	LD	C,A
+	LD	A,E
 	LD	B,0
 	OUT	(C),A
 	RET
 
 	PUBLIC	_in
-_in:	LD	HL,2
-	ADD	HL,SP
-	LD	C,(HL)
+_in:	LD	C,A
 	LD	B,0
 	IN	A,(C)
-	LD	L,A
-	LD	H,0
 	RET
 
 	END

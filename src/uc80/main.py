@@ -442,6 +442,8 @@ class _Roots:
     im2_on: bool = False          # IM 2 is in use
     where: dict = None            # {("rst", 8) | ("vec", 0x38): "file:line"}
     save_wa: set = None           # interrupt functions that save work areas
+    regcall: set = None           # external functions with the register
+                                  # convention (#pragma uc80 regcall)
 
 
 _VECTORS = {0x38: "INT (38h)", 0x66: "NMI (66h)"}
@@ -478,7 +480,7 @@ def _ambiguous_functions(asts: list, paths: list) -> dict:
 
 _NAME_WORDS = {"rst": (1,), "im2": (1,), "vector": (1,),
                "interrupt": (0,), "nmi": (0,)}
-_ALL_NAMES = ("keep", "public", "isr_save_workareas")
+_ALL_NAMES = ("keep", "public", "isr_save_workareas", "regcall")
 
 
 def source_name(name: str) -> str:
@@ -541,7 +543,8 @@ def _roots_from_options(entries: list, pragmas: list,
     Raises CodegenError for a pragma it does not understand: a vector
     that is silently dropped is a ROM that does not start."""
     roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={},
-                   rst={}, im2={}, where={}, save_wa=set())
+                   rst={}, im2={}, where={}, save_wa=set(),
+                   regcall=set())
     ident = re.compile(r"^[A-Za-z_]\w*$")
     ambiguous = ambiguous or {}
 
@@ -629,6 +632,10 @@ def _roots_from_options(entries: list, pragmas: list,
             roots.keep.update(words)
             if verb == "public":
                 roots.public.update(words)
+        elif verb == "regcall":
+            if not words or not all(ident.match(w) for w in words):
+                raise CodegenError(f"{where}: expected one or more names")
+            roots.regcall.update(words)
         elif verb == "rst":
             addr = _parse_address(words[0]) if words else None
             ok = (len(words) in (2, 3, 4) and addr is not None
@@ -708,7 +715,8 @@ def _roots_from_options(entries: list, pragmas: list,
         else:
             raise CodegenError(
                 f"{where}: unknown verb; uc80 knows keep, public, vector, "
-                f"interrupt, nmi, rst, im2, im2table and isr_save_workareas")
+                f"interrupt, nmi, rst, im2, im2table, regcall and "
+                f"isr_save_workareas")
     for name in sorted(roots.save_wa):
         if name not in roots.isrs:
             raise CodegenError(
@@ -1036,6 +1044,48 @@ def main() -> int:
         action="store_true",
         help="Do not remove dead register writes and register copies by "
              "the liveness pass (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-cmp-mem",
+        action="store_true",
+        help="Keep the push and pop of a register pair around the compare "
+             "of a register local with a word or byte in memory "
+             "(docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-regcall",
+        action="store_true",
+        help="Ignore #pragma uc80 regcall: call the named external "
+             "functions with the stack convention (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-mul8x16",
+        action="store_true",
+        help="Call __mul16 also when one factor is known to be 0..255 "
+             "(docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-byte-shl",
+        action="store_true",
+        help="Shift a constant by a variable count in HL also when only "
+             "the low byte of the result is used (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-a-mem",
+        action="store_true",
+        help="Load A again from a byte in memory that A already holds "
+             "(docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-byte-tern",
+        action="store_true",
+        help="Compute a conditional expression through HL also when only "
+             "the low byte of the result is used (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-zero-xor",
+        action="store_true",
+        help="Keep ld A,0 where xor A would do (docs/family_l.md)"
     )
     parser.add_argument(
         "--no-ret-jump",
@@ -1686,6 +1736,8 @@ def main() -> int:
                                             or args.embed_lib
                                             or args.runtime_lib
                                             or args.startup_lib),
+                           regcall_names=(None if args.no_regcall
+                                          else roots.regcall),
                            foreign_asm_names=regcc.asm_text_names(mac_files),
                            register_locals=not args.no_register_locals,
                            naked_funcs={n for n, _f, _l in sdcc_found.naked},
@@ -1715,6 +1767,9 @@ def main() -> int:
         gen.enable_div16b = not args.no_div16b
         gen.enable_const_store = not args.no_const_store
         gen.enable_mul16c = not args.no_mul16c
+        gen.enable_mul8x16 = not args.no_mul8x16
+        gen.enable_byte_shl = not args.no_byte_shl
+        gen.enable_byte_tern = not args.no_byte_tern
         gen.enable_mul16c_loop = not args.no_mul16c_loop
         gen.size_helpers = args.size_helpers
         gen.enable_sdivmod_merge = not args.no_sdivmod_merge
@@ -2512,6 +2567,10 @@ def main() -> int:
             peep_local.RET_JMP = not args.no_ret_jump
             peep_local.CP_ZERO = not args.no_cp_zero
             peep_flow.ENABLED = not args.no_flow_opt
+            peep_flow.CMP_MEM = not args.no_cmp_mem
+            peep_flow.A_MEM = not args.no_a_mem
+            peep_flow.ZERO_A = not args.no_zero_xor
+            peep_flow.GLOBAL_COPY = not args.no_cmp_mem
             peephole = _Peephole(PeepholeOptimizer())
             # Not peephole.optimize(code): inline asm is an optimization
             # barrier and its bytes are never rewritten.
