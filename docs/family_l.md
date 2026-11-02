@@ -37,6 +37,8 @@ The change is made only when all of these are true:
 
 In the second case no code reads the pointer before the assignment. So the pointer is never null when the program reads the pointer.
 
+The compiler also changes `(&obj)->member` to `obj.member` and `*(&obj)` to `obj` everywhere. A macro such as `#define G (&state)` makes such expressions.
+
 The change saves 3348 bytes in `mojozork-size`.
 
 ## qsort of 16-bit elements

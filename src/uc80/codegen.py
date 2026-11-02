@@ -6719,6 +6719,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         """A static pointer that holds one address becomes the address
         (ptrconst.py, docs/family_l.md)."""
         self.ptr_const_count = 0
+        if self.enable_ptr_const:
+            from . import ptrconst
+            ptrconst.fold_arrow_of_address(unit)
         if (not self.enable_ptr_const or not self.whole_program
                 or self.rom_data or self.sdas_output or self.has_mac_files
                 or self.isr_funcs or self.naked

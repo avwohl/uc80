@@ -556,3 +556,36 @@ def _rw(node, pname, obj):
             and _addr_of(node.operand) == obj):
         return node.operand.operand
     return node
+
+
+def fold_arrow_of_address(unit) -> int:
+    """``(&obj)->member`` is ``obj.member``, and ``*(&obj)`` is ``obj``.
+    The macro form ``#define G (&state)`` makes such expressions."""
+    count = 0
+
+    def rw(node):
+        nonlocal count
+        if isinstance(node, list):
+            for i, x in enumerate(node):
+                node[i] = rw(x)
+            return node
+        if isinstance(node, tuple) or not _is_node(node):
+            return node
+        for f in _dcfast.fields(node):
+            if f.name == "pos":
+                continue
+            v = getattr(node, f.name, None)
+            if isinstance(v, (list, tuple)) or _is_node(v):
+                nv = rw(v)
+                if nv is not v:
+                    setattr(node, f.name, nv)
+        if isinstance(node, ast.ArrowMember) and _addr_of(node.obj):
+            count += 1
+            return ast.Member(obj=node.obj.operand, member=node.member,
+                              pos=node.pos)
+        return node
+
+    for it in unit.items or []:
+        if isinstance(it, ast.FunctionDef) and it.body is not None:
+            it.body = rw(it.body)
+    return count

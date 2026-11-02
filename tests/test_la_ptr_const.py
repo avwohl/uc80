@@ -276,3 +276,23 @@ int main(void)
     want, got, text = run_both(tmp_path, src)
     assert got == want == "10 3"
     assert check(text)
+
+
+def test_arrow_of_an_address(tmp_path):
+    src = STATE + r"""
+static State state;
+#define G (&state)
+int main(void)
+{
+    State local;
+    G->count = 4;
+    G->table[1] = 9;
+    (&local)->count = 3;
+    printf("%d %d %d %d\n", state.count, G->table[1], (&local)->count,
+           (*G).count);
+    return 0;
+}
+"""
+    want, got, text = run_both(tmp_path, src)
+    assert got == want == "4 9 3 4"
+    assert "ld\t(_state),HL" in text
