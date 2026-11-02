@@ -86,6 +86,7 @@ The compiler finds a pair of operations when the operands are variables of 16 bi
 - The first operation always runs when its statement runs. It is not on the right of `&&` or `||` and not in an arm of `?:`.
 - No statement between the two operations changes an operand. A call between the two operations is possible only when the operands are local variables. The second statement can be the assignment `x = ... x / n ...` to an operand.
 - Between the two statements there is no label, no loop, no `if` and no other control statement.
+- For signed values, the program has no other division or remainder that can call `__sdiv16` or `__smod16`, and the pair is in a loop or in a function other than `main`. Else the two routines of family K (or the shared body) are smaller than `__sdivmod16`, and the pair stays as two operations. Unsigned pairs never make the image bigger.
 
 If the first operation does not end in a divide call (a constant divisor that is a power of two, for example), the compiler computes the second operation after the first. The result is correct in all cases.
 

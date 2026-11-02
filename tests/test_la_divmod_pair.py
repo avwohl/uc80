@@ -250,7 +250,7 @@ int main(void)
 """
     want, got, text = run_both(tmp_path, src, "--no-divmod-pair")
     assert got == want
-    assert "__sdivmod16" not in text
+    assert "call\t__sdivmod16" not in text
     want, got, text = run_both(tmp_path, src)
     assert got == want
     assert "call\t__sdivmod16" in text
@@ -324,3 +324,57 @@ int main(void)
 """
     want, got, text = run_both(tmp_path, src)
     assert got == want
+
+
+def test_signed_pair_next_to_a_lone_divide_stays_two_operations(tmp_path):
+    # __sdivmod16 would link next to __sdiv16: the image would grow
+    src = HEAD + r"""
+static int q, r;
+static void both(int x, int n)
+{
+    q = x / n;
+    r = x % n;
+}
+static int alone(int x, int n) { return x / n; }
+int main(void)
+{
+    both(100, 7); printf("%d %d %d\n", q, r, alone(55, 4));
+    both(-100, 7); printf("%d %d\n", q, r);
+    return 0;
+}
+"""
+    want, got, text = run_both(tmp_path, src)
+    assert got == want
+    assert "call\t__sdivmod16" not in text
+
+
+def test_signed_pair_in_main_outside_loops_stays_two_operations(tmp_path):
+    src = HEAD + r"""
+int main(void)
+{
+    int x = 100, n = 7, q, r;
+    q = x / n;
+    r = x % n;
+    printf("%d %d\n", q, r);
+    return 0;
+}
+"""
+    want, got, text = run_both(tmp_path, src)
+    assert got == want == "14 2"
+    assert "call\t__sdivmod16" not in text
+
+
+def test_unsigned_pair_in_main_outside_loops_is_paired(tmp_path):
+    src = HEAD + r"""
+int main(void)
+{
+    unsigned x = 1000, n = 7, q, r;
+    q = x / n;
+    r = x % n;
+    printf("%u %u\n", q, r);
+    return 0;
+}
+"""
+    want, got, text = run_both(tmp_path, src)
+    assert got == want == "142 6"
+    assert "call\t__div16" in text and "call\t__mod16" not in text

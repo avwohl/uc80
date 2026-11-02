@@ -256,35 +256,112 @@ def run(unit, *, int_size=2, name_of=None, params_of=None) -> int:
     total = 0
     counter = [0]
     pending: dict = {}
+    funcs = []
     for it in unit.items or []:
         if isinstance(it, ast.FunctionDef) and it.body is not None:
             fx = _Func(it, gtypes, gaddr, params_of)
             pairs = []
             _block_items_walk(it.body, fx, pairs)
-            for (e1, e2) in pairs:
-                _apply(it, e1, e2, counter, pending)
-                total += 1
+            funcs.append((it, fx, pairs))
+    # A signed pair pays in bytes only when the program has no other signed
+    # 16-bit divide: __sdivmod16 (58 bytes) replaces __sdiv16 and __smod16
+    # (70 bytes), and it costs bytes beside any of the two.  The shared
+    # body of family K (49 bytes) wins in main outside every loop.
+    keep = []
+    for it, fx, pairs in funcs:
+        is_main = name_of(it) == "main"
+        keep.append([p for p in pairs
+                     if not (p[0][4] == "s" and is_main and p[2] == 0)])
+    lone_signed = _program_has_lone_signed(unit, funcs, keep)
+    for (it, fx, _pairs), pairs in zip(funcs, keep):
+        for (e1, e2, depth) in pairs:
+            if e1[4] == "s" and lone_signed:
+                continue
+            _apply(it, e1, e2, counter, pending)
+            total += 1
     unit._dm_pending = pending
     return total
 
 
-def _block_items_walk(node, fx, pairs):
-    """Find the blocks (statement lists) below ``node`` and scan each."""
+# libc routines that call __sdiv16 or __smod16
+_SIGNED_LIBC = frozenset(("div", "cbrt", "cbrtf", "cbrtl"))
+
+
+def _program_has_lone_signed(unit, funcs, keep) -> bool:
+    """Is there a divide or remainder that may call __sdiv16 or __smod16
+    and is not in a pair that stays?  Unknown types count as signed."""
+    in_pair = set()
+    for pairs in keep:
+        for e1, e2, _d in pairs:
+            in_pair.add(id(e1[0]))
+            in_pair.add(id(e2[0]))
+    for it, fx, _pairs in funcs:
+        stack = [it.body]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, (list, tuple)):
+                stack.extend(n)
+                continue
+            if not _is_node(n):
+                continue
+            if isinstance(n, ast.Identifier) and _tok(n.name) in _SIGNED_LIBC:
+                return True
+            if isinstance(n, ast.BinaryOp) and id(n) not in in_pair:
+                o = _opt(n)
+                if o in ("/", "%", "/=", "%=") and not _benign(n, fx):
+                    return True
+            for _nm, v in _children_fields(n):
+                if isinstance(v, (list, tuple)) or _is_node(v):
+                    stack.append(v)
+    return False
+
+
+def _benign(op, fx) -> bool:
+    """The operation cannot call __sdiv16 or __smod16: a power of two, or an
+    operand that is unsigned (16 bits), long or floating."""
+    if isinstance(op.right, ast.IntLiteral):
+        k = fx.kind(op.right)
+        if k is not None and k[2] > 0 and k[2] & (k[2] - 1) == 0:
+            return True
+    for o in (op.left, op.right):
+        if type(o).__name__ in ("SizeofExpr", "SizeofType"):
+            return True                     # size_t: unsigned
+        if isinstance(o, ast.IntLiteral):
+            low = _tok(o.value).lower()
+            if "u" in low or "l" in low:
+                return True
+        elif isinstance(o, ast.Identifier):
+            nm = _tok(o.name)
+            key = fx.types.get(nm) if nm in fx.declared else fx.gtypes.get(nm)
+            if key is None:
+                continue
+            if key in _UNSIGNED:
+                return True
+            if any(w in key for w in ("long", "float", "double")):
+                return True
+    return False
+
+
+def _block_items_walk(node, fx, pairs, depth=0):
+    """Find the blocks (statement lists) below ``node`` and scan each.
+    ``depth`` counts the loops around the block."""
     if isinstance(node, ast.CompoundStmt):
-        _scan_block(node.items, fx, pairs)
+        _scan_block(node.items, fx, pairs, depth)
         return
     if not _is_node(node):
         return
     cls = type(node).__name__
     if cls in ("StmtExpr",):
         return
+    if cls in ("WhileStmt", "ForStmt", "DoWhileStmt"):
+        depth += 1
     for _nm, v in _children_fields(node):
         if isinstance(v, list):
             for x in v:
                 if _is_node(x) and not isinstance(x, (ast.Declaration,)):
-                    _block_items_walk(x, fx, pairs)
+                    _block_items_walk(x, fx, pairs, depth)
         elif _is_node(v):
-            _block_items_walk(v, fx, pairs)
+            _block_items_walk(v, fx, pairs, depth)
 
 
 def _item_exprs(item):
@@ -299,7 +376,7 @@ def _item_exprs(item):
     return []
 
 
-def _scan_block(items, fx, pairs):
+def _scan_block(items, fx, pairs, depth=0):
     open_: list = []        # candidates: dict(op, parent, field, idx, kind, names, glob, o)
     for item in items:
         if isinstance(item, ast.EmptyStmt):
@@ -308,7 +385,7 @@ def _scan_block(items, fx, pairs):
                                    ast.Declaration))
         if not simple:
             open_.clear()
-            _block_items_walk(item, fx, pairs)
+            _block_items_walk(item, fx, pairs, depth)
             continue
         eff = _Effects()
         _effects(item, eff)
@@ -346,7 +423,7 @@ def _scan_block(items, fx, pairs):
                 if eff.call and c["glob"]:
                     continue
                 pairs.append(((c["op"], c["parent"], c["field"], c["idx"], c["u"]),
-                              (op, parent, field, idx)))
+                              (op, parent, field, idx), depth))
                 open_.remove(c)
                 matched_nodes.add(id(op))
                 break
