@@ -302,3 +302,25 @@ int main(void)
 """
     want, got, text = run_both(tmp_path, src)
     assert got == want
+
+
+def test_inline_byte_divide_leaves_the_second_operation(tmp_path):
+    # the dividend is known to be 0..199: the divide is inline code with no
+    # call that returns both results, so the pair stays two operations
+    src = r"""
+#include <stdio.h>
+int main(void)
+{
+    unsigned x, r, q;
+    unsigned long sum = 0;
+    for (x = 0; x < 200; x++) {
+        r = x % 10;
+        q = x / 10;
+        sum += q * 100 + r;
+    }
+    printf("%lu\n", sum);
+    return 0;
+}
+"""
+    want, got, text = run_both(tmp_path, src)
+    assert got == want

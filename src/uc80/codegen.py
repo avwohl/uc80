@@ -3972,6 +3972,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_mul16c = True
         self._mul16_sites = []
         self._loop_stmts = []
+        self._dm_pending = {}
         self._loop_calls = {}
         self.enable_mul16c_loop = True
         self._sdiv_sites = []
@@ -6675,13 +6676,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.divmod_pairs = divmod_pair.run(
             unit, int_size=self.type_config.int_size, name_of=function_name,
             params_of=function_params)
+        self._dm_pending = getattr(unit, "_dm_pending", {})
 
     def _gen_divmod_first(self, expr) -> None:
-        """``__uc80_dm_first(E1, T, E2)``: E1 in HL, and the other result
-        of the divide in the variable T.  E2 is the other operation: it
-        is computed when E1 does not end in a call that returns both."""
-        e1, tvar, e2 = expr.args
-        sym = self.ctx.lookup(tvar.name.text)
+        """``__uc80_dm_first(E1, T)``: E1 in HL.  When E1 ends in a call
+        that returns both results, the other result is in the variable T,
+        and T takes the place of the second operation."""
+        from . import divmod_pair
+        e1, tvar = expr.args
+        name = tvar.name.text
+        sym = self.ctx.lookup(name)
         cap = {"node": e1, "sym": sym, "done": False}
         prev = self._dm_capture
         self._dm_capture = cap
@@ -6689,11 +6693,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self.gen_expr(e1)
         finally:
             self._dm_capture = prev
-        if not cap["done"]:
-            self.ctx.emit_instr("push", "HL")
-            self.gen_expr(e2)
-            self._store_local(sym, 2)
-            self.ctx.emit_instr("pop", "HL")
+        if cap["done"]:
+            divmod_pair.take_second(self._dm_pending, name)
 
     def _dm_call(self, expr, routine: str, op: str) -> bool:
         """The call that divides ``expr`` is the first of a pair: call the

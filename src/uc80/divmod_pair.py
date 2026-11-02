@@ -10,14 +10,14 @@ The runtime routine that divides leaves both results (__div16 returns the
 quotient in HL and the remainder in DE).  The pass finds such pairs and
 rewrites the first operation to the intrinsic call
 
-    __uc80_dm_first(E1, T, E2)
+    __uc80_dm_first(E1, T)
 
-and the second operation to the variable ``T``.  The code generator
-(codegen.py, ``_gen_divmod_first``) generates E1 with the call that leaves
-both results, stores the other result in ``T`` and keeps E1 in HL.  When
-E1 does not end in such a call (a shift for a power of two, for example),
-the generator computes E2 and stores it in ``T`` after E1.  So the rewrite
-is right whichever code E1 gets.
+and notes where E2 stands.  The code generator (codegen.py,
+``_gen_divmod_first``) generates E1 with the call that leaves both
+results, stores the other result in ``T`` and keeps E1 in HL.  Then the
+generator puts ``T`` in place of E2 (``take_second``).  When E1 does not end
+in such a call (an inline divide of a byte, for example), E2 stays as it
+is.  So the rewrite is right whichever code E1 gets.
 
 A pair is two operations in the same block, one after the other, with
 
@@ -255,14 +255,16 @@ def run(unit, *, int_size=2, name_of=None, params_of=None) -> int:
                 stack.append(v)
     total = 0
     counter = [0]
+    pending: dict = {}
     for it in unit.items or []:
         if isinstance(it, ast.FunctionDef) and it.body is not None:
             fx = _Func(it, gtypes, gaddr, params_of)
             pairs = []
             _block_items_walk(it.body, fx, pairs)
             for (e1, e2) in pairs:
-                _apply(it, e1, e2, counter)
+                _apply(it, e1, e2, counter, pending)
                 total += 1
+    unit._dm_pending = pending
     return total
 
 
@@ -416,18 +418,16 @@ def _set(parent, field, idx, new):
         getattr(parent, field)[idx] = new
 
 
-def _apply(func, e1, e2, counter):
+def _apply(func, e1, e2, counter, pending):
     op1, p1, f1, i1, unsigned = e1
     op2, p2, f2, i2 = e2
     name = f"__dm{counter[0]}"
     counter[0] += 1
-    import copy
-    e2copy = copy.deepcopy(op2)
-    call = ast.Call(func=make_identifier(INTRINSIC),
-                    args=[op1, make_identifier(name), e2copy],
-                    pos=op1.pos)
-    _set(p1, f1, i1, call)
-    _set(p2, f2, i2, make_identifier(name))
+    call1 = ast.Call(func=make_identifier(INTRINSIC),
+                     args=[op1, make_identifier(name)], pos=op1.pos)
+    _set(p1, f1, i1, call1)
+    # the code generator puts T in place of E2 when E1 has set T
+    pending[name] = (op2, p2, f2, i2)
     kw = "unsigned" if unsigned == "u" else "int"
     spec = ast.BasicTypeSpec(kw=_make_synthetic_token(
         "KW_UNSIGNED" if unsigned == "u" else "KW_INT", kw))
@@ -436,3 +436,23 @@ def _apply(func, e1, e2, counter):
         declarators=[ast.InitDeclarator(declarator=ast.Declarator(
             name=_make_synthetic_token("IDENT", name)))])
     func.body.items.insert(0, decl)
+
+
+def take_second(pending, name):
+    """Put the variable ``name`` in place of the second operation, when the
+    operation still stands where the pass saw the operation.  Returns True
+    when it did."""
+    site = pending.pop(name, None)
+    if site is None:
+        return False
+    op2, parent, field, idx = site
+    cur = getattr(parent, field)
+    if idx is None:
+        if cur is not op2:
+            return False
+        setattr(parent, field, make_identifier(name))
+        return True
+    if idx >= len(cur) or cur[idx] is not op2:
+        return False
+    cur[idx] = make_identifier(name)
+    return True
