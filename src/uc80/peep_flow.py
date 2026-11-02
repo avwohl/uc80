@@ -32,7 +32,11 @@ three steps.
 6. A constant that a register already holds.  After ``ld HL,5`` a later
    ``ld HL,5`` goes (also for a byte register).  A label, a call or a write
    to the register ends the fact.
-7. The test ``while (n--)`` on a 16-bit value in memory:
+7. A constant offset in two steps.  ``ld HL,4 / add HL,BC / inc HL / inc HL``
+   becomes ``ld HL,6 / add HL,BC``, and ``ld DE,4 / add HL,DE / inc HL``
+   becomes ``ld DE,5 / add HL,DE`` when DE is dead afterwards.  The carry
+   of the add must not be read.
+8. The test ``while (n--)`` on a 16-bit value in memory:
    ``push HL / dec HL / ld (X),HL / pop HL / ld A,H / or L / jcc`` becomes
    ``ld A,H / or L / dec HL / ld (X),HL`` (HL holds n-1 afterwards; when
    HL is live after the test, one ``inc HL`` follows).
@@ -73,6 +77,17 @@ _ALU = ("add", "adc", "sub", "sbc", "and", "or", "xor", "cp")
 
 class _Bail(Exception):
     pass
+
+
+_DEBUG = bool(__import__("os").environ.get("UC80_FLOW_DEBUG"))
+
+
+def _bail(why: str):
+    """Leave the run alone (UC80_FLOW_DEBUG=1 says why)."""
+    if _DEBUG:
+        import sys
+        print(f"peep_flow: run left alone: {why}", file=sys.stderr)
+    raise _Bail(why)
 
 
 class _R:
@@ -133,9 +148,9 @@ def _parse(lines: list[str]) -> list[_R]:
         try:
             eff = _effect(r.op, ",".join(r.ops))
         except Exception:
-            raise _Bail()
+            _bail(f"no effect for {ln.strip()}")
         if eff.size is None:
-            raise _Bail()
+            _bail(f"unknown instruction {ln.strip()}")
         r.rd = _mask(eff.reads)
         r.wr = _mask(eff.writes)
         if eff.swap_de_hl:
@@ -149,13 +164,12 @@ def _parse(lines: list[str]) -> list[_R]:
             r.flow = "next"        # an interrupt resumes at the next line
         if eff.flow == "call":
             r.rd = _ALL
-            r.wr = _ALL
-            if eff.cond:
-                raise _Bail()
+            # a conditional call may not run: it kills nothing
+            r.wr = 0 if eff.cond else _ALL
         if r.op in ("exx",):
-            raise _Bail()
+            _bail("exx")
         if r.op == "ex" and r.ops and r.ops[0].lower() == "af":
-            raise _Bail()
+            _bail("ex af,af'")
     return out
 
 
@@ -516,6 +530,104 @@ def _const_forward(rs: list[_R]) -> bool:
     return changed
 
 
+_CARRY_READERS = frozenset(("adc", "sbc", "rl", "rr", "rla", "rra", "ccf",
+                            "daa"))
+# instructions that set the carry flag and do not read it
+_CARRY_WRITERS = frozenset(("add", "sub", "and", "or", "xor", "cp", "neg",
+                            "rlca", "rrca", "rlc", "rrc", "sla", "sra",
+                            "srl", "scf"))
+
+
+def _carry_dead_after(rs: list[_R], start: int) -> bool:
+    """The carry flag (and the half carry) is not read before an
+    instruction sets it again, on the straight line from record ``start``.
+    A conditional jump or return ends the search with "no"."""
+    steps = 0
+    for r in rs[start:]:
+        if r.kind != "ins":
+            continue
+        steps += 1
+        if steps > 14:
+            return False
+        if r.op in _CARRY_READERS:
+            return False
+        if r.flow == "call":
+            return True
+        if r.flow == "branch" or (r.flow == "return" and r.cond):
+            return False
+        if r.flow in ("jump", "return", "stop"):
+            return True
+        if r.op in ("push", "ex") and r.ops and r.ops[0].lower() == "af":
+            return False
+        if r.op in _CARRY_WRITERS:
+            return True
+    return False
+
+
+def _fold_offsets(rs: list[_R]) -> bool:
+    """Step 7."""
+    live_out, _ = _liveness(rs)
+    n = len(rs)
+    changed = False
+    i = 0
+    while i < n:
+        r = rs[i]
+        if not (r.kind == "ins" and not r.dead and r.op == "ld"
+                and len(r.ops) == 2 and r.ops[0].lower() in _PAIR_NAMES):
+            i += 1
+            continue
+        v = _int_of(r.ops[1])
+        if v is None:
+            i += 1
+            continue
+        j = i + 1
+        while j < n and rs[j].kind == "nop":
+            j += 1
+        if j >= n or rs[j].kind != "ins" or rs[j].dead:
+            i += 1
+            continue
+        a = rs[j]
+        x = r.ops[0].lower()
+        src = a.ops[1].lower() if len(a.ops) == 2 else ""
+        if not (a.op == "add" and len(a.ops) == 2 and a.ops[0].lower() == "hl"
+                and src in ("bc", "de") and (x == "hl" or x == src)):
+            i += 1
+            continue
+        run = []
+        k = j + 1
+        net = 0
+        while k < n:
+            q = rs[k]
+            if q.kind == "nop":
+                k += 1
+                continue
+            if (q.kind == "ins" and not q.dead and q.op in ("inc", "dec")
+                    and [o.lower() for o in q.ops] == ["hl"]):
+                run.append(k)
+                net += 1 if q.op == "inc" else -1
+                k += 1
+                continue
+            break
+        if not run:
+            i += 1
+            continue
+        last = run[-1]
+        ok = _carry_dead_after(rs, last + 1)
+        if ok and x != "hl":
+            ok = not (live_out[last] & _mask(_PAIRS[x]))
+        if not ok or not _allow():
+            i += 1
+            continue
+        nv = (v + net) & 0xFFFF
+        r.ops = [r.ops[0], str(nv)]
+        r.line = f"\tld\t{r.ops[0]},{nv}"
+        for q in run:
+            rs[q].dead = True
+        changed = True
+        i = last + 1
+    return changed
+
+
 def _inc_sp(rs: list[_R]) -> bool:
     """Step 4."""
     live_out, _ = _liveness(rs)
@@ -524,7 +636,8 @@ def _inc_sp(rs: list[_R]) -> bool:
     i = 0
     while i < n:
         r = rs[i]
-        if not (r.kind == "ins" and r.flow == "call" and not r.dead):
+        if not (r.kind == "ins" and r.flow == "call" and not r.dead
+                and not r.cond):
             i += 1
             continue
         j = i + 1
@@ -618,48 +731,73 @@ def _post_dec(rs: list[_R]) -> bool:
 
 
 def optimize(code: str) -> str:
-    """Apply the steps to the text of one run of code."""
+    """Apply the steps to the text of one run of code.  A run with exx
+    (the names of the registers change meaning) is split at the labels of
+    functions, and each part without exx is done alone."""
     if not ENABLED or _effect is None:
         return code
     lines = code.split("\n")
     try:
-        rs = _parse(lines)
-    except _Bail:
-        return code
-    try:
-        any_change = False
-        for _ in range(4):
-            c = _copy_prop(rs)
-            d = _dead_writes(rs)
-            if d:
-                rs = _drop(rs)
-            k = _dead_code(rs)
-            if k:
-                rs = _drop(rs)
-            m = _inc_sp(rs)
-            if m:
-                rs = _drop(rs)
-                rs = _parse(_text(rs))
-            f = _mem_forward(rs)
-            if f:
-                rs = _drop(rs)
-                rs = _parse(_text(rs))
-                m = True
-            q = _const_forward(rs)
-            if q:
-                rs = _drop(rs)
-                rs = _parse(_text(rs))
-            p = _post_dec(rs)
-            if p:
-                rs = _drop(rs)
-                rs = _parse(_text(rs))
-            any_change = any_change or c or d or p or k or m or q
-            if not (c or d or p or k or m or q):
-                break
-    except _Bail:
-        return code
+        res = _optimize_lines(lines)
+        return code if res == code else res
+    except _Bail as e:
+        if not e.args or e.args[0] not in ("exx", "ex af,af'"):
+            return code
+    # split at the labels that are not local labels of the compiler
+    parts: list[list[str]] = [[]]
+    for ln in lines:
+        if (ln and ln[0] not in " \t;" and _LABEL.match(ln)
+                and ln[0] not in "@?" and parts[-1]):
+            parts.append([])
+        parts[-1].append(ln)
+    out: list[str] = []
+    for part in parts:
+        try:
+            out.append(_optimize_lines(part))
+        except _Bail:
+            out.append("\n".join(part))
+    res = "\n".join(out)
+    return code if res == code else res
+
+
+def _optimize_lines(lines: list[str]) -> str:
+    rs = _parse(lines)
+    any_change = False
+    for _ in range(4):
+        c = _copy_prop(rs)
+        d = _dead_writes(rs)
+        if d:
+            rs = _drop(rs)
+        k = _dead_code(rs)
+        if k:
+            rs = _drop(rs)
+        m = _inc_sp(rs)
+        if m:
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
+        f = _mem_forward(rs)
+        if f:
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
+            m = True
+        q = _const_forward(rs)
+        if q:
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
+        o = _fold_offsets(rs)
+        if o:
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
+            q = True
+        p = _post_dec(rs)
+        if p:
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
+        any_change = any_change or c or d or p or k or m or q
+        if not (c or d or p or k or m or q):
+            break
     if not any_change:
-        return code
+        return "\n".join(lines)
     return "\n".join(r.line for r in rs)
 
 

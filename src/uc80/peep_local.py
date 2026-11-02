@@ -619,6 +619,8 @@ def _branch_merge_one(lines: list[str], start: int):
         cc = ins[jc][1][0]
         jmp_op = ins[k][0]
         sk_label = f"{target}S"
+        while sk_label in name_idx:     # a second merge of the same arms
+            sk_label += "S"
         head = lines[:first] + p_lines + lines[first:jc]
         tail = lines[end_idx:]
         if not y_has:

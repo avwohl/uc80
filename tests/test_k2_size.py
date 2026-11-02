@@ -990,3 +990,137 @@ int main(void)
     _w, _g, off = run_both(d, src, "--no-loop-unroll")
     assert "@FORB" not in on and "ld\t(_p+18),HL" in on
     assert len(on) < len(off)
+
+
+def test_flow_conditional_call_does_not_stop_the_pass():
+    text = """_f:
+	ld	H,B
+	ld	L,H
+	ld	A,L
+	bit	7,D
+	call	nz,_g
+	ld	E,A
+	ret
+"""
+    out = flow(text)
+    assert "ld\tA,B" in out                 # the copy chain was folded
+
+
+def test_flow_conditional_call_keeps_what_the_callee_may_read():
+    text = """_f:
+	ld	A,5
+	or	D
+	call	nz,_g
+	ld	A,2
+	ret
+"""
+    out = flow(text)
+    assert "ld\tA,5" in out
+
+
+def test_flow_exx_leaves_only_its_own_function_alone():
+    text = """_a:
+	ld	B,5
+	exx
+	ld	B,7
+	exx
+	ld	A,B
+	ret
+_b:
+	ld	H,B
+	ld	L,H
+	ld	A,L
+	ld	E,A
+	ret
+"""
+    out = flow(text)
+    assert out.split("_b:")[0] == text.split("_b:")[0]
+    assert "ld\tL,B" in out.split("_b:")[1]
+
+
+def test_flow_keeps_a_load_that_sets_the_flags():
+    text = """_f:
+	ld	A,I
+	ld	A,0
+	jp	po,@x
+	inc	A
+@x:
+	ld	(_y),A
+	ret
+"""
+    assert flow(text) == text
+
+
+def test_flow_keeps_the_load_of_an_address():
+    text = """_f:
+	ld	HL,__sc_float_on
+	ld	HL,0
+	ret
+"""
+    assert "__sc_float_on" in flow(text)
+
+
+def test_flow_folds_a_constant_offset():
+    text = """_f:
+	ld	HL,4
+	add	HL,BC
+	inc	HL
+	inc	HL
+	ld	A,(HL)
+	ret
+"""
+    out = flow(text)
+    assert "ld\tHL,6" in out and "inc\tHL" not in out
+
+
+def test_flow_folds_an_offset_through_a_register_that_dies():
+    text = """_f:
+	ld	DE,4151
+	add	HL,DE
+	inc	HL
+	inc	HL
+	ld	E,(HL)
+	inc	HL
+	ld	D,(HL)
+	ret
+"""
+    out = flow(text)
+    assert "ld\tDE,4153" in out
+
+
+def test_flow_keeps_an_offset_when_the_carry_is_read():
+    text = """_f:
+	ld	HL,4
+	add	HL,BC
+	inc	HL
+	jr	c,@x
+@x:
+	ret
+"""
+    assert flow(text) == text
+
+
+def test_flow_forgets_a_constant_after_a_write_and_a_label():
+    text = """_f:
+	ld	HL,1
+	ld	(_a),HL
+	inc	HL
+	ld	HL,1
+	ld	(_b),HL
+@x:
+	ld	HL,1
+	ld	(_c),HL
+	ret
+"""
+    out = flow(text)
+    assert out.count("ld\tHL,1") == 3
+
+
+def test_flow_keeps_the_second_load_of_a_constant_after_a_call():
+    text = """_f:
+	ld	HL,1
+	call	_g
+	ld	HL,1
+	ret
+"""
+    assert flow(text).count("ld\tHL,1") == 2
