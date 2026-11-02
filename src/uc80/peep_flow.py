@@ -41,6 +41,10 @@ three steps.
    ``ld A,H / or L / dec HL / ld (X),HL`` (HL holds n-1 afterwards; when
    HL is live after the test, one ``inc HL`` follows).
 
+9. A step of a register-pair counter through HL.  ``ld H,B / ld L,C / inc HL
+   / ld B,H / ld C,L`` becomes ``inc BC / ld H,B / ld L,C`` (the same for DE
+   and for ``dec``): HL holds the new value in both.  22 T-states become 14.
+
 The pass turns off with ``--no-flow-opt``.
 """
 
@@ -735,6 +739,39 @@ def _inc_sp(rs: list[_R]) -> bool:
     return changed
 
 
+def _pair_step(rs: list[_R]) -> bool:
+    """Step 9."""
+    n = len(rs)
+    idx = [k for k in range(n) if rs[k].kind == "ins" and not rs[k].dead]
+    changed = False
+    for a in range(len(idx) - 4):
+        seq = [rs[k] for k in idx[a:a + 5]]
+        if any(x.dead for x in seq):
+            continue
+        sig = [(x.op, tuple(o.lower() for o in x.ops)) for x in seq]
+        for hi, lo, pair in (("b", "c", "BC"), ("d", "e", "DE")):
+            for op in ("inc", "dec"):
+                if sig == [("ld", ("h", hi)), ("ld", ("l", lo)),
+                           (op, ("hl",)), ("ld", (hi, "h")),
+                           ("ld", (lo, "l"))]:
+                    # the five records must be adjacent lines, with no
+                    # label between them
+                    if idx[a + 4] - idx[a] != 4 and any(
+                            rs[k].kind not in ("nop",)
+                            for k in range(idx[a], idx[a + 4] + 1)
+                            if k not in idx[a:a + 5]):
+                        continue
+                    if not _allow():
+                        continue
+                    seq[0].line = f"\t{op}\t{pair}"
+                    seq[1].line = f"\tld\tH,{hi.upper()}"
+                    seq[2].line = f"\tld\tL,{lo.upper()}"
+                    seq[3].dead = True
+                    seq[4].dead = True
+                    changed = True
+    return changed
+
+
 def _post_dec(rs: list[_R]) -> bool:
     """Step 3."""
     live_out, _ = _liveness(rs)
@@ -834,6 +871,10 @@ def _optimize_lines(lines: list[str]) -> str:
     rs = _parse(lines)
     any_change = False
     for _ in range(4):
+        if _pair_step(rs):
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
+            any_change = True
         c = _copy_prop(rs)
         d = _dead_writes(rs)
         if d:

@@ -223,7 +223,7 @@ def union_is_safe(unit):
                     nm = _decl_name(d)
                     if nm:
                         lit_ptr.add(nm)
-            elif isinstance(n, ast.UnaryOp):
+            elif isinstance(n, (ast.UnaryOp, ast.PostfixOp)):
                 op = getattr(n.op, "text", n.op)
                 if op == "&" and isinstance(n.operand, ast.Identifier):
                     addr_taken.add(n.operand.name.text)
@@ -264,6 +264,8 @@ def union_is_safe(unit):
         pname = params[index]
         if (fname, pname) in assigned or declared.get((fname, pname), 0):
             return False
+        if pname in addr_taken:
+            return False        # *&param = ... can change the format
         # the address of the wrapper is not taken
         if idents.get(fname, 0) != callee_count.get(fname, 0):
             return False

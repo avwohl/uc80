@@ -131,7 +131,9 @@ The routine `__div16` called `__dv8w` for a divisor of 256 or more. The routine 
 
 The old routine `__dv8w` is also used by `__div32` and `__div32w`. The compact `__div16` saves bytes only when the program has no 32-bit divide. The compiler checks this at the end of the compile. It also checks the libc routines that need a 32-bit divide (`ldiv`, `lldiv`, `cbrt`, `scanf`, `strtod`, `atof`). When one of these is present, the compiler embeds the old `__div16` from `lib/rt_alt/rt_div16.mac`. The switch `--no-div16-compact` selects the old routine for each program.
 
-The change saves 42 bytes in each of `davidly-e`, `dhrystone21` and the other programs with a 16-bit divide and no 32-bit divide. The T-states do not change for a divisor of less than 256. A division by a divisor of 256 or more is slower by about 70 T-states for a large dividend.
+The change saves 42 bytes in a program with a 16-bit divide and no 32-bit divide. The T-states do not change for a divisor of less than 256. A division by a divisor of 256 or more is slower by about 90 T-states for a dividend of 0x8000 or more, and by about 280 T-states for other dividends (measured in integrate14 on 1280 random divides).
+
+So the compiler embeds the compact `__div16` only when every 16-bit divide stands in `main` outside every loop, and no libc routine that divides is in the program. The switch `--size-helpers` removes these rules. The switch `--no-div16-compact` selects the old routine in every case.
 
 ## puts without a frame
 

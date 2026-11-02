@@ -143,8 +143,17 @@ def test_startup_variant_follows_the_bss_size(tmp_path):
     t_old = compile_c(tmp_path, big, "--no-fast-bss-clear",
                       name="o").read_text()
     assert "__bss_big" not in t_small and "LDIR" in t_small.upper()
-    # Family K step 3: the push fill needs --fast-bss-clear.
-    assert "__bss_big" not in t_big and "LDIR" in t_big.upper()
+    # Integrate14: a big BSS with no timed region gets the push fill
+    # (the clear is part of the measured run); a TIMER_START label keeps
+    # the small code unless --fast-bss-clear is given.
+    assert "__bss_big:" in t_big
+    timed = ('int a[4000]; int main(void) { asm("TIMER_START::");'
+             ' return a[0]; }\n')
+    t_timed = compile_c(tmp_path, timed, name="t").read_text()
+    t_timed_fast = compile_c(tmp_path, timed, "--fast-bss-clear",
+                             name="tf").read_text()
+    assert "__bss_big" not in t_timed and "LDIR" in t_timed.upper()
+    assert "__bss_big:" in t_timed_fast
     assert "__bss_big:" in t_fast
     assert "__bss_big" not in t_old and "LDIR" in t_old.upper()
 

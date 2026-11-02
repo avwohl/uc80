@@ -423,6 +423,13 @@ class _BuildLibsAction(argparse.Action):
         parser.exit(0)
 
 
+def _has_timer_label(code: str, mac_files: list) -> bool:
+    """True when the program marks a timed region (the TIMER_START label
+    of bench.h).  The start-up clear runs before such a region."""
+    pat = re.compile(r"^\s*TIMER_START\s*:", re.M)
+    return bool(pat.search(code) or any(pat.search(m) for m in mac_files))
+
+
 def _defines_label(code: str, mac_files: list, label: str) -> bool:
     """True if the generated code or an appended .mac file has PUBLIC label."""
     pat = re.compile(r"^\s*PUBLIC\s+(?:[^;\n]*,\s*)?" + re.escape(label)
@@ -1112,15 +1119,16 @@ def main() -> int:
     parser.add_argument(
         "--no-fast-bss-clear",
         action="store_true",
-        help="Embed the old start-up code that clears the BSS with one "
-             "LDIR (docs/startup_fast.md)"
+        help="Embed crt0_slow.mac, the start-up code from before family "
+             "J (not the default small start-up code; docs/startup_fast.md)"
     )
     parser.add_argument(
         "--fast-bss-clear",
         action="store_true",
         help="Embed the start-up code with the push fill for a BSS of "
-             "6000 bytes or more; the default is the small start-up code "
-             "(docs/startup_fast.md)"
+             "6000 bytes or more, also for a program with a TIMER_START "
+             "label (without the option the push fill is the default "
+             "only for a program with no such label; docs/startup_fast.md)"
     )
     parser.add_argument(
         "--no-narrow-index",
@@ -1861,7 +1869,14 @@ def main() -> int:
                 # code pays only when the program has a big BSS of its own.
                 if args.no_fast_bss_clear:
                     startup_name = "crt0_slow.mac"
-                elif args.fast_bss_clear and _common_bytes(code) >= BIG_BSS:
+                elif (_common_bytes(code) >= BIG_BSS
+                      and (args.fast_bss_clear
+                           or not _has_timer_label(code, mac_files))):
+                    # A big BSS with no timed region: the clear is part of
+                    # the measured run, and the push fill is 14 T-states a
+                    # byte faster than LDIR.  With a TIMER_START label the
+                    # clear runs before the timed part, and the 74 bytes
+                    # would buy nothing.
                     startup_name = "crt0.mac"
                 else:
                     startup_name = "crt0_small.mac"

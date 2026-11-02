@@ -3968,6 +3968,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_mul16c = True
         self._mul16_sites = []
         self._sdiv_sites = []
+        self._div16_sites = []
         self.size_helpers = False
         self.enable_sdivmod_merge = True
         self.enable_for_entry = True
@@ -6588,15 +6589,23 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     def _decide_compact_div16(self) -> None:
         """The compact __div16 (8-step loop for a divisor of 256 or more,
         no __dv8w) saves bytes only when no 32-bit divide in the program
-        needs __dv8w too.  docs/k2_code_size.md."""
+        needs __dv8w too.  A divisor of 256 or more takes about 280
+        T-states a call more, so the routine is the default only when every
+        divide stands in main outside every loop (--size-helpers removes
+        the rule).  docs/k2_code_size.md."""
         used = self.ctx.runtime_used
         ok = self.enable_compact_div16 and not (used & self._DIV32_NAMES)
+        if ok and not self.size_helpers and any(
+                fn != "main" or depth > 0 for fn, depth in self._div16_sites):
+            ok = False
         if ok:
             text = "\n".join(
                 ln for ln in self.ctx.lines
                 if not ln.lstrip().lower().startswith(
                     ("extrn", "public", ";")))
-            ok = not self._DIV32_LIBC.search(text)
+            ok = not (self._DIV32_LIBC.search(text)
+                      or (not self.size_helpers
+                          and self._DIV16_LIBC.search(text)))
         self.compact_div16 = ok
 
     def _count_is_multiple_of_4(self, e) -> bool:
@@ -21844,6 +21853,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         elif name in ("__sdiv16", "__smod16"):
             self._sdiv_sites.append((self.ctx.current_function,
                                      len(self.ctx.continue_labels)))
+        if name in ("__div16", "__mod16", "__sdiv16", "__smod16"):
+            self._div16_sites.append((self.ctx.current_function,
+                                      len(self.ctx.continue_labels)))
         self.ctx.emit_instr("call", name)
 
     def _store_tmp32(self) -> None:

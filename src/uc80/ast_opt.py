@@ -191,8 +191,32 @@ _DEBUG = bool(__import__("os").environ.get("UC80_UNROLL_DEBUG"))
 UNROLL_SLACK = 4
 
 
+_FLOW_NODES = (ast.BreakStmt, ast.ContinueStmt, ast.GotoStmt, ast.LabelStmt,
+               ast.CaseStmt, ast.DefaultStmt, ast.SwitchStmt)
+
+
 class Uc80ASTOptimizer(ASTOptimizer):
     """See the module docstring."""
+
+    @staticmethod
+    def _contains_flow_control(node) -> bool:
+        """A break, continue, goto, label, case or switch anywhere below
+        ``node``.  uc_core's walker does not enter a switch, so a
+        ``continue`` in a switch was copied into the unrolled body and
+        acted like a ``break`` of the switch."""
+        stack = [node]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, list):
+                stack.extend(x)
+                continue
+            if not _is_node(x):
+                continue
+            if isinstance(x, _FLOW_NODES):
+                return True
+            for f in _fields(x):
+                stack.append(getattr(x, f, None))
+        return False
 
     # uc80 --no-dead-test turns the removal of an empty ``if`` off
     dead_test = True
