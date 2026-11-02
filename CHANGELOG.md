@@ -6,6 +6,36 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Integration of family K into the bug round 6 tree (branch `integrate14`)
+
+The merge of `famk` (head ce83370) into `main` 73a58f6 had text conflicts only in `CHANGELOG.md` and `docs/codegen_gap.md`. Both files keep both entries. The files `bench/results/results.csv` and `docs/benchmarks_speed.md` merged without a conflict, and the benchmark run made them again. The libraries were built again, and `runtime.mac` got one changed comment from `rt_sdivmod16.mac`.
+
+- **`codegen.py` was read after the merge.** `main` changed `_int32_wide_quotient`, `_int32_int_result`, the unary `+`, `-` and `~` cases and the static initializer. `famk` changed other functions: the divide calls, the shift call, the `for` loop, the store of a link address and `_call_runtime`. The changes do not overlap. The code of `famk` that chooses `__div16b` and `__mul16c` tests for a 16-bit `int`. The tests of this entry run `--int=32` programs with the short helpper routines and compare the output with the host compiler. The new tests show that the results are right.
+- **The `for` loop with its test at the end changed one test.** `test_integ13_bench_check.py` counted one rotated loop in a program with `for (i = 0; i < 100; i++)`. A local counter now has the new shape without rotation. The test uses a global counter, which keeps the rotated loop. The check loops still take no rotation budget.
+- **New tests in `tests/test_integ14_famk_bug6.py`.** They run the programs and compare the output with the host compiler.
+  - Check loops with the unroller and the loops with the test at the end.
+  - `--int=16` and `--int=32` with `__div16b`, the compact `__div16`, `__sdiv16m`, `__shr32c`, `__div32w`, and with all family K switches off.
+  - Formats from macros, `#` and `##`, a `__VA_ARGS__` wrapper, and a format in a variable or an array, with and without the literal union.
+  - Counters, members and arrays of `volatile` type through a `typedef` and a `struct`: the loops stay, the two reads of a volatile member stay, and no `ldir` is made.
+- **Rows in `results.csv`.** No status changes (104 OK, 3 FITS, 5 TOO-BIG). The image of all 112 uc80 rows is smaller than on `main`. 96 rows have fewer T-states in the column `cycles`.
+- **Rows that are slower than `main`.**
+  - `bsd-wump` needs 4.61 percent more T-states (3936315 to 4117621). The program has no timer region, and its BSS has 13732 bytes. The `LDIR` clear of the BSS takes about 13 T-states a byte more than the push fill. `--fast-bss-clear` gives the old number.
+  - The column `total_cycles` (the whole run) grows for programs with a large BSS: `sieve` +2.88 percent, `sieve+static` +2.49, `embench-tarfind` +2.78, `embench-huffbench` +0.66, `davidly-sieve` +0.36 and `stanford-bubble` +0.02. The cause is the same. The column `cycles` (the timed region) of these programs is not larger: it is 0.002 to 1.0 percent smaller.
+  - The size means are 0.8236 and 0.7895 (famk alone, measured on the old bench sources: 0.8213 and 0.7845). The `famk` number comes from a run on the bench sources before the self-check code of bug round 6. That code adds bytes to the programs.
+- **Ratio to SDCC 4.6.0 (geometric mean).** Size 0.8236, whole image 0.7895, T-states 0.4949, T-states without `sort-*` 0.5961, 76 of 78 programs faster. `main` 73a58f6 has 0.9109, 0.8726, 0.5023, 0.6029 and 75 of 78.
+- Still above SDCC in the whole image (size mode): `sort-equ-5000`, `sort-ord-5000`, `sort-ran-20`, `sort-ran-5000` and `sort-rev-5000` (the `qsort` of the library), `dhrystone21` (1814 against 1811 bytes), `dhrystone21+nostructassign` (1814 against 1789) and `dhrystone21+static` (1850 against 1774).
+- Slower than SDCC in speed mode: `davidly-ttt` (8239388 against 7960572 T-states) and `micro+loop` (1256037 against 1102397).
+- **Gates on the final tree.**
+  - `pytest -n 6`: 3946 passed (`main` 3818, `famk` 3905). With the new test file: 3990 passed.
+  - `run_ctests.py`: 220 of 220, and 220 of 220 with `--int 32`.
+  - `uc_core` pytest: 465 passed, 1 skipped.
+  - The gen3 family with `GEN3_FULL=1`: 76 passed.
+  - `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
+  - `difftest.py --count 800 -j 8`: seed 1 and seed 5000 give no `UC80-WRONG`, no `MODEL-DIFF` and no `ALL-DIFF`.
+  - `ccfuzz.py`: 2000 programs, 1500 with `--ll`, `--narrow --flags=--int=32` 400, and 400 each with `--flags=-O0`, `--flags=--no-register-locals`, `--flags=--int=32`, `--flags=--size-helpers`, `--flags=--fast-bss-clear` and all family K switches off. All PASS.
+  - `loopfuzz.py`: 400 programs each, default, `--flags=--int=32` and `--flags=-O0`. All PASS.
+  - Bench: all 112 programs with `bench/run.py -c uc80`: 104 OK, 3 FITS, 5 TOO-BIG, as on `main`.
+
 ### Bug round 6 (branch `bugfix6`, with `uc_core` branch `bugfix6`)
 
 - **uc_core, a macro parameter inside a string literal.** `#define OUT(s) printf("%s %d\n", s, 1)` with `OUT("x")` gave `printf("%"x" %d\n", "x", 1)`. The compiler either failed or made wrong code. The preprocessor now splits the replacement list into preprocessing tokens. The preprocessor replaces a parameter only where the token is an identifier (C23 6.10.5). A string literal or a character constant is one token, with its `u8`, `u`, `U` or `L` prefix. The same code now handles `#`, `##`, `__VA_ARGS__` and the new `__VA_OPT__`. `##` also works in an object-like macro. Two tokens that were separate stay separate (`- -1`, not `--1`). This holds at the end of a macro call too (`T(int)x` gives `int x`). An object-like macro that names itself through other tokens (`#define b (b+1)`) expands once. `#__VA_ARGS__` keeps one space where the source had white space. `__VA_OPT__` looks at the argument after its expansion. Two limits stay: the preprocessor expands text again until nothing changes, so a function-like macro name followed by a macro that expands to `(` is called (`G LP 2 RP`), and a host does not call `G`. A `, ## __VA_ARGS__` with an empty argument that is present (`E("x",)`) drops the comma, as GCC does and clang does not. The test `tests/test_macro_tokens.py` in `uc_core` compares 200 generated macro tests with the host `cc -E`. The `-E` output of all c-testsuite and bench programs is the same, except for white space inside a macro that has several lines.
