@@ -6,6 +6,49 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Family K step 2: smaller code
+
+Step 1 linked less library code. Step 2 makes the generated code and the runtime routines smaller. Each change has a switch that turns the change off. The page is `docs/k2_code_size.md`.
+
+- **A counted `for` loop has its test at the end.** The init clause stores a constant. The first test is true for this constant. The loop then has no test before the body. The copy of the test that loop rotation made is not needed. 80 of the 112 programs are smaller (2 to 160 bytes). Most are faster too. Switch: `--no-for-entry`.
+- **A short counted loop is unrolled.** The loop `for (i = 0; i < 4; i++)` has at most 4 passes. A local counter becomes a constant in each copy, and the copies fold into stores to fixed addresses. The unroller of `uc_core` never ran, because the tree wraps the init clause. The new unroller keeps the final value of the counter (the old code stopped one step before it). A size estimate decides. `stanford-puzzle` is about 520 bytes smaller from this change. Switch: `--no-loop-unroll`.
+- **A liveness pass removes dead code.** It removes dead register writes and register copies. It removes the reload of a word that a register pair holds, and a constant that a register holds. It removes dead code behind a jump and a jump to the next line. It folds `ld HL,4 / add HL,BC / inc HL / inc HL` into one offset. A pair of `inc SP` after a call becomes `pop AF`. `while (n--)` loses its `push` and `pop`. A conditional call in the runtime stopped the first version of the pass for the whole program. So the big programs got no gain. `rogue36-size` is 6528 bytes smaller after this repair. Switch: `--no-flow-opt`.
+- **The two arms of an `if` and `else` share their start and their end.** `crc` is 63 bytes smaller and 5.6% faster. Switch: `--no-branch-merge`.
+- **The address of a function or a string is stored without `push` and `pop`.** `mojozork-size` is 412 bytes smaller. Switch: `--no-const-store`.
+- **The test `x < 1` of a 16-bit value uses `ld A,H / or L` and `bit 7,H`.** Eight bytes in place of twelve. Switch: `--no-sign-one`.
+- **A jump to a `ret` becomes `ret`, and `cp 0` before a Z or C jump becomes `or A`.** Switches: `--no-ret-jump`, `--no-cp-zero`.
+- **A shorter signed divide and modulo.** A program that calls `__sdiv16` and `__smod16` uses one shared body (49 bytes in place of 70). `davidly-e` is 91 bytes smaller and 2.7% slower. Switch: `--no-sdivmod-merge`.
+- **A shorter `__div16`.** A divisor of 256 or more uses an eight-step loop in place of `__dv8w`. This saves 42 bytes in a program with no 32-bit divide. Switch: `--no-div16-compact`.
+- **`puts` without a frame.** `__puts_s` has 28 bytes (`puts` has 38). Switch: `--no-puts-small`.
+- **Not done.** A word `qsort` for the `sort-*-5000` programs: the generic `qsort` has 855 bytes, and the programs need about 460. The strength reduction of array indexes: the unroller removes the need in `stanford-puzzle`. A compact multiply: it makes `dhrystone21` 7% slower.
+
+Repairs found by the gates:
+
+- `ld A,I` sets the flags, and the pass deleted it as a dead load.
+- A load of the address `__sc_float_on` is a link hook.
+- A jump to a function (the interrupt vector of a ROM) became a `ret`.
+- A conditional return was an end of the path, and `halt` was an end of the path.
+- The label of a second arm merge was made twice.
+
+Gates on the final tree:
+
+- `pytest -n 6`: 3901 passed (3797 on `main`).
+- `run_ctests.py`: 220 of 220, and 220 of 220 with `--int 32`.
+- `difftest.py --count 800 -j 8` with the seeds 51000 and 61000: no UC80-WRONG and no MODEL-DIFF line.
+- `ccfuzz.py`: 2000 programs and 1000 with `--ll`. The option sets `-O0`, `--no-register-locals`, `--int=32`, all new switches off, `--no-flow-opt`, `--no-loop-unroll`, `--no-for-entry` and `--no-branch-merge` have 400 programs each. All PASS.
+- A loop fuzzer (random nests of counted loops with `break`, `continue`, calls and several counter types, compared with the host compiler): 1400 programs, also with `--int=32` and `-O0`. All PASS.
+- The gen3 family with `GEN3_FULL=1`: 76 passed.
+- `isrproof.py` with `ul80` and with `--sdas`: 7 of 7 OK each. `sndrom.py`: 4 of 4 OK.
+- Bench: 112 uc80 rows. The method is the one of `bench/report.py`. Against SDCC 4.6.0 the size is 0.8168 (0.9124 on `main`, 0.8426 with the step 2 switches off). The whole image is 0.7805 (0.8705). The T-states are 0.4971 (0.5036), and 0.5991 without the `sort-*` programs (0.6047). uc80 is faster than SDCC on 76 of the 78 programs (75 on `main`). 17 of the 26 programs that were bigger than SDCC are now at or below its image.
+
+Rows that are slower than with the step 2 switches off:
+
+- `davidly-e` +2.7% and `micro+a8` +0.8% (the shared signed divide and modulo, about 20 T-states a call).
+- `davidly-sieve` +4.7%. A loop with a counter in memory and a test at the end loads the counter again in each pass. Rotation had HL ready.
+- `micro+a16` +0.2%, and `pi_ldiv` and `pi_ldiv+static` by 45 T-states in 1.8 billion.
+
+Programs that are still bigger than SDCC: the four `sort-*-5000` programs and `sort-ran-20` (the `qsort` of the library), `dhrystone21` (three builds, the speed-tuned multiply has 139 bytes against 23), and `mojozork-size`.
+
 ### Family K step 1: less library code in the image
 
 The image of a program is the linked code, with the library and the start-up code. Step 1 links less library code. Each change has a switch that turns the change off. The page is `docs/k1_link_size.md`. The tests are `tests/test_k1_printf.py`, `tests/test_k1_divide.py` and `tests/test_k1_qsort_small.py`. The tests run code and compare the output with the host compiler.

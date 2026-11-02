@@ -71,7 +71,7 @@ The function `_cost` in `ast_opt.py` estimates the size of a tree in bytes. A va
 
 The compiler folds the copies and compares their cost with the cost of the loop. The loop stays when the copies cost more than `UNROLL_SLACK` (4) bytes more. The environment variable `UC80_UNROLL_DEBUG=1` prints both costs for each loop.
 
-The program `stanford-puzzle` has 13 nests of three short loops. The nests become stores to fixed addresses. The program is 530 bytes smaller.
+The program `stanford-puzzle` has 13 nests of three short loops. The nests become stores to fixed addresses. The program is about 520 bytes smaller.
 
 ## The two arms of an if and else
 

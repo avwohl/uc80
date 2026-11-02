@@ -80,6 +80,7 @@ The switches of family K step 2 are all off-switches. Each one is in [k2_code_si
 
 - `--no-const-store`: the address of a function or a string is stored through a pointer with `push HL` and `pop DE`.
 - `--no-for-entry`: a counted `for` loop tests the condition before the first pass.
+- `--no-loop-unroll`: a counted loop of 1 to 4 passes stays a loop.
 - `--no-branch-merge`: the two arms of an if and else keep their common start and end.
 - `--no-sign-one`: the test `x < 1` of a 16-bit value uses the general signed compare.
 - `--no-flow-opt`: the liveness pass of `peep_flow.py` does not run.
