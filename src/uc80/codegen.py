@@ -7503,8 +7503,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         convention)."""
         self._regcall_ext = set()
         names = self.regcall_names
-        if not names or self.type_config.int_size != 2:
+        if not names:
             return
+        if self.type_config.int_size != 2:
+            raise CodegenError(
+                "#pragma uc80 regcall needs a 16-bit int; use --no-regcall "
+                "with --int=32")
         scan = regcc.scan_program(unit, function_name)
         defined = {function_name(i) for i in unit.items
                    if isinstance(i, ast.FunctionDef) and i.body is not None}
@@ -7569,6 +7573,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     continue
                 self._regcc[nm] = plan
                 self._regcall_ext.add(nm)
+        missing = sorted(set(names) - seen)
+        if missing:
+            raise CodegenError(
+                f"#pragma uc80 regcall {', '.join(missing)}: no function "
+                f"declaration with this name in the program")
 
     def _plan_register_cc(self, unit) -> None:
         self._plan_register_cc_defs(unit)

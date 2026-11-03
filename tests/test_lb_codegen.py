@@ -237,6 +237,47 @@ def test_regcall_rejects_address_use(tmp_path):
     assert "regcall" in r.stderr
 
 
+def _regcall_compile(tmp_path, text, *flags):
+    src = tmp_path / "d.c"
+    src.write_text(text)
+    return subprocess.run([sys.executable, "-m", "uc80.main", str(src), "-o",
+                           str(tmp_path / "d.mac"), *flags],
+                          capture_output=True, text=True, cwd=str(REPO),
+                          timeout=120)
+
+
+def test_regcall_misspelled_name_is_an_error(tmp_path):
+    r = _regcall_compile(tmp_path,
+                         "void out(unsigned char p, unsigned char v);\n"
+                         "#pragma uc80 regcall ouut\n"
+                         "int main(void) { out(1, 2); return 0; }\n")
+    assert r.returncode != 0
+    assert "ouut" in r.stderr and "regcall" in r.stderr
+
+
+def test_regcall_needs_16_bit_int(tmp_path):
+    text = ("void out(unsigned char p, unsigned char v);\n"
+            "#pragma uc80 regcall out\n"
+            "int main(void) { out(1, 2); return 0; }\n")
+    r = _regcall_compile(tmp_path, text, "--int=32")
+    assert r.returncode != 0 and "16-bit" in r.stderr
+    r = _regcall_compile(tmp_path, text, "--int=32", "--no-regcall")
+    assert r.returncode == 0, r.stderr
+
+
+def test_snd_cmdq_stays_below_sdcc_size_mode(tmp_path):
+    """SDCC 4.6.0 size mode makes 1188 bytes (bench/tools/faml/sdrom.py).
+    The margin is 3 bytes: a code size change must not lose the goal."""
+    import shutil
+    if not (shutil.which("um80") and shutil.which("ul80")):
+        pytest.skip("needs um80 and ul80")
+    sys.path.insert(0, str(REPO / "bench" / "rom"))
+    import sndrom
+    info = sndrom.build("snd-cmdq", tmp_path, "neogeo")
+    assert info["ok"], info.get("log")
+    assert info["rom"] <= 1188, info["rom"]
+
+
 # ---------------------------------------------------------------------------
 # R4, R2, ternary: bytes in A, one multiply loop
 # ---------------------------------------------------------------------------

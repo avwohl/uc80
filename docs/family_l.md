@@ -144,6 +144,8 @@ The compiler stops with an error in these cases:
 - the prototype has more than two parameters, a `...`, or a parameter that is not an integer or a pointer of one or two bytes.
 - the program uses the name in another way than as the callee of a call. The address of the function would call it with the stack convention.
 - a call has another number of arguments than the prototype.
+- the program has no declaration for a name in the pragma (for example a misspelled name).
+- `int` has 32 bits (`--int=32`). The routines of the register convention take 16-bit words. Use `--no-regcall` with `--int=32`.
 
 `--no-regcall` ignores the pragma. `--no-register-cc` does not turn the pragma off, because the assembly routine does not change.
 
@@ -232,7 +234,20 @@ Step LB: the program `embench-md5sum` needs 1214 T-states more (0.035 percent). 
 
 Three `nop` instructions give back the old image size and 3,433,492 T-states, fewer than before (3,433,500). The program `embench-huffbench` had the same effect with a smaller change of the code. So the cause is the address of the heap, not the code.
 
+Speed rule exception: the T-state count of `embench-md5sum` is 1214 higher than in step LA. The cause is the address of the heap, not the code, so the program has a documented exception to the speed rule.
+
+## Basis of the figures
+
+The SDCC figures of the ROM plan (`docs/family_l_plan.json`) are the size of the program without the empty-program base. The rows of `bench/results/results.csv` are the whole linked image (for example `davidly-e` 540 against 489, `sort-ran-5000` 780 against 735). Uc80 is below SDCC on both bases.
+
+The bench figures in this page use the whole image. Five rows (`empire-trefonas`, `trek-size`, `adventure-size`, `battlestar-size`, `rogue36-size`) are TOO-BIG: they have no SDCC row and cannot run. The bench compared 107 rows with SDCC. The 5 rows are size-only.
+
+The difftest seed 90065 (`--focus llong`) gives output that differs from the model in uc80 and SDCC. The uc80 output is the same as the output of the build before step LB, so step LB is not the cause. The program has a bit-field struct with a `long long` member. Step LC must look at this seed.
+
 ## Not built
+
+These items stay open for step LC.
+
 
 - L10, a table for runs of constant stores. Only `mojozork-size` has such runs, and the program is 4350 bytes under SDCC.
 - The small items of L13: `inc BC` twice for `p += 2`, a shorter `__conout`, and the IX-free prologue of a small leaf function. The constant of the local in the init clause of a `for` is not built too.
