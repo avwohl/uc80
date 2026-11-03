@@ -4067,6 +4067,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self._char_noext: set[str] = set()
         self._noext_call = None
         self.enable_char_noext = True
+        self.enable_call_reads = True
+        self.stack_funcs: dict[str, int] = {}
         # Compound-literal labels the code writes at run time.
         self._cl_written: set[str] = set()
         self.ctx = CodeGenContext()
@@ -7572,6 +7574,38 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self._plan_register_cc_defs(unit)
         self._plan_regcall(unit)
         self._plan_char_noext(unit)
+        self._plan_stack_funcs(unit)
+
+    def _plan_stack_funcs(self, unit) -> None:
+        """label -> the bytes that a call reads, for the functions that this
+        program defines (the stack convention reads none, the register
+        convention reads the registers of its plan) and for the external
+        functions of ``#pragma uc80 regcall``.  The liveness pass of
+        peep_flow lets a call or a jump read only these (--no-call-reads)."""
+        self.stack_funcs = {}
+        if not self.enable_call_reads:
+            return
+        scan = regcc.scan_program(unit, function_name)
+        bits = {"A": 1, "E": 16, "HL": 96, "DE": 24}
+        names = {}
+        for item in unit.items:
+            if not isinstance(item, ast.FunctionDef) or item.body is None:
+                continue
+            name = function_name(item)
+            if (name is None or name in self.naked
+                    or name in self.isr_funcs or name in self.absolute
+                    or name in scan.asm_funcs):
+                continue
+            names[name] = True
+        for name in list(names) + sorted(self._regcall_ext):
+            plan = self._regcc.get(name)
+            m = 0
+            if plan is not None:
+                for loc in plan.loc:
+                    m |= bits.get(loc, 0)
+                if name in self._wr_cmps:
+                    m |= 96 | 24
+            self.stack_funcs[self._rl_label(name)] = m
 
     def _plan_char_noext(self, unit) -> None:
         """The functions of the program that return a char and that

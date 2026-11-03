@@ -1109,6 +1109,22 @@ def main() -> int:
              "site (docs/family_l.md)"
     )
     parser.add_argument(
+        "--no-be16",
+        action="store_true",
+        help="Read a big-endian word of two bytes through two loads and an or (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-ex-load",
+        action="store_true",
+        help="Keep ld HL,(X) and ex DE,HL where ld DE,(X) would do (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-call-reads",
+        action="store_true",
+        help="Let a call of a function of the program read every register in "
+             "the liveness pass (docs/family_l.md)"
+    )
+    parser.add_argument(
         "--no-ret-jump",
         action="store_true",
         help="Keep a jump to a ret as a jump (docs/k2_code_size.md)"
@@ -1792,6 +1808,7 @@ def main() -> int:
         gen.enable_byte_shl = not args.no_byte_shl
         gen.enable_byte_tern = not args.no_byte_tern
         gen.enable_char_noext = not args.no_char_noext
+        gen.enable_call_reads = not args.no_call_reads
         gen.enable_char_ranges = not args.no_char_noext
         gen.enable_mul16c_loop = not args.no_mul16c_loop
         gen.size_helpers = args.size_helpers
@@ -2593,8 +2610,11 @@ def main() -> int:
             peep_flow.CMP_MEM = not args.no_cmp_mem
             peep_flow.A_MEM = not args.no_a_mem
             peep_flow.CHAR_L = not args.no_char_noext
+            peep_flow.STACK_FUNCS = dict(gen.stack_funcs)
             peep_flow.ZERO_A = not args.no_zero_xor
             peep_flow.HL_SUM = not args.no_hl_reuse
+            peep_flow.BE16 = not args.no_be16
+            peep_flow.EX_LOAD = not args.no_ex_load
             peep_flow.DEAD_ALU = not args.no_dead_alu
             peep_flow.POP_CLEAN = not args.no_pop_cleanup
             peep_flow.GLOBAL_COPY = not args.no_cmp_mem

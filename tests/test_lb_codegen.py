@@ -480,3 +480,96 @@ def test_hl_is_loaded_once(tmp_path):
     _, _, on = run_both(tmp_path, BOARD_SRC)
     _, _, off = run_both(tmp_path, BOARD_SRC, "--no-hl-reuse")
     assert on.count("ld\tHL,_g_board") < off.count("ld\tHL,_g_board")
+
+
+# ---------------------------------------------------------------------------
+# L7, L9, L13: chained stores, a big-endian word, ld DE,(X), call reads
+# ---------------------------------------------------------------------------
+
+WORD_SRC = r"""
+#include <stdio.h>
+typedef unsigned char u8;
+typedef unsigned short u16;
+static u8 mem[300];
+static u16 tbl[40];
+struct S { u16 a, b, c, d, e; } st;
+static u16 keep;
+static u8 *getp(int n) { return mem + n; }
+static void load(int n)
+{
+    u8 *p = getp(n);
+    st.a = (((u16) p[0]) << 8) | ((u16) p[1]); p += 2;
+    st.b = (((u16) p[0]) << 8) | ((u16) p[1]); p += 2;
+    st.c = (((u16) p[0]) << 8) | ((u16) p[1]); p += 2;
+    st.d = (((u16) p[0]) << 8) | ((u16) p[1]); p += 2;
+    st.e = (((u16) p[0]) << 8) | ((u16) p[1]);
+}
+static void setup(u16 *t)
+{
+    t[0] = 0x1234; t[1] = 0x5678; t[2] = 9; t[4] = 0xBEEF; t[5] = 1;
+    t[6] = 0x7777; t[9] = 12345; t[10] = 23; t[11] = 0xFFFF;
+}
+static void setup_b(u8 *t)
+{
+    t[3] = 7; t[4] = 8; t[5] = 9; t[8] = 200; t[9] = 255; t[12] = 1;
+}
+static u16 swap_load(void) { return keep; }
+int main(void)
+{
+    int i;
+    u16 sum = 0;
+    for (i = 0; i < 300; i++)
+        mem[i] = (u8) (i * 37 + 11);
+    load(5);
+    printf("%04x %04x %04x %04x %04x\n", st.a, st.b, st.c, st.d, st.e);
+    load(200);
+    printf("%04x %04x %04x %04x %04x\n", st.a, st.b, st.c, st.d, st.e);
+    setup(tbl);
+    setup_b(mem + 100);
+    for (i = 0; i < 40; i++)
+        sum = (u16) (sum * 3 + tbl[i]);
+    for (i = 100; i < 114; i++)
+        sum = (u16) (sum * 5 + mem[i]);
+    keep = sum;
+    printf("%u %u\n", sum, swap_load());
+    return 0;
+}
+"""
+
+
+@pytest.mark.parametrize("flags", [(), ("--no-be16",), ("--no-hl-reuse",),
+                                   ("--no-ex-load",), ("--no-call-reads",),
+                                   ("-O0",), ("--no-register-locals",),
+                                   ("--no-flow-opt",)])
+def test_word_forms_match_host(tmp_path, flags):
+    want = host_output(tmp_path, WORD_SRC)
+    got, text = uc80_output(tmp_path, WORD_SRC, *flags)
+    assert got == want
+
+
+def test_big_endian_word_is_two_loads(tmp_path):
+    _, _, on = run_both(tmp_path, WORD_SRC)
+    _, _, off = run_both(tmp_path, WORD_SRC, "--no-be16")
+    assert on.count("\tld\tD,(HL)\n\tinc\tHL\n\tld\tE,(HL)\n\tex\tDE,HL") >= 3
+    assert off.count("\tld\tD,(HL)\n\tinc\tHL\n\tld\tE,(HL)\n\tex\tDE,HL") == 0
+    assert len(on) < len(off)
+
+
+def test_stores_through_a_base_pointer_use_inc():
+    """The liveness pass turns ``ld HL,N / add HL,BC`` after a store into
+    ``inc HL`` when HL holds BC plus a number that is at most three away."""
+    from uc80 import peep_flow
+    text = "\n".join([
+        "\tld\tHL,10", "\tadd\tHL,BC", "\tld\tDE,4660", "\tld\t(HL),E",
+        "\tinc\tHL", "\tld\t(HL),D",
+        "\tld\tHL,13", "\tadd\tHL,BC", "\tld\tDE,9", "\tld\t(HL),E",
+        "\tinc\tHL", "\tld\t(HL),D",
+        "\tld\tHL,40", "\tadd\tHL,BC", "\tld\t(HL),E", "\tret", ""])
+    out = peep_flow.optimize(text)
+    assert out.count("add\tHL,BC") == 2      # the second add is gone
+    assert out.count("\tinc\tHL") == 4      # two stores and two steps
+    peep_flow.HL_SUM = False
+    try:
+        assert peep_flow.optimize(text).count("add\tHL,BC") == 3
+    finally:
+        peep_flow.HL_SUM = True

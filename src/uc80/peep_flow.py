@@ -65,6 +65,14 @@ three steps.
 13. An instruction that writes only A and the flags, such as the ``rlca``
    and ``sbc A,A`` of a sign extension that nothing uses, goes when A is dead
    and no flag is read.  ``--no-dead-alu``.
+15. A chain of stores through a base pointer.  After ``ld HL,N / add HL,BC``
+   HL holds BC plus N.  A later ``ld HL,N2 / add HL,BC`` with N2 at most three
+   away from the value that HL holds now becomes ``inc HL`` (or ``dec HL``)
+   in the right number (``--no-hl-reuse``).
+16. The word ``(p[0] << 8) | p[1]`` of two bytes, with the pointer in BC,
+   becomes ``ld D,(HL) / inc HL / ld E,(HL) / ex DE,HL`` (``--no-be16``).
+17. ``ld HL,(X) / ex DE,HL`` becomes ``ld DE,(X)`` when HL is dead
+   (``--no-ex-load``).
 14. ``inc SP / inc SP`` after a call becomes ``pop HL`` (or DE, BC) when A is
    live and the pair is dead.  ``--no-pop-cleanup``.
 11. ``ld A,0`` becomes ``xor A`` when no flag is read before the next
@@ -84,6 +92,7 @@ except Exception:  # pragma: no cover - the pass is then off
     _effect = None
 
 ENABLED = True
+STACK_FUNCS: dict = {}   # label -> bytes that a call of the C function reads
 CHAR_L = True       # step 15, --no-char-noext
 CMP_MEM = True      # step 9, --no-cmp-mem
 # a debug aid that bisects a wrong result: UC80_FLOW_LIMIT=N makes only the
@@ -205,6 +214,9 @@ def _parse(lines: list[str]) -> list[_R]:
             r.flow = "next"        # an interrupt resumes at the next line
         if eff.flow == "call":
             r.rd = _ALL
+            if (not eff.cond and len(r.ops) == 1
+                    and r.ops[0] in STACK_FUNCS):
+                r.rd = STACK_FUNCS[r.ops[0]]    # a function of the program
             # a conditional call may not run: it kills nothing
             r.wr = 0 if eff.cond else _ALL
         if r.op in ("exx",):
@@ -250,7 +262,7 @@ def _liveness(rs: list[_R]):
         elif f == "jump":
             t = labels.get(r.target) if r.target else None
             if t is None:
-                exit_live[i] = _ALL
+                exit_live[i] = STACK_FUNCS.get(r.target, _ALL)
             else:
                 succs[i] = [t]
         else:                        # return, stop
@@ -1174,7 +1186,7 @@ def _flags_dead_after(rs: list[_R], start: int) -> bool:
         if r.kind != "ins":
             continue
         steps += 1
-        if steps > 10:
+        if steps > 30:
             return False
         if r.op in _FLAG_KILL or (r.op == "add" and r.ops
                                   and r.ops[0].lower() == "a"):
@@ -1183,9 +1195,14 @@ def _flags_dead_after(rs: list[_R], start: int) -> bool:
             return not r.cond
         if r.flow == "return":
             return not r.cond
+        if r.flow == "jump" and not r.cond and r.target in STACK_FUNCS:
+            return True         # a tail jump to a C function
         if r.flow in ("jump", "branch", "stop") or r.cond:
             return False
-        if r.fw or r.op in ("push", "pop", "ex", "rla", "rra", "rlca",
+        if r.op in ("push", "pop", "ex") and r.ops and r.ops[0].lower() in (
+                "af", "af'"):
+            return False
+        if r.fw or r.op in ("rla", "rra", "rlca",
                             "rrca", "cpl", "ccf", "scf", "daa", "adc",
                             "sbc", "djnz", "ldi", "ldir", "ldd", "lddr",
                             "halt", "di", "ei", "im", "reti", "retn"):
@@ -1212,13 +1229,27 @@ HL_SUM = True       # step 12, --no-hl-reuse
 DEAD_ALU = True     # step 13, --no-dead-alu
 
 
+def _split_base(x: str):
+    """``X`` of ``ld HL,X`` as (symbol or None, offset), or None."""
+    v = _int_of(x)
+    if v is not None:
+        return (None, v)
+    m = re.match(r"^([A-Za-z_@?$.][A-Za-z0-9_@?$.]*)\s*([+-]\s*\d+)?$", x)
+    if not m or m.group(1).lower() in _PAIRS or m.group(1).lower() in _BIT:
+        return None
+    return (m.group(1), int((m.group(2) or "0").replace(" ", "")))
+
+
 def _hl_sum(rs: list[_R]) -> bool:
     """Step 12: ``ld HL,X / add HL,BC`` (or DE) when HL already holds X
-    plus that pair.  A conditional jump between the two does not change HL
-    on the way that falls through; a label, a call, a jump and a write to HL
-    or to the pair end the fact.  The carry of the add must be dead."""
+    plus that pair, or a few bytes away from it.  HL holds ``base + pair +
+    k``; ``inc HL`` and ``dec HL`` change k; a conditional jump does not
+    change HL on the way that falls through; a label, a call, a jump and a
+    write to HL or to the pair end the fact.  The new add becomes at most
+    three ``inc HL`` or ``dec HL`` (a chain of stores through a base
+    pointer, step L7).  The carry of the add must be dead."""
     changed = False
-    state = None
+    state = None            # (base, pair, k)
     n = len(rs)
     i = 0
     while i < n:
@@ -1234,25 +1265,124 @@ def _hl_sum(rs: list[_R]) -> bool:
                 and r.ops[1].lower() not in _PAIRS
                 and not r.ops[1].startswith("(")):
             k = _ins_after(rs, i, 1)
-            if k is not None:
+            sb = _split_base(r.ops[1])
+            if k is not None and sb is not None:
                 a = rs[k[0]]
                 if (a.op == "add" and [o.lower() for o in a.ops] in (
                         ["hl", "bc"], ["hl", "de"])):
-                    key = (r.ops[1], a.ops[1].lower())
-                    if (state == key and _carry_dead_after(rs, k[0] + 1)
+                    pair = a.ops[1].lower()
+                    if (state is not None and state[0] == sb[0]
+                            and state[1] == pair
+                            and abs(sb[1] - state[2]) <= 3
+                            and _carry_dead_after(rs, k[0] + 1)
                             and _allow()):
-                        r.dead = True
-                        a.dead = True
+                        delta = sb[1] - state[2]
+                        if delta == 0:
+                            r.dead = True
+                            a.dead = True
+                        else:
+                            op = "inc" if delta > 0 else "dec"
+                            r.line = "\n".join(
+                                [f"\t{op}\tHL"] * abs(delta))
+                            r.op = ""
+                            r.kind = "nop"
+                            a.dead = True
                         changed = True
+                        state = (sb[0], pair, sb[1])
                     else:
-                        state = key
+                        state = (sb[0], pair, sb[1])
                     i = k[0] + 1
                     continue
         if state is not None:
-            m = 96 | _mask(_PAIRS[state[1]])
-            if r.wr & m or r.flow in ("call", "jump", "return", "stop"):
-                state = None
+            if (r.op in ("inc", "dec") and [o.lower() for o in r.ops]
+                    == ["hl"]):
+                state = (state[0], state[1],
+                         state[2] + (1 if r.op == "inc" else -1))
+            else:
+                m = 96 | _mask(_PAIRS[state[1]])
+                if r.wr & m or r.flow in ("call", "jump", "return", "stop"):
+                    state = None
         i += 1
+    return changed
+
+
+_BE16_TAIL = [("ld", ("l", "(hl)")), ("ld", ("h", "l")), ("ld", ("l", "0")),
+              ("push", ("hl",)), ("ld", ("l", "c")), ("ld", ("h", "b")),
+              ("inc", ("hl",)), ("ld", ("l", "(hl)")), ("ld", ("h", "0")),
+              ("pop", ("de",)), ("ld", ("a", "h")), ("or", ("d",)),
+              ("ld", ("h", "a")), ("ld", ("a", "l")), ("or", ("e",)),
+              ("ld", ("l", "a"))]
+BE16 = True         # step 16, --no-be16
+EX_LOAD = True      # step 17, --no-ex-load
+
+
+def _be16(rs: list[_R]) -> bool:
+    """Step 16: the word ``(p[0] << 8) | p[1]`` of two bytes, with the
+    pointer in BC and in HL, becomes ``ld D,(HL) / inc HL / ld E,(HL) / ex
+    DE,HL``.  A and DE hold other values afterwards, so they must be dead,
+    and so must the flags."""
+    live_out, _ = _liveness(rs)
+    changed = False
+    for i, r in enumerate(rs):
+        if (r.kind != "ins" or r.dead or r.op != "ld"
+                or [o.lower() for o in r.ops] != ["l", "(hl)"]):
+            continue
+        k = _ins_after(rs, i, len(_BE16_TAIL) - 1)
+        if k is None:
+            continue
+        idx = [i] + k
+        got = [_lc(rs[x]) for x in idx]
+        if got[4:6] == [("ld", ("h", "b")), ("ld", ("l", "c"))]:
+            got[4:6] = got[5], got[4]       # the copy in the other order
+        if got != _BE16_TAIL:
+            continue
+        # HL must be a copy of BC before the block
+        back = []
+        q = i - 1
+        while q >= 0 and len(back) < 2:
+            if rs[q].kind == "ins" and not rs[q].dead:
+                back.append(q)
+            elif rs[q].kind != "nop":
+                break
+            q -= 1
+        have = {_lc(rs[q]) for q in back}
+        if not ({("ld", ("l", "c")), ("ld", ("h", "b"))} <= have
+                or {("ld", ("c", "l")), ("ld", ("b", "h"))} <= have):
+            continue
+        last = idx[-1]
+        if live_out[last] & (1 | 8 | 16) or not _flags_dead_after(
+                rs, last + 1) or not _allow():
+            continue
+        lines = ["\tld\tD,(HL)", "\tinc\tHL", "\tld\tE,(HL)",
+                 "\tex\tDE,HL"]
+        rs[idx[0]].line = "\n".join(lines)
+        for x in idx[1:]:
+            rs[x].dead = True
+        changed = True
+    return changed
+
+
+def _ex_load(rs: list[_R]) -> bool:
+    """Step 17: ``ld HL,(X) / ex DE,HL`` becomes ``ld DE,(X)`` when HL is
+    dead afterwards."""
+    live_out, _ = _liveness(rs)
+    changed = False
+    for i, r in enumerate(rs):
+        if (r.kind != "ins" or r.dead or r.op != "ld" or len(r.ops) != 2
+                or r.ops[0].lower() != "hl"
+                or not _MEM_WORD.match(r.ops[1])):
+            continue
+        k = _ins_after(rs, i, 1)
+        if k is None:
+            continue
+        a = rs[k[0]]
+        if (a.op != "ex" or [o.lower() for o in a.ops] != ["de", "hl"]
+                or live_out[k[0]] & 96 or not _allow()):
+            continue
+        r.ops = ["DE", r.ops[1]]
+        r.line = f"\tld\tDE,{r.ops[1]}"
+        a.dead = True
+        changed = True
     return changed
 
 
@@ -1470,6 +1600,14 @@ def _optimize_lines(lines: list[str]) -> str:
                 rs = _drop(rs)
                 rs = _parse(_text(rs))
         if HL_SUM and _hl_sum(rs):
+            v = True
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
+        if BE16 and _be16(rs):
+            v = True
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
+        if EX_LOAD and _ex_load(rs):
             v = True
             rs = _drop(rs)
             rs = _parse(_text(rs))
