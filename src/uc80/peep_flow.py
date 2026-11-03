@@ -163,6 +163,7 @@ def _mask(regs) -> int:
 def _parse(lines: list[str]) -> list[_R]:
     out = []
     char_l = False      # inside a function that returns a char in L only
+    ret_label = False   # the label @name_ret of that function was seen
     for ln in lines:
         r = _R(ln)
         out.append(r)
@@ -170,6 +171,9 @@ def _parse(lines: list[str]) -> list[_R]:
             char_l = False
         elif ln.strip() == ";@CHARL":
             char_l = CHAR_L
+            ret_label = False
+        elif char_l and re.match(r"^@\w+_ret:", ln):
+            ret_label = True
         if not ln or not ln.strip() or ln.lstrip().startswith(";"):
             continue
         if ln[0] not in " \t":
@@ -209,6 +213,8 @@ def _parse(lines: list[str]) -> list[_R]:
         r.cond = bool(eff.cond)
         if char_l and r.op == "ret" and not r.cond:
             r.retmask = 64
+            if ret_label:
+                char_l = False      # the return of the epilogue ends it
         r.fw = any(w.startswith("f") for w in eff.writes)
         if r.op == "halt":
             r.flow = "next"        # an interrupt resumes at the next line

@@ -573,3 +573,19 @@ def test_stores_through_a_base_pointer_use_inc():
         assert peep_flow.optimize(text).count("add\tHL,BC") == 3
     finally:
         peep_flow.HL_SUM = True
+
+
+def test_char_l_return_mask_ends_with_the_function():
+    """The mark ;@CHARL says that the return of one function reads only L.
+    The code after the epilogue (the embedded runtime) is another function:
+    its return reads every register.  A first version kept the mark and
+    deleted the write of H before the return of a runtime helper."""
+    from uc80 import peep_flow
+    text = "\n".join([
+        "; Function f", ";@CHARL", "_f:", "\tld\tL,A", "@f_ret:", "\tret",
+        "", "__helper:", "\tld\tH,B", "\tret", ""])
+    out = peep_flow.optimize(text)
+    assert "\tld\tH,B" in out
+    inner = "\n".join(["; Function g", ";@CHARL", "_g:", "\tld\tH,B",
+                       "\tld\tL,A", "@g_ret:", "\tret", ""])
+    assert "\tld\tH,B" not in peep_flow.optimize(inner)

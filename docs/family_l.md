@@ -13,6 +13,16 @@ Step LA (link, library and tree level):
 - [An empty counted loop](#an-empty-counted-loop): `--no-empty-loop-fold`.
 - [A short multiply in a loop with calls](#a-short-multiply-in-a-loop-with-calls): `--no-mul16c-loop`.
 
+Step LB (code generator and ROM):
+
+- [External functions in registers](#external-functions-in-registers): `#pragma uc80 regcall`, `--no-regcall`.
+- [A compare of a register local with memory](#a-compare-of-a-register-local-with-memory): `--no-cmp-mem`.
+- [A char result in L](#a-char-result-in-l): `--no-char-noext`.
+- [Small changes of the liveness pass](#small-changes-of-the-liveness-pass): `--no-hl-reuse`, `--no-dead-alu`, `--no-pop-cleanup`, `--no-be16`, `--no-ex-load`, `--no-a-mem`, `--no-zero-xor`, `--no-call-reads`.
+- [Bytes in A](#bytes-in-a): `--no-mul8x16`, `--no-byte-shl`, `--no-byte-tern`.
+- [A frame without a reservation](#a-frame-without-a-reservation): `--no-frame-drop`.
+- [Loop rotation budget](#loop-rotation-budget).
+
 ## Static pointer to a fixed address
 
 Some programs keep their state in one object and reach the object through a pointer variable:
@@ -115,6 +125,95 @@ Family K step 2 uses `__mul16c` (25 bytes) in place of `__mul16` and its helpers
 Library calls and indirect calls are heavy. A heavy call costs much more than the multiply, so the slower short routine does not change the run time in a measurable way. A loop with fewer heavy calls keeps `__mul16`. A loop of three light calls and two multiplies was 80 percent slower with the first version of this rule.
 
 The change saves 116 bytes in each of the three `dhrystone21` programs.
+
+## External functions in registers
+
+A ROM program calls `out` and `in` many times. The stack convention costs about 100 T-states and 11 bytes for each call. The pragma `regcall` gives an external function the register convention of family J:
+
+```c
+void out(uint8_t port, uint8_t value);
+uint8_t in(uint8_t port);
+#pragma uc80 regcall out in
+```
+
+The first parameter goes in `A` (a byte) or in `HL` (a word). The second parameter goes in `E` (a byte) or in `DE` (a word). A char result comes back in `A`. Another result comes back as before, in `HL`. The assembly routine must use the same registers. `bench/rom/z80io.mac` is the routine of the sound kernels, and `bench/rom/z80io_stack.mac` is the old routine for `--no-regcall`.
+
+The compiler stops with an error in these cases:
+
+- the program defines the function itself.
+- the prototype has more than two parameters, a `...`, or a parameter that is not an integer or a pointer of one or two bytes.
+- the program uses the name in another way than as the callee of a call. The address of the function would call it with the stack convention.
+- a call has another number of arguments than the prototype.
+
+`--no-regcall` ignores the pragma. `--no-register-cc` does not turn the pragma off, because the assembly routine does not change.
+
+The calls of the register convention are shorter, and a register local in `BC` or `DE` stays in the register when the call reads only `A` and `E`. The liveness pass knows what the call reads (see `--no-call-reads` below).
+
+## A compare of a register local with memory
+
+A register local in `DE` or `BC` that is compared with a word in memory needed the pair for the word too. The compiler saved the pair:
+
+```
+push DE / ld DE,(X) / ld A,C / sub E / ld A,B / sbc A,D / pop DE
+```
+
+When HL is dead afterwards, the word goes to HL: `ld HL,(X) / ld A,C / sub L / ld A,B / sbc A,H`. The change saves 21 T-states and 3 bytes for each compare.
+
+A loop that tests `i < n` often has a copy of the counter in HL for the body. The pass of copies now works across a label of the compiler. The copy facts that hold on every jump to the label stay true. A pair that the code saves with `push` and restores with `pop` keeps its facts. So the body reads `E` and not `L`, and HL is dead at the compare.
+
+The signed compare of two bytes used the bias 128:
+
+```
+ld A,(IX-6) / xor 128 / ld H,A / ld A,E / xor 128 / cp H / jr nc,T
+```
+
+It is now `ld A,E / sub (IX-6) / jp po,N / xor 128 / N: jp p,T`. The overflow flag gives the sign. The change saves 4 bytes and about 5 T-states for each compare. The label of the copy has the form `@CMP_NVn`, so the loop rotation still copies such a test.
+
+`--no-cmp-mem` turns off the compare changes and the copy facts across labels. `micro+loop` goes from 1,256,037 to 1,060,947 T-states (SDCC: 1,102,397).
+
+## A char result in L
+
+A function that returns a char put the char in `L` and the sign extension in `H`. A call that uses only the byte did not need `H`. Now a function of the program that nothing outside the program calls leaves the char in `L` and does not set `H`. A function that assembly names, that a pragma names, or that the library names keeps the old form.
+
+Each call site that returns a char extends the result itself (`ld A,L / rlca / sbc A,A / ld H,A` for `signed char`, `ld H,0` for `unsigned char`). The liveness pass deletes the extension when the program uses only `L`. A call that stands alone in `return g(x);` keeps the tail jump. Two more rules go with this change:
+
+- the register-locals pass knows that the return of such a function reads only `L` (the marker `;@CHARL` after the line `; Function`).
+- a call of a function that returns a char has the byte range. A variable that gets such a value and a loop counter has the range -128 to 127 and compares as a byte.
+
+`davidly-ttt` goes from 8,239,388 to 7,912,478 T-states (SDCC: 7,960,572). `--no-char-noext` turns the change off.
+
+## Small changes of the liveness pass
+
+The pass `peep_flow` has these new steps. The text of its docstring lists them with numbers.
+
+- `--no-hl-reuse`: `ld HL,X / add HL,BC` goes when HL already holds the sum. A conditional jump between the two does not matter. After a store through a base pointer, HL is up to three bytes away from the next address. Then `inc HL` (or `dec HL`) takes the place of the two instructions. `mojozork-size` is 411 bytes smaller.
+- `--no-dead-alu`: an instruction that writes only A and the flags goes when A is dead and no flag is read. This removes the sign extension that nothing uses.
+- `--no-pop-cleanup`: `inc SP` twice after a call is `pop HL` (or `pop DE`, `pop BC`) when A is live and the pair is dead. Before, only `pop AF` was possible.
+- `--no-be16`: the word `(p[0] << 8) | p[1]` of two bytes, with the pointer in `BC`, is `ld D,(HL) / inc HL / ld E,(HL) / ex DE,HL`. It saves 19 bytes and 67 T-states for each word. A, DE and the flags must be dead afterwards.
+- `--no-ex-load`: `ld HL,(X) / ex DE,HL` is `ld DE,(X)` when HL is dead.
+- `--no-a-mem`: after `ld A,(X)` or `ld (X),A`, the register A holds the byte at X. A later `ld A,(X)` goes. The fact crosses a label of the compiler when every jump to the label has the fact. A store to memory, a call, a write to A or another label ends the fact.
+- `--no-zero-xor`: `ld A,0` is `xor A` when no flag is read before the next instruction that sets all flags, a call or a return.
+- `--no-call-reads`: a call (or a tail jump) of a function of the program reads no register in the stack convention. In the register convention it reads the registers of the plan. Before, each call read all registers, and a value in `A`, `D` or `E` stayed live until the call.
+
+## Bytes in A
+
+- `--no-mul8x16`: the product `x * y` of 16 bits calls `__mul8x16` when one factor is a byte (0 to 255). The routine is the loop that `__mul16` ends in. The call does not need `__mul16` and its three helpers any more, 61 bytes of code in `snd-fnum`. The compiler also uses `__mul16c` for the other multiplications of a loop, as before.
+- `--no-byte-shl`: `(uint8_t)(1 << n)` with a variable `n` is a loop of `add A,A` in A, with the count in E. The code has 10 bytes. Before, the code shifted HL and took 19 bytes.
+- `--no-byte-tern`: `(uint8_t)(c ? a : b)` computes each arm in A. `ld A,k` replaces `ld HL,k` and `ld A,L`.
+
+## A frame without a reservation
+
+The register-locals pass can move all locals of a function out of its frame. The function may still need `IX` for its parameters (`rom_printf` reads its variable arguments through `IX`). The reservation `ld HL,-n / add HL,SP / ld SP,HL` has no use then. The compiler deletes the reservation and the `ld SP,IX` of the epilogue when the body names `IX` only with a non-negative offset. `--no-frame-drop` keeps the reservation.
+
+## Loop rotation budget
+
+Loop rotation copies the test of a loop to its end. The copies may use a share of the code. The share was 2 percent. A change that makes the program smaller makes the budget smaller, and one loop lost its rotation (`micro+copy`, 3605 T-states more). The share is now 3 percent. `UC80_ROT_PERCENT` sets another share for an experiment.
+
+## ROM kernels
+
+The four kernels of `bench/rom/sndrom.py --layout neogeo`, uc80 against SDCC 4.6.0 (size and speed mode of the standalone ROM build of `bench/tools/faml/sdrom.py`):
+
+ROMTABLE
 
 ## Known timing noise
 
