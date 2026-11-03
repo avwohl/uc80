@@ -147,11 +147,11 @@ The compiler stops with an error in these cases:
 
 `--no-regcall` ignores the pragma. `--no-register-cc` does not turn the pragma off, because the assembly routine does not change.
 
-The calls of the register convention are shorter, and a register local in `BC` or `DE` stays in the register when the call reads only `A` and `E`. The liveness pass knows what the call reads (see `--no-call-reads` below).
+The calls of the register convention are shorter. A register local in `BC` stays in the register when the call reads only `A` and `E`. The liveness pass knows what the call reads (see `--no-call-reads` below).
 
 ## A compare of a register local with memory
 
-A register local in `DE` or `BC` that is compared with a word in memory needed the pair for the word too. The compiler saved the pair:
+The compare of a register local in `DE` or `BC` with a word in memory needed the same pair for the word. The compiler saved the pair:
 
 ```
 push DE / ld DE,(X) / ld A,C / sub E / ld A,B / sbc A,D / pop DE
@@ -173,7 +173,7 @@ It is now `ld A,E / sub (IX-6) / jp po,N / xor 128 / N: jp p,T`. The overflow fl
 
 ## A char result in L
 
-A function that returns a char put the char in `L` and the sign extension in `H`. A call that uses only the byte did not need `H`. Now a function of the program that nothing outside the program calls leaves the char in `L` and does not set `H`. A function that assembly names, that a pragma names, or that the library names keeps the old form.
+A function that returns a char put the char in `L` and the sign extension in `H`. A call that uses only the byte did not need `H`. Now a function of the program leaves the char in `L` and does not set `H`. Only the code of the program calls the function. A function that assembly names, that a pragma names, or that the library names keeps the old form.
 
 Each call site that returns a char extends the result itself (`ld A,L / rlca / sbc A,A / ld H,A` for `signed char`, `ld H,0` for `unsigned char`). The liveness pass deletes the extension when the program uses only `L`. A call that stands alone in `return g(x);` keeps the tail jump. Two more rules go with this change:
 
@@ -184,15 +184,15 @@ Each call site that returns a char extends the result itself (`ld A,L / rlca / s
 
 ## Small changes of the liveness pass
 
-The pass `peep_flow` has these new steps. The text of its docstring lists them with numbers.
+The pass `peep_flow` has these new steps. The first lines of the file `peep_flow.py` list them with numbers.
 
 - `--no-hl-reuse`: `ld HL,X / add HL,BC` goes when HL already holds the sum. A conditional jump between the two does not matter. After a store through a base pointer, HL is up to three bytes away from the next address. Then `inc HL` (or `dec HL`) takes the place of the two instructions. `mojozork-size` is 411 bytes smaller.
-- `--no-dead-alu`: an instruction that writes only A and the flags goes when A is dead and no flag is read. This removes the sign extension that nothing uses.
-- `--no-pop-cleanup`: `inc SP` twice after a call is `pop HL` (or `pop DE`, `pop BC`) when A is live and the pair is dead. Before, only `pop AF` was possible.
-- `--no-be16`: the word `(p[0] << 8) | p[1]` of two bytes, with the pointer in `BC`, is `ld D,(HL) / inc HL / ld E,(HL) / ex DE,HL`. It saves 19 bytes and 67 T-states for each word. A, DE and the flags must be dead afterwards.
-- `--no-ex-load`: `ld HL,(X) / ex DE,HL` is `ld DE,(X)` when HL is dead.
+- `--no-dead-alu`: an instruction that writes only A and the flags goes when A is dead and no flag is read. This removes a sign extension that no code uses.
+- `--no-pop-cleanup`: `inc SP` twice after a call becomes `pop HL` (or `pop DE`, `pop BC`) when A is live and the pair is dead. Before, only `pop AF` was possible.
+- `--no-be16`: the word `(p[0] << 8) | p[1]` of two bytes, with the pointer in `BC`, becomes `ld D,(HL) / inc HL / ld E,(HL) / ex DE,HL`. It saves 19 bytes and 67 T-states for each word. A, DE and the flags must be dead afterwards. `mojozork-size` has 35 such words and is about 130 bytes smaller.
+- `--no-ex-load`: `ld HL,(X) / ex DE,HL` becomes `ld DE,(X)` when HL is dead.
 - `--no-a-mem`: after `ld A,(X)` or `ld (X),A`, the register A holds the byte at X. A later `ld A,(X)` goes. The fact crosses a label of the compiler when every jump to the label has the fact. A store to memory, a call, a write to A or another label ends the fact.
-- `--no-zero-xor`: `ld A,0` is `xor A` when no flag is read before the next instruction that sets all flags, a call or a return.
+- `--no-zero-xor`: `ld A,0` becomes `xor A` when no flag is read before the next instruction that sets all flags, a call or a return.
 - `--no-call-reads`: a call (or a tail jump) of a function of the program reads no register in the stack convention. In the register convention it reads the registers of the plan. Before, each call read all registers, and a value in `A`, `D` or `E` stayed live until the call.
 
 ## Bytes in A
@@ -213,10 +213,26 @@ Loop rotation copies the test of a loop to its end. The copies may use a share o
 
 The four kernels of `bench/rom/sndrom.py --layout neogeo`, uc80 against SDCC 4.6.0 (size and speed mode of the standalone ROM build of `bench/tools/faml/sdrom.py`):
 
-ROMTABLE
+Bytes of the ROM image, and T-states of the whole run. "uc80 before" is the figure before step LB. SDCC speed and size are the standalone ROM builds of `bench/tools/faml/sdrom.py` (`sdcc -mz80 --max-allocs-per-node 200000`, own `crt0`, `out` and `in` in registers).
+
+| Kernel | uc80 before | uc80 now | SDCC speed | SDCC size |
+|---|---|---|---|---|
+| snd-cmdq | 1475 / 7,874,380 | 1185 / 6,138,897 | 1190 / 7,089,258 | 1188 / 8,255,396 |
+| snd-ymreg | 1040 / 13,831,135 | 970 / 12,402,479 | 1041 / 13,166,418 | 1021 / 13,219,824 |
+| snd-seq | 2249 / 9,625,961 | 2066 / 8,833,951 | 2222 / 11,988,349 | 2199 / 12,957,292 |
+| snd-fnum | 1040 / 8,713,840 | 897 / 7,084,240 | 925 / 15,158,156 | 915 / 15,533,087 |
+
+All four kernels are at or below SDCC in bytes (size mode) and in T-states (speed mode). `snd-cmdq` has 3 bytes of margin. The output of each kernel equals the golden output, in both layouts and in both assembler flows.
 
 ## Known timing noise
 
-The program `embench-tarfind` needs 1185 T-states more (0.04 percent) than before this step. The code is 13 bytes shorter, so the heap array starts at another address. A build with one extra `nop` gives 3,228,426 T-states, fewer than before.
+The T-states of some programs depend on the address of their data. Step LA: the program `embench-tarfind` needs 1185 T-states more (0.04 percent) than before the step. The code is 13 bytes shorter, so the heap array starts at another address. A build with one extra `nop` gives 3,228,426 T-states, fewer than before.
 
-So the cause is the address of the array, not the code. The row is the only one that is slower.
+Step LB: the program `embench-md5sum` needs 1214 T-states more (0.035 percent). The code is 3 bytes shorter (`ld HL,(X) / ex DE,HL` became `ld DE,(X)`). The allocator computes `pointer % 2` with `__mod16`, and the time of the routine depends on the pointer.
+
+Three `nop` instructions give back the old image size and 3,433,492 T-states, fewer than before (3,433,500). The program `embench-huffbench` had the same effect with a smaller change of the code. So the cause is the address of the heap, not the code.
+
+## Not built
+
+- L10, a table for runs of constant stores. Only `mojozork-size` has such runs, and the program is 4350 bytes under SDCC.
+- The small items of L13: `inc BC` twice for `p += 2`, a shorter `__conout`, and the IX-free prologue of a small leaf function. The constant of the local in the init clause of a `for` is not built too.
