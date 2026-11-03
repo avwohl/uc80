@@ -925,7 +925,7 @@ def _bias_cmp(rs: list[_R], i: int, live_out) -> bool:
         if live_out[jmp] & 1 or not _allow():
             continue
         _LAB[0] += 1
-        lab = f"@CMPV{_LAB[0]}"
+        lab = f"@CMP_NV{900000 + _LAB[0]}"
         cond = "M" if a[-1][1][0] == "c" else "P"
         t = recs[-1].ops[1]
         lines = [f"\tld\tA,{lhs}"] + pre + [
@@ -1054,7 +1054,7 @@ def _cmp_mem(rs: list[_R]) -> bool:
             if live_out[k[10]] & 1 or not _allow():
                 continue
             _LAB[0] += 1
-            lab = f"@CMPV{_LAB[0]}"
+            lab = f"@CMP_NV{900000 + _LAB[0]}"
             cond = "M" if a[10][1][0] == "c" else "P"
             hl_line = rs[k[1]].line
             rs[k[0]].line = hl_line
