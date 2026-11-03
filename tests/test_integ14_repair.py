@@ -15,7 +15,7 @@ import re
 import pytest
 
 from .test_famj_startup import compile_c, REPO
-from .test_integ14_famk_bug6 import host, uc, ids
+from .test_integ14_famk_bug6 import host, uc, ids, pytestmark  # noqa: F401
 
 SWITCH_SRC = r"""
 #include <stdio.h>
