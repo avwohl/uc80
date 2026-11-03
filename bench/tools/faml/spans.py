@@ -2,7 +2,7 @@
 """spans.py uc80|sdcc DIR [--mod=M] FUNC... : inclusive T per function (romrun spans) between TIMER_START and TIMER_STOP."""
 import sys,re,subprocess
 from pathlib import Path
-WT=Path("/private/tmp/claude-501/-Users-wohl-src-uc80/ec4c5501-bd11-4fd4-8f7f-ed83b93def9a/scratchpad/wt/famlan")
+WT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(WT/"bench"))
 from romrun import Machine
 kind=sys.argv[1]; d=Path(sys.argv[2]).resolve(); args=sys.argv[3:]

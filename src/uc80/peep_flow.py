@@ -60,6 +60,13 @@ three steps.
    A later ``ld A,(X)`` goes.  The fact crosses a label of the compiler
    (``@name``) when every jump to the label has the same fact.
    ``--no-a-mem`` turns this step off (docs/family_l.md).
+12. ``ld HL,X / add HL,BC`` (or DE) goes when HL already holds X plus the
+   pair, also when a conditional jump stands between.  ``--no-hl-reuse``.
+13. An instruction that writes only A and the flags, such as the ``rlca``
+   and ``sbc A,A`` of a sign extension that nothing uses, goes when A is dead
+   and no flag is read.  ``--no-dead-alu``.
+14. ``inc SP / inc SP`` after a call becomes ``pop HL`` (or DE, BC) when A is
+   live and the pair is dead.  ``--no-pop-cleanup``.
 11. ``ld A,0`` becomes ``xor A`` when no flag is read before the next
    instruction that sets all flags, a call or a return.  ``--no-zero-xor``
    turns this step off.
@@ -77,6 +84,7 @@ except Exception:  # pragma: no cover - the pass is then off
     _effect = None
 
 ENABLED = True
+CHAR_L = True       # step 15, --no-char-noext
 CMP_MEM = True      # step 9, --no-cmp-mem
 # a debug aid that bisects a wrong result: UC80_FLOW_LIMIT=N makes only the
 # first N edits of the whole compile
@@ -119,7 +127,7 @@ class _R:
     """One line of the run."""
 
     __slots__ = ("line", "kind", "op", "ops", "rd", "wr", "flow", "target",
-                 "dead", "cond", "fw")
+                 "dead", "cond", "fw", "retmask")
 
     def __init__(self, line: str):
         self.line = line
@@ -133,6 +141,7 @@ class _R:
         self.dead = False
         self.cond = False
         self.fw = False             # the instruction writes a flag
+        self.retmask = _ALL         # the registers that a return reads
 
 
 def _mask(regs) -> int:
@@ -144,9 +153,14 @@ def _mask(regs) -> int:
 
 def _parse(lines: list[str]) -> list[_R]:
     out = []
+    char_l = False      # inside a function that returns a char in L only
     for ln in lines:
         r = _R(ln)
         out.append(r)
+        if ln.startswith("; Function "):
+            char_l = False
+        elif ln.strip() == ";@CHARL":
+            char_l = CHAR_L
         if not ln or not ln.strip() or ln.lstrip().startswith(";"):
             continue
         if ln[0] not in " \t":
@@ -184,6 +198,8 @@ def _parse(lines: list[str]) -> list[_R]:
         r.flow = eff.flow
         r.target = eff.target
         r.cond = bool(eff.cond)
+        if char_l and r.op == "ret" and not r.cond:
+            r.retmask = 64
         r.fw = any(w.startswith("f") for w in eff.writes)
         if r.op == "halt":
             r.flow = "next"        # an interrupt resumes at the next line
@@ -238,7 +254,7 @@ def _liveness(rs: list[_R]):
             else:
                 succs[i] = [t]
         else:                        # return, stop
-            exit_live[i] = _ALL
+            exit_live[i] = r.retmask
             if r.cond and nxt is not None:
                 succs[i] = [nxt]     # ret cc also falls through
     changed = True
@@ -253,7 +269,7 @@ def _liveness(rs: list[_R]):
             if r.kind == "ins":
                 new = (out & ~r.wr) | r.rd
                 if r.flow in ("return", "stop"):
-                    new |= _ALL
+                    new |= r.retmask
             else:
                 new = out
             if out != live_out[i] or new != live_in[i]:
@@ -846,6 +862,83 @@ def _lc(r: _R) -> tuple:
 _MEM_WORD = re.compile(r"^\([A-Za-z_@?$.][A-Za-z0-9_@?$.]*([+-]\d+)?\)$")
 
 
+BIAS_CMP = True     # step 9b, --no-cmp-mem
+_SCRATCH = (("h", "l"), ("d", "e"))
+
+
+def _bias_cmp(rs: list[_R], i: int, live_out) -> bool:
+    """The signed byte compare of two operands through the bias 128 (see
+    _cmp_mem).  Returns True after one rewrite."""
+    for count in (9, 7):
+        k = _ins_after(rs, i, count - 1)
+        if k is None:
+            continue
+        recs = [rs[i]] + [rs[x] for x in k]
+        idx = [i] + k
+        a = [_lc(r) for r in recs]
+        if a[1] != ("xor", ("128",)) or a[4] != ("xor", ("128",)):
+            continue
+        if not (a[3][0] == "ld" and a[3][1][0] == "a"):
+            continue
+        p_src = recs[0].ops[1]
+        q_src = recs[3].ops[1]
+        if a[2][0] != "ld" or a[2][1][1] != "a" or a[2][1][0] not in "hd" \
+                or len(a[2][1][0]) != 1:
+            continue
+        t1 = a[2][1][0]
+        t2 = {"h": "l", "d": "e"}[t1]
+        if count == 7:
+            if not (a[5] == ("cp", (t1,)) and a[6][0] in ("jr", "jp")
+                    and len(a[6][1]) == 2 and a[6][1][0] in ("c", "nc")):
+                continue
+            lhs, rhs = q_src, p_src
+            jmp = idx[6]
+        else:
+            if not (a[5] == ("ld", (t2, "a")) and a[6] == ("ld", ("a", t1))
+                    and a[7] == ("cp", (t2,)) and a[8][0] in ("jr", "jp")
+                    and len(a[8][1]) == 2 and a[8][1][0] in ("c", "nc")):
+                continue
+            lhs, rhs = p_src, q_src
+            jmp = idx[8]
+        # operands: P, Q are plain loads (a register, (IX+d), (sym), (HL))
+        def okld(o):
+            ol = o.lower()
+            return (ol in _BIT or ol == "(hl)" or ol.startswith("(ix")
+                    or _sym_mem(o) is not None)
+        if not (okld(lhs) and okld(rhs)):
+            continue
+        # a scratch register that the compare names must not be a source
+        if any(x.lower() in (t1, t2) for x in (lhs, rhs)):
+            continue
+        rl = rhs.lower()
+        pre = []
+        if rl in _BIT:
+            operand = rhs
+        elif rl == "(hl)" or rl.startswith("(ix"):
+            operand = rhs
+        else:
+            # (sym): the address goes to HL, which must be dead after
+            if live_out[jmp] & 96 or lhs.lower() in ("h", "l"):
+                continue
+            pre = [f"\tld\tHL,{rhs.strip()[1:-1]}"]
+            operand = "(HL)"
+        if live_out[jmp] & 1 or not _allow():
+            continue
+        _LAB[0] += 1
+        lab = f"@CMPV{_LAB[0]}"
+        cond = "M" if a[-1][1][0] == "c" else "P"
+        t = recs[-1].ops[1]
+        lines = [f"\tld\tA,{lhs}"] + pre + [
+            f"\tsub\t{operand}", f"\tjp\tPO,{lab}", "\txor\t128",
+            f"{lab}:", f"\tjp\t{cond},{t}"]
+        # replace the records: the first gets all the new text, the others go
+        recs[0].line = "\n".join(lines)
+        for r in recs[1:]:
+            r.dead = True
+        return True
+    return False
+
+
 def _cmp_mem(rs: list[_R]) -> bool:
     """Step 9."""
     live_out, _ = _liveness(rs)
@@ -920,6 +1013,16 @@ def _cmp_mem(rs: list[_R]) -> bool:
             rs[k[5]].dead = True
             changed = True
             continue
+        # signed byte compare through the bias 128 (two forms):
+        #   ld A,P / xor 128 / ld H,A / ld A,Q / xor 128 / cp H / jcc
+        #   ld A,P / xor 128 / ld H,A / ld A,Q / xor 128 / ld L,A /
+        #   ld A,H / cp L / jcc
+        # becomes ld A,lhs / sub rhs / jp po,N / xor 128 / N: jp m|p,T
+        if r.op == "ld" and len(r.ops) == 2 and r.ops[0].lower() == "a" \
+                and BIAS_CMP:
+            if _bias_cmp(rs, i, live_out):
+                changed = True
+                continue
         # signed byte against a byte in memory:
         # ld A,r / xor 128 / ld HL,X / ld D,A / ld A,(HL) / xor 128 /
         # push DE / ld E,A / ld A,D / cp E / pop DE / jr nc|c,T
@@ -963,8 +1066,6 @@ def _cmp_mem(rs: list[_R]) -> bool:
                 rs[x].dead = True
             jr.line = f"\tjp\t{cond},{t}"
             changed = True
-            # labels and records changed: stop, the caller parses again
-            return changed
     return changed
 
 
@@ -974,6 +1075,7 @@ _NOT_SYM = {"hl", "bc", "de", "ix", "iy", "sp", "af"}
 _MEM_RMW = ("ld", "inc", "dec", "res", "set", "rl", "rr", "rlc", "rrc", "sla",
             "sra", "srl", "sll", "sl1")
 _MEM_WRITERS = ("ldi", "ldir", "ldd", "lddr", "ini", "inir", "ind", "indr")
+POP_CLEAN = True    # step 4 with a pair, --no-pop-cleanup
 A_MEM = True        # step 10, --no-a-mem
 
 
@@ -1106,6 +1208,85 @@ def _zero_a(rs: list[_R]) -> bool:
     return changed
 
 
+HL_SUM = True       # step 12, --no-hl-reuse
+DEAD_ALU = True     # step 13, --no-dead-alu
+
+
+def _hl_sum(rs: list[_R]) -> bool:
+    """Step 12: ``ld HL,X / add HL,BC`` (or DE) when HL already holds X
+    plus that pair.  A conditional jump between the two does not change HL
+    on the way that falls through; a label, a call, a jump and a write to HL
+    or to the pair end the fact.  The carry of the add must be dead."""
+    changed = False
+    state = None
+    n = len(rs)
+    i = 0
+    while i < n:
+        r = rs[i]
+        if r.kind == "label":
+            state = None
+            i += 1
+            continue
+        if r.kind != "ins" or r.dead:
+            i += 1
+            continue
+        if (r.op == "ld" and len(r.ops) == 2 and r.ops[0].lower() == "hl"
+                and r.ops[1].lower() not in _PAIRS
+                and not r.ops[1].startswith("(")):
+            k = _ins_after(rs, i, 1)
+            if k is not None:
+                a = rs[k[0]]
+                if (a.op == "add" and [o.lower() for o in a.ops] in (
+                        ["hl", "bc"], ["hl", "de"])):
+                    key = (r.ops[1], a.ops[1].lower())
+                    if (state == key and _carry_dead_after(rs, k[0] + 1)
+                            and _allow()):
+                        r.dead = True
+                        a.dead = True
+                        changed = True
+                    else:
+                        state = key
+                    i = k[0] + 1
+                    continue
+        if state is not None:
+            m = 96 | _mask(_PAIRS[state[1]])
+            if r.wr & m or r.flow in ("call", "jump", "return", "stop"):
+                state = None
+        i += 1
+    return changed
+
+
+_ALU_A_ONLY = frozenset(("rlca", "rrca", "rla", "rra", "cpl", "neg"))
+
+
+def _dead_alu(rs: list[_R]) -> bool:
+    """Step 13: an instruction that writes only A and the flags, when A is
+    dead afterwards and no flag is read before the next instruction that
+    sets all flags (``rlca`` or ``sbc A,A`` of a sign extension that nobody
+    uses)."""
+    live_out, _ = _liveness(rs)
+    changed = False
+    for i, r in enumerate(rs):
+        if r.kind != "ins" or r.dead or r.flow != "next":
+            continue
+        ops = [o.lower() for o in r.ops]
+        pure = (r.op in _ALU_A_ONLY and not ops) \
+            or (r.op in ("sbc", "adc") and ops == ["a", "a"]) \
+            or (r.op in ("add", "sub", "and", "or", "xor", "inc", "dec")
+                and ops[:1] == ["a"] and len(ops) <= 2
+                and (len(ops) == 1 or _IMM.match(r.ops[1])
+                     or ops[1] in _BIT)) \
+            or (r.op in ("inc", "dec") and ops == ["a"])
+        if not pure or live_out[i] & 1:
+            continue
+        if r.op in ("sbc", "adc", "rla", "rra"):
+            pass
+        if _flags_dead_after(rs, i + 1) and _allow():
+            r.dead = True
+            changed = True
+    return changed
+
+
 def _inc_sp(rs: list[_R]) -> bool:
     """Step 4."""
     live_out, _ = _liveness(rs)
@@ -1132,11 +1313,22 @@ def _inc_sp(rs: list[_R]) -> bool:
                 continue
             break
         pairs = len(run) // 2
-        if (pairs and not (live_out[run[2 * pairs - 1]] & 1)
-                and _allow()):
+        # the register that the pops can fill: A (pop AF), else a pair
+        # that is dead afterwards (pop HL, DE or BC; --no-pop-cleanup)
+        reg = None
+        if pairs:
+            lv = live_out[run[2 * pairs - 1]]
+            if not lv & 1:
+                reg = "AF"
+            elif POP_CLEAN:
+                for nm, bits in (("HL", 96), ("DE", 24), ("BC", 6)):
+                    if not lv & bits:
+                        reg = nm
+                        break
+        if reg is not None and _allow():
             for k in range(pairs):
                 a, b = run[2 * k], run[2 * k + 1]
-                rs[a].line = "\tpop\tAF"
+                rs[a].line = f"\tpop\t{reg}"
                 rs[b].dead = True
             changed = True
         i = j if run else i + 1
@@ -1277,6 +1469,14 @@ def _optimize_lines(lines: list[str]) -> str:
             if v:
                 rs = _drop(rs)
                 rs = _parse(_text(rs))
+        if HL_SUM and _hl_sum(rs):
+            v = True
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
+        if DEAD_ALU and _dead_alu(rs):
+            v = True
+            rs = _drop(rs)
+            rs = _parse(_text(rs))
         if ZERO_A and _zero_a(rs):
             v = True
             rs = _parse(_text(rs))

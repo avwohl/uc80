@@ -2,7 +2,7 @@
 """bld.py PROG COMPILER(uc80|sdcc) [extra uc80 flags...]: build time variant into faml_an/w/PROG/COMPILER; print image, and region cycles."""
 import sys, os, shutil
 from pathlib import Path
-WT = Path("/private/tmp/claude-501/-Users-wohl-src-uc80/ec4c5501-bd11-4fd4-8f7f-ed83b93def9a/scratchpad/wt/famlan")
+WT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(WT/"bench"))
 import run
 from compilers import Uc80, Sdcc

@@ -3,7 +3,7 @@
 uc80: DIR has prog.mac (re-assembled with -g and linked here). sdcc: DIR has X.lst, prog.map, prog.com (module chosen by --mod)."""
 import sys,re,subprocess
 from pathlib import Path
-WT=Path("/private/tmp/claude-501/-Users-wohl-src-uc80/ec4c5501-bd11-4fd4-8f7f-ed83b93def9a/scratchpad/wt/famlan")
+WT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(WT/"bench")); import run
 kind=sys.argv[1]; d=Path(sys.argv[2]).resolve(); funcs=sys.argv[3:]
 mod=None

@@ -1088,6 +1088,27 @@ def main() -> int:
         help="Keep ld A,0 where xor A would do (docs/family_l.md)"
     )
     parser.add_argument(
+        "--no-hl-reuse",
+        action="store_true",
+        help="Load HL and add the pair again also when HL already holds the sum (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-dead-alu",
+        action="store_true",
+        help="Keep an instruction on A whose result nobody reads (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-pop-cleanup",
+        action="store_true",
+        help="Clean the arguments of a call with inc SP also when a register pair is free for pop (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-char-noext",
+        action="store_true",
+        help="Extend a char result into H in the callee, not in the call "
+             "site (docs/family_l.md)"
+    )
+    parser.add_argument(
         "--no-ret-jump",
         action="store_true",
         help="Keep a jump to a ret as a jump (docs/k2_code_size.md)"
@@ -1770,6 +1791,8 @@ def main() -> int:
         gen.enable_mul8x16 = not args.no_mul8x16
         gen.enable_byte_shl = not args.no_byte_shl
         gen.enable_byte_tern = not args.no_byte_tern
+        gen.enable_char_noext = not args.no_char_noext
+        gen.enable_char_ranges = not args.no_char_noext
         gen.enable_mul16c_loop = not args.no_mul16c_loop
         gen.size_helpers = args.size_helpers
         gen.enable_sdivmod_merge = not args.no_sdivmod_merge
@@ -2569,7 +2592,11 @@ def main() -> int:
             peep_flow.ENABLED = not args.no_flow_opt
             peep_flow.CMP_MEM = not args.no_cmp_mem
             peep_flow.A_MEM = not args.no_a_mem
+            peep_flow.CHAR_L = not args.no_char_noext
             peep_flow.ZERO_A = not args.no_zero_xor
+            peep_flow.HL_SUM = not args.no_hl_reuse
+            peep_flow.DEAD_ALU = not args.no_dead_alu
+            peep_flow.POP_CLEAN = not args.no_pop_cleanup
             peep_flow.GLOBAL_COPY = not args.no_cmp_mem
             peephole = _Peephole(PeepholeOptimizer())
             # Not peephole.optimize(code): inline asm is an optimization

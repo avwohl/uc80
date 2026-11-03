@@ -617,6 +617,7 @@ NMI_SRC = r"""
 #include <z80.h>
 #include <stdint.h>
 void out(uint8_t port, uint8_t value);
+#pragma uc80 regcall out
 static volatile uint8_t ticks;
 static uint8_t total;
 

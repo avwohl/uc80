@@ -4062,6 +4062,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.regcall_names = (set(regcall_names)
                               if regcall_names is not None else None)
         self._regcall_ext: set[str] = set()
+        # functions whose char result comes back in L only (H undefined);
+        # every caller extends it (--no-char-noext, docs/family_l.md)
+        self._char_noext: set[str] = set()
+        self._noext_call = None
+        self.enable_char_noext = True
         # Compound-literal labels the code writes at run time.
         self._cl_written: set[str] = set()
         self.ctx = CodeGenContext()
@@ -7567,6 +7572,66 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     def _plan_register_cc(self, unit) -> None:
         self._plan_register_cc_defs(unit)
         self._plan_regcall(unit)
+        self._plan_char_noext(unit)
+
+    def _plan_char_noext(self, unit) -> None:
+        """The functions of the program that return a char and that
+        nothing outside the C code calls: they leave the char in L and do
+        not extend it into H.  A call site always extends the result
+        (_gen_call), and the extension goes again when the program uses
+        only the low byte.  A function named by assembly, by an option or
+        pragma, or by the library keeps the extended HL."""
+        self._char_noext = set()
+        if (not self.enable_char_noext or not self.whole_program
+                or self.type_config.int_size != 2):
+            return
+        scan = regcc.scan_program(unit, function_name)
+        libnames = regcc.lib_asm_names()
+        asm_names = scan.asm_tokens | self.foreign_asm_names
+        isr_reach: set[str] = set()
+        if self.isr_funcs:
+            if self.call_graph_analyzer is None:
+                return
+            isr_reach = self.call_graph_analyzer.isr_reachable()
+        for item in unit.items:
+            if not isinstance(item, ast.FunctionDef) or item.body is None:
+                continue
+            name = function_name(item)
+            if name is None or name == "main":
+                continue
+            if (name in self.keep_names or name in self.public_names
+                    or name in self.naked or name in self.isr_funcs
+                    or name in self.absolute or name in isr_reach
+                    or name in scan.asm_funcs):
+                continue
+            low = name.lower()
+            if (low in asm_names or f"_{low}" in asm_names
+                    or low in libnames or f"_{low}" in libnames):
+                continue
+            try:
+                _, fn_type = resolve_type_from_decl(item.decl_specs,
+                                                    item.declarator)
+                if fn_type.kind != "function" or fn_type.is_variadic:
+                    continue
+                rt = _to_legacy(fn_type.return_type)
+            except Exception:
+                continue
+            if self._char_type_signed(rt) is None:
+                continue
+            plan = self._regcc.get(name)
+            if plan is not None and plan.ret_a:
+                continue
+            self._char_noext.add(name)
+
+    def _char_call_type(self, expr):
+        """For a call expression whose result type is a char (not _Bool):
+        its signedness; else None."""
+        if not isinstance(expr, (ast.Call, ast.CallNoArgs)):
+            return None
+        try:
+            return self._char_type_signed(_to_legacy(self._get_expr_type(expr)))
+        except Exception:
+            return None
 
     def _plan_register_cc_defs(self, unit) -> None:
         """Decide, for every function, whether its first two scalar
@@ -7803,6 +7868,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self.ctx.emit(f"; Function {name} (uses shared storage)")
         else:
             self.ctx.emit(f"; Function {name}")
+        if name in self._char_noext:
+            # the register pass and the peephole pass know that the return
+            # reads only L (peep_flow, step 15)
+            self.ctx.emit(";@CHARL")
         self.ctx.emit_label(func_label)
 
         if name in self.naked:
@@ -10601,6 +10670,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     "inline assembly and cannot appear in an asm template",
                     node)
 
+    def _ret_noext(self) -> bool:
+        """The function being generated leaves its char result in L only."""
+        return self.ctx.current_function in self._char_noext
+
     def _ret_in_a(self) -> bool:
         """The function being generated returns its char result in A."""
         plan = self._regcc.get(self.ctx.current_function)
@@ -10678,13 +10751,24 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 # A char result: only the low byte of the value matters.
                 self._gen_expr_a(value)
                 if not self._ret_in_a():
-                    self._emit_a_to_hl(
-                        self._char_type_signed(_to_legacy(ret_type)))
+                    if self._ret_noext():
+                        self.ctx.emit_instr("ld", "L,A")
+                    else:
+                        self._emit_a_to_hl(
+                            self._char_type_signed(_to_legacy(ret_type)))
             else:
                 return_is_long = self._is_long_type(ret_type)
                 return_is_float = self._is_float_type(ret_type)
                 expr_is_float = self._is_float_expr(value)
+                if self._ret_noext():
+                    pv = self._peel_int_casts(value)
+                    if (self._char_call_type(pv) is not None
+                            and self._char_type_signed(
+                                _to_legacy(ret_type)) is not None):
+                        # return g(...): the callee's L is ours
+                        self._noext_call = pv
                 self.gen_expr(value, force_long=return_is_long or return_is_float)
+                self._noext_call = None
                 if expr_is_float and not return_is_float:
                     self._emit_float_to_int(ret_type)
                 elif return_is_float and not expr_is_float:
@@ -10700,7 +10784,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         self.ctx.emit_instr("ld", "A,L")
                     elif ret_size == 1:
                         is_signed = self._is_signed_type(ret_type)
-                        skip = False
+                        skip = self._ret_noext()
                         if isinstance(value, ast.IntLiteral):
                             v = int_value(value)
                             if is_signed:
@@ -15548,6 +15632,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if reg_plan is not None and reg_plan.ret_a and not want_a:
             # the callee returns its char in A: widen it to an int in HL
             self._emit_a_to_hl(reg_plan.ret_signed)
+        elif (self.enable_char_noext and not (reg_plan is not None
+                                              and reg_plan.ret_a)
+              and expr is not self._noext_call):
+            # a stack-convention char result is in L; H is not defined
+            sg = self._char_call_type(expr)
+            if sg is not None:
+                self._emit_char_to_hl(sg)
 
         # For 64-bit return, load low 32 bits from __acc64 into DEHL
         if return_is_64bit:
@@ -18803,6 +18894,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             r = self._ival(expr)
             if r is not None and r[0] >= 0 and r[1] <= 255:
                 return frozenset("us" if r[1] <= 127 else "u")
+            if (r is not None and self.enable_char_ranges
+                    and r[0] >= -128 and r[1] <= 127):
+                return frozenset("s")
             return hk
         if isinstance(expr, _SavedAddrValue):
             # The char at the saved address of a compound assignment.
@@ -18811,6 +18905,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if self._regcc_ret_a(expr):
             return frozenset(
                 "s" if self._regcc_callee_plan(expr).ret_signed else "u")
+        if self.enable_char_noext:
+            sg = self._char_call_type(expr)
+            if sg is not None:
+                return frozenset("s" if sg else "u")
         fast = self._bf_fast_pos(expr)
         if fast is not None:
             bf = fast[0]
@@ -19132,6 +19230,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 or self._a_simple_sym(x) is not None
                 or self._a_char_load(x)
                 or self._bf_fast_pos(x) is not None
+                or (self.enable_char_noext
+                    and self._char_call_type(x) is not None)
                 or self._a_structural(x))
 
     def _emit_a_imm(self, op: str, b: int) -> None:
