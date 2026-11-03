@@ -11005,7 +11005,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # User labels are prefixed with @L_{funcname}_ to be unique per function
         func = self.ctx.current_function or "global"
         self.ctx.emit_label(f"@L_{func}_{self._label_text(stmt.label)}")
-        self.gen_statement(stmt.stmt)
+        # C23 6.8.2: a label may precede a declaration (`L: int y = 1;`).
+        self._gen_block_item(stmt.stmt)
 
     def gen_goto(self, stmt: ast.GotoStmt) -> None:
         """Generate code for goto statement."""

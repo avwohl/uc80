@@ -1467,6 +1467,7 @@ def main() -> int:
                     else:
                         pp.macros[define] = Macro(define, body="1")
 
+                pp.keep_pragmas = args.preprocess_only   # -E keeps #pragma lines
                 source = pp.preprocess(source, str(input_path))
                 srcmap.register(str(input_path), pp.line_map,
                                 getattr(pp, "line_breaks", None))

@@ -6,6 +6,14 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### Bug round 7 (uc_core 3afb47b)
+
+uc_core now parses a label at the end of a block and a `case` or `default` label before a declaration. It also fixes more macro cases, `__COUNTER__` and `#__VA_OPT__`. See the uc_core CHANGELOG.
+
+- A label before a declaration (`L: int y = 1;`) now links. `gen_label` generated the declaration as a statement, so the local had no storage.
+- `-E` keeps `#pragma` lines, and it writes `_Pragma("x")` as a `#pragma x` line. A normal compile does not change.
+- The tests are in `tests/test_bugfix7_core.py`. Each program runs under cpmemu and the host compiler, and the outputs must agree.
+
 ### Repair of integrate14
 
 The verifiers gave 14 findings. This pass checked each one. The tests are in `tests/test_integ14_repair.py`. Each test runs a program and compares the output with the host compiler.
