@@ -164,6 +164,7 @@ def _parse(lines: list[str]) -> list[_R]:
     out = []
     char_l = False      # inside a function that returns a char in L only
     ret_label = False   # the label @name_ret of that function was seen
+    fn_label = False    # the label of the function is next
     for ln in lines:
         r = _R(ln)
         out.append(r)
@@ -172,8 +173,16 @@ def _parse(lines: list[str]) -> list[_R]:
         elif ln.strip() == ";@CHARL":
             char_l = CHAR_L
             ret_label = False
-        elif char_l and re.match(r"^@\w+_ret:", ln):
-            ret_label = True
+            fn_label = True
+        elif char_l and ln and ln[0] not in " \t;" and _LABEL.match(ln):
+            # the label of the function comes first; another label that is
+            # not a local label of the compiler starts other code
+            if fn_label:
+                fn_label = False
+            elif ln[0] != "@":
+                char_l = False
+            elif re.match(r"^@\w+_ret:", ln):
+                ret_label = True
         if not ln or not ln.strip() or ln.lstrip().startswith(";"):
             continue
         if ln[0] not in " \t":

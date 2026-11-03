@@ -589,3 +589,15 @@ def test_char_l_return_mask_ends_with_the_function():
     inner = "\n".join(["; Function g", ";@CHARL", "_g:", "\tld\tH,B",
                        "\tld\tL,A", "@g_ret:", "\tret", ""])
     assert "\tld\tH,B" not in peep_flow.optimize(inner)
+
+
+def test_char_l_mark_needs_no_function_comment():
+    """A pass can remove the comment line `; Function g`.  The mark of one
+    function then must not reach the next function (ccfuzz seeds 628 and
+    673): a function that returns a long keeps the write of E."""
+    from uc80 import peep_flow
+    text = "\n".join([
+        ";@CHARL", "_f:", "\tld\tL,A", "@f_ret:", "\tret",
+        "_g:", "\tld\tE,A", "\tld\tD,A", "@g_ret:", "\tret", ""])
+    out = peep_flow.optimize(text)
+    assert "\tld\tE,A" in out
