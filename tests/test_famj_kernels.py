@@ -115,7 +115,7 @@ int main(void) { wait(); puts("ok"); return 0; }
 """
     on = compile_c(tmp_path, src, "--no-inlining").read_text()
     off = compile_c(tmp_path, src, "--no-inlining", "--no-char-ret-mask",
-                    name="o").read_text()
+                    "--no-char-noext", name="o").read_text()
 
     def fn(text, name):
         seg = text[text.index(f"\n_{name}:"):]

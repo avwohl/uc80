@@ -6623,7 +6623,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 or not self._mul16_sites
                 or self.type_config.int_size != 2
                 or any(n.startswith("__mul") and n not in
-                       ("__mul16", "__mul16c") for n in used)
+                       ("__mul16", "__mul16c", "__mul8x16") for n in used)
                 or any(fn != "main" or depth > self._mul16c_depth(depth, calls)
                        for fn, depth, calls in self._mul16_sites)):
             return
@@ -7501,8 +7501,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         convention)."""
         self._regcall_ext = set()
         names = self.regcall_names
-        if (not names or not self.register_cc
-                or self.type_config.int_size != 2):
+        if not names or self.type_config.int_size != 2:
             return
         scan = regcc.scan_program(unit, function_name)
         defined = {function_name(i) for i in unit.items

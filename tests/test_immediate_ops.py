@@ -215,12 +215,11 @@ class TestCharInA:
 
     def test_char_return(self):
         assert ret("c + 3", "unsigned char", "unsigned char c") == [
-            "ld\tA,(IX+4)", "add\tA,3", "ld\tL,A", "ld\tH,0"]
+            "ld\tA,(IX+4)", "add\tA,3", "ld\tL,A"]
 
     def test_char_return_variable_operand(self):
         assert ret("a - b", "signed char", "signed char a, signed char b") == [
-            "ld\tA,(IX+4)", "sub\t(IX+6)", "ld\tL,A", "ld\tA,L", "rlca",
-            "sbc\tA,A", "ld\tH,A"]
+            "ld\tA,(IX+4)", "sub\t(IX+6)", "ld\tL,A"]
 
     def test_shifts(self):
         assert fn("uc = uc >> 4;", "void") == [
