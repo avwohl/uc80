@@ -133,7 +133,7 @@ The old routine `__dv8w` is also used by `__div32` and `__div32w`. The compact `
 
 The change saves 42 bytes in a program with a 16-bit divide and no 32-bit divide. The T-states do not change for a divisor of less than 256. A division by a divisor of 256 or more is slower by about 90 T-states for a dividend of 0x8000 or more, and by about 280 T-states for other dividends (measured in integrate14 on 1280 random divides).
 
-So the compiler embeds the compact `__div16` only when every 16-bit divide stands in `main` outside every loop (a divide by a constant of 1 to 255 does not count), and no libc routine that divides is in the program. The switch `--size-helpers` removes these rules. The switch `--no-div16-compact` selects the old routine in every case.
+So the compiler embeds the compact `__div16` only when every 16-bit divide stands in `main` outside every loop (a divide by a constant of 1 to 255 does not count; neither does a divide by a variable that the function uses as the index of a local array of 256 elements or fewer, `a[n]`; a call of `__sdivmod16` counts as a divide), and no libc routine that divides is in the program. The switch `--size-helpers` removes these rules. The switch `--no-div16-compact` selects the old routine in every case.
 
 ## puts without a frame
 

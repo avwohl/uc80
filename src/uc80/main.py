@@ -449,6 +449,8 @@ class _Roots:
     im2_on: bool = False          # IM 2 is in use
     where: dict = None            # {("rst", 8) | ("vec", 0x38): "file:line"}
     save_wa: set = None           # interrupt functions that save work areas
+    regcall: set = None           # external functions with the register
+                                  # convention (#pragma uc80 regcall)
 
 
 _VECTORS = {0x38: "INT (38h)", 0x66: "NMI (66h)"}
@@ -485,7 +487,7 @@ def _ambiguous_functions(asts: list, paths: list) -> dict:
 
 _NAME_WORDS = {"rst": (1,), "im2": (1,), "vector": (1,),
                "interrupt": (0,), "nmi": (0,)}
-_ALL_NAMES = ("keep", "public", "isr_save_workareas")
+_ALL_NAMES = ("keep", "public", "isr_save_workareas", "regcall")
 
 
 def source_name(name: str) -> str:
@@ -548,7 +550,8 @@ def _roots_from_options(entries: list, pragmas: list,
     Raises CodegenError for a pragma it does not understand: a vector
     that is silently dropped is a ROM that does not start."""
     roots = _Roots(keep=set(entries), public=set(), vectors={}, isrs={},
-                   rst={}, im2={}, where={}, save_wa=set())
+                   rst={}, im2={}, where={}, save_wa=set(),
+                   regcall=set())
     ident = re.compile(r"^[A-Za-z_]\w*$")
     ambiguous = ambiguous or {}
 
@@ -636,6 +639,10 @@ def _roots_from_options(entries: list, pragmas: list,
             roots.keep.update(words)
             if verb == "public":
                 roots.public.update(words)
+        elif verb == "regcall":
+            if not words or not all(ident.match(w) for w in words):
+                raise CodegenError(f"{where}: expected one or more names")
+            roots.regcall.update(words)
         elif verb == "rst":
             addr = _parse_address(words[0]) if words else None
             ok = (len(words) in (2, 3, 4) and addr is not None
@@ -715,7 +722,8 @@ def _roots_from_options(entries: list, pragmas: list,
         else:
             raise CodegenError(
                 f"{where}: unknown verb; uc80 knows keep, public, vector, "
-                f"interrupt, nmi, rst, im2, im2table and isr_save_workareas")
+                f"interrupt, nmi, rst, im2, im2table, regcall and "
+                f"isr_save_workareas")
     for name in sorted(roots.save_wa):
         if name not in roots.isrs:
             raise CodegenError(
@@ -972,6 +980,23 @@ def main() -> int:
              "elements of at most 8 bytes (docs/k1_link_size.md)"
     )
     parser.add_argument(
+        "--no-divmod-pair",
+        action="store_true",
+        help="Divide twice for x / y and x %% y (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-ptr-const",
+        action="store_true",
+        help="Keep a static pointer variable that holds one object address "
+             "(docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-qsort-wr",
+        action="store_true",
+        help="Call the generic qsort for an array of 2-byte elements, with "
+             "the stack convention for the comparator (docs/family_l.md)"
+    )
+    parser.add_argument(
         "--no-const-store",
         action="store_true",
         help="Store the address of a function or string into an array "
@@ -1028,6 +1053,85 @@ def main() -> int:
              "the liveness pass (docs/k2_code_size.md)"
     )
     parser.add_argument(
+        "--no-cmp-mem",
+        action="store_true",
+        help="Keep the push and pop of a register pair around the compare "
+             "of a register local with a word or byte in memory "
+             "(docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-regcall",
+        action="store_true",
+        help="Ignore #pragma uc80 regcall: call the named external "
+             "functions with the stack convention (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-mul8x16",
+        action="store_true",
+        help="Call __mul16 also when one factor is known to be 0..255 "
+             "(docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-byte-shl",
+        action="store_true",
+        help="Shift a constant by a variable count in HL also when only "
+             "the low byte of the result is used (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-a-mem",
+        action="store_true",
+        help="Load A again from a byte in memory that A already holds "
+             "(docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-byte-tern",
+        action="store_true",
+        help="Compute a conditional expression through HL also when only "
+             "the low byte of the result is used (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-zero-xor",
+        action="store_true",
+        help="Keep ld A,0 where xor A would do (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-hl-reuse",
+        action="store_true",
+        help="Load HL and add the pair again also when HL already holds the sum (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-dead-alu",
+        action="store_true",
+        help="Keep an instruction on A whose result nobody reads (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-pop-cleanup",
+        action="store_true",
+        help="Clean the arguments of a call with inc SP also when a register pair is free for pop (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-char-noext",
+        action="store_true",
+        help="Extend a char result into H in the callee, not in the call "
+             "site (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-be16",
+        action="store_true",
+        help="Read a big-endian word of two bytes through two loads and an or (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-ex-load",
+        action="store_true",
+        help="Keep ld HL,(X) and ex DE,HL where ld DE,(X) would do (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-call-reads",
+        action="store_true",
+        help="Let a call of a function of the program read every register in "
+             "the liveness pass (docs/family_l.md)"
+    )
+    parser.add_argument(
         "--no-ret-jump",
         action="store_true",
         help="Keep a jump to a ret as a jump (docs/k2_code_size.md)"
@@ -1042,6 +1146,30 @@ def main() -> int:
         action="store_true",
         help="Do not unroll a counted loop of at most 4 passes with a short "
              "body (docs/k2_code_size.md)"
+    )
+    parser.add_argument(
+        "--no-empty-call",
+        action="store_true",
+        help="Keep a call of a function with an empty body when its "
+             "arguments have no side effect (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-empty-loop-fold",
+        action="store_true",
+        help="Do not fold an empty counted loop with constant bounds into "
+             "an assignment of the final counter value (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--empty-loop-fold",
+        action="store_true",
+        help="Fold an empty counted loop also in a ROM or freestanding "
+             "build, where the loop is off by default (docs/family_l.md)"
+    )
+    parser.add_argument(
+        "--no-mul16c-loop",
+        action="store_true",
+        help="Keep __mul16 for a multiplication in a loop with calls in "
+             "it (docs/family_l.md)"
     )
     parser.add_argument(
         "--no-mul16c",
@@ -1548,12 +1676,18 @@ def main() -> int:
                 print(f"Merged {len(asts)} files into {len(merged_ast.items)} declarations")
 
         # AST-level expression optimization
+        ast_opt = None
         if not args.no_ast_optimize:
             opt_level = 3
             ast_opt = Uc80ASTOptimizer(opt_level, type_config=type_config)
             ast_opt.dead_test = (not args.no_dead_test
                                  and not args.no_optimize)
             ast_opt.loop_unroll = not args.no_loop_unroll
+            # a ROM program uses an empty counted loop as a delay
+            ast_opt.empty_loop_fold = (
+                not args.no_empty_loop_fold
+                and (args.empty_loop_fold
+                     or not (args.target == "rom" or args.freestanding)))
             merged_ast = ast_opt.optimize(merged_ast)
             merged_ast._enum_fixed_types = enum_fixed
             if args.verbose and ast_opt.stats:
@@ -1615,6 +1749,20 @@ def main() -> int:
             args.entry, target_pragmas, sdcc_found.isrs,
             _ambiguous_functions(asts, [str(p) for p in input_paths
                                         if p.suffix.lower() != ".mac"]))
+        # A call of a function with an empty body is deleted (docs/family_l.md).
+        # An entry point or an interrupt function stays: a direct call of
+        # one is an error that the code generator reports.
+        if (ast_opt is not None and not args.no_empty_call
+                and not args.no_optimize):
+            from . import empty_calls
+            n_empty = empty_calls.run(
+                merged_ast,
+                keep=set(roots.keep) | set(roots.public) | set(roots.isrs))
+            if n_empty:
+                if args.verbose:
+                    print(f"  Deleted {n_empty} call(s) of empty functions")
+                merged_ast = ast_opt.optimize(merged_ast)
+                merged_ast._enum_fixed_types = enum_fixed
         gen = CodeGenerator(module_name, enable_shared_storage, enable_dead_elimination,
                            enable_inlining, enable_const_propagation, whole_program,
                            embed_runtime=embed_runtime,
@@ -1634,6 +1782,8 @@ def main() -> int:
                                             or args.embed_lib
                                             or args.runtime_lib
                                             or args.startup_lib),
+                           regcall_names=(None if args.no_regcall
+                                          else roots.regcall),
                            foreign_asm_names=regcc.asm_text_names(mac_files),
                            register_locals=not args.no_register_locals,
                            naked_funcs={n for n, _f, _l in sdcc_found.naked},
@@ -1657,9 +1807,19 @@ def main() -> int:
         gen.enable_printf_union = not args.no_printf_literal_union
         gen.enable_div32w = not args.no_div32w
         gen.enable_qsort_small = not args.no_qsort_small
+        gen.enable_qsort_wr = not args.no_qsort_wr
+        gen.enable_ptr_const = not args.no_ptr_const
+        gen.enable_divmod_pair = not args.no_divmod_pair
         gen.enable_div16b = not args.no_div16b
         gen.enable_const_store = not args.no_const_store
         gen.enable_mul16c = not args.no_mul16c
+        gen.enable_mul8x16 = not args.no_mul8x16
+        gen.enable_byte_shl = not args.no_byte_shl
+        gen.enable_byte_tern = not args.no_byte_tern
+        gen.enable_char_noext = not args.no_char_noext
+        gen.enable_call_reads = not args.no_call_reads
+        gen.enable_char_ranges = not args.no_char_noext
+        gen.enable_mul16c_loop = not args.no_mul16c_loop
         gen.size_helpers = args.size_helpers
         gen.enable_sdivmod_merge = not args.no_sdivmod_merge
         gen.enable_for_entry = not args.no_for_entry
@@ -2463,6 +2623,17 @@ def main() -> int:
             peep_local.RET_JMP = not args.no_ret_jump
             peep_local.CP_ZERO = not args.no_cp_zero
             peep_flow.ENABLED = not args.no_flow_opt
+            peep_flow.CMP_MEM = not args.no_cmp_mem
+            peep_flow.A_MEM = not args.no_a_mem
+            peep_flow.CHAR_L = not args.no_char_noext
+            peep_flow.STACK_FUNCS = dict(gen.stack_funcs)
+            peep_flow.ZERO_A = not args.no_zero_xor
+            peep_flow.HL_SUM = not args.no_hl_reuse
+            peep_flow.BE16 = not args.no_be16
+            peep_flow.EX_LOAD = not args.no_ex_load
+            peep_flow.DEAD_ALU = not args.no_dead_alu
+            peep_flow.POP_CLEAN = not args.no_pop_cleanup
+            peep_flow.GLOBAL_COPY = not args.no_cmp_mem
             peephole = _Peephole(PeepholeOptimizer())
             # Not peephole.optimize(code): inline asm is an optimization
             # barrier and its bytes are never rewritten.

@@ -622,3 +622,12 @@ Six programs are still above the image of SDCC. The four `sort-*-5000` programs 
 The branch `integrate14` has family K (steps 1 and 2) and the tree of `integrate13`. The mean ratio to SDCC 4.6.0 is 0.8236 for the size, 0.7895 for the whole image and 0.4949 for the T-states (0.5961 without `sort-*`). 76 of the 78 programs are faster. The image of all 112 uc80 rows is smaller than on `integrate13`.
 
 Eight programs are still above the whole image of SDCC: five `sort-*` programs and the three `dhrystone21` builds. The programs `davidly-ttt` and `micro+loop` are slower than SDCC in speed mode. The causes of the rows that are slower than before are in `CHANGELOG.md`.
+
+## Status on 2026-11-03 (integration of family L, branch integrate15)
+
+The branch `integrate15` has family L (steps LA and LB) and the tree of `integrate14` with its repair and bug round 7. The mean ratio to SDCC 4.6.0 is 0.7875 for the size, 0.7562 for the whole image and 0.4657 for the T-states (0.5882 without `sort-*`). All 78 programs are faster than SDCC in speed mode. No program is bigger than SDCC in size mode in the whole image. The four ROM kernels are smaller than SDCC in size mode and faster than SDCC in speed mode.
+
+The size column of the report (bytes minus the empty program of each compiler) has 11 programs above SDCC, because the empty program of uc80 is smaller than the one of SDCC: `crc`, `davidly-e`, the three `dhrystone21` builds, `pi+static`, `queens`, `sort-ran-20`, `sort-ran-5000`, `stanford-bubble` and `tak`. Their whole image is below SDCC.
+
+The one row that is slower than on `main` is `embench-md5sum` (+1043 T-states, 0.03 percent). The [CHANGELOG](../CHANGELOG.md) has the gates.
+

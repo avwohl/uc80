@@ -37,6 +37,7 @@ from .rangediv import RangeDivMixin
 from .deadstore import DeadStoreMixin
 from .blockops import BlockOpsMixin
 from .fillidiom import FillIdiomMixin
+from .qsortwr import QsortWrMixin
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE,
@@ -1562,6 +1563,7 @@ class CallGraphAnalyzer:
     total_shared_storage: int = 0  # Total size of shared storage area
     is_variadic: dict[str, bool] = field(default_factory=dict)  # func -> is variadic
     has_body: set[str] = field(default_factory=set)  # functions with definitions (not just declarations)
+    loop_funcs: set[str] = field(default_factory=set)  # functions with a loop in the body
     is_static: dict[str, bool] = field(default_factory=dict)  # func -> is static (internal linkage)
     whole_program: bool = True  # True = no other C files at link time
     struct_sizes: dict[str, int] = field(default_factory=dict)  # struct name -> size in bytes
@@ -1930,6 +1932,18 @@ class CallGraphAnalyzer:
         self.call_graph[name] = calls
         self.address_taken.update(address_taken)
         self.indirect_call_sigs[name] = indirect_sigs
+        stack = [func.body]
+        while stack:
+            x = stack.pop()
+            if isinstance(x, (list, tuple)):
+                stack.extend(x)
+                continue
+            if not _dcfast.is_dataclass(x) or isinstance(x, type):
+                continue
+            if isinstance(x, (ast.ForStmt, ast.WhileStmt, ast.DoWhileStmt)):
+                self.loop_funcs.add(name)
+                break
+            stack.extend(_children(x))
 
     def _analyze_asm(self, node, calls: set[str], address_taken: set[str]) -> None:
         """Treat every `_name` in an asm template as a reference to the C
@@ -3911,7 +3925,8 @@ _MEMO_MISS = object()
 
 class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin, RangeMixin, NarrowMixin,
                     RangeDivMixin,
-                    DeadStoreMixin, BlockOpsMixin, FillIdiomMixin):
+                    DeadStoreMixin, BlockOpsMixin, FillIdiomMixin,
+                    QsortWrMixin):
     """Z80 code generator."""
 
     _expr_memo = None   # see _scoped_memo
@@ -3931,6 +3946,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                  isr_safe: bool = False,
                  absolute: "dict[str, int] | None" = None,
                  register_cc: bool = True,
+                 regcall_names: "set[str] | None" = None,
                  foreign_asm_names: "set[str] | None" = None,
                  register_locals: bool = True,
                  naked_funcs: "set[str] | None" = None,
@@ -3963,10 +3979,22 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_printf_union = True
         self.enable_div32w = True
         self.enable_qsort_small = True
+        self.enable_ptr_const = True
+        self.enable_divmod_pair = True
         self.enable_div16b = True
         self.enable_const_store = True
         self.enable_mul16c = True
+        self.enable_mul8x16 = True
+        self.enable_byte_shl = True
+        self.enable_byte_tern = True
         self._mul16_sites = []
+        self._loop_stmts = []
+        self._static_init_labels = None
+        self._fn_static_fn = None
+        self._fn_static_labels = {}
+        self._dm_pending = {}
+        self._loop_calls = {}
+        self.enable_mul16c_loop = True
         self._sdiv_sites = []
         self._div16_sites = []
         self._div_const = None
@@ -4031,6 +4059,18 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # #pragma uc80 public: file-scope names that get a PUBLIC label even
         # if static, so assembly can name them.
         self.public_names = set(public_names or ())
+        # #pragma uc80 regcall: external functions whose assembly takes the
+        # register convention (docs/family_l.md); None turns the pragma off.
+        self.regcall_names = (set(regcall_names)
+                              if regcall_names is not None else None)
+        self._regcall_ext: set[str] = set()
+        # functions whose char result comes back in L only (H undefined);
+        # every caller extends it (--no-char-noext, docs/family_l.md)
+        self._char_noext: set[str] = set()
+        self._noext_call = None
+        self.enable_char_noext = True
+        self.enable_call_reads = True
+        self.stack_funcs: dict[str, int] = {}
         # Compound-literal labels the code writes at run time.
         self._cl_written: set[str] = set()
         self.ctx = CodeGenContext()
@@ -4755,6 +4795,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # code paths apply (LD A,(K), LD (K),A, LD HL,(K)).
         self.absolute.update(absaddr.rewrite(
             unit, self._const_int_operand, self._type_size))
+        self._ptr_const_run(unit)
         if self.isr_funcs:
             self._check_isr_functions(unit)
         # Build call graph for optimizations
@@ -4801,6 +4842,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self.call_graph_analyzer = self._new_analyzer()
                 self.call_graph_analyzer.build_call_graph(unit)
 
+        self._divmod_pair_run(unit)
         self._vol = VolatileInfo(unit)
         self._vol_names = self._vol.file_names
 
@@ -5179,10 +5221,15 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 var_type, init = entry[0], entry[1]
                 resolved_addr = entry[2] if len(entry) > 2 else None
                 self.ctx.emit_label(label)
-                if has_resolved:
-                    self._emit_address_const(*resolved_addr)
-                else:
-                    self._emit_initializer(init, var_type)
+                self._static_init_labels = (entry[3] if len(entry) > 3
+                                            else None)
+                try:
+                    if has_resolved:
+                        self._emit_address_const(*resolved_addr)
+                    else:
+                        self._emit_initializer(init, var_type)
+                finally:
+                    self._static_init_labels = None
 
         def emit_compound_literals(items):
             for label, init, target_type, size in items:
@@ -6475,9 +6522,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     # bytes only when the program does not need the fast routine too.
     _SHORT_HELPERS = (
         ("__div16b", "__div16", ("__div16", "__mod16", "__sdiv16",
-                                 "__smod16")),
+                                 "__smod16", "__sdivmod16")),
         ("__mod16b", "__mod16", ("__div16", "__mod16", "__sdiv16",
-                                 "__smod16")),
+                                 "__smod16", "__sdivmod16")),
         ("__shr32c", "__shr32", ("__shr32",)),
         ("__div32w", "__div32", ("__div32", "__mod32", "__sdiv32",
                                  "__smod32")),
@@ -6558,6 +6605,18 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     # libc routines that call __mul16
     _MUL16_LIBC = re.compile(r"\b_(fread|fwrite|rand|srand|rand_r)\b")
 
+    # a loop with this many calls in it: a multiply costs little there
+    MUL16C_LOOP_CALLS = 3
+
+    def _mul16c_depth(self, depth: int, calls: int) -> int:
+        """The deepest loop nesting at which a multiply site may call
+        __mul16c: 0, or 1 for --size-helpers or for a loop with calls."""
+        if self.size_helpers:
+            return 1
+        if self.enable_mul16c_loop and calls >= self.MUL16C_LOOP_CALLS:
+            return 1
+        return 0
+
     def _decide_mul16c(self) -> None:
         """A program whose multiplications all stand in main outside every
         loop (one loop deep with --size-helpers) calls __mul16c (25 bytes,
@@ -6568,9 +6627,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 or not self._mul16_sites
                 or self.type_config.int_size != 2
                 or any(n.startswith("__mul") and n not in
-                       ("__mul16", "__mul16c") for n in used)
-                or any(fn != "main" or depth > (1 if self.size_helpers else 0)
-                       for fn, depth in self._mul16_sites)):
+                       ("__mul16", "__mul16c", "__mul8x16") for n in used)
+                or any(fn != "main" or depth > self._mul16c_depth(depth, calls)
+                       for fn, depth, calls in self._mul16_sites)):
             return
         text = "\n".join(
             ln for ln in self.ctx.lines
@@ -6586,6 +6645,53 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     _DIV32_NAMES = frozenset((
         "__div32", "__mod32", "__sdiv32", "__smod32", "__div32w",
         "__mod32w"))
+
+    _small_idx: frozenset = frozenset()
+
+    def _small_index_names(self, body) -> frozenset:
+        """Names of variables that the function uses as the index of a local
+        array of 256 elements or fewer (``a[n]``).  Such a variable is
+        under 256 in a program without undefined behavior, so a divide by
+        it is a small divisor for the rule of the compact __div16.  The
+        guess only picks the faster routine; both routines are correct."""
+        from .deadstore import _walk
+        arrays = {}
+        for n in _walk(body):
+            if not isinstance(n, ast.Declaration):
+                continue
+            for d in n.declarators or []:
+                d = getattr(d, "declarator", None)
+                if isinstance(d, ast.ArrayDeclarator) and isinstance(
+                        getattr(d, "inner", None), ast.Declarator):
+                    k = self._const_int_operand(d.size)
+                    if k is not None and 0 < k <= 256:
+                        arrays[d.inner.name.text] = k
+        names = set()
+        if arrays:
+            for n in _walk(body):
+                if (isinstance(n, ast.Index)
+                        and isinstance(n.array, ast.Identifier)
+                        and n.array.name.text in arrays
+                        and isinstance(n.index, ast.Identifier)):
+                    names.add(n.index.name.text)
+        return frozenset(names)
+
+    def _div_small(self, e):
+        """A constant divisor, or the upper bound of a divisor that the
+        value ranges keep between 1 and 255 (the compact __div16 takes the
+        same T-states there), else None."""
+        k = self._const_int_operand(e)
+        if k is not None:
+            return k
+        if isinstance(e, ast.Identifier) and e.name.text in self._small_idx:
+            return 255
+        try:
+            r = self._ival(e)
+        except Exception:
+            return None
+        if r is not None and 0 < r[0] and r[1] < 256:
+            return r[1]
+        return None
 
     def _decide_compact_div16(self) -> None:
         """The compact __div16 (8-step loop for a divisor of 256 or more,
@@ -6650,6 +6756,77 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return False
         sym = self.ctx.lookup("puts")
         return sym is None or sym.is_global
+
+    # ---- one divide for x / y and x % y (divmod_pair.py, L4)
+
+    _dm_capture = None
+
+    def _divmod_pair_run(self, unit) -> None:
+        self.divmod_pairs = 0
+        if (not self.enable_divmod_pair or self.type_config.int_size != 2
+                or self.rom_data and False):
+            return
+        from . import divmod_pair
+        self.divmod_pairs = divmod_pair.run(
+            unit, int_size=self.type_config.int_size, name_of=function_name,
+            params_of=function_params)
+        self._dm_pending = getattr(unit, "_dm_pending", {})
+
+    def _gen_divmod_first(self, expr) -> None:
+        """``__uc80_dm_first(E1, T)``: E1 in HL.  When E1 ends in a call
+        that returns both results, the other result is in the variable T,
+        and T takes the place of the second operation."""
+        from . import divmod_pair
+        e1, tvar = expr.args
+        name = tvar.name.text
+        sym = self.ctx.lookup(name)
+        cap = {"node": e1, "sym": sym, "done": False}
+        prev = self._dm_capture
+        self._dm_capture = cap
+        try:
+            self.gen_expr(e1)
+        finally:
+            self._dm_capture = prev
+        if cap["done"]:
+            divmod_pair.take_second(self._dm_pending, name)
+
+    def _dm_call(self, expr, routine: str, op: str) -> bool:
+        """The call that divides ``expr`` is the first of a pair: call the
+        routine that returns the quotient in HL and the remainder in DE,
+        and put the result that ``expr`` does not need into T."""
+        cap = self._dm_capture
+        if cap is None or cap["node"] is not expr or cap["done"]:
+            return False
+        e = self.ctx.emit_instr
+        self._call_runtime(routine)
+        if op == "/":
+            e("ex", "DE,HL")
+            self._store_local(cap["sym"], 2)
+            e("ex", "DE,HL")
+        else:
+            self._store_local(cap["sym"], 2)
+            e("ex", "DE,HL")
+        cap["done"] = True
+        return True
+
+    def _ptr_const_run(self, unit) -> None:
+        """A static pointer that holds one address becomes the address
+        (ptrconst.py, docs/family_l.md)."""
+        self.ptr_const_count = 0
+        if self.enable_ptr_const:
+            from . import ptrconst
+            ptrconst.fold_arrow_of_address(unit)
+        if (not self.enable_ptr_const or not self.whole_program
+                or self.rom_data or self.sdas_output or self.has_mac_files
+                or self.isr_funcs or self.naked
+                or set(self.keep_names) - {"main"}):
+            return
+        from . import ptrconst
+        scan = regcc.scan_program(unit, function_name)
+        asm = scan.asm_tokens | self.foreign_asm_names
+        self.ptr_const_count = ptrconst.run(
+            unit, asm_names=asm, name_of=function_name,
+            params_of=function_params)
 
     def _qsort_small_ok(self, expr) -> bool:
         """``qsort(base, n, size, cmp)`` with n a constant of 32 or less and
@@ -7372,7 +7549,190 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             visit(item.body, False, locs, fchar)
         return {n: tuple(v) for n, v in counts.items()}
 
+    def _plan_regcall(self, unit) -> None:
+        """The external functions that ``#pragma uc80 regcall`` names get
+        the register convention: parameter 0 in A (byte) or HL, parameter
+        1 in E (byte) or DE, a char result in A.  The assembly routine
+        has to take the same registers.  The pragma needs a prototype with
+        at most two parameters of one or two bytes, no body in the
+        program, and no use of the name except as the callee of a direct
+        call (the address of such a function would call it with the stack
+        convention)."""
+        self._regcall_ext = set()
+        names = self.regcall_names
+        if not names:
+            return
+        if self.type_config.int_size != 2:
+            raise CodegenError(
+                "#pragma uc80 regcall needs a 16-bit int; use --no-regcall "
+                "with --int=32")
+        scan = regcc.scan_program(unit, function_name)
+        defined = {function_name(i) for i in unit.items
+                   if isinstance(i, ast.FunctionDef) and i.body is not None}
+        seen: set[str] = set()
+        for item in unit.items:
+            if not isinstance(item, ast.Declaration):
+                continue
+            for d in item.declarators or []:
+                dd = getattr(d, "declarator", d)
+                nm = declarator_ident(dd)
+                if nm not in names or nm in seen:
+                    continue
+                try:
+                    _, ft = resolve_type_from_decl(item.decl_specs, dd)
+                    ft = _to_legacy(ft)
+                except Exception:
+                    continue
+                if not isinstance(ft, lt.FunctionType):
+                    continue
+                seen.add(nm)
+                where = f"#pragma uc80 regcall {nm}"
+                if nm in defined:
+                    raise CodegenError(
+                        f"{where}: the program defines '{nm}'; the pragma is "
+                        f"for an external function")
+                ptypes = [_to_legacy(t) for t in (ft.param_types or [])]
+                if (len(ptypes) == 1 and isinstance(ptypes[0], lt.BasicType)
+                        and ptypes[0].name == "void"):
+                    ptypes = []
+                if (getattr(ft, "is_variadic", False) or len(ptypes) > 2
+                        or not all(self._regcc_param_ok(t) for t in ptypes)):
+                    raise CodegenError(
+                        f"{where}: '{nm}' needs a prototype with at most two "
+                        f"parameters, each an integer or pointer of one or "
+                        f"two bytes, and no '...'")
+                if self._struct_return_size(ft.return_type):
+                    raise CodegenError(f"{where}: '{nm}' returns a struct")
+                if nm in scan.value_refs:
+                    raise CodegenError(
+                        f"{where}: the program uses '{nm}' other than as the "
+                        f"callee of a call; the address would call it with "
+                        f"the stack convention")
+                bad = scan.call_args.get(nm, set()) - {len(ptypes)}
+                if bad:
+                    raise CodegenError(
+                        f"{where}: a call of '{nm}' has {sorted(bad)} "
+                        f"argument(s), the prototype has {len(ptypes)}")
+                plan = regcc.RegPlan()
+                plan.types = ptypes
+                plan.names = [None] * len(ptypes)
+                plan.sizes = [self._type_size(t) for t in ptypes]
+                plan.spill = [False] * len(ptypes)
+                plan.loc = [None] * len(ptypes)
+                for i, sz in enumerate(plan.sizes):
+                    plan.loc[i] = (("A" if sz == 1 else "HL") if i == 0
+                                   else ("E" if sz == 1 else "DE"))
+                sg = self._char_type_signed(ft.return_type)
+                if sg is not None:
+                    plan.ret_a = True
+                    plan.ret_signed = sg
+                if not plan.reg_params() and not plan.ret_a:
+                    continue
+                self._regcc[nm] = plan
+                self._regcall_ext.add(nm)
+        missing = sorted(set(names) - seen)
+        if missing:
+            raise CodegenError(
+                f"#pragma uc80 regcall {', '.join(missing)}: no function "
+                f"declaration with this name in the program")
+
     def _plan_register_cc(self, unit) -> None:
+        self._plan_register_cc_defs(unit)
+        self._plan_regcall(unit)
+        self._plan_char_noext(unit)
+        self._plan_stack_funcs(unit)
+
+    def _plan_stack_funcs(self, unit) -> None:
+        """label -> the bytes that a call reads, for the functions that this
+        program defines (the stack convention reads none, the register
+        convention reads the registers of its plan) and for the external
+        functions of ``#pragma uc80 regcall``.  The liveness pass of
+        peep_flow lets a call or a jump read only these (--no-call-reads)."""
+        self.stack_funcs = {}
+        if not self.enable_call_reads:
+            return
+        scan = regcc.scan_program(unit, function_name)
+        bits = {"A": 1, "E": 16, "HL": 96, "DE": 24}
+        names = {}
+        for item in unit.items:
+            if not isinstance(item, ast.FunctionDef) or item.body is None:
+                continue
+            name = function_name(item)
+            if (name is None or name in self.naked
+                    or name in self.isr_funcs or name in self.absolute
+                    or name in scan.asm_funcs):
+                continue
+            names[name] = True
+        for name in list(names) + sorted(self._regcall_ext):
+            plan = self._regcc.get(name)
+            m = 0
+            if plan is not None:
+                for loc in plan.loc:
+                    m |= bits.get(loc, 0)
+                if name in self._wr_cmps:
+                    m |= 96 | 24
+            self.stack_funcs[self._rl_label(name)] = m
+
+    def _plan_char_noext(self, unit) -> None:
+        """The functions of the program that return a char and that
+        nothing outside the C code calls: they leave the char in L and do
+        not extend it into H.  A call site always extends the result
+        (_gen_call), and the extension goes again when the program uses
+        only the low byte.  A function named by assembly, by an option or
+        pragma, or by the library keeps the extended HL."""
+        self._char_noext = set()
+        if (not self.enable_char_noext or not self.whole_program
+                or self.type_config.int_size != 2):
+            return
+        scan = regcc.scan_program(unit, function_name)
+        libnames = regcc.lib_asm_names()
+        asm_names = scan.asm_tokens | self.foreign_asm_names
+        isr_reach: set[str] = set()
+        if self.isr_funcs:
+            if self.call_graph_analyzer is None:
+                return
+            isr_reach = self.call_graph_analyzer.isr_reachable()
+        for item in unit.items:
+            if not isinstance(item, ast.FunctionDef) or item.body is None:
+                continue
+            name = function_name(item)
+            if name is None or name == "main":
+                continue
+            if (name in self.keep_names or name in self.public_names
+                    or name in self.naked or name in self.isr_funcs
+                    or name in self.absolute or name in isr_reach
+                    or name in scan.asm_funcs):
+                continue
+            low = name.lower()
+            if (low in asm_names or f"_{low}" in asm_names
+                    or low in libnames or f"_{low}" in libnames):
+                continue
+            try:
+                _, fn_type = resolve_type_from_decl(item.decl_specs,
+                                                    item.declarator)
+                if fn_type.kind != "function" or fn_type.is_variadic:
+                    continue
+                rt = _to_legacy(fn_type.return_type)
+            except Exception:
+                continue
+            if self._char_type_signed(rt) is None:
+                continue
+            plan = self._regcc.get(name)
+            if plan is not None and plan.ret_a:
+                continue
+            self._char_noext.add(name)
+
+    def _char_call_type(self, expr):
+        """For a call expression whose result type is a char (not _Bool):
+        its signedness; else None."""
+        if not isinstance(expr, (ast.Call, ast.CallNoArgs)):
+            return None
+        try:
+            return self._char_type_signed(_to_legacy(self._get_expr_type(expr)))
+        except Exception:
+            return None
+
+    def _plan_register_cc_defs(self, unit) -> None:
         """Decide, for every function, whether its first two scalar
         parameters travel in registers.  Runs before any call is generated.
 
@@ -7384,11 +7744,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         function, not variadic, not main, and returns no aggregate.  Every
         call has as many arguments as the definition has parameters."""
         self._regcc = {}
+        self._wr_cmps = frozenset()
         if (not self.register_cc or not self.whole_program
                 or self.type_config.int_size != 2):
             return
         scan = regcc.scan_program(unit, function_name)
         self._regcc_scan = scan
+        wr_cands = self._wr_candidates(unit, scan, function_name)
         libnames = regcc.lib_asm_names()
         asm_names = scan.asm_tokens | self.foreign_asm_names
         isr_reach: set[str] = set()
@@ -7396,6 +7758,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             isr_reach = self.call_graph_analyzer.isr_reachable()
         elif self.isr_funcs:
             return          # cannot tell what an interrupt reaches
+        wr_final: set[str] = set()
         for item in unit.items:
             if not isinstance(item, ast.FunctionDef) or item.body is None:
                 continue
@@ -7404,7 +7767,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 continue
             if (name in self.keep_names or name in self.public_names
                     or name in self.naked or name in self.isr_funcs or name in self.absolute
-                    or name in isr_reach or name in scan.value_refs
+                    or name in isr_reach
+                    or (name in scan.value_refs and name not in wr_cands)
                     or name in scan.asm_funcs):
                 continue
             low = name.lower()
@@ -7462,9 +7826,18 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 else:
                     plan.loc[i] = "E" if size == 1 else "DE"
                 plan.spill[i] = plan.names[i] is not None and plan.names[i] in used
+            if name in wr_cands:
+                # the comparator of __qsort_wr: HL and DE, result in HL
+                if (len(plan.types) != 2 or plan.ret_a
+                        or plan.sizes != [2, 2]
+                        or plan.loc != ["HL", "DE"]):
+                    continue
             if not plan.reg_params() and not plan.ret_a:
                 continue
             self._regcc[name] = plan
+            if name in wr_cands:
+                wr_final.add(name)
+        self._wr_cmps = frozenset(wr_final)
         # A char result in A pays only when the calls that use it as a byte
         # are at least as many as the calls that need an int.
         ra = [n for n, p in self._regcc.items() if p.ret_a]
@@ -7514,7 +7887,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return None
         sym = self.ctx.lookup(nm)
         if (sym is None or not sym.is_global
-                or nm not in self.ctx.function_names
+                or (nm not in self.ctx.function_names
+                    and nm not in self._regcall_ext)
                 or not is_function_type(sym.sym_type)):
             return None
         return plan
@@ -7564,6 +7938,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         type_scope = self._type_scope_snapshot()
         self._register_body_types(func.body)
         self._range_facts(func)
+        self._small_idx = self._small_index_names(func.body)
         self._current_sret_size = self._struct_return_size(return_type)
 
         # --no-shared-storage has to reach here too: can_use_shared_storage
@@ -7593,6 +7968,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self.ctx.emit(f"; Function {name} (uses shared storage)")
         else:
             self.ctx.emit(f"; Function {name}")
+        if name in self._char_noext:
+            # the register pass and the peephole pass know that the return
+            # reads only L (peep_flow, step 15)
+            self.ctx.emit(";@CHARL")
         self.ctx.emit_label(func_label)
 
         if name in self.naked:
@@ -7794,6 +8173,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 and not use_shared_storage and not self._stmt_expr_seen
                 and self._drop_dead_frame(frame_start, frame_size, pushed)):
             frame_size = 0
+        elif (self.enable_frame_drop and frame_size > 0
+                and not use_shared_storage and not self._stmt_expr_seen
+                and self._drop_dead_locals(frame_start, frame_size, pushed)):
+            frame_size = 0
 
         if (isr_kind is None and name != "main" and self.register_cc
                 and frame_size == 0 and not self._stmt_expr_seen):
@@ -7979,6 +8362,57 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if res_at is not None:
             del lines[res_at:res_at + 3]
         del lines[base:base + n_push]
+        return True
+
+    _IX_POS = re.compile(r"^\t\w+\t.*\(IX\+\d+\)", re.IGNORECASE)
+
+    def _drop_dead_locals(self, frame_start: int, frame_size: int,
+                          pushed: int) -> bool:
+        """The reservation ``ld HL,-n / add HL,SP / ld SP,HL`` of a frame
+        whose body reaches IX only at a non-negative offset (the
+        parameters and the saved IX): the register-locals pass moved
+        every local out of the n bytes, so the reservation goes (and the
+        ``ld SP,IX`` of the epilogue with it; --no-frame-drop).  Returns
+        True when the reservation is gone."""
+        if pushed != 0 or frame_size <= 0:
+            return False
+        lines = self.ctx.lines
+        base = frame_start + 3
+        want = f"\tld\tHL,-{frame_size}"
+        at = None
+        for k in range(base, min(len(lines) - 2, base + 40)):
+            if (lines[k].split(";", 1)[0].rstrip() == want
+                    and lines[k + 1].split(";", 1)[0].strip() == "add\tHL,SP"
+                    and lines[k + 2].split(";", 1)[0].strip() == "ld\tSP,HL"):
+                at = k
+                break
+        if at is None:
+            return False
+        for k, ln in enumerate(lines[base:], base):
+            if k in (at, at + 1, at + 2):
+                continue
+            code = ln.split(";", 1)[0]
+            if "setjmp" in code.lower():
+                return False
+            if re.search(r"\bSP\b", code, re.IGNORECASE) and not re.match(
+                    r"^\t(ld\tSP,IX|call\b)", code, re.IGNORECASE):
+                if not re.match(r"^\t(push|pop)\b", code, re.IGNORECASE):
+                    return False
+            if not self._IX_USE.search(code):
+                continue
+            if self._IX_POS.match(code):
+                continue
+            if re.match(r"^\tld\tSP,IX\s*$", code, re.IGNORECASE):
+                continue
+            if re.match(r"^\tpush\tIX\s*$", code, re.IGNORECASE):
+                prev = lines[k - 1].split(";", 1)[0] if k else ""
+                nxt = lines[k + 1].split(";", 1)[0] if k + 1 < len(lines) \
+                    else ""
+                if (re.match(r"^\tld\t(HL|DE),\d+\s*$", prev)
+                        and re.match(r"^\tpop\t(DE|HL|BC)\s*$", nxt)):
+                    continue
+            return False
+        del lines[at:at + 3]
         return True
 
     def _frame_is_unused(self, frame_start: int, frame_size: int) -> bool:
@@ -8409,6 +8843,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         # Record mapping from variable name to label for late-binding initializers
         self.ctx.static_local_labels[decl.name] = label
+        if self._fn_static_fn != func_name:
+            self._fn_static_fn = func_name
+            self._fn_static_labels = {}
+        self._fn_static_labels[decl.name] = label
 
         # Register as a "global" for access purposes, but mark is_static=True
         # so we don't add another _ prefix when accessing
@@ -8428,7 +8866,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 resolved_addr = addr
 
         # Store type, init value, and pre-resolved address for data segment emission
-        self.ctx.static_locals[label] = (decl.var_type, decl.init, resolved_addr)
+        # the statics of the function seen so far: an initializer such as
+        # { &slot, 3 } names one of them, and is emitted after the function
+        self.ctx.static_locals[label] = (
+            decl.var_type, decl.init, resolved_addr,
+            dict(self._fn_static_labels))
 
     def _gen_local_string_array_init(self, sym: 'Symbol', array_type: lt.ArrayType,
                                       string_lit: ast.StringLiteral,
@@ -10328,6 +10770,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     "inline assembly and cannot appear in an asm template",
                     node)
 
+    def _ret_noext(self) -> bool:
+        """The function being generated leaves its char result in L only."""
+        return self.ctx.current_function in self._char_noext
+
     def _ret_in_a(self) -> bool:
         """The function being generated returns its char result in A."""
         plan = self._regcc.get(self.ctx.current_function)
@@ -10405,13 +10851,24 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 # A char result: only the low byte of the value matters.
                 self._gen_expr_a(value)
                 if not self._ret_in_a():
-                    self._emit_a_to_hl(
-                        self._char_type_signed(_to_legacy(ret_type)))
+                    if self._ret_noext():
+                        self.ctx.emit_instr("ld", "L,A")
+                    else:
+                        self._emit_a_to_hl(
+                            self._char_type_signed(_to_legacy(ret_type)))
             else:
                 return_is_long = self._is_long_type(ret_type)
                 return_is_float = self._is_float_type(ret_type)
                 expr_is_float = self._is_float_expr(value)
+                if self._ret_noext():
+                    pv = self._peel_int_casts(value)
+                    if (self._char_call_type(pv) is not None
+                            and self._char_type_signed(
+                                _to_legacy(ret_type)) is not None):
+                        # return g(...): the callee's L is ours
+                        self._noext_call = pv
                 self.gen_expr(value, force_long=return_is_long or return_is_float)
+                self._noext_call = None
                 if expr_is_float and not return_is_float:
                     self._emit_float_to_int(ret_type)
                 elif return_is_float and not expr_is_float:
@@ -10427,7 +10884,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         self.ctx.emit_instr("ld", "A,L")
                     elif ret_size == 1:
                         is_signed = self._is_signed_type(ret_type)
-                        skip = False
+                        skip = self._ret_noext()
                         if isinstance(value, ast.IntLiteral):
                             v = int_value(value)
                             if is_signed:
@@ -10473,6 +10930,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self.ctx.break_labels.append(end_label)
         self.ctx.continue_labels.append(start_label)
+        self._loop_stmts.append(stmt)
 
         self.ctx.emit_label(start_label)
         with self._vol_region(stmt.condition):
@@ -10482,6 +10940,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.emit_instr("jp", start_label)
         self.ctx.emit_label(end_label)
 
+        self._loop_stmts.pop()
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
 
@@ -10493,6 +10952,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self.ctx.break_labels.append(end_label)
         self.ctx.continue_labels.append(cond_label)
+        self._loop_stmts.append(stmt)
 
         self.ctx.emit_label(start_label)
         self.gen_statement(stmt.body)
@@ -10507,6 +10967,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self.ctx.emit_instr("jp", f"NZ,{start_label}")
         self.ctx.emit_label(end_label)
 
+        self._loop_stmts.pop()
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
 
@@ -10520,6 +10981,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self.ctx.break_labels.append(end_label)
         self.ctx.continue_labels.append(update_label)
+        self._loop_stmts.append(stmt)
         # The counter of the loop has a known range inside the loop
         # (docs/range_compare.md).
         saved_ranges = self._range_scoped
@@ -10556,6 +11018,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self._gen_branch(stmt.condition, body_label, True)
             self.ctx.emit_label(end_label)
             self._range_scoped = saved_ranges
+            self._loop_stmts.pop()
             self.ctx.break_labels.pop()
             self.ctx.continue_labels.pop()
             return
@@ -10579,6 +11042,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.emit_label(end_label)
 
         self._range_scoped = saved_ranges
+        self._loop_stmts.pop()
         self.ctx.break_labels.pop()
         self.ctx.continue_labels.pop()
 
@@ -11769,6 +12233,30 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # Restore left operand to DE
         self.ctx.emit_instr("pop", "DE")
 
+    def _gen_mul8_call(self, expr) -> bool:
+        """``x * y`` of 16 bits, left in DE and right in HL, where one
+        operand is known to be 0..255: the byte goes to A and the other
+        operand to DE, and __mul8x16 (the loop that __mul16 ends in)
+        multiplies at once.  The low 16 bits of the product are the same,
+        so a signed int is right too.  Returns False, with nothing
+        emitted, when neither operand is a byte (--no-mul8x16)."""
+        if not self.enable_mul8x16:
+            return False
+
+        def is_byte(x) -> bool:
+            return (self._int_scalar_expr(x) and self._cmp16_operand(x)
+                    and "u" in self._byte_kind(x))
+        e = self.ctx.emit_instr
+        if is_byte(expr.right):
+            e("ld", "A,L")
+        elif is_byte(expr.left):
+            e("ld", "A,E")
+            e("ex", "DE,HL")
+        else:
+            return False
+        self._call_runtime("__mul8x16")
+        return True
+
     def _emit_binary_op_16_tail(self, expr, op: str, ptr_elem_size: int,
                                 ptr_sub: bool) -> None:
         """The operation itself, with left in DE and right in HL."""
@@ -11795,7 +12283,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     # Swap: we want the non-constant in HL
                     # Left (constant) is in DE, right (variable) is in HL - already correct
                     pass
-                else:
+                elif not self._gen_mul8_call(expr):
                     self._call_runtime("__mul16")
             if shift is not None:
                 # Emit repeated ADD HL,HL if left was constant,
@@ -11809,7 +12297,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         elif op == "/":
             # Use signed or unsigned division based on promoted operand types
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
-            self._div_const = self._const_int_operand(expr.right)
+            self._div_const = self._div_small(expr.right)
             shift = self._mul_shift_count(expr.right)
             if is_unsigned and shift is not None and shift < 16:
                 # Unsigned divide by 2^n: a logical shift right.  (The
@@ -11827,13 +12315,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         self.ctx.emit_instr("rr", "L")
             else:
                 if is_unsigned and self._div16b_ok(expr.right):
-                    self._call_runtime("__div16b")
-                else:
+                    if not self._dm_call(expr, "__div16b", op):
+                        self._call_runtime("__div16b")
+                elif not self._dm_call(
+                        expr, "__div16" if is_unsigned else "__sdivmod16",
+                        op):
                     self._call_runtime("__div16" if is_unsigned
                                        else "__sdiv16")
         elif op == "%":
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
-            self._div_const = self._const_int_operand(expr.right)
+            self._div_const = self._div_small(expr.right)
             shift = self._mul_shift_count(expr.right)
             if is_unsigned and shift is not None and shift < 16:
                 # Unsigned remainder by 2^n: a mask.
@@ -11851,8 +12342,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     self.ctx.emit_instr("and", str(hi))
                     self.ctx.emit_instr("ld", "H,A")
             elif is_unsigned and self._div16b_ok(expr.right):
-                self._call_runtime("__mod16b")
-            else:
+                if not self._dm_call(expr, "__div16b", op):
+                    self._call_runtime("__mod16b")
+            elif not self._dm_call(
+                    expr, "__div16" if is_unsigned else "__sdivmod16", op):
                 self._call_runtime("__mod16" if is_unsigned else "__smod16")
         elif op == "&":
             self.ctx.emit_instr("ld", "A,H")
@@ -13426,14 +13919,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self._call_runtime("__mul16")
         elif op == "/":
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
-            self._div_const = self._const_int_operand(expr.right)
+            self._div_const = self._div_small(expr.right)
             if is_unsigned and self._div16b_ok(expr.right):
                 self._call_runtime("__div16b")
             else:
                 self._call_runtime("__div16" if is_unsigned else "__sdiv16")
         elif op == "%":
             is_unsigned = self._is_promoted_unsigned(expr.left) or self._is_promoted_unsigned(expr.right)
-            self._div_const = self._const_int_operand(expr.right)
+            self._div_const = self._div_small(expr.right)
             if is_unsigned and self._div16b_ok(expr.right):
                 self._call_runtime("__mod16b")
             else:
@@ -14487,6 +14980,15 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
     def _gen_call(self, expr: ast.Call, want_a: bool) -> None:
         discarded = expr is self._discard_expr
+        if (isinstance(expr.func, ast.Identifier)
+                and expr.func.name.text == "__uc80_dm_first"):
+            self._gen_divmod_first(expr)
+            return
+        if self._wr_cmps:
+            self._wr_guard(expr)
+            if self._qsort_wr_ok(expr):
+                self._gen_qsort_wr(expr)
+                return
         # Handle GCC builtins
         if isinstance(expr.func, ast.Identifier):
             if expr.func.name.text in Z80_BUILTINS:
@@ -15235,6 +15737,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if reg_plan is not None and reg_plan.ret_a and not want_a:
             # the callee returns its char in A: widen it to an int in HL
             self._emit_a_to_hl(reg_plan.ret_signed)
+        elif (self.enable_char_noext and not (reg_plan is not None
+                                              and reg_plan.ret_a)
+              and expr is not self._noext_call):
+            # a stack-convention char result is in L; H is not defined
+            sg = self._char_call_type(expr)
+            if sg is not None:
+                self._emit_char_to_hl(sg)
 
         # For 64-bit return, load low 32 bits from __acc64 into DEHL
         if return_is_64bit:
@@ -17083,6 +17592,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             # Get return type of function call
             if isinstance(expr.func, ast.Identifier):
                 fname = expr.func.name.text
+                if fname == "__uc80_dm_first":
+                    return self._get_expr_type(expr.args[0])
                 if fname in _BUILTIN_RET:
                     return _BUILTIN_RET[fname]
                 if fname in Z80_BUILTINS:
@@ -18489,6 +19000,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             r = self._ival(expr)
             if r is not None and r[0] >= 0 and r[1] <= 255:
                 return frozenset("us" if r[1] <= 127 else "u")
+            if (r is not None and self.enable_char_ranges
+                    and r[0] >= -128 and r[1] <= 127):
+                return frozenset("s")
             return hk
         if isinstance(expr, _SavedAddrValue):
             # The char at the saved address of a compound assignment.
@@ -18497,6 +19011,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if self._regcc_ret_a(expr):
             return frozenset(
                 "s" if self._regcc_callee_plan(expr).ret_signed else "u")
+        if self.enable_char_noext:
+            sg = self._char_call_type(expr)
+            if sg is not None:
+                return frozenset("s" if sg else "u")
         fast = self._bf_fast_pos(expr)
         if fast is not None:
             bf = fast[0]
@@ -18730,6 +19248,15 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     def _a_structural(self, expr) -> bool:
         """``expr`` (casts peeled) is an operator that _gen_expr_a
         computes in A rather than through gen_expr."""
+        if isinstance(expr, ast.TernaryOp):
+            # c ? a : b with an arm of each kind in A (--no-byte-tern)
+            return (self.enable_byte_tern
+                    and self._int_scalar_expr(expr.true_expr)
+                    and self._int_scalar_expr(expr.false_expr)
+                    and self._cmp16_operand(expr.true_expr)
+                    and self._cmp16_operand(expr.false_expr)
+                    and self._a_profitable(expr.true_expr)
+                    and self._a_profitable(expr.false_expr))
         if isinstance(expr, ast.BinaryOp):
             op = expr.op.text if hasattr(expr.op, "text") else expr.op
             if op in ("/", "%"):
@@ -18743,6 +19270,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 return self._mul_pow2_shift(expr) is not None
             if op in ("<<", ">>"):
                 k = self._const_int_operand(expr.right)
+                if k is None and self._byte_shl_var(expr):
+                    return True
                 if k is None or not 0 <= k <= 15:
                     return False
                 if op == ">>" and not self._byte_kind(expr.left):
@@ -18758,6 +19287,22 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return (op in ("~", "-", "+")
                     and self._int_scalar_expr(expr.operand))
         return False
+
+    def _byte_shl_var(self, expr) -> bool:
+        """``K << n`` with a constant K and a variable count n that is
+        read in place: the low byte is computed in A by a loop of add A,A
+        (--no-byte-shl).  The count is the low byte of n; a count of 16 or
+        more is undefined in C for a 16-bit int."""
+        op = expr.op.text if hasattr(expr.op, "text") else expr.op
+        if (not self.enable_byte_shl or op != "<<"
+                or self._const_int_operand(expr.left) is None):
+            return False
+        cnt = self._peel_int_casts(expr.right)
+        return (self._const_int_operand(cnt) is None
+                and self._a_simple_sym(cnt) is not None
+                and self._cmp16_operand(cnt)
+                and self._type_size(_to_legacy(self._get_expr_type(cnt)))
+                in (1, 2))
 
     def _mul_pow2_shift(self, expr):
         """For ``x * 2^n`` or ``2^n * x`` with an integer x and
@@ -18791,6 +19336,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 or self._a_simple_sym(x) is not None
                 or self._a_char_load(x)
                 or self._bf_fast_pos(x) is not None
+                or (self.enable_char_noext
+                    and self._char_call_type(x) is not None)
                 or self._a_structural(x))
 
     def _emit_a_imm(self, op: str, b: int) -> None:
@@ -18881,6 +19428,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self.gen_expr(expr)
             e("ld", "A,L")
             return
+        if isinstance(expr, ast.TernaryOp):
+            else_label = self.ctx.new_label("TERNA_E")
+            end_label = self.ctx.new_label("TERNA_END")
+            self._gen_cond_false_jump(expr.condition, else_label)
+            self._gen_expr_a(expr.true_expr)
+            e("jp", end_label)
+            self.ctx.emit_label(else_label)
+            self._gen_expr_a(expr.false_expr)
+            self.ctx.emit_label(end_label)
+            return
         if isinstance(expr, ast.UnaryOp):
             self._gen_expr_a(expr.operand)
             op = expr.op.text if hasattr(expr.op, "text") else expr.op
@@ -18899,6 +19456,21 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return
         left, right = expr.left, expr.right
         shift = None
+        if op == "<<" and self._const_int_operand(right) is None:
+            # K << n: A = K, E = n + 1, then add A,A until E is 1.
+            self._gen_expr_a(right)
+            e("ld", "E,A")
+            e("ld", f"A,{self._const_int_operand(left) & 0xFF}")
+            e("inc", "E")
+            top = self.ctx.new_label("SHLB")
+            test = self.ctx.new_label("SHLT")
+            e("jr", test)
+            self.ctx.emit_label(top)
+            e("add", "A,A")
+            self.ctx.emit_label(test)
+            e("dec", "E")
+            e("jr", f"NZ,{top}")
+            return
         if op == "*":
             # x * 2^n: the low byte is that of x << n.
             left, shift = self._mul_pow2_shift(expr)
@@ -21856,11 +22428,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.runtime_used.add(name)
         if name == "__mul16":
             self._mul16_sites.append((self.ctx.current_function,
-                                      len(self.ctx.continue_labels)))
+                                      len(self.ctx.continue_labels),
+                                      self._loop_call_count()))
         elif name in ("__sdiv16", "__smod16"):
             self._sdiv_sites.append((self.ctx.current_function,
                                      len(self.ctx.continue_labels)))
-        if name in ("__div16", "__mod16", "__sdiv16", "__smod16"):
+        if name in ("__div16", "__mod16", "__sdiv16", "__smod16",
+                    "__sdivmod16"):
             k = self._div_const
             # a constant divisor under 256 takes the same T-states in the
             # compact __div16, so the site does not count
@@ -21869,6 +22443,43 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                                           len(self.ctx.continue_labels)))
         self._div_const = None
         self.ctx.emit_instr("call", name)
+
+    def _light_callee(self, func) -> bool:
+        """True for a call of a function of this program that has no
+        call and no loop in its body: the call costs little, so a loop of
+        such calls is no reason for the slow __mul16c."""
+        if not isinstance(func, ast.Identifier):
+            return False
+        cga = getattr(self, "call_graph_analyzer", None)
+        name = func.name.text
+        return (cga is not None and name in cga.has_body
+                and not cga.call_graph.get(name)
+                and name not in cga.loop_funcs)
+
+    def _loop_call_count(self) -> int:
+        """The number of calls in the innermost loop being generated (0
+        outside a loop), without the calls of light functions.  Counted
+        on the tree, once for each loop."""
+        if not self._loop_stmts:
+            return 0
+        stmt = self._loop_stmts[-1]
+        n = self._loop_calls.get(id(stmt))
+        if n is None:
+            n = 0
+            stack = [stmt]
+            while stack:
+                x = stack.pop()
+                if isinstance(x, (list, tuple)):
+                    stack.extend(x)
+                    continue
+                if not _dcfast.is_dataclass(x) or isinstance(x, type):
+                    continue
+                if isinstance(x, (ast.Call, ast.CallNoArgs)):
+                    if not self._light_callee(x.func):
+                        n += 1
+                stack.extend(_children(x))
+            self._loop_calls[id(stmt)] = n
+        return n
 
     def _store_tmp32(self) -> None:
         """Store DEHL to __tmp32 for 32-bit binary operations."""
@@ -23545,13 +24156,17 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if isinstance(expr, ast.UnaryOp) and expr.op == "&":
             operand = expr.operand
             if isinstance(operand, ast.Identifier):
-                sym = self.ctx.lookup(operand.name)
+                oname = getattr(operand.name, "text", operand.name)
+                sym = self.ctx.lookup(oname)
+                if (self._static_init_labels is not None
+                        and oname in self._static_init_labels):
+                    return (self._static_init_labels[oname], 0)
                 if sym:
                     return (sym.label(), 0)
-                elif operand.name in self.ctx.static_local_labels:
-                    return (self.ctx.static_local_labels[operand.name], 0)
+                elif oname in self.ctx.static_local_labels:
+                    return (self.ctx.static_local_labels[oname], 0)
                 else:
-                    return (f"_{operand.name}", 0)
+                    return (f"_{oname}", 0)
             elif isinstance(operand, (ast.Member, ast.ArrowMember)):
                 # &struct.member or &((struct*)base)->member chain
                 if isinstance(operand, ast.Member) and isinstance(operand.obj, ast.Identifier):

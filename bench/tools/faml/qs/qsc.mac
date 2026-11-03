@@ -1,0 +1,208 @@
+; qsh.mac - __qsort_wr as a shell sort (Hibbard gaps) with the run check; reg ABI HL=base DE=nmemb BC=compar
+	.Z80
+	CSEG
+	PUBLIC	__qsort_wr
+__qsort_wr:
+	LD	(QW_TR+1),BC
+	LD	A,0C3H
+	LD	(QW_TR),A
+	LD	(QW_LO),HL
+	EX	DE,HL
+	DEC	HL
+	BIT	7,H
+	RET	NZ
+	LD	A,H
+	OR	L
+	RET	Z
+	ADD	HL,HL
+	ADD	HL,DE			; hi = base + 2*(nmemb-1)
+	LD	(QW_HI),HL
+; ---- run check: ascending or descending ----
+	LD	HL,(QW_LO)
+	CALL	qw_cn
+	XOR	A
+	LD	(QW_M),A
+	BIT	7,H
+	JR	NZ,qw_rc1
+	LD	A,H
+	OR	L
+	JR	Z,qw_rc1
+	LD	A,80H
+	LD	(QW_M),A
+qw_rc1:
+	LD	HL,(QW_LO)
+qw_rc2:
+	INC	HL
+	INC	HL
+	EX	DE,HL
+	LD	HL,(QW_HI)
+	OR	A
+	SBC	HL,DE
+	JR	Z,qw_rc9
+	EX	DE,HL
+	PUSH	HL
+	CALL	qw_cn
+	POP	DE
+	LD	A,(QW_M)
+	XOR	H
+	EX	DE,HL
+	JP	M,qw_rc2
+	LD	A,D
+	OR	E
+	JR	Z,qw_rc2
+	JR	qw_sort
+qw_rc9:
+	LD	A,(QW_M)
+	OR	A
+	RET	Z
+	LD	HL,(QW_LO)
+	LD	DE,(QW_HI)
+qw_rv:
+	PUSH	HL
+	PUSH	DE
+	CALL	qw_swp
+	POP	DE
+	POP	HL
+	INC	HL
+	INC	HL
+	DEC	DE
+	DEC	DE
+	OR	A
+	SBC	HL,DE
+	RET	NC
+	ADD	HL,DE
+	JR	qw_rv
+; ---- shell sort.  QW_H = gap in bytes (2^(k+1)-2) ----
+qw_sort:
+	LD	HL,(QW_HI)
+	LD	DE,(QW_LO)
+	OR	A
+	SBC	HL,DE			; HL = 2*(n-1)
+	EX	DE,HL			; DE = 2*(n-1)
+	LD	HL,QW_GT+16		; last table entry (the largest gap)
+qw_g:
+	LD	C,(HL)
+	INC	HL
+	LD	B,(HL)
+	DEC	HL
+	LD	A,B
+	CP	D
+	JR	C,qw_gd
+	JR	NZ,qw_gn
+	LD	A,C
+	CP	E
+	JR	C,qw_gd			; gap < 2*(n-1): start here
+qw_gn:
+	DEC	HL
+	DEC	HL
+	JR	qw_g
+qw_gd:
+	LD	(QW_P),HL
+	LD	(QW_H),BC
+qw_gap:
+	LD	HL,(QW_LO)
+	LD	DE,(QW_H)
+	ADD	HL,DE
+	LD	(QW_I),HL		; i = lo + G
+qw_il:
+	LD	HL,(QW_HI)
+	LD	DE,(QW_I)
+	OR	A
+	SBC	HL,DE
+	JR	C,qw_next		; i > hi
+	EX	DE,HL			; HL = i
+	LD	(QW_J),HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(QW_PV),DE
+qw_jl:
+	LD	HL,(QW_J)
+	LD	DE,(QW_H)
+	OR	A
+	SBC	HL,DE			; HL = j - G
+	PUSH	HL
+	LD	DE,(QW_LO)
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	JR	C,qw_pl			; j - G < lo
+	PUSH	HL
+	LD	DE,QW_PV
+	CALL	QW_TR			; cmp(a[j-G], pv)
+	POP	DE			; DE = j - G
+	BIT	7,H
+	JR	NZ,qw_pl
+	LD	A,H
+	OR	L
+	JR	Z,qw_pl
+	LD	HL,(QW_J)		; a[j] = a[j-G]
+	LD	A,(DE)
+	LD	(HL),A
+	INC	DE
+	INC	HL
+	LD	A,(DE)
+	LD	(HL),A
+	LD	(QW_J),DE		; j = j - G: DE = j-G+1
+	LD	HL,(QW_J)
+	DEC	HL
+	LD	(QW_J),HL
+	JR	qw_jl
+qw_pl:
+	LD	HL,(QW_J)
+	LD	DE,(QW_PV)
+	LD	(HL),E
+	INC	HL
+	LD	(HL),D
+	LD	HL,(QW_I)
+	INC	HL
+	INC	HL
+	LD	(QW_I),HL
+	JR	qw_il
+qw_next:
+	LD	HL,(QW_P)
+	DEC	HL
+	DEC	HL
+	LD	DE,QW_GT
+	PUSH	HL
+	OR	A
+	SBC	HL,DE
+	POP	HL
+	RET	C
+	LD	(QW_P),HL
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(QW_H),DE
+	JR	qw_gap
+
+qw_cn:	LD	D,H
+	LD	E,L
+	INC	DE
+	INC	DE
+qw_cmp:	JP	QW_TR
+
+qw_swp:	LD	A,(DE)
+	LDI
+	DEC	HL
+	LD	(HL),A
+	INC	HL
+	LD	A,(DE)
+	LDI
+	DEC	HL
+	LD	(HL),A
+	RET
+
+QW_GT:	DW	2,8,20,46,114,264,602,1402,3500
+
+	COMMON	/lc_qsortw/
+QW_TR:	DS	3
+QW_LO:	DS	2
+QW_HI:	DS	2
+QW_I:	DS	2
+QW_J:	DS	2
+QW_H:	DS	2
+QW_PV:	DS	2
+QW_M:	DS	1
+QW_P:	DS	2
+	END

@@ -88,7 +88,7 @@ NESTED_BYTES = int(os.environ.get("UC80_ROT_NESTED", 100))
 CALLS_OK = os.environ.get("UC80_ROT_CALLS", "0") != "0"
 # the copies of the tests may use this share of the code, at least
 # MIN_BUDGET bytes (UC80_ROT_PERCENT, UC80_ROT_MIN: for tests)
-BUDGET_PERCENT = int(os.environ.get("UC80_ROT_PERCENT", 2))
+BUDGET_PERCENT = int(os.environ.get("UC80_ROT_PERCENT", 3))
 MIN_BUDGET = int(os.environ.get("UC80_ROT_MIN", 32))
 _CALL = re.compile(r"^\t(call|rst)\b", re.I)
 

@@ -18472,6 +18472,240 @@ QSS_NV	EQU	QSS_END-QSS_VARS
 
 	CSEG
 ; ============================================================
+; lc_qsort_w.mac
+; ============================================================
+; lc_qsort_w.mac - __qsort_wr: qsort of 16-bit elements, register convention
+	CSEG
+
+; ============================================================
+; __qsort_wr: sort an array of 16-bit elements (family L, L2,
+; docs/family_l.md).
+;
+; Only the compiler calls this routine, in place of qsort, when the
+; element size is the constant 2 and the comparator is a function of the
+; program that is used only as the comparator of such calls.  The routine
+; is not reentrant: its working storage is static.  The compiler uses it
+; only when the comparator cannot reach qsort or bsearch, and the program
+; has no interrupt function.
+;
+; Entry:  HL = base, DE = number of elements, BC = comparator.
+; The comparator takes its two arguments in registers: HL = pointer to
+; the first element, DE = pointer to the second element.  It returns the
+; result in HL (negative, zero or positive: only the sign bit and the
+; zero test are used).  The comparator can change every register except
+; IX and SP.
+;
+; Plan: if the array is one run (ascending, or strictly descending) the
+; routine returns, or reverses the array.  Else a quicksort with the element
+; at one quarter of the part as pivot (the middle element is the
+; largest one of an organ-pipe array, and gives n*n/2 compares).  The
+; recursion goes into the smaller part and the loop into the larger part,
+; so the stack depth is at most log2(n) levels.
+; The routine changes AF, BC, DE, HL and keeps IX and IY.
+; ============================================================
+
+	PUBLIC	__qsort_wr
+__qsort_wr:
+	LD	(QW_TR+1),BC
+	LD	A,0C3H
+	LD	(QW_TR),A
+	LD	(QW_LO),HL
+	EX	DE,HL
+	DEC	HL			; nmemb-1
+	BIT	7,H
+	RET	NZ
+	LD	A,H
+	OR	L
+	RET	Z
+	ADD	HL,HL
+	ADD	HL,DE			; hi = base + 2*(nmemb-1)
+	LD	(QW_HI),HL
+; ---- run check ----
+	LD	HL,(QW_LO)
+	CALL	qw_cn			; cmp(lo, lo+2)
+	XOR	A
+	LD	(QW_M),A
+	BIT	7,H
+	JR	NZ,qw_rc1		; < 0: ascending
+	LD	A,H
+	OR	L
+	JR	Z,qw_rc1		; == 0: ascending
+	LD	A,80H
+	LD	(QW_M),A		; > 0: descending
+qw_rc1:
+	LD	HL,(QW_LO)
+qw_rc2:
+	INC	HL
+	INC	HL			; p += 2
+	EX	DE,HL
+	LD	HL,(QW_HI)
+	OR	A
+	SBC	HL,DE
+	JR	Z,qw_rc9		; p == hi: whole array is a run
+	EX	DE,HL
+	PUSH	HL
+	CALL	qw_cn
+	POP	DE
+	LD	A,(QW_M)
+	XOR	H
+	EX	DE,HL			; HL = p (flags kept)
+	JP	M,qw_rc2		; ok: sign set after xor
+	LD	A,D
+	OR	E
+	JR	Z,qw_rc2		; == 0
+	JR	qw_top			; not a run: sort
+qw_rc9:
+	LD	A,(QW_M)
+	OR	A
+	RET	Z
+	LD	HL,(QW_LO)		; reverse
+	LD	DE,(QW_HI)
+qw_rv:
+	PUSH	HL
+	PUSH	DE
+	CALL	qw_swp
+	POP	DE
+	POP	HL
+	INC	HL
+	INC	HL
+	DEC	DE
+	DEC	DE
+	OR	A
+	SBC	HL,DE
+	RET	NC
+	ADD	HL,DE
+	JR	qw_rv
+
+; ---- sort [LO..HI] (recursive) ----
+qw_top:
+	LD	HL,(QW_HI)
+	LD	DE,(QW_LO)
+	OR	A
+	SBC	HL,DE
+	RET	C
+	RET	Z
+	SRL	H
+	RR	L
+	SRL	H
+	RR	L
+	RES	0,L
+	ADD	HL,DE			; HL = lo + (hi - lo) / 4: the pivot
+	LD	E,(HL)
+	INC	HL
+	LD	D,(HL)
+	LD	(QW_PV),DE		; pivot value
+	LD	HL,(QW_LO)
+	LD	(QW_I),HL
+	LD	HL,(QW_HI)
+	LD	(QW_J),HL
+qw_si:
+	LD	HL,(QW_I)		; while (cmp(i,pv) < 0) i += 2
+	LD	DE,QW_PV
+	CALL	qw_cmp
+	BIT	7,H
+	JR	Z,qw_sj
+	LD	HL,(QW_I)
+	INC	HL
+	INC	HL
+	LD	(QW_I),HL
+	JR	qw_si
+qw_sj:
+	LD	HL,QW_PV		; while (cmp(pv,j) < 0) j -= 2
+	LD	DE,(QW_J)
+	CALL	qw_cmp
+	BIT	7,H
+	JR	Z,qw_sx
+	LD	HL,(QW_J)
+	DEC	HL
+	DEC	HL
+	LD	(QW_J),HL
+	JR	qw_sj
+qw_sx:
+	LD	HL,(QW_J)		; if (i <= j) { swap; i += 2; j -= 2 }
+	LD	DE,(QW_I)
+	OR	A
+	SBC	HL,DE			; j - i
+	JR	C,qw_done
+	ADD	HL,DE
+	CALL	qw_swp			; HL = j, DE = i
+	LD	HL,(QW_I)
+	INC	HL
+	INC	HL
+	LD	(QW_I),HL
+	LD	HL,(QW_J)
+	DEC	HL
+	DEC	HL
+	LD	(QW_J),HL
+	JR	qw_si
+qw_done:
+	LD	HL,(QW_J)
+	LD	DE,(QW_LO)
+	OR	A
+	SBC	HL,DE			; HL = j - lo
+	EX	DE,HL
+	LD	HL,(QW_HI)
+	LD	BC,(QW_I)
+	OR	A
+	SBC	HL,BC			; HL = hi - i
+	OR	A
+	SBC	HL,DE			; carry: right smaller
+	JR	NC,qw_dl
+	LD	HL,(QW_LO)		; recurse right [i,hi]; loop on [lo,j]
+	PUSH	HL
+	LD	HL,(QW_J)
+	PUSH	HL
+	LD	HL,(QW_I)
+	LD	(QW_LO),HL
+	CALL	qw_top
+	POP	HL
+	LD	(QW_HI),HL
+	POP	HL
+	LD	(QW_LO),HL
+	JR	qw_top
+qw_dl:
+	LD	HL,(QW_I)		; recurse left [lo,j]; loop on [i,hi]
+	PUSH	HL
+	LD	HL,(QW_HI)
+	PUSH	HL
+	LD	HL,(QW_J)
+	LD	(QW_HI),HL
+	CALL	qw_top
+	POP	HL
+	LD	(QW_HI),HL
+	POP	HL
+	LD	(QW_LO),HL
+	JR	qw_top
+
+qw_cn:	LD	D,H			; HL = cmp(HL, HL+2)
+	LD	E,L
+	INC	DE
+	INC	DE
+qw_cmp:	JP	QW_TR
+
+qw_swp:	LD	A,(DE)			; swap the words at HL and DE
+	LDI
+	DEC	HL
+	LD	(HL),A
+	INC	HL
+	LD	A,(DE)
+	LDI
+	DEC	HL
+	LD	(HL),A
+	RET
+
+	COMMON	/lc_qsort_w/
+QW_VARS:
+QW_TR:	DS	3
+QW_LO:	DS	2
+QW_HI:	DS	2
+QW_I:	DS	2
+QW_J:	DS	2
+QW_PV:	DS	2
+QW_M:	DS	1
+QW_END:
+
+	CSEG
+; ============================================================
 ; lc_quick_exit.mac
 ; ============================================================
 ; lc_quick_exit.mac - quick_exit and at_quick_exit (C11)

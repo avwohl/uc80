@@ -305,6 +305,8 @@ class RegLocalsMixin:
         from . import codegen as cg
         if self.enable_byte_regs and self._ret_in_a():
             return reglocals.A      # a char result in A; H and L are junk
+        if self._ret_noext():
+            return reglocals.L      # a char result in L; H is junk
         t = self.ctx.current_return_type
         try:
             t = cg._to_legacy(t)

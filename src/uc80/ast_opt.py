@@ -222,6 +222,105 @@ class Uc80ASTOptimizer(ASTOptimizer):
     dead_test = True
     # uc80 --no-loop-unroll turns the unrolling of a short counted loop off
     loop_unroll = True
+    # uc80 --no-empty-loop-fold turns the fold of an empty counted loop off
+    empty_loop_fold = True
+
+    # int-like type keys of _decl_type_key (sorted keywords) that hold every
+    # value of 0..32767 in this loop fold
+    _FOLD_TYPES = frozenset((
+        "int", "unsigned", "int unsigned", "short", "int short",
+        "short unsigned", "int short unsigned", "long", "int long",
+        "long unsigned", "int long unsigned", "long long",
+        "long long unsigned", "int long long", "int long long unsigned"))
+
+    _global_types: dict = {}
+
+    def optimize(self, tu):
+        """Record the plain scalar types of the file-scope objects (the
+        loop fold must know the type of a global counter)."""
+        from uc_core.ast_optimizer import _decl_type_key
+        gt = {}
+        for item in tu.items or []:
+            if isinstance(item, ast.Declaration):
+                for d in item.declarators or []:
+                    dd = getattr(d, "declarator", None)
+                    nm = getattr(getattr(dd, "name", None), "text", None)
+                    key = _decl_type_key(item.decl_specs, dd)
+                    if nm is None:
+                        continue
+                    # a name declared twice with different types: unknown
+                    if nm in gt and gt[nm] != key:
+                        key = None
+                    gt[nm] = key
+        self._global_types = gt
+        return super().optimize(tu)
+
+    # ---- an empty counted loop (docs/family_l.md)
+
+    def _try_empty_loop(self, stmt):
+        """``for (v = c1; v < c2; v += c) ;`` with constant bounds, a
+        non-volatile counter of an integer type and an empty body becomes
+        ``v = final;``, where ``final`` is the value that ends the loop."""
+        if not self.empty_loop_fold or not self._is_empty_stmt(stmt.body):
+            return None
+        init = stmt.init
+        if isinstance(init, ast.ExpressionStmt):
+            init = init.expr
+        if not (isinstance(init, ast.BinaryOp) and _op(init) == "="
+                and isinstance(init.left, ast.Identifier)
+                and isinstance(init.right, ast.IntLiteral)):
+            return None
+        name = _idname(init.left)
+        start = _iv(init.right)
+        cond, upd = stmt.condition, stmt.update
+        if not (isinstance(cond, ast.BinaryOp)
+                and isinstance(cond.left, ast.Identifier)
+                and _idname(cond.left) == name
+                and isinstance(cond.right, ast.IntLiteral)):
+            return None
+        end = _iv(cond.right)
+        if (isinstance(upd, (ast.UnaryOp, ast.PostfixOp))
+                and _op(upd) == "++"
+                and isinstance(upd.operand, ast.Identifier)
+                and _idname(upd.operand) == name):
+            step = 1
+        elif (isinstance(upd, ast.BinaryOp) and _op(upd) == "+="
+                and isinstance(upd.left, ast.Identifier)
+                and _idname(upd.left) == name
+                and isinstance(upd.right, ast.IntLiteral)):
+            step = _iv(upd.right)
+        else:
+            return None
+        if step is None or start is None or end is None or step <= 0:
+            return None
+        if not (0 <= start <= 32767 and 0 <= end <= 32767):
+            return None
+        if self._touches_volatile(cond.left):
+            return None
+        if name in self._var_types:
+            tkey = self._var_types[name]
+        else:
+            tkey = self._global_types.get(name)
+        if tkey not in self._FOLD_TYPES:
+            return None
+        cmp_op = _op(cond)
+        if cmp_op == "<":
+            n = max(0, (end - start + step - 1) // step)
+        elif cmp_op == "<=":
+            n = max(0, (end - start + step) // step)
+        elif cmp_op == "!=":
+            if end < start or (end - start) % step:
+                return None
+            n = (end - start) // step
+        else:
+            return None
+        final = start + n * step
+        if final > 32767:
+            return None
+        self._stat("empty_loop_fold")
+        self._changed = True
+        return ast.CompoundStmt(items=[ast.ExpressionStmt(expr=_binop(
+            "=", make_identifier(name), make_int_lit(final)))])
 
     # ---- a short counted loop (docs/k2_code_size.md)
 
@@ -234,6 +333,9 @@ class Uc80ASTOptimizer(ASTOptimizer):
         counter of a plain integer type becomes a literal in each copy,
         and the copies fold.  The loop is unrolled only when the folded
         copies cost no more than the loop (``_cost``)."""
+        folded = self._try_empty_loop(stmt)
+        if folded is not None:
+            return folded
         if not self.loop_unroll:
             return None
         # A short loop that is the whole body of another loop is the only

@@ -1,0 +1,32 @@
+	.Z80
+	CSEG
+	EXTRN	__qsort_wr
+	PUBLIC	_qwtest
+; _qwtest(base, n, cmp): stack ABI -> __qsort_wr (HL=base DE=n BC=shim)
+_qwtest:
+	PUSH	IX
+	LD	IX,0
+	ADD	IX,SP
+	LD	L,(IX+8)
+	LD	H,(IX+9)
+	LD	(CCMP),HL
+	LD	L,(IX+4)
+	LD	H,(IX+5)
+	LD	E,(IX+6)
+	LD	D,(IX+7)
+	LD	BC,SHIM
+	CALL	__qsort_wr
+	POP	IX
+	RET
+SHIM:	PUSH	DE
+	PUSH	HL
+	LD	HL,SHRET
+	PUSH	HL
+	LD	HL,(CCMP)
+	JP	(HL)
+SHRET:	POP	DE
+	POP	DE
+	RET
+	DSEG
+CCMP:	DS	2
+	END

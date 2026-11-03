@@ -50,8 +50,9 @@ class TestMultiFileCompilation:
         """Dead functions are eliminated in multi-file compilation."""
         util_c = tmp_path / "util.c"
         util_c.write_text("""
-            void used(void) { }
-            void unused(void) { }
+            int g;
+            void used(void) { g = 1; }
+            void unused(void) { g = 2; }
         """)
 
         main_c = tmp_path / "main.c"

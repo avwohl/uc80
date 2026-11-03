@@ -104,6 +104,7 @@ def _stores_to(node, v) -> bool:
 
 class RangeMixin:
     enable_range_cmp = True
+    enable_char_ranges = True       # --no-char-noext
     _range_env: dict = {}
     _range_scoped: dict = {}
     _range_taken: frozenset = frozenset()
@@ -188,6 +189,11 @@ class RangeMixin:
             if tb is None or a[0] < tb[0] or a[1] > tb[1]:
                 return None
             return a
+        if isinstance(e, (ast.Call, ast.CallNoArgs)) and self.enable_char_ranges:
+            # the value of a char call is a char (the caller extends it)
+            sg = self._char_call_type(e)
+            if sg is not None:
+                return (-128, 127) if sg else (0, 255)
         if not isinstance(e, ast.BinaryOp):
             return None
         op = _op(e)
