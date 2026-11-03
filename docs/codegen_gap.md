@@ -625,7 +625,7 @@ Eight programs are still above the whole image of SDCC: five `sort-*` programs a
 
 ## Status on 2026-11-03 (integration of family L, branch integrate15)
 
-The branch `integrate15` has family L (steps LA and LB) and the tree of `integrate14` with its repair and bug round 7. The mean ratio to SDCC 4.6.0 is 0.7875 for the size, 0.7562 for the whole image and 0.4657 for the T-states (0.5882 without `sort-*`). All 78 programs are faster than SDCC in speed mode. No program is bigger than SDCC in size mode in the whole image. The four ROM kernels are smaller than SDCC in size mode and faster than SDCC in speed mode.
+The branch `integrate15` has family L (steps LA and LB) and the tree of `integrate14` with its repair and bug round 7. The mean ratio to SDCC 4.6.0 is 0.7874 for the size, 0.7561 for the whole image and 0.4650 for the T-states (0.5872 without `sort-*`). All 78 programs are faster than SDCC in speed mode. No program is bigger than SDCC in size mode in the whole image. The four ROM kernels are smaller than SDCC in size mode and faster than SDCC in speed mode.
 
 The size column of the report (bytes minus the empty program of each compiler) has 11 programs above SDCC, because the empty program of uc80 is smaller than the one of SDCC: `crc`, `davidly-e`, the three `dhrystone21` builds, `pi+static`, `queens`, `sort-ran-20`, `sort-ran-5000`, `stanford-bubble` and `tak`. Their whole image is below SDCC.
 

@@ -256,13 +256,20 @@ def test_div16_matches_host(tmp_path, flags):
 
 @needs_tools
 @pytest.mark.parametrize("flags", [(), ("--size-helpers",),
-                                   ("--size-helpers", "--no-sdivmod-merge"),
+                                   ("--size-helpers", "--no-divmod-pair"),
+                                   ("--size-helpers", "--no-sdivmod-merge",
+                                    "--no-divmod-pair"),
                                    ("--no-div16-compact",)])
 def test_signed_divmod_matches_host(tmp_path, flags):
     want, got, text = run_both(tmp_path, SDM_PROG, *flags)
     assert got == want
-    # the divides stand in a loop: the shared body only with the option
-    if "--size-helpers" in flags and "--no-sdivmod-merge" not in flags:
+    # x / y and x % y of int16_t operands in a loop are a pair (family L,
+    # also through the typedef name): one __sdivmod16.  Without the pair
+    # the shared body stands only with the option.
+    if "--no-divmod-pair" not in flags:
+        assert "__sdivmod16" in text
+    if ("--size-helpers" in flags and "--no-sdivmod-merge" not in flags
+            and "--no-divmod-pair" in flags):
         assert "__sdiv16m" in text and "__smod16m" in text
     else:
         assert "__sdiv16m" not in text

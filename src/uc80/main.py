@@ -1757,7 +1757,10 @@ def main() -> int:
             from . import empty_calls
             n_empty = empty_calls.run(
                 merged_ast,
-                keep=set(roots.keep) | set(roots.public) | set(roots.isrs))
+                keep=set(roots.keep) | set(roots.public) | set(roots.isrs)
+                | set(roots.regcall or ())
+                | {n[1:] if n.startswith("_") else n
+                   for n in regcc.asm_text_names(mac_files)})
             if n_empty:
                 if args.verbose:
                     print(f"  Deleted {n_empty} call(s) of empty functions")

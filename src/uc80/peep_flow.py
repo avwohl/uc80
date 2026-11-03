@@ -60,11 +60,16 @@ three steps.
    A later ``ld A,(X)`` goes.  The fact crosses a label of the compiler
    (``@name``) when every jump to the label has the same fact.
    ``--no-a-mem`` turns this step off (docs/family_l.md).
+11. ``ld A,0`` becomes ``xor A`` when no flag is read before the next
+   instruction that sets all flags, a call or a return.  ``--no-zero-xor``
+   turns this step off.
 12. ``ld HL,X / add HL,BC`` (or DE) goes when HL already holds X plus the
    pair, also when a conditional jump stands between.  ``--no-hl-reuse``.
 13. An instruction that writes only A and the flags, such as the ``rlca``
    and ``sbc A,A`` of a sign extension that nothing uses, goes when A is dead
    and no flag is read.  ``--no-dead-alu``.
+14. ``inc SP / inc SP`` after a call becomes ``pop HL`` (or DE, BC) when A is
+   live and the pair is dead.  ``--no-pop-cleanup``.
 15. A chain of stores through a base pointer.  After ``ld HL,N / add HL,BC``
    HL holds BC plus N.  A later ``ld HL,N2 / add HL,BC`` with N2 at most three
    away from the value that HL holds now becomes ``inc HL`` (or ``dec HL``)
@@ -73,11 +78,6 @@ three steps.
    becomes ``ld D,(HL) / inc HL / ld E,(HL) / ex DE,HL`` (``--no-be16``).
 17. ``ld HL,(X) / ex DE,HL`` becomes ``ld DE,(X)`` when HL is dead
    (``--no-ex-load``).
-14. ``inc SP / inc SP`` after a call becomes ``pop HL`` (or DE, BC) when A is
-   live and the pair is dead.  ``--no-pop-cleanup``.
-11. ``ld A,0`` becomes ``xor A`` when no flag is read before the next
-   instruction that sets all flags, a call or a return.  ``--no-zero-xor``
-   turns this step off.
 18. A step of a register-pair counter through HL.  ``ld H,B / ld L,C / inc HL
    / ld B,H / ld C,L`` becomes ``inc BC / ld H,B / ld L,C`` (the same for DE
    and for ``dec``): HL holds the new value in both.  22 T-states become 14.

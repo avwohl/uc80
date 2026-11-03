@@ -16,7 +16,12 @@ A call is kept when
   expression with a side effect);
 - a local variable or a parameter of the calling function has the name of
   the function (the call then calls something else);
-- the unit has more than one definition of the name.
+- the unit has more than one definition of the name;
+- the body reads a volatile object (a dummy read of a device register is
+  code), or the unit has `volatile` and the body reads memory through a
+  pointer, an index or a member;
+- the name is in ``keep``: an entry point, an interrupt function, a name
+  that a regcall pragma or an assembly file uses.
 
 The function itself stays when its address is taken.
 """
@@ -101,24 +106,46 @@ def _is_expr_child(parent, child) -> bool:
     return True
 
 
-def _body_is_empty(func) -> bool:
+def _body_is_empty(func, vol=None, vol_names=frozenset()) -> bool:
     body = func.body
     if not isinstance(body, ast.CompoundStmt):
         return False
-    return all(_stmt_is_empty(s) for s in body.items or [])
+    return all(_stmt_is_empty(s, vol, vol_names) for s in body.items or [])
 
 
-def _stmt_is_empty(s) -> bool:
+_MEMORY = ("Index", "Member", "ArrowMember")
+
+
+def _reads_memory(e) -> bool:
+    """A dereference, an index or a member access: in a unit that has
+    `volatile`, a read through a pointer may be a read of a device
+    register."""
+    if isinstance(e, (list, tuple)):
+        return any(_reads_memory(x) for x in e)
+    if not _is_node(e):
+        return False
+    cls = type(e).__name__
+    if cls in _MEMORY:
+        return True
+    if cls == "UnaryOp" and _optext(e) == "*":
+        return True
+    return any(_reads_memory(c) for c in _children(e))
+
+
+def _stmt_is_empty(s, vol=None, vol_names=frozenset()) -> bool:
     if isinstance(s, ast.EmptyStmt):
         return True
     if isinstance(s, ast.CompoundStmt):
-        return all(_stmt_is_empty(i) for i in s.items or [])
+        return all(_stmt_is_empty(i, vol, vol_names) for i in s.items or [])
     if isinstance(s, ast.ExpressionStmt):
         e = s.expr
         if e is None:
             return True
         if type(e).__name__ == "Cast":
             e = e.expr
+        if vol is not None and vol.any and (
+                vol.touches(e, vol_names) or _reads_memory(e)):
+            return False          # a read of a volatile object is an effect
         return is_pure(e)
     return False
 
@@ -151,13 +178,15 @@ def run(unit, keep=frozenset()) -> int:
             nm = _fname(item)
             if nm is not None:
                 defs.setdefault(nm, []).append(item)
-    empty = {nm for nm, fs in defs.items()
-             if len(fs) == 1 and nm != "main" and nm not in keep
-             and _body_is_empty(fs[0])}
-    if not empty:
-        return 0
     vol = VolatileInfo(unit)
     vol_names = vol.all_names()
+    keep_l = {k.lower() for k in keep}      # assembly names are lower case
+    empty = {nm for nm, fs in defs.items()
+             if len(fs) == 1 and nm != "main" and nm not in keep
+             and nm.lower() not in keep_l
+             and _body_is_empty(fs[0], vol, vol_names)}
+    if not empty:
+        return 0
     count = 0
 
     def target(stmt) -> str | None:

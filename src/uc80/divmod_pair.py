@@ -49,6 +49,19 @@ _ASSIGN = frozenset(("=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=",
 INTRINSIC = "__uc80_dm_first"
 
 
+_TD: dict = {}          # typedef name -> type key, set by run()
+
+
+def _norm(key):
+    """Resolve a typedef-name key ("td:uint16_t") to the key of its base
+    type, when the unit declares the typedef as a bare scalar."""
+    n = 0
+    while key is not None and key.startswith("td:") and n < 8:
+        key = _TD.get(key[3:])
+        n += 1
+    return key
+
+
 def _is_node(x) -> bool:
     return _dcfast.is_dataclass(x) and not isinstance(x, type)
 
@@ -197,10 +210,10 @@ class _Func:
         if isinstance(e, ast.Identifier):
             nm = _tok(e.name)
             if nm in self.declared:
-                key = self.types.get(nm)
+                key = _norm(self.types.get(nm))
                 glob = nm in self.static_names
             else:
-                key = self.gtypes.get(nm)
+                key = _norm(self.gtypes.get(nm))
                 glob = True
             if key is None or nm in self.addr or nm in self.gaddr:
                 return None
@@ -227,6 +240,17 @@ def run(unit, *, int_size=2, name_of=None, params_of=None) -> int:
         return 0
     gtypes: dict = {}
     gaddr: set = set()
+    _TD.clear()
+    for it in unit.items or []:
+        if isinstance(it, ast.Declaration) and any(
+                type(sp).__name__ == "StorageClass"
+                and _tok(sp.kw) == "typedef" for sp in it.decl_specs or []):
+            for d in it.declarators or []:
+                dd = getattr(d, "declarator", d)
+                nm = _deep_name(dd)
+                key = _decl_type_key(it.decl_specs, dd)
+                if nm is not None and key is not None:
+                    _TD[nm] = key
     for it in unit.items or []:
         if isinstance(it, ast.Declaration):
             for d in it.declarators or []:
@@ -332,7 +356,8 @@ def _benign(op, fx) -> bool:
                 return True
         elif isinstance(o, ast.Identifier):
             nm = _tok(o.name)
-            key = fx.types.get(nm) if nm in fx.declared else fx.gtypes.get(nm)
+            key = _norm(fx.types.get(nm) if nm in fx.declared
+                        else fx.gtypes.get(nm))
             if key is None:
                 continue
             if key in _UNSIGNED:

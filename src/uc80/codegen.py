@@ -6653,10 +6653,20 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         array of 256 elements or fewer (``a[n]``).  Such a variable is
         under 256 in a program without undefined behavior, so a divide by
         it is a small divisor for the rule of the compact __div16.  The
-        guess only picks the faster routine; both routines are correct."""
+        guess only picks the faster routine; both routines are correct.
+        A name that two scopes of the function declare (a shadow) is not
+        used, and the index or the array must be declared once in the
+        body; a variable that the code sets to 256 or more between the
+        index use and the divide costs 280 T-states a call, nothing
+        else."""
         from .deadstore import _walk
         arrays = {}
+        seen: dict[str, int] = {}        # how often a scope declares a name
         for n in _walk(body):
+            if isinstance(n, ast.Declarator):
+                nm = getattr(n.name, "text", None)
+                if nm:
+                    seen[nm] = seen.get(nm, 0) + 1
             if not isinstance(n, ast.Declaration):
                 continue
             for d in n.declarators or []:
@@ -6672,7 +6682,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 if (isinstance(n, ast.Index)
                         and isinstance(n.array, ast.Identifier)
                         and n.array.name.text in arrays
-                        and isinstance(n.index, ast.Identifier)):
+                        and isinstance(n.index, ast.Identifier)
+                        and seen.get(n.index.name.text) == 1
+                        and seen.get(n.array.name.text) == 1):
                     names.add(n.index.name.text)
         return frozenset(names)
 

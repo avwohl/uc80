@@ -84,6 +84,8 @@ A debug function such as `static void dbg(const char *fmt, ...) { }` has no effe
 - The function has one definition, and the body has no code. A body of empty statements and of expressions without side effects counts as empty.
 - Each argument has no call, assignment, `++`, `--`, statement expression or compound literal, and does not access a volatile object.
 - The function that contains the call has no local variable or parameter with the name of the called function.
+- The body does not read a volatile object. A read of a device register that does nothing with the value (`static void ack(void) { status; }`, `REG;` with `#define REG (*(volatile unsigned char *) 0xE000)`, `d->st;`) is code. In a unit that has `volatile`, a body that reads memory through a pointer, an index or a member also counts as code.
+- No assembly file, regcall pragma or entry option names the function. An assembly file may call the function with `CALL _hook`. `#pragma uc80 keep` also keeps the function.
 
 The function stays when the program takes its address. Otherwise dead function removal deletes the function and the string literals that only its calls used. The change saves 1259 bytes in `mojozork-size`.
 
@@ -106,9 +108,13 @@ The compiler finds a pair of operations when the operands are variables of 16 bi
 - Between the two statements there is no label, no loop, no `if` and no other control statement.
 - For signed values, the pair needs two conditions. The program has no other division or remainder that can call `__sdiv16` or `__smod16`. The pair is in a loop or in a function other than `main`. Else the two routines of family K (or the shared body) are smaller than `__sdivmod16`, and the pair stays as two operations. Unsigned pairs never make the image bigger.
 
+The operands can have a typedef name (`uint16_t`, `int16_t`, `typedef unsigned UT;`) when the typedef names a plain 16-bit integer type.
+
 If the first operation does not end in a divide call (a constant divisor that is a power of two, for example), the compiler computes the second operation after the first. The result is correct in all cases.
 
 The routine `__sdivmod16` calls `__div16`. The call of `__sdivmod16` counts as a divide site for the rule of the compact `__div16` (`docs/k2_code_size.md`): a pair in a loop or in a function other than `main` selects the fast `__div16`.
+
+A divisor can be the index of a local array of 256 elements or fewer. The divisor then counts as small (under 256). The divisor and the array must each have one declaration in the function. The rule is a guess by name. The code can set the divisor to 256 or more after the index use. The divide then takes about 280 T-states more for each call. The result stays correct.
 
 The change gives a gain of 38% in T-states for `davidly-e`. The hidden local variable adds 2 bytes of BSS there, and the image is 27 bytes smaller.
 
@@ -217,14 +223,14 @@ Loop rotation copies the test of a loop to its end. The copies may use a share o
 
 The four kernels of `bench/rom/sndrom.py --layout neogeo`, uc80 against SDCC 4.6.0 (size and speed mode of the standalone ROM build of `bench/tools/faml/sdrom.py`):
 
-Bytes of the ROM image, and T-states of the whole run. "uc80 before" is the figure before step LB. SDCC speed and size are the standalone ROM builds of `bench/tools/faml/sdrom.py` (`sdcc -mz80 --max-allocs-per-node 200000`, own `crt0`, `out` and `in` in registers).
+Bytes of the ROM image, and T-states of the timed region (`timed_t` of `sndrom.py` and `sdrom.py`, for uc80 and for SDCC). "uc80 before" is the figure before step LB. SDCC speed and size are the standalone ROM builds of `bench/tools/faml/sdrom.py` (`sdcc -mz80 --max-allocs-per-node 200000`, own `crt0`, `out` and `in` in registers).
 
 | Kernel | uc80 before | uc80 now | SDCC speed | SDCC size |
 |---|---|---|---|---|
-| snd-cmdq | 1475 / 7,874,380 | 1185 / 6,138,897 | 1190 / 7,089,258 | 1188 / 8,255,396 |
-| snd-ymreg | 1040 / 13,831,135 | 970 / 12,402,479 | 1041 / 13,166,418 | 1021 / 13,219,824 |
-| snd-seq | 2249 / 9,625,961 | 2066 / 8,833,951 | 2222 / 11,988,349 | 2199 / 12,957,292 |
-| snd-fnum | 1040 / 8,713,840 | 897 / 7,084,240 | 925 / 15,158,156 | 915 / 15,533,087 |
+| snd-cmdq | 1475 / 7,874,380 | 1185 / 6,138,897 | 1190 / 7,071,518 | 1188 / 8,237,657 |
+| snd-ymreg | 1040 / 13,831,135 | 970 / 12,402,479 | 1041 / 13,130,684 | 1021 / 13,184,034 |
+| snd-seq | 2249 / 9,625,961 | 2066 / 8,833,951 | 2222 / 11,956,973 | 2199 / 12,925,840 |
+| snd-fnum | 1040 / 8,713,840 | 897 / 7,084,240 | 925 / 15,157,793 | 915 / 15,532,693 |
 
 All four kernels are at or below SDCC in bytes (size mode) and in T-states (speed mode). `snd-cmdq` has 3 bytes of margin. The output of each kernel equals the golden output, in both layouts and in both assembler flows.
 
