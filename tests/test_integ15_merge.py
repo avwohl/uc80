@@ -12,7 +12,7 @@ import re
 
 import pytest
 
-from .test_integ14_famk_bug6 import host, uc
+from .test_integ14_famk_bug6 import host, uc, pytestmark  # noqa: F401
 
 PAIR_S = r"""
 #include <stdio.h>
