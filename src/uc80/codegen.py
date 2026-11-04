@@ -38,6 +38,8 @@ from .deadstore import DeadStoreMixin
 from .blockops import BlockOpsMixin
 from .fillidiom import FillIdiomMixin
 from .qsortwr import QsortWrMixin
+from .debug_markers import DebugMarkersMixin
+from .markers import is_marker
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE,
@@ -1576,6 +1578,9 @@ class CallGraphAnalyzer:
     # their locals on the stack (see can_use_shared_storage).
     isr_roots: set[str] = field(default_factory=set)
     isr_reentrant: set[str] = field(default_factory=set)  # EI first
+    # -g: called as dbg_note(body, name, call, func) for each inlined call
+    dbg_note: object = None
+    dbg_carry: object = None
     isr_safe: bool = False
     # Naked functions (docs/rom_hardware.md): never inlined, never given a
     # constant parameter.
@@ -2760,6 +2765,14 @@ class CallGraphAnalyzer:
                     func_bodies: dict[str, ast.FunctionDef],
                     inlineable: set[str]) -> ast.Expression:
         """Recursively inline function calls in an expression."""
+        new = self._inline_expr_raw(expr, func_bodies, inlineable)
+        if self.dbg_carry is not None and new is not expr:
+            self.dbg_carry(expr, new)      # -g: the copy keeps the mark
+        return new
+
+    def _inline_expr_raw(self, expr: ast.Expression,
+                         func_bodies: dict[str, ast.FunctionDef],
+                         inlineable: set[str]) -> ast.Expression:
         if isinstance(expr, (ast.Call, ast.CallNoArgs)):
             new_args = [self._inline_expr(a, func_bodies, inlineable) for a in expr.args]
 
@@ -2870,6 +2883,8 @@ class CallGraphAnalyzer:
                                     is_signed=(False if rt16.is_signed is False else True)),
                                 expr=body, pos=ast._Pos(),
                             )
+                    if self.dbg_note is not None:
+                        self.dbg_note(body, expr.func.name.text, expr, func)
                     return body
 
             # Return call with inlined arguments.
@@ -3848,6 +3863,8 @@ class _DivModFuse:
         if self.mark is None:
             return
         for line in lines[self.mark:]:
+            if is_marker(line):
+                continue
             if not line.startswith("\t"):
                 return
             text = line.split(";")[0].strip()
@@ -3926,7 +3943,7 @@ _MEMO_MISS = object()
 class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin, RangeMixin, NarrowMixin,
                     RangeDivMixin,
                     DeadStoreMixin, BlockOpsMixin, FillIdiomMixin,
-                    QsortWrMixin):
+                    QsortWrMixin, DebugMarkersMixin):
     """Z80 code generator."""
 
     _expr_memo = None   # see _scoped_memo
@@ -4011,6 +4028,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.enable_char_ret_mask = True
         self.enable_param_reg = True
         self.enable_frame_drop = True
+        # -g: ;#file / ;#line / ;#func ... markers (docs/debug_info_g.md).
+        # The markers are whole-line comments; the code does not change.
+        self.debug_info = False
         self.enable_pair_cmp = True
         self.enable_fill_idiom = True
         self.enable_shl_inline = True
@@ -4760,6 +4780,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     f"in an ordinary function.")
 
     def _new_analyzer(self) -> "CallGraphAnalyzer":
+        an = self._new_analyzer_plain()
+        if self.debug_info:
+            an.dbg_note = self.dbg_note_inline
+            an.dbg_carry = self.dbg_carry_inline
+        return an
+
+    def _new_analyzer_plain(self) -> "CallGraphAnalyzer":
         return CallGraphAnalyzer(whole_program=self.whole_program,
                                  type_config=self.type_config,
                                  extra_roots=set(self.keep_names),
@@ -4774,6 +4801,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
     def generate(self, unit: ast.TranslationUnit) -> str:
         """Generate assembly for a translation unit."""
+        if self.debug_info:
+            self._dbg_reset()
+            self.dbg_install()
         enum_fixed_table = getattr(unit, "_enum_fixed_types", None) or {}
         self._enum_fixed_tag_set = set(enum_fixed_table)
         # (the enumerations with a fixed type: typeof of a constant)
@@ -5398,6 +5428,13 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self.ctx.emit()
         self.ctx.emit("\tend")
+
+        if self.debug_info and self._dbg_files:
+            # the file table goes in the header: a dead function that the
+            # assembly pass removes must not take a ;#file line with it
+            at = next((i for i, ln in enumerate(self.ctx.lines[:12])
+                       if ln.startswith("; Generated by")), 2) + 1
+            self.ctx.lines[at:at] = self.dbg_file_table()
 
         # Unused EXTRNs are pruned later, by main.py once any .mac input
         # has been appended (its references keep their EXTRNs), or by the
@@ -7985,9 +8022,14 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             # reads only L (peep_flow, step 15)
             self.ctx.emit(";@CHARL")
         self.ctx.emit_label(func_label)
+        dbg_at = len(self.ctx.lines)       # -g: ;#func goes here, at the end
+        self.dbg_begin_func(func)
 
         if name in self.naked:
             self._gen_naked_body(func, name)
+            if self.debug_info:
+                self.dbg_func(name, func, dbg_at, "none")
+                self.dbg_endfunc(name)
             self._type_scope_restore(type_scope)
             return
 
@@ -8145,22 +8187,24 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         and return_type.name == "void") or (
                 _is_resolved_type(return_type) and return_type.kind == "basic"
                 and return_type.name == "void")
-            regcc.forward_slots(self.ctx.lines, fwd_start, fwd_slots, fwd_init,
-                                end_dead=void_ret)
-            if use_shared_storage:
-                regcc.push_pop_slots(
-                    self.ctx.lines, fwd_start,
-                    [k[1] for k in fwd_slots if k[0] == "a"])
-                if self.enable_param_reg:
-                    inc = set()
-                    for loc in plan.loc:
-                        inc |= {"A": {"a"}, "E": {"e"}, "HL": {"h", "l"},
-                                "DE": {"d", "e"}}.get(loc, set())
-                    kept = regcc.keep_params_in_regs(
-                        self.ctx.lines, fwd_start, fwd_slots, fwd_init, inc)
-                    if kept:
-                        self._rl_vars = [v for v in self._rl_vars
-                                         if v.name not in kept]
+            with self.dbg_clean(fwd_start):
+                regcc.forward_slots(self.ctx.lines, fwd_start, fwd_slots,
+                                    fwd_init, end_dead=void_ret)
+                if use_shared_storage:
+                    regcc.push_pop_slots(
+                        self.ctx.lines, fwd_start,
+                        [k[1] for k in fwd_slots if k[0] == "a"])
+                    if self.enable_param_reg:
+                        inc = set()
+                        for loc in plan.loc:
+                            inc |= {"A": {"a"}, "E": {"e"}, "HL": {"h", "l"},
+                                    "DE": {"d", "e"}}.get(loc, set())
+                        kept = regcc.keep_params_in_regs(
+                            self.ctx.lines, fwd_start, fwd_slots, fwd_init,
+                            inc)
+                        if kept:
+                            self._rl_vars = [v for v in self._rl_vars
+                                             if v.name not in kept]
         self._rl_finish(name, fwd_start, rl_entry_idx, not use_shared_storage)
 
         # The prologue reserved locals_size before a line of the body was
@@ -8181,30 +8225,36 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # A frame whose slots the register locals emptied: no instruction
         # names IX any more, so the pushes and the reservation of the slots
         # and the frame pointer itself can go (docs/frame_drop.md).
-        if (self.enable_frame_drop and frame_size > 0
-                and not use_shared_storage and not self._stmt_expr_seen
-                and self._drop_dead_frame(frame_start, frame_size, pushed)):
-            frame_size = 0
-        elif (self.enable_frame_drop and frame_size > 0
-                and not use_shared_storage and not self._stmt_expr_seen
-                and self._drop_dead_locals(frame_start, frame_size, pushed)):
-            frame_size = 0
+        with self.dbg_clean(frame_start):
+            if (self.enable_frame_drop and frame_size > 0
+                    and not use_shared_storage and not self._stmt_expr_seen
+                    and self._drop_dead_frame(frame_start, frame_size,
+                                              pushed)):
+                frame_size = 0
+            elif (self.enable_frame_drop and frame_size > 0
+                    and not use_shared_storage and not self._stmt_expr_seen
+                    and self._drop_dead_locals(frame_start, frame_size,
+                                               pushed)):
+                frame_size = 0
 
-        if (isr_kind is None and name != "main" and self.register_cc
-                and frame_size == 0 and not self._stmt_expr_seen):
-            self._tail_call_returns(name, frame_start)
+            if (isr_kind is None and name != "main" and self.register_cc
+                    and frame_size == 0 and not self._stmt_expr_seen):
+                self._tail_call_returns(name, frame_start)
 
         epilogue_label = f"@{name}_ret"
         if isr_kind is not None:
             self.ctx.emit(BARRIER_BEGIN)
+        self.dbg_closing_brace(func)
         self.ctx.emit_label(epilogue_label)
 
+        dbg_frame = "none"
         if self._frame_is_unused(frame_start, frame_size):
             # Nothing in the body names IX, so the frame pointer is dead:
             # drop "push IX / ld IX,0 / add IX,SP" (44 T-states) and the
             # "ld SP,IX / pop IX" that undoes them (24 T-states).
             del self.ctx.lines[frame_start:frame_start + 3]
         else:
+            dbg_frame = "ix"
             # With no stack locals and no return slots, SP is already IX
             # at the return (every call drops its arguments, and a
             # statement expression or inline asm keeps the full epilogue).
@@ -8220,6 +8270,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.emit()
 
         self._rl_end(name, rl_text_start)
+        if self.debug_info:
+            self.dbg_func(name, func, dbg_at, dbg_frame)
+            self.dbg_endfunc(name)
         self.ctx.current_function = None
         self.ctx.current_return_type = None
         self._use_shared_storage = False
@@ -8441,7 +8494,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             return False
         # lines[frame_start:frame_start+3] is the prologue itself.
         for line in self.ctx.lines[frame_start + 3:]:
-            if self._IX_USE.search(line):
+            if not is_marker(line) and self._IX_USE.search(line):
                 return False
         return True
 
@@ -8484,6 +8537,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
     def _gen_block_item(self, item) -> None:
         if isinstance(item, ast.Declaration):
+            if self.debug_info:
+                self.dbg_decl(item)
             self.gen_local_decl(item)
         else:
             self.gen_statement(item)
@@ -10701,6 +10756,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if self._expr_memo is not None:
             # A statement inside a statement expression can declare names.
             self._expr_memo.clear()
+        if self.debug_info:
+            self.dbg_stmt(stmt)
         if isinstance(stmt, (ast.ReturnStmt, ast.ReturnStmtValue)):
             self.gen_return(stmt)
         elif isinstance(stmt, ast.ExpressionStmt):
@@ -10945,6 +11002,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self._loop_stmts.append(stmt)
 
         self.ctx.emit_label(start_label)
+        self.dbg_line(stmt.condition, stmt)
         with self._vol_region(stmt.condition):
             self._gen_cond_false_jump(stmt.condition, end_label)
 
@@ -10970,6 +11028,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.gen_statement(stmt.body)
 
         self.ctx.emit_label(cond_label)
+        self.dbg_line(stmt.condition, stmt)
         with self._vol_region(stmt.condition):
             if self._const_int_operand(stmt.condition) is None:
                 self._gen_branch(stmt.condition, start_label, True)
@@ -11002,6 +11061,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # Init: auto-AST wraps a bare for-init expression as
         # ExpressionStmt(expr=...). gen_statement handles that uniformly.
         if stmt.init:
+            if self.debug_info:
+                if isinstance(stmt.init, ast.Declaration):
+                    self.dbg_decl(stmt.init)
+                else:
+                    self.dbg_line(stmt.init, stmt)
             if isinstance(stmt.init, ast.Declaration):
                 self.gen_local_decl(stmt.init)
             elif isinstance(stmt.init, ast.ExpressionStmt):
@@ -11024,8 +11088,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self.gen_statement(stmt.body)
             self.ctx.emit_label(update_label)
             if stmt.update:
+                self.dbg_line(stmt.update, stmt)
                 with self._vol_region(stmt.update):
                     self.gen_expr_discard(stmt.update)
+            self.dbg_line(stmt.condition, stmt)
             with self._vol_region(stmt.condition):
                 self._gen_branch(stmt.condition, body_label, True)
             self.ctx.emit_label(end_label)
@@ -11038,6 +11104,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         # Condition
         if stmt.condition:
+            self.dbg_line(stmt.condition, stmt)
             with self._vol_region(stmt.condition):
                 self._gen_cond_false_jump(stmt.condition, end_label)
 
@@ -11047,6 +11114,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # Update
         self.ctx.emit_label(update_label)
         if stmt.update:
+            self.dbg_line(stmt.update, stmt)
             with self._vol_region(stmt.update):
                 self.gen_expr_discard(stmt.update)
 
@@ -14976,7 +15044,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self._gen_reg_arg(a1, t1, r1)
         mark = len(self.ctx.lines)
         self._gen_reg_arg(a0, t0, r0)
-        eff = regcc.run_effects(self.ctx.lines[mark:])
+        eff = regcc.run_effects([ln for ln in self.ctx.lines[mark:]
+                                 if not is_marker(ln)])
         if eff is not None and not (eff[0] & self._REGCC_REGS[r1]):
             return
         self.ctx.lines.insert(mark, "\tpush\tDE")
@@ -20471,7 +20540,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         lines = self.ctx.lines
         mark = len(lines)
         self.gen_expr(rhs)
-        new = lines[mark:]
+        new = [ln for ln in lines[mark:] if not is_marker(ln)]
         del lines[mark:]
         if len(new) == 1:
             m = self._LD_HL_LABEL.match(new[0])
@@ -23184,12 +23253,17 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         lines = self.ctx.lines
         sext = ["\tld\tA,H", "\trlca", "\tsbc\tA,A", "\tld\tE,A",
                 "\tld\tD,A"]
+        tail_marks = []         # -g: the markers after the code do not count
+        while lines and is_marker(lines[-1]):
+            tail_marks.append(lines.pop())
+        tail_marks.reverse()
         if (lines[-5:] == sext
                 and not (len(lines) > 5 and "$" in lines[-6])):
             del lines[-5:]
         elif (lines and lines[-1] == "\tld\tDE,0"
                 and not (len(lines) > 1 and "$" in lines[-2])):
             del lines[-1]
+        lines.extend(tail_marks)
         if is_signed:
             e("ld", "A,H")
             e("rlca")

@@ -25,7 +25,7 @@ The pass runs on the text of the program after the peephole pass. The pass rotat
 
 - the head label is `@FORn` or `@WHILEn`.
 - the test up to the first conditional jump to `@ENDFORn` or `@ENDWHILEn` has at most 12 instructions and at most 14 bytes. A loop that holds another loop needs a test of at most 9 bytes.
-- the test holds no label except the `@CMP_NVn` labels of a signed compare. It holds no return, no `rst`, no `djnz`, no jump to another place and no comment.
+- the test holds no label except the `@CMP_NVn` labels of a signed compare. It holds no return, no `rst`, no `djnz`, no jump to another place and no comment. The pass accepts a `;#` debug marker (`-g`) in the test, and copies the marker with the test.
 - the back jump to the head stands directly before the exit label. If the exit is a conditional return (`ret nc`, which the peephole pass makes from a jump to a `ret`), labels and the `ret` follow the back jump.
 - the loop is hot, as far as the pass can see. An outer loop needs a body of at most 32 bytes without a call. A loop in another loop needs a body of at most 100 bytes without a call.
 - the copy fits in the budget of the program.

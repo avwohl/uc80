@@ -76,3 +76,22 @@ def locate_end() -> "str | None":
     except OSError:
         pass
     return f"{_show(f)}:{l}"
+
+
+def locate_pair(token):
+    """(path, line) of a token, the parts of ``locate`` (the path as
+    ``locate`` shows it).  ``-g`` writes these into the ``;#file`` and
+    ``;#line`` markers."""
+    s = locate(token)
+    path, _, line = s.rpartition(":")
+    return path, int(line)
+
+
+def locate_at(file_id: int, line: int):
+    """(path, line) for a line of the preprocessed text of the file with
+    id ``file_id`` (the line of a node that has no token), or None."""
+    m = _MAPS.get(file_id)
+    if m and 1 <= line <= len(m):
+        f, l = m[line - 1]
+        return _show(f), l
+    return None

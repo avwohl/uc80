@@ -51,6 +51,9 @@ except rule 3, which keeps the labels where they are.
 from __future__ import annotations
 
 import re
+from collections import Counter
+
+from .markers import is_marker
 
 RET_CC = True
 RELOAD = True
@@ -610,6 +613,10 @@ def _branch_merge_one(lines: list[str], start: int):
         y_from = e_ins[pk - 1] + 1 if pk else e_idx + 1
         y_to = e_ins[len(e_ins) - sk] if sk else end_idx
         s_lines = lines[y_to:end_idx] if sk else []
+        # the markers of the shared end in the then arm go with the code
+        # that is left (the arm loses the instructions, not the lines)
+        t_marks = ([ln for ln in lines[x_to:k] if is_marker(ln)]
+                   if sk else [])
         x_lines = lines[x_from:x_to]
         y_lines = lines[y_from:y_to]
         y_has = any(not _is_comment(ln) for ln in y_lines)
@@ -626,13 +633,26 @@ def _branch_merge_one(lines: list[str], start: int):
         if not y_has:
             # then arm X is skipped by the test: jump to the shared end
             join = sk_label if sk else end_name
-            mid = ([f"\t{jc_op}\t{cc},{join}"] + x_lines
+            mid = ([f"\t{jc_op}\t{cc},{join}"] + x_lines + t_marks
                    + ([f"{sk_label}:"] + s_lines if sk else []))
         else:
             join = sk_label if sk else end_name
-            mid = ([lines[jc]] + x_lines + [f"\t{jmp_op}\t{join}"]
+            mid = ([lines[jc]] + x_lines + t_marks + [f"\t{jmp_op}\t{join}"]
                    + [lines[e_idx]] + y_lines
                    + ([f"{sk_label}:"] + s_lines if sk else []))
+        # A marker that the cut dropped (the markers of the arm lines that
+        # moved before the jump, or the ones after the jump) is kept: it
+        # goes at the end of the merged arms, in the order it had.
+        kept = Counter(ln for ln in lines[first:jc] + mid if is_marker(ln))
+        lost = []
+        for ln in lines[first:end_idx]:
+            if is_marker(ln):
+                if kept[ln] > 0:
+                    kept[ln] -= 1
+                else:
+                    lost.append(ln)
+        if lost:
+            mid = mid + lost
         new = head + mid + tail
         return new, len(head)
     return lines, None
@@ -652,12 +672,18 @@ def _sign_one(lines: list[str]) -> tuple[list[str], bool]:
     changed = False
     counter = 0
     while i < n:
-        # collect the eight instructions (comments between are not allowed)
+        # collect the eight instructions (comments between are not
+        # allowed, ;# debug markers are: they are kept, after the new code)
         if lines[i].startswith("\tld\tA,H") or lines[i].startswith(
                 "\tld\ta,h"):
             seq = []
+            marks = []          # ;# debug markers inside the sequence
             j = i
             while j < n and len(seq) < 8:
+                if is_marker(lines[j]):
+                    marks.append(lines[j])
+                    j += 1
+                    continue
                 ins = _split(lines[j])
                 if ins is None:
                     break
@@ -696,6 +722,7 @@ def _sign_one(lines: list[str]) -> tuple[list[str], bool]:
                                    "\tbit\t7,H", f"\t{jm}\tz,{tgt}",
                                    f"{skip}:"]
                     out.extend(new)
+                    out.extend(marks)
                     i = j
                     changed = True
                     continue

@@ -30,6 +30,7 @@ from uc_core import ast_legacy as lt
 from uc_core._const import int_value
 
 from .addrcse import _fields, _is_node
+from .markers import is_marker
 
 # up to this size a copy or fill is unrolled
 UNROLL = max(1, int(os.environ.get("UC80_BLOCKOP_UNROLL", 4)))
@@ -301,8 +302,9 @@ class BlockOpsMixin:
         """The lines emitted since ``mark`` are one ``ld HL,const``:
         remove them and return the constant."""
         lines = self.ctx.lines
-        if len(lines) == mark + 1:
-            m = _LD_HL_CONST.match(lines[mark])
+        code = [ln for ln in lines[mark:] if not is_marker(ln)]
+        if len(code) == 1:
+            m = _LD_HL_CONST.match(code[0])
             if m is not None:
                 del lines[mark:]
                 return m.group(1)

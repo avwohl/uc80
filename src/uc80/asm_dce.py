@@ -7,6 +7,8 @@ from entry points (main and PUBLIC functions).
 import re
 from dataclasses import dataclass, field
 
+from .markers import marker_kind
+
 # Inline-assembly region markers.  They bracket every basic `asm("...")`
 # block in the emitted .mac and are load-bearing in three modules:
 # codegen writes them (it imports them from here), main.py splits the
@@ -299,6 +301,17 @@ class AssemblyDCE:
                 label = match.group(1)
                 in_header = False
 
+                # The ``;#line`` debug markers just before a label are for the
+                # code after the label: they go with its block, so that
+                # they stay when a dead block before it goes (the position
+                # is the same, a label is not a byte).
+                moved: list[str] = []
+                if current_block:
+                    while current_block.lines and marker_kind(
+                            current_block.lines[-1]) == "line":
+                        moved.append(current_block.lines.pop())
+                    moved.reverse()
+
                 # Save previous block
                 if current_block:
                     self.blocks[current_block.label] = current_block
@@ -306,7 +319,7 @@ class AssemblyDCE:
                 # Start new block
                 current_block = AsmBlock(
                     label=label,
-                    lines=[line],
+                    lines=[line] + moved,
                     is_public=label in self.public_labels
                 )
 
@@ -637,9 +650,35 @@ class AssemblyDCE:
             lines.append(line)
 
         # Reachable code blocks in original order
+        # The ``;#endfunc`` and ``;#endinline`` markers of a dead block stay
+        # when their opening marker stays: a function that ends in an endless
+        # loop has a dead epilogue block, and the debug info needs the end.
+        open_funcs: list[str] = []
+        open_inline = 0
         for label, block in self.blocks.items():
             if label in reachable_code:
                 lines.extend(block.lines)
+                for ln in block.lines:
+                    kind = marker_kind(ln)
+                    if kind == "func":
+                        open_funcs.append(ln.split()[1])
+                    elif kind == "endfunc":
+                        if open_funcs:
+                            open_funcs.pop()
+                    elif kind == "inline":
+                        open_inline += 1
+                    elif kind == "endinline":
+                        open_inline = max(0, open_inline - 1)
+            else:
+                for ln in block.lines:
+                    kind = marker_kind(ln)
+                    if kind == "endinline" and open_inline:
+                        open_inline -= 1
+                        lines.append(ln)
+                    elif (kind == "endfunc" and open_funcs
+                          and ln.split()[1:2] == open_funcs[-1:]):
+                        open_funcs.pop()
+                        lines.append(ln)
 
         # ROM data (CSEG) - only include referenced data blocks
         rom_blocks = [b for lb, b in self.data_blocks.items()

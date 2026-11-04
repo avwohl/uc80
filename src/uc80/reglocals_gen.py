@@ -16,7 +16,7 @@ from uc_core import ast
 from uc_core import _dcfast
 from uc_core.volatility import children as _children
 
-from . import iyptr, reglocals
+from . import debug_markers, iyptr, reglocals
 
 _SKIPFN = os.environ.get("UC80_RL_SKIPFN", "").split(",")
 
@@ -255,6 +255,10 @@ class RegLocalsMixin:
         region = lines[region_start:]
         if any(_SETJMP.search(ln) for ln in region if ln.startswith("\tcall")):
             return
+        marks = []
+        if self.debug_info:
+            # -g: the pass sees the text as it is without -g
+            region, marks = debug_markers.strip_markers(region)
         env = dataclasses.replace(self._rl_env(),
                                   exit_live=self._rl_exit_live(),
                                   peep_pairs=self.enable_peep_pairs,
@@ -285,6 +289,9 @@ class RegLocalsMixin:
             gain = igain
         elif res is None:
             return
+        if marks:
+            base_lines = debug_markers.restore_markers(region, base_lines,
+                                                       marks)
         lines[region_start:] = base_lines
         if base_pro:
             lines[entry_idx:entry_idx] = base_pro

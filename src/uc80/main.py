@@ -823,6 +823,14 @@ def main() -> int:
         help="Disable peephole optimization"
     )
     parser.add_argument(
+        "-g", "--debug-info",
+        action="store_true",
+        help="Write ;# debug markers (file, line, function, inline) into "
+             "the assembler text. The code is the same bytes as without -g. "
+             "Assemble with um80 --debug-info and link with ul80 "
+             "--debug-info to get prog.dbg (docs/debug_info_g.md)"
+    )
+    parser.add_argument(
         "--no-shared-storage",
         action="store_true",
         help="Disable shared storage optimization for non-recursive functions"
@@ -1835,6 +1843,7 @@ def main() -> int:
         gen.enable_char_ret_mask = not args.no_char_ret_mask
         gen.enable_param_reg = not args.no_param_reg
         gen.enable_frame_drop = not args.no_frame_drop
+        gen.debug_info = args.debug_info
         gen.enable_pair_cmp = not args.no_pair_cmp
         gen.enable_fill_idiom = not args.no_fill_idiom
         gen.enable_shl_inline = not args.no_shl_inline

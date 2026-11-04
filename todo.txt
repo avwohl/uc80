@@ -258,3 +258,13 @@ were wrong and are corrected here so the record survives:
 The mbasic write-up those items came from is cited in the old text as
 /home/wohl/src/mbasic/docs/dev/UC80_BUGS_TODO.md.  That path is on another
 host; the local sister project is ../mbasicc and has no docs directory.
+
+
+Debug info (uc80 -g)
+--------------------
+[RELEASE] Inlined calls do not step in GDB.  prog.dbg has the inline stack
+for an inlined call (`[start,end,[[0,12,0],[0,6,0]],[["add",0,12]]]`), but
+the scratch prog.dbg-to-ELF converter writes no DWARF inline records, so GDB
+shows the line of the inlined body at a break on the call line and has no
+inline frame.  Phase 4 acceptance (step through the program) is not met for
+inlined calls until dbg2elf writes them.  Missing: dbg2elf in um80_and_friends.

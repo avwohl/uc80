@@ -227,6 +227,7 @@ class _Fn:
                 except RecursionError:
                     wrapper_items = None
             if wrapper_items:
+                self.g.note_hoisted(wrapper_items, n)
                 wrapper = ast.CompoundStmt(items=wrapper_items + [n])
                 if isinstance(cont, list):
                     cont[slot] = wrapper

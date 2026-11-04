@@ -55,6 +55,8 @@ from __future__ import annotations
 import os
 import re
 
+from .markers import is_marker
+
 try:  # the size of one instruction
     from upeepz80.z80 import effect as _effect
 except Exception:  # pragma: no cover
@@ -145,22 +147,32 @@ def _trim_junction(lines: list[str], k: int, copy: list[str]) -> list[str]:
             return copy             # a label: another path joins here
         prev.append(ln)
         j -= 1
-    if prev and copy:
-        st, ld = _ST.match(prev[0]), _LD.match(copy[0])
+    # The copy can hold ``;#`` markers between its instructions.  The
+    # decision looks at the instructions only, and a drop removes
+    # instructions only: each marker stays (the bytes are the same with and
+    # without -g).
+    ins = [i for i, x in enumerate(copy) if not is_marker(x)]
+
+    def drop(count: int) -> list[str]:
+        gone = set(ins[:count])
+        return [x for i, x in enumerate(copy) if i not in gone]
+
+    if prev and ins:
+        st, ld = _ST.match(prev[0]), _LD.match(copy[ins[0]])
         if (st and ld and st.group(1) == ld.group(2)
                 and st.group(2).upper() == ld.group(1).upper()):
-            return copy[1:]
-    if len(prev) == 2 and len(copy) >= 2:
+            return drop(1)
+    if len(prev) == 2 and len(ins) >= 2:
         # ld B,H / ld C,L  then  ld H,B / ld L,C  (either order)
         a = [_LDR.match(x) for x in prev]
-        b = [_LDR.match(x) for x in copy[:2]]
+        b = [_LDR.match(copy[i]) for i in ins[:2]]
         if all(a) and all(b):
             fwd = {(m.group(1).upper(), m.group(2).upper()) for m in a}
             back = {(m.group(2).upper(), m.group(1).upper()) for m in b}
             if fwd == back and any(
                     fwd == {(hi, "H"), (lo, "L")} or fwd == {("H", hi), ("L", lo)}
                     for hi, lo in (("B", "C"), ("D", "E"))):
-                return copy[2:]
+                return drop(2)
     return copy
 
 
@@ -218,13 +230,21 @@ def _rotate(code: str) -> str:
     spans = []                         # (first, last) line of each loop
     for lab, pos in label_at.items():
         if lab.startswith("@FOR") or lab.startswith("@WHILE"):
-            for j in range(pos + 1, min(pos + 40, n)):
+            # the window is 40 lines of text; a ;# marker is no line
+            seen = 0
+            j = pos + 1
+            while j < n and seen < 40:
+                if is_marker(lines[j]):
+                    j += 1
+                    continue
+                seen += 1
                 jm = _JCC.match(lines[j])
                 if jm and _END.match(jm.group(3)):
                     ex = label_at.get(jm.group(3))
                     if ex is not None and ex > j:
                         spans.append((pos, ex))
                     break
+                j += 1
     cands: list = []                   # loops that may be rotated
     reserved: set[int] = set()
     out: dict[int, str] = {}           # index -> replacement text
@@ -250,6 +270,9 @@ def _rotate(code: str) -> str:
                     j += 1
                     continue
                 break
+            if is_marker(ln):
+                j += 1              # a debug marker: copied with the test
+                continue
             if not _is_instruction(ln):
                 break               # a comment, a blank line, a directive
             if _RETCC.match(ln):
@@ -308,7 +331,8 @@ def _rotate(code: str) -> str:
                 continue
             # the back jump: the last line before the exit label
             k = ex - 1
-            while k > test_end and not lines[k].strip():
+            while k > test_end and (not lines[k].strip()
+                                    or is_marker(lines[k])):
                 k -= 1
             bm = _JMP.match(lines[k])
             if not bm or bm.group(2) != head or k in reserved:

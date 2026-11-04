@@ -89,6 +89,8 @@ from __future__ import annotations
 
 import re
 
+from .markers import is_marker
+
 try:  # the register effects of one instruction
     from upeepz80.z80 import effect as _effect
 except Exception:  # pragma: no cover - the pass is then off
@@ -869,7 +871,8 @@ def _fold_offsets(rs: list[_R]) -> bool:
 
 def _ins_after(rs: list[_R], i: int, count: int):
     """The indexes of the ``count`` instructions that follow record i with
-    no label, comment-only line or other record between, or None."""
+    no label, comment-only line or other record between, or None.  A blank
+    line and a ``;#`` debug marker do not count as a record between."""
     out = []
     j = i
     while len(out) < count:
@@ -877,7 +880,8 @@ def _ins_after(rs: list[_R], i: int, count: int):
         if j >= len(rs):
             return None
         r = rs[j]
-        if r.kind == "nop" and (not r.line.strip()):
+        if r.kind == "nop" and (not r.line.strip()
+                                or is_marker(r.line)):
             continue
         if r.kind != "ins" or r.dead:
             return None
