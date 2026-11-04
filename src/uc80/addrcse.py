@@ -1194,7 +1194,8 @@ class AddrCseMixin:
             name = cg.function_name(item)
             if name is None or (only is not None and name not in only):
                 continue
-            if name in getattr(self, "naked", ()) or _unsafe(item.body):
+            if (name in getattr(self, "naked", ())
+                    or name in self.optnone or _unsafe(item.body)):
                 continue
             snap = self._type_scope_snapshot()
             self.ctx.locals = {}

@@ -235,7 +235,9 @@ def _deep_name(d):
     return _tok(d.name) if d is not None else None
 
 
-def run(unit, *, int_size=2, name_of=None, params_of=None) -> int:
+def run(unit, *, int_size=2, name_of=None, params_of=None,
+        skip=frozenset()) -> int:
+    """``skip``: functions under optnone, which the pass leaves alone."""
     if int_size != 2:
         return 0
     gtypes: dict = {}
@@ -282,7 +284,8 @@ def run(unit, *, int_size=2, name_of=None, params_of=None) -> int:
     pending: dict = {}
     funcs = []
     for it in unit.items or []:
-        if isinstance(it, ast.FunctionDef) and it.body is not None:
+        if (isinstance(it, ast.FunctionDef) and it.body is not None
+                and name_of(it) not in skip):
             fx = _Func(it, gtypes, gaddr, params_of)
             pairs = []
             _block_items_walk(it.body, fx, pairs)

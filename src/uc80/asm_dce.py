@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass, field
 
 from .markers import marker_kind
+from . import optnone as optnone_module
 
 # Inline-assembly region markers.  They bracket every basic `asm("...")`
 # block in the emitted .mac and are load-bearing in three modules:
@@ -521,6 +522,23 @@ class AssemblyDCE:
         worklist += [label for label, block in self.blocks.items()
                      if block.is_asm_region]
 
+        # A function under optnone (docs/optnone.md) is whole: one live block
+        # of its ;#noopt region makes every block of the region live.
+        groups = optnone_module.noopt_groups(
+            [(lb, blk.lines) for lb, blk in self.blocks.items()])
+        pending = list(worklist)
+        while True:
+            self._explore(pending, reachable)
+            more = []
+            for g in groups:
+                if g & reachable:
+                    more.extend(sorted(g - reachable))
+            if not more:
+                return reachable
+            pending = more
+
+    def _explore(self, worklist: list, reachable: set) -> None:
+        """Follow the jumps and the fall-through from ``worklist``."""
         while worklist:
             label = worklist.pop()
             if label in reachable:
@@ -545,8 +563,6 @@ class AssemblyDCE:
                 next_label = self._find_next_block(label)
                 if next_label and next_label not in reachable:
                     worklist.append(next_label)
-
-        return reachable
 
     def _block_ends_with_terminator(self, block: AsmBlock) -> bool:
         """Check if block ends with unconditional control transfer."""

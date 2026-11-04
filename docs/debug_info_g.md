@@ -62,3 +62,5 @@ These results come from 390 programs: `examples/`, `tests/c-testsuite-z80/`, `te
 - The tests compare the `.com` of 115 programs, and the `.com` of one program under five option sets. All are the same.
 
 See [loop_rotation.md](loop_rotation.md) for the pass `looprot`. It copies the markers of the loop test.
+
+See [optnone.md](optnone.md) for a function that no pass changes (`;#noopt` regions), so that a debugger can step through each statement.

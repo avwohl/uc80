@@ -904,6 +904,7 @@ class LicmMixin:
             if name is None or (only is not None and name not in only):
                 continue
             if (name in getattr(self, "naked", ())
+                    or name in self.optnone
                     or name in (self.isr_funcs or {})
                     or name in (getattr(self, "vector_funcs", None) or ())
                     or _unsafe(item.body)):

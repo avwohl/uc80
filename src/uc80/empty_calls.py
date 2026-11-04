@@ -169,9 +169,10 @@ def _declared_in(func) -> set[str]:
     return names
 
 
-def run(unit, keep=frozenset()) -> int:
+def run(unit, keep=frozenset(), skip=frozenset()) -> int:
     """Delete the calls in ``unit``.  Returns the number of calls.  The
-    functions in ``keep`` (entry points, interrupt functions) stay."""
+    functions in ``keep`` (entry points, interrupt functions) stay.  A
+    function in ``skip`` (under optnone) keeps all its calls."""
     defs: dict[str, list] = {}
     for item in unit.items or []:
         if isinstance(item, ast.FunctionDef) and item.body is not None:
@@ -239,6 +240,7 @@ def run(unit, keep=frozenset()) -> int:
                     walk(v, shadow)
 
     for item in unit.items or []:
-        if isinstance(item, ast.FunctionDef) and item.body is not None:
+        if (isinstance(item, ast.FunctionDef) and item.body is not None
+                and _fname(item) not in skip):
             walk(item.body, _declared_in(item) & empty)
     return count

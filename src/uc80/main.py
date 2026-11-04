@@ -18,7 +18,9 @@ from uc_core.type_config import TypeConfig, Z80_CPM
 
 from . import lib_dir, lib_file
 from .codegen import (generate, CodeGenerator, CodegenError, BSS_BANNER_PREFIX,
-                      drop_unreferenced_externs, function_name)
+                      drop_unreferenced_externs, function_name,
+                      iter_var_decls)
+from . import optnone as optnone_module
 from .runtime import (RuntimeLibrary, load_lib_modules, load_runtime_library,
                       leave_to_library)
 from .asm_dce import eliminate_dead_code as asm_eliminate_dead_code
@@ -487,7 +489,7 @@ def _ambiguous_functions(asts: list, paths: list) -> dict:
 
 _NAME_WORDS = {"rst": (1,), "im2": (1,), "vector": (1,),
                "interrupt": (0,), "nmi": (0,)}
-_ALL_NAMES = ("keep", "public", "isr_save_workareas", "regcall")
+_ALL_NAMES = ("keep", "public", "isr_save_workareas", "regcall", "optnone")
 
 
 def source_name(name: str) -> str:
@@ -542,6 +544,44 @@ def resolve_found_names(found, paths: list, maps: list) -> None:
     # a static noreturn function is renamed by the merge: the label of an
     # extern function of the same name in another file is not noreturn
     found.noreturn_labels = {mapped(n, f) for n, f in found.noreturn_at}
+
+
+def _optnone_set(cli: list, pragmas: list, unit) -> tuple:
+    """The names of the functions under optnone (docs/optnone.md), and
+    whether every function is: from ``--optnone``, and from the
+    ``optnone`` entries that the marks in the source made.  ``unit`` is
+    the merged AST; a static function that the merge renamed (h__s0) is
+    named ``h`` by --optnone."""
+    defined = {function_name(i) for i in unit.items or []
+               if isinstance(i, ast_module.FunctionDef) and i.body is not None
+               and function_name(i)}
+    names: set = set()
+    everything = False
+    for verb, words, fname, line in pragmas:
+        if verb != "optnone":
+            continue
+        for w in words:
+            if w in defined:
+                names.add(w)
+            else:
+                print(f"uc80: warning: {fname}:{line}: #pragma uc80 optnone:"
+                      f" '{source_name(w)}' is not a function with a body "
+                      f"in this program", file=sys.stderr)
+    for item in cli:
+        for w in (x.strip() for x in item.split(",")):
+            if not w:
+                continue
+            if w == "all":
+                everything = True
+                continue
+            hit = {d for d in defined if d == w or source_name(d) == w}
+            if not hit:
+                print(f"uc80: warning: --optnone: '{w}' is not a function "
+                      f"with a body in this program", file=sys.stderr)
+            names |= hit
+    if everything:
+        names = set(defined)
+    return names, everything
 
 
 def _roots_from_options(entries: list, pragmas: list,
@@ -639,6 +679,8 @@ def _roots_from_options(entries: list, pragmas: list,
             roots.keep.update(words)
             if verb == "public":
                 roots.public.update(words)
+        elif verb == "optnone":
+            pass        # main() reads the names (docs/optnone.md)
         elif verb == "regcall":
             if not words or not all(ident.match(w) for w in words):
                 raise CodegenError(f"{where}: expected one or more names")
@@ -722,7 +764,7 @@ def _roots_from_options(entries: list, pragmas: list,
         else:
             raise CodegenError(
                 f"{where}: unknown verb; uc80 knows keep, public, vector, "
-                f"interrupt, nmi, rst, im2, im2table, regcall and "
+                f"interrupt, nmi, rst, im2, im2table, regcall, optnone and "
                 f"isr_save_workareas")
     for name in sorted(roots.save_wa):
         if name not in roots.isrs:
@@ -829,6 +871,16 @@ def main() -> int:
              "the assembler text. The code is the same bytes as without -g. "
              "Assemble with um80 --debug-info and link with ul80 "
              "--debug-info to get prog.dbg (docs/debug_info_g.md)"
+    )
+    parser.add_argument(
+        "--optnone", metavar="NAMES", action="append", default=[],
+        help="No optimization for the functions in the comma list NAMES, "
+             "or for every function when NAMES is 'all' (repeatable). The "
+             "function is not inlined, keeps its IX frame and its calls, "
+             "and no pass changes its code; the same as #pragma uc80 "
+             "optnone, [[uc80::optnone]] and GCC "
+             "__attribute__((optimize(\"O0\"))) before the function "
+             "(docs/optnone.md)"
     )
     parser.add_argument(
         "--no-shared-storage",
@@ -1553,6 +1605,7 @@ def main() -> int:
         pragma_units = []                        # unit index of each pragma
 
         for input_path in input_paths:
+            file_optnone = []
             # Handle .mac assembly files - pass through
             if input_path.suffix.lower() == '.mac':
                 if args.verbose:
@@ -1608,8 +1661,11 @@ def main() -> int:
                 srcmap.register(str(input_path), pp.line_map,
                                 getattr(pp, "line_breaks", None))
 
-                target_pragmas.extend(pp.target_pragmas)
-                pragma_units.extend([len(asts)] * len(pp.target_pragmas))
+                file_optnone = [(f, l, w) for v, w, f, l in pp.target_pragmas
+                                if v == "optnone"]
+                other = [t for t in pp.target_pragmas if t[0] != "optnone"]
+                target_pragmas.extend(other)
+                pragma_units.extend([len(asts)] * len(other))
 
                 # Collect #pragma printf/scanf features
                 if pp.printf_features:
@@ -1636,6 +1692,8 @@ def main() -> int:
             # them into the uc80 forms and records them.  Anything else
             # that looks like SDCC stays an error.
             source = sdcc_compat.prepass(source, str(input_path), sdcc_found)
+            # optnone attributes: found before the front end strips them
+            optnone_lines = optnone_module.attribute_lines(source)
             ast = _frontend_parse(
                 source, str(input_path),
                 strict_unsupported=True,
@@ -1650,6 +1708,36 @@ def main() -> int:
                 for msg in sem_errors:
                     print(f"uc80: error: {msg}", file=sys.stderr)
                 return 1
+            if optnone_lines or file_optnone:
+                from uc_core.c23_parser import FILE_TABLE
+                fid = FILE_TABLE.intern(str(input_path))
+
+                def names_of(item):
+                    if isinstance(item, ast_module.FunctionDef):
+                        nm = function_name(item)
+                        return True, [nm] if nm else []
+                    if isinstance(item, ast_module.Declaration):
+                        try:
+                            return False, [n for n, _f, _i, fn
+                                           in iter_var_decls(item)
+                                           if fn and n]
+                        except Exception:
+                            return False, []
+                    return False, []
+
+                def locate(item):
+                    line = getattr(getattr(item, "pos", None),
+                                   "start_line", None)
+                    return srcmap.locate_at(fid, line) if line else None
+
+                marks, problems = optnone_module.mark_names(
+                    ast.items or [], names_of, locate, optnone_lines,
+                    file_optnone)
+                for msg in problems:
+                    print(f"uc80: warning: {msg}", file=sys.stderr)
+                for mfile, mline, mnames in marks:
+                    target_pragmas.append(("optnone", mnames, mfile, mline))
+                    pragma_units.append(len(asts))
             asts.append(ast)
 
             if args.verbose:
@@ -1683,6 +1771,16 @@ def main() -> int:
             if args.verbose:
                 print(f"Merged {len(asts)} files into {len(merged_ast.items)} declarations")
 
+        # A pragma, __interrupt or __naked names a function of its own
+        # file: a static that the merge renamed (h -> h__s0) is found
+        # through the map of that file.
+        target_pragmas = resolve_pragma_names(
+            target_pragmas, pragma_units, static_maps, scope_names)
+
+        # optnone (docs/optnone.md): the functions that no pass changes.
+        optnone_names, optnone_all = _optnone_set(
+            args.optnone, target_pragmas, merged_ast)
+
         # AST-level expression optimization
         ast_opt = None
         if not args.no_ast_optimize:
@@ -1696,6 +1794,7 @@ def main() -> int:
                 not args.no_empty_loop_fold
                 and (args.empty_loop_fold
                      or not (args.target == "rom" or args.freestanding)))
+            ast_opt.optnone = frozenset(optnone_names)
             merged_ast = ast_opt.optimize(merged_ast)
             merged_ast._enum_fixed_types = enum_fixed
             if args.verbose and ast_opt.stats:
@@ -1744,8 +1843,6 @@ def main() -> int:
         # file: a static that the merge renamed (h -> h__s0) is found
         # through the map of that file.
         c_paths = [str(p) for p in input_paths if p.suffix.lower() != ".mac"]
-        target_pragmas = resolve_pragma_names(
-            target_pragmas, pragma_units, static_maps, scope_names)
         resolve_found_names(sdcc_found, c_paths, static_maps)
         for e in args.entry:
             if sum(e in m for m in static_maps) > 1:
@@ -1767,8 +1864,10 @@ def main() -> int:
                 merged_ast,
                 keep=set(roots.keep) | set(roots.public) | set(roots.isrs)
                 | set(roots.regcall or ())
+                | set(optnone_names)
                 | {n[1:] if n.startswith("_") else n
-                   for n in regcc.asm_text_names(mac_files)})
+                   for n in regcc.asm_text_names(mac_files)},
+                skip=optnone_names)
             if n_empty:
                 if args.verbose:
                     print(f"  Deleted {n_empty} call(s) of empty functions")
@@ -1802,6 +1901,8 @@ def main() -> int:
                            chain_store=not args.no_chain_store,
                            dead_store=not args.no_dead_store,
                            blockops=not args.no_blockops)
+        gen.optnone = set(optnone_names)
+        gen.optnone_all = optnone_all
         gen.direct_pointers = not args.no_direct_pointers
         gen.enable_discard_comma = not args.no_discard_comma
         gen.enable_peep_pairs = not args.no_peep_pairs
@@ -2651,8 +2752,11 @@ def main() -> int:
             # barrier and its bytes are never rewritten.
             # Volatile accesses are fenced with labels the matcher cannot
             # see across (volatile_fence.py); the labels go again after.
-            code = _optimize_outside_asm(
-                peephole, volatile_fence.fence_regions(code))
+            # A function under optnone is written between ;#noopt markers;
+            # guard() puts its text back after the passes (optnone.py).
+            code = optnone_module.guard(
+                lambda c: _optimize_outside_asm(
+                    peephole, volatile_fence.fence_regions(c)), code)
 
             if args.verbose:
                 for pattern, count in peephole.stats.items():
@@ -2662,10 +2766,10 @@ def main() -> int:
 
         # The register-locals wraps that protect nothing (the peephole
         # pass has run: the callees are final).
-        code = reglocals.prune(code)
+        code = optnone_module.guard(reglocals.prune, code)
         if not args.no_param_reg:
-            code = reglocals.drop_dead_copies(code)
-        code = iyptr.prune_iy(code)
+            code = optnone_module.guard(reglocals.drop_dead_copies, code)
+        code = optnone_module.guard(iyptr.prune_iy, code)
 
         # The volatile markers and fence labels are for the passes above only.
         code = volatile_fence.strip(code)
@@ -2673,7 +2777,7 @@ def main() -> int:
             code = "\n".join(ln for ln in code.split("\n")
                              if ln.strip() not in (BARRIER_BEGIN, BARRIER_END))
         if not args.no_loop_rotate and not args.no_optimize:
-            code = looprot.rotate(code)
+            code = optnone_module.guard(looprot.rotate, code)
 
         # Drop EXTRNs nothing uses: ul80 links the library module for each
         # one.  Done last, so appended .mac files count as uses and names

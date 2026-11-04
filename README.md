@@ -79,6 +79,7 @@ z88dk output. uc80 passes 220 of the 220 c-testsuite tests. Numbers are in
 - [Inline assembly](https://github.com/avwohl/uc80/blob/main/docs/inline_assembly.md) - `asm("...")` rules and limits
 - [Volatile objects](https://github.com/avwohl/uc80/blob/main/docs/volatile.md) - every volatile access happens as written, and how each pass keeps that
 - [Debug markers](https://github.com/avwohl/uc80/blob/main/docs/debug_info_g.md) - `-g` writes source line markers for a debugger, and the code stays the same
+- [optnone](https://github.com/avwohl/uc80/blob/main/docs/optnone.md) - `--optnone`, `#pragma uc80 optnone` and `[[uc80::optnone]]` keep one function unoptimized for a debugger
 - [Binary size and test results](https://github.com/avwohl/uc80/blob/main/docs/benchmarks.md) - speed and size against 8 compilers, and external test suite pass rates
 - [C standard compliance](https://github.com/avwohl/uc80/blob/main/docs/ANSI_C_COMPLIANCE.md) - implemented and missing C features
 - [Compile time](https://github.com/avwohl/uc80/blob/main/docs/compile_time.md) - why long expressions and large programs compiled slowly, and the repairs

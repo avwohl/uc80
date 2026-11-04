@@ -40,6 +40,7 @@ from .fillidiom import FillIdiomMixin
 from .qsortwr import QsortWrMixin
 from .debug_markers import DebugMarkersMixin
 from .markers import is_marker
+from . import optnone as optnone_module
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
                              z80_builtin_type, BARRIER_BEGIN, BARRIER_END,
                              ISR_ALT_SAVE, ISR_ALT_RESTORE,
@@ -1585,6 +1586,9 @@ class CallGraphAnalyzer:
     # Naked functions (docs/rom_hardware.md): never inlined, never given a
     # constant parameter.
     naked: set[str] = field(default_factory=set)
+    # Functions under optnone (docs/optnone.md): never inlined, given no
+    # inlined call, given no constant parameter, and given no shared storage.
+    optnone: set[str] = field(default_factory=set)
 
     def build_call_graph(self, unit: ast.TranslationUnit) -> None:
         """Build call graph by analyzing all function bodies."""
@@ -2235,6 +2239,10 @@ class CallGraphAnalyzer:
         if func not in self.has_body:
             return False
 
+        # optnone: the locals stay in the IX frame
+        if func in self.optnone:
+            return False
+
         # Variadic functions use stack frames
         if self.is_variadic.get(func, False):
             return False
@@ -2432,6 +2440,10 @@ class CallGraphAnalyzer:
 
         # A naked function is the assembly of the programmer
         if func_name in self.naked:
+            return False
+
+        # optnone: the call stays a call
+        if func_name in self.optnone:
             return False
 
         # Don't inline recursive functions
@@ -3125,7 +3137,8 @@ class CallGraphAnalyzer:
             # body with the inlined version.
             new_items = []
             for item in unit.items or []:
-                if isinstance(item, ast.FunctionDef) and item.body:
+                if (isinstance(item, ast.FunctionDef) and item.body
+                        and declarator_ident(item.declarator) not in self.optnone):
                     self._inline_var_types = self._inline_function_types(item)
                     new_body = self._inline_stmt(item.body, func_bodies, inlineable)
                     new_items.append(ast.FunctionDef(
@@ -3357,7 +3370,8 @@ class CallGraphAnalyzer:
                 continue
 
             # Don't propagate if function's address is taken
-            if func_name in self.address_taken or func_name in self.naked:
+            if (func_name in self.address_taken or func_name in self.naked
+                    or func_name in self.optnone):
                 continue
 
             # When not in whole_program mode, don't propagate to PUBLIC functions
@@ -3979,6 +3993,11 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.direct_pointer_accesses = 0
         self.enable_blockops = blockops
         self.enable_addr_cse = addr_cse
+        # optnone (docs/optnone.md): the names of the functions that no
+        # pass changes; main.py sets them.  optnone_all: every function.
+        self.optnone: set[str] = set()
+        self.optnone_all = False
+        self._optnone_now = False
         # Family I step 1 switches (docs/peephole_pairs.md,
         # docs/register_locals.md); main.py sets them from the options.
         self.enable_discard_comma = True
@@ -4796,6 +4815,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                                                 if k == "int"},
                                  isr_safe=self.isr_safe,
                                  naked=set(self.naked),
+                                 optnone=set(self.optnone),
                                  enum_fixed_tags=set(self.__dict__.get(
                                      "_enum_fixed_tag_set", ())))
 
@@ -4818,6 +4838,12 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                         if _enum_tag(sp):
                             nodes.setdefault(_enum_tag(sp), sp)
         self._annotate_typeof(unit)
+        if self.optnone_all:
+            self.optnone = {
+                function_name(i) for i in unit.items or []
+                if isinstance(i, ast.FunctionDef) and function_name(i)
+                and i.body is not None}
+        self.optnone = {n for n in self.optnone if n not in self.naked}
         self.user_defined_funcs = {
             declarator_ident(i.declarator) for i in unit.items or []
             if isinstance(i, ast.FunctionDef)}
@@ -6818,7 +6844,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         from . import divmod_pair
         self.divmod_pairs = divmod_pair.run(
             unit, int_size=self.type_config.int_size, name_of=function_name,
-            params_of=function_params)
+            params_of=function_params, skip=self.optnone)
         self._dm_pending = getattr(unit, "_dm_pending", {})
 
     def _gen_divmod_first(self, expr) -> None:
@@ -7750,6 +7776,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             if (name in self.keep_names or name in self.public_names
                     or name in self.naked or name in self.isr_funcs
                     or name in self.absolute or name in isr_reach
+                    or name in self.optnone
                     or name in scan.asm_funcs):
                 continue
             low = name.lower()
@@ -7816,6 +7843,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 continue
             if (name in self.keep_names or name in self.public_names
                     or name in self.naked or name in self.isr_funcs or name in self.absolute
+                    or name in self.optnone
                     or name in isr_reach
                     or (name in scan.value_refs and name not in wr_cands)
                     or name in scan.asm_funcs):
@@ -7962,11 +7990,51 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             e("ld", f"({lo}),{lo_r}")
             e("ld", f"({hi}),{hi_r}")
 
+    # The switches that make a function smaller or faster at the cost of its
+    # lines.  A function under optnone runs with all of them off.  A switch
+    # that changes the calling convention or a name that other functions
+    # read (register parameters, char returns) is not here: the plan for
+    # such a switch leaves the function out (_plan_register_cc_defs).
+    _OPTNONE_OFF = (
+        "enable_blockops", "enable_addr_cse", "enable_chain_store",
+        "enable_dead_store", "enable_register_locals", "enable_licm",
+        "enable_licm_load", "enable_range_cmp", "enable_narrow_index",
+        "enable_peep_pairs", "enable_slot_fold", "enable_discard_comma",
+        "enable_const_store", "enable_fill_idiom", "enable_shl_inline",
+        "enable_byte_regs", "enable_range_byte_cmp", "enable_pair_cmp",
+        "enable_frame_drop", "enable_range_div", "enable_divmod_pair",
+        "enable_mul16c_loop", "enable_byte_shl", "enable_byte_tern",
+        "enable_div32w", "enable_shr32_loop", "enable_char_ret_mask",
+        "enable_compact_div16", "enable_div16b", "enable_sdivmod_merge")
+
     def gen_function(self, func) -> None:
-        """Generate code for a function definition (auto-AST FunctionDef)."""
+        """Generate code for a function definition (auto-AST FunctionDef).
+
+        A function under optnone (docs/optnone.md) is generated with the
+        switches of ``_OPTNONE_OFF`` off, between ``;#noopt begin`` and
+        ``;#noopt end``."""
+        name = function_name(func)
+        if (name is None or name not in self.optnone or func.body is None
+                or name in self.naked):
+            self._gen_function(func)
+            return
+        saved = {f: getattr(self, f) for f in self._OPTNONE_OFF
+                 if hasattr(self, f)}
+        for f in saved:
+            setattr(self, f, False)
+        self._optnone_now = True
+        try:
+            self._gen_function(func)
+        finally:
+            self._optnone_now = False
+            for f, v in saved.items():
+                setattr(self, f, v)
+
+    def _gen_function(self, func) -> None:
         name = function_name(func)
         if name is None:
             return
+        optnone = self._optnone_now
         storage = decl_storage_class(func.decl_specs)
         _, fn_type = resolve_type_from_decl(func.decl_specs, func.declarator)
         return_type = fn_type.return_type if fn_type.kind == "function" else fn_type
@@ -7987,7 +8055,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         type_scope = self._type_scope_snapshot()
         self._register_body_types(func.body)
         self._range_facts(func)
-        self._small_idx = self._small_index_names(func.body)
+        self._small_idx = (frozenset() if optnone
+                           else self._small_index_names(func.body))
         self._current_sret_size = self._struct_return_size(return_type)
 
         # --no-shared-storage has to reach here too: can_use_shared_storage
@@ -8022,6 +8091,10 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             # reads only L (peep_flow, step 15)
             self.ctx.emit(";@CHARL")
         self.ctx.emit_label(func_label)
+        if optnone:
+            # no text pass changes the lines up to the matching end marker
+            for ln in optnone_module.begin_lines(func_label):
+                self.ctx.emit(ln)
         dbg_at = len(self.ctx.lines)       # -g: ;#func goes here, at the end
         self.dbg_begin_func(func)
 
@@ -8175,7 +8248,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         if name == "main" and not self.crlf_console:
             self._emit_crlf_mode_init()
 
-        self._holders = self._scan_byte_holders(func)
+        self._holders = None if optnone else self._scan_byte_holders(func)
         self._holder_cache = {}
         self._holder_busy = set()
         try:
@@ -8238,6 +8311,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 frame_size = 0
 
             if (isr_kind is None and name != "main" and self.register_cc
+                    and not optnone
                     and frame_size == 0 and not self._stmt_expr_seen):
                 self._tail_call_returns(name, frame_start)
 
@@ -8248,7 +8322,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         self.ctx.emit_label(epilogue_label)
 
         dbg_frame = "none"
-        if self._frame_is_unused(frame_start, frame_size):
+        if not optnone and self._frame_is_unused(frame_start, frame_size):
             # Nothing in the body names IX, so the frame pointer is dead:
             # drop "push IX / ld IX,0 / add IX,SP" (44 T-states) and the
             # "ld SP,IX / pop IX" that undoes them (24 T-states).
@@ -8267,6 +8341,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self._emit_isr_epilogue(name, isr_kind)
         else:
             self.ctx.emit_instr("ret")
+        if optnone:
+            self.ctx.emit(optnone_module.end_line())
         self.ctx.emit()
 
         self._rl_end(name, rl_text_start)

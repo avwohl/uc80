@@ -127,6 +127,7 @@ class RegLocalsMixin:
             # table): its callers do not know it (docs/byte_regs.md)
             skip |= set(scan.value_refs & self._rl_defined(unit))
         skip |= set(self.naked)     # no prologue; the body is user assembly
+        skip |= set(self.optnone)   # optnone: every local stays in its slot
         libnames = regcc.lib_asm_names()
         asm_names = scan.asm_tokens | self.foreign_asm_names
         for nm in self._rl_defined(unit):

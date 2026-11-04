@@ -235,6 +235,17 @@ class Uc80ASTOptimizer(ASTOptimizer):
 
     _global_types: dict = {}
 
+    # Names of the functions under optnone (docs/optnone.md): the walk
+    # leaves the body of each one as it is written.
+    optnone: frozenset = frozenset()
+
+    def _optimize_decl(self, decl) -> None:
+        if isinstance(decl, ast.FunctionDef) and self.optnone:
+            from .codegen import function_name
+            if function_name(decl) in self.optnone:
+                return
+        super()._optimize_decl(decl)
+
     def optimize(self, tu):
         """Record the plain scalar types of the file-scope objects (the
         loop fold must know the type of a global counter)."""
