@@ -1,0 +1,6 @@
+sort-ran-5000 base check OK image 2345
+sort-ran-5000 base time image 734 cycles 28648286
+stanford-bubble base check OK image 2881
+stanford-bubble base time image 1012 cycles 412699707
+tak base check OK image 696
+tak base time image 696 cycles 31180640

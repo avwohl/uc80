@@ -1,0 +1,18 @@
+while1 top 0 rb 0 do 0
+range cmp sites 2
+sort-ran-20 fin check OK image 2257
+while1 top 1 rb 1 do 0
+range cmp sites 2
+sort-ran-20 fin time image 709 cycles 45318
+while1 top 0 rb 0 do 0
+range cmp sites 0
+sort-ran-5000 fin check OK image 2339
+while1 top 1 rb 1 do 0
+range cmp sites 0
+sort-ran-5000 fin time image 715 cycles 25275181
+stanford-bubble fin check OK image 2812
+stanford-bubble fin time image 943 cycles 249282657
+edited tak.c
+tak fin check OK image 676
+edited tak.c
+tak fin time image 676 cycles 31180640

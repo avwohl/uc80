@@ -1,0 +1,2 @@
+snd-cmdq speed ROM bytes 1190 {'reason': 'port:FF', 'total_t': 7089276, 'timed_t': 7071518, 'stack': 41, 'rom_writes': 0, 'writes': 16145, 'polls': 0}
+output matches golden: True

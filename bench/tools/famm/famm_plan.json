@@ -1,0 +1,131 @@
+{
+ "summary": "VERIFIED: exactly 11 of 96 comparable programs are above SDCC 4.6.0 size mode in the minus-empty column (uc80 image - 28) vs (SDCC image - 112). Exact gaps: dhrystone21+static +82 (1744 vs 1662), queens +73 (635 vs 562), davidly-e +57 (485 vs 428), pi+static +55 (1064 vs 1009), crc +48 (1393 vs 1345), stanford-bubble +44 (984 vs 940), sort-ran-5000 +38 (706 vs 668), sort-ran-20 +37 (708 vs 671), dhrystone21+nostructassign +26 (1703 vs 1677), tak +15 (668 vs 653), dhrystone21 +4 (1703 vs 1699). My rebuilds at fa2cc15 equal results.csv.\n\nACCOUNTING EFFECT: yes, partly. Startup is identical across all 11 (crt0_small, 24 bytes each), so no startup effect. The effect is the console. SDCC's harness links cpmio.rel (putchar 23 + getchar 23 = 46 bytes) as an object into EVERY program, so those 46 bytes sit in SDCC's empty and are subtracted. uc80's console code lives in libc.lib and is linked on demand, so it is billed to the program. Bytes of uc80 console library in the program column / SDCC console library in its column (puts only): crc 42/0, davidly-e 77/29, pi+static 42/29, queens 42/0, stanford-bubble 77/29, tak 42/0. The five non-console programs (3 dhrystone, 2 sort-ran) have 0, so their gaps are real code. Accounting part of each gap (uc80 console minus SDCC puts): crc 42 of 48, davidly-e 48 of 57, pi+static 13 of 55, queens 42 of 73, stanford-bubble 48 of 44 (without it the program is -4), tak 42 of 15 (without it -27). Gap with console I/O removed from both sides: crc +6, davidly-e +9, pi+static +42, queens +31, bubble -4, tak -27. If SDCC's cpmio were an on-demand library instead (putchar billed, getchar dropped), console programs would gain 23 more bytes of SDCC column; I do NOT recommend that change, because SDCC whole images would shrink 23-46 bytes and dhrystone21+static (uc80 lead is only 2 bytes: 1772 vs 1774) would then lose the whole-image goal.\n\nRESULT: every one of the 11 gaps plus snd-cmdq closes with T-neutral or T-faster fixes. I measured each fix by hand-editing the generated prog.mac or relinking a replacement module, with golden check (check build) and z88dk-ticks region T-states; no measured fix costs any T. Projected minus-empty gap after the measured fix set: tak -8, queens -5 (-38 with page-safe arrays), crc -22, dhrystone21 -40, nostructassign -18, dhrystone21+static -4, pi+static -62, sort-ran-20 -75, sort-ran-5000 -74, stanford-bubble -25 (-31 with the literal-output fix), davidly-e -17 (-24 with small fixes). Margins for tak, queens and dhrystone21+static are thin (4-8 bytes); the backup items for them are listed in the plan. snd-cmdq: ROM 1185 to 1104 with zero timed-T change (-81), and 20+ bytes of margin over SDCC size mode (1188) comes from the crt0 change alone (-21).\n\nTools and patches are copied to wt/fammna/bench/tools/famm (ab.py, lmods.py, sdmods.py, fn2.py, gapsum.py, table.py, romab.py, combo.py; patches/ holds every p_*.py and s_*.py edit; results/ holds outputs). No compiler source or committed file was changed.",
+ "gaps": [
+  {
+   "program": "dhrystone21+static",
+   "uc80": "image 1772, minus-empty 1744; funcs 1352 (main 510, Proc_1 170, Proc_6 127, Func_2 137, Proc_8 223), data 124, libs+helpers 272 (__div16/dv8n/dv8w 110+66, mul16c/mul16ng 58, strcmp+strcpy 38)",
+   "sdcc": "image 1774, minus-empty 1662; funcs 1322 (main 526, Proc_6 74, Func_2 120), data 126, libs 218 (div 110, strcmp 61, mul 23, memcpy 14, crtenter 10); gap +82",
+   "causes": "funcs +30, data -2, libs +54. Biggest single causes: (a) uc80 enums are 16-bit, SDCC enums are 1 byte, so every Enumeration store and struct member costs 2 bytes (Proc_6 127 vs 74, Func_2, struct size); (b) a 5-case dense switch uses the 24-byte jump table; (c) Bool_Glob |= bool does a full 16-bit OR with a zero-extended byte (13 dead bytes); (d) signed compares of static/global ints with small constants (10 bytes each, no range info for statics); (e) 54 bytes of divide/multiply runtime vs SDCC.",
+   "fix": "short enums (C23 allows a 1-byte compatible type) + dense switch of <=6 cases as a decrement chain + 16-bit ALU op with zero-extended byte rhs done as a byte op + range pass extended to non-address-taken statics/globals",
+   "measured_gain": "1772 -> 1715 (enum8, -57) -> 1705 (byte OR, -10) -> 1694 (switch chain, -11) -> 1690 (static loop-var range cmp, -4) -> 1686 (Int_Glob range cmp, -4). Gap +82 -> -4. Golden check OK at every step.",
+   "t_effect": "210,680,098 -> 203,460,098 T (-3.4%); enum8 alone -2.3%; no step costs T"
+  },
+  {
+   "program": "queens",
+   "uc80": "image 663, minus-empty 635; place 266, put_str 23, put_dec 74, main 127, helpers 52, putchar_v 40+2",
+   "sdcc": "image 674, minus-empty 562; place 185, put_str 15, put_dec 92, main 137, libs div/mod/crtenter 74; gap +73",
+   "causes": "funcs +53, libs -22, console +42. place() is +81: (1) i and h of the row==n block live in an IX frame (push IX/ld IX/add IX,SP/ld SP... about 17 bytes plus 3-byte IX accesses) because the four byte register slots B,C,D,E are taken by row,c,d1,d2 and disjoint-scope locals cannot share a register; (2) 11 byte-array index sequences of 9 bytes (ld A,r / add A,LOW / ld L,A / ld A,HIGH / adc A,0 / ld H,A); (3) put_str 23 vs 15: pointer in a memory slot, push/inc/store/pop then a dead reload of (HL); (4) v%10 and v/=10 do two divides (the divmod pair pass misses uint16_t typedefs and compound /=).",
+   "fix": "register sharing for locals with disjoint live ranges (no frame) + put_str pointer fix + divmod pair for typedef'd 16-bit and /= + (backup) page-safe byte-array indexing",
+   "measured_gain": "663 -> 585: place without frame (i in C, h in DE) -58, put_str -11, divmod pair -9. Gap +73 -> -5. Backup: page-safe arrays (add A,LOW(arr)/ld L,A/ld H,HIGH(arr), 6 bytes instead of 9) a further -33: 552 (gap -38). Golden check OK.",
+   "t_effect": "20,593,985 -> 18,933,835 T (-8.1%); with page-safe arrays 16,746,155 (-18.7%)"
+  },
+  {
+   "program": "davidly-e",
+   "uc80": "image 513, minus-empty 485; main 223, runtime __sdivmod16 47 + __div16 87 + __dv8n 47 = 181, console __puts_s 28 + __conout 47 + 2 data = 77",
+   "sdcc": "image 540, minus-empty 428; main 263, libs divsigned 58 + modsigned 14 + divunsigned 52 + crtenter 10 = 134, puts 29; gap +57",
+   "causes": "funcs -40, libs +47..+49, console +48 (77 vs 29; the 46 bytes of SDCC cpmio are in its empty). Without console on either side the gap is +9. The divide runtime is the faster nibble/byte-wise code (T is 0.42x of SDCC), so it cannot be shrunk without T loss. Small waste in main: a dead 'ld H,D / ld L,E / ex DE,HL' (4 bytes) and two 'push DE / ld D,A / pop DE' around signed compares.",
+   "fix": "puts/printf of a constant string as BDOS function 9 (CR LF baked in at compile time) when the program has no other console use and never touches __crlf_mode, so __puts_s, __conout and their data are not linked; plus the two small peepholes",
+   "measured_gain": "513 -> 439 (literal output, -74; gap +57 -> -17, output text identical to base). Peepholes -7 (506 alone). Policy item: dropping the divide-by-zero guard from __div16 is another -13 but changes defined /0 behaviour.",
+   "t_effect": "literal output: 20,566,464 unchanged; peepholes 20,319,864 (-1.2%); div0 guard 20,021,904"
+  },
+  {
+   "program": "pi+static",
+   "uc80": "image 1092, minus-empty 1064; main 523, runtime 503 (div32w, mod32w, mul32, mul16_32, mul8x16, dv8n/dv8w, neg32), putchar_v 40+2",
+   "sdcc": "image 1121, minus-empty 1009; main 434, libs mullong 227 + modulong 135 + divulong 131 + muluint2ulong 23 + mul 23 + crtenter 10 = 549, puts 29; gap +55",
+   "causes": "funcs +89, data -1, libs -46, console +13. main is +89 because d += (uint32_t)r[i] * 10000 is expanded inline as a 62-instruction shift/add chain (about 100 bytes) although __mul16_32 is already linked (it is part of __mul32). Also a constant-true while(1) is tested (7 bytes top + 8 bytes bottom).",
+   "fix": "cost model for constant multiplication: for a 16x16 to 32 multiply by a constant with more than about 4 set bits call the already-linked __mul16_32 (the helper is faster than the chain); fold while(1) / do{}while(1)",
+   "measured_gain": "1092 -> 983 (call __mul16_32, -109) -> 975 (while(1) top test removed, -8). Gap +55 -> -62. Golden check OK.",
+   "t_effect": "1,568,929,945 -> 1,539,319,479 T (-1.9%); the helper call alone is -1.4% (the chain was not faster)"
+  },
+  {
+   "program": "crc",
+   "uc80": "image 1421, minus-empty 1393; funcs 1131 (main 328, crc32_tab 123, put_hex 72, put_str 23), data 179, helper __shr32c 45 (one call site), putchar_v 40+2",
+   "sdcc": "image 1457, minus-empty 1345; funcs 1169 (main 298, crc32_tab 152, put_hex 86, put_str 15), data 170 (const array counted as code), crtenter 10; gap +48",
+   "causes": "funcs -38, data +9 (classification only: SDCC counts the const array in funcs), helper +35, console +42. The 45-byte __shr32c helper has ONE call site (put_hex, v >> (digits*4)); main calls line(name, uint32 v, uint8 digits) 10 times with the stack convention, each call site pushes 3 words and pops them again (30 bytes of pops); put_str is 8 bytes bigger than SDCC.",
+   "fix": "inline the simple shift loop when a variable-shift helper has exactly one call site + deferred stack cleanup for runs of calls that pop >=3 words each + put_str pointer fix + putchar_v golf",
+   "measured_gain": "1421 -> 1387 (shr32 inline, -34) -> 1376 (put_str, -11) -> 1351 (one SP restore instead of ten pop triples, -25). Gap +48 -> -22. Without the deferred pops the gap would be +3, so that item (or an equal one) is needed. Golden check OK.",
+   "t_effect": "3,999,016 unchanged in the timed region (all changes are in the output code after TIMER_STOP)"
+  },
+  {
+   "program": "stanford-bubble",
+   "uc80": "image 1012, minus-empty 984; funcs 633 (Bubble 316, bInitarr 206, main 53), arith 260 (mul32/mul16_32/mul8x16/neg32), data 18, console __puts_s 28 + __conout 47 + 2 = 77",
+   "sdcc": "image 1052, minus-empty 940; funcs 633, libs mullong 227 + mul 23 + crtenter 10 = 260, puts 29, data 18; gap +44",
+   "causes": "funcs -4, libs 0, console +48: the whole gap is the console accounting (77 vs 29). The inner loop is also wasteful: each compare and swap of 32-bit sortlist[] elements reloads the element through a pointer in 11-byte sequences (9 sites, 99 bytes) and recomputes the address and the compare operands.",
+   "fix": "(a) literal-string puts as BDOS function 9 (same item as davidly-e), or (b) keep the 32-bit element in registers across compare and swap with a walking pointer (value reuse)",
+   "measured_gain": "(a) 1012 -> 937 (-75), gap -31. (b) hand-written inner loop 1012 -> 943 (-69), gap -25. Golden check OK for both (output of the time build identical for (a)).",
+   "t_effect": "(a) 412,699,707 unchanged; (b) 249,282,657 T (-39.6%)"
+  },
+  {
+   "program": "sort-ran-5000",
+   "uc80": "image 734, minus-empty 706; funcs 370 (main 191, g_rand 149), qsort_wr 336 (static-var quicksort), data 4",
+   "sdcc": "image 780, minus-empty 668; funcs 388, libs qsort 249 + mul 23 + crtenter 10 + call_iy 2 = 284; gap +38",
+   "causes": "funcs -18, data +4, libs +52. qsort_wr is 87 bytes bigger than SDCC qsort, but it keeps the reverse-run and run check that make the other sort programs fast, so it cannot be cut without T loss on those. g_rand is +17: the 32-bit local t lives in ??AUTO and every 't ^= expr' is 20 bytes of 'ld A,(AUTO+k) / xor r / ld r,A'. main has a 15-byte while(1) (constant test not folded), 15-byte signed loop tests on a global that is always in 0..N, and ascending_order is 19 bytes (SDCC 13).",
+   "fix": "keep 32-bit locals in DE:HL with BC:A as scratch for shift/xor chains (g_rand drops from 149 to 61 bytes); fold while(1); unsigned compare for non-negative global loop variables; comparator operand order",
+   "measured_gain": "734 -> 622 with all four (gap +38 -> -74); g_rand alone 734 -> 646 (-88, gap -50). Golden check and the self-check in the time build OK.",
+   "t_effect": "28,648,286 -> 25,275,181 T (-11.8%); g_rand is outside the timed region"
+  },
+  {
+   "program": "sort-ran-20",
+   "uc80": "image 736, minus-empty 708; funcs 372 (main 191, g_rand 149), qsort_wr 336, data 4",
+   "sdcc": "image 783, minus-empty 671; funcs 391, libs qsort 249 + mul 23 + crtenter 10 + call_iy 2 = 284; gap +37",
+   "causes": "same as sort-ran-5000: funcs -19, data +4, libs +52 (qsort_wr 336 vs 249).",
+   "fix": "same fix set as sort-ran-5000",
+   "measured_gain": "736 -> 624 (gap +37 -> -75); g_rand register version alone 736 -> 648 (-88, gap -51). Golden check OK.",
+   "t_effect": "50,424 -> 45,318 T (-10.1%)"
+  },
+  {
+   "program": "dhrystone21+nostructassign",
+   "uc80": "image 1731, minus-empty 1703; funcs 1311 incl. main 510, Proc_6 127, Func_2 128",
+   "sdcc": "image 1789, minus-empty 1677; funcs 1351, libs 204 (no memcpy); gap +26",
+   "causes": "funcs -40, libs +68. Same as dhrystone21: 16-bit enums (Proc_6 127 vs 74, Func_2 128 vs 85, Proc_2 47 vs 34) and a 5-case jump table; uc80 is smaller in main (510 vs 577), Proc_1 (153 vs 198) and Proc_8 (208 vs 247).",
+   "fix": "short enums",
+   "measured_gain": "1731 -> 1687 (-44); gap +26 -> -18. Golden check OK.",
+   "t_effect": "202,980,098 -> 199,480,098 T (-1.7%)"
+  },
+  {
+   "program": "tak",
+   "uc80": "image 696, minus-empty 668; funcs 513 (tak 116, ack 47, fib 43, put_str 23, put_dec 74, line 45, main 165), data 65, divide helpers 52, putchar_v 40+2",
+   "sdcc": "image 765, minus-empty 653; funcs 528 (tak 135, ack 37, fib 38, put_str 15, put_dec 92, line 49, main 162), data 65, libs divunsigned 52 + modunsigned 12; gap +15",
+   "causes": "funcs -15, helpers -12, console +42: the gap is the console accounting; without it tak is -27. Real waste: put_str 23 vs 15 (dead reload of (HL) after post-increment, pointer kept in a memory slot) and put_dec divides twice (v % 10u then v /= 10u, pair pass misses uint16_t and compound /=).",
+   "fix": "divmod pair for typedef'd 16-bit and compound /=; put_str pointer fix; putchar_v golf (CALL __putchar_put for the CR instead of a second LD C/CALL BDOS: -2); __conout_last to BSS (-1)",
+   "measured_gain": "696 -> 687 (divmod pair, -9) -> 676 (put_str, -11) -> 674 (putchar_v golf, -2) -> 673 (conout_last in BSS, -1). Gap +15 -> -8. Golden check OK. The margin is thin; the putchar_v and BSS items also help crc, queens and pi+static.",
+   "t_effect": "31,180,640 unchanged (putchar golf adds 10 T only on an LF path, outside the timed region)"
+  },
+  {
+   "program": "dhrystone21",
+   "uc80": "image 1731, minus-empty 1703; funcs 1311, data 124, libs+helpers 272",
+   "sdcc": "image 1811, minus-empty 1699; funcs 1359, data 126, libs 218; gap +4",
+   "causes": "funcs -48, data -2, libs +54: the 54 bytes of divide/multiply/strcmp runtime are the whole gap; uc80 is smaller in main, Proc_1 and Proc_8 but loses in Proc_6 (127 vs 74), Func_2 (128 vs 85), Proc_2 and Proc_4 (16-bit enums, jump table, 16-bit OR).",
+   "fix": "short enums",
+   "measured_gain": "1731 -> 1687 (-44); gap +4 -> -40. Golden check OK.",
+   "t_effect": "202,980,098 -> 199,480,098 T (-1.7%)"
+  }
+ ],
+ "empty_program": "uc80 empty = 28 bytes: crt0_small 24 (LD HL,(6)/LD SP,HL, 13-byte link-time BSS clear with LDIR, CALL _main, LD HL,(__exit_hook)/JP (HL)) + main stub 4 (LD HL,0 / RET); BSS 2 bytes (__exit_hook). Every uc80 program in the 11 uses the same crt0_small (24 bytes), so startup is comparable. SDCC empty = 112 bytes: crt0_cpm 62 (init 15: LD SP,(6)/CALL gsinit/LD HL,0/LD DE,argv0/CALL main/JP 0 + argv0 + _exit; gsinit 37 = BSS clear plus _INITIALIZER copy; gsfinal 1) + cpmio 46 (_putchar 23 + _getchar 23, linked as an object so ALWAYS present, even unused) + main stub 4. Accounting asymmetry: only the console. The harness links SDCC cpmio.rel as an object, so putchar and getchar are always in SDCC's image and always subtracted; uc80's putchar_v (40 code + 2 data), __conout (47) and __puts_s (28) live in libc.lib and are linked only when the program uses them, so they are billed to the program. Billed bytes: crc 42, davidly-e 77, pi+static 42, queens 42, stanford-bubble 77, tak 42; 0 for dhrystone x3 and sort-ran x2. The other SDCC constants (gsinit 37, argv0, exit) cancel because they are in the image and in the empty program of SDCC. Library modules that SDCC links on demand from z80.lib (crtenter 10, divunsigned 52, mullong 227, qsort 249 ...) are billed to the program on both sides, same as uc80's embedded runtime.",
+ "rom": "snd-cmdq (neogeo layout, bench/rom/sndrom.py vs bench/tools/faml/sdrom.py). Baselines: uc80 ROM 1185 bytes, timed region 6,138,897 T (total 6,151,540); SDCC size mode ROM 1188 bytes, timed 8,237,657; SDCC speed mode ROM 1190, timed 7,071,518. Attribution of the uc80 1185 bytes: startup+vectors 71 (vectors at 0000-0067 are mostly zero padding: 90 free bytes), dispatch 497, main 146, rom_printf 93, rom_putu 75, nmi_cmd 45, cmd_pop 34, rng_step 25, snd_report 8, __div16b/__mod16b about 79, _out 7 + _in 5 (unused), 6 init-data bytes. SDCC: dispatch 484, main 142, rom_printf 75, rom_putu 91, nmi_cmd 41, cmd_pop 31, rng_step 31, divunsigned+modunsigned+crtenter 74.\\n\\nMeasured fixes on the generated k.mac (golden match True, timed T given): (1) crt0_rom: drop the DATA_LEN zero test and use the link-time-count BSS clear (LD BC,__BSS_END-__BSS_START-1 / LD HL,start / LD (HL),0 / LD DE,start+1 / LDIR, like crt0_small), valid when the compiler knows BSS >= 2 bytes and initial data exists: 1185 -> 1164 (-21), timed T unchanged 6,138,897. That alone gives 24 bytes of margin under SDCC size mode. (2) Place small functions into the unused vector gaps (_out at 0009-000F, cmd_pop at 003A-005B; free holes 0009-000F, 0011-0017, 0019-001F, 0021-0027, 0029-002F, 0031-0037, 003A-0065, roughly 90 bytes): 1185 -> 1144 (-41), T identical. (3) divmod pair for the unsigned int v % 10 / v /= 10 in rom_putu (snd.h): -9 (1176), T unchanged. (4) micro peepholes: 1 << n with n <= 7 as INC A/LD B,A/XOR A/SCF/RLA/DJNZ (2 sites, -9 bytes), unreachable 'ret' after jp/ret (4 sites), dead 'ld A,B' in cmd_pop: -11 together (1165 with item 3), timed T 6,109,236 (-0.5%). (5) out()/in() as inline OUT/IN when the callee is a known port routine (35 call sites of 'ld A,port/ld E,val/call _out', 7 bytes each become 'ld A,val/out (port),A', 3-4 bytes, _out removed): 1185 -> 1079 (-106), timed T 5,452,765 (-11%); this needs a harness policy decision because snd.h is shared with SDCC (z80_out already exists as an intrinsic in <z80.h>). Combined (1)+(2)+(3)+(4): 1104 (84 bytes under SDCC size mode), timed T 6,109,236. With (5): 1005, timed T 5,423,104. All with output matching bench/golden/snd-cmdq.txt. Not counted: the unused _in routine (5 bytes) is in both the uc80 and the SDCC ROM.",
+ "plan": [
+  "Order is by bytes saved on the benchmark set with zero or negative T; every item below has T <= 0 in all measured timed regions. Effort: S small, M medium, L large.",
+  "1. [L] 32-bit register locals: keep a 32-bit local in DE:HL with BC and A as scratch for shift/xor/add chains. Measured: g_rand 149 -> 61 bytes, sort-ran-20 and sort-ran-5000 -88 each (736 -> 648, 734 -> 646), gap +37/+38 -> -51/-50; closes both sort-ran programs alone. T: g_rand is outside the timed region (unchanged). Switch: --no-reg32.",
+  "2. [M] Literal console output through BDOS function 9: puts(\"lit\") and printf(\"lit\\n\") with a constant string, in a whole-program build with no other console user, no reference to __crlf_mode and no --no-crlf, string without '$': bake CR LF in at compile time (honour 'no CR doubling when the previous char is CR'), emit LD DE,str/LD C,9/CALL 5, and do not link __puts_s/__conout/data (also drop the 'EXTRN __puts_s' line, or the linker still pulls the module). Measured davidly-e -74 (513 -> 439, gap +57 -> -17), stanford-bubble -75 (1012 -> 937, gap +44 -> -31); text output identical, T unchanged. A constant putchar('\\n') as 'LD E,13/LD C,2/CALL 5/LD E,10/...' would also drop putchar_v from pi+static (estimated -33, not measured). Switch: --no-bdos-literals.",
+  "3. [S] Short enums: an enum whose constants fit in unsigned char (or signed char) gets a 1-byte type (C23 6.7.2.2 allows an implementation-defined compatible type; SDCC does this). Measured dhrystone21 -44, nostructassign -44, static -57 (1772 -> 1715), T -1.7% to -2.3%. Check tests that print sizeof(enum) and struct layout. Switch: --no-short-enums.",
+  "4. [S] Constant-multiply cost model: for a 16x16 to 32 or 32-bit multiply by a constant, compare the chain against a call of the already-linked __mul16_32 / __mul32 helper and take the helper when it is smaller and not slower (here the 62-instruction chain of x*10000 was both bigger and slower). Measured pi+static -109 (1092 -> 983), T -1.4%; gap +55 -> -54 alone.",
+  "5. [policy, S] Inline port intrinsics for snd-cmdq: map out()/in() of bench/rom/snd.h to z80_out/z80_in (uc80-only change to a shared harness header) or inline a routine whose body is a single OUT/IN. Measured -106 bytes (1185 -> 1079) and timed T -11%. Needs an owner decision because the SDCC side keeps its call.",
+  "6. [L] Compare and swap of 32-bit array elements with the pointer walking through the bytes and the loaded value reused (no reload of sortlist[i], no recomputed address). Measured stanford-bubble inner loop 1012 -> 943 (-69), T 412.7M -> 249.3M (-39.6%); closes bubble alone (the literal-output item 2 also closes it).",
+  "7. [M] Share registers between locals with disjoint live ranges (block-scoped locals i,h vs c,d1,d2 in queens place()), which removes the IX frame. Measured queens place -58 (663 -> 605), T -8.1%.",
+  "8. [M] ROM: place small leaf functions into the unused vector holes (about 90 bytes below 0x68, sizes from a trial assembly). Measured snd-cmdq -41 (1185 -> 1144), T identical; applies to every ROM program. Must respect vectors the program binds (rst, im2, int, nmi).",
+  "9. [S] Inline the compact loop of a variable-shift helper that has exactly one call site (or call-site count x size rule). Measured crc __shr32c: -34 (1421 -> 1387), T unchanged.",
+  "10. [S] put_str/pointer-argument loops: post-increment of a pointer in a memory slot leaves 'push HL/inc HL/ld (m),HL/pop HL/ld A,(HL)' with a dead reload of (HL) and a second HL load; use the pointer in a register (BC with push/pop around the call) or drop the reload. Measured -11 each on tak, queens, crc (33 total), T unchanged. Also __putchar_v: call the shared put label for the CR (-2) and move __conout_last to BSS (-1): tak 676 -> 673.",
+  "11. [S] Backup for queens: page-safe byte arrays. Place small BSS arrays (not DSEG) so they never cross a 256-byte page (two-pass: link, read __bss_start, add DS padding inside BSS; padding costs RAM, not image) and index with 'add A,LOW(arr)/ld L,A/ld H,HIGH(arr)' (6 bytes instead of 9). Measured queens -33 more (585 -> 552), T -9% more. Not needed to close queens (-5 without it) but adds margin.",
+  "12. [S] Divmod pair pass (src/uc80/divmod_pair.py): resolve typedef names (uint16_t, unsigned int parameter) and accept the compound second statement 'v /= 10'. Measured -9 on tak, queens and the ROM rom_putu (27 total), T unchanged (the divide halves in output code).",
+  "13. [M] Deferred stack cleanup: in straight-line runs of calls whose arguments are popped with 3+ pop instructions, leave the arguments on the stack and restore SP once ('ld HL,n/add HL,SP/ld SP,HL' before the result load), under a stack budget (about 64 bytes) and not in recursive functions. Measured crc main 10 calls: -25, T slightly lower. Needed for crc (without it the gap is +3).",
+  "14. [S] ROM crt0: known-nonzero BSS and DATA_LEN use the link-time-count form (see rom field). Measured -21 on snd-cmdq, timed T unchanged; this alone gives the 20+ bytes of margin.",
+  "15. [S] Fold constant-true loop conditions: while(1) and do{}while(1) still emit 'ld HL,1/ld A,H/or L/jr z,..' at the top and bottom (15 bytes for an empty while(1)). Measured sort-ran-20 -13, pi+static -8, T -0.5% on pi.",
+  "16. [M] Range pass for non-address-taken static/global ints (flow-insensitive over the whole program): unsigned compare of a loop variable with a constant (saves 4 bytes and 16 T per compare), and drop 'bit 7,H' for 'i > 0'. Measured sort-ran-20 about -8, dhrystone+static -4 (loop var) and -4 (Int_Glob > 100).",
+  "17. [S] Dense switch with <= 6 cases: compare chain 'or A/jr z,c0/dec A/jr z,c1...' instead of the 24-byte jump table (faster too, 38 T vs 71 T). Measured dhrystone+static Proc_6 -11.",
+  "18. [S] 16-bit or/xor with a zero-extended byte rhs as a byte op on the low byte in memory (Bool_Glob |= flag): dhrystone+static -10, T -0.4%.",
+  "19. [S] Small peepholes: 'ld H,D/ld L,E/ex DE,HL/ld HL,x' is dead (4 bytes), 'push DE/ld D,A/.../pop DE' around a signed compare should use a free byte register (davidly-e -7 together, T -1.2%); unreachable 'ret' after jp/ret and 'ld A,B' before 'ld L,B' (snd-cmdq -2); 1<<n for n known <= 7 as SCF/RLA/DJNZ (snd-cmdq -9, T lower); comparator operand order in qsort comparators (sort-ran -6).",
+  "20. [policy, S] Division by zero guard in __div16 (13 bytes) is dead if /0 stays undefined behaviour: davidly-e -13 (T -1.5%). Not recommended unless tests/test_*div* are changed.",
+  "Projected result with items 1-4, 6, 7, 9, 10, 12, 13, 15-19: all 11 programs below SDCC in the minus-empty column (tak -8, queens -5, crc -22, dhrystone21 -40, nostructassign -18, dhrystone21+static -4, pi+static -62, sort-ran-20 -75, sort-ran-5000 -74, stanford-bubble -25, davidly-e -17 via item 2) and snd-cmdq 1104 with the ROM items 8, 14, 12, 19 (84 bytes under SDCC size mode). Thin margins (tak, queens, dhrystone21+static) get backup bytes from items 11, 10 and 16.",
+  "Test plan for each item: bench/run.py golden check plus z88dk-ticks region T-states for the 11 programs, tests/test_rom_target.py and sndrom.py --layout neogeo for the ROM items, and a --no-<switch> A/B build. Every measured edit is reproducible with bench/tools/famm/ab.py PROG --tag T --edit patches/p_*.py (AB_SRC_EDIT=patches/s_*.py for source edits; ROMSRC=dm romab.py snd-cmdq patches/p_*.py for the ROM)."
+ ]
+}

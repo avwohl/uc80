@@ -1,0 +1,8 @@
+dhrystone21+static base check OK image 4944
+dhrystone21+static base time image 1772 cycles 210680098
+pi+static base check OK image 2413
+pi+static base time image 1092 cycles 1568929945
+queens base check OK image 663
+queens base time image 663 cycles 20593985
+sort-ran-20 base check OK image 2271
+sort-ran-20 base time image 736 cycles 50424

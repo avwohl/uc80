@@ -64,3 +64,6 @@ fred.txt
 src/uc80/.build_libs.lock
 bench/tools/faml/rom/snd-*_size/
 bench/tools/faml/rom/snd-*_speed/
+bench/tools/famm/w/
+bench/tools/famm/rom/snd-*_size/
+bench/tools/famm/rom/snd-*_speed/

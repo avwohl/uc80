@@ -1,0 +1,22 @@
+static range cmp 1
+Int_Glob cmp 1
+dhrystone21+static fin check OK image 4857
+static range cmp 1
+Int_Glob cmp 1
+dhrystone21+static fin time image 1686 cycles 203460098
+while1 top 1 rb 0 do 0
+chain bytes removed (lines): 62
+pi+static fin check OK image 2296
+while1 top 1 rb 0 do 0
+chain bytes removed (lines): 62
+pi+static fin time image 975 cycles 1539319479
+edited queens.c
+queens fin check OK image 585
+edited queens.c
+queens fin time image 585 cycles 18933835
+edited queens.c
+page-safe sites 11
+queens fin2 check OK image 552
+edited queens.c
+page-safe sites 11
+queens fin2 time image 552 cycles 16746155

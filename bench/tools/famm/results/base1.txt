@@ -1,0 +1,8 @@
+crc base check OK image 1421
+crc base time image 1421 cycles 3999016
+davidly-e base check OK image 1829
+davidly-e base time image 513 cycles 20566464
+dhrystone21 base check OK image 4898
+dhrystone21 base time image 1731 cycles 202980098
+dhrystone21+nostructassign base check OK image 4898
+dhrystone21+nostructassign base time image 1731 cycles 202980098

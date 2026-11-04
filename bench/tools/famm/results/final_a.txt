@@ -1,0 +1,12 @@
+deferred calls 10
+crc fin check OK image 1351
+deferred calls 10
+crc fin time image 1351 cycles 3999016
+dead ex 1 pushpop 2
+davidly-e fin check OK image 1822
+dead ex 1 pushpop 2
+davidly-e fin time image 506 cycles 20319864
+dhrystone21 fin check OK image 4853
+dhrystone21 fin time image 1687 cycles 199480098
+dhrystone21+nostructassign fin check OK image 4853
+dhrystone21+nostructassign fin time image 1687 cycles 199480098
