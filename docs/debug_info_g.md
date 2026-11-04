@@ -47,7 +47,7 @@ The upeepz80 package keeps each marker too. A marker of code that upeepz80 delet
 - The if/else merge of `peep_local` moves the common first and last instructions of both arms. The instructions keep the line of the arm where the merge put them.
 - uc80 writes `;#inline` for the inlined functions that survive the later AST passes. A later pass can rebuild the call, and the call then loses its marker. The code is the same.
 - The markers work with `--asm-syntax=sdas` and `--target=rom` as comments. Only `um80` and `ul80` read them.
-- An inlined call has no inline record in the ELF file of the scratch converter. GDB shows the line of the inlined body at the call, and it has no inline frame. The phase 4 test "step through the program" is not met for inlined calls. It needs DWARF inline records from `dbg2elf`. `todo.txt` has the item.
+- `dbg2elf` writes a `DW_TAG_inlined_subroutine` for each inlined call of `prog.dbg`. Measured with GDB 18.1 on a `uc80 -g` program with an inlined call: `step` enters the inlined function, `bt` shows the inline frame, and `finish` returns to the caller. See `docs/gdb.md` in um80_and_friends.
 - The `outer` field and the third level (BASIC to C) are not written.
 
 ## Measurements
