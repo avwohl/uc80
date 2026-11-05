@@ -4,6 +4,8 @@ The code generator writes a function under optnone as the source says. No pass c
 
 The design is in [debugger_plan.md](https://github.com/avwohl/cpmemu/blob/main/docs/debugger_plan.md) of cpmemu (D6). The marker format is in `docs/debug_info.md` of um80_and_friends. [debug_info_g.md](debug_info_g.md) describes the markers that `-g` writes.
 
+`--optnone`, the pragma and the attribute are in uc80 0.8.0 and later.
+
 ## Use
 
 Mark the function in the source. Use one of these forms before the function:

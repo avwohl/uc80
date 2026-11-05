@@ -4,6 +4,21 @@ All notable changes to uc80 are recorded here. Versions follow
 `major.minor.patch`: the minor number is raised when a release changes the
 observable behaviour of a program uc80 compiles.
 
+## Unreleased
+
+### Docs: `-g` and `--optnone` are in 0.8.0
+
+`docs/debug_info_g.md` gained an Install section: `-g` and `--optnone` are
+in uc80 0.8.0 and later, `pip install "uc80>=0.8.0" "um80>=0.4.0"`, and
+cpmemu 4.11.0 or later for `--gdb`. Its link example named `libc.lib` and
+`runtime.lib` as if they were in the current directory; it now takes them
+from `uc80 --print-lib-dir`. `docs/optnone.md` and the README's two
+documentation links say 0.8.0 and later. Measured with released packages
+only (uc80 0.8.0 and um80 0.4.0 from PyPI, the cpmemu 4.11.0 macOS
+tarball): a recursive `sum` at `-g --optnone=sum` stopped at
+`break rs.c:4` in udb80 and `p n` gave 0, and 1 a frame up; without
+`--optnone`, GDB 18.1 with `dbg2elf` showed 5 frames of `sum` and `main`.
+
 ## 0.8.0
 
 ### upeepz80 0.2.8 or later

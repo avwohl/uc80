@@ -2,14 +2,27 @@
 
 `uc80 -g` writes debug markers into the assembler text. A debugger uses the markers to find the C source line of each instruction. The design is in [debugger_plan.md](https://github.com/avwohl/cpmemu/blob/main/docs/debugger_plan.md) of cpmemu. The marker format is in `docs/debug_info.md` of um80_and_friends.
 
-## Use
+## Install
 
-`uc80` writes the `.mac` file only. You run `um80` and `ul80` yourself. Give both programs the option `--debug-info`.
+`-g` and `--optnone` are in uc80 0.8.0 and later. An older release has neither option. Install the compiler and the assembler tools from PyPI:
 
 ```
+pip install "uc80>=0.8.0" "um80>=0.4.0"
+```
+
+um80 0.4.0 has `um80` and `ul80` with `--debug-info`, the debugger `udb80`, and `dbg2elf` for GDB. To run the program under a debugger, use `cpmemu --gdb` from cpmemu 4.11.0 or later. The cpmemu document `docs/gdb_stub.md` lists the parts for udb80 and for GDB.
+
+A check on 2026-11-05 used only released packages: uc80 0.8.0 and um80 0.4.0 from PyPI, and the cpmemu 4.11.0 macOS release. A recursive `sum` was compiled with `-g --optnone=sum`. In `udb80`, `break rs.c:4` stopped in the base case. `p n` printed 0, and `p n` in the frame above printed 1. For the same program without `--optnone`, GDB 18.1 with `dbg2elf` stopped at the same line, and `bt` showed 5 frames of `sum` and `main`.
+
+## Use
+
+`uc80` writes the `.mac` file only. You run `um80` and `ul80` yourself. Give both programs the option `--debug-info`. The libraries are in the directory that `uc80 --print-lib-dir` prints.
+
+```
+LIB=$(uc80 --print-lib-dir)
 uc80 -g prog.c -o prog.mac
 um80 --debug-info prog.mac -o prog.rel
-ul80 --debug-info prog.rel libc.lib runtime.lib -o prog.com
+ul80 --debug-info prog.rel $LIB/libc.lib $LIB/runtime.lib -o prog.com
 ```
 
 `um80` writes `prog.dbm` next to `prog.rel`. `ul80` writes `prog.dbg` next to `prog.com`. The file `prog.dbg` lists the source line of each address, the routines, and the labels. A GDB converter or `udb80` reads the file.
