@@ -42,7 +42,7 @@ from .multi_unit import (file_scope_names, uniquify_enumerators, uniquify_static
 
 from . import peep_local
 from . import peep_flow
-from . import looprot
+from . import ixrange, looprot
 from . import iyptr, reglocals
 
 # Import peephole optimizer from upeepz80 library
@@ -2783,6 +2783,11 @@ def main() -> int:
         # one.  Done last, so appended .mac files count as uses and names
         # whose last use asm DCE or the peephole pass deleted go too.
         code = drop_unreferenced_externs(code)
+
+        # -g: the IX range of each frame=ix function (ixrange.py).  The last
+        # step on the text: it adds labels, and a label would stop a pass.
+        if args.debug_info:
+            code = ixrange.add_ix_ranges(code)
 
         # Write output
         rom_end = _parse_address(

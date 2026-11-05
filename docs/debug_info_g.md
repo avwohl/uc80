@@ -30,12 +30,37 @@ The upeepz80 package keeps each marker too. A marker of code that upeepz80 delet
 ## What uc80 writes
 
 - `;#file N "PATH"` in the header, one for each source file. An `#include` file and a `#line` name get their own number. The file name is the real name, not the name of the preprocessed text.
-- `;#func NAME F L frame=KIND pops=0` after the label of each function, and `;#endfunc NAME` after the last live line of the function. A function that ends in an endless loop (`for (;;)`) has no `ret`. Its `;#endfunc` stands after the last jump. KIND has the value `ix` when the function keeps the IX frame. KIND has the value `none` when the function has no frame. The caller removes the arguments, so `pops` is always 0.
+- `;#func NAME F L frame=KIND pops=0` after the label of each function, and `;#endfunc NAME` after the last live line of the function. A function that ends in an endless loop (`for (;;)`) has no `ret`. Its `;#endfunc` stands after the last jump. KIND has the value `ix` when the function keeps the IX frame. KIND has the value `static` when the function has no frame and keeps its locals in the shared area `??AUTO`. KIND has the value `none` for another function with no frame. `uc80` reads KIND from the final text, after the passes, because a pass can delete the frame. The caller removes the arguments, so `pops` is always 0.
 - `;#line F L` in front of each statement. F and L are the file and line of the first token of the statement. The line of a token comes from `srcmap`, not from the preprocessed text.
 - Three markers for a `for` header: the first part in front of the init code, the second part after the loop label, the third part after the update label. A `while` and a `do` loop have one marker for the condition, after the loop label.
 - The line of the function declaration, in front of the prologue. The line of the `}` that ends the function, in front of the epilogue.
 - `;#inline F L NAME` and `;#endinline` around the code of an inlined function. The line inside is the line of the `return` of the inlined function.
 - `;#line F L nostmt` in front of code that loop invariant motion moved out of a loop. L is the line of the loop. The debugger does not stop there when it steps.
+
+## IX range
+
+A debugger finds the return address of an IX frame at IX+2, but only between `add IX,SP` of the prologue and `pop IX` of the epilogue. Outside the range IX is the IX of the caller. `uc80 -g` writes the range on the marker of each function with `frame=ix`:
+
+```
+	;#func _sum 1 2 frame=ix pops=0 ixbegin=??IXB1 ixend=??IXE1
+	push	IX
+	ld	IX,0
+	add	IX,SP
+??IXB1:
+	...
+	ld	SP,IX
+??IXE1:
+	pop	IX
+	ret
+```
+
+`ixbegin` is the address after `add IX,SP`. `ixend` is the address of the last `pop IX` in front of a `ret`. The module `ixrange.py` writes the two labels as the last step on the text, after `looprot` and after the removal of the unused `EXTRN` lines. A label stops the peephole patterns, so a label inside the text of a pass would change the code. `uplm80` does the same in `add_ix_range_labels`.
+
+The range needs the plain prologue: `push IX`, `ld IX,0` and `add IX,SP` are the first three instructions of the function. A function that saves registers in front of `push IX` has no range. 
+
+A `push IX ... pop IX` pair in the body lends IX to the code as a pointer. The pair is not the epilogue. The `pop IX` of an epilogue is the one with `ret` after the `pop IX`. A function with an early exit has more than one epilogue. The range ends at the last one, and the debugger reads the return address at SP at each `ret`.
+
+Measured on 357 programs (`examples/`, `tests/c-testsuite-z80/`, `tests/gen3/`, `tests/wide_int/`, `bench/programs/micro/` and the 220 programs of the c-testsuite): 114 functions have `frame=ix`, and all 114 have a range. 560 functions have no frame (219 `static` and 341 `none`). The `.com` of the 115 programs of the D2 test is the same with and without `-g`.
 
 ## Limits
 
@@ -43,7 +68,7 @@ The upeepz80 package keeps each marker too. A marker of code that upeepz80 delet
 - A declaration with no initializer has no marker. A `return;` and a `break;` take the line from the position of the statement in the preprocessed text.
 - Whole-program mode copies the runtime and the start-up code into the `.mac` file. These lines have no markers. `um80` gives each of them a line of the `.mac` file (assembler level only).
 - A jump table of a `switch` stands inside its function. The table has no source line.
-- uc80 does not write `ixbegin` and `ixend`. A label would stop the text passes, and a label changes the code. The debugger uses the stack offset at the address instead.
+- A function with a frame in IX has `ixbegin=` and `ixend=` on its `;#func` marker, and the two labels `??IXBn` and `??IXEn`. See [IX range](#ix-range). A function with `push IX` in front of its frame (an interrupt handler) has no range, and the debugger uses the stack depth.
 - The if/else merge of `peep_local` moves the common first and last instructions of both arms. The instructions keep the line of the arm where the merge put them.
 - uc80 writes `;#inline` for the inlined functions that survive the later AST passes. A later pass can rebuild the call, and the call then loses its marker. The code is the same.
 - The markers work with `--asm-syntax=sdas` and `--target=rom` as comments. Only `um80` and `ul80` read them.
