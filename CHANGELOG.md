@@ -6,6 +6,14 @@ observable behaviour of a program uc80 compiles.
 
 ## Unreleased
 
+### upeepz80 0.2.8 or later
+
+`pyproject.toml` requires `upeepz80>=0.2.8` (a minimum, not a pin; it was
+`>=0.2.3`).  0.2.8, on PyPI since 2026-11-04, is the first release that keeps
+the `;#` markers of `-g` in order without changing the code, and that has the
+`;#noopt` regions optnone uses.  With 0.2.7 a marker line between a procedure
+label and a dead store kept the store, so `-g` could change the `.com`.
+
 ### Variables and the outer level: `uc80 -g` writes `;#var`, `;#type` and `outer=` (phase 8 of the debugger plan, rule D8)
 
 `uc80 -g` now writes a `;#var` marker for each global, static, parameter and local variable, a `;#type` marker for each struct, union, enum and typedef that a variable uses, and `outer=FILE:LINE` on the `;#line` markers that a `#line` directive moved. The marker format is in um80_and_friends `docs/debug_info.md` (Variables), the use of the records in `docs/udb80.md` and `docs/gdb.md` there, and the rules of uc80 in [docs/debug_info_g.md](docs/debug_info_g.md#variables). The new modules are `debug_vars.py` (the code generator notes the variables while it hands out the slots) and `varinfo.py` (the markers, written after the last text pass, as `ixrange.py` does). The `.com` is the same with and without `-g`.

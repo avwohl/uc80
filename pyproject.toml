@@ -14,7 +14,7 @@ readme = "README.md"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.10"
 dependencies = [
-    "upeepz80>=0.2.3",
+    "upeepz80>=0.2.8",
     "uc_core>=0.4.2",
     "uplox>=3.3.0",
 ]
