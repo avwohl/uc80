@@ -4,7 +4,7 @@ All notable changes to uc80 are recorded here. Versions follow
 `major.minor.patch`: the minor number is raised when a release changes the
 observable behaviour of a program uc80 compiles.
 
-## Unreleased
+## 0.8.0
 
 ### upeepz80 0.2.8 or later
 
