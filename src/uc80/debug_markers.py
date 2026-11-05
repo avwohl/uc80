@@ -113,6 +113,7 @@ class DebugMarkersMixin:
         self._dbg_inline_marks: dict[int, tuple] = {}
         self._dbg_hoist_where: dict[int, object] = {}
         self._dbg_keep: list = []   # keeps the nodes of the two tables alive
+        self._dbgv_reset()          # the variables (debug_vars.py)
 
     def _dbg_file_no(self, path: str) -> int:
         no = self._dbg_files.get(path)
@@ -126,12 +127,23 @@ class DebugMarkersMixin:
         token, of the ``pos`` line of ``node``; else None."""
         tok = first_token(header)
         if tok is not None:
-            return srcmap.locate_pair(tok)
+            return self._dbg_with_outer(srcmap.locate_pair(tok),
+                                        srcmap.outer_pair(tok))
         pos = getattr(node, "pos", None)
         line = getattr(pos, "start_line", None)
         if line and self._dbg_fid:
-            return srcmap.locate_at(self._dbg_fid, line)
+            return self._dbg_with_outer(
+                srcmap.locate_at(self._dbg_fid, line),
+                srcmap.outer_at(self._dbg_fid, line))
         return None
+
+    @staticmethod
+    def _dbg_with_outer(where, outer):
+        """(path, line) or, under a ``#line`` directive, (path, line,
+        (outer path, outer line))."""
+        if where is None or outer is None or outer == tuple(where[:2]):
+            return where
+        return (where[0], where[1], outer)
 
     @contextmanager
     def dbg_clean(self, start: int):
@@ -172,10 +184,14 @@ class DebugMarkersMixin:
         """``;#line`` for (path, line)."""
         if not self.debug_info or where is None:
             return
-        path, line = where
+        path, line = where[0], where[1]
         no = self._dbg_file_no(path)
         self._dbg_cur = (no, line)
-        self._dbg_emit(f"\t;#line {no} {line}" + (" nostmt" if nostmt else ""))
+        text = f"\t;#line {no} {line}" + (" nostmt" if nostmt else "")
+        if len(where) > 2 and where[2] is not None:
+            # D8: the C position below a position set by #line
+            text += f" outer={self._dbg_file_no(where[2][0])}:{where[2][1]}"
+        self._dbg_emit(text)
 
     def dbg_line(self, header, node=None, nostmt: bool = False) -> None:
         """``;#line`` for the first token of ``header`` (see _dbg_where)."""
@@ -281,6 +297,9 @@ class DebugMarkersMixin:
             no = self._dbg_file_no(where[0])
             fields = f"{no} {where[1]}"
             extra = [f"\t;#line {no} {where[1]}"]
+            if len(where) > 2 and where[2] is not None:
+                extra[0] += (f" outer={self._dbg_file_no(where[2][0])}"
+                             f":{where[2][1]}")
         self.ctx.lines[at:at] = [
             f"\t;#func {label} {fields} frame={frame} pops=0", *extra]
 
@@ -300,7 +319,9 @@ class DebugMarkersMixin:
         pos = getattr(func.body, "pos", None) or getattr(func, "pos", None)
         line = getattr(pos, "end_line", None)
         if line and self._dbg_fid:
-            self.dbg_line_at(srcmap.locate_at(self._dbg_fid, line))
+            self.dbg_line_at(self._dbg_with_outer(
+                srcmap.locate_at(self._dbg_fid, line),
+                srcmap.outer_at(self._dbg_fid, line)))
 
     def dbg_file_table(self) -> list[str]:
         """The ``;#file`` lines of the files used."""

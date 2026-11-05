@@ -17,6 +17,7 @@ from uc_core.c23_parser import FILE_TABLE
 _MAPS: dict[int, list] = {}
 _LAST: list = [None]          # file id of the file registered last
 _BREAKS: dict[int, dict] = {}
+_OUTER: dict[int, list] = {}     # file id -> per output line: (file, line) or None
 
 
 def register(path: str, line_map, line_breaks=None) -> None:
@@ -95,3 +96,32 @@ def locate_at(file_id: int, line: int):
         f, l = m[line - 1]
         return _show(f), l
     return None
+
+
+def register_outer(path: str, outer_map) -> None:
+    """Remember the physical position of each output line of the input file
+    PATH where a ``#line`` directive is in effect (``outer_map[k]`` is
+    ``(file, line)`` of output line ``k`` of the text, or None where the
+    directive changed nothing).  ``-g`` writes it as ``outer=`` on ``;#line``
+    (rule D8 of the debugger plan: the C line below a BASIC line)."""
+    _OUTER[FILE_TABLE.intern(path)] = list(outer_map or [])
+
+
+def _outer_at(fid: int, line: int):
+    m = _OUTER.get(fid)
+    if m and 1 <= line <= len(m) and m[line - 1] is not None:
+        f, l = m[line - 1]
+        return _show(f), l
+    return None
+
+
+def outer_pair(token):
+    """(path, line) of the physical C position of a token under a ``#line``
+    directive, or None when no directive moved the token."""
+    return _outer_at(getattr(token, "file_id", 0),
+                     getattr(token, "line", 0) or 0)
+
+
+def outer_at(file_id: int, line: int):
+    """The same for a line of the preprocessed text."""
+    return _outer_at(file_id, line)

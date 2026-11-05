@@ -39,6 +39,7 @@ from .blockops import BlockOpsMixin
 from .fillidiom import FillIdiomMixin
 from .qsortwr import QsortWrMixin
 from .debug_markers import DebugMarkersMixin
+from .debug_vars import DebugVarsMixin
 from .markers import is_marker
 from . import optnone as optnone_module
 from .z80_intrinsics import (Z80IntrinsicsMixin, Z80_BUILTINS,
@@ -3957,7 +3958,7 @@ _MEMO_MISS = object()
 class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin, RangeMixin, NarrowMixin,
                     RangeDivMixin,
                     DeadStoreMixin, BlockOpsMixin, FillIdiomMixin,
-                    QsortWrMixin, DebugMarkersMixin):
+                    QsortWrMixin, DebugMarkersMixin, DebugVarsMixin):
     """Z80 code generator."""
 
     _expr_memo = None   # see _scoped_memo
@@ -5179,6 +5180,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         global_vars: dict[str, "_SynthVarDecl"] = {}
         extern_only: set[str] = set()
 
+        dbg_raw_types: dict = {}
         for d in unit.items:
             if not isinstance(d, ast.Declaration):
                 continue
@@ -5191,6 +5193,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 if nm in self.absolute:
                     continue          # an EQU, not storage
                 full_unconverted = full
+                if self.debug_info:
+                    dbg_raw_types.setdefault(nm, full)
+                    self.dbgv_note_global_decl(nm, d)
                 full = _to_legacy(full)
                 if isinstance(full, lt.FunctionType):
                     continue
@@ -5233,6 +5238,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     init_globals.append((name, decl))
                 else:
                     uninit_globals.append((name, decl))
+
+        if self.debug_info:
+            gitems = []
+            for name, decl in global_vars.items():
+                sym = self.ctx.globals.get(name)
+                gitems.append((name, sym.label() if sym else f"_{name}",
+                               sym.sym_type if sym else decl.var_type,
+                               decl.storage_class == "static"
+                               and name not in self.public_names))
+            self.dbgv_globals(gitems, dbg_raw_types)
 
         # Separate statics into initialized (DSEG) and uninitialized (COMMON/BSS)
         init_statics = []
@@ -5846,6 +5861,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
     def _register_enum_entries(self, tag, entries) -> None:
         """Record the constants (name, value) of one enumeration, and its
         integer type when its values are wider than int."""
+        self.note_enum(tag, entries)
         seen_names = set()
         for name, value in entries:
             if name in seen_names:
@@ -8097,6 +8113,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 self.ctx.emit(ln)
         dbg_at = len(self.ctx.lines)       # -g: ;#func goes here, at the end
         self.dbg_begin_func(func)
+        self.dbgv_begin(func)
 
         if name in self.naked:
             self._gen_naked_body(func, name)
@@ -8180,6 +8197,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     p.decl_specs, getattr(p, "declarator", None))
             except Exception:
                 continue
+            p_dbg_type = p_type          # -g: keeps a typedef name
             p_type = _to_legacy(p_type)
             # C99 6.7.6.3p7: parameter declared as ``T x[]`` (or with
             # any other array shape) is adjusted to ``T *x``. Without
@@ -8188,6 +8206,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             # the caller pushed.
             if isinstance(p_type, lt.ArrayType):
                 p_type = lt.PointerType(base_type=p_type.base_type)
+                p_dbg_type = p_type
             size = self._type_size(p_type)
             p_index += 1
             if (plan is not None and p_index < len(plan.loc)
@@ -8215,6 +8234,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     self.ctx.locals[p_name] = sym_p
                     spills.append((sym_p, plan.loc[p_index]))
                     self._rl_note(sym_p, plan.loc[p_index])
+                    self.dbgv_param(p_name, p_dbg_type, sym_p, True, p)
                 continue
             if p_name is not None:
                 self.ctx.locals[p_name] = Symbol(
@@ -8223,6 +8243,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                     offset=param_offset,
                     is_param=True,
                 )
+                self.dbgv_param(p_name, p_dbg_type,
+                                self.ctx.locals[p_name], False, p)
             param_offset += (size + 1) & ~1
         fwd_start = len(self.ctx.lines)
         fwd_slots, fwd_init = {}, {}
@@ -8347,6 +8369,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
         self._rl_end(name, rl_text_start)
         if self.debug_info:
+            self.dbgv_end(func_label, self._rl_final)
             self.dbg_func(name, func, dbg_at, dbg_frame)
             self.dbg_endfunc(name)
         self.ctx.current_function = None
@@ -8590,6 +8613,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         saved_locals = dict(self.ctx.locals)
         items = stmt.items
         i = 0
+        self.dbgv_block_push(stmt)
         while i < len(items):
             pair = (self._dm_pair(items[i], items[i + 1])
                     if i + 1 < len(items) else None)
@@ -8610,6 +8634,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # Restore block_externs on scope exit
         self.ctx.block_externs = saved_block_externs
         self.ctx.locals = saved_locals
+        self.dbgv_block_pop()
 
     def _gen_block_item(self, item) -> None:
         if isinstance(item, ast.Declaration):
@@ -8705,6 +8730,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         """
         if not isinstance(decl, ast.Declaration):
             return
+        self.dbgv_decl(decl)
         # Register enum constants reachable through this Declaration's
         # specs, including:
         #   - typedef enum { e, f, g } h;   (00198, typedef storage)
@@ -8759,6 +8785,7 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
         # iter_var_decls returns the uc80-internal ResolvedType; convert
         # once here so every downstream legacy-isinstance check just works
         # (size inference, struct registration, array decay, etc.).
+        var_raw_type = var_type
         var_type = _to_legacy(var_type)
         # Synthesise a VarDecl-shaped namespace object so the rest of
         # the legacy body (rewritten below) can keep using
@@ -8830,6 +8857,9 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
                 )
             self._rl_note(self.ctx.locals[decl.name],
                           hint=getattr(decl, 'storage_class', None) == 'register')
+            self.dbgv_local(decl.name, decl.var_type
+                            if decl.var_type is not var_type
+                            else var_raw_type, self.ctx.locals[decl.name])
 
             # Initialize if there's an initializer
             if decl.init:
@@ -8990,6 +9020,8 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
             self._fn_static_fn = func_name
             self._fn_static_labels = {}
         self._fn_static_labels[decl.name] = label
+
+        self.dbgv_static(decl.name, decl.var_type, label)
 
         # Register as a "global" for access purposes, but mark is_static=True
         # so we don't add another _ prefix when accessing
@@ -11120,6 +11152,16 @@ class CodeGenerator(Z80IntrinsicsMixin, RegLocalsMixin, AddrCseMixin, LicmMixin,
 
     def gen_for(self, stmt: ast.ForStmt) -> None:
         """Generate code for for loop."""
+        if self.debug_info and isinstance(stmt.init, ast.Declaration):
+            # -g: a name declared in the init clause is visible in the loop
+            self.dbgv_block_push(stmt)
+            try:
+                return self._gen_for(stmt)
+            finally:
+                self.dbgv_block_pop()
+        return self._gen_for(stmt)
+
+    def _gen_for(self, stmt: ast.ForStmt) -> None:
         if self._fill_try(stmt):
             return
         start_label = self.ctx.new_label("FOR")

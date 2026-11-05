@@ -5,6 +5,7 @@ Compiles C source to Z80 assembly compatible with um80 assembler.
 """
 
 import argparse
+import os
 import re
 import sys
 from dataclasses import dataclass
@@ -42,7 +43,7 @@ from .multi_unit import (file_scope_names, uniquify_enumerators, uniquify_static
 
 from . import peep_local
 from . import peep_flow
-from . import ixrange, looprot
+from . import ixrange, looprot, varinfo
 from . import iyptr, reglocals
 
 # Import peephole optimizer from upeepz80 library
@@ -799,6 +800,37 @@ def _rom_problems(gen, code: str) -> list:
 UNSUPPORTED_MESSAGE = ("uc80 does not support '{name}' yet; "
                        "see docs/rom_target.md")
 
+
+
+_LINE_DIRECTIVE = re.compile(r"^([ \t]*)#[ \t]*line\b.*$", re.MULTILINE)
+
+
+def _register_outer_map(srcmap, path, source, pp, include_paths,
+                        predefines, defines) -> None:
+    """``-g`` and a ``#line`` directive in the source (mbasic writes one for
+    each BASIC line): tell srcmap where each output line of the text really
+    stands in the C file (rule D8 of the debugger plan).  The source is
+    preprocessed a second time with each ``#line`` directive replaced by a
+    directive that writes no output line and moves no line number, so the
+    second map is the physical position of the same output lines."""
+    if not _LINE_DIRECTIVE.search(source):
+        return
+    neutral = _LINE_DIRECTIVE.sub(r"\1#undef __UC80_NO_LINE__", source)
+    pp2 = Preprocessor(include_paths, target_predefines=predefines)
+    for define in defines:
+        if '=' in define:
+            name, value = define.split('=', 1)
+            pp2.macros[name] = pp2.macros.get(name) or Macro(name, body=value)
+        else:
+            pp2.macros[define] = Macro(define, body="1")
+    try:
+        pp2.preprocess(neutral, path)
+    except Exception:
+        return
+    if len(pp2.line_map) != len(pp.line_map):
+        return
+    srcmap.register_outer(path, [
+        None if a == b else b for a, b in zip(pp.line_map, pp2.line_map)])
 
 def main() -> int:
     """Main entry point."""
@@ -1657,9 +1689,14 @@ def main() -> int:
                         pp.macros[define] = Macro(define, body="1")
 
                 pp.keep_pragmas = args.preprocess_only   # -E keeps #pragma lines
+                orig_source = source
                 source = pp.preprocess(source, str(input_path))
                 srcmap.register(str(input_path), pp.line_map,
                                 getattr(pp, "line_breaks", None))
+                if args.debug_info:
+                    _register_outer_map(
+                        srcmap, str(input_path), orig_source, pp,
+                        include_paths, pp_predefines, args.define)
 
                 file_optnone = [(f, l, w) for v, w, f, l in pp.target_pragmas
                                 if v == "optnone"]
@@ -2788,6 +2825,13 @@ def main() -> int:
         # step on the text: it adds labels, and a label would stop a pass.
         if args.debug_info:
             code = ixrange.add_ix_ranges(code)
+            try:
+                code = varinfo.add_vars(code, gen.dbg_var_info())
+            except Exception as e:      # the records are a debugging aid
+                if os.environ.get("UC80_DEBUG_VARS_STRICT"):
+                    raise
+                print(f"uc80: warning: no variable records for -g "
+                      f"({type(e).__name__}: {e})", file=sys.stderr)
 
         # Write output
         rom_end = _parse_address(

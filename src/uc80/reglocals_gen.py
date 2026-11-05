@@ -97,6 +97,7 @@ class RegLocalsMixin:
     _rl_on = False
     _rl_fn_ok = False
     _rl_vars: list = []
+    _rl_final: dict = {}
     _rl_skip: set = frozenset()
     _rl_noret: set = frozenset()
     _rl_noret_labels = None
@@ -207,6 +208,7 @@ class RegLocalsMixin:
 
     def _rl_begin(self, name: str, func) -> None:
         self._rl_vars = []
+        self._rl_final = {}         # -g: slot key -> register of a local
         self._rl_fn_ok = False
         if not self._rl_on or name in self._rl_skip:
             return
@@ -290,6 +292,9 @@ class RegLocalsMixin:
             gain = igain
         elif res is None:
             return
+        if self.debug_info:
+            self._rl_final = {(v.kind, v.base): v.reg for v in assigned
+                              if v.reg and v.reg != "?"}
         if marks:
             base_lines = debug_markers.restore_markers(region, base_lines,
                                                        marks)

@@ -239,7 +239,8 @@ def test_the_labels_do_not_change_the_code(flags, tmp_path):
 def _text_without_debug(text):
     from uc80.markers import is_marker
     return [ln for ln in text.split("\n")
-            if not is_marker(ln) and not ln.startswith("??IX") and ln.strip()]
+            if not is_marker(ln) and not ln.startswith(("??IX", "??VR"))
+            and not re.match(r"\s*;\s*#(var|type)\b", ln) and ln.strip()]
 
 
 @pytest.mark.parametrize("src", _programs()[:40], ids=lambda p: p.stem)
